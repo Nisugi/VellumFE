@@ -3389,6 +3389,8 @@ impl AppCore {
             visible: true,
             content_align: None,
             tts_speak: false,
+            text_size: None,
+            font_family: None,
         };
 
         let window_def = match widget_type_str.to_lowercase().as_str() {
@@ -3539,6 +3541,8 @@ impl AppCore {
             visible: true,
             content_align: None,
             tts_speak: false,
+            text_size: None,
+            font_family: None,
         };
         self.layout.windows.insert(
             0,
@@ -5293,6 +5297,8 @@ mod tests {
             visible: true,
             content_align: None,
             tts_speak: false,
+            text_size: None,
+            font_family: None,
             title_position: "top-left".to_string(),
         }
     }

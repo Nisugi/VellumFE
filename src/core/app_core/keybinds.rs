@@ -404,6 +404,8 @@ impl AppCore {
                 visible: true,
                 content_align: None,
                 tts_speak: false,
+                text_size: None,
+                font_family: None,
             }
         };
 

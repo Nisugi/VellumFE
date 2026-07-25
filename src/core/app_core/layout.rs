@@ -1380,6 +1380,8 @@ mod tests {
             visible: true,
             content_align: None,
             tts_speak: false,
+            text_size: None,
+            font_family: None,
             title_position: "top-left".to_string(),
         }
     }

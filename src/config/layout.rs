@@ -823,4 +823,30 @@ zoom = 3
         assert!(Layout::parse_tolerant("windows = 5", "test").is_err());
         assert!(Layout::parse_tolerant("not toml at [[", "test").is_err());
     }
+
+    #[test]
+    fn window_base_gui_appearance_fields_default_to_none_and_stay_unwritten() {
+        let layout = Layout::parse_tolerant(MIXED_LAYOUT, "test").expect("parse");
+        assert_eq!(layout.windows[0].base().text_size, None);
+        assert_eq!(layout.windows[0].base().font_family, None);
+
+        let serialized = layout.to_toml_string_preserving().expect("serialize");
+        assert!(!serialized.contains("text_size"));
+        assert!(!serialized.contains("font_family"));
+    }
+
+    #[test]
+    fn window_base_gui_appearance_fields_round_trip() {
+        let mut layout = Layout::parse_tolerant(MIXED_LAYOUT, "test").expect("parse");
+        layout.windows[0].base_mut().text_size = Some(18.5);
+        layout.windows[0].base_mut().font_family = Some("Consolas".to_string());
+
+        let serialized = layout.to_toml_string_preserving().expect("serialize");
+        let reparsed = Layout::parse_tolerant(&serialized, "test").expect("reparse");
+        assert_eq!(reparsed.windows[0].base().text_size, Some(18.5));
+        assert_eq!(
+            reparsed.windows[0].base().font_family.as_deref(),
+            Some("Consolas")
+        );
+    }
 }

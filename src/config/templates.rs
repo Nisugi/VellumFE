@@ -116,6 +116,8 @@ impl Config {
             visible: true,
             content_align: None,
             tts_speak: false,
+            text_size: None,
+            font_family: None,
         };
         // Prefer user-defined window templates (global store)
         if let Some(custom) = Self::get_custom_window_template(name) {

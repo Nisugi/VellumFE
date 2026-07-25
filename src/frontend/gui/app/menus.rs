@@ -179,30 +179,36 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::SetTextSize(size) => {
-                self.tab_settings
-                    .entry(request.tab_key.clone())
-                    .or_default()
-                    .text_size = size;
-                self.layout_dirty = true;
+                self.with_layout_def_for_tab(&request.tab_key, |def| {
+                    def.base_mut().text_size = size;
+                });
             }
             GuiWindowMenuCommand::SetWrapText(wrap) => {
-                self.tab_settings
-                    .entry(request.tab_key.clone())
-                    .or_default()
-                    .wrap_text = wrap;
-                self.layout_dirty = true;
+                if self.def_wordwrap_for_tab(&request.tab_key).is_some() {
+                    // Text-list defs carry wordwrap; store it there (shared
+                    // with the TUI and layout.toml).
+                    self.with_layout_def_for_tab(&request.tab_key, |def| match def {
+                        crate::config::WindowDef::Text { data, .. } => data.wordwrap = wrap,
+                        crate::config::WindowDef::Inventory { data, .. }
+                        | crate::config::WindowDef::Reserve { data, .. } => data.wordwrap = wrap,
+                        _ => {}
+                    });
+                } else {
+                    // Widget types with no wordwrap field (tabbedtext, spells,
+                    // container) keep the per-tab GUI setting.
+                    self.tab_settings
+                        .entry(request.tab_key.clone())
+                        .or_default()
+                        .wrap_text = wrap;
+                    self.layout_dirty = true;
+                }
             }
             GuiWindowMenuCommand::SetFont(name) => {
-                self.tab_settings
-                    .entry(request.tab_key.clone())
-                    .or_default()
-                    .font_primary = match name {
-                    Some(name) => FontRef::Named(name),
-                    None => FontRef::SystemDefault,
-                };
+                self.with_layout_def_for_tab(&request.tab_key, |def| {
+                    def.base_mut().font_family = name;
+                });
                 // Rebuild font definitions so the new family is registered.
                 self.fonts_applied = false;
-                self.layout_dirty = true;
             }
             GuiWindowMenuCommand::SetAccent(color) => {
                 self.tab_settings
@@ -275,15 +281,11 @@ impl VellumGuiApp {
             return;
         };
 
-        let text_size_override = self
-            .tab_settings
-            .get(&request.tab_key)
-            .and_then(|settings| settings.text_size);
+        let text_size_override = self.text_size_override_for_tab(&request.tab_key);
         let current_font = self
-            .tab_settings
-            .get(&request.tab_key)
-            .and_then(|settings| match &settings.font_primary {
-                FontRef::Named(name) => Some(name.clone()),
+            .font_ref_for_tab(&request.tab_key)
+            .and_then(|font| match font {
+                FontRef::Named(name) => Some(name),
                 _ => None,
             });
         let detached_tabs = self.detached_tab_keys();
@@ -328,11 +330,7 @@ impl VellumGuiApp {
                 )
             })
             .unwrap_or(false);
-        let wrap_text = self
-            .tab_settings
-            .get(&request.tab_key)
-            .map(|settings| settings.wrap_text)
-            .unwrap_or(true);
+        let wrap_text = self.effective_wrap_text(&request.tab_key);
         let is_map = self
             .available_tabs
             .get(&request.tab_key)

@@ -263,6 +263,14 @@ pub struct WindowBase {
     /// still apply on top for backward compatibility.
     #[serde(default)]
     pub tts_speak: bool,
+    /// GUI: per-window text size override in points; None uses the global
+    /// text size. The TUI ignores it (terminals have no text size).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_size: Option<f32>,
+    /// GUI: per-window font family name; None uses the default font.
+    /// The TUI ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
 }
 
 /// Text widget specific data

@@ -435,6 +435,19 @@ impl VellumGuiApp {
             initial_width,
         );
 
+        // Legacy GUI files stored per-window text size/font/wrap in
+        // TabSettings; those now live on the shared layout defs. Migrate
+        // once: marking both stores dirty persists the move on both sides.
+        let mut tab_settings = tab_settings;
+        let (migrated_layout, migrated_gui) = Self::migrate_tab_settings_to_layout(
+            &mut tab_settings,
+            &mut app_core.layout,
+            |key| available_tabs.get(key).map(|tab| tab.window_name.clone()),
+        );
+        if migrated_layout {
+            app_core.layout_modified_since_save = true;
+        }
+
         let command_history =
             Self::load_command_history(app_core.config.character.as_deref());
 
@@ -470,7 +483,9 @@ impl VellumGuiApp {
             layout_profile,
             layout_character,
             core_layout_size,
-            layout_dirty: false,
+            // Migration emptied legacy TabSettings fields; rewrite the GUI
+            // file so they stay emptied.
+            layout_dirty: migrated_gui,
             layout_dirty_since: None,
             applied_theme_id: None,
             current_theme: crate::theme::AppTheme::default(),
@@ -978,24 +993,168 @@ impl VellumGuiApp {
         self.layout_dirty = true;
     }
 
-    /// Effective text size for a window: per-tab override or the global size.
-    fn effective_text_size(&self, key: &TabKey) -> f32 {
-        self.tab_settings
+    /// The shared layout definition backing a tab, when one exists.
+    fn layout_def_for_tab(&self, key: &TabKey) -> Option<&crate::config::WindowDef> {
+        let window_name = &self.available_tabs.get(key)?.window_name;
+        self.app_core
+            .layout
+            .windows
+            .iter()
+            .find(|window| window.name() == *window_name)
+    }
+
+    /// Mutate the shared layout def backing a tab and mark layout.toml
+    /// modified (the same mechanism the Window Editor uses). Returns false
+    /// (and changes nothing) when the tab has no layout definition.
+    fn with_layout_def_for_tab(
+        &mut self,
+        key: &TabKey,
+        mutate: impl FnOnce(&mut crate::config::WindowDef),
+    ) -> bool {
+        let Some(window_name) = self
+            .available_tabs
             .get(key)
-            .and_then(|settings| settings.text_size)
+            .map(|tab| tab.window_name.clone())
+        else {
+            return false;
+        };
+        let Some(def) = self
+            .app_core
+            .layout
+            .windows
+            .iter_mut()
+            .find(|window| window.name() == window_name)
+        else {
+            return false;
+        };
+        mutate(def);
+        self.app_core.layout_modified_since_save = true;
+        true
+    }
+
+    /// Per-window text size override: the shared layout def first, then the
+    /// legacy per-tab GUI setting (pre-migration files).
+    fn text_size_override_for_tab(&self, key: &TabKey) -> Option<f32> {
+        self.layout_def_for_tab(key)
+            .and_then(|def| def.base().text_size)
+            .or_else(|| self.tab_settings.get(key).and_then(|s| s.text_size))
+    }
+
+    /// Effective text size for a window: per-window override or the global size.
+    fn effective_text_size(&self, key: &TabKey) -> f32 {
+        self.text_size_override_for_tab(key)
             .unwrap_or(self.ui_settings.text_size)
             .clamp(6.0, 72.0)
     }
 
-    /// Effective proportional font family for a window: the per-tab font
-    /// (registered as a named family during font setup) or egui's default.
-    fn effective_font_family(&self, key: &TabKey) -> egui::FontFamily {
+    /// Per-window font: the shared layout def's family name first, then the
+    /// legacy per-tab GUI setting (which can also be a custom font file).
+    fn font_ref_for_tab(&self, key: &TabKey) -> Option<FontRef> {
+        if let Some(family) = self
+            .layout_def_for_tab(key)
+            .and_then(|def| def.base().font_family.clone())
+        {
+            return Some(FontRef::Named(family));
+        }
         self.tab_settings
             .get(key)
-            .and_then(|settings| theme::font_ref_key(&settings.font_primary))
+            .map(|settings| settings.font_primary.clone())
+    }
+
+    /// Effective proportional font family for a window: the per-window font
+    /// (registered as a named family during font setup) or egui's default.
+    fn effective_font_family(&self, key: &TabKey) -> egui::FontFamily {
+        self.font_ref_for_tab(key)
+            .as_ref()
+            .and_then(theme::font_ref_key)
             .filter(|font_key| self.registered_font_families.contains(font_key))
             .map(|font_key| egui::FontFamily::Name(font_key.into()))
             .unwrap_or(egui::FontFamily::Proportional)
+    }
+
+    /// Word wrap stored on the shared layout def, for widget types whose def
+    /// carries a `wordwrap` field. None = this def has no such field.
+    fn def_wordwrap_for_tab(&self, key: &TabKey) -> Option<bool> {
+        match self.layout_def_for_tab(key)? {
+            crate::config::WindowDef::Text { data, .. } => Some(data.wordwrap),
+            crate::config::WindowDef::Inventory { data, .. }
+            | crate::config::WindowDef::Reserve { data, .. } => Some(data.wordwrap),
+            _ => None,
+        }
+    }
+
+    /// Effective wrap for a window: the def's wordwrap when it has one, else
+    /// the legacy per-tab GUI setting, else on.
+    fn effective_wrap_text(&self, key: &TabKey) -> bool {
+        self.def_wordwrap_for_tab(key).unwrap_or_else(|| {
+            self.tab_settings
+                .get(key)
+                .map(|settings| settings.wrap_text)
+                .unwrap_or(true)
+        })
+    }
+
+    /// One-time migration: move legacy per-tab GUI appearance settings
+    /// (text size, font, wrap) onto the shared layout window defs, where
+    /// they now live. A value already present on a def wins; migrated
+    /// TabSettings fields reset to their defaults either way, so a second
+    /// run is a no-op. `FontRef::Custom` (a font file path, not a family
+    /// name) stays in TabSettings and keeps working via the read fallback.
+    /// Returns (layout_changed, gui_settings_changed).
+    fn migrate_tab_settings_to_layout(
+        tab_settings: &mut HashMap<TabKey, TabSettings>,
+        layout: &mut crate::config::Layout,
+        window_name_of: impl Fn(&TabKey) -> Option<String>,
+    ) -> (bool, bool) {
+        use crate::config::WindowDef;
+
+        let mut layout_changed = false;
+        let mut gui_changed = false;
+        for (key, settings) in tab_settings.iter_mut() {
+            let Some(name) = window_name_of(key) else {
+                continue;
+            };
+            let Some(def) = layout.windows.iter_mut().find(|w| w.name() == name) else {
+                continue;
+            };
+            if let Some(size) = settings.text_size.take() {
+                if def.base().text_size.is_none() {
+                    def.base_mut().text_size = Some(size);
+                    layout_changed = true;
+                }
+                gui_changed = true;
+            }
+            if matches!(settings.font_primary, FontRef::Named(_)) {
+                let font = std::mem::take(&mut settings.font_primary);
+                if let FontRef::Named(family) = font {
+                    if def.base().font_family.is_none() {
+                        def.base_mut().font_family = Some(family);
+                        layout_changed = true;
+                    }
+                }
+                gui_changed = true;
+            }
+            if !settings.wrap_text {
+                // wrap_text=false is the only migratable signal (true is the
+                // default); only defs with a wordwrap field can hold it.
+                let target = match def {
+                    WindowDef::Text { data, .. } => Some(&mut data.wordwrap),
+                    WindowDef::Inventory { data, .. } | WindowDef::Reserve { data, .. } => {
+                        Some(&mut data.wordwrap)
+                    }
+                    _ => None,
+                };
+                if let Some(wordwrap) = target {
+                    if *wordwrap {
+                        *wordwrap = false;
+                        layout_changed = true;
+                    }
+                    settings.wrap_text = true;
+                    gui_changed = true;
+                }
+            }
+        }
+        (layout_changed, gui_changed)
     }
 
     /// Resolve the sizing values a window's content renderer needs.
@@ -1007,11 +1166,7 @@ impl VellumGuiApp {
             effects_bar_height: self.ui_settings.effects_bar_height.clamp(10.0, 60.0),
             bar_corner_radius: self.ui_settings.bar_corner_radius.clamp(0.0, 12.0),
             auto_contrast_bar_text: self.ui_settings.auto_contrast_bar_text,
-            wrap_text: self
-                .tab_settings
-                .get(key)
-                .map(|settings| settings.wrap_text)
-                .unwrap_or(true),
+            wrap_text: self.effective_wrap_text(key),
             vitals: self.ui_settings.vitals.clone(),
             background: self
                 .available_tabs
@@ -1572,6 +1727,17 @@ impl VellumGuiApp {
         self.ui_font = restored.ui_font;
         self.ui_settings = restored.ui_settings;
         self.tab_settings = restored.tab_settings;
+        // Checkpoints can predate the move of per-window text size/font/wrap
+        // onto the layout defs; migrate them the same way startup does.
+        let available_tabs = &self.available_tabs;
+        let (migrated_layout, _) = Self::migrate_tab_settings_to_layout(
+            &mut self.tab_settings,
+            &mut self.app_core.layout,
+            |key| available_tabs.get(key).map(|tab| tab.window_name.clone()),
+        );
+        if migrated_layout {
+            self.app_core.layout_modified_since_save = true;
+        }
         // Lazy appliers pick up the new font/zoom/density next frame.
         self.fonts_applied = false;
         self.zoom_applied = false;
@@ -3674,11 +3840,19 @@ impl eframe::App for VellumGuiApp {
         }
         if !self.fonts_applied {
             self.fonts_applied = true;
-            let window_fonts: Vec<FontRef> = self
+            let mut window_fonts: Vec<FontRef> = self
                 .tab_settings
                 .values()
                 .map(|settings| settings.font_primary.clone())
                 .collect();
+            // Fonts assigned on shared layout defs need registering too.
+            window_fonts.extend(
+                self.app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .filter_map(|window| window.base().font_family.clone().map(FontRef::Named)),
+            );
             let fonts = theme::build_font_definitions(&self.ui_font, &window_fonts);
             self.pending_font_families = Some(
                 fonts
@@ -4393,7 +4567,10 @@ pub fn run_native_gui(
 #[cfg(test)]
 mod tests {
     use super::widgets::parse_hex_color;
-    use super::{AppShortcut, GlobalDispatchTarget, GuiLinkDispatch, VellumGuiApp};
+    use super::{
+        AppShortcut, FontRef, GlobalDispatchTarget, GuiLinkDispatch, TabKey, TabSettings,
+        VellumGuiApp,
+    };
     use crate::config::{AppKeybinds, Config, KeyBindAction, MacroAction, TargetListConfig};
     use crate::core::state::{Creature, Player};
     use crate::data::{LinkData, SpanType, TextSegment};
@@ -4814,5 +4991,186 @@ mod tests {
             &live_creature,
             &cfg
         ));
+    }
+
+    fn migration_test_layout() -> crate::config::Layout {
+        use crate::config::{BorderSides, CompassWidgetData, TextWidgetData, WindowBase, WindowDef};
+        let base = |name: &str| WindowBase {
+            name: name.to_string(),
+            row: 0,
+            col: 0,
+            rows: 10,
+            cols: 40,
+            show_border: true,
+            border_style: "single".to_string(),
+            border_sides: BorderSides::default(),
+            border_color: None,
+            show_title: true,
+            title: None,
+            title_position: "top-left".to_string(),
+            background_color: None,
+            text_color: None,
+            transparent_background: false,
+            locked: false,
+            min_rows: None,
+            max_rows: None,
+            min_cols: None,
+            max_cols: None,
+            visible: true,
+            content_align: None,
+            tts_speak: false,
+            text_size: None,
+            font_family: None,
+        };
+        crate::config::Layout {
+            windows: vec![
+                WindowDef::Text {
+                    base: base("main"),
+                    data: TextWidgetData {
+                        streams: vec!["main".to_string()],
+                        buffer_size: 100,
+                        wordwrap: true,
+                        show_timestamps: false,
+                        timestamp_position: None,
+                        compact: false,
+                    },
+                },
+                WindowDef::Compass {
+                    base: base("compass"),
+                    data: CompassWidgetData {
+                        active_color: None,
+                        inactive_color: None,
+                    },
+                },
+            ],
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        }
+    }
+
+    fn migration_name_of(key: &TabKey) -> Option<String> {
+        match key {
+            TabKey::TextMain => Some("main".to_string()),
+            TabKey::Compass => Some("compass".to_string()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_migrate_tab_settings_moves_values_onto_defs() {
+        let mut layout = migration_test_layout();
+        let mut settings = HashMap::new();
+        settings.insert(
+            TabKey::TextMain,
+            TabSettings {
+                text_size: Some(16.0),
+                font_primary: FontRef::Named("Fira Code".to_string()),
+                wrap_text: false,
+                ..Default::default()
+            },
+        );
+        // Compass has no wordwrap field: wrap stays a legacy GUI setting.
+        settings.insert(
+            TabKey::Compass,
+            TabSettings {
+                wrap_text: false,
+                ..Default::default()
+            },
+        );
+
+        let (layout_changed, gui_changed) = VellumGuiApp::migrate_tab_settings_to_layout(
+            &mut settings,
+            &mut layout,
+            migration_name_of,
+        );
+        assert!(layout_changed);
+        assert!(gui_changed);
+
+        assert_eq!(layout.windows[0].base().text_size, Some(16.0));
+        assert_eq!(
+            layout.windows[0].base().font_family.as_deref(),
+            Some("Fira Code")
+        );
+        let crate::config::WindowDef::Text { data, .. } = &layout.windows[0] else {
+            panic!("main window should be a text def");
+        };
+        assert!(!data.wordwrap);
+
+        let migrated = settings.get(&TabKey::TextMain).unwrap();
+        assert_eq!(migrated.text_size, None);
+        assert!(matches!(migrated.font_primary, FontRef::SystemDefault));
+        assert!(migrated.wrap_text);
+
+        // Compass: nothing moved onto the def; legacy wrap preserved.
+        assert_eq!(layout.windows[1].base().text_size, None);
+        assert!(!settings.get(&TabKey::Compass).unwrap().wrap_text);
+
+        // Idempotent: a second run changes nothing.
+        let (layout_changed, gui_changed) = VellumGuiApp::migrate_tab_settings_to_layout(
+            &mut settings,
+            &mut layout,
+            migration_name_of,
+        );
+        assert!(!layout_changed);
+        assert!(!gui_changed);
+    }
+
+    #[test]
+    fn test_migrate_tab_settings_existing_def_value_wins() {
+        let mut layout = migration_test_layout();
+        layout.windows[0].base_mut().text_size = Some(20.0);
+        layout.windows[0].base_mut().font_family = Some("Consolas".to_string());
+
+        let mut settings = HashMap::new();
+        settings.insert(
+            TabKey::TextMain,
+            TabSettings {
+                text_size: Some(16.0),
+                font_primary: FontRef::Named("Fira Code".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let (layout_changed, gui_changed) = VellumGuiApp::migrate_tab_settings_to_layout(
+            &mut settings,
+            &mut layout,
+            migration_name_of,
+        );
+        assert!(!layout_changed);
+        // The legacy fields still empty out so they stop shadowing the def.
+        assert!(gui_changed);
+        assert_eq!(layout.windows[0].base().text_size, Some(20.0));
+        assert_eq!(
+            layout.windows[0].base().font_family.as_deref(),
+            Some("Consolas")
+        );
+        let migrated = settings.get(&TabKey::TextMain).unwrap();
+        assert_eq!(migrated.text_size, None);
+        assert!(matches!(migrated.font_primary, FontRef::SystemDefault));
+    }
+
+    #[test]
+    fn test_migrate_tab_settings_ignores_unmapped_tabs() {
+        let mut layout = migration_test_layout();
+        let mut settings = HashMap::new();
+        settings.insert(
+            TabKey::Vitals,
+            TabSettings {
+                text_size: Some(16.0),
+                ..Default::default()
+            },
+        );
+
+        let (layout_changed, gui_changed) = VellumGuiApp::migrate_tab_settings_to_layout(
+            &mut settings,
+            &mut layout,
+            migration_name_of,
+        );
+        assert!(!layout_changed);
+        assert!(!gui_changed);
+        assert_eq!(settings.get(&TabKey::Vitals).unwrap().text_size, Some(16.0));
     }
 }
