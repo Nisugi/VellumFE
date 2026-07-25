@@ -25,7 +25,7 @@
 
 [connection]
 host = "127.0.0.1"
-port = 8001
+port = 8000
 # character = "YourName"  # Character for Lich proxy and direct connect login
 
 # --- Direct Connection (all optional) ---
@@ -116,23 +116,23 @@ command_echo = true
 betrayer_active_color = "#ff4040"
 
 # Prevent these openDialog windows from auto-opening (still parse their data).
+# (This list mirrors the built-in default; edit to taste.)
 open_dialog_blocklist = [
-  "bank",
   "combat",
   "injuries",
+  "stance",
+  "befriend",
   "espMasterDialog",
   "espMasterData",
+  "Buffs",
+  "Debuffs",
+  "Cooldowns",
   "mapMaster",
+  "encum",
+  "minivitals",
+  "expr",
+  "Active Spells",
 ]
-
-# --- Focus Navigation ---
-# Configure which windows are focusable via Tab and the optional cycle order.
-# If order is empty, VellumFE uses layout order filtered by focusable types.
-#
-# [ui.focus]
-types = ["text", "tabbedtext"]
-exclude = ["bounty", "society"]
-order = []
 
 # --- Performance Overlay (Debug) ---
 # Press F3 or use .perf command to toggle
@@ -141,6 +141,15 @@ perf_stats_x = 0
 perf_stats_y = 0
 perf_stats_width = 35
 perf_stats_height = 23
+
+# --- Focus Navigation ---
+# Configure which windows are focusable via Tab and the optional cycle order.
+# If order is empty, VellumFE uses layout order filtered by focusable types.
+# (Sub-table: must stay below the bare [ui] keys above.)
+[ui.focus]
+types = ["text", "tabbedtext"]
+exclude = ["bounty", "society"]
+order = []
 
 
 # ------------------------------------------------------------
@@ -401,3 +410,17 @@ enabled = false
 port = 8040
 bind = "127.0.0.1"
 pinned = false
+
+# --- Map & Travel -----------------------------------------------------------
+# The in-client map and native go2 travel. Both are best configured from the
+# GUI (Settings > Map, Settings > Travel); the sections exist here so the
+# file documents every config surface.
+#
+# [map]
+# mapdb_repo = "Nisugi/gs-mapdb"   # GitHub repo for map database downloads
+# lich_dir = ""                    # Lich install dir (auto-detected if empty)
+# mapdb_path = ""                  # Explicit mapdb file (overrides downloads)
+# mapping_mode = false             # Capture session evidence for mapping
+#
+# [go2]
+# native_map_clicks = true         # Map clicks walk via native go2
