@@ -198,13 +198,13 @@ impl Config {
         fs::create_dir_all(&profile)?;
         tracing::info!("Created profile directory: {:?}", profile);
 
-        // Extract config.toml to global directory (shared defaults for all characters)
-        // Character-specific overrides can still be added to profile/config.toml
-        let config_path = Self::common_config_path()?;
-        if !config_path.exists() {
-            fs::write(&config_path, DEFAULT_CONFIG).context("Failed to write config.toml")?;
-            tracing::info!("Extracted config.toml to {:?}", config_path);
-        }
+        // config.toml is deliberately NOT extracted: the embedded defaults
+        // are the bottom layer at load time (see load_layered_config), so
+        // shipped default changes reach every user automatically. A
+        // global/config.toml appears only once someone saves a global
+        // setting, and then holds just their overrides. (Existing extracted
+        // files keep working as the global layer and thin on next save.)
+        // The commented reference copy lives in templates/config_template.toml.
 
         // Extract colors.toml to global directory (shared across all characters)
         // Character-specific overrides can still be added to profile/colors.toml
@@ -246,6 +246,31 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Read one config layer's raw file contents, if the file exists.
+    fn read_layer(path: &std::path::Path) -> Result<Option<String>> {
+        if path.exists() {
+            Ok(Some(fs::read_to_string(path).with_context(|| {
+                format!("Failed to read config layer: {:?}", path)
+            })?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// The fully layered view for a character: defaults < global < profile.
+    pub fn load_layered_config(character: Option<&str>) -> Result<Self> {
+        let global = Self::read_layer(&Self::common_config_path()?)?;
+        let profile = Self::read_layer(&Self::config_path(character)?)?;
+        super::sparse::layer_config(global.as_deref(), profile.as_deref())
+    }
+
+    /// The global layer only: defaults < global file. This is the base a
+    /// profile save diffs against.
+    fn load_global_layer() -> Result<Self> {
+        let global = Self::read_layer(&Self::common_config_path()?)?;
+        super::sparse::layer_config(global.as_deref(), None)
     }
 
     /// Load common (global) config defaults
@@ -344,14 +369,10 @@ impl Config {
         // Extract defaults on first run (idempotent - only creates missing files)
         Self::extract_defaults(character)?;
 
-        // Load global config first (defaults for all characters)
-        let mut config = Self::load_common_config()?;
-
-        // Load character-specific config and merge (character overrides global)
-        if let Some(char_config) = Self::load_character_config_only(character)? {
-            config.merge_with(char_config);
-        }
-        // If no character config exists, we use global config with default connection
+        // Layer per-leaf: code defaults < global file < profile file. Only
+        // keys a file actually states override the layer below — a profile
+        // file that sets one value no longer resets whole sections.
+        let mut config = Self::load_layered_config(character)?;
 
         // Override port from command line (if specified)
         if let Some(port) = port_override {
@@ -400,19 +421,27 @@ impl Config {
         Ok(config)
     }
 
+    /// Write `config` to `path` sparsely: the file ends up stating exactly
+    /// the keys that differ from `base`, with comments on surviving keys
+    /// preserved and unknown keys left alone.
+    fn save_sparse(path: &std::path::Path, config: &Config, base: &Config) -> Result<()> {
+        let existing = Self::read_layer(path)?.unwrap_or_default();
+        let contents = super::sparse::sparse_config_toml(&existing, config, base)?;
+        write_atomic(path, contents)
+            .with_context(|| format!("Failed to write config file: {:?}", path))?;
+        Ok(())
+    }
+
     pub fn save(&self, character: Option<&str>) -> Result<()> {
         // Use provided character name, or fall back to stored character name
         let char_name = character.or(self.character.as_deref());
         let config_path = Self::config_path(char_name)?;
 
-        // Ensure parent directory exists
-        if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        // Save main config (without highlights, keybinds, colors, color_palette - those are skipped)
-        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        write_atomic(&config_path, contents).context("Failed to write config file")?;
+        // The profile file keeps only what diverges from the global layer,
+        // so global edits keep reaching this character. (The old full dump
+        // pinned every setting into the profile forever.)
+        let base = Self::load_global_layer()?;
+        Self::save_sparse(&config_path, self, &base)?;
 
         // Save to separate files
         self.colors.save(char_name)?;
@@ -422,19 +451,10 @@ impl Config {
         Ok(())
     }
 
-    /// Save config to global config.toml
+    /// Save config to global config.toml (sparse against the code defaults).
     pub fn save_common(&self) -> Result<()> {
         let config_path = Self::common_config_path()?;
-
-        // Ensure global directory exists
-        if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create global directory: {:?}", parent))?;
-        }
-
-        // Save main config
-        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
-        write_atomic(&config_path, contents).context("Failed to write global config file")?;
+        Self::save_sparse(&config_path, self, &Config::default())?;
         tracing::info!("Saved config to global file: {:?}", config_path);
         Ok(())
     }
@@ -475,20 +495,16 @@ impl Config {
 
     /// Save a specific setting to character config
     fn save_setting_to_character(&self, key: &str, character: Option<&str>) -> Result<()> {
-        // Load current character config (or create new if doesn't exist)
-        let mut char_config = Self::load_character_config_only(character)?
-            .unwrap_or_else(Self::default);
-
-        // Update the specific setting
+        // Start from the character's layered view (not the raw file):
+        // fields the profile never set match the global layer exactly, so
+        // the sparse diff below writes this key plus existing overrides —
+        // never phantom "overrides" of serde defaults.
+        let mut char_config = Self::load_layered_config(character)?;
         Self::copy_setting(&mut char_config, self, key);
 
-        // Save to character config path
         let config_path = Self::config_path(character)?;
-        if let Some(parent) = config_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let contents = toml::to_string_pretty(&char_config).context("Failed to serialize config")?;
-        write_atomic(&config_path, contents).context("Failed to write character config file")?;
+        let base = Self::load_global_layer()?;
+        Self::save_sparse(&config_path, &char_config, &base)?;
         tracing::info!("Saved setting '{}' to character config: {:?}", key, config_path);
         Ok(())
     }

@@ -26,6 +26,7 @@ mod keybinds;
 mod layout;
 pub mod registry;
 mod settings;
+mod sparse;
 mod templates;
 mod widgets;
 mod window_def;
