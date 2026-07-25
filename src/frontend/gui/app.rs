@@ -1313,12 +1313,31 @@ impl VellumGuiApp {
         }
     }
 
-    /// Accent (border) color for a window, if the user set one.
+    /// Accent (border) color for a window. Precedence: the per-window GUI
+    /// accent (context menu), else the shared layout definition's
+    /// border_color — so a border color set in the window editor or the
+    /// TUI finally shows here too — else the theme frame (None).
     fn accent_color_for_tab(&self, key: &TabKey) -> Option<Color32> {
-        self.tab_settings
+        if let Some(accent) = self
+            .tab_settings
             .get(key)
             .and_then(|settings| settings.accent_color.as_deref())
             .and_then(widgets::parse_hex_color)
+        {
+            return Some(accent);
+        }
+        let window_name = &self.available_tabs.get(key)?.window_name;
+        let base = self
+            .app_core
+            .layout
+            .windows
+            .iter()
+            .find(|window| window.name() == *window_name)?
+            .base();
+        match base.border_color.as_deref() {
+            None | Some("-") | Some("") => None,
+            Some(color) => widgets::parse_hex_color(color),
+        }
     }
 
     /// Apply zoom and title-bar sizing. Zoom is pushed to egui once at
