@@ -274,7 +274,7 @@ pub struct TtsConfig {
     #[serde(default = "default_tts_enabled")]
     pub enabled: bool,
     #[serde(default = "default_tts_rate")]
-    pub rate: f32, // Speech rate (0.5 to 2.0, 1.0 = normal)
+    pub rate: f32, // Speech rate (0.5 slow, 1.0 = engine normal, 3.0 = engine max)
     #[serde(default = "default_tts_volume")]
     pub volume: f32, // Volume (0.0 to 1.0)
     #[serde(default = "default_tts_speak_thoughts")]
@@ -283,6 +283,22 @@ pub struct TtsConfig {
     pub speak_speech: bool, // Automatically speak speech window (renamed from speak_whispers)
     #[serde(default = "default_tts_speak_main")]
     pub speak_main: bool, // Automatically speak main window
+    /// Preferred voice by name (engine default when unset).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<String>,
+    /// Speech-only gags: lines matching any regex are shown but not spoken.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gags: Vec<String>,
+    /// Pronunciation substitutions applied before speaking, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub substitutions: Vec<TtsSubstitution>,
+}
+
+/// One pronunciation rewrite: regex pattern -> spoken replacement.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct TtsSubstitution {
+    pub pattern: String,
+    pub replacement: String,
 }
 
 fn default_tts_enabled() -> bool {
@@ -318,6 +334,9 @@ impl Default for TtsConfig {
             speak_thoughts: default_tts_speak_thoughts(),
             speak_speech: default_tts_speak_speech(),
             speak_main: default_tts_speak_main(),
+            voice: None,
+            gags: Vec::new(),
+            substitutions: Vec::new(),
         }
     }
 }

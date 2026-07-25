@@ -108,18 +108,36 @@ fn font_data_from_ref(
                     }
                 },
             };
+            if let Err(err) = validate_font_bytes(&bytes, index) {
+                tracing::warn!("Font '{}' is not usable ({}); keeping default", name, err);
+                return None;
+            }
             let mut data = egui::FontData::from_owned(bytes);
             data.index = index;
             Some(data)
         }
         FontRef::Custom(path) => match std::fs::read(path) {
-            Ok(bytes) => Some(egui::FontData::from_owned(bytes)),
+            Ok(bytes) => {
+                if let Err(err) = validate_font_bytes(&bytes, 0) {
+                    tracing::warn!("Font file '{}' is not usable ({}); keeping default", path, err);
+                    return None;
+                }
+                Some(egui::FontData::from_owned(bytes))
+            }
             Err(err) => {
                 tracing::warn!("Failed to load font file '{}': {}", path, err);
                 None
             }
         },
     }
+}
+
+/// Reject font data egui cannot render. epaint parses fonts with skrifa and
+/// panics the frame on failure, so anything skrifa refuses here must never
+/// reach `FontDefinitions`. fontdb enumerates with ttf-parser, which accepts
+/// faces skrifa does not — the picker can list fonts that would crash us.
+fn validate_font_bytes(bytes: &[u8], index: u32) -> Result<(), skrifa::raw::ReadError> {
+    skrifa::FontRef::from_index(bytes, index).map(|_| ())
 }
 
 /// Registration key for a font reference inside `FontDefinitions`; None for

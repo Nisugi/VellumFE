@@ -115,6 +115,7 @@ impl Config {
             max_cols: None,
             visible: true,
             content_align: None,
+            tts_speak: false,
         };
         // Prefer user-defined window templates (global store)
         if let Some(custom) = Self::get_custom_window_template(name) {

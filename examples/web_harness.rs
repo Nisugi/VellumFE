@@ -273,7 +273,30 @@ async fn main() {
                     );
                 }
             }
-            RemoteEvent::Command(text) => println!("EVENT cmd: {text:?}"),
+            RemoteEvent::Command(text) => {
+                println!("EVENT cmd: {text:?}");
+                // `echo <text>` / `echot <text>` / `echod <text>` send the
+                // text back as a main/thoughts/death stream line, so
+                // client-side text-flow features (speech, highlights) can
+                // be exercised end-to-end without a game connection.
+                let mut echo = |stream: &str, body: &str| {
+                    sink.push_text(
+                        stream,
+                        std::sync::Arc::new(StyledLine {
+                            segments: vec![TextSegment::plain(body)],
+                            stream: stream.to_string(),
+                            timestamp: None,
+                        }),
+                    );
+                };
+                if let Some(body) = text.strip_prefix("echo ") {
+                    echo("main", body);
+                } else if let Some(body) = text.strip_prefix("echot ") {
+                    echo("thoughts", body);
+                } else if let Some(body) = text.strip_prefix("echod ") {
+                    echo("death", body);
+                }
+            }
             RemoteEvent::Macro { id } => println!("EVENT macro tap: {id:?}"),
             RemoteEvent::MacroSave {
                 group,

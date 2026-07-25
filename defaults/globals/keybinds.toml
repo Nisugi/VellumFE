@@ -122,15 +122,15 @@ f12 = "toggle_performance_stats"
 
 # Text-to-Speech (Accessibility)
 # Ctrl+Alt combinations avoid terminal interception
-# Also set enabled = true in [tts] section of config.toml
+# Enable in Settings > Accessibility (GUI) or with .tts on
 "ctrl+alt+left" = "tts_previous"       # Previous message (sequential, includes read)
 "ctrl+alt+right" = "tts_next"          # Next message (sequential, includes read)
 "ctrl+alt+up" = "tts_next_unread"      # Skip to next unread message
 "ctrl+alt+down" = "tts_stop"           # Stop current speech
-f7 = "tts_increase_volume"             # Increase TTS volume by 0.2
-f8 = "tts_decrease_volume"             # Decrease TTS volume by 0.2
-f9 = "tts_increase_rate"               # Increase TTS speech rate by 0.5
-f10 = "tts_decrease_rate"              # Decrease TTS speech rate by 0.5
+f7 = "tts_increase_volume"             # Increase TTS volume by 0.1
+f8 = "tts_decrease_volume"             # Decrease TTS volume by 0.1
+f9 = "tts_increase_rate"               # Increase TTS speech rate by 0.1
+f10 = "tts_decrease_rate"              # Decrease TTS speech rate by 0.1
 f11 = "tts_mute_toggle"                # Toggle TTS mute (stops speech, prevents new speech)
 
 # Numpad movement macros (inline table syntax required for HashMap deserialization)

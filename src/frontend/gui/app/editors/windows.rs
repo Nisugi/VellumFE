@@ -40,6 +40,9 @@ pub(in super::super) struct WindowEditorState {
     /// Lock flag from the layout definition; None when the window has no
     /// layout def. Locked windows can't be deleted.
     locked: Option<bool>,
+    /// TTS opt-in from the layout def; None when the window has no def or
+    /// doesn't carry text lines.
+    tts_speak: Option<bool>,
     /// Some for tabbed-text windows: the editable tab list.
     tabs: Option<Vec<TabBuffer>>,
     error: Option<String>,
@@ -165,6 +168,7 @@ impl WindowEditorState {
             experience: None,
             encum: None,
             locked: None,
+            tts_speak: None,
             tabs: None,
             error: None,
         }
@@ -222,6 +226,7 @@ impl VellumGuiApp {
         state.experience = None;
         state.encum = None;
         state.locked = None;
+        state.tts_speak = None;
         state.tabs = None;
         // Def-backed options (lock flag, room/targets display settings).
         if let Some(def) = self
@@ -232,6 +237,18 @@ impl VellumGuiApp {
             .find(|w| w.name() == name)
         {
             state.locked = Some(def.base().locked);
+            // Only text-carrying windows receive lines the TTS queue can
+            // speak, so only they get the checkbox.
+            if matches!(
+                def,
+                crate::config::WindowDef::Text { .. }
+                    | crate::config::WindowDef::TabbedText { .. }
+                    | crate::config::WindowDef::Inventory { .. }
+                    | crate::config::WindowDef::Reserve { .. }
+                    | crate::config::WindowDef::Spells { .. }
+            ) {
+                state.tts_speak = Some(def.base().tts_speak);
+            }
             match def {
                 crate::config::WindowDef::Room { data, .. } => {
                     state.room = Some(RoomFields {
@@ -569,6 +586,22 @@ impl VellumGuiApp {
             }
         }
 
+        if let Some(tts_speak) = state.tts_speak {
+            if let Some(def) = self
+                .app_core
+                .layout
+                .windows
+                .iter_mut()
+                .find(|w| w.name() == name)
+            {
+                if def.base().tts_speak != tts_speak {
+                    def.base_mut().tts_speak = tts_speak;
+                    self.app_core.refresh_tts_windows();
+                    self.app_core.layout_modified_since_save = true;
+                }
+            }
+        }
+
         if let Some(locked) = state.locked {
             if let Some(def) = self
                 .app_core
@@ -775,6 +808,15 @@ impl VellumGuiApp {
                                 ui.checkbox(&mut room.show_players, "players");
                                 ui.checkbox(&mut room.show_exits, "exits");
                             });
+                            ui.end_row();
+                        }
+                        if let Some(tts_speak) = state.tts_speak.as_mut() {
+                            ui.label("Speech");
+                            ui.checkbox(tts_speak, "speak new lines (TTS)")
+                                .on_hover_text(
+                                    "Read lines routed to this window aloud. TTS must \
+                                     be enabled in Settings > Accessibility.",
+                                );
                             ui.end_row();
                         }
                         if let Some(experience) = state.experience.as_mut() {

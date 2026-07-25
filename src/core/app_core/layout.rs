@@ -1379,6 +1379,7 @@ mod tests {
             max_cols: None,
             visible: true,
             content_align: None,
+            tts_speak: false,
             title_position: "top-left".to_string(),
         }
     }

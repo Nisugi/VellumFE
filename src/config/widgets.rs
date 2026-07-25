@@ -258,6 +258,11 @@ pub struct WindowBase {
     /// Content alignment within widget area
     #[serde(default)]
     pub content_align: Option<String>,
+    /// Speak new lines routed to this window via TTS (accessibility).
+    /// Off by default; the classic thoughts/speech/main config toggles
+    /// still apply on top for backward compatibility.
+    #[serde(default)]
+    pub tts_speak: bool,
 }
 
 /// Text widget specific data

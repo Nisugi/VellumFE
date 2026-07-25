@@ -43,7 +43,7 @@ pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
 pub use paths::{DialogPosition, SavedDialogPositions};
 pub use settings::{
     ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
-    SoundConfig, StreamsConfig, TargetListConfig, TtsConfig, UiConfig, WebConfig,
+    SoundConfig, StreamsConfig, TargetListConfig, TtsConfig, TtsSubstitution, UiConfig, WebConfig,
 };
 pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore};
 pub use widgets::{
