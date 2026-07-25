@@ -3160,11 +3160,8 @@ impl VellumGuiApp {
     /// `content.lines[start..start + rendered_count]`. Appends measure only
     /// the new lines; width changes or non-monotonic generations rebuild.
     ///
-    /// Returns the pixel strides (height + `spacing_y`) of rows dropped off
-    /// the front of the rendered window and rows appended at the back this
-    /// frame, so the caller can keep an up-scrolled view anchored while the
-    /// ring buffer trims. Rebuilds report (0, 0): the whole layout changed,
-    /// so there is nothing coherent to anchor to.
+    /// The scroll-anchoring pre-pass in `render_text_content` reads the
+    /// heights this update is about to drain, so it must run before this.
     fn update_row_height_cache(
         cache: &mut RowHeightCache,
         ctx: &egui::Context,
@@ -3172,10 +3169,9 @@ impl VellumGuiApp {
         start: usize,
         rendered_count: usize,
         wrap_width: f32,
-        spacing_y: f32,
         visuals: &egui::Visuals,
         font_id: &egui::FontId,
-    ) -> (f32, f32) {
+    ) {
         let timestamps = content.show_timestamps.then_some(content.timestamp_position);
         let width_changed =
             (cache.wrap_width - wrap_width).abs() > 0.5 || cache.font_id != *font_id;
@@ -3185,25 +3181,15 @@ impl VellumGuiApp {
             && delta <= rendered_count
             && cache.heights.len() + delta >= rendered_count;
 
-        let mut dropped_px = 0.0f32;
-        let mut appended_px = 0.0f32;
         if incremental {
             if delta > 0 {
-                let drop_front = (cache.heights.len() + delta)
-                    .saturating_sub(rendered_count)
-                    .min(cache.heights.len());
-                dropped_px = cache
-                    .heights
-                    .drain(..drop_front)
-                    .map(|h| h + spacing_y)
-                    .sum();
+                let drop_front = (cache.heights.len() + delta).saturating_sub(rendered_count);
+                cache.heights.drain(..drop_front.min(cache.heights.len()));
                 let len = content.lines.len();
                 for line in content.lines.iter().skip(len - delta) {
-                    let h = Self::measure_line_height(
+                    cache.heights.push(Self::measure_line_height(
                         ctx, line, visuals, wrap_width, font_id, timestamps,
-                    );
-                    appended_px += h + spacing_y;
-                    cache.heights.push(h);
+                    ));
                 }
             }
         } else {
@@ -3219,7 +3205,6 @@ impl VellumGuiApp {
         cache.font_id = font_id.clone();
         cache.generation = content.generation;
         debug_assert_eq!(cache.heights.len(), rendered_count);
-        (dropped_px, appended_px)
     }
 
     pub(super) fn render_text_content(
@@ -3239,12 +3224,64 @@ impl VellumGuiApp {
         let max_height = ui.available_height().max(1.0);
         let cache_id = egui::Id::new(("text_row_heights", scroll_id));
 
+        // ---- Same-frame scroll anchoring ---------------------------------
+        // Once the ring buffer is full, each appended line drops one off the
+        // front and every remaining row shifts up, while the persisted
+        // scroll offset stays a raw pixel value. Nudge the stored offset by
+        // the outgoing rows' strides (known from LAST frame's height cache)
+        // BEFORE the ScrollArea reads it, so an up-scrolled reader keeps
+        // their exact place with no one-frame flicker. At the bottom this is
+        // a no-op: the area's stuck-to-end flag re-pins the offset to the
+        // end regardless of the stored value. The area id comes from last
+        // frame's ScrollAreaOutput (stashed below) rather than re-deriving
+        // egui's salt hashing.
+        let outer_ctx = ui.ctx().clone();
+        let outer_spacing_y = ui.spacing().item_spacing.y;
+        let area_id_key = egui::Id::new(("text_scroll_area_id", scroll_id));
+        let cache_handle = outer_ctx.data_mut(|data| {
+            data.get_temp_mut_or_insert_with::<std::sync::Arc<
+                std::sync::Mutex<RowHeightCache>,
+            >>(cache_id, Default::default)
+                .clone()
+        });
+        {
+            let cache = cache_handle.lock().expect("row height cache poisoned");
+            let delta = content.generation.wrapping_sub(cache.generation) as usize;
+            // Mirrors update_row_height_cache's incremental test, minus the
+            // wrap-width check (unknown until layout runs); a width change
+            // means a reflow that scrambles positions anyway.
+            let incremental = content.generation >= cache.generation
+                && delta <= rendered_count
+                && cache.heights.len() + delta >= rendered_count;
+            if incremental && delta > 0 {
+                let drop_front = (cache.heights.len() + delta)
+                    .saturating_sub(rendered_count)
+                    .min(cache.heights.len());
+                if drop_front > 0 {
+                    let dropped_px: f32 = cache.heights[..drop_front]
+                        .iter()
+                        .map(|h| h + outer_spacing_y)
+                        .sum();
+                    let area_id =
+                        outer_ctx.data_mut(|data| data.get_temp::<egui::Id>(area_id_key));
+                    if let Some(area_id) = area_id {
+                        if let Some(mut state) =
+                            egui::scroll_area::State::load(&outer_ctx, area_id)
+                        {
+                            state.offset.y = (state.offset.y - dropped_px).max(0.0);
+                            state.store(&outer_ctx, area_id);
+                        }
+                    }
+                }
+            }
+        }
+
         let scroll_area = if wrap {
             egui::ScrollArea::vertical()
         } else {
             egui::ScrollArea::both()
         };
-        scroll_area
+        let output = scroll_area
             .id_salt(format!("text_scroll_{}", scroll_id))
             .stick_to_bottom(true)
             .auto_shrink([false, false])
@@ -3282,44 +3319,22 @@ impl VellumGuiApp {
                 let content_left = ui.max_rect().left();
                 let content_top = ui.cursor().min.y;
 
-                // The cache lives in egui temp data so renderers stay
-                // stateless; the Arc dance keeps ctx.fonts_mut() callable
-                // while the cache is borrowed (calling it inside ctx.data_mut
-                // would deadlock on the context lock).
-                let cache_handle = ctx.data_mut(|data| {
-                    data.get_temp_mut_or_insert_with::<std::sync::Arc<
-                        std::sync::Mutex<RowHeightCache>,
-                    >>(cache_id, Default::default)
-                        .clone()
-                });
+                // The cache lives in egui temp data (fetched before the
+                // scroll area) so renderers stay stateless; the Arc dance
+                // keeps ctx.fonts_mut() callable while the cache is borrowed
+                // (calling it inside ctx.data_mut would deadlock on the
+                // context lock).
                 let mut cache = cache_handle.lock().expect("row height cache poisoned");
-                let (dropped_px, appended_px) = Self::update_row_height_cache(
+                Self::update_row_height_cache(
                     &mut cache,
                     &ctx,
                     content,
                     start,
                     rendered_count,
                     wrap_width,
-                    spacing_y,
                     &visuals,
                     font_id,
                 );
-
-                // The ring buffer trimming rows off the front shifts every
-                // remaining row up by dropped_px, but the scroll offset is a
-                // pixel value that stays put — an up-scrolled reader would
-                // drift one line per incoming line. Cancel the shift unless
-                // the view was at the bottom, where stick_to_bottom follows
-                // the live text.
-                if dropped_px > 0.0 {
-                    let total_px: f32 =
-                        cache.heights.iter().map(|h| h + spacing_y).sum();
-                    let prev_total_px = total_px + dropped_px - appended_px;
-                    let was_at_bottom = viewport.max.y >= prev_total_px - spacing_y - 1.0;
-                    if !was_at_bottom {
-                        ui.scroll_with_delta(Vec2::new(0.0, dropped_px));
-                    }
-                }
 
                 // ---- Buffer-anchored selection: window-level updates ----
                 let clip = ui.clip_rect();
@@ -3674,6 +3689,8 @@ impl VellumGuiApp {
                     ui.allocate_space(Vec2::new(1.0, bottom_space - spacing_y));
                 }
             });
+        // Next frame's anchoring pre-pass targets this area's real id.
+        outer_ctx.data_mut(|data| data.insert_temp(area_id_key, output.id));
         clicked_link
     }
 
