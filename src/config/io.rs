@@ -447,12 +447,12 @@ impl Config {
         is_global: bool,
         character: Option<&str>,
     ) -> Result<()> {
-        // Connection settings are ALWAYS character-specific
-        let actual_is_global = if key.starts_with("connection.") {
-            false
-        } else {
-            is_global
-        };
+        // Character-only settings (connection identity, pinned ports)
+        // never save to global, regardless of the requested scope.
+        let character_only = crate::config::registry::find(key)
+            .map(|def| def.scope == crate::config::registry::SettingScope::CharacterOnly)
+            .unwrap_or_else(|| key.starts_with("connection."));
+        let actual_is_global = if character_only { false } else { is_global };
 
         if actual_is_global {
             self.save_setting_to_global(key)
@@ -493,42 +493,21 @@ impl Config {
         Ok(())
     }
 
-    /// Copy a specific setting from source to destination config
-    fn copy_setting(dest: &mut Config, src: &Config, key: &str) {
-        match key {
-            // Connection settings
-            "connection.host" => dest.connection.host = src.connection.host.clone(),
-            "connection.port" => dest.connection.port = src.connection.port,
-            "connection.character" => dest.connection.character = src.connection.character.clone(),
-            "connection.account" => dest.connection.account = src.connection.account.clone(),
-            "connection.password" => dest.connection.password = src.connection.password.clone(),
-            "connection.game" => dest.connection.game = src.connection.game.clone(),
-
-            // UI settings
-            "ui.buffer_size" => dest.ui.buffer_size = src.ui.buffer_size,
-            "ui.border_style" => dest.ui.border_style = src.ui.border_style.clone(),
-            "ui.countdown_icon" => dest.ui.countdown_icon = src.ui.countdown_icon.clone(),
-            "ui.selection_enabled" => dest.ui.selection_enabled = src.ui.selection_enabled,
-            "ui.selection_respect_window_boundaries" => {
-                dest.ui.selection_respect_window_boundaries = src.ui.selection_respect_window_boundaries
-            }
-            "ui.selection_auto_copy" => dest.ui.selection_auto_copy = src.ui.selection_auto_copy,
-            "ui.drag_modifier_key" => dest.ui.drag_modifier_key = src.ui.drag_modifier_key.clone(),
-            "ui.min_command_length" => dest.ui.min_command_length = src.ui.min_command_length,
-
-            // Sound settings
-            "sound.enabled" => dest.sound.enabled = src.sound.enabled,
-            "sound.volume" => dest.sound.volume = src.sound.volume,
-            "sound.cooldown_ms" => dest.sound.cooldown_ms = src.sound.cooldown_ms,
-
-            // Theme settings
-            "active_theme" => dest.active_theme = src.active_theme.clone(),
-
-            // Skin settings
-            "active_skin" => dest.active_skin = src.active_skin.clone(),
-
-            _ => {
-                tracing::warn!("Unknown setting key for copy: {}", key);
+    /// Copy a specific setting from source to destination config, resolved
+    /// through the settings registry — every registered key works, not a
+    /// hand-picked subset. Returns false (with a warning) for unknown keys
+    /// so callers can surface the miss instead of silently no-op saving.
+    pub(crate) fn copy_setting(dest: &mut Config, src: &Config, key: &str) -> bool {
+        let Some(def) = crate::config::registry::find(key) else {
+            tracing::warn!("Unknown setting key for copy: {}", key);
+            return false;
+        };
+        let value = (def.get)(src);
+        match (def.set)(dest, &value) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!("Failed to copy setting {}: {}", key, err);
+                false
             }
         }
     }

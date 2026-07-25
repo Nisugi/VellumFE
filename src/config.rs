@@ -24,6 +24,7 @@ pub mod profiles;
 pub mod skins;
 mod keybinds;
 mod layout;
+pub mod registry;
 mod settings;
 mod templates;
 mod widgets;
