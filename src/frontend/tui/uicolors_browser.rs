@@ -612,6 +612,16 @@ impl UIColorsBrowser {
         }
     }
 
+    /// Rebuild the entry list from the (just-edited) color config, keeping
+    /// the current selection in place so consecutive edits stay ergonomic.
+    pub fn refresh(&mut self, colors: &ColorConfig) {
+        let selected = self.selected_index;
+        let rebuilt = Self::new(colors);
+        self.entries = rebuilt.entries;
+        self.selected_index = selected.min(self.entries.len().saturating_sub(1));
+        self.adjust_scroll();
+    }
+
     pub fn open_editor(&mut self, textarea_bg: &str) {
         if let Some(entry) = self.entries.get(self.selected_index) {
             self.editor = Some(UIColorEditor::new(entry, textarea_bg));
@@ -937,6 +947,11 @@ impl UIColorsBrowser {
                         .bg(crossterm_bridge::to_ratatui_color(theme.browser_background)),
                 );
             }
+        }
+
+        // Inline editor floats above the list while open.
+        if let Some(ref mut editor) = self.editor {
+            editor.render(area, buf, _config, theme);
         }
     }
 

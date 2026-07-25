@@ -59,6 +59,82 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
 
 // TUI-specific methods (not part of Frontend trait)
 impl TuiFrontend {
+    /// Write the in-memory color config to the profile colors.toml, matching
+    /// the GUI colors editor's persist path. Without this, spell-color and UI
+    /// color edits lived only in memory and vanished on restart or
+    /// `.reload colors`.
+    fn persist_colors(app_core: &mut crate::core::AppCore) {
+        let character = app_core.config.character.clone();
+        if let Err(err) = app_core.config.colors.save(character.as_deref()) {
+            tracing::error!("Failed to save colors: {}", err);
+            app_core.add_system_message(&format!("Failed to save colors: {}", err));
+        }
+    }
+
+    /// Apply an inline `.uicolors` edit back onto the color config. Entries
+    /// are addressed the same way the browser builds them: category "UI"
+    /// (named UiColors fields), "PRESETS" (preset map key), or "PROMPT"
+    /// ("Prompt (c)" per prompt character).
+    fn apply_ui_color_edit(
+        app_core: &mut crate::core::AppCore,
+        category: &str,
+        name: &str,
+        fg: Option<String>,
+        bg: Option<String>,
+    ) {
+        let colors = &mut app_core.config.colors;
+        match category {
+            "UI" => {
+                // UiColors fields are plain strings; "-" is the existing
+                // "unset/transparent" sentinel.
+                let value = fg.unwrap_or_else(|| "-".to_string());
+                match name {
+                    "Background" => colors.ui.background_color = value,
+                    "Border" => colors.ui.border_color = value,
+                    "Command Echo" => colors.ui.command_echo_color = value,
+                    "Focused Border" => colors.ui.focused_border_color = value,
+                    "Text" => colors.ui.text_color = value,
+                    "Text Selection" => colors.ui.selection_bg_color = value,
+                    "Textarea Background" => colors.ui.textarea_background = value,
+                    other => {
+                        tracing::warn!("Unknown UI color entry '{}'", other);
+                        return;
+                    }
+                }
+            }
+            "PRESETS" => {
+                if let Some(preset) = colors.presets.get_mut(name) {
+                    preset.fg = fg;
+                    preset.bg = bg;
+                } else {
+                    tracing::warn!("Unknown color preset '{}'", name);
+                    return;
+                }
+            }
+            "PROMPT" => {
+                let ch = name
+                    .strip_prefix("Prompt (")
+                    .and_then(|rest| rest.strip_suffix(')'))
+                    .unwrap_or(name);
+                if let Some(prompt) = colors
+                    .prompt_colors
+                    .iter_mut()
+                    .find(|p| p.character == ch)
+                {
+                    prompt.color = fg;
+                } else {
+                    tracing::warn!("Unknown prompt color '{}'", name);
+                    return;
+                }
+            }
+            other => {
+                tracing::warn!("Unknown UI color category '{}'", other);
+                return;
+            }
+        }
+        Self::persist_colors(app_core);
+    }
+
     pub(super) fn open_quickbar_switcher(
         &mut self,
         app_core: &mut crate::core::AppCore,
@@ -2514,6 +2590,39 @@ impl TuiFrontend {
             }
             InputMode::UIColorsBrowser => {
                 if let Some(ref mut browser) = self.uicolors_browser {
+                    // The inline editor owns the keyboard while open.
+                    if browser.editor.is_some() {
+                        let ct_event = crossterm::event::KeyEvent::new(
+                            super::crossterm_bridge::to_crossterm_keycode(code),
+                            super::crossterm_bridge::to_crossterm_modifiers(modifiers),
+                        );
+                        let result = browser
+                            .editor
+                            .as_mut()
+                            .and_then(|editor| editor.handle_key(ct_event));
+                        match result {
+                            Some(super::uicolors_browser::UIColorEditorResult::Save {
+                                fg,
+                                bg,
+                            }) => {
+                                // save_editor closes the editor and reports
+                                // which entry was being edited.
+                                if let Some((category, name, _, _)) = browser.save_editor() {
+                                    Self::apply_ui_color_edit(
+                                        app_core, &category, &name, fg, bg,
+                                    );
+                                    browser.refresh(&app_core.config.colors);
+                                }
+                            }
+                            Some(super::uicolors_browser::UIColorEditorResult::Cancel) => {
+                                browser.close_editor();
+                            }
+                            None => {}
+                        }
+                        app_core.needs_render = true;
+                        return Ok(None);
+                    }
+
                     let key_event = crate::data::input::KeyEvent { code, modifiers };
                     let action = input_router::route_input(
                         &key_event,
@@ -2531,6 +2640,12 @@ impl TuiFrontend {
                         }
                         crate::core::menu_actions::MenuAction::PreviousPage => {
                             browser.previous_page()
+                        }
+                        crate::core::menu_actions::MenuAction::Select
+                        | crate::core::menu_actions::MenuAction::Edit => {
+                            let textarea_bg =
+                                app_core.config.colors.ui.textarea_background.clone();
+                            browser.open_editor(&textarea_bg);
                         }
                         crate::core::menu_actions::MenuAction::Cancel => {
                             self.uicolors_browser = None;
@@ -2589,6 +2704,7 @@ impl TuiFrontend {
                             if let Some(index) = browser.get_selected() {
                                 if index < app_core.config.colors.spell_colors.len() {
                                     app_core.config.colors.spell_colors.remove(index);
+                                    Self::persist_colors(app_core);
                                     browser
                                         .update_items(&app_core.config.colors.spell_colors);
                                     tracing::info!("Deleted spell color range at index {}", index);
@@ -3502,6 +3618,7 @@ impl TuiFrontend {
                                         }
 
                                         app_core.config.colors.spell_colors.push(spell_color);
+                                        Self::persist_colors(app_core);
                                         self.spell_color_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
                                         tracing::info!("Saved spell color range");
@@ -3511,6 +3628,7 @@ impl TuiFrontend {
                                     ) => {
                                         if index < app_core.config.colors.spell_colors.len() {
                                             app_core.config.colors.spell_colors.remove(index);
+                                            Self::persist_colors(app_core);
                                             tracing::info!("Deleted spell color range");
                                         }
                                         self.spell_color_form = None;
@@ -3546,6 +3664,7 @@ impl TuiFrontend {
                                         }
 
                                         app_core.config.colors.spell_colors.push(spell_color);
+                                        Self::persist_colors(app_core);
                                         self.spell_color_form = None;
                                         app_core.ui_state.input_mode = InputMode::Normal;
                                         tracing::info!("Saved spell color range");
@@ -3555,6 +3674,7 @@ impl TuiFrontend {
                                     ) => {
                                         if index < app_core.config.colors.spell_colors.len() {
                                             app_core.config.colors.spell_colors.remove(index);
+                                            Self::persist_colors(app_core);
                                             tracing::info!("Deleted spell color range");
                                         }
                                         self.spell_color_form = None;
