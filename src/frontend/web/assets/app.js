@@ -774,6 +774,7 @@ function handleMessage(msg) {
     case "highlights": handleHighlightsReply(msg.d); break;
     case "colors": handleColorsReply(msg.d); break;
     case "settings": handleSettingsReply(msg.d); break;
+    case "streams": handleStreamsReply(msg.d); break;
     case "injuries": setInjuries(msg.d); break;
     case "targets": setTargets(msg.d); break;
     case "charinfo": setCharInfo(msg.d); break;
@@ -1583,6 +1584,7 @@ function openSettingsSheet() {
     );
   }
   sheetButton("Client settings (saved on host)", openClientSettings);
+  sheetButton("Streams (saved on host)", openStreamsPanel);
   sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
   sheetButton("Highlight rules (global)", () => openHighlightList("global"));
   sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
@@ -3699,7 +3701,7 @@ function csRowStatus(el, text, isError) {
   el.classList.toggle("editor-error", !!isError);
 }
 
-function csSendPut(entry, value, scope, statusEl, onSaved) {
+function csSendPut(entry, value, scope, statusEl, onSaved, clear) {
   csRowStatus(statusEl, "Saving…", false);
   const requestId = ++csRequestCounter;
   const pending = { statusEl, onSaved };
@@ -3713,6 +3715,7 @@ function csSendPut(entry, value, scope, statusEl, onSaved) {
     key: entry.key,
     value,
     scope,
+    ...(clear ? { clear: true } : {}),
   });
 }
 
@@ -3817,6 +3820,25 @@ function csRow(entry) {
     scopeSel.value = "character";
   }
 
+  // A redacted secret can't be emptied by editing (the field never held
+  // it), so it gets an explicit Clear that unsets the host-side value.
+  let clearBtn = null;
+  if (entry.sensitive && entry.redacted) {
+    clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "cs-clear";
+    clearBtn.textContent = "Clear";
+    clearBtn.addEventListener("click", () => {
+      if (!confirm(`Clear the saved ${entry.label}?`)) return;
+      csSendPut(entry, "", scopeSel ? scopeSel.value : "character", status, () => {
+        entry.redacted = false;
+        control.value = "";
+        control.placeholder = "";
+        clearBtn.hidden = true;
+      }, true);
+    });
+  }
+
   const save = () => {
     // Sensitive: only send when the user actually typed a replacement.
     if (entry.sensitive && control.value === "") return;
@@ -3824,8 +3846,10 @@ function csRow(entry) {
     if (value === null && entry.kind.type !== "bool") return;
     const onSaved = entry.sensitive
       ? () => {
+          entry.redacted = true;
           control.value = "";
           control.placeholder = "(unchanged)";
+          if (clearBtn) clearBtn.hidden = false;
         }
       : null;
     csSendPut(entry, value, scopeSel ? scopeSel.value : "character", status, onSaved);
@@ -3853,7 +3877,12 @@ function csRow(entry) {
     label.prepend(control);
     controls.append(...(scopeSel ? [scopeSel] : []), status);
   } else {
-    controls.append(control, ...(scopeSel ? [scopeSel] : []), status);
+    controls.append(
+      control,
+      ...(clearBtn ? [clearBtn] : []),
+      ...(scopeSel ? [scopeSel] : []),
+      status,
+    );
   }
 
   row.append(label);
@@ -3890,6 +3919,162 @@ function renderClientSettings() {
     for (const entry of entries) group.appendChild(csRow(entry));
     csList.appendChild(group);
   }
+}
+
+// ---- Streams (routing, saved on the host) ----------------------------------
+// The server ships the streams catalog (streams_get: every known stream,
+// its effective destination, and whether a window subscribes) and this
+// overlay renders it in the Client-settings idiom: one row per stream with
+// per-row save-on-change status. Subscribed rows are read-only (window
+// subscriptions are desktop-edited); orphan rows get a destination select
+// that sends streams_put (Discard / Main / fallback / a window: route).
+
+const stOverlay = document.createElement("div");
+stOverlay.id = "st-overlay";
+stOverlay.hidden = true;
+stOverlay.innerHTML = `
+  <div id="st-card">
+    <div id="st-titlebar">
+      <span id="st-title">Streams</span>
+      <button type="button" id="st-close">Close</button>
+    </div>
+    <p id="st-note">Where each game text stream goes. Rows tagged
+      "window" are claimed by a window subscription — edit those on the
+      desktop. Everything else saves to the host as you change it.</p>
+    <div id="st-list"></div>
+  </div>`;
+document.body.appendChild(stOverlay);
+const stList = stOverlay.querySelector("#st-list");
+
+let stCatalog = null;
+let stRequestCounter = 0;
+let stPendingGet = null;
+const stPendingPuts = new Map(); // request_id -> { statusEl, timeout }
+
+stOverlay.querySelector("#st-close").addEventListener("click", () => {
+  stOverlay.hidden = true;
+  stPendingGet = null;
+});
+
+function openStreamsPanel() {
+  stOverlay.hidden = false;
+  stList.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "hl-empty", textContent: "Loading…",
+  }));
+  stPendingGet = ++stRequestCounter;
+  sendJson("streams_get", { request_id: stPendingGet });
+}
+
+function handleStreamsReply(d) {
+  if (d.request_id === stPendingGet) {
+    stPendingGet = null;
+    if (d.error) {
+      stList.replaceChildren(Object.assign(document.createElement("p"), {
+        className: "hl-empty editor-error", textContent: d.error,
+      }));
+      return;
+    }
+    stCatalog = d;
+    renderStreamsPanel();
+    return;
+  }
+  const pending = stPendingPuts.get(d.request_id);
+  if (!pending) return;
+  stPendingPuts.delete(d.request_id);
+  clearTimeout(pending.timeout);
+  if (d.error) {
+    csRowStatus(pending.statusEl, d.error, true);
+  } else {
+    csRowStatus(pending.statusEl, "Saved", false);
+    setTimeout(() => {
+      if (pending.statusEl.textContent === "Saved") csRowStatus(pending.statusEl, "", false);
+    }, 1500);
+  }
+}
+
+function stSendPut(stream, target, statusEl) {
+  csRowStatus(statusEl, "Saving…", false);
+  const requestId = ++stRequestCounter;
+  const pending = { statusEl };
+  // Never leave a row spinning if the reply is lost (disconnect).
+  pending.timeout = setTimeout(() => {
+    if (stPendingPuts.delete(requestId)) csRowStatus(statusEl, "No reply — retry", true);
+  }, 8000);
+  stPendingPuts.set(requestId, pending);
+  sendJson("streams_put", { request_id: requestId, stream, target });
+}
+
+function stRow(entry, windows, fallback) {
+  const row = document.createElement("div");
+  row.className = "cs-row";
+  const label = document.createElement("div");
+  label.className = "cs-label";
+  label.textContent = entry.id;
+  const status = document.createElement("span");
+  status.className = "cs-status";
+  const controls = document.createElement("div");
+  controls.className = "cs-control-row";
+
+  if (entry.subscribed) {
+    // A window subscription claims this stream; a route would only apply
+    // if that window went away. Read-only from the phone.
+    const tag = document.createElement("span");
+    tag.className = "cs-tag";
+    tag.textContent = "window";
+    label.appendChild(tag);
+    const dest = document.createElement("span");
+    dest.className = "st-dest";
+    dest.textContent = entry.destination;
+    controls.append(dest, status);
+  } else {
+    const select = document.createElement("select");
+    select.appendChild(new Option("Discard", "discard"));
+    select.appendChild(new Option("Main", "main"));
+    select.appendChild(new Option(`fallback (${fallback})`, "clear"));
+    for (const name of windows) {
+      select.appendChild(new Option(`window: ${name}`, `window:${name}`));
+    }
+    const current = entry.route || "clear";
+    if (![...select.options].some((o) => o.value === current)) {
+      // A window: route aimed at a window missing from the list still
+      // shows (delivery falls back gracefully server-side).
+      select.appendChild(new Option(current, current));
+    }
+    select.value = current;
+    select.addEventListener("change", () => {
+      stSendPut(entry.id, select.value, status);
+    });
+    controls.append(select, status);
+  }
+
+  row.append(label);
+  if (entry.label) {
+    // Friendly stream name from the Lich seen-streams registry.
+    const desc = document.createElement("div");
+    desc.className = "cs-desc";
+    desc.textContent = entry.label;
+    row.appendChild(desc);
+  }
+  row.appendChild(controls);
+  return row;
+}
+
+function renderStreamsPanel() {
+  stList.replaceChildren();
+  const rows = (stCatalog && stCatalog.streams) || [];
+  if (!rows.length) {
+    stList.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty",
+      textContent: "No streams known yet — they appear as the game sends them.",
+    }));
+    return;
+  }
+  const group = document.createElement("div");
+  group.className = "cs-group st-group";
+  for (const entry of rows) {
+    group.appendChild(stRow(entry, stCatalog.windows || [], stCatalog.fallback || "main"));
+  }
+  stList.appendChild(group);
 }
 
 // ---- Roaming phone prefs (per-character, server-side) ----------------------

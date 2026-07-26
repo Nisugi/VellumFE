@@ -2156,4 +2156,75 @@ body.hide-compass #compass { display: none !important; }
 }
 
 .cs-status.editor-error { color: var(--hp); }
+
+/* Clear button beside a redacted sensitive field. */
+.cs-clear {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* Streams overlay: same shell as the Client settings sheet (its rows
+   reuse the cs-* row classes). */
+#st-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  background: var(--bg);
+  display: flex;
+  padding: 12px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+#st-overlay[hidden] { display: none; }
+
+#st-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+#st-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#st-close {
+  padding: 4px 12px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+}
+
+#st-note { color: var(--fg-dim); font-size: 12px; margin: 0; }
+
+#st-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The streams table is one flat group (no summary row above it). */
+.st-group > .cs-row:first-child { border-top: none; }
+
+.st-dest { color: var(--fg-dim); font-size: 13px; }
+
 #colors-status[hidden] { display: none; }

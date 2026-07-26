@@ -1946,9 +1946,27 @@ impl VellumGuiApp {
                     key,
                     value,
                     scope,
+                    clear,
+                } => {
+                    self.app_core.handle_remote_settings_put(
+                        client_id, request_id, key, value, scope, clear,
+                    );
+                }
+                crate::core::remote::RemoteEvent::StreamsGet {
+                    client_id,
+                    request_id,
                 } => {
                     self.app_core
-                        .handle_remote_settings_put(client_id, request_id, key, value, scope);
+                        .handle_remote_streams_get(client_id, request_id);
+                }
+                crate::core::remote::RemoteEvent::StreamsPut {
+                    client_id,
+                    request_id,
+                    stream,
+                    target,
+                } => {
+                    self.app_core
+                        .handle_remote_streams_put(client_id, request_id, stream, target);
                 }
                 crate::core::remote::RemoteEvent::ColorsGet {
                     client_id,

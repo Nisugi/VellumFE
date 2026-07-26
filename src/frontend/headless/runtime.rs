@@ -948,8 +948,25 @@ fn handle_remote_event(
             key,
             value,
             scope,
+            clear,
         } => {
-            app_core.handle_remote_settings_put(client_id, request_id, key, value, scope);
+            app_core.handle_remote_settings_put(client_id, request_id, key, value, scope, clear);
+            true
+        }
+        RemoteEvent::StreamsGet {
+            client_id,
+            request_id,
+        } => {
+            app_core.handle_remote_streams_get(client_id, request_id);
+            true
+        }
+        RemoteEvent::StreamsPut {
+            client_id,
+            request_id,
+            stream,
+            target,
+        } => {
+            app_core.handle_remote_streams_put(client_id, request_id, stream, target);
             true
         }
         RemoteEvent::ColorsGet {

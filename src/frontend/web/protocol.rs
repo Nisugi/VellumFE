@@ -339,6 +339,26 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "saved": saved,
             }),
         ),
+        // The catalog object's fields (streams/windows/fallback) ride at
+        // the payload top level, per-request fields alongside them.
+        RemoteDelta::Streams {
+            request_id,
+            data,
+            stream,
+            error,
+            saved,
+            ..
+        } => {
+            let mut payload = match data {
+                serde_json::Value::Object(map) => map.clone(),
+                _ => serde_json::Map::new(),
+            };
+            payload.insert("request_id".to_string(), serde_json::json!(request_id));
+            payload.insert("stream".to_string(), serde_json::json!(stream));
+            payload.insert("error".to_string(), serde_json::json!(error));
+            payload.insert("saved".to_string(), serde_json::json!(saved));
+            encode("streams", last_seq, serde_json::Value::Object(payload))
+        }
         // client_id stays server-side: the ws task already filtered on it.
         RemoteDelta::ConfigFile {
             request_id,
@@ -492,12 +512,25 @@ pub enum ClientMessage {
     /// The full settings catalog (registry dump + live values).
     SettingsGet { request_id: u64 },
     /// Set one registered setting: JSON value typed by the setting's kind,
-    /// scope "character" or "global".
+    /// scope "character" or "global". `clear` resets a sensitive
+    /// optional-text setting to None (its redacted value never crossed the
+    /// wire, so the client can't send it back emptied).
     SettingsPut {
         request_id: u64,
         key: String,
         value: serde_json::Value,
         scope: String,
+        clear: bool,
+    },
+    /// The streams catalog (every known stream + where it goes).
+    StreamsGet { request_id: u64 },
+    /// Set one stream's orphan route: target "discard" | "main" |
+    /// "window:<name>" | "clear" (reset to fallback). Route editing only —
+    /// window subscriptions are read-only from the phone.
+    StreamsPut {
+        request_id: u64,
+        stream: String,
+        target: String,
     },
     /// Structured color config for the editor UI.
     ColorsGet { request_id: u64, scope: String },
@@ -748,6 +781,21 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 key,
                 value,
                 scope,
+                clear: msg.d.get("clear").and_then(|v| v.as_bool()).unwrap_or(false),
+            })
+        }
+        "streams_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            Some(ClientMessage::StreamsGet { request_id })
+        }
+        "streams_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let stream = msg.d.get("stream")?.as_str()?.to_string();
+            let target = msg.d.get("target")?.as_str()?.to_string();
+            Some(ClientMessage::StreamsPut {
+                request_id,
+                stream,
+                target,
             })
         }
         "colors_get" => {
@@ -979,6 +1027,20 @@ mod tests {
                 key: "ui.buffer_size".to_string(),
                 value: serde_json::json!(5000),
                 scope: "character".to_string(),
+                clear: false,
+            })
+        );
+        // Optional clear flag (sensitive optional-text reset).
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"settings_put","d":{"request_id":14,"key":"connection.password","value":"","scope":"character","clear":true}}"#
+            ),
+            Some(ClientMessage::SettingsPut {
+                request_id: 14,
+                key: "connection.password".to_string(),
+                value: serde_json::json!(""),
+                scope: "character".to_string(),
+                clear: true,
             })
         );
         // Non-scalar values (lists) pass through as JSON for the handler.
@@ -999,6 +1061,68 @@ mod tests {
             parse_client_message(r#"{"t":"settings_put","d":{"request_id":12,"key":"k"}}"#),
             None
         );
+    }
+
+    #[test]
+    fn parse_streams_messages() {
+        assert_eq!(
+            parse_client_message(r#"{"t":"streams_get","d":{"request_id":31}}"#),
+            Some(ClientMessage::StreamsGet { request_id: 31 })
+        );
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"streams_put","d":{"request_id":32,"stream":"bounty","target":"window:bounty_win"}}"#
+            ),
+            Some(ClientMessage::StreamsPut {
+                request_id: 32,
+                stream: "bounty".to_string(),
+                target: "window:bounty_win".to_string(),
+            })
+        );
+        // Missing target → rejected.
+        assert_eq!(
+            parse_client_message(r#"{"t":"streams_put","d":{"request_id":32,"stream":"bounty"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn streams_delta_shapes() {
+        // Get reply: catalog fields ride at the payload top level.
+        let d = RemoteDelta::Streams {
+            client_id: 4,
+            request_id: 33,
+            data: serde_json::json!({
+                "streams": [{ "id": "bounty", "destination": "Main" }],
+                "windows": ["main", "thoughts"],
+                "fallback": "main",
+            }),
+            stream: None,
+            error: None,
+            saved: false,
+        };
+        let json: serde_json::Value = serde_json::from_str(&delta(&d, 2)).unwrap();
+        assert_eq!(json["t"], "streams");
+        assert_eq!(json["d"]["request_id"], 33);
+        assert_eq!(json["d"]["streams"][0]["id"], "bounty");
+        assert_eq!(json["d"]["windows"][1], "thoughts");
+        assert_eq!(json["d"]["fallback"], "main");
+        assert!(json["d"].get("client_id").is_none(), "client_id stays server-side");
+
+        // Put reply: no catalog, echoes the stream, carries saved/error.
+        let d = RemoteDelta::Streams {
+            client_id: 4,
+            request_id: 34,
+            data: serde_json::Value::Null,
+            stream: Some("bounty".to_string()),
+            error: None,
+            saved: true,
+        };
+        let json: serde_json::Value = serde_json::from_str(&delta(&d, 2)).unwrap();
+        assert_eq!(json["d"]["request_id"], 34);
+        assert_eq!(json["d"]["stream"], "bounty");
+        assert_eq!(json["d"]["saved"], true);
+        assert!(json["d"].get("streams").is_none());
     }
 
     #[test]

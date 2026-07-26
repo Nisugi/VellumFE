@@ -834,6 +834,7 @@ async fn handle_client_message(
             key,
             value,
             scope,
+            clear,
         } => state
             .handles
             .event_tx
@@ -843,6 +844,29 @@ async fn handle_client_message(
                 key,
                 value,
                 scope,
+                clear,
+            })
+            .is_ok(),
+        ClientMessage::StreamsGet { request_id } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::StreamsGet {
+                client_id,
+                request_id,
+            })
+            .is_ok(),
+        ClientMessage::StreamsPut {
+            request_id,
+            stream,
+            target,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::StreamsPut {
+                client_id,
+                request_id,
+                stream,
+                target,
             })
             .is_ok(),
         ClientMessage::ColorsGet { request_id, scope } => state
@@ -1052,6 +1076,7 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     | RemoteDelta::Highlights { client_id: target, .. }
                     | RemoteDelta::Colors { client_id: target, .. }
                     | RemoteDelta::Settings { client_id: target, .. }
+                    | RemoteDelta::Streams { client_id: target, .. }
                     | RemoteDelta::MapLocations { client_id: target, .. }
                     | RemoteDelta::MapBrowse { client_id: target, .. } = &d
                     {

@@ -309,6 +309,31 @@ async fn main() {
         }
     ]);
 
+    // Scripted streams catalog for the phone Streams panel: a subscribed
+    // row (read-only on the phone), routed rows of each kind, and orphan
+    // rows (one with a Lich friendly label), same wire shape as
+    // streams_catalog_json. Puts update route + destination so a re-open
+    // shows the edit; subscribed rows keep their destination (subscription
+    // wins — the route is only the orphan policy).
+    let mut streams_catalog = serde_json::json!({
+        "streams": [
+            { "id": "atmospherics", "label": "Ambient scenery", "destination": "fallback (main)",
+              "subscribed": false, "route": null },
+            { "id": "bounty", "label": null, "destination": "bounty_win",
+              "subscribed": false, "route": "window:bounty_win" },
+            { "id": "logons", "label": "Friends list", "destination": "thoughts +1",
+              "subscribed": true, "route": "main" },
+            { "id": "ooc", "label": null, "destination": "Main",
+              "subscribed": false, "route": "main" },
+            { "id": "speech", "label": null, "destination": "Discard",
+              "subscribed": false, "route": "discard" },
+            { "id": "thoughts", "label": null, "destination": "thoughts",
+              "subscribed": true, "route": null },
+        ],
+        "windows": ["bounty_win", "main", "thoughts"],
+        "fallback": "main",
+    });
+
     while let Some(event) = event_rx.recv().await {
         match event {
             RemoteEvent::Command(text) if login_mode && text == "drop" => {
@@ -417,15 +442,54 @@ async fn main() {
                 key,
                 value,
                 scope,
+                clear,
             } => {
-                println!("EVENT settings_put: key={key:?} value={value} scope={scope:?}");
-                let error = apply_scripted_setting(&mut settings_catalog, &key, &value);
+                println!(
+                    "EVENT settings_put: key={key:?} value={value} scope={scope:?} clear={clear}"
+                );
+                let error = if clear {
+                    clear_scripted_setting(&mut settings_catalog, &key)
+                } else {
+                    apply_scripted_setting(&mut settings_catalog, &key, &value)
+                };
                 let saved = error.is_none();
                 sink.push_settings(
                     client_id,
                     request_id,
                     serde_json::Value::Null,
                     Some(key),
+                    error,
+                    saved,
+                );
+            }
+            RemoteEvent::StreamsGet {
+                client_id,
+                request_id,
+            } => {
+                println!("EVENT streams_get");
+                sink.push_streams(
+                    client_id,
+                    request_id,
+                    streams_catalog.clone(),
+                    None,
+                    None,
+                    false,
+                );
+            }
+            RemoteEvent::StreamsPut {
+                client_id,
+                request_id,
+                stream,
+                target,
+            } => {
+                println!("EVENT streams_put: stream={stream:?} target={target:?}");
+                let error = apply_scripted_route(&mut streams_catalog, &stream, &target);
+                let saved = error.is_none();
+                sink.push_streams(
+                    client_id,
+                    request_id,
+                    serde_json::Value::Null,
+                    Some(stream),
                     error,
                     saved,
                 );
@@ -525,6 +589,65 @@ async fn main() {
             other => println!("EVENT other: {other:?}"),
         }
     }
+}
+
+/// Clear one sensitive setting the way the real server does: only
+/// sensitive rows may be cleared; the stored value resets to unset
+/// (value "" stays, the redacted flag drops).
+fn clear_scripted_setting(catalog: &mut serde_json::Value, key: &str) -> Option<String> {
+    let Some(entry) = catalog
+        .as_array_mut()
+        .and_then(|a| a.iter_mut().find(|e| e["key"] == key))
+    else {
+        return Some(format!("Unknown setting '{key}'"));
+    };
+    if entry["sensitive"] != true {
+        return Some(format!("Setting '{key}' cannot be cleared"));
+    }
+    entry["value"] = serde_json::json!("");
+    if let Some(obj) = entry.as_object_mut() {
+        obj.remove("redacted");
+    }
+    None
+}
+
+/// Apply one streams_put to the scripted streams catalog the way the real
+/// handler does: validate the target, store it as the row's route, and
+/// recompute the display destination (subscribed rows keep theirs — the
+/// route is only the orphan policy). Unknown streams get a fresh orphan
+/// row, like routing a stream the layout has never seen.
+fn apply_scripted_route(
+    catalog: &mut serde_json::Value,
+    stream: &str,
+    target: &str,
+) -> Option<String> {
+    let (route, orphan_destination): (serde_json::Value, String) = match target {
+        "discard" => ("discard".into(), "Discard".to_string()),
+        "main" => ("main".into(), "Main".to_string()),
+        "clear" => (serde_json::Value::Null, "fallback (main)".to_string()),
+        other => match other.strip_prefix("window:") {
+            Some("") | None => {
+                return Some(format!("invalid stream route {target:?}"));
+            }
+            Some(name) => (other.into(), name.to_string()),
+        },
+    };
+    let rows = catalog["streams"].as_array_mut().expect("streams array");
+    let row = match rows.iter_mut().find(|r| r["id"] == stream) {
+        Some(row) => row,
+        None => {
+            rows.push(serde_json::json!({
+                "id": stream, "label": null, "destination": "",
+                "subscribed": false, "route": null,
+            }));
+            rows.last_mut().expect("just pushed")
+        }
+    };
+    row["route"] = route;
+    if row["subscribed"] != true {
+        row["destination"] = serde_json::json!(orphan_destination);
+    }
+    None
 }
 
 /// Validate one settings_put against the scripted catalog the way the

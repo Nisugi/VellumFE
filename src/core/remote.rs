@@ -315,6 +315,17 @@ pub enum RemoteDelta {
         error: Option<String>,
         saved: bool,
     },
+    /// Reply to one client's streams get/put (addressed). `data` is the
+    /// catalog object (`{streams, windows, fallback}`) for gets, Null on
+    /// put replies; `stream` echoes the stream a put touched.
+    Streams {
+        client_id: u64,
+        request_id: u64,
+        data: serde_json::Value,
+        stream: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -436,13 +447,28 @@ pub enum RemoteEvent {
     /// Set one registered setting by dotted key. `value` is JSON typed by
     /// the setting's kind; `scope` is "character" or "global". Applied to
     /// the live config, persisted sparsely, then hot-refreshed where the
-    /// server can.
+    /// server can. `clear` (sensitive optional-text keys only) resets the
+    /// value to None — the only way a phone can unset a redacted secret,
+    /// since redacted values never round-trip.
     SettingsPut {
         client_id: u64,
         request_id: u64,
         key: String,
         value: serde_json::Value,
         scope: String,
+        clear: bool,
+    },
+    /// The streams catalog (every known stream + where it goes) for the
+    /// phone Streams panel. Reply: `RemoteDelta::Streams` with `data`.
+    StreamsGet { client_id: u64, request_id: u64 },
+    /// Set one stream's orphan route. `target` is "discard", "main",
+    /// "window:<name>", or "clear" (drop the route; fallback applies).
+    /// Route editing only — window subscriptions stay desktop-edited.
+    StreamsPut {
+        client_id: u64,
+        request_id: u64,
+        stream: String,
+        target: String,
     },
     /// Structured color config for the phone editor ("profile"/"global").
     ColorsGet {
@@ -999,6 +1025,27 @@ impl RemoteSink {
             request_id,
             catalog,
             key,
+            error,
+            saved,
+        });
+    }
+
+    /// Route a streams catalog / put reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_streams(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        data: serde_json::Value,
+        stream: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::Streams {
+            client_id,
+            request_id,
+            data,
+            stream,
             error,
             saved,
         });
