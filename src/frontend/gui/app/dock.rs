@@ -28,6 +28,11 @@ pub(super) struct MainWindowRectSnapshot {
     pub(super) key: TabKey,
     /// [x, y, width, height] in points
     pub(super) rect: [f32; 4],
+    /// Sidebar stacks only: desired empty space above this window, in
+    /// points (free vertical placement). Defaults to 0 so layouts saved
+    /// before the field existed load unchanged.
+    #[serde(default)]
+    pub(super) gap_above: f32,
 }
 
 /// Everything a persisted layout file restores, reconciled against the tabs
@@ -37,6 +42,7 @@ pub(super) struct MainWindowRectSnapshot {
 pub(super) struct RestoredLayoutState {
     pub(super) hidden_tabs: HashSet<TabKey>,
     pub(super) main_window_rects: HashMap<TabKey, [f32; 4]>,
+    pub(super) sidebar_gap_above: HashMap<TabKey, f32>,
     pub(super) tab_zones: HashMap<TabKey, GuiShellZone>,
     pub(super) no_title_tabs: HashSet<TabKey>,
     pub(super) shell_layout: ShellLayoutSnapshot,
@@ -87,6 +93,18 @@ impl VellumGuiApp {
             })
             .unwrap_or_default();
         main_window_rects.retain(|key, _| available_tabs.contains_key(key));
+        let sidebar_gap_above: HashMap<TabKey, f32> = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .main_window_rects
+                    .iter()
+                    .filter(|entry| available_tabs.contains_key(&entry.key))
+                    .filter(|entry| entry.gap_above.is_finite() && entry.gap_above > 0.0)
+                    .map(|entry| (entry.key.clone(), entry.gap_above))
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut tab_zones = snapshot
             .as_ref()
             .map(|snapshot| {
@@ -147,6 +165,7 @@ impl VellumGuiApp {
         RestoredLayoutState {
             hidden_tabs,
             main_window_rects,
+            sidebar_gap_above,
             tab_zones,
             no_title_tabs,
             shell_layout,

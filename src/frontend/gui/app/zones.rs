@@ -54,6 +54,56 @@ pub(super) struct TabZoneSnapshot {
     pub(super) zone: GuiShellZone,
 }
 
+/// Effective per-tab gaps for a sidebar stack. Each tab's desired
+/// `gap_above` is granted top-down out of whatever height the windows
+/// leave free in the zone, so a shrinking zone collapses gaps
+/// (bottom-most tabs starve first) before any window height is
+/// compromised, and windows can never overlap or spill past the zone.
+/// `items` are ordered `(desired_gap_above, occupied_height)` pairs.
+pub(super) fn effective_sidebar_gaps(zone_height: f32, items: &[(f32, f32)]) -> Vec<f32> {
+    let occupied: f32 = items.iter().map(|(_, height)| height.max(0.0)).sum();
+    let mut free = (zone_height - occupied).max(0.0);
+    items
+        .iter()
+        .map(|(gap, _)| {
+            let granted = if gap.is_finite() {
+                gap.clamp(0.0, free)
+            } else {
+                0.0
+            };
+            free -= granted;
+            granted
+        })
+        .collect()
+}
+
+/// Apply a vertical drag of `delta` points on tab `index`'s top edge to a
+/// sidebar stack. Dragging down grows that tab's gap by at most the free
+/// space left in the zone (pushing later windows down within the clamp);
+/// dragging up shrinks it to no less than zero and never steals from
+/// earlier tabs' gaps. Returns the full clamped gap list; only `index`
+/// differs from [`effective_sidebar_gaps`].
+pub(super) fn sidebar_gaps_after_drag(
+    zone_height: f32,
+    items: &[(f32, f32)],
+    index: usize,
+    delta: f32,
+) -> Vec<f32> {
+    let mut gaps = effective_sidebar_gaps(zone_height, items);
+    if index >= gaps.len() || !delta.is_finite() {
+        return gaps;
+    }
+    if delta <= 0.0 {
+        gaps[index] = (gaps[index] + delta).max(0.0);
+    } else {
+        let occupied: f32 = items.iter().map(|(_, height)| height.max(0.0)).sum();
+        let used: f32 = gaps.iter().sum();
+        let free = (zone_height - occupied - used).max(0.0);
+        gaps[index] += delta.min(free);
+    }
+    gaps
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct ShellLayoutSnapshot {
@@ -803,8 +853,36 @@ impl VellumGuiApp {
                 .map(|(_, min_height, _)| min_height + gap)
                 .sum();
 
-            for (tab, min_slot_height, desired_height) in tab_metrics {
+            // Free vertical placement: each tab can carry a persisted gap
+            // above it. Gaps are granted out of the space the windows'
+            // desired heights leave free, so they collapse before heights
+            // do when the zone shrinks, and the stack still cannot overlap.
+            let zone_inner_height = (root_rect.height() - margin * 2.0).max(0.0);
+            let stack_items: Vec<(f32, f32)> = tab_metrics
+                .iter()
+                .map(|(tab, min_height, desired_height)| {
+                    let desired_gap = self
+                        .sidebar_gap_above
+                        .get(&tab.id.key)
+                        .copied()
+                        .filter(|value| value.is_finite())
+                        .unwrap_or(0.0)
+                        .max(0.0);
+                    (desired_gap, desired_height.max(*min_height) + gap)
+                })
+                .collect();
+            let stack_keys: Vec<TabKey> = tab_metrics
+                .iter()
+                .map(|(tab, _, _)| tab.id.key.clone())
+                .collect();
+            let effective_gaps = effective_sidebar_gaps(zone_inner_height, &stack_items);
+            let mut gap_drag: Option<(usize, f32)> = None;
+
+            for (stack_index, (tab, min_slot_height, desired_height)) in
+                tab_metrics.into_iter().enumerate()
+            {
                 remaining_min -= min_slot_height + gap;
+                y += effective_gaps.get(stack_index).copied().unwrap_or(0.0);
                 if y >= root_rect.max.y - margin {
                     break;
                 }
@@ -823,6 +901,7 @@ impl VellumGuiApp {
 
                 let mut clicked_link = None;
                 let mut resize_delta_y = 0.0f32;
+                let mut gap_drag_delta = 0.0f32;
                 let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
                 let window_id =
                     egui::Id::new(("gui_zone_window", zone.id_fragment(), &tab.id.key));
@@ -900,6 +979,49 @@ impl VellumGuiApp {
                             if handle_response.dragged() {
                                 resize_delta_y += ui.ctx().input(|i| i.pointer.delta().y);
                             }
+                            // Top-edge band: dragging moves the window
+                            // vertically by adjusting the gap persisted above
+                            // it. With a title bar it covers only the
+                            // outermost few px so title clicks/drags keep
+                            // working; without one it mirrors the bottom
+                            // band's height over the content edge.
+                            let move_band_height =
+                                if title_bar_hidden { resize_handle_height } else { 4.0 };
+                            let move_band_rect = Rect::from_min_max(
+                                Pos2::new(frame_rect.min.x, slot_rect.min.y),
+                                Pos2::new(
+                                    frame_rect.max.x,
+                                    slot_rect.min.y + move_band_height,
+                                ),
+                            );
+                            let move_response = ui.interact(
+                                move_band_rect,
+                                ui.id().with("sidebar_move_handle"),
+                                egui::Sense::click_and_drag(),
+                            );
+                            let move_active =
+                                move_response.hovered() || move_response.dragged();
+                            if move_active {
+                                let stroke_color =
+                                    ui.visuals().widgets.hovered.fg_stroke.color;
+                                let band_center = move_band_rect.center();
+                                // The band can sit over the title bar, outside
+                                // this ui's clip rect; paint on the window's
+                                // layer directly so the grab line shows there.
+                                ui.ctx().layer_painter(ui.layer_id()).hline(
+                                    (band_center.x - 16.0)..=(band_center.x + 16.0),
+                                    band_center.y,
+                                    egui::Stroke::new(2.0, stroke_color),
+                                );
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                            }
+                            // Alt+drag is the zone-reorder gesture; leave it
+                            // to that path instead of also moving the gap.
+                            if move_response.dragged()
+                                && !ui.ctx().input(|i| i.modifiers.alt)
+                            {
+                                gap_drag_delta += ui.ctx().input(|i| i.pointer.delta().y);
+                            }
                             clicked
                         })
                         .inner
@@ -956,6 +1078,29 @@ impl VellumGuiApp {
                         .or_insert([slot_rect.min.x, slot_rect.min.y, slot_rect.width(), resized_height]);
                     entry[3] = resized_height;
                     self.layout_dirty = true;
+                }
+                if gap_drag_delta.abs() > 0.0 {
+                    gap_drag = Some((stack_index, gap_drag_delta));
+                    // The gap persists alongside this tab's rect entry;
+                    // make sure one exists even if the window was never
+                    // resized (mirrors the resize handler above).
+                    self.main_window_rects.entry(tab.id.key.clone()).or_insert([
+                        slot_rect.min.x,
+                        slot_rect.min.y,
+                        slot_rect.width(),
+                        slot_rect.height(),
+                    ]);
+                }
+            }
+
+            if let Some((index, delta)) = gap_drag {
+                let new_gaps = sidebar_gaps_after_drag(zone_inner_height, &stack_items, index, delta);
+                if let (Some(key), Some(new_gap)) = (stack_keys.get(index), new_gaps.get(index)) {
+                    let stored = self.sidebar_gap_above.get(key).copied().unwrap_or(0.0);
+                    if (stored - *new_gap).abs() > 0.01 {
+                        self.sidebar_gap_above.insert(key.clone(), *new_gap);
+                        self.layout_dirty = true;
+                    }
                 }
             }
 
@@ -1354,5 +1499,80 @@ mod tests {
             &TabKey::Room,
         );
         assert_eq!(before, None);
+    }
+
+    #[test]
+    fn test_effective_sidebar_gaps_granted_when_space_is_free() {
+        // 1000 tall zone, two 200-tall windows: 600 free, both gaps fit.
+        let gaps = super::effective_sidebar_gaps(1000.0, &[(100.0, 200.0), (150.0, 200.0)]);
+        assert_eq!(gaps, vec![100.0, 150.0]);
+    }
+
+    #[test]
+    fn test_effective_sidebar_gaps_shrink_bottom_up_before_heights() {
+        // Only 120 free: the top gap is granted in full, the lower one gets
+        // the remainder; heights are never asked to give anything up.
+        let gaps = super::effective_sidebar_gaps(520.0, &[(100.0, 200.0), (150.0, 200.0)]);
+        assert_eq!(gaps, vec![100.0, 20.0]);
+
+        // No free space at all: every gap collapses to zero.
+        let gaps = super::effective_sidebar_gaps(400.0, &[(100.0, 200.0), (150.0, 200.0)]);
+        assert_eq!(gaps, vec![0.0, 0.0]);
+
+        // Heights already overflow the zone: still just zeros, never negative.
+        let gaps = super::effective_sidebar_gaps(300.0, &[(100.0, 200.0), (150.0, 200.0)]);
+        assert_eq!(gaps, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_effective_sidebar_gaps_ignore_non_finite_and_negative() {
+        let gaps = super::effective_sidebar_gaps(
+            1000.0,
+            &[(f32::NAN, 200.0), (-50.0, 200.0), (f32::INFINITY, 200.0)],
+        );
+        assert_eq!(gaps, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_sidebar_gap_drag_down_consumes_only_free_space() {
+        let items = [(0.0, 200.0), (0.0, 200.0)];
+        // 100 free in the zone; a 60-point drag down is granted in full.
+        let gaps = super::sidebar_gaps_after_drag(500.0, &items, 0, 60.0);
+        assert_eq!(gaps, vec![60.0, 0.0]);
+
+        // A 300-point drag clamps to the 100 points actually free.
+        let gaps = super::sidebar_gaps_after_drag(500.0, &items, 0, 300.0);
+        assert_eq!(gaps, vec![100.0, 0.0]);
+
+        // Free space already spoken for by an earlier gap: nothing to grant.
+        let items = [(100.0, 200.0), (0.0, 200.0)];
+        let gaps = super::sidebar_gaps_after_drag(500.0, &items, 1, 50.0);
+        assert_eq!(gaps, vec![100.0, 0.0]);
+    }
+
+    #[test]
+    fn test_sidebar_gap_drag_up_floors_at_zero_and_never_steals() {
+        // Dragging up shrinks this tab's gap only; the earlier tab's gap
+        // is untouched even once this one bottoms out at zero.
+        let items = [(80.0, 200.0), (50.0, 200.0)];
+        let gaps = super::sidebar_gaps_after_drag(1000.0, &items, 1, -30.0);
+        assert_eq!(gaps, vec![80.0, 20.0]);
+
+        let gaps = super::sidebar_gaps_after_drag(1000.0, &items, 1, -300.0);
+        assert_eq!(gaps, vec![80.0, 0.0]);
+    }
+
+    #[test]
+    fn test_sidebar_gap_drag_out_of_range_or_non_finite_is_noop() {
+        let items = [(10.0, 200.0), (20.0, 200.0)];
+        let baseline = super::effective_sidebar_gaps(1000.0, &items);
+        assert_eq!(
+            super::sidebar_gaps_after_drag(1000.0, &items, 5, 40.0),
+            baseline
+        );
+        assert_eq!(
+            super::sidebar_gaps_after_drag(1000.0, &items, 0, f32::NAN),
+            baseline
+        );
     }
 }

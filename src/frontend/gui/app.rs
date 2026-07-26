@@ -176,6 +176,9 @@ pub struct VellumGuiApp {
     available_tabs: HashMap<TabKey, GuiTab>,
     hidden_tabs: HashSet<TabKey>,
     main_window_rects: HashMap<TabKey, [f32; 4]>,
+    /// Sidebar stacks: desired empty space above each docked window, in
+    /// points (free vertical placement; 0 / absent = stacked flush).
+    sidebar_gap_above: HashMap<TabKey, f32>,
     last_center_window_rects: HashMap<TabKey, [f32; 4]>,
     tab_zones: HashMap<TabKey, GuiShellZone>,
     no_title_tabs: HashSet<TabKey>,
@@ -420,6 +423,7 @@ impl VellumGuiApp {
         let dock::RestoredLayoutState {
             hidden_tabs,
             main_window_rects,
+            sidebar_gap_above,
             tab_zones,
             no_title_tabs,
             shell_layout,
@@ -476,6 +480,7 @@ impl VellumGuiApp {
             available_tabs,
             hidden_tabs,
             main_window_rects,
+            sidebar_gap_above,
             last_center_window_rects: HashMap::new(),
             tab_zones,
             no_title_tabs,
@@ -1582,6 +1587,12 @@ impl VellumGuiApp {
                     .map(|(key, rect)| MainWindowRectSnapshot {
                         key: key.clone(),
                         rect: *rect,
+                        gap_above: self
+                            .sidebar_gap_above
+                            .get(key)
+                            .copied()
+                            .filter(|value| value.is_finite() && *value > 0.0)
+                            .unwrap_or(0.0),
                     })
                     .collect();
                 rects.sort_by_key(|entry| entry.key.short_id());
@@ -1718,6 +1729,7 @@ impl VellumGuiApp {
             Self::restore_layout_state(Some(layout), &self.available_tabs, content_width);
         self.hidden_tabs = restored.hidden_tabs;
         self.main_window_rects = restored.main_window_rects;
+        self.sidebar_gap_above = restored.sidebar_gap_above;
         self.last_center_window_rects.clear();
         self.tab_zones = restored.tab_zones;
         self.no_title_tabs = restored.no_title_tabs;
