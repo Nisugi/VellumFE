@@ -1374,6 +1374,13 @@ function pollGamepads() {
     }
     gpStickSector = sector;
   }
+
+  // Right stick: analog scroll of the story pane (quadratic speed curve;
+  // stick up scrolls up). Quiet while a sheet is open.
+  const rightY = axes[3] || 0;
+  if (Math.abs(rightY) > 0.25 && sheet.hidden) {
+    pane.scrollBy(0, rightY * Math.abs(rightY) * 40);
+  }
 }
 
 function sheetItemButtons() {

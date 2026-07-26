@@ -105,16 +105,21 @@ impl VellumGuiApp {
         }
 
         // Left stick: 8-way compass movement, one command per deflection.
-        let stick = self
+        // Right stick: analog story-window scroll (speed follows deflection).
+        let (stick, right_y) = self
             .gamepad
             .as_ref()
             .and_then(|g| g.gamepads().next())
             .map(|(_, pad)| {
                 (
-                    pad.value(gilrs::Axis::LeftStickX),
-                    pad.value(gilrs::Axis::LeftStickY),
+                    Some((
+                        pad.value(gilrs::Axis::LeftStickX),
+                        pad.value(gilrs::Axis::LeftStickY),
+                    )),
+                    pad.value(gilrs::Axis::RightStickY),
                 )
-            });
+            })
+            .unwrap_or((None, 0.0));
 
         for button in pressed {
             // The controller editor's "press a button" capture wins over
@@ -142,6 +147,19 @@ impl VellumGuiApp {
                 }
                 self.gp_stick_sector = sector;
             }
+        }
+
+        // Right stick up/down scrolls the main story window; quadratic
+        // curve so small deflections creep and full tilt flies. Stick up
+        // scrolls up (negative offset delta).
+        if right_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
+            let delta = -right_y.signum() * right_y * right_y * 40.0;
+            ctx.data_mut(|d| {
+                d.insert_temp(
+                    egui::Id::new(("text_scroll_pending", "main")),
+                    (0u8, delta),
+                )
+            });
         }
 
         // gilrs events arrive outside egui's own event loop; without a
