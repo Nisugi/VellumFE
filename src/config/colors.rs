@@ -147,6 +147,13 @@ impl UiColors {
         Self::user_value(&self.border_color, &super::default_border_color_default())
     }
 
+    pub fn user_focused_border_color(&self) -> Option<&str> {
+        Self::user_value(
+            &self.focused_border_color,
+            &super::default_focused_border_color(),
+        )
+    }
+
     pub fn user_text_color(&self) -> Option<&str> {
         Self::user_value(&self.text_color, &super::default_text_color_default())
     }
@@ -521,8 +528,20 @@ mod ui_color_layer_tests {
     fn defaults_and_sentinels_are_not_user_values() {
         let ui = UiColors::default();
         assert_eq!(ui.user_border_color(), None);
+        assert_eq!(ui.user_focused_border_color(), None);
         assert_eq!(ui.user_text_color(), None);
         assert_eq!(ui.user_background_color(), None);
+    }
+
+    #[test]
+    fn changed_focused_border_is_a_user_value() {
+        let mut ui = UiColors::default();
+        ui.focused_border_color = "#ff00ff".to_string();
+        assert_eq!(ui.user_focused_border_color(), Some("#ff00ff"));
+        ui.focused_border_color = "-".to_string();
+        assert_eq!(ui.user_focused_border_color(), None);
+        ui.focused_border_color = String::new();
+        assert_eq!(ui.user_focused_border_color(), None);
     }
 
     #[test]

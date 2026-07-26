@@ -159,6 +159,11 @@ impl Frontend for TuiFrontend {
         // Clone cached theme for use in render closure (cheaper than HashMap lookup + clone per widget)
         let theme_for_render = theme.clone();
 
+        // Effective focused-border color, resolved once per frame:
+        // user-set colors.toml ui.focused_border_color, else the theme.
+        let focused_border_color =
+            super::colors::resolve_focused_border_color(&app_core.config.colors.ui, &theme);
+
         let render_start = Instant::now();
 
         // Refresh the cached render order (no-op unless the window set changed)
@@ -212,7 +217,7 @@ impl Frontend for TuiFrontend {
                                 app_core.ui_state.selection_state.as_ref(),
                                 "#4a4a4a", // Selection background color
                                 window_index,
-                                &theme,
+                                focused_border_color,
                             );
                         }
                     }
@@ -389,6 +394,7 @@ impl Frontend for TuiFrontend {
                                 "#4a4a4a", // Selection background color
                                 window_index,
                                 &theme,
+                                focused_border_color,
                             );
                         }
                     }

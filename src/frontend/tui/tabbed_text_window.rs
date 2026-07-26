@@ -663,6 +663,7 @@ impl TabbedTextWindow {
         selection_bg_color: &str,
         window_index: usize,
         theme: &AppTheme,
+        focused_border_color: crate::frontend::common::Color,
     ) {
         if self.tabs.is_empty() {
             return;
@@ -686,9 +687,7 @@ impl TabbedTextWindow {
 
         if focused {
             border_style = border_style
-                .fg(crossterm_bridge::to_ratatui_color(
-                    theme.window_border_focused,
-                ))
+                .fg(crossterm_bridge::to_ratatui_color(focused_border_color))
                 .add_modifier(Modifier::BOLD);
         }
 
@@ -875,14 +874,24 @@ impl TabbedTextWindow {
                 selection_state,
                 selection_bg_color,
                 window_index,
-                theme,
+                focused_border_color,
             );
         }
     }
 
     pub fn render(&mut self, area: Rect, buf: &mut Buffer) {
         let theme = crate::theme::ThemePresets::dark();
-        self.render_with_focus(area, buf, false, None, "#4a4a4a", 0, &theme);
+        let focused_border_color = theme.window_border_focused;
+        self.render_with_focus(
+            area,
+            buf,
+            false,
+            None,
+            "#4a4a4a",
+            0,
+            &theme,
+            focused_border_color,
+        );
     }
 
     fn render_tab_bar(&self, area: Rect, buf: &mut Buffer) {

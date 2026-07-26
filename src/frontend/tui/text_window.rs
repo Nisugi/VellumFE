@@ -1466,7 +1466,15 @@ mod tests {
         let area = Rect::new(0, 0, 20, 3);
         let mut buf = Buffer::empty(area);
         let theme = crate::theme::AppTheme::default();
-        window.render_with_focus(area, &mut buf, false, None, "#000000", 0, &theme);
+        window.render_with_focus(
+            area,
+            &mut buf,
+            false,
+            None,
+            "#000000",
+            0,
+            theme.window_border_focused,
+        );
 
         window.scroll_up(1);
         assert!(window.get_scroll_indicator().is_some());
@@ -1512,7 +1520,7 @@ impl TextWindow {
         selection_state: Option<&crate::selection::SelectionState>,
         selection_bg_color: &str,
         window_index: usize,
-        theme: &crate::theme::AppTheme,
+        focused_border_color: crate::frontend::common::Color,
     ) {
         // Clear the area to prevent bleed-through from windows behind
         Clear.render(area, buf);
@@ -1577,9 +1585,7 @@ impl TextWindow {
 
         if focused {
             border_style = border_style
-                .fg(crossterm_bridge::to_ratatui_color(
-                    theme.window_border_focused,
-                ))
+                .fg(crossterm_bridge::to_ratatui_color(focused_border_color))
                 .add_modifier(Modifier::BOLD);
         }
 
@@ -1737,6 +1743,6 @@ impl Widget for &mut TextWindow {
         // No selection highlighting for basic Widget trait render
         // Use default dark theme (this trait doesn't allow passing theme)
         let theme = crate::theme::ThemePresets::dark();
-        self.render_with_focus(area, buf, false, None, "#4a4a4a", 0, &theme);
+        self.render_with_focus(area, buf, false, None, "#4a4a4a", 0, theme.window_border_focused);
     }
 }

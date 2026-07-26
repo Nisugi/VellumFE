@@ -21,6 +21,7 @@ pub mod pathing;
 pub mod remote;
 pub mod travel;
 pub mod state;
+pub mod window_style;
 
 pub use app_core::AppCore;
 pub use highlight_engine::{

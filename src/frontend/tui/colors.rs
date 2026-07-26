@@ -235,15 +235,7 @@ pub fn blend_colors_hex(
 }
 
 pub(crate) fn normalize_color(opt: &Option<String>) -> Option<String> {
-    opt.as_ref().and_then(|s| {
-        let trimmed = s.trim();
-        if trimmed.is_empty() || trimmed == "-" {
-            None
-        } else {
-            // Try to resolve color names to hex codes
-            parse_color_flexible(trimmed).or_else(|| Some(trimmed.to_string()))
-        }
-    })
+    crate::core::window_style::normalize_color(opt, parse_color_flexible)
 }
 
 /// Parse a color string to ratatui Color
@@ -267,41 +259,33 @@ pub fn parse_color_to_ratatui(input: &str) -> Option<ratatui::style::Color> {
     parsed
 }
 
-#[derive(Clone)]
-pub struct WindowColors {
-    pub border: Option<String>,
-    pub background: Option<String>,
-    pub text: Option<String>,
-}
+pub use crate::core::window_style::WindowColors;
 
 /// Per-window color precedence: the window definition, else a colors.toml
 /// ui.* value the user actually changed (defaults fall through — see
-/// UiColors::user_*), else the theme.
+/// UiColors::user_*), else the theme. Thin wrapper over the core resolver
+/// (core/window_style.rs) supplying the shared frontend color-name parser.
 pub fn resolve_window_colors(
     base: &crate::config::WindowBase,
     ui: &crate::config::UiColors,
     theme: &crate::theme::AppTheme,
 ) -> WindowColors {
-    let ui_layer = |value: Option<&str>| value.and_then(parse_color_flexible);
-    let border = normalize_color(&base.border_color)
-        .or_else(|| ui_layer(ui.user_border_color()))
-        .or_else(|| color_to_hex_string(&theme.window_border));
-    let background = if base.transparent_background {
-        None
-    } else {
-        normalize_color(&base.background_color)
-            .or_else(|| ui_layer(ui.user_background_color()))
-            .or_else(|| color_to_hex_string(&theme.window_background))
-    };
-    let text = normalize_color(&base.text_color)
-        .or_else(|| ui_layer(ui.user_text_color()))
-        .or_else(|| color_to_hex_string(&theme.text_primary));
+    crate::core::window_style::resolve_window_colors(base, ui, theme, parse_color_flexible)
+}
 
-    WindowColors {
-        border,
-        background,
-        text,
-    }
+/// Effective focused-window border color: a user-set colors.toml
+/// ui.focused_border_color, else the theme's window_border_focused.
+/// Resolved once per frame in frontend_impl.rs and passed down to the
+/// widgets that draw a focused border.
+pub fn resolve_focused_border_color(
+    ui: &crate::config::UiColors,
+    theme: &crate::theme::AppTheme,
+) -> crate::frontend::common::Color {
+    let hex =
+        crate::core::window_style::resolve_focused_border_color(ui, theme, parse_color_flexible);
+    // Theme fallback round-trips through lowercase hex losslessly, so the
+    // default path stays pixel-identical to theme.window_border_focused.
+    crate::frontend::common::Color::from_hex(&hex).unwrap_or(theme.window_border_focused)
 }
 
 #[cfg(test)]
