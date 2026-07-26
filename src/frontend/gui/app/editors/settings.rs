@@ -1,186 +1,493 @@
-//! Settings editor: edits the shared Config (connection, UI, sound, theme)
-//! and saves through `AppCore::save_config`, mirroring the TUI settings
-//! editor's field list where the setting applies to the GUI.
+//! Settings editor: a registry-driven UI over every setting in
+//! `config/registry.rs`, grouped by category. Edits buffer into per-key
+//! drafts; Save applies only the CHANGED keys through the registry setters
+//! and persists each one sparsely via `Config::save_single_setting` with a
+//! per-key Global/Character scope choice.
+//!
+//! Bespoke (non-registry) sections kept alongside the generated rows:
+//! GUI sizing + the Vitals window (per-character GUI layout file, not
+//! config.toml), the Map download button/status, skin management actions,
+//! the TTS test button, and pronunciation substitutions (registry-exempt
+//! structured data).
 
 use super::super::VellumGuiApp;
+use crate::config::registry::{self, SettingDef, SettingKind, SettingScope, SettingValue};
+use crate::config::Config;
 use eframe::egui;
+use std::collections::HashMap;
 
-const BORDER_STYLES: &[&str] = &[
-    "single",
-    "double",
-    "rounded",
-    "thick",
-    "quadrant_inside",
-    "quadrant_outside",
+/// ComboBox entry meaning "no skin active" (draft value = empty string).
+const NONE_SKIN: &str = "(none)";
+
+/// ComboBox entry meaning "engine default voice" (draft value = empty string).
+const NONE_VOICE: &str = "(engine default)";
+
+/// Preferred category display order. Categories the registry grows later
+/// (not listed here) render after these, alphabetically — nothing is ever
+/// silently dropped.
+const CATEGORY_ORDER: &[&str] = &[
+    "Connection",
+    "Appearance",
+    "UI",
+    "Terminal",
+    "Selection",
+    "Focus",
+    "Sound",
+    "Speech",
+    "Highlights",
+    "Targets",
+    "Streams",
+    "Logging",
+    "Performance",
+    "Web",
+    "Map",
+    "Travel",
 ];
 
+/// One setting's edit buffer, shaped for the widget that edits it.
+#[derive(Clone, Debug, PartialEq)]
+enum DraftValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    /// Text, OptionalText, and Enum kinds (empty = unset for OptionalText).
+    Text(String),
+    /// List entries as a multiline buffer, one entry per line.
+    List(String),
+}
+
+/// Build the draft for one setting from the live config value.
+fn draft_from_config(def: &SettingDef, config: &Config) -> DraftValue {
+    match (def.get)(config) {
+        SettingValue::Bool(v) => DraftValue::Bool(v),
+        SettingValue::Int(v) => DraftValue::Int(v),
+        SettingValue::Float(v) => DraftValue::Float(v),
+        SettingValue::Text(v) => DraftValue::Text(v),
+        SettingValue::List(v) => DraftValue::List(v.join("\n")),
+    }
+}
+
+/// Drafts for every registered setting.
+fn drafts_from_config(config: &Config) -> HashMap<&'static str, DraftValue> {
+    registry::registry()
+        .iter()
+        .map(|def| (def.key, draft_from_config(def, config)))
+        .collect()
+}
+
+/// Multiline list buffer -> entries: split lines, trim, drop empties.
+fn parse_list_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Convert an edit buffer back into the typed value the registry setter
+/// expects. OptionalText trims (the setter treats empty as "unset"), so
+/// change detection agrees with what a save would actually store.
+fn value_from_draft(kind: &SettingKind, draft: &DraftValue) -> SettingValue {
+    match draft {
+        DraftValue::Bool(v) => SettingValue::Bool(*v),
+        DraftValue::Int(v) => SettingValue::Int(*v),
+        DraftValue::Float(v) => SettingValue::Float(*v),
+        DraftValue::Text(v) => match kind {
+            SettingKind::OptionalText => SettingValue::Text(v.trim().to_string()),
+            _ => SettingValue::Text(v.clone()),
+        },
+        DraftValue::List(v) => SettingValue::List(parse_list_lines(v)),
+    }
+}
+
+/// Keys whose draft differs from the live config value (sorted, because the
+/// registry itself is key-sorted).
+fn changed_keys(
+    config: &Config,
+    drafts: &HashMap<&'static str, DraftValue>,
+) -> Vec<&'static str> {
+    registry::registry()
+        .iter()
+        .filter_map(|def| {
+            let draft = drafts.get(def.key)?;
+            let desired = value_from_draft(&def.kind, draft);
+            (desired != (def.get)(config)).then_some(def.key)
+        })
+        .collect()
+}
+
+/// All categories present in the registry, in display order.
+fn ordered_categories() -> Vec<&'static str> {
+    let mut categories: Vec<&'static str> = CATEGORY_ORDER
+        .iter()
+        .copied()
+        .filter(|cat| registry::registry().iter().any(|def| def.category == *cat))
+        .collect();
+    let mut extras: Vec<&'static str> = registry::registry()
+        .iter()
+        .map(|def| def.category)
+        .filter(|cat| !CATEGORY_ORDER.contains(cat))
+        .collect();
+    extras.sort_unstable();
+    extras.dedup();
+    categories.extend(extras);
+    categories
+}
+
 /// Buffered edit state, initialized from Config when the editor opens and
-/// applied back on Save.
+/// applied back per changed key on Save.
 pub(in super::super) struct SettingsEditorState {
-    host: String,
-    port: u16,
-    character: String,
-    buffer_size: usize,
-    border_style: String,
-    countdown_icon: String,
-    min_command_length: usize,
-    lich_dir: String,
-    mapdb_path: String,
-    mapdb_repo: String,
-    mapping_mode: bool,
-    go2_native_map_clicks: bool,
-    sound_enabled: bool,
-    sound_volume: f32,
-    sound_cooldown_ms: u64,
-    tts_enabled: bool,
-    tts_rate: f32,
-    tts_volume: f32,
-    /// Selected voice; NONE_VOICE sentinel = engine default.
-    tts_voice: String,
-    /// Voices the engine reported when the editor opened (empty when TTS
-    /// is off or the platform doesn't enumerate).
-    tts_voices: Vec<String>,
-    tts_speak_main: bool,
-    tts_speak_thoughts: bool,
-    tts_speak_speech: bool,
-    /// Speech-only gag patterns (edit buffers; empties dropped on save).
-    tts_gags: Vec<String>,
-    /// Pronunciation substitutions (pattern, replacement).
-    tts_subs: Vec<(String, String)>,
-    active_theme: String,
+    /// Per-key edit buffers for every registered setting.
+    drafts: HashMap<&'static str, DraftValue>,
+    /// Per-key save scope for GlobalOrCharacter settings: true = global.
+    /// Defaults to character (matching the old editor); not persisted.
+    scopes: HashMap<&'static str, bool>,
+    /// Per-key errors from the last Save attempt.
+    errors: Vec<String>,
     theme_names: Vec<String>,
-    /// Selected skin; NONE_SKIN sentinel = no skin.
-    active_skin: String,
     skin_names: Vec<String>,
     /// Buffer for the "New skin" name field.
     new_skin_name: String,
     /// Inline error from the last "Create" attempt.
     skin_error: Option<String>,
+    /// Voices the engine reported when the editor opened (empty when TTS
+    /// is off or the platform doesn't enumerate).
+    tts_voices: Vec<String>,
+    /// Pronunciation substitutions (pattern, replacement) — registry-exempt
+    /// structured data with bespoke rows.
+    tts_subs: Vec<(String, String)>,
     /// GUI sizing settings; persisted in the per-character GUI layout file,
     /// not config.toml.
     gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
 }
 
-/// ComboBox entry meaning "no skin active".
-const NONE_SKIN: &str = "(none)";
-
-/// ComboBox entry meaning "engine default voice".
-const NONE_VOICE: &str = "(engine default)";
-
 impl SettingsEditorState {
     fn from_config(
-        config: &crate::config::Config,
+        config: &Config,
         theme_names: Vec<String>,
         skin_names: Vec<String>,
         tts_voices: Vec<String>,
         gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
     ) -> Self {
         Self {
-            host: config.connection.host.clone(),
-            port: config.connection.port,
-            character: config.connection.character.clone().unwrap_or_default(),
-            lich_dir: config.map.lich_dir.clone().unwrap_or_default(),
-            mapdb_path: config.map.mapdb_path.clone().unwrap_or_default(),
-            mapdb_repo: config.map.mapdb_repo.clone(),
-            mapping_mode: config.map.mapping_mode,
-            go2_native_map_clicks: config.go2.native_map_clicks,
-            buffer_size: config.ui.buffer_size,
-            border_style: config.ui.border_style.clone(),
-            countdown_icon: config.ui.countdown_icon.clone(),
-            min_command_length: config.ui.min_command_length,
-            sound_enabled: config.sound.enabled,
-            sound_volume: config.sound.volume,
-            sound_cooldown_ms: config.sound.cooldown_ms,
-            tts_enabled: config.tts.enabled,
-            tts_rate: config.tts.rate.clamp(0.5, 3.0),
-            tts_volume: config.tts.volume.clamp(0.0, 1.0),
-            tts_voice: config
-                .tts
-                .voice
-                .clone()
-                .unwrap_or_else(|| NONE_VOICE.to_string()),
+            drafts: drafts_from_config(config),
+            scopes: HashMap::new(),
+            errors: Vec::new(),
+            theme_names,
+            skin_names,
+            new_skin_name: String::new(),
+            skin_error: None,
             tts_voices,
-            tts_speak_main: config.tts.speak_main,
-            tts_speak_thoughts: config.tts.speak_thoughts,
-            tts_speak_speech: config.tts.speak_speech,
-            tts_gags: config.tts.gags.clone(),
             tts_subs: config
                 .tts
                 .substitutions
                 .iter()
                 .map(|sub| (sub.pattern.clone(), sub.replacement.clone()))
                 .collect(),
-            active_theme: config.active_theme.clone(),
-            theme_names,
-            active_skin: config
-                .active_skin
-                .clone()
-                .unwrap_or_else(|| NONE_SKIN.to_string()),
-            skin_names,
-            new_skin_name: String::new(),
-            skin_error: None,
             gui_settings,
         }
     }
 
-    fn apply_to_config(&self, config: &mut crate::config::Config) {
-        config.connection.host = self.host.clone();
-        config.connection.port = self.port;
-        config.connection.character = if self.character.trim().is_empty() {
-            None
-        } else {
-            Some(self.character.trim().to_string())
+    /// Current draft text for a Text/OptionalText/Enum setting.
+    fn text_draft(&self, key: &str) -> String {
+        match self.drafts.get(key) {
+            Some(DraftValue::Text(v)) => v.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// Current draft value for a Float setting.
+    fn float_draft(&self, key: &str) -> f64 {
+        match self.drafts.get(key) {
+            Some(DraftValue::Float(v)) => *v,
+            _ => 0.0,
+        }
+    }
+
+    /// Generated rows for every registered setting in `category`:
+    /// label | value widget | scope choice.
+    fn render_category_grid(&mut self, ui: &mut egui::Ui, category: &str) {
+        egui::Grid::new(format!("settings_grid_{category}"))
+            .num_columns(3)
+            .show(ui, |ui| {
+                let defs: Vec<&'static SettingDef> = registry::registry()
+                    .iter()
+                    .filter(|def| def.category == category)
+                    .collect();
+                for def in defs {
+                    self.render_setting_row(ui, def);
+                    ui.end_row();
+                }
+            });
+    }
+
+    fn render_setting_row(&mut self, ui: &mut egui::Ui, def: &'static SettingDef) {
+        ui.label(def.label).on_hover_text(def.description);
+        self.render_value_widget(ui, def);
+        match def.scope {
+            SettingScope::GlobalOrCharacter => {
+                let is_global = self.scopes.entry(def.key).or_insert(false);
+                egui::ComboBox::from_id_salt(("setting_scope", def.key))
+                    .width(96.0)
+                    .selected_text(if *is_global { "Global" } else { "Character" })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(is_global, false, "Character");
+                        ui.selectable_value(is_global, true, "Global");
+                    })
+                    .response
+                    .on_hover_text("Where Save writes this setting");
+            }
+            SettingScope::CharacterOnly => {
+                ui.weak("character").on_hover_text(
+                    "This setting only makes sense per character and always \
+                     saves to the character profile.",
+                );
+            }
+        }
+    }
+
+    fn render_value_widget(&mut self, ui: &mut egui::Ui, def: &'static SettingDef) {
+        let Some(draft) = self.drafts.get_mut(def.key) else {
+            ui.weak("?");
+            return;
         };
-        config.map.lich_dir = match self.lich_dir.trim() {
-            "" => None,
-            dir => Some(dir.to_string()),
-        };
-        config.map.mapdb_path = match self.mapdb_path.trim() {
-            "" => None,
-            path => Some(path.to_string()),
-        };
-        config.map.mapdb_repo = self.mapdb_repo.trim().to_string();
-        config.map.mapping_mode = self.mapping_mode;
-        config.go2.native_map_clicks = self.go2_native_map_clicks;
-        config.ui.buffer_size = self.buffer_size;
-        config.ui.border_style = self.border_style.clone();
-        config.ui.countdown_icon = self.countdown_icon.clone();
-        config.ui.min_command_length = self.min_command_length;
-        config.sound.enabled = self.sound_enabled;
-        config.sound.volume = self.sound_volume;
-        config.sound.cooldown_ms = self.sound_cooldown_ms;
-        config.tts.enabled = self.tts_enabled;
-        config.tts.rate = self.tts_rate;
-        config.tts.volume = self.tts_volume;
-        config.tts.voice = if self.tts_voice == NONE_VOICE {
-            None
-        } else {
-            Some(self.tts_voice.clone())
-        };
-        config.tts.speak_main = self.tts_speak_main;
-        config.tts.speak_thoughts = self.tts_speak_thoughts;
-        config.tts.speak_speech = self.tts_speak_speech;
-        config.tts.gags = self
-            .tts_gags
-            .iter()
-            .map(|gag| gag.trim().to_string())
-            .filter(|gag| !gag.is_empty())
-            .collect();
-        config.tts.substitutions = self
-            .tts_subs
-            .iter()
-            .filter(|(pattern, _)| !pattern.trim().is_empty())
-            .map(|(pattern, replacement)| crate::config::TtsSubstitution {
-                pattern: pattern.trim().to_string(),
-                replacement: replacement.clone(),
+
+        // A few Text settings have a known value population; give them combo
+        // boxes instead of free text (still the same draft + save path).
+        match def.key {
+            "active_theme" => {
+                if let DraftValue::Text(value) = draft {
+                    egui::ComboBox::from_id_salt(("setting", def.key))
+                        .selected_text(value.clone())
+                        .show_ui(ui, |ui| {
+                            for name in &self.theme_names {
+                                ui.selectable_value(value, name.clone(), name);
+                            }
+                        });
+                }
+                return;
+            }
+            "active_skin" => {
+                if let DraftValue::Text(value) = draft {
+                    let selected = if value.trim().is_empty() {
+                        NONE_SKIN.to_string()
+                    } else {
+                        value.clone()
+                    };
+                    egui::ComboBox::from_id_salt(("setting", def.key))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(value.trim().is_empty(), NONE_SKIN)
+                                .clicked()
+                            {
+                                value.clear();
+                            }
+                            for name in &self.skin_names {
+                                if ui.selectable_label(value == name, name).clicked() {
+                                    *value = name.clone();
+                                }
+                            }
+                        });
+                }
+                return;
+            }
+            "tts.voice" if !self.tts_voices.is_empty() => {
+                if let DraftValue::Text(value) = draft {
+                    let selected = if value.trim().is_empty() {
+                        NONE_VOICE.to_string()
+                    } else {
+                        value.clone()
+                    };
+                    egui::ComboBox::from_id_salt(("setting", def.key))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(value.trim().is_empty(), NONE_VOICE)
+                                .clicked()
+                            {
+                                value.clear();
+                            }
+                            for name in &self.tts_voices {
+                                if ui.selectable_label(value == name, name).clicked() {
+                                    *value = name.clone();
+                                }
+                            }
+                        });
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        match draft {
+            DraftValue::Bool(value) => {
+                ui.checkbox(value, "");
+            }
+            DraftValue::Int(value) => {
+                if let SettingKind::Int { min, max } = def.kind {
+                    ui.add(egui::DragValue::new(value).range(min..=max));
+                } else {
+                    ui.add(egui::DragValue::new(value));
+                }
+            }
+            DraftValue::Float(value) => {
+                if let SettingKind::Float { min, max } = def.kind {
+                    ui.add(egui::Slider::new(value, min..=max));
+                } else {
+                    ui.add(egui::DragValue::new(value));
+                }
+            }
+            DraftValue::Text(value) => match &def.kind {
+                SettingKind::Enum { options } => {
+                    egui::ComboBox::from_id_salt(("setting", def.key))
+                        .selected_text(value.clone())
+                        .show_ui(ui, |ui| {
+                            for option in *options {
+                                ui.selectable_value(value, option.to_string(), *option);
+                            }
+                        });
+                }
+                _ => {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(value)
+                            .password(def.sensitive)
+                            .desired_width(220.0),
+                    );
+                    if matches!(def.kind, SettingKind::OptionalText) {
+                        response.on_hover_text("empty = unset");
+                    }
+                }
+            },
+            DraftValue::List(value) => {
+                ui.add(
+                    egui::TextEdit::multiline(value)
+                        .desired_rows(3)
+                        .desired_width(220.0),
+                )
+                .on_hover_text("one entry per line");
+            }
+        }
+    }
+}
+
+/// Bespoke GUI sizing + Vitals section (per-character GUI layout file, not
+/// config.toml). Kept exactly as the previous editor rendered it.
+fn render_gui_section(
+    ui: &mut egui::Ui,
+    gui_settings: &mut crate::frontend::gui::persistence::GuiUiSettings,
+) {
+    ui.label(
+        "Sizing applies to the GUI only and is saved per character. \
+         Ctrl+= / Ctrl+- / Ctrl+0 also adjust zoom anytime.",
+    );
+    egui::Grid::new("settings_gui_grid").num_columns(2).show(ui, |ui| {
+        ui.label("UI zoom");
+        ui.add(egui::Slider::new(&mut gui_settings.zoom_factor, 0.5..=3.0).step_by(0.05));
+        ui.end_row();
+        ui.label("Text size");
+        ui.add(egui::Slider::new(&mut gui_settings.text_size, 8.0..=32.0).step_by(0.5));
+        ui.end_row();
+        ui.label("Title bar size");
+        ui.add(egui::Slider::new(&mut gui_settings.title_font_size, 8.0..=40.0).step_by(0.5));
+        ui.end_row();
+        ui.label("Effect bar height");
+        ui.add(egui::Slider::new(&mut gui_settings.effects_bar_height, 10.0..=60.0).step_by(1.0));
+        ui.end_row();
+        ui.label("Density");
+        ui.add(egui::Slider::new(&mut gui_settings.density, 0.5..=2.0).step_by(0.05))
+            .on_hover_text(
+                "Spacing and padding scale. Lower = denser \
+                 (Wrayth-like), higher = more comfortable.",
+            );
+        ui.end_row();
+        ui.label("Bar corners");
+        ui.add(egui::Slider::new(&mut gui_settings.bar_corner_radius, 0.0..=12.0).step_by(0.5))
+            .on_hover_text(
+                "Corner radius for all progress bars. \
+                 0 = square (Wrayth-style).",
+            );
+        ui.end_row();
+        ui.label("Bar text contrast");
+        ui.checkbox(&mut gui_settings.auto_contrast_bar_text, "Auto light/dark")
+            .on_hover_text(
+                "Switch bar text to light or dark when its \
+                 configured color would be unreadable against \
+                 the bar fill.",
+            );
+        ui.end_row();
+    });
+
+    ui.separator();
+    ui.label("Vitals window");
+    egui::Grid::new("settings_vitals_grid").num_columns(2).show(ui, |ui| {
+        use crate::frontend::gui::persistence::{VitalsOrientation, VitalsTextFormat};
+        let vitals = &mut gui_settings.vitals;
+        ui.label("Layout");
+        egui::ComboBox::from_id_salt("settings_vitals_orientation")
+            .selected_text(match vitals.orientation {
+                VitalsOrientation::Horizontal => "One row",
+                VitalsOrientation::Vertical => "Stacked",
             })
-            .collect();
-        config.active_theme = self.active_theme.clone();
-        config.active_skin = if self.active_skin == NONE_SKIN {
-            None
-        } else {
-            Some(self.active_skin.clone())
-        };
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut vitals.orientation,
+                    VitalsOrientation::Horizontal,
+                    "One row",
+                );
+                ui.selectable_value(
+                    &mut vitals.orientation,
+                    VitalsOrientation::Vertical,
+                    "Stacked",
+                );
+            });
+        ui.end_row();
+        ui.label("Bar height");
+        ui.add(egui::Slider::new(&mut vitals.bar_height, 8.0..=60.0).step_by(1.0));
+        ui.end_row();
+        ui.label("Bar text");
+        egui::ComboBox::from_id_salt("settings_vitals_text")
+            .selected_text(match vitals.text_format {
+                VitalsTextFormat::LabelValueMax => "Health: 191/193",
+                VitalsTextFormat::LabelPercent => "Health: 99%",
+                VitalsTextFormat::ValueMax => "191/193",
+                VitalsTextFormat::Percent => "99%",
+                VitalsTextFormat::None => "No text",
+            })
+            .show_ui(ui, |ui| {
+                for (format, label) in [
+                    (VitalsTextFormat::LabelValueMax, "Health: 191/193"),
+                    (VitalsTextFormat::LabelPercent, "Health: 99%"),
+                    (VitalsTextFormat::ValueMax, "191/193"),
+                    (VitalsTextFormat::Percent, "99%"),
+                    (VitalsTextFormat::None, "No text"),
+                ] {
+                    ui.selectable_value(&mut vitals.text_format, format, label);
+                }
+            });
+        ui.end_row();
+    });
+    ui.label("Bars shown:");
+    {
+        use crate::frontend::gui::persistence::VitalKind;
+        let bars = &mut gui_settings.vitals.bars;
+        for kind in VitalKind::all() {
+            let mut enabled = bars.contains(&kind);
+            if ui.checkbox(&mut enabled, kind.label()).changed() {
+                if enabled {
+                    bars.push(kind);
+                    // Keep display order canonical regardless of toggle order.
+                    bars.sort_by_key(|entry| {
+                        VitalKind::all()
+                            .iter()
+                            .position(|k| k == entry)
+                            .unwrap_or(usize::MAX)
+                    });
+                } else {
+                    bars.retain(|entry| entry != &kind);
+                }
+            }
+        }
     }
 }
 
@@ -231,610 +538,324 @@ impl VellumGuiApp {
         egui::Window::new("Settings")
             .id(egui::Id::new("gui_settings_editor"))
             .open(&mut open)
-            .default_width(380.0)
+            .default_width(440.0)
             .collapsible(false)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("settings_editor_scroll")
                     .show(ui, |ui| {
-                        ui.collapsing("Connection", |ui| {
-                            ui.label("Connection settings are always character-specific.");
-                            egui::Grid::new("settings_connection_grid")
-                                .num_columns(2)
-                                .show(ui, |ui| {
-                                    ui.label("Host");
-                                    ui.text_edit_singleline(&mut state.host);
-                                    ui.end_row();
-                                    ui.label("Port");
-                                    ui.add(egui::DragValue::new(&mut state.port));
-                                    ui.end_row();
-                                    ui.label("Character");
-                                    ui.text_edit_singleline(&mut state.character);
-                                    ui.end_row();
-                                });
-                        });
-
-                        ui.collapsing("Map", |ui| {
-                            ui.label(
-                                "Map data comes from a downloaded release or your Lich install                                  (data/<game>/map-<timestamp>.json); downloaded data wins.",
-                            );
-                            egui::Grid::new("settings_map_grid").num_columns(2).show(
-                                ui,
-                                |ui| {
-                                    ui.label("Map data repo");
-                                    ui.text_edit_singleline(&mut state.mapdb_repo)
-                                        .on_hover_text(
-                                            "GitHub owner/repo whose releases attach a mapdb.json asset",
+                        for category in ordered_categories() {
+                            match category {
+                                "Connection" => {
+                                    ui.collapsing("Connection", |ui| {
+                                        ui.label(
+                                            "Connection settings are always character-specific.",
                                         );
-                                    ui.end_row();
-                                    ui.label("Lich folder");
-                                    ui.text_edit_singleline(&mut state.lich_dir)
-                                        .on_hover_text("e.g. C:/Gemstone/Lich5");
-                                    ui.end_row();
-                                    ui.label("mapdb file (override)");
-                                    ui.text_edit_singleline(&mut state.mapdb_path)
-                                        .on_hover_text(
-                                            "Optional explicit map-*.json; overrides both sources above",
+                                        state.render_category_grid(ui, "Connection");
+                                    });
+                                }
+                                "Appearance" => {
+                                    ui.collapsing("Appearance", |ui| {
+                                        ui.label(
+                                            "Skins add graphics (backgrounds, borders, widget \
+                                             art) on top of the theme.",
                                         );
-                                    ui.end_row();
-                                },
-                            );
-                            ui.horizontal(|ui| {
-                                let can_download =
-                                    !updater_in_flight && !state.mapdb_repo.trim().is_empty();
-                                let label = if updater_installed.is_some() {
-                                    "Check for update"
-                                } else {
-                                    "Download map data"
-                                };
-                                if ui.add_enabled(can_download, egui::Button::new(label)).clicked()
-                                {
-                                    map_download_repo = Some(state.mapdb_repo.trim().to_string());
-                                }
-                                if updater_installed.is_some()
-                                    && ui
-                                        .add_enabled(
-                                            !updater_in_flight,
-                                            egui::Button::new("Remove downloaded"),
-                                        )
-                                        .on_hover_text(
-                                            "Delete downloaded map data and fall back to the Lich folder",
-                                        )
-                                        .clicked()
-                                {
-                                    map_remove_clicked = true;
-                                }
-                            });
-                            use crate::core::mapdb_update::UpdateStatus;
-                            let status_text = match &updater_status {
-                                UpdateStatus::Idle => match &updater_installed {
-                                    Some(tag) => format!("Installed: {tag}"),
-                                    None => "No downloaded map data".to_string(),
-                                },
-                                UpdateStatus::Checking => {
-                                    "Checking for the latest release...".to_string()
-                                }
-                                UpdateStatus::Downloading {
-                                    tag,
-                                    received,
-                                    total,
-                                } => match total {
-                                    Some(total) => format!(
-                                        "Downloading {tag}: {:.1} / {:.1} MB",
-                                        *received as f64 / 1e6,
-                                        *total as f64 / 1e6
-                                    ),
-                                    None => format!(
-                                        "Downloading {tag}: {:.1} MB",
-                                        *received as f64 / 1e6
-                                    ),
-                                },
-                                UpdateStatus::UpToDate { tag } => format!("Up to date ({tag})"),
-                                UpdateStatus::Updated { tag } => format!("Installed {tag}"),
-                                UpdateStatus::Failed(e) => format!("Update failed: {e}"),
-                            };
-                            if matches!(updater_status, UpdateStatus::Failed(_)) {
-                                ui.colored_label(ui.visuals().error_fg_color, status_text);
-                            } else {
-                                ui.label(egui::RichText::new(status_text).weak());
-                            }
-                            ui.separator();
-                            ui.checkbox(
-                                &mut state.mapping_mode,
-                                "Cartography mode (sketch unmapped rooms)",
-                            )
-                            .on_hover_text(
-                                "Draw dashed ghost sketches of unmapped rooms as you explore them. \
-                                 Off = the map shows only mapdb truth; unmapped interiors hold the \
-                                 last mapped room. Sketches are session-only either way.",
-                            );
-                        });
-
-                        ui.collapsing("Travel", |ui| {
-                            ui.label(
-                                "Native .go2 walks the map without Lich — travel with                                  .go2 <room|tag|name>, stop with .go2 stop.",
-                            );
-                            ui.checkbox(
-                                &mut state.go2_native_map_clicks,
-                                "Map clicks travel natively",
-                            )
-                            .on_hover_text(
-                                "Off = clicks send ;go2 to Lich instead (its go2 knows silvers, day passes, urchins)",
-                            );
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Saved targets: {saved_target_count} (manage with .go2 save / .go2 targets)"
-                                ))
-                                .weak(),
-                            );
-                        });
-
-                        ui.collapsing("UI", |ui| {
-                            egui::Grid::new("settings_ui_grid").num_columns(2).show(
-                                ui,
-                                |ui| {
-                                    ui.label("Buffer size");
-                                    ui.add(
-                                        egui::DragValue::new(&mut state.buffer_size)
-                                            .range(100..=100_000),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Border style");
-                                    egui::ComboBox::from_id_salt("settings_border_style")
-                                        .selected_text(state.border_style.clone())
-                                        .show_ui(ui, |ui| {
-                                            for style in BORDER_STYLES {
-                                                ui.selectable_value(
-                                                    &mut state.border_style,
-                                                    style.to_string(),
-                                                    *style,
-                                                );
+                                        state.render_category_grid(ui, "Appearance");
+                                        ui.separator();
+                                        ui.horizontal(|ui| {
+                                            if ui
+                                                .button("Open skins folder")
+                                                .on_hover_text(
+                                                    "Skins live in ~/.vellum-fe/skins/<name>/",
+                                                )
+                                                .clicked()
+                                            {
+                                                if let Ok(dir) = Config::skins_dir() {
+                                                    let _ = std::fs::create_dir_all(&dir);
+                                                    if let Err(err) = crate::platform::open_url(
+                                                        &dir.to_string_lossy(),
+                                                    ) {
+                                                        tracing::warn!(
+                                                            "Failed to open skins folder {}: {}",
+                                                            dir.display(),
+                                                            err
+                                                        );
+                                                    }
+                                                }
                                             }
                                         });
-                                    ui.end_row();
-                                    ui.label("Countdown icon");
-                                    ui.text_edit_singleline(&mut state.countdown_icon);
-                                    ui.end_row();
-                                    ui.label("Min command length");
-                                    ui.add(
-                                        egui::DragValue::new(&mut state.min_command_length)
-                                            .range(0..=10),
-                                    );
-                                    ui.end_row();
-                                },
-                            );
-                        });
-
-                        ui.collapsing("GUI", |ui| {
-                            ui.label(
-                                "Sizing applies to the GUI only and is saved per character. \
-                                 Ctrl+= / Ctrl+- / Ctrl+0 also adjust zoom anytime.",
-                            );
-                            egui::Grid::new("settings_gui_grid").num_columns(2).show(
-                                ui,
-                                |ui| {
-                                    ui.label("UI zoom");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut state.gui_settings.zoom_factor,
-                                            0.5..=3.0,
-                                        )
-                                        .step_by(0.05),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Text size");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut state.gui_settings.text_size,
-                                            8.0..=32.0,
-                                        )
-                                        .step_by(0.5),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Title bar size");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut state.gui_settings.title_font_size,
-                                            8.0..=40.0,
-                                        )
-                                        .step_by(0.5),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Effect bar height");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut state.gui_settings.effects_bar_height,
-                                            10.0..=60.0,
-                                        )
-                                        .step_by(1.0),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Density");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut state.gui_settings.density,
-                                            0.5..=2.0,
-                                        )
-                                        .step_by(0.05),
-                                    )
-                                    .on_hover_text(
-                                        "Spacing and padding scale. Lower = denser \
-                                         (Wrayth-like), higher = more comfortable.",
-                                    );
-                                    ui.end_row();
-                                    ui.label("Bar corners");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut state.gui_settings.bar_corner_radius,
-                                            0.0..=12.0,
-                                        )
-                                        .step_by(0.5),
-                                    )
-                                    .on_hover_text(
-                                        "Corner radius for all progress bars. \
-                                         0 = square (Wrayth-style).",
-                                    );
-                                    ui.end_row();
-                                    ui.label("Bar text contrast");
-                                    ui.checkbox(
-                                        &mut state.gui_settings.auto_contrast_bar_text,
-                                        "Auto light/dark",
-                                    )
-                                    .on_hover_text(
-                                        "Switch bar text to light or dark when its \
-                                         configured color would be unreadable against \
-                                         the bar fill.",
-                                    );
-                                    ui.end_row();
-                                },
-                            );
-
-                            ui.separator();
-                            ui.label("Vitals window");
-                            egui::Grid::new("settings_vitals_grid").num_columns(2).show(
-                                ui,
-                                |ui| {
-                                    use crate::frontend::gui::persistence::{
-                                        VitalsOrientation, VitalsTextFormat,
-                                    };
-                                    let vitals = &mut state.gui_settings.vitals;
-                                    ui.label("Layout");
-                                    egui::ComboBox::from_id_salt("settings_vitals_orientation")
-                                        .selected_text(match vitals.orientation {
-                                            VitalsOrientation::Horizontal => "One row",
-                                            VitalsOrientation::Vertical => "Stacked",
-                                        })
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(
-                                                &mut vitals.orientation,
-                                                VitalsOrientation::Horizontal,
-                                                "One row",
+                                        ui.horizontal(|ui| {
+                                            ui.add(
+                                                egui::TextEdit::singleline(
+                                                    &mut state.new_skin_name,
+                                                )
+                                                .hint_text("new skin name")
+                                                .desired_width(140.0),
                                             );
-                                            ui.selectable_value(
-                                                &mut vitals.orientation,
-                                                VitalsOrientation::Vertical,
-                                                "Stacked",
-                                            );
-                                        });
-                                    ui.end_row();
-                                    ui.label("Bar height");
-                                    ui.add(
-                                        egui::Slider::new(&mut vitals.bar_height, 8.0..=60.0)
-                                            .step_by(1.0),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Bar text");
-                                    egui::ComboBox::from_id_salt("settings_vitals_text")
-                                        .selected_text(match vitals.text_format {
-                                            VitalsTextFormat::LabelValueMax => "Health: 191/193",
-                                            VitalsTextFormat::LabelPercent => "Health: 99%",
-                                            VitalsTextFormat::ValueMax => "191/193",
-                                            VitalsTextFormat::Percent => "99%",
-                                            VitalsTextFormat::None => "No text",
-                                        })
-                                        .show_ui(ui, |ui| {
-                                            for (format, label) in [
-                                                (
-                                                    VitalsTextFormat::LabelValueMax,
-                                                    "Health: 191/193",
-                                                ),
-                                                (VitalsTextFormat::LabelPercent, "Health: 99%"),
-                                                (VitalsTextFormat::ValueMax, "191/193"),
-                                                (VitalsTextFormat::Percent, "99%"),
-                                                (VitalsTextFormat::None, "No text"),
-                                            ] {
-                                                ui.selectable_value(
-                                                    &mut vitals.text_format,
-                                                    format,
-                                                    label,
-                                                );
+                                            if ui
+                                                .button("Create")
+                                                .on_hover_text(
+                                                    "Write a starter skin.toml (all sections \
+                                                     commented out) and select it",
+                                                )
+                                                .clicked()
+                                            {
+                                                match crate::config::skins::write_scaffold(
+                                                    &state.new_skin_name,
+                                                ) {
+                                                    Ok(_) => {
+                                                        let name = state
+                                                            .new_skin_name
+                                                            .trim()
+                                                            .to_string();
+                                                        state.skin_names.push(name.clone());
+                                                        state.skin_names.sort();
+                                                        state.drafts.insert(
+                                                            "active_skin",
+                                                            DraftValue::Text(name),
+                                                        );
+                                                        state.new_skin_name.clear();
+                                                        state.skin_error = None;
+                                                    }
+                                                    Err(err) => {
+                                                        state.skin_error =
+                                                            Some(err.to_string());
+                                                    }
+                                                }
                                             }
                                         });
-                                    ui.end_row();
-                                },
-                            );
-                            ui.label("Bars shown:");
-                            {
-                                use crate::frontend::gui::persistence::VitalKind;
-                                let bars = &mut state.gui_settings.vitals.bars;
-                                for kind in VitalKind::all() {
-                                    let mut enabled = bars.contains(&kind);
-                                    if ui.checkbox(&mut enabled, kind.label()).changed() {
-                                        if enabled {
-                                            bars.push(kind);
-                                            // Keep display order canonical regardless
-                                            // of toggle order.
-                                            bars.sort_by_key(|entry| {
-                                                VitalKind::all()
-                                                    .iter()
-                                                    .position(|k| k == entry)
-                                                    .unwrap_or(usize::MAX)
-                                            });
-                                        } else {
-                                            bars.retain(|entry| entry != &kind);
+                                        if let Some(error) = &state.skin_error {
+                                            ui.colored_label(
+                                                ui.visuals().error_fg_color,
+                                                error,
+                                            );
                                         }
-                                    }
+                                        if ui
+                                            .add_enabled(
+                                                can_calibrate_doll,
+                                                egui::Button::new(
+                                                    "Calibrate injury doll\u{2026}",
+                                                ),
+                                            )
+                                            .on_hover_text(
+                                                "Click each body part on the skin's doll image \
+                                                 to place its wound dot",
+                                            )
+                                            .on_disabled_hover_text(
+                                                "Needs an active (saved) skin with base art \
+                                                 under [injury_doll] in its skin.toml",
+                                            )
+                                            .clicked()
+                                        {
+                                            calibrate_doll_clicked = true;
+                                        }
+                                    });
+
+                                    // The GUI sizing/vitals section lives in
+                                    // the per-character GUI layout file, not
+                                    // config.toml; keep it next to Appearance.
+                                    ui.collapsing("GUI", |ui| {
+                                        render_gui_section(ui, &mut state.gui_settings);
+                                    });
                                 }
-                            }
-                        });
+                                "Speech" => {
+                                    ui.collapsing("Speech", |ui| {
+                                        ui.label(
+                                            "Text-to-speech reads incoming lines aloud. Pick \
+                                             which windows speak with the checkbox in each \
+                                             window's editor; the speak toggles below cover \
+                                             the classic three.",
+                                        );
+                                        state.render_category_grid(ui, "Speech");
+                                        if state.tts_voices.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new(
+                                                    "enable TTS, save, and reopen to list voices",
+                                                )
+                                                .weak(),
+                                            );
+                                        }
+                                        let tts_enabled = matches!(
+                                            state.drafts.get("tts.enabled"),
+                                            Some(DraftValue::Bool(true))
+                                        );
+                                        if ui
+                                            .add_enabled(
+                                                tts_enabled,
+                                                egui::Button::new("Test voice"),
+                                            )
+                                            .on_hover_text(
+                                                "Applies the values above and speaks a sample",
+                                            )
+                                            .clicked()
+                                        {
+                                            tts_test_clicked = true;
+                                        }
 
-                        ui.collapsing("Sound", |ui| {
-                            ui.checkbox(&mut state.sound_enabled, "Sounds enabled");
-                            ui.horizontal(|ui| {
-                                ui.label("Volume");
-                                ui.add(egui::Slider::new(&mut state.sound_volume, 0.0..=1.0));
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Cooldown (ms)");
-                                ui.add(
-                                    egui::DragValue::new(&mut state.sound_cooldown_ms)
-                                        .range(0..=10_000),
-                                );
-                            });
-                        });
-
-                        ui.collapsing("Accessibility", |ui| {
-                            ui.label(
-                                "Text-to-speech reads incoming lines aloud. Pick which \
-                                 windows speak with the checkbox in each window's editor; \
-                                 the toggles below cover the classic three.",
-                            );
-                            ui.checkbox(&mut state.tts_enabled, "Text-to-speech enabled");
-                            egui::Grid::new("settings_tts_grid").num_columns(2).show(
-                                ui,
-                                |ui| {
-                                    ui.label("Rate");
-                                    ui.add(
-                                        egui::Slider::new(&mut state.tts_rate, 0.5..=3.0)
-                                            .step_by(0.1),
-                                    )
-                                    .on_hover_text(
-                                        "1.0 = the voice's natural speed; 3.0 = the \
-                                         engine's maximum",
-                                    );
-                                    ui.end_row();
-                                    ui.label("Volume");
-                                    ui.add(
-                                        egui::Slider::new(&mut state.tts_volume, 0.0..=1.0)
-                                            .step_by(0.05),
-                                    );
-                                    ui.end_row();
-                                    ui.label("Voice");
-                                    if state.tts_voices.is_empty() {
+                                        ui.separator();
+                                        ui.label("Pronunciations (regex pattern -> spoken text)");
+                                        let mut remove_sub: Option<usize> = None;
+                                        for (index, (pattern, replacement)) in
+                                            state.tts_subs.iter_mut().enumerate()
+                                        {
+                                            ui.horizontal(|ui| {
+                                                let valid =
+                                                    regex::Regex::new(pattern).is_ok();
+                                                ui.add(
+                                                    egui::TextEdit::singleline(pattern)
+                                                        .hint_text("Wehnimer's")
+                                                        .desired_width(140.0),
+                                                );
+                                                ui.label("→");
+                                                ui.add(
+                                                    egui::TextEdit::singleline(replacement)
+                                                        .hint_text("Wenimers")
+                                                        .desired_width(140.0),
+                                                );
+                                                if !valid {
+                                                    ui.colored_label(
+                                                        ui.visuals().error_fg_color,
+                                                        "invalid",
+                                                    );
+                                                }
+                                                if ui.small_button("✕").clicked() {
+                                                    remove_sub = Some(index);
+                                                }
+                                            });
+                                        }
+                                        if let Some(index) = remove_sub {
+                                            state.tts_subs.remove(index);
+                                        }
+                                        if ui.button("Add pronunciation").clicked() {
+                                            state.tts_subs.push((String::new(), String::new()));
+                                        }
                                         ui.label(
                                             egui::RichText::new(
-                                                "enable TTS, save, and reopen to list voices",
+                                                "Queue navigation: Ctrl+Alt+Left/Right = \
+                                                 previous/next, Ctrl+Alt+Up = next unread, \
+                                                 Ctrl+Alt+Down = stop, F11 = mute. Rebind \
+                                                 under Keybinds.",
                                             )
                                             .weak(),
                                         );
-                                    } else {
-                                        egui::ComboBox::from_id_salt("settings_tts_voice")
-                                            .selected_text(state.tts_voice.clone())
-                                            .show_ui(ui, |ui| {
-                                                ui.selectable_value(
-                                                    &mut state.tts_voice,
-                                                    NONE_VOICE.to_string(),
-                                                    NONE_VOICE,
-                                                );
-                                                for name in &state.tts_voices {
-                                                    ui.selectable_value(
-                                                        &mut state.tts_voice,
-                                                        name.clone(),
-                                                        name,
-                                                    );
-                                                }
-                                            });
-                                    }
-                                    ui.end_row();
-                                },
-                            );
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut state.tts_speak_main, "main");
-                                ui.checkbox(&mut state.tts_speak_thoughts, "thoughts");
-                                ui.checkbox(&mut state.tts_speak_speech, "speech");
-                            });
-                            if ui
-                                .add_enabled(state.tts_enabled, egui::Button::new("Test voice"))
-                                .on_hover_text("Applies the sliders above and speaks a sample")
-                                .clicked()
-                            {
-                                tts_test_clicked = true;
-                            }
-
-                            ui.separator();
-                            ui.label("Speech gags (regex; matching lines show but never speak)");
-                            let mut remove_gag: Option<usize> = None;
-                            for (index, gag) in state.tts_gags.iter_mut().enumerate() {
-                                ui.horizontal(|ui| {
-                                    let valid = regex::Regex::new(gag).is_ok();
-                                    ui.add(
-                                        egui::TextEdit::singleline(gag).desired_width(240.0),
-                                    );
-                                    if !valid {
-                                        ui.colored_label(
-                                            ui.visuals().error_fg_color,
-                                            "invalid",
+                                    });
+                                }
+                                "Map" => {
+                                    ui.collapsing("Map", |ui| {
+                                        ui.label(
+                                            "Map data comes from a downloaded release or your \
+                                             Lich install (data/<game>/map-<timestamp>.json); \
+                                             downloaded data wins.",
                                         );
-                                    }
-                                    if ui.small_button("✕").clicked() {
-                                        remove_gag = Some(index);
-                                    }
-                                });
-                            }
-                            if let Some(index) = remove_gag {
-                                state.tts_gags.remove(index);
-                            }
-                            if ui.button("Add gag").clicked() {
-                                state.tts_gags.push(String::new());
-                            }
-
-                            ui.separator();
-                            ui.label("Pronunciations (regex pattern -> spoken text)");
-                            let mut remove_sub: Option<usize> = None;
-                            for (index, (pattern, replacement)) in
-                                state.tts_subs.iter_mut().enumerate()
-                            {
-                                ui.horizontal(|ui| {
-                                    let valid = regex::Regex::new(pattern).is_ok();
-                                    ui.add(
-                                        egui::TextEdit::singleline(pattern)
-                                            .hint_text("Wehnimer's")
-                                            .desired_width(140.0),
-                                    );
-                                    ui.label("→");
-                                    ui.add(
-                                        egui::TextEdit::singleline(replacement)
-                                            .hint_text("Wenimers")
-                                            .desired_width(140.0),
-                                    );
-                                    if !valid {
-                                        ui.colored_label(
-                                            ui.visuals().error_fg_color,
-                                            "invalid",
-                                        );
-                                    }
-                                    if ui.small_button("✕").clicked() {
-                                        remove_sub = Some(index);
-                                    }
-                                });
-                            }
-                            if let Some(index) = remove_sub {
-                                state.tts_subs.remove(index);
-                            }
-                            if ui.button("Add pronunciation").clicked() {
-                                state.tts_subs.push((String::new(), String::new()));
-                            }
-                            ui.label(
-                                egui::RichText::new(
-                                    "Queue navigation: Ctrl+Alt+Left/Right = previous/next, \
-                                     Ctrl+Alt+Up = next unread, Ctrl+Alt+Down = stop, \
-                                     F11 = mute. Rebind under Keybinds.",
-                                )
-                                .weak(),
-                            );
-                        });
-
-                        ui.collapsing("Theme", |ui| {
-                            egui::ComboBox::from_id_salt("settings_theme")
-                                .selected_text(state.active_theme.clone())
-                                .show_ui(ui, |ui| {
-                                    for name in &state.theme_names {
-                                        ui.selectable_value(
-                                            &mut state.active_theme,
-                                            name.clone(),
-                                            name,
-                                        );
-                                    }
-                                });
-                        });
-
-                        ui.collapsing("Skin", |ui| {
-                            ui.label("Skins add graphics (backgrounds, borders, widget art) on top of the theme.");
-                            ui.horizontal(|ui| {
-                                egui::ComboBox::from_id_salt("settings_skin")
-                                    .selected_text(state.active_skin.clone())
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(
-                                            &mut state.active_skin,
-                                            NONE_SKIN.to_string(),
-                                            NONE_SKIN,
-                                        );
-                                        for name in &state.skin_names {
-                                            ui.selectable_value(
-                                                &mut state.active_skin,
-                                                name.clone(),
-                                                name,
+                                        state.render_category_grid(ui, "Map");
+                                        let repo_draft = state.text_draft("map.mapdb_repo");
+                                        ui.horizontal(|ui| {
+                                            let can_download = !updater_in_flight
+                                                && !repo_draft.trim().is_empty();
+                                            let label = if updater_installed.is_some() {
+                                                "Check for update"
+                                            } else {
+                                                "Download map data"
+                                            };
+                                            if ui
+                                                .add_enabled(
+                                                    can_download,
+                                                    egui::Button::new(label),
+                                                )
+                                                .clicked()
+                                            {
+                                                map_download_repo =
+                                                    Some(repo_draft.trim().to_string());
+                                            }
+                                            if updater_installed.is_some()
+                                                && ui
+                                                    .add_enabled(
+                                                        !updater_in_flight,
+                                                        egui::Button::new("Remove downloaded"),
+                                                    )
+                                                    .on_hover_text(
+                                                        "Delete downloaded map data and fall \
+                                                         back to the Lich folder",
+                                                    )
+                                                    .clicked()
+                                            {
+                                                map_remove_clicked = true;
+                                            }
+                                        });
+                                        use crate::core::mapdb_update::UpdateStatus;
+                                        let status_text = match &updater_status {
+                                            UpdateStatus::Idle => match &updater_installed {
+                                                Some(tag) => format!("Installed: {tag}"),
+                                                None => "No downloaded map data".to_string(),
+                                            },
+                                            UpdateStatus::Checking => {
+                                                "Checking for the latest release...".to_string()
+                                            }
+                                            UpdateStatus::Downloading {
+                                                tag,
+                                                received,
+                                                total,
+                                            } => match total {
+                                                Some(total) => format!(
+                                                    "Downloading {tag}: {:.1} / {:.1} MB",
+                                                    *received as f64 / 1e6,
+                                                    *total as f64 / 1e6
+                                                ),
+                                                None => format!(
+                                                    "Downloading {tag}: {:.1} MB",
+                                                    *received as f64 / 1e6
+                                                ),
+                                            },
+                                            UpdateStatus::UpToDate { tag } => {
+                                                format!("Up to date ({tag})")
+                                            }
+                                            UpdateStatus::Updated { tag } => {
+                                                format!("Installed {tag}")
+                                            }
+                                            UpdateStatus::Failed(e) => {
+                                                format!("Update failed: {e}")
+                                            }
+                                        };
+                                        if matches!(updater_status, UpdateStatus::Failed(_)) {
+                                            ui.colored_label(
+                                                ui.visuals().error_fg_color,
+                                                status_text,
                                             );
+                                        } else {
+                                            ui.label(egui::RichText::new(status_text).weak());
                                         }
                                     });
-                                if ui
-                                    .button("Open skins folder")
-                                    .on_hover_text("Skins live in ~/.vellum-fe/skins/<name>/")
-                                    .clicked()
-                                {
-                                    if let Ok(dir) = crate::config::Config::skins_dir() {
-                                        let _ = std::fs::create_dir_all(&dir);
-                                        if let Err(err) =
-                                            crate::platform::open_url(&dir.to_string_lossy())
-                                        {
-                                            tracing::warn!(
-                                                "Failed to open skins folder {}: {}",
-                                                dir.display(),
-                                                err
-                                            );
-                                        }
-                                    }
                                 }
-                            });
-                            ui.horizontal(|ui| {
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut state.new_skin_name)
-                                        .hint_text("new skin name")
-                                        .desired_width(140.0),
-                                );
-                                if ui
-                                    .button("Create")
-                                    .on_hover_text(
-                                        "Write a starter skin.toml (all sections commented out) and select it",
-                                    )
-                                    .clicked()
-                                {
-                                    match crate::config::skins::write_scaffold(
-                                        &state.new_skin_name,
-                                    ) {
-                                        Ok(_) => {
-                                            let name = state.new_skin_name.trim().to_string();
-                                            state.skin_names.push(name.clone());
-                                            state.skin_names.sort();
-                                            state.active_skin = name;
-                                            state.new_skin_name.clear();
-                                            state.skin_error = None;
-                                        }
-                                        Err(err) => {
-                                            state.skin_error = Some(err.to_string());
-                                        }
-                                    }
+                                "Travel" => {
+                                    ui.collapsing("Travel", |ui| {
+                                        ui.label(
+                                            "Native .go2 walks the map without Lich — travel \
+                                             with .go2 <room|tag|name>, stop with .go2 stop.",
+                                        );
+                                        state.render_category_grid(ui, "Travel");
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "Saved targets: {saved_target_count} (manage \
+                                                 with .go2 save / .go2 targets)"
+                                            ))
+                                            .weak(),
+                                        );
+                                    });
                                 }
-                            });
-                            if let Some(error) = &state.skin_error {
+                                other => {
+                                    ui.collapsing(other, |ui| {
+                                        state.render_category_grid(ui, other);
+                                    });
+                                }
+                            }
+                        }
+
+                        if !state.errors.is_empty() {
+                            ui.separator();
+                            for error in &state.errors {
                                 ui.colored_label(ui.visuals().error_fg_color, error);
                             }
-                            if ui
-                                .add_enabled(
-                                    can_calibrate_doll,
-                                    egui::Button::new("Calibrate injury doll\u{2026}"),
-                                )
-                                .on_hover_text(
-                                    "Click each body part on the skin's doll image to place its wound dot",
-                                )
-                                .on_disabled_hover_text(
-                                    "Needs an active (saved) skin with base art under [injury_doll] in its skin.toml",
-                                )
-                                .clicked()
-                            {
-                                calibrate_doll_clicked = true;
-                            }
-                        });
+                        }
 
                         ui.separator();
                         ui.horizontal(|ui| {
@@ -859,14 +880,17 @@ impl VellumGuiApp {
             self.open_doll_calibration();
         }
         if tts_test_clicked {
+            let rate = state.float_draft("tts.rate") as f32;
+            let volume = state.float_draft("tts.volume") as f32;
+            let voice = state.text_draft("tts.voice");
             let tts = &mut self.app_core.tts_manager;
             tts.set_enabled(true);
-            let _ = tts.set_rate(state.tts_rate);
-            let _ = tts.set_volume(state.tts_volume);
-            tts.set_voice_by_name(if state.tts_voice == NONE_VOICE {
+            let _ = tts.set_rate(rate);
+            let _ = tts.set_volume(volume);
+            tts.set_voice_by_name(if voice.trim().is_empty() {
                 None
             } else {
-                Some(state.tts_voice.clone())
+                Some(voice.trim().to_string())
             });
             if let Err(err) =
                 tts.speak_text_now("A giant rat scampers out of the shadows. Roundtime, 5 seconds.")
@@ -881,15 +905,66 @@ impl VellumGuiApp {
         }
 
         if saved {
-            state.apply_to_config(&mut self.app_core.config);
-            self.app_core.refresh_map_source();
-            self.app_core.apply_tts_settings();
-            match self.app_core.save_config() {
-                Ok(()) => self.app_core.add_system_message("Settings saved."),
-                Err(err) => self
-                    .app_core
-                    .add_system_message(&format!("Failed to save settings: {}", err)),
+            let character = self.app_core.config.character.clone();
+            let mut errors: Vec<String> = Vec::new();
+            let mut applied: Vec<&'static str> = Vec::new();
+
+            // Apply and persist only the keys the user actually changed —
+            // one sparse scoped save per key, never a whole-config dump.
+            for key in changed_keys(&self.app_core.config, &state.drafts) {
+                let Some(def) = registry::find(key) else {
+                    continue;
+                };
+                let value = value_from_draft(&def.kind, &state.drafts[key]);
+                if let Err(err) = (def.set)(&mut self.app_core.config, &value) {
+                    errors.push(format!("{key}: {err}"));
+                    continue;
+                }
+                applied.push(key);
+                let is_global = state.scopes.get(key).copied().unwrap_or(false);
+                if let Err(err) = self.app_core.config.save_single_setting(
+                    key,
+                    is_global,
+                    character.as_deref(),
+                ) {
+                    errors.push(format!("{key}: {err}"));
+                }
             }
+
+            // Pronunciation substitutions are registry-exempt structured
+            // data (EXEMPT_PREFIXES); when they changed, persist them with
+            // the sparse whole-config save they always used.
+            let new_subs: Vec<crate::config::TtsSubstitution> = state
+                .tts_subs
+                .iter()
+                .filter(|(pattern, _)| !pattern.trim().is_empty())
+                .map(|(pattern, replacement)| crate::config::TtsSubstitution {
+                    pattern: pattern.trim().to_string(),
+                    replacement: replacement.clone(),
+                })
+                .collect();
+            let subs_changed = new_subs != self.app_core.config.tts.substitutions;
+            if subs_changed {
+                self.app_core.config.tts.substitutions = new_subs;
+                if let Err(err) = self.app_core.save_config() {
+                    errors.push(format!("tts.substitutions: {err}"));
+                }
+            }
+
+            // Side effects for the keys that just changed. Theme and skin
+            // need no explicit hook: apply_theme_if_changed and
+            // skin_state.apply_if_changed watch config.active_theme /
+            // active_skin every frame.
+            if applied
+                .iter()
+                .any(|key| key.starts_with("map.") || *key == "connection.game")
+            {
+                self.app_core.refresh_map_source();
+            }
+            if applied.iter().any(|key| key.starts_with("tts.")) || subs_changed {
+                self.app_core.apply_tts_settings();
+            }
+
             // GUI sizing lives in the per-character layout file; force the
             // zoom/title-bar values to re-apply on the next frame.
             self.ui_settings = state.gui_settings.clone();
@@ -897,13 +972,109 @@ impl VellumGuiApp {
             self.applied_title_font_size = None;
             self.applied_density = None;
             self.layout_dirty = true;
-            // Theme changes take effect via apply_theme_if_changed next frame.
-            self.settings_editor = None;
+
+            if errors.is_empty() {
+                self.app_core.add_system_message("Settings saved.");
+                self.settings_editor = None;
+                return;
+            }
+            self.app_core.add_system_message(&format!(
+                "Settings: {} value(s) failed to save.",
+                errors.len()
+            ));
+            state.errors = errors;
+            self.settings_editor = Some(state);
             return;
         }
 
         if open && !cancelled {
             self.settings_editor = Some(state);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_lines_parse_trims_and_drops_empties() {
+        let parsed = parse_list_lines("  one \n\n two\nthree\n   ");
+        assert_eq!(parsed, ["one", "two", "three"]);
+        // Round trip: join -> parse is stable.
+        assert_eq!(parse_list_lines(&parsed.join("\n")), parsed);
+    }
+
+    #[test]
+    fn every_registered_setting_gets_a_draft() {
+        let drafts = drafts_from_config(&Config::default());
+        assert_eq!(drafts.len(), registry::registry().len());
+    }
+
+    #[test]
+    fn untouched_drafts_report_no_changes() {
+        let config = Config::default();
+        let drafts = drafts_from_config(&config);
+        assert_eq!(changed_keys(&config, &drafts), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn edited_drafts_report_exactly_their_keys() {
+        let config = Config::default();
+        let mut drafts = drafts_from_config(&config);
+        drafts.insert(
+            "ui.buffer_size",
+            DraftValue::Int(config.ui.buffer_size as i64 + 17),
+        );
+        drafts.insert("sound.enabled", DraftValue::Bool(!config.sound.enabled));
+        drafts.insert(
+            "ui.open_dialog_blocklist",
+            DraftValue::List("alpha\n beta \n".to_string()),
+        );
+        assert_eq!(
+            changed_keys(&config, &drafts),
+            ["sound.enabled", "ui.buffer_size", "ui.open_dialog_blocklist"]
+        );
+    }
+
+    #[test]
+    fn optional_text_whitespace_is_not_a_change() {
+        // map.lich_dir defaults to None; whitespace-only input still means
+        // "unset", so it must not count as an edit.
+        let config = Config::default();
+        let mut drafts = drafts_from_config(&config);
+        drafts.insert("map.lich_dir", DraftValue::Text("   ".to_string()));
+        assert_eq!(changed_keys(&config, &drafts), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn list_draft_round_trips_through_registry_setter() {
+        let mut config = Config::default();
+        let def = registry::find("tts.gags").expect("tts.gags registered");
+        let draft = DraftValue::List(" spam \n\n ^You feel \n".to_string());
+        let value = value_from_draft(&def.kind, &draft);
+        (def.set)(&mut config, &value).expect("set tts.gags");
+        assert_eq!(config.tts.gags, ["spam", "^You feel"]);
+        // Reopening the editor reproduces an equivalent draft.
+        assert_eq!(
+            draft_from_config(def, &config),
+            DraftValue::List("spam\n^You feel".to_string())
+        );
+    }
+
+    #[test]
+    fn ordered_categories_cover_the_whole_registry() {
+        let categories = ordered_categories();
+        for def in registry::registry() {
+            assert!(
+                categories.contains(&def.category),
+                "category {} missing from ordered_categories()",
+                def.category
+            );
+        }
+        // No duplicates.
+        let mut deduped = categories.clone();
+        deduped.dedup();
+        assert_eq!(categories, deduped);
     }
 }
