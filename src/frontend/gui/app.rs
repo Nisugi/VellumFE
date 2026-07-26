@@ -3663,7 +3663,7 @@ impl VellumGuiApp {
             items.insert(
                 0,
                 PopupMenuItem {
-                    text: "Custom Window…".to_string(),
+                    text: "Streams & Custom Windows…".to_string(),
                     command: "action:customwindows".to_string(),
                     disabled: false,
                 },

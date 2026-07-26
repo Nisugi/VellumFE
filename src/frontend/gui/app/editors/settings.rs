@@ -126,6 +126,15 @@ fn changed_keys(
 /// editor still shows these categories.
 const CATEGORIES_IN_WINDOW_EDITOR: &[&str] = &["Targets"];
 
+/// Individual registry keys deliberately NOT rendered by this GUI Settings
+/// window. `streams.drop_unsubscribed` is legacy: config load migrates its
+/// entries into `[streams.routes]` and clears the list, so at runtime the
+/// row would always be an empty list that a save immediately re-empties.
+/// Per-stream routing is edited in the Streams panel instead. The registry
+/// entry itself must stay (old config files load through it, and the TUI
+/// settings editor is unaffected).
+const HIDDEN_KEYS: &[&str] = &["streams.drop_unsubscribed"];
+
 /// All categories present in the registry, in display order (minus those
 /// the Window Editor owns in the GUI).
 fn ordered_categories() -> Vec<&'static str> {
@@ -227,6 +236,7 @@ impl SettingsEditorState {
                 let defs: Vec<&'static SettingDef> = registry::registry()
                     .iter()
                     .filter(|def| def.category == category)
+                    .filter(|def| !HIDDEN_KEYS.contains(&def.key))
                     .collect();
                 for def in defs {
                     self.render_setting_row(ui, def);
@@ -402,8 +412,9 @@ fn category_intro(category: &str) -> Option<&'static str> {
         ),
         "Terminal" => Some("TUI only: how the terminal renders colors."),
         "Streams" => Some(
-            "Routing for game text streams that no window subscribes to: \
-             dropped if listed, otherwise sent to the fallback window.",
+            "Game text streams that no window subscribes to go to the \
+             fallback window. Per-stream routing (discard, main, or a \
+             specific window) is edited in the Streams panel.",
         ),
         "Performance" => Some("Debug overlay (F3 in the TUI)."),
         _ => None,
