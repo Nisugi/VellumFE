@@ -1824,11 +1824,11 @@ function announceInteractFocus() {
   speechSynthesis.speak(utterance);
 }
 
+// Compact bar: one wrapping cycler per axis (lists are short; the pad's
+// right stick still steps both directions), tap the label or ⏎ to act.
 document.getElementById("interact-btn").addEventListener("click", toggleInteract);
 document.getElementById("ia-close").addEventListener("click", exitInteract);
-document.getElementById("ia-prev").addEventListener("click", () => interactMove(-1));
 document.getElementById("ia-next").addEventListener("click", () => interactMove(1));
-document.getElementById("ia-cat-prev").addEventListener("click", () => interactCategoryMove(-1));
 document.getElementById("ia-cat-next").addEventListener("click", () => interactCategoryMove(1));
 document.getElementById("ia-go").addEventListener("click", interactActivate);
 document.getElementById("ia-label").addEventListener("click", interactActivate);

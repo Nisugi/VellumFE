@@ -857,8 +857,8 @@ body.hide-interact #interact-btn,
 body.hide-interact #interact-bar { display: none !important; }
 
 #interact-bar button {
-  min-width: 40px;
-  padding: 8px 6px;
+  min-width: 36px;
+  padding: 7px 4px;
   font: inherit;
   font-size: 16px;
   color: var(--fg);
