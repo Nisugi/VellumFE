@@ -1,10 +1,16 @@
 //! Window editor: rename windows and edit stream routing / scrollback for
 //! text windows. Geometry, borders, and colors are dock/theme concerns in the
 //! GUI, so only content-level properties are exposed here.
+//!
+//! Widget-shaped settings that used to live in the Settings window are edited
+//! here instead, next to the window they configure: the vitals bar options
+//! (GuiUiSettings, per-character GUI layout file) and the global
+//! `target_list.*` config settings (settings registry).
 
 use super::super::VellumGuiApp;
 use super::color_field;
 use super::custom_windows::append_stream_id;
+use crate::config::registry::{self, SettingKind, SettingValue};
 use crate::data::WindowContent;
 use eframe::egui;
 
@@ -33,6 +39,16 @@ pub(in super::super) struct WindowEditorState {
     room: Option<RoomFields>,
     /// Some for Targets windows: per-window display options.
     targets: Option<TargetFields>,
+    /// Some for Targets windows: drafts of the GLOBAL `target_list.*`
+    /// settings (config.toml via the settings registry), surfaced here so
+    /// every target knob lives in one place. Changes apply immediately and
+    /// persist per key at character scope.
+    targets_global: Option<TargetGlobalFields>,
+    /// Some for MiniVitals windows: the shared vitals options from the
+    /// per-character GUI layout file (GuiUiSettings.vitals). Buffered here
+    /// and written back on Save with the same dirty-flag mechanism the
+    /// Settings editor used before this section moved here.
+    vitals: Option<crate::frontend::gui::persistence::VitalsConfig>,
     /// Some for gs4_experience windows: per-field display toggles.
     experience: Option<ExperienceFields>,
     /// Some for encum windows: bar/blurb display toggles.
@@ -77,6 +93,26 @@ struct TargetFields {
     show_appendages: bool,
     /// Per-window status position override: "" = follow global config.
     status_position: String,
+}
+
+/// Drafts for the global `target_list.*` registry settings. Each field
+/// mirrors one registry key; lists buffer as one entry per line.
+struct TargetGlobalFields {
+    status_position: String,
+    truncation_mode: String,
+    excluded_nouns: String,
+    boss_color: String,
+    challenging_color: String,
+}
+
+/// Current value of a registry setting as draft text (lists join one entry
+/// per line, matching the Settings editor's list buffers).
+fn registry_draft(config: &crate::config::Config, key: &str) -> String {
+    match registry::find(key).map(|def| (def.get)(config)) {
+        Some(SettingValue::Text(v)) => v,
+        Some(SettingValue::List(v)) => v.join("\n"),
+        _ => String::new(),
+    }
 }
 
 /// One editable tab row. Keeps the original config tab so fields this
@@ -165,6 +201,8 @@ impl WindowEditorState {
             effects_category: None,
             room: None,
             targets: None,
+            targets_global: None,
+            vitals: None,
             experience: None,
             encum: None,
             locked: None,
@@ -223,6 +261,8 @@ impl VellumGuiApp {
         state.effects_category = None;
         state.room = None;
         state.targets = None;
+        state.targets_global = None;
+        state.vitals = None;
         state.experience = None;
         state.encum = None;
         state.locked = None;
@@ -281,6 +321,23 @@ impl VellumGuiApp {
                 }
                 _ => {}
             }
+        }
+        // Targets windows also edit the global target_list.* settings here
+        // (moved from the Settings window's Targets category).
+        if matches!(window.content, WindowContent::Targets) {
+            let config = &self.app_core.config;
+            state.targets_global = Some(TargetGlobalFields {
+                status_position: registry_draft(config, "target_list.status_position"),
+                truncation_mode: registry_draft(config, "target_list.truncation_mode"),
+                excluded_nouns: registry_draft(config, "target_list.excluded_nouns"),
+                boss_color: registry_draft(config, "target_list.boss_color"),
+                challenging_color: registry_draft(config, "target_list.challenging_color"),
+            });
+        }
+        // The vitals window's bar options live in GuiUiSettings (moved from
+        // the Settings window's GUI section).
+        if matches!(window.content, WindowContent::MiniVitals) {
+            state.vitals = Some(self.ui_settings.vitals.clone());
         }
         // Tabbed windows: edit the tab list from the layout definition (the
         // canonical home of per-tab config; live tabs sync from it on save).
@@ -644,6 +701,14 @@ impl VellumGuiApp {
             self.app_core.layout_modified_since_save = true;
         }
 
+        if let Some(vitals) = &state.vitals {
+            // Vitals options live in GuiUiSettings, saved with the
+            // per-character GUI layout file — same storage and debounced
+            // dirty-flag save the Settings editor used for this section.
+            self.ui_settings.vitals = vitals.clone();
+            self.layout_dirty = true;
+        }
+
         // Rename through the shared dot-command so the layout definition and
         // system messaging behave exactly like the TUI.
         let _ = self
@@ -666,6 +731,9 @@ impl VellumGuiApp {
         // A stream id clicked in the "seen this session" list, to append to
         // the Streams field after the UI closure.
         let mut append_stream: Option<String> = None;
+        // Global target_list.* keys edited this frame; applied and persisted
+        // after the UI closure (the closure only borrows self immutably).
+        let mut changed_global: Vec<&'static str> = Vec::new();
         // Snapshot outside the closure: the closure borrows self immutably.
         let seen_streams = if state.supports_streams {
             self.app_core.message_processor.seen_streams()
@@ -874,6 +942,190 @@ impl VellumGuiApp {
                             ui.end_row();
                         }
                     });
+
+                // Vitals bar options (moved from Settings > GUI). Buffered
+                // like every other field here; written back on Save.
+                if let Some(vitals) = state.vitals.as_mut() {
+                    use crate::frontend::gui::persistence::{
+                        VitalKind, VitalsOrientation, VitalsTextFormat,
+                    };
+                    ui.separator();
+                    ui.strong("Vitals");
+                    ui.weak("Saved per character with the GUI layout.");
+                    egui::Grid::new("window_editor_vitals_grid")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            ui.label("Layout");
+                            egui::ComboBox::from_id_salt("window_editor_vitals_orientation")
+                                .selected_text(match vitals.orientation {
+                                    VitalsOrientation::Horizontal => "One row",
+                                    VitalsOrientation::Vertical => "Stacked",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(
+                                        &mut vitals.orientation,
+                                        VitalsOrientation::Horizontal,
+                                        "One row",
+                                    );
+                                    ui.selectable_value(
+                                        &mut vitals.orientation,
+                                        VitalsOrientation::Vertical,
+                                        "Stacked",
+                                    );
+                                });
+                            ui.end_row();
+                            ui.label("Bar height");
+                            ui.add(
+                                egui::Slider::new(&mut vitals.bar_height, 8.0..=60.0)
+                                    .step_by(1.0),
+                            );
+                            ui.end_row();
+                            ui.label("Bar text");
+                            egui::ComboBox::from_id_salt("window_editor_vitals_text")
+                                .selected_text(match vitals.text_format {
+                                    VitalsTextFormat::LabelValueMax => "Health: 191/193",
+                                    VitalsTextFormat::LabelPercent => "Health: 99%",
+                                    VitalsTextFormat::ValueMax => "191/193",
+                                    VitalsTextFormat::Percent => "99%",
+                                    VitalsTextFormat::None => "No text",
+                                })
+                                .show_ui(ui, |ui| {
+                                    for (format, label) in [
+                                        (VitalsTextFormat::LabelValueMax, "Health: 191/193"),
+                                        (VitalsTextFormat::LabelPercent, "Health: 99%"),
+                                        (VitalsTextFormat::ValueMax, "191/193"),
+                                        (VitalsTextFormat::Percent, "99%"),
+                                        (VitalsTextFormat::None, "No text"),
+                                    ] {
+                                        ui.selectable_value(
+                                            &mut vitals.text_format,
+                                            format,
+                                            label,
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+                        });
+                    ui.label("Bars shown:");
+                    let bars = &mut vitals.bars;
+                    for kind in VitalKind::all() {
+                        let mut enabled = bars.contains(&kind);
+                        if ui.checkbox(&mut enabled, kind.label()).changed() {
+                            if enabled {
+                                bars.push(kind);
+                                // Keep display order canonical regardless of
+                                // toggle order.
+                                bars.sort_by_key(|entry| {
+                                    VitalKind::all()
+                                        .iter()
+                                        .position(|k| k == entry)
+                                        .unwrap_or(usize::MAX)
+                                });
+                            } else {
+                                bars.retain(|entry| entry != &kind);
+                            }
+                        }
+                    }
+                }
+
+                // Global targets settings (moved from Settings > Targets).
+                // These edit config.target_list through the settings
+                // registry and apply/persist on change, not on Save.
+                if let Some(globals) = state.targets_global.as_mut() {
+                    ui.separator();
+                    ui.strong("Targets (global)");
+                    ui.weak(
+                        "These apply to target parsing/display everywhere, \
+                         not just this window.",
+                    );
+                    let input_height = ui.spacing().interact_size.y;
+                    egui::Grid::new("window_editor_targets_global_grid")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            for (key, draft) in [
+                                (
+                                    "target_list.status_position",
+                                    &mut globals.status_position,
+                                ),
+                                (
+                                    "target_list.truncation_mode",
+                                    &mut globals.truncation_mode,
+                                ),
+                            ] {
+                                let Some(def) = registry::find(key) else {
+                                    continue;
+                                };
+                                ui.label(def.label).on_hover_text(def.description);
+                                if let SettingKind::Enum { options } = &def.kind {
+                                    let mut changed = false;
+                                    egui::ComboBox::from_id_salt((
+                                        "window_editor_targets_global",
+                                        key,
+                                    ))
+                                    .selected_text(draft.clone())
+                                    .show_ui(ui, |ui| {
+                                        for option in *options {
+                                            changed |= ui
+                                                .selectable_value(
+                                                    draft,
+                                                    option.to_string(),
+                                                    *option,
+                                                )
+                                                .changed();
+                                        }
+                                    });
+                                    if changed {
+                                        changed_global.push(key);
+                                    }
+                                }
+                                ui.end_row();
+                            }
+                            {
+                                let key = "target_list.excluded_nouns";
+                                if let Some(def) = registry::find(key) {
+                                    ui.label(def.label).on_hover_text(def.description);
+                                    if ui
+                                        .add_sized(
+                                            [260.0, input_height * 3.6],
+                                            egui::TextEdit::multiline(
+                                                &mut globals.excluded_nouns,
+                                            )
+                                            .desired_rows(3),
+                                        )
+                                        .on_hover_text("one entry per line")
+                                        .changed()
+                                    {
+                                        changed_global.push(key);
+                                    }
+                                    ui.end_row();
+                                }
+                            }
+                            for (key, draft) in [
+                                ("target_list.boss_color", &mut globals.boss_color),
+                                (
+                                    "target_list.challenging_color",
+                                    &mut globals.challenging_color,
+                                ),
+                            ] {
+                                let Some(def) = registry::find(key) else {
+                                    continue;
+                                };
+                                ui.label(def.label).on_hover_text(def.description);
+                                if ui
+                                    .add_sized(
+                                        [260.0, input_height],
+                                        egui::TextEdit::singleline(draft),
+                                    )
+                                    .on_hover_text("empty = unset")
+                                    .changed()
+                                {
+                                    changed_global.push(key);
+                                }
+                                ui.end_row();
+                            }
+                        });
+                }
+
                 if state.supports_streams {
                     ui.weak("Comma-separated stream ids (e.g. main, speech, thoughts).");
                     if !seen_streams.is_empty() {
@@ -1006,6 +1258,58 @@ impl VellumGuiApp {
 
         if let Some(id) = append_stream {
             append_stream_id(&mut state.streams, &id);
+        }
+
+        // Apply the global targets edits: write through the registry setter
+        // and persist each changed key sparsely at character scope (the GUI
+        // default elsewhere).
+        if !changed_global.is_empty() {
+            if let Some(globals) = &state.targets_global {
+                changed_global.sort_unstable();
+                changed_global.dedup();
+                let character = self.app_core.config.character.clone();
+                for key in changed_global {
+                    let Some(def) = registry::find(key) else {
+                        continue;
+                    };
+                    let value = match key {
+                        "target_list.status_position" => {
+                            SettingValue::Text(globals.status_position.clone())
+                        }
+                        "target_list.truncation_mode" => {
+                            SettingValue::Text(globals.truncation_mode.clone())
+                        }
+                        "target_list.excluded_nouns" => SettingValue::List(
+                            globals
+                                .excluded_nouns
+                                .lines()
+                                .map(str::trim)
+                                .filter(|line| !line.is_empty())
+                                .map(str::to_string)
+                                .collect(),
+                        ),
+                        "target_list.boss_color" => {
+                            SettingValue::Text(globals.boss_color.trim().to_string())
+                        }
+                        "target_list.challenging_color" => {
+                            SettingValue::Text(globals.challenging_color.trim().to_string())
+                        }
+                        _ => continue,
+                    };
+                    if let Err(err) = (def.set)(&mut self.app_core.config, &value) {
+                        state.error = Some(format!("{key}: {err}"));
+                        continue;
+                    }
+                    if let Err(err) = self.app_core.config.save_single_setting(
+                        key,
+                        false,
+                        character.as_deref(),
+                    ) {
+                        state.error = Some(format!("{key}: {err}"));
+                    }
+                }
+                self.app_core.needs_render = true;
+            }
         }
 
         match load_request.as_deref() {

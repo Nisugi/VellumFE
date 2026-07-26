@@ -5,10 +5,13 @@
 //! per-key Global/Character scope choice.
 //!
 //! Bespoke (non-registry) sections kept alongside the generated rows:
-//! GUI sizing + the Vitals window (per-character GUI layout file, not
-//! config.toml), the Map download button/status, skin management actions,
-//! the TTS test button, and pronunciation substitutions (registry-exempt
-//! structured data).
+//! GUI sizing (per-character GUI layout file, not config.toml), the Map
+//! download button/status, skin management actions, the TTS test button,
+//! and pronunciation substitutions (registry-exempt structured data).
+//!
+//! Widget-shaped settings moved to the Window Editor (editors/windows.rs),
+//! next to the window they configure: the Vitals bar options and the
+//! global Targets category.
 
 use super::super::VellumGuiApp;
 use crate::config::registry::{self, SettingDef, SettingKind, SettingScope, SettingValue};
@@ -116,17 +119,28 @@ fn changed_keys(
         .collect()
 }
 
-/// All categories present in the registry, in display order.
+/// Categories deliberately NOT rendered by this GUI Settings window: their
+/// settings are edited in the Window Editor (editors/windows.rs) next to
+/// the window they configure. Targets lives in the Window Editor's
+/// "Targets (global)" section on any targets window. The TUI settings
+/// editor still shows these categories.
+const CATEGORIES_IN_WINDOW_EDITOR: &[&str] = &["Targets"];
+
+/// All categories present in the registry, in display order (minus those
+/// the Window Editor owns in the GUI).
 fn ordered_categories() -> Vec<&'static str> {
     let mut categories: Vec<&'static str> = CATEGORY_ORDER
         .iter()
         .copied()
+        .filter(|cat| !CATEGORIES_IN_WINDOW_EDITOR.contains(cat))
         .filter(|cat| registry::registry().iter().any(|def| def.category == *cat))
         .collect();
     let mut extras: Vec<&'static str> = registry::registry()
         .iter()
         .map(|def| def.category)
-        .filter(|cat| !CATEGORY_ORDER.contains(cat))
+        .filter(|cat| {
+            !CATEGORY_ORDER.contains(cat) && !CATEGORIES_IN_WINDOW_EDITOR.contains(cat)
+        })
         .collect();
     extras.sort_unstable();
     extras.dedup();
@@ -396,8 +410,10 @@ fn category_intro(category: &str) -> Option<&'static str> {
     }
 }
 
-/// Bespoke GUI sizing + Vitals section (per-character GUI layout file, not
-/// config.toml). Kept exactly as the previous editor rendered it.
+/// Bespoke GUI sizing section (per-character GUI layout file, not
+/// config.toml). The Vitals bar options that used to follow this grid moved
+/// to the Window Editor (editors/windows.rs), rendered when editing the
+/// vitals window itself.
 fn render_gui_section(
     ui: &mut egui::Ui,
     gui_settings: &mut crate::frontend::gui::persistence::GuiUiSettings,
@@ -442,78 +458,11 @@ fn render_gui_section(
             );
         ui.end_row();
     });
-
-    ui.separator();
-    ui.label("Vitals window");
-    egui::Grid::new("settings_vitals_grid").num_columns(2).show(ui, |ui| {
-        use crate::frontend::gui::persistence::{VitalsOrientation, VitalsTextFormat};
-        let vitals = &mut gui_settings.vitals;
-        ui.label("Layout");
-        egui::ComboBox::from_id_salt("settings_vitals_orientation")
-            .selected_text(match vitals.orientation {
-                VitalsOrientation::Horizontal => "One row",
-                VitalsOrientation::Vertical => "Stacked",
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(
-                    &mut vitals.orientation,
-                    VitalsOrientation::Horizontal,
-                    "One row",
-                );
-                ui.selectable_value(
-                    &mut vitals.orientation,
-                    VitalsOrientation::Vertical,
-                    "Stacked",
-                );
-            });
-        ui.end_row();
-        ui.label("Bar height");
-        ui.add(egui::Slider::new(&mut vitals.bar_height, 8.0..=60.0).step_by(1.0));
-        ui.end_row();
-        ui.label("Bar text");
-        egui::ComboBox::from_id_salt("settings_vitals_text")
-            .selected_text(match vitals.text_format {
-                VitalsTextFormat::LabelValueMax => "Health: 191/193",
-                VitalsTextFormat::LabelPercent => "Health: 99%",
-                VitalsTextFormat::ValueMax => "191/193",
-                VitalsTextFormat::Percent => "99%",
-                VitalsTextFormat::None => "No text",
-            })
-            .show_ui(ui, |ui| {
-                for (format, label) in [
-                    (VitalsTextFormat::LabelValueMax, "Health: 191/193"),
-                    (VitalsTextFormat::LabelPercent, "Health: 99%"),
-                    (VitalsTextFormat::ValueMax, "191/193"),
-                    (VitalsTextFormat::Percent, "99%"),
-                    (VitalsTextFormat::None, "No text"),
-                ] {
-                    ui.selectable_value(&mut vitals.text_format, format, label);
-                }
-            });
-        ui.end_row();
-    });
-    ui.label("Bars shown:");
-    {
-        use crate::frontend::gui::persistence::VitalKind;
-        let bars = &mut gui_settings.vitals.bars;
-        for kind in VitalKind::all() {
-            let mut enabled = bars.contains(&kind);
-            if ui.checkbox(&mut enabled, kind.label()).changed() {
-                if enabled {
-                    bars.push(kind);
-                    // Keep display order canonical regardless of toggle order.
-                    bars.sort_by_key(|entry| {
-                        VitalKind::all()
-                            .iter()
-                            .position(|k| k == entry)
-                            .unwrap_or(usize::MAX)
-                    });
-                } else {
-                    bars.retain(|entry| entry != &kind);
-                }
-            }
-        }
-    }
+    ui.weak(
+        "Vitals bar options (layout, height, text, bars shown) moved to the \
+         vitals window's own editor: right-click the Vitals window and \
+         choose Edit Window.",
+    );
 }
 
 impl VellumGuiApp {
@@ -994,8 +943,13 @@ impl VellumGuiApp {
             }
 
             // GUI sizing lives in the per-character layout file; force the
-            // zoom/title-bar values to re-apply on the next frame.
+            // zoom/title-bar values to re-apply on the next frame. Vitals
+            // options are edited in the Window Editor now — preserve the
+            // live values rather than restoring this editor's stale
+            // open-time snapshot.
+            let vitals = self.ui_settings.vitals.clone();
             self.ui_settings = state.gui_settings.clone();
+            self.ui_settings.vitals = vitals;
             self.zoom_applied = false;
             self.applied_title_font_size = None;
             self.applied_density = None;
@@ -1092,12 +1046,30 @@ mod tests {
 
     #[test]
     fn ordered_categories_cover_the_whole_registry() {
+        // Every category is rendered by this editor EXCEPT the ones the
+        // Window Editor owns in the GUI (Targets, deliberately: its global
+        // settings live in the "Targets (global)" section of any targets
+        // window's editor).
         let categories = ordered_categories();
         for def in registry::registry() {
+            if CATEGORIES_IN_WINDOW_EDITOR.contains(&def.category) {
+                continue;
+            }
             assert!(
                 categories.contains(&def.category),
                 "category {} missing from ordered_categories()",
                 def.category
+            );
+        }
+        assert!(
+            !categories.contains(&"Targets"),
+            "Targets is edited in the Window Editor, not the GUI Settings window"
+        );
+        // The exclusion list only names categories that actually exist.
+        for excluded in CATEGORIES_IN_WINDOW_EDITOR {
+            assert!(
+                registry::registry().iter().any(|def| def.category == *excluded),
+                "excluded category {excluded} is not in the registry"
             );
         }
         // No duplicates.
