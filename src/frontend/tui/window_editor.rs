@@ -2895,6 +2895,14 @@ impl WindowEditor {
         true
     }
 
+    /// Replace the Streams field wholesale. Used by the `.streams` menu's
+    /// "New window on this stream" flow so template default streams don't
+    /// linger next to the pre-filled id.
+    pub fn set_streams_field(&mut self, streams: &str) {
+        self.streams_input = Self::create_textarea();
+        self.streams_input.insert_str(streams);
+    }
+
     /// Append a stream id to the Streams field's comma-separated list, skipping
     /// duplicates (case-insensitive). Mirrors the GUI `append_stream_id` helper.
     fn append_stream_to_field(&mut self, id: &str) {

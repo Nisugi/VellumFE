@@ -90,6 +90,86 @@ pub fn handle_menu_action(
     } else if let Some(window_name) = command.strip_prefix("action:hidewindow:") {
         // Hide a visible window
         app_core.hide_window(window_name);
+    } else if let Some(stream) = command.strip_prefix("action:streamacts:") {
+        // Per-stream route actions submenu. Rebuild the streams list under it
+        // first: the mouse path closes every menu before dispatching actions.
+        let stream = stream.to_string();
+        open_streams_menu(app_core, Some(&stream));
+        let items = menu_builders::build_stream_actions_menu(app_core, &stream);
+        let parent_pos = app_core
+            .ui_state
+            .popup_menu
+            .as_ref()
+            .map(|m| m.get_position())
+            .unwrap_or((40, 12));
+        app_core.ui_state.submenu = Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+    } else if let Some(stream) = command.strip_prefix("action:streamwin:") {
+        // "Send to window..." picker (level 3), with its parent menus rebuilt.
+        let stream = stream.to_string();
+        open_streams_menu(app_core, Some(&stream));
+        let parent_pos = app_core
+            .ui_state
+            .popup_menu
+            .as_ref()
+            .map(|m| m.get_position())
+            .unwrap_or((40, 12));
+        let actions = menu_builders::build_stream_actions_menu(app_core, &stream);
+        app_core.ui_state.submenu =
+            Some(PopupMenu::new(actions, (parent_pos.0 + 2, parent_pos.1)));
+        let windows = menu_builders::build_stream_window_menu(app_core, &stream);
+        app_core.ui_state.nested_submenu =
+            Some(PopupMenu::new(windows, (parent_pos.0 + 4, parent_pos.1)));
+    } else if let Some(rest) = command.strip_prefix("action:streamroute:") {
+        // Route the stream to main/discard, or clear back to the fallback.
+        let (kind, stream) = rest.split_once(':').unwrap_or((rest, ""));
+        let route = match kind {
+            "main" => Some(Some(crate::config::StreamRoute::Main)),
+            "discard" => Some(Some(crate::config::StreamRoute::Discard)),
+            "clear" => Some(None),
+            _ => None,
+        };
+        match route {
+            Some(route) if !stream.is_empty() => {
+                let stream = stream.to_string();
+                // Route actions orphan the stream first (a subscription would
+                // always win over the route) — same as the GUI Streams panel.
+                remove_stream_from_text_windows(app_core, &stream, None);
+                if let Err(err) = set_stream_route(app_core, &stream, route) {
+                    app_core.add_system_message(&err);
+                }
+                open_streams_menu(app_core, Some(&stream));
+            }
+            _ => tracing::warn!("Malformed stream route action: {}", command),
+        }
+    } else if let Some(rest) = command.strip_prefix("action:streamsub:") {
+        // Subscribe an existing text window to the stream (moving it from any
+        // other text window). Any route entry stays as the orphan policy.
+        if let Some((window, stream)) = rest.split_once(':') {
+            let (window, stream) = (window.to_string(), stream.to_string());
+            remove_stream_from_text_windows(app_core, &stream, Some(&window));
+            if let Err(err) = add_stream_to_text_window(app_core, &window, &stream) {
+                app_core.add_system_message(&err);
+            }
+            open_streams_menu(app_core, Some(&stream));
+        } else {
+            tracing::warn!("Malformed stream subscribe action: {}", command);
+        }
+    } else if let Some(stream) = command.strip_prefix("action:streamnew:") {
+        // Existing create-custom-window flow with the streams field pre-filled.
+        if frontend.window_editor.is_some() {
+            tracing::debug!("Window editor already open, ignoring streamnew request");
+        } else {
+            let mut editor =
+                crate::frontend::tui::window_editor::WindowEditor::new_window_with_layout(
+                    "text_custom".to_string(),
+                    &app_core.layout,
+                );
+            editor.set_streams_field(stream);
+            frontend.window_editor = Some(editor);
+            close_all_menus(&mut app_core.ui_state);
+            app_core.ui_state.input_mode = InputMode::WindowEditor;
+            app_core.needs_render = true;
+        }
     } else {
         match command {
             "action:addwindow" => {
@@ -191,6 +271,12 @@ pub fn handle_menu_action(
                 // Close menus so focus moves to the browser
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::KeybindBrowser;
+            }
+            "action:streams" => {
+                // Open the streams routing menu (every known stream and where
+                // it goes) — the TUI mirror of the GUI Streams panel.
+                close_all_menus(&mut app_core.ui_state);
+                open_streams_menu(app_core, None);
             }
             "action:hotbars" => {
                 // Open the hotbar editor (bars -> buttons -> button form)
@@ -396,5 +482,133 @@ pub fn handle_menu_action(
             }
         }
     }
+    Ok(())
+}
+
+// ---- Streams routing helpers (.streams menu) ------------------------------
+//
+// These mirror the GUI Streams panel's semantics: subscription edits sync the
+// layout definition (or they are lost on restart) and rebuild the routing
+// cache; route edits persist through the sparse config save and are pushed
+// into the live message processor.
+
+/// Rebuild and show the streams list menu (level 1), optionally keeping the
+/// selection on one stream. Deeper levels are cleared; callers reopen them.
+fn open_streams_menu(app_core: &mut AppCore, select: Option<&str>) {
+    let items = menu_builders::build_streams_menu(app_core);
+    let mut menu = PopupMenu::new(items, (40, 12));
+    if let Some(stream) = select {
+        let target = format!("action:streamacts:{}", stream);
+        if let Some(idx) = menu.items.iter().position(|item| item.command == target) {
+            menu.selected = idx;
+        }
+    }
+    app_core.ui_state.popup_menu = Some(menu);
+    app_core.ui_state.submenu = None;
+    app_core.ui_state.nested_submenu = None;
+    app_core.ui_state.input_mode = InputMode::Menu;
+    app_core.needs_render = true;
+}
+
+/// Mirror a text window's live stream list into its layout definition so the
+/// change survives a restart (same fix the Window Editor carries).
+fn sync_text_streams_to_layout(app_core: &mut AppCore, name: &str, streams: Vec<String>) {
+    if let Some(crate::config::WindowDef::Text { data, .. }) = app_core
+        .layout
+        .windows
+        .iter_mut()
+        .find(|w| w.name() == name)
+    {
+        data.streams = streams;
+        app_core.layout_modified_since_save = true;
+    }
+}
+
+/// Remove `stream` from every plain Text window's stream list except `keep`,
+/// syncing layout definitions and the routing cache.
+fn remove_stream_from_text_windows(app_core: &mut AppCore, stream: &str, keep: Option<&str>) {
+    let mut changed: Vec<(String, Vec<String>)> = Vec::new();
+    for (name, window) in app_core.ui_state.windows.iter_mut() {
+        if keep == Some(name.as_str()) {
+            continue;
+        }
+        // Only plain Text widgets: tabbed tabs and built-in inventory-type
+        // widgets are Window Editor territory (their rows are read-only here).
+        let crate::data::WindowContent::Text(text) = &mut window.content else {
+            continue;
+        };
+        let before = text.streams.len();
+        text.streams
+            .retain(|s| !s.trim().eq_ignore_ascii_case(stream));
+        if text.streams.len() != before {
+            changed.push((name.clone(), text.streams.clone()));
+        }
+    }
+    if changed.is_empty() {
+        return;
+    }
+    for (name, streams) in changed {
+        sync_text_streams_to_layout(app_core, &name, streams);
+    }
+    app_core
+        .message_processor
+        .update_text_stream_subscribers(&app_core.ui_state);
+    app_core.needs_render = true;
+}
+
+/// Subscribe an existing Text window to `stream` (no-op when already
+/// subscribed), syncing the layout definition and the routing cache.
+fn add_stream_to_text_window(
+    app_core: &mut AppCore,
+    name: &str,
+    stream: &str,
+) -> Result<(), String> {
+    let streams = {
+        let window = app_core
+            .ui_state
+            .windows
+            .get_mut(name)
+            .ok_or_else(|| format!("Window '{}' no longer exists.", name))?;
+        let crate::data::WindowContent::Text(text) = &mut window.content else {
+            return Err(format!("Window '{}' is not a text window.", name));
+        };
+        if !text
+            .streams
+            .iter()
+            .any(|s| s.trim().eq_ignore_ascii_case(stream))
+        {
+            text.streams.push(stream.to_string());
+        }
+        text.streams.clone()
+    };
+    sync_text_streams_to_layout(app_core, name, streams);
+    app_core
+        .message_processor
+        .update_text_stream_subscribers(&app_core.ui_state);
+    app_core.needs_render = true;
+    Ok(())
+}
+
+/// Set (or clear, with `None`) the `[streams.routes]` entry for a stream,
+/// persist it via the sparse profile save, and push the new config into the
+/// message processor (which routes from its own copy).
+fn set_stream_route(
+    app_core: &mut AppCore,
+    stream: &str,
+    route: Option<crate::config::StreamRoute>,
+) -> Result<(), String> {
+    let routes = &mut app_core.config.streams.routes;
+    // Replace any existing entry regardless of letter case (route lookup is
+    // case-insensitive, so near-duplicates would shadow each other).
+    routes.retain(|id, _| !id.eq_ignore_ascii_case(stream));
+    if let Some(route) = route {
+        routes.insert(stream.to_string(), route);
+    }
+    app_core
+        .save_config()
+        .map_err(|err| format!("Failed to save config: {}", err))?;
+    let config = app_core.config.clone();
+    app_core.message_processor.apply_config(config);
+    app_core.needs_render = true;
     Ok(())
 }

@@ -3816,6 +3816,11 @@ impl AppCore {
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
+                text: "Streams".to_string(),
+                command: ".streams".to_string(),
+                disabled: false,
+            },
+            crate::data::ui_state::PopupMenuItem {
                 text: "Windows >".to_string(),
                 command: "__SUBMENU__windows".to_string(),
                 disabled: false,

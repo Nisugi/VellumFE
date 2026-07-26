@@ -3,9 +3,13 @@
 //! Constructs menu items for various popup menus in the TUI.
 
 use crate::config;
+use crate::config::StreamRoute;
+use crate::core::messages::{route_for, RouteDecision};
 use crate::core::AppCore;
 use crate::data::ui_state::PopupMenuItem;
+use crate::data::WindowContent;
 use crate::frontend::tui::settings_editor::{tui_value_for, SettingItem};
+use std::collections::BTreeMap;
 
 /// Build configuration submenu
 pub fn build_config_submenu() -> Vec<PopupMenuItem> {
@@ -118,6 +122,226 @@ pub fn build_hidewindow_picker(app_core: &AppCore) -> Vec<PopupMenuItem> {
     items
 }
 
+// ---- Streams routing menus (.streams) ------------------------------------
+
+/// Human label for a stream's EFFECTIVE destination, mirroring the GUI
+/// Streams panel: subscriber window ("name", "name +2"), else the
+/// `[streams.routes]` entry ("Main", "Discard", window name), else
+/// "fallback (<name>)". Precedence semantics come from `route_for`; only the
+/// label strings are duplicated from the GUI.
+pub fn stream_destination_label(
+    subscribers: &[String],
+    stream_id: &str,
+    routes: &BTreeMap<String, StreamRoute>,
+    fallback: &str,
+) -> String {
+    match route_for(stream_id, !subscribers.is_empty(), routes, fallback) {
+        RouteDecision::Subscribed => match subscribers.split_first() {
+            Some((first, [])) => first.clone(),
+            Some((first, rest)) => format!("{} +{}", first, rest.len()),
+            // Unreachable: Subscribed implies at least one subscriber.
+            None => format!("fallback ({})", fallback),
+        },
+        RouteDecision::Discard => "Discard".to_string(),
+        RouteDecision::Deliver { .. } => {
+            // Deliver flattens "explicit route" vs "fallback" into candidate
+            // windows; disambiguate for display by consulting the route entry
+            // the same way route_for does (case-insensitive).
+            let route = routes
+                .iter()
+                .find(|(id, _)| id.eq_ignore_ascii_case(stream_id))
+                .map(|(_, route)| route);
+            match route {
+                Some(StreamRoute::Main) => "Main".to_string(),
+                Some(StreamRoute::Window(name)) => name.clone(),
+                Some(StreamRoute::Discard) | None => format!("fallback ({})", fallback),
+            }
+        }
+    }
+}
+
+/// Union stream ids from routes, layout window subscriptions, and streams
+/// seen this session: trim, drop empties, de-duplicate case-insensitively
+/// (first spelling wins), sort alphabetically. Mirrors the GUI panel's union.
+fn known_stream_ids(app_core: &AppCore) -> Vec<String> {
+    let mut layout_streams: Vec<String> = Vec::new();
+    for def in &app_core.layout.windows {
+        match def {
+            config::WindowDef::Text { data, .. } => {
+                layout_streams.extend(data.streams.iter().cloned());
+            }
+            config::WindowDef::Inventory { data, .. }
+            | config::WindowDef::Reserve { data, .. } => {
+                layout_streams.extend(data.streams.iter().cloned());
+            }
+            config::WindowDef::TabbedText { data, .. } => {
+                for tab in &data.tabs {
+                    layout_streams.extend(tab.get_streams());
+                }
+            }
+            _ => {}
+        }
+    }
+    let seen = app_core.message_processor.seen_streams();
+    let mut out: Vec<String> = Vec::new();
+    for id in app_core
+        .config
+        .streams
+        .routes
+        .keys()
+        .map(String::as_str)
+        .chain(layout_streams.iter().map(String::as_str))
+        .chain(seen.iter().map(|(id, _)| id.as_str()))
+    {
+        let id = id.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if !out.iter().any(|s| s.eq_ignore_ascii_case(id)) {
+            out.push(id.to_string());
+        }
+    }
+    out.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+    out
+}
+
+/// Build the `.streams` list menu: every known stream and its effective
+/// destination. Selecting a row opens the per-stream route actions submenu.
+/// Streams bound by a non-Text widget (tabbed tab, built-in) are read-only
+/// here — that binding is edited in the Window Editor, matching the GUI.
+pub fn build_streams_menu(app_core: &AppCore) -> Vec<PopupMenuItem> {
+    let routes = &app_core.config.streams.routes;
+    let fallback = &app_core.config.streams.fallback;
+    let mut items: Vec<PopupMenuItem> = known_stream_ids(app_core)
+        .into_iter()
+        .map(|id| {
+            let subscribers = app_core.message_processor.get_stream_subscribers(&id);
+            let editable = subscribers.iter().all(|name| {
+                matches!(
+                    app_core.ui_state.windows.get(name).map(|w| &w.content),
+                    Some(WindowContent::Text(_))
+                )
+            });
+            let label = stream_destination_label(subscribers, &id, routes, fallback);
+            if editable {
+                PopupMenuItem {
+                    text: format!("{} → {}", id, label),
+                    command: format!("action:streamacts:{}", id),
+                    disabled: false,
+                }
+            } else {
+                PopupMenuItem {
+                    text: format!("{} → {}  (edit in Window Editor)", id, label),
+                    command: String::new(),
+                    disabled: true,
+                }
+            }
+        })
+        .collect();
+    if items.is_empty() {
+        items.push(PopupMenuItem {
+            text: "No streams known yet".to_string(),
+            command: String::new(),
+            disabled: true,
+        });
+    }
+    items
+}
+
+/// Route actions for one stream. `[✓]` marks the current orphan policy; no
+/// mark while a subscription overrides it (routes apply only when no window
+/// subscribes, and picking one orphans the stream first — GUI semantics).
+pub fn build_stream_actions_menu(app_core: &AppCore, stream: &str) -> Vec<PopupMenuItem> {
+    let fallback = &app_core.config.streams.fallback;
+    let has_sub = !app_core
+        .message_processor
+        .get_stream_subscribers(stream)
+        .is_empty();
+    let route = app_core
+        .config
+        .streams
+        .routes
+        .iter()
+        .find(|(id, _)| id.eq_ignore_ascii_case(stream))
+        .map(|(_, route)| route);
+    let check = |on: bool| if on { "✓" } else { " " };
+    vec![
+        PopupMenuItem {
+            text: "Send to window...".to_string(),
+            command: format!("action:streamwin:{}", stream),
+            disabled: false,
+        },
+        PopupMenuItem {
+            text: format!(
+                "[{}] Route to Main",
+                check(!has_sub && matches!(route, Some(StreamRoute::Main)))
+            ),
+            command: format!("action:streamroute:main:{}", stream),
+            disabled: false,
+        },
+        PopupMenuItem {
+            text: format!(
+                "[{}] Route to Discard",
+                check(!has_sub && matches!(route, Some(StreamRoute::Discard)))
+            ),
+            command: format!("action:streamroute:discard:{}", stream),
+            disabled: false,
+        },
+        PopupMenuItem {
+            text: format!(
+                "[{}] Clear route (fallback: {})",
+                check(!has_sub && route.is_none()),
+                fallback
+            ),
+            command: format!("action:streamroute:clear:{}", stream),
+            disabled: false,
+        },
+        PopupMenuItem {
+            text: "New window on this stream...".to_string(),
+            command: format!("action:streamnew:{}", stream),
+            disabled: false,
+        },
+    ]
+}
+
+/// Window picker for "Send to window...": every plain Text window, `[✓]` on
+/// the current first subscriber.
+pub fn build_stream_window_menu(app_core: &AppCore, stream: &str) -> Vec<PopupMenuItem> {
+    let current = app_core
+        .message_processor
+        .get_stream_subscribers(stream)
+        .first()
+        .cloned();
+    let mut names: Vec<String> = app_core
+        .ui_state
+        .windows
+        .iter()
+        .filter(|(_, w)| matches!(w.content, WindowContent::Text(_)))
+        .map(|(name, _)| name.clone())
+        .collect();
+    names.sort_by_key(|name| name.to_ascii_lowercase());
+    let mut items: Vec<PopupMenuItem> = names
+        .into_iter()
+        .map(|name| PopupMenuItem {
+            text: format!(
+                "[{}] {}",
+                if Some(&name) == current.as_ref() { "✓" } else { " " },
+                name
+            ),
+            command: format!("action:streamsub:{}:{}", name, stream),
+            disabled: false,
+        })
+        .collect();
+    if items.is_empty() {
+        items.push(PopupMenuItem {
+            text: "No text windows in this layout".to_string(),
+            command: String::new(),
+            disabled: true,
+        });
+    }
+    items
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +401,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---- Stream destination labels (mirrors GUI Streams panel strings) ----
+
+    fn routes(entries: &[(&str, StreamRoute)]) -> BTreeMap<String, StreamRoute> {
+        entries
+            .iter()
+            .map(|(id, route)| (id.to_string(), route.clone()))
+            .collect()
+    }
+
+    fn subs(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn label_subscribed_window_beats_any_route() {
+        let map = routes(&[("bounty", StreamRoute::Discard)]);
+        let label = stream_destination_label(&subs(&["bounty_win"]), "bounty", &map, "main");
+        assert_eq!(label, "bounty_win");
+    }
+
+    #[test]
+    fn label_counts_extra_subscribers() {
+        let label = stream_destination_label(&subs(&["a", "b", "c"]), "notes", &routes(&[]), "main");
+        assert_eq!(label, "a +2");
+    }
+
+    #[test]
+    fn label_shows_routes_case_insensitively() {
+        let map = routes(&[
+            ("speech", StreamRoute::Discard),
+            ("ooc", StreamRoute::Main),
+            ("bounty", StreamRoute::Window("bounty_win".to_string())),
+        ]);
+        assert_eq!(stream_destination_label(&[], "SPEECH", &map, "main"), "Discard");
+        assert_eq!(stream_destination_label(&[], "ooc", &map, "main"), "Main");
+        assert_eq!(stream_destination_label(&[], "Bounty", &map, "main"), "bounty_win");
+    }
+
+    #[test]
+    fn label_unrouted_stream_is_fallback() {
+        let label = stream_destination_label(&[], "bounty", &routes(&[]), "story");
+        assert_eq!(label, "fallback (story)");
     }
 }

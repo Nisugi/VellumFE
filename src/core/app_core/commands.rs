@@ -845,6 +845,10 @@ impl AppCore {
             "hotbars" | "hotbar" => {
                 return Ok("action:hotbars".to_string());
             }
+            // Streams (per-stream routing: every known stream and where it goes)
+            "streams" => {
+                return Ok("action:streams".to_string());
+            }
             "addkeybind" | "addkey" => {
                 return Ok("action:addkeybind".to_string());
             }
@@ -1381,6 +1385,7 @@ mod tests {
             }
             "keybinds" | "kb" => Some("action:keybinds".to_string()),
             "hotbars" | "hotbar" => Some("action:hotbars".to_string()),
+            "streams" => Some("action:streams".to_string()),
             "addkeybind" | "addkey" => Some("action:addkeybind".to_string()),
             "colors" | "colorpalette" => Some("action:colors".to_string()),
             "addcolor" | "createcolor" => Some("action:addcolor".to_string()),
@@ -1455,6 +1460,15 @@ mod tests {
         assert_eq!(
             get_expected_action(&cmd, &args),
             Some("action:keybinds".to_string())
+        );
+    }
+
+    #[test]
+    fn test_action_streams() {
+        let (cmd, args) = parse_dot_command(".streams");
+        assert_eq!(
+            get_expected_action(&cmd, &args),
+            Some("action:streams".to_string())
         );
     }
 
