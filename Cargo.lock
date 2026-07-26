@@ -5025,7 +5025,7 @@ dependencies = [
 
 [[package]]
 name = "vellum-android"
-version = "0.3.0-beta.10"
+version = "0.3.0-beta.11"
 dependencies = [
  "android_logger",
  "jni 0.21.1",
@@ -5036,7 +5036,7 @@ dependencies = [
 
 [[package]]
 name = "vellum-fe"
-version = "0.3.0-beta.10"
+version = "0.3.0-beta.11"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -5086,7 +5086,7 @@ dependencies = [
 
 [[package]]
 name = "vellum-ios"
-version = "0.3.0-beta.10"
+version = "0.3.0-beta.11"
 dependencies = [
  "log",
  "oslog",
