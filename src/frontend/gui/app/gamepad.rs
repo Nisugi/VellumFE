@@ -155,12 +155,14 @@ impl VellumGuiApp {
         use gilrs::Button;
 
         // While interact mode or a popup menu is up, the d-pad and the
-        // confirm/cancel face buttons are fixed navigation keys.
+        // confirm/cancel face buttons are fixed navigation keys — unless
+        // the shift button is held, which always means "the other bank".
+        let shift_held = self.gamepad_shift_held();
         let modal = matches!(
             self.app_core.ui_state.input_mode,
             InputMode::Interact | InputMode::Menu
         );
-        if modal {
+        if modal && !shift_held {
             let code = match button {
                 Button::DPadUp => Some(KeyCode::Up),
                 Button::DPadDown => Some(KeyCode::Down),
@@ -182,10 +184,74 @@ impl VellumGuiApp {
         let Some(name) = gamepad_button_name(button) else {
             return;
         };
+        if shift_held {
+            // Shift layer: strictly the [controller_shift] table (no
+            // fall-through — holding shift means "the other bank").
+            if let Some(binding) = self
+                .app_core
+                .config
+                .controller_shift_binds
+                .get(name)
+                .cloned()
+            {
+                self.execute_macro_keybind(&binding, ctx);
+            }
+            return;
+        }
         if let Some(binding) = self.app_core.config.controller_binds.get(name).cloned() {
-            self.execute_macro_keybind(&binding);
+            self.execute_macro_keybind(&binding, ctx);
         }
     }
+
+    /// True while any button bound to `controller_shift` is held. Read
+    /// from live pad state each press — no held/released bookkeeping to
+    /// desync.
+    fn gamepad_shift_held(&self) -> bool {
+        let Some(gilrs) = self.gamepad.as_ref() else {
+            return false;
+        };
+        let shift_buttons: Vec<gilrs::Button> = self
+            .app_core
+            .config
+            .controller_binds
+            .iter()
+            .filter(|(_, action)| {
+                matches!(action, crate::config::KeyBindAction::Action(name) if name == "controller_shift")
+            })
+            .filter_map(|(name, _)| gamepad_button_from_name(name))
+            .collect();
+        if shift_buttons.is_empty() {
+            return false;
+        }
+        gilrs
+            .gamepads()
+            .any(|(_, pad)| shift_buttons.iter().any(|b| pad.is_pressed(*b)))
+    }
+}
+
+/// Reverse of `gamepad_button_name`, for config-driven button lookups.
+pub(super) fn gamepad_button_from_name(name: &str) -> Option<gilrs::Button> {
+    use gilrs::Button;
+    Some(match name {
+        "south" => Button::South,
+        "east" => Button::East,
+        "north" => Button::North,
+        "west" => Button::West,
+        "dpad_up" => Button::DPadUp,
+        "dpad_down" => Button::DPadDown,
+        "dpad_left" => Button::DPadLeft,
+        "dpad_right" => Button::DPadRight,
+        "l1" => Button::LeftTrigger,
+        "l2" => Button::LeftTrigger2,
+        "r1" => Button::RightTrigger,
+        "r2" => Button::RightTrigger2,
+        "l3" => Button::LeftThumb,
+        "r3" => Button::RightThumb,
+        "select" => Button::Select,
+        "start" => Button::Start,
+        "guide" => Button::Mode,
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

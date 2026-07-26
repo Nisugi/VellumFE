@@ -44,6 +44,7 @@ impl Config {
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
         config.controller_binds = Self::load_controller_binds().unwrap_or_default();
+        config.controller_shift_binds = Self::load_controller_binds_layer(true).unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
@@ -403,6 +404,7 @@ impl Config {
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
         config.controller_binds = Self::load_controller_binds().unwrap_or_default();
+        config.controller_shift_binds = Self::load_controller_binds_layer(true).unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;
@@ -600,6 +602,7 @@ impl Default for Config {
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
             controller_binds: HashMap::new(), // Loaded from [controller] of keybinds.toml
+            controller_shift_binds: HashMap::new(), // Loaded from [controller_shift]
             hotbars: HotbarsConfig::default(), // Loaded from hotbars.toml
             app_keybinds: AppKeybinds::default(), // Loaded from [app] section of keybinds.toml
             colors: ColorConfig::default(), // Loaded from colors.toml

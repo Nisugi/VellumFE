@@ -157,7 +157,11 @@ fn refresh_user_keybinds(
     let mut on_disk = BTreeSet::new();
     let mut changed = false;
 
-    for (table, prefix) in [("user", ""), ("controller", "controller/")] {
+    for (table, prefix) in [
+        ("user", ""),
+        ("controller", "controller/"),
+        ("controller_shift", "controller_shift/"),
+    ] {
         let embedded_tbl_keys = table_keys(&embedded_doc, table, prefix);
         let on_disk_tbl_keys = table_keys(&user_doc, table, prefix);
         let to_add = keys_to_add(&embedded_tbl_keys, &on_disk_tbl_keys, seen);
@@ -409,6 +413,17 @@ mod tests {
         assert!(outcome.seen.contains("controller/start"));
         assert!(outcome.seen.contains("controller/south"));
         assert!(outcome.seen.contains("f5"));
+    }
+
+    #[test]
+    fn controller_shift_table_refreshes_with_prefixed_seen_keys() {
+        let embedded = "[controller]\nstart = \"interact_mode\"\n\n[controller_shift]\nsouth = \"tts_stop\"\n";
+        let user = "[controller]\nstart = \"interact_mode\"\n";
+        let seen: BTreeSet<String> = ["controller/start".to_string()].into();
+        let outcome = refresh_user_keybinds(user, embedded, Some(&seen)).unwrap();
+        let updated = outcome.updated_file.expect("shift table should be added");
+        assert!(updated.contains("[controller_shift]"), "{}", updated);
+        assert!(outcome.seen.contains("controller_shift/south"));
     }
 
     #[test]

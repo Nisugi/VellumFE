@@ -2677,7 +2677,7 @@ impl VellumGuiApp {
             };
 
             consumed_keyboard_input = true;
-            self.execute_global_dispatch_target(target);
+            self.execute_global_dispatch_target(target, ctx);
 
             ctx.input_mut(|input| {
                 if let Some(logical_key) = key_press.logical_key {
@@ -2950,14 +2950,50 @@ impl VellumGuiApp {
         )
     }
 
-    fn execute_global_dispatch_target(&mut self, target: GlobalDispatchTarget) {
+    fn execute_global_dispatch_target(
+        &mut self,
+        target: GlobalDispatchTarget,
+        ctx: &egui::Context,
+    ) {
         match target {
-            GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action),
+            GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action, ctx),
             GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut),
         }
     }
 
-    fn execute_macro_keybind(&mut self, action: &KeyBindAction) {
+    /// Scroll actions bound to keys or controller buttons, applied to the
+    /// GUI's own scroll model — the core implementations move
+    /// `content.scroll_offset`, which only the TUI renders. v1 targets the
+    /// "main" story window. Returns true when the action was a scroll.
+    fn try_gui_scroll_action(&mut self, action: &KeyBindAction, ctx: &egui::Context) -> bool {
+        let KeyBindAction::Action(name) = action else {
+            return false;
+        };
+        let scroll_id = "main";
+        let view_h: f32 = ctx
+            .data_mut(|d| d.get_temp(egui::Id::new(("text_scroll_view_h", scroll_id))))
+            .unwrap_or(400.0);
+        // (kind, value): 0 = relative px, 1 = home, 2 = end
+        let request: (u8, f32) = match name.as_str() {
+            "scroll_current_window_up_page" => (0, -(view_h * 0.85)),
+            "scroll_current_window_down_page" => (0, view_h * 0.85),
+            "scroll_current_window_up_one" => (0, -48.0),
+            "scroll_current_window_down_one" => (0, 48.0),
+            "scroll_current_window_home" => (1, 0.0),
+            "scroll_current_window_end" => (2, 0.0),
+            _ => return false,
+        };
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::new(("text_scroll_pending", scroll_id)), request)
+        });
+        ctx.request_repaint();
+        true
+    }
+
+    fn execute_macro_keybind(&mut self, action: &KeyBindAction, ctx: &egui::Context) {
+        if self.try_gui_scroll_action(action, ctx) {
+            return;
+        }
         match self.app_core.execute_keybind_action(action) {
             Ok(commands) => {
                 for outbound in commands {

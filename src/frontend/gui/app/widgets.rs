@@ -3295,11 +3295,46 @@ impl VellumGuiApp {
             }
         }
 
-        let scroll_area = if wrap {
+        // Viewport height for keyboard/controller paging (see
+        // try_gui_scroll_action) — refreshed every frame.
+        outer_ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new(("text_scroll_view_h", scroll_id)),
+                max_height,
+            );
+        });
+
+        let mut scroll_area = if wrap {
             egui::ScrollArea::vertical()
         } else {
             egui::ScrollArea::both()
         };
+
+        // Pending programmatic scroll (page keys / controller): applied
+        // through the builder so egui treats it as an explicit adjustment —
+        // the private stuck-to-end flag re-pins plain offset writes.
+        let pending_key = egui::Id::new(("text_scroll_pending", scroll_id));
+        let pending: Option<(u8, f32)> = outer_ctx.data_mut(|data| {
+            let value = data.get_temp(pending_key);
+            if value.is_some() {
+                data.remove::<(u8, f32)>(pending_key);
+            }
+            value
+        });
+        if let Some((kind, value)) = pending {
+            let current = outer_ctx
+                .data_mut(|data| data.get_temp::<egui::Id>(area_id_key))
+                .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
+                .map(|state| state.offset.y)
+                .unwrap_or(0.0);
+            let target = match kind {
+                1 => 0.0,                  // home
+                2 => f32::MAX / 4.0,       // end (clamped; re-sticks to bottom)
+                _ => (current + value).max(0.0),
+            };
+            scroll_area = scroll_area.vertical_scroll_offset(target);
+        }
+
         let output = scroll_area
             .id_salt(format!("text_scroll_{}", scroll_id))
             .stick_to_bottom(true)

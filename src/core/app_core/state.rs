@@ -4645,6 +4645,8 @@ impl AppCore {
                 self.config.keybinds = keybinds;
                 self.config.controller_binds =
                     crate::config::Config::load_controller_binds().unwrap_or_default();
+                self.config.controller_shift_binds =
+                    crate::config::Config::load_controller_binds_layer(true).unwrap_or_default();
                 // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
                 self.rebuild_keybind_map();
                 self.add_system_message("Keybinds reloaded");

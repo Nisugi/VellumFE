@@ -9,11 +9,17 @@ use eframe::egui;
 
 pub(in super::super) struct ControllerEditorState {
     form: Option<ControllerFormState>,
+    /// Which binding bank is shown/edited: false = [controller],
+    /// true = [controller_shift] (while the shift button is held).
+    shift_layer: bool,
 }
 
 impl ControllerEditorState {
     fn new() -> Self {
-        Self { form: None }
+        Self {
+            form: None,
+            shift_layer: false,
+        }
     }
 }
 
@@ -119,22 +125,32 @@ impl VellumGuiApp {
         false
     }
 
-    fn save_controller_bind_from_form(&mut self, form: &ControllerFormState) -> Result<(), String> {
+    fn save_controller_bind_from_form(
+        &mut self,
+        form: &ControllerFormState,
+        shift: bool,
+    ) -> Result<(), String> {
         let (button, action) = form.build_binding()?;
 
         if let Some(original) = &form.original_button {
             if *original != button {
-                if let Err(err) = Config::delete_single_controller_bind(original) {
+                if let Err(err) = Config::delete_single_controller_bind(original, shift) {
                     tracing::warn!("Failed to remove old controller bind '{}': {}", original, err);
                 }
             }
         }
 
-        Config::save_single_controller_bind(&button, &action)
+        Config::save_single_controller_bind(&button, &action, shift)
             .map_err(|err| format!("Failed to save controller bind: {}", err))?;
+        self.reload_controller_binds();
+        Ok(())
+    }
+
+    fn reload_controller_binds(&mut self) {
         self.app_core.config.controller_binds =
             Config::load_controller_binds().unwrap_or_default();
-        Ok(())
+        self.app_core.config.controller_shift_binds =
+            Config::load_controller_binds_layer(true).unwrap_or_default();
     }
 
     pub(in super::super) fn render_controller_editor(&mut self, ctx: &egui::Context) {
@@ -163,14 +179,24 @@ impl VellumGuiApp {
                     ui.weak("No controller detected — connect one and it will announce itself.");
                 }
                 ui.horizontal(|ui| {
+                    ui.selectable_value(&mut state.shift_layer, false, "Base");
+                    ui.selectable_value(&mut state.shift_layer, true, "Shift layer");
+                    ui.separator();
                     if ui.button("Add binding").clicked() {
                         open_form = Some(ControllerFormState::empty());
                     }
                 });
+                if state.shift_layer {
+                    ui.weak("Bindings while the shift button (bind one to controller_shift) is held.");
+                }
                 ui.separator();
 
-                let mut entries: Vec<(&String, &KeyBindAction)> =
-                    self.app_core.config.controller_binds.iter().collect();
+                let binds = if state.shift_layer {
+                    &self.app_core.config.controller_shift_binds
+                } else {
+                    &self.app_core.config.controller_binds
+                };
+                let mut entries: Vec<(&String, &KeyBindAction)> = binds.iter().collect();
                 entries.sort_by(|a, b| a.0.cmp(b.0));
                 let row_count = entries.len();
 
@@ -198,10 +224,9 @@ impl VellumGuiApp {
             });
 
         if let Some(button) = delete_request {
-            match Config::delete_single_controller_bind(&button) {
+            match Config::delete_single_controller_bind(&button, state.shift_layer) {
                 Ok(()) => {
-                    self.app_core.config.controller_binds =
-                        Config::load_controller_binds().unwrap_or_default();
+                    self.reload_controller_binds();
                     self.app_core
                         .add_system_message(&format!("Controller bind '{}' deleted.", button));
                 }
@@ -314,7 +339,7 @@ impl VellumGuiApp {
                 });
 
             if submitted {
-                match self.save_controller_bind_from_form(&form) {
+                match self.save_controller_bind_from_form(&form, state.shift_layer) {
                     Ok(()) => {
                         self.app_core.add_system_message(&format!(
                             "Controller bind '{}' saved.",

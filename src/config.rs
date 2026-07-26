@@ -228,6 +228,8 @@ pub struct Config {
     pub keybinds: HashMap<String, KeyBindAction>,
     #[serde(skip)] // Loaded from [controller] section of global keybinds.toml
     pub controller_binds: HashMap<String, KeyBindAction>,
+    #[serde(skip)] // Loaded from [controller_shift] (bindings while shift button held)
+    pub controller_shift_binds: HashMap<String, KeyBindAction>,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml
