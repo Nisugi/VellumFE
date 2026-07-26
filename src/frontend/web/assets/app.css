@@ -2011,4 +2011,145 @@ body.hide-compass #compass { display: none !important; }
 
 #colors-status { color: var(--fg-dim); font-size: 13px; }
 #colors-status.editor-error { color: var(--hp); }
+
+/* ---- Client settings sheet (registry-backed, saved on the host) ----------- */
+
+#cs-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  background: var(--bg);
+  display: flex;
+  padding: 12px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+
+#cs-overlay[hidden] { display: none; }
+
+#cs-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+#cs-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#cs-title { color: var(--st); font-size: 15px; }
+
+#cs-close {
+  padding: 4px 12px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font: inherit;
+}
+
+#cs-tier-note { color: var(--fg-dim); font-size: 12px; margin: 0; }
+
+#cs-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cs-group {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.cs-group summary {
+  padding: 10px;
+  color: var(--st);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cs-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.cs-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.cs-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--st);
+}
+
+.cs-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+.cs-desc { color: var(--fg-dim); font-size: 11px; }
+
+.cs-control-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cs-control-row input[type="text"],
+.cs-control-row input[type="password"],
+.cs-control-row input[type="number"],
+.cs-control-row select,
+.cs-control-row textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.cs-control-row textarea { resize: vertical; }
+
+.cs-scope {
+  flex: 0 0 auto !important;
+  width: auto;
+  color: var(--fg-dim) !important;
+  font-size: 12px !important;
+}
+
+.cs-status {
+  flex-shrink: 0;
+  min-width: 0;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.cs-status.editor-error { color: var(--hp); }
 #colors-status[hidden] { display: none; }

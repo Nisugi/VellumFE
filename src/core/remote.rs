@@ -303,6 +303,18 @@ pub enum RemoteDelta {
         sounds: Vec<String>,
         error: Option<String>,
     },
+    /// Reply to one client's registry settings get/put (addressed).
+    /// `catalog` is the full setting list for gets (Null on put replies);
+    /// `key` echoes the setting a put touched; `saved` marks a successful
+    /// put.
+    Settings {
+        client_id: u64,
+        request_id: u64,
+        catalog: serde_json::Value,
+        key: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -417,6 +429,20 @@ pub enum RemoteEvent {
         request_id: u64,
         scope: String,
         name: String,
+    },
+    /// The full settings catalog (registry dump + live values) for the
+    /// phone settings sheet. Reply: `RemoteDelta::Settings` with `catalog`.
+    SettingsGet { client_id: u64, request_id: u64 },
+    /// Set one registered setting by dotted key. `value` is JSON typed by
+    /// the setting's kind; `scope` is "character" or "global". Applied to
+    /// the live config, persisted sparsely, then hot-refreshed where the
+    /// server can.
+    SettingsPut {
+        client_id: u64,
+        request_id: u64,
+        key: String,
+        value: serde_json::Value,
+        scope: String,
     },
     /// Structured color config for the phone editor ("profile"/"global").
     ColorsGet {
@@ -954,6 +980,27 @@ impl RemoteSink {
             rules,
             sounds,
             error,
+        });
+    }
+
+    /// Route a settings catalog / put reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_settings(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        catalog: serde_json::Value,
+        key: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::Settings {
+            client_id,
+            request_id,
+            catalog,
+            key,
+            error,
+            saved,
         });
     }
 

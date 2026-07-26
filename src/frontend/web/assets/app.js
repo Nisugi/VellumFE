@@ -767,6 +767,7 @@ function handleMessage(msg) {
     case "sound": playRemoteSound(msg.d); break;
     case "highlights": handleHighlightsReply(msg.d); break;
     case "colors": handleColorsReply(msg.d); break;
+    case "settings": handleSettingsReply(msg.d); break;
     case "injuries": setInjuries(msg.d); break;
     case "targets": setTargets(msg.d); break;
     case "charinfo": setCharInfo(msg.d); break;
@@ -1569,6 +1570,7 @@ function openSettingsSheet() {
       () => setMusicOff(!musicOff),
     );
   }
+  sheetButton("Client settings (saved on host)", openClientSettings);
   sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
   sheetButton("Highlight rules (global)", () => openHighlightList("global"));
   sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
@@ -3590,6 +3592,277 @@ document.getElementById("colors-close").addEventListener("click", () => {
   colorsScope = null;
   colorsDoc = null;
 });
+
+// ---- Client settings (registry-backed, saved on the host) ------------------
+// The server dumps its settings registry (settings_get: key, label, kind,
+// scope, live value) and this sheet renders it: collapsible category
+// groups, a per-kind input per row, a per-row Character/Global scope, and
+// save-on-change via settings_put (debounced for typed fields — same
+// live-apply idiom as the Appearance sheet, no big Save button to forget).
+// Unlike Appearance (per-phone localStorage), these live in the connected
+// character/host profile. Sensitive settings arrive redacted and are only
+// sent when the user types a new value.
+
+const csOverlay = document.createElement("div");
+csOverlay.id = "cs-overlay";
+csOverlay.hidden = true;
+csOverlay.innerHTML = `
+  <div id="cs-card">
+    <div id="cs-titlebar">
+      <span id="cs-title">Client settings</span>
+      <button type="button" id="cs-close">Close</button>
+    </div>
+    <p id="cs-tier-note">These save to the connected character/host profile.
+      Appearance above is per-phone.</p>
+    <div id="cs-list"></div>
+  </div>`;
+document.body.appendChild(csOverlay);
+const csList = csOverlay.querySelector("#cs-list");
+
+let csCatalog = null;
+let csRequestCounter = 0;
+let csPendingGet = null;
+const csPendingPuts = new Map(); // request_id -> { statusEl, onSaved }
+
+csOverlay.querySelector("#cs-close").addEventListener("click", () => {
+  csOverlay.hidden = true;
+  csPendingGet = null;
+});
+
+function openClientSettings() {
+  csOverlay.hidden = false;
+  csList.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "hl-empty", textContent: "Loading…",
+  }));
+  csPendingGet = ++csRequestCounter;
+  sendJson("settings_get", { request_id: csPendingGet });
+}
+
+function handleSettingsReply(d) {
+  if (d.request_id === csPendingGet) {
+    csPendingGet = null;
+    if (d.error) {
+      csList.replaceChildren(Object.assign(document.createElement("p"), {
+        className: "hl-empty editor-error", textContent: d.error,
+      }));
+      return;
+    }
+    csCatalog = Array.isArray(d.catalog) ? d.catalog : [];
+    renderClientSettings();
+    return;
+  }
+  const pending = csPendingPuts.get(d.request_id);
+  if (!pending) return;
+  csPendingPuts.delete(d.request_id);
+  clearTimeout(pending.timeout);
+  if (d.error) {
+    csRowStatus(pending.statusEl, d.error, true);
+  } else {
+    if (pending.onSaved) pending.onSaved();
+    csRowStatus(pending.statusEl, "Saved", false);
+    setTimeout(() => {
+      if (pending.statusEl.textContent === "Saved") csRowStatus(pending.statusEl, "", false);
+    }, 1500);
+  }
+}
+
+function csRowStatus(el, text, isError) {
+  el.textContent = text;
+  el.classList.toggle("editor-error", !!isError);
+}
+
+function csSendPut(entry, value, scope, statusEl, onSaved) {
+  csRowStatus(statusEl, "Saving…", false);
+  const requestId = ++csRequestCounter;
+  const pending = { statusEl, onSaved };
+  // Never leave a row spinning if the reply is lost (disconnect).
+  pending.timeout = setTimeout(() => {
+    if (csPendingPuts.delete(requestId)) csRowStatus(statusEl, "No reply — retry", true);
+  }, 8000);
+  csPendingPuts.set(requestId, pending);
+  sendJson("settings_put", {
+    request_id: requestId,
+    key: entry.key,
+    value,
+    scope,
+  });
+}
+
+// The current value a row's control holds, as the wire value for its kind,
+// or null with an error shown when it doesn't parse.
+function csControlValue(entry, control, statusEl) {
+  const type = entry.kind.type;
+  if (type === "bool") return control.checked;
+  if (type === "int" || type === "float") {
+    const n = Number(control.value);
+    if (control.value.trim() === "" || !Number.isFinite(n)) {
+      csRowStatus(statusEl, "Enter a number", true);
+      return null;
+    }
+    if (type === "int" && !Number.isInteger(n)) {
+      csRowStatus(statusEl, "Whole numbers only", true);
+      return null;
+    }
+    return n;
+  }
+  if (type === "list") {
+    return control.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  }
+  return control.value; // text / optional_text / enum / sensitive
+}
+
+function csMakeControl(entry) {
+  const type = entry.kind.type;
+  if (type === "bool") {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!entry.value;
+    return input;
+  }
+  if (type === "int" || type === "float") {
+    const input = document.createElement("input");
+    input.type = "number";
+    if (entry.kind.min !== undefined) input.min = String(entry.kind.min);
+    if (entry.kind.max !== undefined) input.max = String(entry.kind.max);
+    input.step = type === "int" ? "1" : "any";
+    input.inputMode = type === "int" ? "numeric" : "decimal";
+    input.value = String(entry.value);
+    return input;
+  }
+  if (type === "enum") {
+    const select = document.createElement("select");
+    const options = entry.kind.options || [];
+    if (!options.includes(entry.value)) select.appendChild(new Option(entry.value, entry.value));
+    for (const opt of options) select.appendChild(new Option(opt, opt));
+    select.value = entry.value;
+    return select;
+  }
+  if (type === "list") {
+    const area = document.createElement("textarea");
+    area.rows = Math.min(6, Math.max(2, (entry.value || []).length + 1));
+    area.value = (entry.value || []).join("\n");
+    area.placeholder = "One entry per line";
+    return area;
+  }
+  const input = document.createElement("input");
+  if (entry.sensitive) {
+    input.type = "password";
+    input.autocomplete = "new-password";
+    input.value = "";
+    if (entry.redacted) input.placeholder = "(unchanged)";
+  } else {
+    input.type = "text";
+    input.value = entry.value || "";
+    if (entry.kind.type === "optional_text") input.placeholder = "(empty = default)";
+  }
+  return input;
+}
+
+function csRow(entry) {
+  const row = document.createElement("div");
+  row.className = "cs-row";
+
+  const label = document.createElement("div");
+  label.className = "cs-label";
+  label.textContent = entry.label;
+  const status = document.createElement("span");
+  status.className = "cs-status";
+
+  const controls = document.createElement("div");
+  controls.className = "cs-control-row";
+  const control = csMakeControl(entry);
+
+  // Scope: per-row Character/Global choice, defaulting Character.
+  // Character-only settings save to the character file regardless — show
+  // a tag instead of a choice.
+  let scopeSel = null;
+  if (entry.scope === "character_only") {
+    const tag = document.createElement("span");
+    tag.className = "cs-tag";
+    tag.textContent = "character";
+    label.appendChild(tag);
+  } else {
+    scopeSel = document.createElement("select");
+    scopeSel.className = "cs-scope";
+    scopeSel.appendChild(new Option("Character", "character"));
+    scopeSel.appendChild(new Option("Global", "global"));
+    scopeSel.value = "character";
+  }
+
+  const save = () => {
+    // Sensitive: only send when the user actually typed a replacement.
+    if (entry.sensitive && control.value === "") return;
+    const value = csControlValue(entry, control, status);
+    if (value === null && entry.kind.type !== "bool") return;
+    const onSaved = entry.sensitive
+      ? () => {
+          control.value = "";
+          control.placeholder = "(unchanged)";
+        }
+      : null;
+    csSendPut(entry, value, scopeSel ? scopeSel.value : "character", status, onSaved);
+  };
+
+  // Discrete controls commit on change; typed fields also save after a
+  // typing pause so a hidden keyboard-blur isn't required.
+  control.addEventListener("change", save);
+  const typed = control.tagName === "TEXTAREA"
+    || (control.tagName === "INPUT" && control.type !== "checkbox");
+  if (typed) {
+    let debounce = 0;
+    control.addEventListener("input", () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(save, 900);
+    });
+  }
+  if (scopeSel) {
+    // Re-picking scope re-saves the current value to the new file.
+    scopeSel.addEventListener("change", save);
+  }
+
+  if (entry.kind.type === "bool") {
+    // Checkbox rides inline with the label text.
+    label.prepend(control);
+    controls.append(...(scopeSel ? [scopeSel] : []), status);
+  } else {
+    controls.append(control, ...(scopeSel ? [scopeSel] : []), status);
+  }
+
+  row.append(label);
+  if (entry.description) {
+    const desc = document.createElement("div");
+    desc.className = "cs-desc";
+    desc.textContent = entry.description;
+    row.appendChild(desc);
+  }
+  row.appendChild(controls);
+  return row;
+}
+
+function renderClientSettings() {
+  csList.replaceChildren();
+  const groups = new Map(); // category -> entries, in catalog order
+  for (const entry of csCatalog || []) {
+    if (!groups.has(entry.category)) groups.set(entry.category, []);
+    groups.get(entry.category).push(entry);
+  }
+  if (!groups.size) {
+    csList.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty", textContent: "No settings received.",
+    }));
+    return;
+  }
+  for (const [category, entries] of [...groups.entries()].sort((a, b) =>
+    a[0].localeCompare(b[0]))) {
+    const group = document.createElement("details");
+    group.className = "cs-group";
+    const summary = document.createElement("summary");
+    summary.textContent = `${category} (${entries.length})`;
+    group.appendChild(summary);
+    for (const entry of entries) group.appendChild(csRow(entry));
+    csList.appendChild(group);
+  }
+}
 
 // ---- Map (full-screen canvas over the generated map scene) ----------------
 // The server pushes the same sheet the desktop mini map draws: `map_scene`

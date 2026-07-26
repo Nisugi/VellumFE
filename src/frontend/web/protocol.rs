@@ -321,6 +321,24 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "error": error,
             }),
         ),
+        RemoteDelta::Settings {
+            request_id,
+            catalog,
+            key,
+            error,
+            saved,
+            ..
+        } => encode(
+            "settings",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "catalog": catalog,
+                "key": key,
+                "error": error,
+                "saved": saved,
+            }),
+        ),
         // client_id stays server-side: the ws task already filtered on it.
         RemoteDelta::ConfigFile {
             request_id,
@@ -470,6 +488,16 @@ pub enum ClientMessage {
         request_id: u64,
         scope: String,
         name: String,
+    },
+    /// The full settings catalog (registry dump + live values).
+    SettingsGet { request_id: u64 },
+    /// Set one registered setting: JSON value typed by the setting's kind,
+    /// scope "character" or "global".
+    SettingsPut {
+        request_id: u64,
+        key: String,
+        value: serde_json::Value,
+        scope: String,
     },
     /// Structured color config for the editor UI.
     ColorsGet { request_id: u64, scope: String },
@@ -703,6 +731,25 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 rule,
             })
         }
+        "settings_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            Some(ClientMessage::SettingsGet { request_id })
+        }
+        "settings_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let key = msg.d.get("key")?.as_str()?.to_string();
+            let value = msg.d.get("value")?.clone();
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            if !matches!(scope.as_str(), "character" | "global") {
+                return None;
+            }
+            Some(ClientMessage::SettingsPut {
+                request_id,
+                key,
+                value,
+                scope,
+            })
+        }
         "colors_get" => {
             let request_id = msg.d.get("request_id")?.as_u64()?;
             let scope = msg.d.get("scope")?.as_str()?.to_string();
@@ -915,6 +962,63 @@ mod tests {
             parse_client_message(r#"{"t":"config_put","d":{"request_id":8,"file":"colors"}}"#),
             None
         );
+    }
+
+    #[test]
+    fn parse_settings_messages() {
+        assert_eq!(
+            parse_client_message(r#"{"t":"settings_get","d":{"request_id":11}}"#),
+            Some(ClientMessage::SettingsGet { request_id: 11 })
+        );
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"settings_put","d":{"request_id":12,"key":"ui.buffer_size","value":5000,"scope":"character"}}"#
+            ),
+            Some(ClientMessage::SettingsPut {
+                request_id: 12,
+                key: "ui.buffer_size".to_string(),
+                value: serde_json::json!(5000),
+                scope: "character".to_string(),
+            })
+        );
+        // Non-scalar values (lists) pass through as JSON for the handler.
+        assert!(matches!(
+            parse_client_message(
+                r#"{"t":"settings_put","d":{"request_id":13,"key":"tts.gags","value":["a","b"],"scope":"global"}}"#
+            ),
+            Some(ClientMessage::SettingsPut { scope, .. }) if scope == "global"
+        ));
+        // Unknown scope or missing fields → rejected.
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"settings_put","d":{"request_id":12,"key":"k","value":1,"scope":"profile"}}"#
+            ),
+            None
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"settings_put","d":{"request_id":12,"key":"k"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn settings_delta_shape() {
+        let d = RemoteDelta::Settings {
+            client_id: 4,
+            request_id: 21,
+            catalog: serde_json::Value::Null,
+            key: Some("ui.buffer_size".to_string()),
+            error: None,
+            saved: true,
+        };
+        let json: serde_json::Value = serde_json::from_str(&delta(&d, 3)).unwrap();
+        assert_eq!(json["t"], "settings");
+        assert_eq!(json["d"]["request_id"], 21);
+        assert_eq!(json["d"]["key"], "ui.buffer_size");
+        assert_eq!(json["d"]["saved"], true);
+        assert!(json["d"]["error"].is_null());
+        // client_id stays server-side.
+        assert!(json["d"].get("client_id").is_none());
     }
 
     #[test]

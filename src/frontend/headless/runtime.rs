@@ -935,6 +935,23 @@ fn handle_remote_event(
             app_core.handle_remote_highlight_put(client_id, request_id, scope, name, rule);
             true
         }
+        RemoteEvent::SettingsGet {
+            client_id,
+            request_id,
+        } => {
+            app_core.handle_remote_settings_get(client_id, request_id);
+            true
+        }
+        RemoteEvent::SettingsPut {
+            client_id,
+            request_id,
+            key,
+            value,
+            scope,
+        } => {
+            app_core.handle_remote_settings_put(client_id, request_id, key, value, scope);
+            true
+        }
         RemoteEvent::ColorsGet {
             client_id,
             request_id,

@@ -1933,6 +1933,23 @@ impl VellumGuiApp {
                     self.app_core
                         .handle_remote_highlight_put(client_id, request_id, scope, name, rule);
                 }
+                crate::core::remote::RemoteEvent::SettingsGet {
+                    client_id,
+                    request_id,
+                } => {
+                    self.app_core
+                        .handle_remote_settings_get(client_id, request_id);
+                }
+                crate::core::remote::RemoteEvent::SettingsPut {
+                    client_id,
+                    request_id,
+                    key,
+                    value,
+                    scope,
+                } => {
+                    self.app_core
+                        .handle_remote_settings_put(client_id, request_id, key, value, scope);
+                }
                 crate::core::remote::RemoteEvent::ColorsGet {
                     client_id,
                     request_id,
