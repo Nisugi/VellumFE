@@ -849,6 +849,13 @@ html, body {
   -webkit-touch-callout: none;
 }
 
+/* `display: flex` on the id selector outranks the UA's [hidden] rule. */
+#interact-bar[hidden] { display: none; }
+
+/* Appearance toggle: hide the interact chrome entirely. */
+body.hide-interact #interact-btn,
+body.hide-interact #interact-bar { display: none !important; }
+
 #interact-bar button {
   min-width: 40px;
   padding: 8px 6px;
@@ -908,6 +915,8 @@ html, body {
   -webkit-user-select: none;
   user-select: none;
 }
+
+#wheel-overlay[hidden] { display: none; }
 
 #wheel-overlay svg {
   width: min(78vmin, 380px);

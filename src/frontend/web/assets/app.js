@@ -2403,6 +2403,7 @@ const OPACITY_SETTINGS = [
 const CHROME_TOGGLES = [
   ["macrorail", "Macro bar (bottom)"],
   ["compass", "Compass"],
+  ["interact", "Interact button"],
   ["vitals", "Vitals bars"],
   ["hands", "Hands"],
   ["rt", "RT label"],
