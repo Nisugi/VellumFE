@@ -386,6 +386,7 @@ function appendText(seq, stream, line) {
   // Speak before display routing: enabled streams speak even while
   // another stream is active (thoughts read out mid-hunt).
   speakLine(stream, line);
+  gpRumbleLine(stream);
   const buf = ensureStream(stream);
   buf.lines.push(line);
   if (buf.lines.length > MAX_BUFFER_LINES) buf.lines.shift();
@@ -1449,6 +1450,28 @@ function gpShiftHeld() {
   );
 }
 
+// Rumble the pad when a line arrives on a chosen stream (whispers and
+// deaths by default) — the phone counterpart of the desktop event map.
+let gpLastRumble = 0;
+function gpRumbleLine(stream) {
+  const rumble = controllerPrefs.rumble || {};
+  if (rumble.enabled === false) return;
+  const streams = rumble.streams || { whisper: true, death: true };
+  if (!streams[stream]) return;
+  const now = Date.now();
+  if (now - gpLastRumble < 1500) return; // don't buzz continuously
+  gpLastRumble = now;
+  for (const pad of gamepadPads()) {
+    pad.vibrationActuator
+      ?.playEffect?.("dual-rumble", {
+        duration: 250,
+        strongMagnitude: 0.8,
+        weakMagnitude: 0.4,
+      })
+      ?.catch?.(() => {});
+  }
+}
+
 let gpSheetShiftLayer = false;
 
 function openControllerSheet() {
@@ -1494,6 +1517,34 @@ function renderControllerSheet() {
     renderControllerSheet();
   });
   sheetItems.appendChild(layerBtn);
+
+  // Rumble toggles (master + per-stream).
+  const rumble =
+    controllerPrefs.rumble ||
+    (controllerPrefs.rumble = { enabled: true, streams: { whisper: true, death: true } });
+  rumble.streams = rumble.streams || { whisper: true, death: true };
+  const rumbleRow = (label, checked, onToggle) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sheet-item";
+    btn.textContent = `${checked ? "☑" : "☐"} ${label}`;
+    btn.addEventListener("click", () => {
+      onToggle();
+      saveControllerPrefs();
+      renderControllerSheet();
+    });
+    sheetItems.appendChild(btn);
+  };
+  rumbleRow("Rumble on events", rumble.enabled !== false, () => {
+    rumble.enabled = rumble.enabled === false;
+  });
+  if (rumble.enabled !== false) {
+    for (const stream of ["whisper", "death", "thoughts"]) {
+      rumbleRow(`　rumble: ${stream}`, !!rumble.streams[stream], () => {
+        rumble.streams[stream] = !rumble.streams[stream];
+      });
+    }
+  }
 
   const activeBinds = gpSheetShiftLayer
     ? controllerPrefs.shiftBinds

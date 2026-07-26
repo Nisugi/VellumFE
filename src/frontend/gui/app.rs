@@ -226,6 +226,10 @@ pub struct VellumGuiApp {
     /// Binding-legend overlay visibility (controller_overlay toggles it).
     #[cfg(feature = "gamepad")]
     gp_overlay: bool,
+    /// Live rumble effects: gilrs stops an effect when dropped, so each
+    /// stays here until its expiry.
+    #[cfg(feature = "gamepad")]
+    gp_rumble: Vec<(gilrs::ff::Effect, std::time::Instant)>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -530,6 +534,8 @@ impl VellumGuiApp {
             gp_wheel: None,
             #[cfg(feature = "gamepad")]
             gp_overlay: false,
+            #[cfg(feature = "gamepad")]
+            gp_rumble: Vec::new(),
             ui_settings,
             tab_settings,
             tab_groups,

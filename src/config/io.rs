@@ -48,6 +48,7 @@ impl Config {
         config.controller_wheel = Self::load_controller_wheel().unwrap_or_default();
         config.controller_wheels = Self::load_controller_wheels().unwrap_or_default();
         config.controller_overlay = Self::load_controller_overlay().unwrap_or_default();
+        config.controller_rumble = Self::load_controller_rumble().unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
@@ -411,6 +412,7 @@ impl Config {
         config.controller_wheel = Self::load_controller_wheel().unwrap_or_default();
         config.controller_wheels = Self::load_controller_wheels().unwrap_or_default();
         config.controller_overlay = Self::load_controller_overlay().unwrap_or_default();
+        config.controller_rumble = Self::load_controller_rumble().unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;
@@ -612,6 +614,7 @@ impl Default for Config {
             controller_wheel: Vec::new(),   // Loaded from [[controller_wheel]]
             controller_wheels: HashMap::new(), // Loaded from [controller_wheels.<name>]
             controller_overlay: Vec::new(), // Loaded from [controller_overlay]
+            controller_rumble: RumbleConfig::default(),
             hotbars: HotbarsConfig::default(), // Loaded from hotbars.toml
             app_keybinds: AppKeybinds::default(), // Loaded from [app] section of keybinds.toml
             colors: ColorConfig::default(), // Loaded from colors.toml

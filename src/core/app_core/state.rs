@@ -91,6 +91,11 @@ pub struct AppCore {
     /// Text-to-Speech manager for accessibility
     pub tts_manager: crate::tts::TtsManager,
 
+    /// Queued haptic (rumble) events for frontends to drain (haptics.rs)
+    pub pending_haptics: Vec<super::HapticEvent>,
+    /// Last-seen state for haptic transition detection
+    pub(crate) haptic_prev: super::HapticSnapshot,
+
     // === Navigation State ===
     /// Navigation room ID from <nav rm='...'/>
     /// Live map state: mapdb, generated layouts, current-room tracking.
@@ -226,6 +231,8 @@ impl AppCore {
             show_perf_stats: false,
             sound_player: None,
             tts_manager,
+            pending_haptics: Vec::new(),
+            haptic_prev: Default::default(),
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
@@ -348,6 +355,8 @@ impl AppCore {
             show_perf_stats: false,
             sound_player,
             tts_manager,
+            pending_haptics: Vec::new(),
+            haptic_prev: Default::default(),
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
@@ -4653,6 +4662,8 @@ impl AppCore {
                     crate::config::Config::load_controller_wheels().unwrap_or_default();
                 self.config.controller_overlay =
                     crate::config::Config::load_controller_overlay().unwrap_or_default();
+                self.config.controller_rumble =
+                    crate::config::Config::load_controller_rumble().unwrap_or_default();
                 // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
                 self.rebuild_keybind_map();
                 self.add_system_message("Keybinds reloaded");

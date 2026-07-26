@@ -212,10 +212,84 @@ impl VellumGuiApp {
             });
         }
 
+        // Haptics: core detects the transitions (RT end, stun, death);
+        // we map them to rumble patterns. Drain even when disabled or
+        // padless so the queue can't grow.
+        self.app_core.poll_haptics();
+        let events = self.app_core.drain_haptics();
+        self.gp_rumble
+            .retain(|(_, expiry)| *expiry > std::time::Instant::now());
+        if any_connected && self.app_core.config.controller_rumble.enabled {
+            for event in events {
+                let rumble = &self.app_core.config.controller_rumble;
+                let pattern = match event {
+                    crate::core::app_core::HapticEvent::RoundtimeEnd => {
+                        rumble.roundtime_end.clone()
+                    }
+                    crate::core::app_core::HapticEvent::Stunned => rumble.stunned.clone(),
+                    crate::core::app_core::HapticEvent::Death => rumble.death.clone(),
+                };
+                self.play_rumble(&pattern);
+            }
+        }
+
         // gilrs events arrive outside egui's own event loop; without a
         // wake-up an idle GUI would stop polling. Cheap while connected.
         if any_connected {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Play a rumble pattern on every connected pad. Effects are kept
+    /// alive until expiry (gilrs stops them on drop).
+    fn play_rumble(&mut self, pattern: &str) {
+        use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
+
+        let (magnitude, ms, pulses) = match pattern {
+            "short" => (0.5_f32, 160_u32, 1_u32),
+            "long" => (0.9, 450, 1),
+            "double" => (0.8, 180, 2),
+            _ => return, // "off" and anything unknown
+        };
+        let Some(gilrs) = self.gamepad.as_mut() else {
+            return;
+        };
+        let ids: Vec<gilrs::GamepadId> = gilrs
+            .gamepads()
+            .filter(|(_, pad)| pad.is_ff_supported())
+            .map(|(id, _)| id)
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        let strength = (magnitude.clamp(0.0, 1.0) * u16::MAX as f32) as u16;
+        let gap = 120_u32;
+        let mut builder = EffectBuilder::new();
+        for pulse in 0..pulses {
+            builder.add_effect(BaseEffect {
+                kind: BaseEffectType::Strong { magnitude: strength },
+                scheduling: Replay {
+                    after: Ticks::from_ms(pulse * (ms + gap)),
+                    play_for: Ticks::from_ms(ms),
+                    with_delay: Ticks::from_ms(0),
+                },
+                envelope: Default::default(),
+            });
+        }
+        for id in &ids {
+            builder.add_gamepad(&gilrs.gamepad(*id));
+        }
+        match builder.finish(gilrs) {
+            Ok(effect) => {
+                if let Err(err) = effect.play() {
+                    tracing::debug!("rumble play failed: {}", err);
+                    return;
+                }
+                let total = std::time::Duration::from_millis((pulses * (ms + gap)) as u64 + 100);
+                self.gp_rumble
+                    .push((effect, std::time::Instant::now() + total));
+            }
+            Err(err) => tracing::debug!("rumble effect build failed: {}", err),
         }
     }
 

@@ -12,7 +12,10 @@ enum ControllerTab {
     Base,
     Shift,
     Wheels,
+    Rumble,
 }
+
+const RUMBLE_PATTERNS: [&str; 4] = ["off", "short", "long", "double"];
 
 pub(in super::super) struct ControllerEditorState {
     form: Option<ControllerFormState>,
@@ -240,6 +243,7 @@ impl VellumGuiApp {
         let mut delete_request: Option<String> = None;
         let mut wheel_save = false;
         let mut overlay_toggle: Option<String> = None;
+        let mut rumble_save: Option<crate::config::RumbleConfig> = None;
 
         let pad_connected = self
             .gamepad
@@ -261,8 +265,11 @@ impl VellumGuiApp {
                     ui.selectable_value(&mut state.tab, ControllerTab::Base, "Base");
                     ui.selectable_value(&mut state.tab, ControllerTab::Shift, "Shift layer");
                     ui.selectable_value(&mut state.tab, ControllerTab::Wheels, "Wheels");
+                    ui.selectable_value(&mut state.tab, ControllerTab::Rumble, "Rumble");
                     ui.separator();
-                    if state.tab != ControllerTab::Wheels && ui.button("Add binding").clicked() {
+                    if matches!(state.tab, ControllerTab::Base | ControllerTab::Shift)
+                        && ui.button("Add binding").clicked()
+                    {
                         open_form = Some(ControllerFormState::empty());
                     }
                 });
@@ -273,6 +280,44 @@ impl VellumGuiApp {
 
                 if state.tab == ControllerTab::Wheels {
                     render_wheels_tab(ui, &mut state, &self.app_core.config, &mut wheel_save);
+                    return;
+                }
+                if state.tab == ControllerTab::Rumble {
+                    let mut rumble = self.app_core.config.controller_rumble.clone();
+                    let mut changed = ui
+                        .checkbox(&mut rumble.enabled, "Rumble on game events")
+                        .changed();
+                    let pattern_row = |ui: &mut egui::Ui,
+                                       label: &str,
+                                       value: &mut String,
+                                       changed: &mut bool| {
+                        ui.horizontal(|ui| {
+                            ui.label(label);
+                            egui::ComboBox::from_id_salt(format!("rumble_{label}"))
+                                .selected_text(value.as_str())
+                                .show_ui(ui, |ui| {
+                                    for pattern in RUMBLE_PATTERNS {
+                                        if ui
+                                            .selectable_value(
+                                                value,
+                                                pattern.to_string(),
+                                                pattern,
+                                            )
+                                            .changed()
+                                        {
+                                            *changed = true;
+                                        }
+                                    }
+                                });
+                        });
+                    };
+                    pattern_row(ui, "Roundtime ends", &mut rumble.roundtime_end, &mut changed);
+                    pattern_row(ui, "Stunned", &mut rumble.stunned, &mut changed);
+                    pattern_row(ui, "Death", &mut rumble.death, &mut changed);
+                    ui.weak("short = light tap · long = strong buzz · double = two pulses");
+                    if changed {
+                        rumble_save = Some(rumble);
+                    }
                     return;
                 }
 
@@ -329,6 +374,15 @@ impl VellumGuiApp {
                         }
                     });
             });
+
+        if let Some(rumble) = rumble_save {
+            match Config::save_controller_rumble(&rumble) {
+                Ok(()) => self.app_core.config.controller_rumble = rumble,
+                Err(err) => self
+                    .app_core
+                    .add_system_message(&format!("Failed to save rumble config: {}", err)),
+            }
+        }
 
         if let Some(entry) = overlay_toggle {
             let mut list = self.app_core.config.controller_overlay.clone();

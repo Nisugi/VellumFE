@@ -39,7 +39,8 @@ pub use hotbars::{
     HotbarCountdownSource, HotbarDef, HotbarStyle, HotbarsConfig, NameMatch, VitalKind, VitalUnit,
 };
 pub use keybinds::{
-    parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds, WheelSlice,
+    parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
+    RumbleConfig, WheelSlice,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
@@ -236,6 +237,8 @@ pub struct Config {
     pub controller_wheels: HashMap<String, Vec<WheelSlice>>,
     #[serde(skip)] // Loaded from [controller_overlay] (curated HUD legend entries)
     pub controller_overlay: Vec<String>,
+    #[serde(skip)] // Loaded from [controller_rumble] (haptic event map)
+    pub controller_rumble: RumbleConfig,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml

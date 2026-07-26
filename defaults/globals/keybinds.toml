@@ -183,6 +183,14 @@ select = "controller_overlay"          # Toggle the binding-legend overlay
 [controller_overlay]
 buttons = ["start", "dpad_left", "l2", "r2", "shift/south"]
 
+# Rumble on game events. Patterns: off, short, long, double.
+# Edit in the .controller editor's Rumble tab.
+[controller_rumble]
+enabled = true
+roundtime_end = "short"   # hands free again
+stunned = "long"
+death = "double"
+
 # Bindings while the shift button (l2 above) is held — a second bank for
 # every button. Same format as [controller].
 [controller_shift]
