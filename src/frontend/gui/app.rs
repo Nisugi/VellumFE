@@ -238,6 +238,8 @@ pub struct VellumGuiApp {
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
+    #[cfg(feature = "gamepad")]
+    controller_editor: Option<editors::ControllerEditorState>,
     hotbar_editor: Option<editors::HotbarEditorState>,
     colors_editor: Option<editors::ColorsEditorState>,
     theme_browser: Option<editors::ThemeBrowserState>,
@@ -521,6 +523,8 @@ impl VellumGuiApp {
             settings_editor: None,
             highlight_editor: None,
             keybind_editor: None,
+            #[cfg(feature = "gamepad")]
+            controller_editor: None,
             hotbar_editor: None,
             colors_editor: None,
             theme_browser: None,
@@ -3671,6 +3675,14 @@ impl VellumGuiApp {
         }
         if action == "action:keybinds" {
             self.open_keybind_editor();
+            return true;
+        }
+        if action == "action:controller" {
+            #[cfg(feature = "gamepad")]
+            self.open_controller_editor();
+            #[cfg(not(feature = "gamepad"))]
+            self.app_core
+                .add_system_message("This build has no gamepad support.");
             return true;
         }
         if action == "action:hotbars" {

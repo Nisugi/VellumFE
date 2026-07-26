@@ -140,6 +140,41 @@ fn validate_font_bytes(bytes: &[u8], index: u32) -> Result<(), skrifa::raw::Read
     skrifa::FontRef::from_index(bytes, index).map(|_| ())
 }
 
+/// Bundled fallback fonts (name, bytes) appended to the end of every font
+/// family. NotoSansSymbols2 covers arrows/geometric shapes/misc symbols;
+/// NotoEmoji (monochrome) covers emoji. Both are OFL-licensed — see
+/// assets/fonts/OFL.txt. Order matters: symbols before emoji.
+const BUILTIN_FALLBACK_FONTS: &[(&str, &[u8])] = &[
+    (
+        "vellum-fallback-symbols",
+        include_bytes!("../../../../assets/fonts/NotoSansSymbols2-Regular.ttf"),
+    ),
+    (
+        "vellum-fallback-emoji",
+        include_bytes!("../../../../assets/fonts/NotoEmoji-VariableFont_wght.ttf"),
+    ),
+];
+
+/// Append the bundled symbol/emoji fallback fonts to the END of every font
+/// family (default and custom alike), registering their data once. Call this
+/// after any code that builds or adds font families so no font selection can
+/// produce tofu for arrows/symbols/emoji. Append-only and idempotent: it
+/// never replaces or reorders the fonts already in a family.
+pub(super) fn append_builtin_fallbacks(fonts: &mut egui::FontDefinitions) {
+    for (name, bytes) in BUILTIN_FALLBACK_FONTS {
+        fonts
+            .font_data
+            .entry((*name).to_string())
+            .or_insert_with(|| std::sync::Arc::new(egui::FontData::from_static(bytes)));
+    }
+    for list in fonts.families.values_mut() {
+        for (name, _) in BUILTIN_FALLBACK_FONTS {
+            list.retain(|font| font != name);
+            list.push((*name).to_string());
+        }
+    }
+}
+
 /// Registration key for a font reference inside `FontDefinitions`; None for
 /// the system default (nothing to register).
 pub(super) fn font_ref_key(font: &crate::frontend::gui::persistence::FontRef) -> Option<String> {
@@ -193,6 +228,10 @@ pub(super) fn build_font_definitions(
         }
         fonts.families.insert(family, list);
     }
+
+    // Last step so the bundled symbol/emoji fallbacks land at the end of
+    // every family built above (defaults, ui font, and per-window families).
+    append_builtin_fallbacks(&mut fonts);
 
     fonts
 }
@@ -264,6 +303,104 @@ mod tests {
         assert_eq!(resolve_color("red"), Some(Color32::from_rgb(205, 0, 0)));
         assert_eq!(resolve_color("notacolor"), None);
         assert_eq!(resolve_color("-"), None);
+    }
+
+    #[test]
+    fn bundled_fallback_fonts_parse_with_skrifa() {
+        // epaint panics the frame on unparseable font data; make sure the
+        // bundled fallbacks pass the same skrifa validation gate.
+        for (name, bytes) in BUILTIN_FALLBACK_FONTS {
+            assert!(
+                validate_font_bytes(bytes, 0).is_ok(),
+                "bundled fallback font '{}' failed skrifa validation",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_fallbacks_appended_to_end_of_every_family() {
+        let mut fonts = egui::FontDefinitions::default();
+        // A custom family like the per-window ones built from font refs.
+        fonts.families.insert(
+            egui::FontFamily::Name("vellum-named:Test Font".into()),
+            vec!["some-user-font".to_string()],
+        );
+
+        append_builtin_fallbacks(&mut fonts);
+        // Idempotent: a second run must not duplicate names or data.
+        append_builtin_fallbacks(&mut fonts);
+
+        // Font data registered exactly once per fallback (font_data is a map,
+        // so presence means exactly one entry under that name).
+        for (name, _) in BUILTIN_FALLBACK_FONTS {
+            assert!(
+                fonts.font_data.contains_key(*name),
+                "fallback '{}' missing from font_data",
+                name
+            );
+        }
+
+        for (family, list) in &fonts.families {
+            assert!(
+                list.len() >= 2,
+                "family {:?} has too few fonts: {:?}",
+                family,
+                list
+            );
+            // Both fallbacks present exactly once, as the last two entries,
+            // symbols before emoji.
+            for (name, _) in BUILTIN_FALLBACK_FONTS {
+                assert_eq!(
+                    list.iter().filter(|font| font == name).count(),
+                    1,
+                    "family {:?} should list '{}' exactly once: {:?}",
+                    family,
+                    name,
+                    list
+                );
+            }
+            assert_eq!(
+                &list[list.len() - 2..],
+                &[
+                    "vellum-fallback-symbols".to_string(),
+                    "vellum-fallback-emoji".to_string()
+                ],
+                "family {:?} must end with the bundled fallbacks: {:?}",
+                family,
+                list
+            );
+        }
+
+        // The custom family's own font is still first — append-only.
+        let custom = fonts
+            .families
+            .get(&egui::FontFamily::Name("vellum-named:Test Font".into()))
+            .unwrap();
+        assert_eq!(custom[0], "some-user-font");
+    }
+
+    #[test]
+    fn build_font_definitions_ends_every_family_with_fallbacks() {
+        use crate::frontend::gui::persistence::FontRef;
+        // SystemDefault avoids touching the system font database in tests.
+        let fonts = build_font_definitions(&FontRef::SystemDefault, &[]);
+        for (family, list) in &fonts.families {
+            assert_eq!(
+                list.last().map(String::as_str),
+                Some("vellum-fallback-emoji"),
+                "family {:?} does not end with the emoji fallback: {:?}",
+                family,
+                list
+            );
+            assert_eq!(
+                list.get(list.len() - 2).map(String::as_str),
+                Some("vellum-fallback-symbols"),
+                "family {:?} missing the symbols fallback before emoji: {:?}",
+                family,
+                list
+            );
+        }
     }
 
     #[test]

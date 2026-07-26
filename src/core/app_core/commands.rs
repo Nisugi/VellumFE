@@ -841,6 +841,10 @@ impl AppCore {
             "keybinds" | "kb" => {
                 return Ok("action:keybinds".to_string());
             }
+            // Controller bindings editor (GUI)
+            "controller" => {
+                return Ok("action:controller".to_string());
+            }
             // Hotbars (hotkey bar definitions)
             "hotbars" | "hotbar" => {
                 return Ok("action:hotbars".to_string());

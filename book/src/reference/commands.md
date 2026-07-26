@@ -61,6 +61,7 @@ command `quit` also saves your settings on the way out.)
 | Command | Aliases | Description |
 |---------|---------|-------------|
 | `.keybinds` | `.kb` | Browse keybinds (press `f` to cycle the scope filter: all / global / character) |
+| `.controller` | | Edit gamepad button bindings (GUI; see [Controllers](../frontends/gui.md#controllers)) |
 | `.addkeybind` | `.addkey` | Create a keybind |
 | `.savekeybinds [name]` | `.savekb` | Save keybinds as a named profile |
 | `.loadkeybinds <name>` | `.loadkb` | Load a keybind profile |

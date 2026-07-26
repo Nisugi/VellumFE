@@ -153,3 +153,21 @@ num_0 = { macro_text = "down\r" }
 "num_-" = { macro_text = "info\r" }
 "num_*" = { macro_text = "exp\r" }
 "num_/" = { macro_text = "health\r" }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONTROLLER (GUI gamepad — edit with the .controller editor)
+# ═══════════════════════════════════════════════════════════════════════════
+# Buttons: south, east, west, north, dpad_up, dpad_down, dpad_left,
+# dpad_right, l1, r1, l2, r2, l3, r3, start, select.
+# Values are keybind action names or { macro_text = "..." } like [user].
+# While interact mode or a context menu is open, the d-pad (navigate),
+# south (confirm), and east (cancel) are fixed; bindings below apply
+# outside those modes. Controller binds are global (all characters).
+
+[controller]
+start = "interact_mode"                # Enter/exit interact mode
+dpad_up = { macro_text = "n\r" }       # Movement on the d-pad
+dpad_down = { macro_text = "s\r" }
+dpad_left = { macro_text = "w\r" }
+dpad_right = { macro_text = "e\r" }
+south = { macro_text = "look\r" }      # A / cross

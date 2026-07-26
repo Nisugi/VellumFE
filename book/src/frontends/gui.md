@@ -142,6 +142,19 @@ keys with Steam Input or similar) and anyone who'd rather not mouse:
   overlay, and announced through TTS when speech is enabled.
 - **Esc** exits the mode.
 
+## Controllers
+
+Plug in a gamepad and the GUI reads it natively (Xbox and PlayStation
+pads verified on Windows; no mapper software needed — turn yours off to
+avoid doubled inputs). While [interact mode](#interact-mode) or a
+context menu is open, the **d-pad navigates, South (A/cross) confirms,
+East (B/circle) cancels** — that part is fixed. Everything else is
+yours to bind with **`.controller`**: each button maps to a keybind
+action or macro, with a "press a button" capture in the editor. The
+shipped defaults put movement on the d-pad, `look` on South, and
+interact mode on Start. Bindings live in the `[controller]` table of
+the global keybinds.toml and apply to all characters.
+
 ## Speech (Text-to-Speech)
 
 **Settings > Speech** holds the TTS controls: enable, rate, volume, a

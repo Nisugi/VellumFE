@@ -3,6 +3,8 @@
 //! the shared core config layer, so both frontends stay in sync.
 
 mod colors;
+#[cfg(feature = "gamepad")]
+mod controller;
 mod custom_windows;
 mod doll_calibration;
 mod highlights;
@@ -14,6 +16,8 @@ mod themes;
 mod windows;
 
 pub(super) use colors::ColorsEditorState;
+#[cfg(feature = "gamepad")]
+pub(super) use controller::ControllerEditorState;
 pub(super) use custom_windows::CustomWindowsEditorState;
 pub(super) use doll_calibration::DollCalibrationState;
 pub(super) use highlights::HighlightEditorState;
@@ -33,6 +37,8 @@ impl VellumGuiApp {
         self.render_settings_editor(ctx);
         self.render_highlight_editor(ctx);
         self.render_keybind_editor(ctx);
+        #[cfg(feature = "gamepad")]
+        self.render_controller_editor(ctx);
         self.render_hotbar_editor(ctx);
         self.render_colors_editor(ctx);
         self.render_theme_browser(ctx);
