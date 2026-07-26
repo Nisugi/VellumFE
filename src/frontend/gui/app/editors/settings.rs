@@ -320,6 +320,10 @@ impl SettingsEditorState {
             _ => {}
         }
 
+        // Text inputs get a firm size: inside a Grid, egui's first-pass
+        // sizing can collapse a TextEdit's desired_width to near zero and
+        // the grid then remembers the squeezed column. add_sized wins.
+        let input_height = ui.spacing().interact_size.y;
         match draft {
             DraftValue::Bool(value) => {
                 ui.checkbox(value, "");
@@ -349,10 +353,9 @@ impl SettingsEditorState {
                         });
                 }
                 _ => {
-                    let response = ui.add(
-                        egui::TextEdit::singleline(value)
-                            .password(def.sensitive)
-                            .desired_width(220.0),
+                    let response = ui.add_sized(
+                        [260.0, input_height],
+                        egui::TextEdit::singleline(value).password(def.sensitive),
                     );
                     if matches!(def.kind, SettingKind::OptionalText) {
                         response.on_hover_text("empty = unset");
@@ -360,14 +363,36 @@ impl SettingsEditorState {
                 }
             },
             DraftValue::List(value) => {
-                ui.add(
-                    egui::TextEdit::multiline(value)
-                        .desired_rows(3)
-                        .desired_width(220.0),
+                ui.add_sized(
+                    [260.0, input_height * 3.6],
+                    egui::TextEdit::multiline(value).desired_rows(3),
                 )
                 .on_hover_text("one entry per line");
             }
         }
+    }
+}
+
+/// One-line context for generated categories whose purpose isn't obvious
+/// from the rows alone.
+fn category_intro(category: &str) -> Option<&'static str> {
+    match category {
+        "Highlights" => Some(
+            "Master switches for the highlight system: turn a whole feature off \
+             without deleting any patterns. The patterns themselves live in the \
+             Highlights editor.",
+        ),
+        "Focus" => Some(
+            "TUI only: which windows Tab cycles through in the terminal \
+             frontend. The GUI ignores these.",
+        ),
+        "Terminal" => Some("TUI only: how the terminal renders colors."),
+        "Streams" => Some(
+            "Routing for game text streams that no window subscribes to: \
+             dropped if listed, otherwise sent to the fallback window.",
+        ),
+        "Performance" => Some("Debug overlay (F3 in the TUI)."),
+        _ => None,
     }
 }
 
@@ -844,6 +869,9 @@ impl VellumGuiApp {
                                 }
                                 other => {
                                     ui.collapsing(other, |ui| {
+                                        if let Some(intro) = category_intro(other) {
+                                            ui.label(intro);
+                                        }
                                         state.render_category_grid(ui, other);
                                     });
                                 }
