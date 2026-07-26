@@ -611,6 +611,35 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             get: |c| SettingValue::Bool(c.web.pinned),
             set: |c, v| { c.web.pinned = v.as_bool()?; Ok(()) },
         },
+        // Roaming phone prefs: the phone client's per-character look,
+        // riding the ordinary settings_get/put wire. Unset (0 / empty)
+        // means "no server opinion" — the phone keeps using its own
+        // per-device localStorage value. Option<u8> has no registry
+        // kind, so story_size uses Int with 0 as the documented
+        // "unset" sentinel (the phone clamps applied values to its own
+        // legible range).
+        SettingDef {
+            key: "web.story_size",
+            label: "Phone Text Size",
+            category: "Web",
+            description: "Phone story text size in px; roams with the character (0 = unset, phone keeps its own)",
+            kind: SettingKind::Int { min: 0, max: 32 },
+            scope: SettingScope::GlobalOrCharacter,
+            sensitive: false,
+            get: |c| SettingValue::Int(c.web.story_size.map_or(0, |v| v as i64)),
+            set: |c, v| {
+                let raw = v.as_int()?;
+                if !(0..=32).contains(&raw) {
+                    return Err("web.story_size must be between 0 and 32 (0 = unset)".to_string());
+                }
+                c.web.story_size = if raw == 0 { None } else { Some(raw as u8) };
+                Ok(())
+            },
+        },
+        opt_text_entry!("web.theme", "Phone Theme", "Web",
+            "Phone theme preset; roams with the character (empty = unset, phone keeps its own)", web.theme),
+        list_entry!("web.chip_order", "Phone Chip Order", "Web",
+            "Phone stream-chip order, leftmost first; roams with the character (empty = unset)", web.chip_order),
         // ---- Map -----------------------------------------------------
         opt_text_entry!("map.lich_dir", "Lich Directory", "Map",
             "Lich install dir for mapdb discovery (empty = auto)", map.lich_dir),

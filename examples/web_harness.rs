@@ -271,6 +271,41 @@ async fn main() {
             "sensitive": true,
             "value": "",
             "redacted": true
+        },
+        // Roaming phone prefs (settings Phase 5 slice B). Ship them SET
+        // so the client's connect-time fetch visibly overrides local
+        // prefs: story text 18px, OLED-black theme, thoughts chip in
+        // front. Change any of the three on the phone and the put lands
+        // here (character scope); re-open Client settings to see it.
+        {
+            "key": "web.story_size",
+            "label": "Phone Text Size",
+            "category": "Web",
+            "description": "Phone story text size in px; roams with the character (0 = unset, phone keeps its own)",
+            "kind": { "type": "int", "min": 0, "max": 32 },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": 18
+        },
+        {
+            "key": "web.theme",
+            "label": "Phone Theme",
+            "category": "Web",
+            "description": "Phone theme preset; roams with the character (empty = unset, phone keeps its own)",
+            "kind": { "type": "optional_text" },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": "black"
+        },
+        {
+            "key": "web.chip_order",
+            "label": "Phone Chip Order",
+            "category": "Web",
+            "description": "Phone stream-chip order, leftmost first; roams with the character (empty = unset)",
+            "kind": { "type": "list" },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": ["thoughts", "main"]
         }
     ]);
 

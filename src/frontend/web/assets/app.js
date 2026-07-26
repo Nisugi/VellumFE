@@ -190,8 +190,11 @@ document.getElementById("pair-form").addEventListener("submit", (ev) => {
 const buffers = new Map(); // stream -> { lines: [], unread: 0, chip, badge }
 let activeStream = "main";
 
-// Chip order is user-arrangeable (long-press a chip) and persists per
-// device; streams the user hasn't placed keep their first-text arrival
+// Chip order is user-arrangeable (long-press a chip). It's a roaming
+// pref: localStorage is the offline fallback, but a server-side value
+// (web.chip_order in the character profile) wins on connect and edits
+// are pushed back, so the arrangement follows the character across
+// phones. Streams the user hasn't placed keep their first-text arrival
 // order after the placed ones.
 const CHIP_ORDER_KEY = "vellum-chip-order";
 let chipOrder = [];
@@ -228,6 +231,7 @@ function moveChip(stream, delta) {
     localStorage.setItem(CHIP_ORDER_KEY, JSON.stringify(chipOrder));
   } catch { /* fine, just won't persist */ }
   applyChipOrder();
+  roamPut("web.chip_order", chipOrder.slice());
 }
 
 function openChipArrange(stream) {
@@ -748,8 +752,10 @@ function handleMessage(msg) {
       // Answer with our resume cursor; the server replies with a
       // full/resume/gap snapshot accordingly.
       state.ws.send(JSON.stringify({ t: "resume", d: { seq: state.lastSeq } }));
-      // Authenticated: pick up the skin's injury doll art (if any).
+      // Authenticated: pick up the skin's injury doll art (if any) and
+      // any roaming prefs the character profile carries.
       fetchDollSkin();
+      fetchRoamingPrefs();
       break;
     case "snapshot": handleSnapshot(msg.d); break;
     case "text": appendText(msg.seq, msg.d.stream, msg.d.line); break;
@@ -904,6 +910,9 @@ function updateSessionUi(prevState) {
     // screen appearing.
     if (LOGIN_FLOW_STATES.includes(prevState)) {
       maybePlayLoginMusic();
+      // A headless login just loaded the character's profile config
+      // server-side — the hello-time fetch predates it, so re-fetch.
+      fetchRoamingPrefs();
     }
     return;
   }
@@ -1392,7 +1401,9 @@ let pendingConfigRequest = null;
 
 // ---- Appearance (client-side prefs) ----------------------------------------
 // Theme presets are CSS-variable override sets; chrome toggles are body
-// classes. Both persist per device — nothing crosses the wire.
+// classes. Everything persists per device, except the theme choice,
+// which is also a roaming pref (web.theme): a server-side value wins on
+// connect and picks push back to the character profile.
 
 const UI_PREFS_KEY = "vellum-ui-prefs";
 let uiPrefs = { theme: "dark", hide: {} };
@@ -1492,6 +1503,7 @@ function openAppearanceSheet() {
       saveUiPrefs();
       applyUiPrefs();
       refreshThemeButtons();
+      roamPut("web.theme", key);
     });
     themeButtons.set(key, btn);
     themeRow.appendChild(btn);
@@ -2763,8 +2775,11 @@ cmdInput.addEventListener("keydown", (ev) => {
 });
 
 // ---- Text size --------------------------------------------------------------
-// Story-text size, adjusted live from a stepper sheet and persisted per
-// device (a phone and a tablet want different sizes).
+// Story-text size, adjusted live from a stepper sheet. Roaming pref:
+// localStorage is the offline fallback, a server-side web.story_size
+// wins on connect, and stepper changes push back to the character
+// profile. (A phone and a tablet sharing a character will fight over
+// it; per-device divergence is what the unset server value preserves.)
 
 const TEXT_SIZE_KEY = "vellum-text-size";
 // 6px is genuinely tiny, but more text on screen beats enforced comfort —
@@ -2805,11 +2820,13 @@ document.getElementById("textsize-btn").addEventListener("click", () => {
     storySize -= 1;
     applyStorySize();
     refresh();
+    roamPut("web.story_size", storySize);
   });
   bigger.addEventListener("click", () => {
     storySize += 1;
     applyStorySize();
     refresh();
+    roamPut("web.story_size", storySize);
   });
   refresh();
   stepper.append(smaller, value, bigger);
@@ -3639,6 +3656,17 @@ function openClientSettings() {
 }
 
 function handleSettingsReply(d) {
+  // Roaming-pref traffic shares the settings wire but never touches the
+  // sheet UI: gets apply silently, puts are fire-and-forget.
+  if (d.request_id === roamPendingGet) {
+    roamPendingGet = null;
+    if (!d.error && Array.isArray(d.catalog)) applyRoamingPrefs(d.catalog);
+    return;
+  }
+  if (roamPendingPuts.delete(d.request_id)) {
+    if (d.error) console.debug("roaming pref save failed:", d.error);
+    return;
+  }
   if (d.request_id === csPendingGet) {
     csPendingGet = null;
     if (d.error) {
@@ -3862,6 +3890,81 @@ function renderClientSettings() {
     for (const entry of entries) group.appendChild(csRow(entry));
     csList.appendChild(group);
   }
+}
+
+// ---- Roaming phone prefs (per-character, server-side) ----------------------
+// Story text size, theme, and chip order ride the character profile as
+// registry settings (web.story_size / web.theme / web.chip_order) over
+// the same settings_get/put wire as the sheet above, so switching phones
+// keeps the look. Rules:
+//   - a SET server value wins over this device's localStorage and
+//     applies live on connect (and login for headless runtimes);
+//   - an UNSET server value (0 / empty) changes nothing — localStorage
+//     keeps working as before, and the local value is never pushed
+//     uninvited (no surprise migration of a per-device pref);
+//   - the server copy only changes when the user changes the pref here
+//     (stepper / theme pick / chip arrange), debounced, character
+//     scope, silent on success, and only with a session connected.
+// Drag positions and the rest of Appearance stay per-device.
+
+let roamPendingGet = null;
+const roamPendingPuts = new Set(); // request_ids of in-flight silent puts
+const roamPutTimers = new Map(); // setting key -> debounce timer
+
+function fetchRoamingPrefs() {
+  roamPendingGet = ++csRequestCounter;
+  if (!sendJson("settings_get", { request_id: roamPendingGet })) {
+    roamPendingGet = null;
+  }
+}
+
+function applyRoamingPrefs(catalog) {
+  const values = new Map();
+  for (const entry of catalog) {
+    values.set(entry.key, entry.value);
+  }
+  const size = values.get("web.story_size");
+  if (Number.isInteger(size) && size > 0) {
+    // applyStorySize clamps to this device's legible range and mirrors
+    // the result into localStorage (the offline fallback tracks it).
+    storySize = size;
+    applyStorySize();
+  }
+  const theme = values.get("web.theme");
+  if (typeof theme === "string" && theme && THEMES[theme]) {
+    uiPrefs.theme = theme;
+    saveUiPrefs();
+    applyUiPrefs();
+  }
+  const order = values.get("web.chip_order");
+  if (Array.isArray(order) && order.length) {
+    chipOrder = order.filter((s) => typeof s === "string");
+    try {
+      localStorage.setItem(CHIP_ORDER_KEY, JSON.stringify(chipOrder));
+    } catch { /* fine, just won't persist */ }
+    applyChipOrder();
+    updateChips();
+  }
+}
+
+// Push one changed roaming pref to the character profile. Debounced per
+// key (a stepper tap-tap-tap is one save), fire-and-forget: localStorage
+// already holds the value, the server copy is the roaming bonus.
+function roamPut(key, value) {
+  clearTimeout(roamPutTimers.get(key));
+  roamPutTimers.set(key, setTimeout(() => {
+    roamPutTimers.delete(key);
+    if (session.state !== "connected") return; // no session — stays local
+    const requestId = ++csRequestCounter;
+    roamPendingPuts.add(requestId);
+    const sent = sendJson("settings_put", {
+      request_id: requestId,
+      key,
+      value,
+      scope: "character",
+    });
+    if (!sent) roamPendingPuts.delete(requestId);
+  }, 600));
 }
 
 // ---- Map (full-screen canvas over the generated map scene) ----------------

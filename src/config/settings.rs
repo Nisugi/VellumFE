@@ -657,6 +657,22 @@ pub struct WebConfig {
     /// stable; set it in the character's profile config.
     #[serde(default)]
     pub pinned: bool,
+    /// Phone story text size in px — a roaming pref: it rides the
+    /// character profile so switching phones keeps the look. None =
+    /// unset; the phone falls back to its own localStorage value.
+    /// (0 on the settings wire means "unset" — see the registry entry.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub story_size: Option<u8>,
+    /// Phone theme preset name (e.g. "dark", "black", "contrast",
+    /// "light") — roaming pref like `story_size`. Free text because the
+    /// client's theme set can grow without a server release. None =
+    /// unset (phone's own choice).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    /// Phone stream-chip order (stream ids, leftmost first) — roaming
+    /// pref like `story_size`. Empty = unset (phone's own order).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chip_order: Vec<String>,
 }
 
 fn default_web_port() -> u16 {
@@ -674,6 +690,9 @@ impl Default for WebConfig {
             port: default_web_port(),
             bind: default_web_bind(),
             pinned: false,
+            story_size: None,
+            theme: None,
+            chip_order: Vec::new(),
         }
     }
 }
