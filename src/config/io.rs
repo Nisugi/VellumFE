@@ -568,6 +568,7 @@ impl Default for Config {
                 selection_auto_copy: default_selection_auto_copy(),
                 drag_modifier_key: default_drag_modifier_key(),
                 min_command_length: default_min_command_length(),
+                emoji_shortcodes: true,
                 performance_stats_enabled: default_performance_stats_enabled(),
                 perf_stats_x: default_perf_stats_x(),
                 perf_stats_y: default_perf_stats_y(),
