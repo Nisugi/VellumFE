@@ -1253,6 +1253,222 @@ function speechStreamChoices() {
   return [...known].filter((stream) => !HIDDEN_STREAMS.has(stream));
 }
 
+// ---- Controller (browser Gamepad API) --------------------------------------
+// Bluetooth/USB pads (Backbone, Kishi, Xbox, PlayStation, MFi) with the
+// standard mapping. Buttons map to commands — defaults mirror the desktop
+// [controller] table — and while any bottom sheet is open the d-pad
+// navigates it: up/down move focus, South taps, East closes. There is no
+// mapper software on phones, so this is the only controller path here.
+// Prefs are per-device (localStorage): pads travel with the phone.
+
+const CONTROLLER_PREFS_KEY = "vellum-controller";
+const GP_BUTTON_NAMES = {
+  0: "south", 1: "east", 2: "west", 3: "north",
+  4: "l1", 5: "r1", 6: "l2", 7: "r2",
+  8: "select", 9: "start", 10: "l3", 11: "r3",
+  12: "dpad_up", 13: "dpad_down", 14: "dpad_left", 15: "dpad_right",
+  16: "guide",
+};
+const GP_BUTTON_ORDER = [
+  "dpad_up", "dpad_down", "dpad_left", "dpad_right",
+  "south", "east", "west", "north",
+  "l1", "r1", "l2", "r2", "l3", "r3",
+  "select", "start", "guide",
+];
+const GP_DEFAULT_BINDS = {
+  dpad_up: "n", dpad_down: "s", dpad_left: "w", dpad_right: "e",
+  south: "look",
+};
+
+let controllerPrefs = { enabled: true, binds: { ...GP_DEFAULT_BINDS } };
+try {
+  const stored = JSON.parse(localStorage.getItem(CONTROLLER_PREFS_KEY) || "{}");
+  controllerPrefs = { ...controllerPrefs, ...stored };
+  if (!stored.binds) controllerPrefs.binds = { ...GP_DEFAULT_BINDS };
+} catch { /* corrupted storage — defaults */ }
+
+function saveControllerPrefs() {
+  try {
+    localStorage.setItem(CONTROLLER_PREFS_KEY, JSON.stringify(controllerPrefs));
+  } catch { /* private mode */ }
+}
+
+let gpLoop = 0;
+const gpPrev = new Map(); // pad.index -> [pressed]
+let gpFocusIndex = -1; // d-pad focus among sheet items
+let gpEditButton = null; // button row expanded in the controller sheet
+
+function gamepadPads() {
+  try {
+    return [...(navigator.getGamepads?.() || [])].filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function startGamepadLoop() {
+  if (!gpLoop) gpLoop = setInterval(pollGamepads, 33);
+}
+
+function stopGamepadLoop() {
+  clearInterval(gpLoop);
+  gpLoop = 0;
+  gpPrev.clear();
+}
+
+window.addEventListener("gamepadconnected", () => {
+  startGamepadLoop();
+  if (controllerSheetActive()) renderControllerSheet();
+});
+window.addEventListener("gamepaddisconnected", () => {
+  if (!gamepadPads().length) stopGamepadLoop();
+  if (controllerSheetActive()) renderControllerSheet();
+});
+
+function pollGamepads() {
+  const pads = gamepadPads();
+  if (!pads.length) {
+    stopGamepadLoop();
+    return;
+  }
+  for (const pad of pads) {
+    const prev = gpPrev.get(pad.index) || [];
+    pad.buttons.forEach((button, i) => {
+      const pressed = !!(button && button.pressed);
+      if (pressed && !prev[i]) handleGamepadButton(i);
+    });
+    gpPrev.set(pad.index, pad.buttons.map((b) => !!(b && b.pressed)));
+  }
+}
+
+function sheetItemButtons() {
+  return sheet.hidden ? [] : [...sheetItems.querySelectorAll("button.sheet-item")];
+}
+
+function gpSetSheetFocus(index) {
+  const items = sheetItemButtons();
+  if (!items.length) return;
+  gpFocusIndex = ((index % items.length) + items.length) % items.length;
+  items.forEach((item, i) => item.classList.toggle("gp-focus", i === gpFocusIndex));
+  items[gpFocusIndex].scrollIntoView({ block: "nearest" });
+}
+
+function controllerSheetActive() {
+  return !sheet.hidden && sheetTitle.textContent === "Controller";
+}
+
+function handleGamepadButton(index) {
+  const name = GP_BUTTON_NAMES[index];
+  if (!name) return;
+
+  // In the controller sheet, a physical press selects that button's row
+  // for editing (capture) instead of dispatching.
+  if (controllerSheetActive()) {
+    gpEditButton = name;
+    renderControllerSheet();
+    return;
+  }
+
+  // Any open sheet (context menus, tap-to-target, settings): the d-pad
+  // navigates, South taps the focused item, East closes.
+  if (!sheet.hidden) {
+    if (name === "dpad_up") return gpSetSheetFocus(gpFocusIndex <= 0 ? -1 : gpFocusIndex - 1);
+    if (name === "dpad_down") return gpSetSheetFocus(gpFocusIndex + 1);
+    if (name === "south") {
+      const items = sheetItemButtons();
+      const target = items[gpFocusIndex] || items[0];
+      if (target) target.click();
+      return;
+    }
+    if (name === "east") return closeSheet();
+    return; // other buttons stay quiet while a sheet is open
+  }
+
+  if (!controllerPrefs.enabled) return;
+  const bind = controllerPrefs.binds[name];
+  if (bind) sendCommand(bind);
+}
+
+function openControllerSheet() {
+  gpEditButton = null;
+  openSheet("Controller");
+  renderControllerSheet();
+}
+
+function renderControllerSheet() {
+  sheetItems.replaceChildren();
+
+  const pads = gamepadPads();
+  if (pads.length) {
+    sheetNote(`Connected: ${pads.map((p) => p.id).join(", ")}`, false);
+  } else {
+    sheetNote(
+      "No controller detected — pair one over Bluetooth/USB and press a button.",
+      false,
+    );
+  }
+
+  const enabledBtn = document.createElement("button");
+  enabledBtn.type = "button";
+  enabledBtn.className = "sheet-item";
+  enabledBtn.textContent = `${controllerPrefs.enabled ? "☑" : "☐"} Send bound commands`;
+  enabledBtn.addEventListener("click", () => {
+    controllerPrefs.enabled = !controllerPrefs.enabled;
+    saveControllerPrefs();
+    renderControllerSheet();
+  });
+  sheetItems.appendChild(enabledBtn);
+
+  for (const name of GP_BUTTON_ORDER) {
+    if (gpEditButton === name) {
+      const row = document.createElement("div");
+      row.className = "sheet-empty gp-edit-row";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = controllerPrefs.binds[name] || "";
+      input.placeholder = "command (e.g. look, hide, sw)";
+      const save = document.createElement("button");
+      save.type = "button";
+      save.textContent = "Save";
+      save.addEventListener("click", () => {
+        const value = input.value.trim();
+        if (value) controllerPrefs.binds[name] = value;
+        else delete controllerPrefs.binds[name];
+        saveControllerPrefs();
+        gpEditButton = null;
+        renderControllerSheet();
+      });
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => {
+        gpEditButton = null;
+        renderControllerSheet();
+      });
+      row.append(`${name}: `, input, save, cancel);
+      sheetItems.appendChild(row);
+      queueMicrotask(() => input.focus());
+      continue;
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sheet-item";
+    const bind = controllerPrefs.binds[name];
+    btn.textContent = `${name} — ${bind || "unbound"}`;
+    btn.addEventListener("click", () => {
+      gpEditButton = name;
+      renderControllerSheet();
+    });
+    sheetItems.appendChild(btn);
+  }
+
+  sheetNote(
+    "Tap a row (or press the button on the pad) to edit. In menus the " +
+      "d-pad always navigates: up/down move, A taps, B closes.",
+    false,
+  );
+}
+
 function openSpeechSheet() {
   openSheet("Speech");
   if (!speechAvailable()) {
@@ -1567,6 +1783,7 @@ function openSettingsSheet() {
   openSheet("Settings");
   sheetButton("Appearance", openAppearanceSheet);
   sheetButton("Speech (read lines aloud)", openSpeechSheet);
+  sheetButton("Controller (gamepad)", openControllerSheet);
   sheetButton(
     soundMuted ? "Sound alerts: off — tap to enable" : "Sound alerts: on — tap to mute",
     () => {
@@ -2034,6 +2251,7 @@ function openSheet(title) {
   effectsSheetOpen = false;
   sheet.hidden = false;
   sheetBackdrop.hidden = false;
+  gpFocusIndex = -1; // fresh sheet, fresh d-pad focus
 }
 
 function sheetNote(text, dismisses) {
@@ -2075,6 +2293,10 @@ function openSheetLoading(noun) {
 
 sheetBackdrop.addEventListener("click", closeSheet);
 document.getElementById("sheet-close").addEventListener("click", closeSheet);
+
+// A pad connected before this script ran fires no gamepadconnected event;
+// pick it up if the browser already lists one.
+if (gamepadPads().length) startGamepadLoop();
 
 // Belt and braces: while the sheet is open, tapping anything that is not
 // the sheet itself (and not a link, which retargets the sheet) closes it.

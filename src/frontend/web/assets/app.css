@@ -828,6 +828,39 @@ html, body {
   font-style: italic;
 }
 
+/* Gamepad d-pad focus over sheet items */
+.sheet-item.gp-focus {
+  outline: 2px solid var(--accent, #6a9fb5);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+/* Controller sheet inline bind editor */
+.gp-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-style: normal;
+}
+.gp-edit-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-raised, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--fg-dim);
+  border-radius: 6px;
+}
+.gp-edit-row button {
+  padding: 6px 10px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-raised, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--fg-dim);
+  border-radius: 6px;
+}
+
 /* Hands + status indicators (bottom, above vitals) */
 #status-row {
   display: flex;

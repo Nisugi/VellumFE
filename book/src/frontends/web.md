@@ -114,6 +114,12 @@ The gear button (also reachable from the login screen) opens Settings:
 - **Speech** — read incoming lines aloud with the browser's speech
   synthesis, with per-stream toggles (thoughts on by default). Voice
   availability depends on the phone; the first utterance may need a tap.
+- **Controller** — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
+  PlayStation, MFi) and buttons send commands: defaults put movement on
+  the d-pad and `look` on South, all rebindable here (tap a row, or
+  press the button on the pad to jump to it). Whenever a bottom sheet
+  is open — context menus, tap-to-target — the d-pad navigates it:
+  up/down move, South taps, East closes. Per-device.
 - **Sound alerts / login music** — browser playback toggles.
 - **Client settings (saved on host)** — the full desktop settings
   registry over the wire: every setting, editable at character or global
