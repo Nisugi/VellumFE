@@ -296,7 +296,7 @@ impl VellumGuiApp {
                 link_clicks.push((key.clone(), click));
             }
             for target in out.dispatch_targets {
-                self.execute_global_dispatch_target(target);
+                self.execute_global_dispatch_target(target, ctx);
             }
             if out.popup_command.is_some() || out.popup_should_close {
                 self.apply_popup_menu_layer_result(out.popup_command, out.popup_should_close);

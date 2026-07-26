@@ -86,6 +86,18 @@ dpad_up = { macro_text = "n\r" }
 Inside interact mode and context menus the d-pad, South, and East are
 fixed navigation keys; bindings apply outside those modes.
 
+Controller-specific actions: `controller_shift` (hold: buttons use
+`[controller_shift]`, a second bank in the same format),
+`controller_wheel` / `controller_wheel:<name>` (hold: radial command
+wheel — default ring in `[[controller_wheel]]`, named rings in
+`[controller_wheels.<name>]`; slices take `label`, `command`, optional
+`color`, and nested `slices` for folders), and `controller_overlay`
+(toggle the binding legend — curated by `[controller_overlay]
+buttons`, with `shift/<button>` entries for the shift bank). Rumble
+lives in `[controller_rumble]` (patterns `off`/`short`/`long`/`double`
+per event). All of it is edited in the `.controller` editor's tabs —
+hand-editing is never required.
+
 ## Macros
 
 Send text with a keypress using the inline-table form. `\r` presses Enter:

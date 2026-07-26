@@ -5,6 +5,7 @@ A modern, multi-frontend client for [GemStone IV](https://www.play.net/gs4/) —
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
 ![Tests](https://img.shields.io/badge/tests-3%2C100%2B%20passing-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
+[![Discord](https://img.shields.io/badge/discord-join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/6nKhWRTkSN)
 
 ## Frontends
 
@@ -117,6 +118,12 @@ Settings live in TOML files under `~/.vellum-fe/`, but you rarely need to touch 
 │ (Ratatui)   │ │ (egui)      │ │ (phone / Android / iOS) │
 └─────────────┘ └─────────────┘ └─────────────────────────┘
 ```
+
+## Community
+
+Join the [VellumFE Discord](https://discord.gg/6nKhWRTkSN) — help and
+setup questions, layout/skin/wheel showcases, accessibility and
+controller talk, beta testing, and release announcements.
 
 ## Contributing
 

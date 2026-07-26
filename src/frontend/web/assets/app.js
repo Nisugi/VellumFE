@@ -386,6 +386,7 @@ function appendText(seq, stream, line) {
   // Speak before display routing: enabled streams speak even while
   // another stream is active (thoughts read out mid-hunt).
   speakLine(stream, line);
+  gpRumbleLine(stream);
   const buf = ensureStream(stream);
   buf.lines.push(line);
   if (buf.lines.length > MAX_BUFFER_LINES) buf.lines.shift();
@@ -1277,17 +1278,25 @@ const GP_BUTTON_ORDER = [
 ];
 // The left stick walks the 8 compass directions; the d-pad covers the
 // vertical axis and portals (.portal resolves go door / climb stair on
-// the host).
+// the host). Binding a button to the reserved word "shift" makes it a
+// hold-modifier: while held, buttons resolve against shiftBinds.
+const GP_SHIFT = "shift";
 const GP_DEFAULT_BINDS = {
   dpad_up: "up", dpad_down: "down", dpad_right: "out", dpad_left: ".portal",
-  south: "look",
+  south: "look", l2: GP_SHIFT,
 };
+const GP_DEFAULT_SHIFT_BINDS = { south: "stand" };
 
-let controllerPrefs = { enabled: true, binds: { ...GP_DEFAULT_BINDS } };
+let controllerPrefs = {
+  enabled: true,
+  binds: { ...GP_DEFAULT_BINDS },
+  shiftBinds: { ...GP_DEFAULT_SHIFT_BINDS },
+};
 try {
   const stored = JSON.parse(localStorage.getItem(CONTROLLER_PREFS_KEY) || "{}");
   controllerPrefs = { ...controllerPrefs, ...stored };
   if (!stored.binds) controllerPrefs.binds = { ...GP_DEFAULT_BINDS };
+  if (!stored.shiftBinds) controllerPrefs.shiftBinds = { ...GP_DEFAULT_SHIFT_BINDS };
 } catch { /* corrupted storage — defaults */ }
 
 function saveControllerPrefs() {
@@ -1366,6 +1375,13 @@ function pollGamepads() {
     }
     gpStickSector = sector;
   }
+
+  // Right stick: analog scroll of the story pane (quadratic speed curve;
+  // stick up scrolls up). Quiet while a sheet is open.
+  const rightY = axes[3] || 0;
+  if (Math.abs(rightY) > 0.25 && sheet.hidden) {
+    pane.scrollBy(0, rightY * Math.abs(rightY) * 40);
+  }
 }
 
 function sheetItemButtons() {
@@ -1412,12 +1428,55 @@ function handleGamepadButton(index) {
   }
 
   if (!controllerPrefs.enabled) return;
+  if (gpShiftHeld()) {
+    // Shift layer: strictly the shift bank — no fall-through.
+    const bind = controllerPrefs.shiftBinds[name];
+    if (bind && bind !== GP_SHIFT) sendCommand(bind);
+    return;
+  }
   const bind = controllerPrefs.binds[name];
-  if (bind) sendCommand(bind);
+  if (bind && bind !== GP_SHIFT) sendCommand(bind);
 }
+
+// True while any button bound to "shift" is held — read from live pad
+// state so there is no press/release bookkeeping to desync.
+function gpShiftHeld() {
+  const shiftIndexes = Object.entries(GP_BUTTON_NAMES)
+    .filter(([, name]) => controllerPrefs.binds[name] === GP_SHIFT)
+    .map(([index]) => Number(index));
+  if (!shiftIndexes.length) return false;
+  return gamepadPads().some((pad) =>
+    shiftIndexes.some((i) => !!(pad.buttons[i] && pad.buttons[i].pressed)),
+  );
+}
+
+// Rumble the pad when a line arrives on a chosen stream (whispers and
+// deaths by default) — the phone counterpart of the desktop event map.
+let gpLastRumble = 0;
+function gpRumbleLine(stream) {
+  const rumble = controllerPrefs.rumble || {};
+  if (rumble.enabled === false) return;
+  const streams = rumble.streams || { whisper: true, death: true };
+  if (!streams[stream]) return;
+  const now = Date.now();
+  if (now - gpLastRumble < 1500) return; // don't buzz continuously
+  gpLastRumble = now;
+  for (const pad of gamepadPads()) {
+    pad.vibrationActuator
+      ?.playEffect?.("dual-rumble", {
+        duration: 250,
+        strongMagnitude: 0.8,
+        weakMagnitude: 0.4,
+      })
+      ?.catch?.(() => {});
+  }
+}
+
+let gpSheetShiftLayer = false;
 
 function openControllerSheet() {
   gpEditButton = null;
+  gpSheetShiftLayer = false;
   openSheet("Controller");
   renderControllerSheet();
 }
@@ -1446,21 +1505,66 @@ function renderControllerSheet() {
   });
   sheetItems.appendChild(enabledBtn);
 
+  const layerBtn = document.createElement("button");
+  layerBtn.type = "button";
+  layerBtn.className = "sheet-item";
+  layerBtn.textContent = gpSheetShiftLayer
+    ? "Editing: shift layer (while shift held) — tap for base"
+    : "Editing: base layer — tap for shift layer";
+  layerBtn.addEventListener("click", () => {
+    gpSheetShiftLayer = !gpSheetShiftLayer;
+    gpEditButton = null;
+    renderControllerSheet();
+  });
+  sheetItems.appendChild(layerBtn);
+
+  // Rumble toggles (master + per-stream).
+  const rumble =
+    controllerPrefs.rumble ||
+    (controllerPrefs.rumble = { enabled: true, streams: { whisper: true, death: true } });
+  rumble.streams = rumble.streams || { whisper: true, death: true };
+  const rumbleRow = (label, checked, onToggle) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "sheet-item";
+    btn.textContent = `${checked ? "☑" : "☐"} ${label}`;
+    btn.addEventListener("click", () => {
+      onToggle();
+      saveControllerPrefs();
+      renderControllerSheet();
+    });
+    sheetItems.appendChild(btn);
+  };
+  rumbleRow("Rumble on events", rumble.enabled !== false, () => {
+    rumble.enabled = rumble.enabled === false;
+  });
+  if (rumble.enabled !== false) {
+    for (const stream of ["whisper", "death", "thoughts"]) {
+      rumbleRow(`　rumble: ${stream}`, !!rumble.streams[stream], () => {
+        rumble.streams[stream] = !rumble.streams[stream];
+      });
+    }
+  }
+
+  const activeBinds = gpSheetShiftLayer
+    ? controllerPrefs.shiftBinds
+    : controllerPrefs.binds;
+
   for (const name of GP_BUTTON_ORDER) {
     if (gpEditButton === name) {
       const row = document.createElement("div");
       row.className = "sheet-empty gp-edit-row";
       const input = document.createElement("input");
       input.type = "text";
-      input.value = controllerPrefs.binds[name] || "";
-      input.placeholder = "command (e.g. look, hide, sw)";
+      input.value = activeBinds[name] || "";
+      input.placeholder = "command (e.g. look, hide, sw) or shift";
       const save = document.createElement("button");
       save.type = "button";
       save.textContent = "Save";
       save.addEventListener("click", () => {
         const value = input.value.trim();
-        if (value) controllerPrefs.binds[name] = value;
-        else delete controllerPrefs.binds[name];
+        if (value) activeBinds[name] = value;
+        else delete activeBinds[name];
         saveControllerPrefs();
         gpEditButton = null;
         renderControllerSheet();
@@ -1480,7 +1584,7 @@ function renderControllerSheet() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "sheet-item";
-    const bind = controllerPrefs.binds[name];
+    const bind = activeBinds[name];
     btn.textContent = `${name} — ${bind || "unbound"}`;
     btn.addEventListener("click", () => {
       gpEditButton = name;
@@ -1490,8 +1594,9 @@ function renderControllerSheet() {
   }
 
   sheetNote(
-    "Tap a row (or press the button on the pad) to edit. In menus the " +
-      "d-pad always navigates: up/down move, A taps, B closes.",
+    "Tap a row (or press the button on the pad) to edit. Bind a button " +
+      'to "shift" to make it the hold-modifier for the shift layer. In ' +
+      "menus the d-pad always navigates: up/down move, A taps, B closes.",
     false,
   );
 }

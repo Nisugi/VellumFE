@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod color_emoji;
 mod detached;
 mod map_explorer;
 mod dialogs;
@@ -218,6 +219,18 @@ pub struct VellumGuiApp {
     /// center. Movement sends on sector *change* with hysteresis.
     #[cfg(feature = "gamepad")]
     gp_stick_sector: Option<usize>,
+    /// Radial wheel state while the wheel button is held: which named
+    /// wheel, the folder path descended so far, and the aimed slice.
+    /// Firing happens on release.
+    #[cfg(feature = "gamepad")]
+    gp_wheel: Option<gamepad::WheelUi>,
+    /// Binding-legend overlay visibility (controller_overlay toggles it).
+    #[cfg(feature = "gamepad")]
+    gp_overlay: bool,
+    /// Live rumble effects: gilrs stops an effect when dropped, so each
+    /// stays here until its expiry.
+    #[cfg(feature = "gamepad")]
+    gp_rumble: Vec<(gilrs::ff::Effect, std::time::Instant)>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -518,6 +531,12 @@ impl VellumGuiApp {
                 .ok(),
             #[cfg(feature = "gamepad")]
             gp_stick_sector: None,
+            #[cfg(feature = "gamepad")]
+            gp_wheel: None,
+            #[cfg(feature = "gamepad")]
+            gp_overlay: false,
+            #[cfg(feature = "gamepad")]
+            gp_rumble: Vec::new(),
             ui_settings,
             tab_settings,
             tab_groups,
@@ -2677,7 +2696,7 @@ impl VellumGuiApp {
             };
 
             consumed_keyboard_input = true;
-            self.execute_global_dispatch_target(target);
+            self.execute_global_dispatch_target(target, ctx);
 
             ctx.input_mut(|input| {
                 if let Some(logical_key) = key_press.logical_key {
@@ -2950,14 +2969,56 @@ impl VellumGuiApp {
         )
     }
 
-    fn execute_global_dispatch_target(&mut self, target: GlobalDispatchTarget) {
+    fn execute_global_dispatch_target(
+        &mut self,
+        target: GlobalDispatchTarget,
+        ctx: &egui::Context,
+    ) {
         match target {
-            GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action),
+            GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action, ctx),
             GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut),
         }
     }
 
-    fn execute_macro_keybind(&mut self, action: &KeyBindAction) {
+    /// Scroll actions bound to keys or controller buttons, applied to the
+    /// GUI's own scroll model — the core implementations move
+    /// `content.scroll_offset`, which only the TUI renders. v1 targets the
+    /// "main" story window. Returns true when the action was a scroll.
+    fn try_gui_scroll_action(&mut self, action: &KeyBindAction, ctx: &egui::Context) -> bool {
+        let KeyBindAction::Action(name) = action else {
+            return false;
+        };
+        let scroll_id = "main";
+        let view_h: f32 = ctx
+            .data_mut(|d| d.get_temp(egui::Id::new(("text_scroll_view_h", scroll_id))))
+            .unwrap_or(400.0);
+        // (kind, value): 0 = relative px, 1 = home, 2 = end
+        let request: (u8, f32) = match name.as_str() {
+            "scroll_current_window_up_page" => (0, -(view_h * 0.85)),
+            "scroll_current_window_down_page" => (0, view_h * 0.85),
+            "scroll_current_window_up_one" => (0, -48.0),
+            "scroll_current_window_down_one" => (0, 48.0),
+            "scroll_current_window_home" => (1, 0.0),
+            "scroll_current_window_end" => (2, 0.0),
+            _ => return false,
+        };
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::new(("text_scroll_pending", scroll_id)), request)
+        });
+        ctx.request_repaint();
+        true
+    }
+
+    fn execute_macro_keybind(&mut self, action: &KeyBindAction, ctx: &egui::Context) {
+        if self.try_gui_scroll_action(action, ctx) {
+            return;
+        }
+        #[cfg(feature = "gamepad")]
+        if matches!(action, KeyBindAction::Action(name) if name == "controller_overlay") {
+            self.gp_overlay = !self.gp_overlay;
+            ctx.request_repaint();
+            return;
+        }
         match self.app_core.execute_keybind_action(action) {
             Ok(commands) => {
                 for outbound in commands {
@@ -3955,6 +4016,8 @@ impl eframe::App for VellumGuiApp {
                 ctx.request_repaint_after(at - now);
             }
         }
+        // Publish the color-emoji toggle for this frame's text painters.
+        color_emoji::set_enabled(self.app_core.config.ui.color_emoji);
         // Publish the configured item-drag modifier for link renderers.
         ctx.data_mut(|data| {
             data.insert_temp(
@@ -4502,6 +4565,10 @@ impl eframe::App for VellumGuiApp {
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
         self.render_interact_overlay(&ctx);
+        #[cfg(feature = "gamepad")]
+        self.render_controller_wheel(&ctx);
+        #[cfg(feature = "gamepad")]
+        self.render_controller_overlay(&ctx);
         self.render_injuries_popup(&ctx);
         self.render_editors(&ctx);
         self.render_server_dialog(&ctx);

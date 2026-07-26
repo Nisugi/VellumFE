@@ -146,6 +146,20 @@ pub enum KeyAction {
     // Interact mode: pointer-free entity focus cycling (controller-friendly)
     InteractMode, // Toggle interact mode on/off
 
+    // Controller shift modifier: while the bound button is held, other
+    // buttons resolve against [controller_shift]. Handled entirely by the
+    // gamepad layer; a no-op from a keyboard key.
+    ControllerShift,
+
+    // Controller radial wheel: hold the bound button to show the command
+    // wheel, pick a slice with the left stick, release to fire. Handled
+    // by the gamepad layer; a no-op from a keyboard key.
+    ControllerWheel,
+
+    // Toggle the controller binding-legend overlay (curated via the
+    // HUD checkboxes in the .controller editor). GUI-handled.
+    ControllerOverlay,
+
     // TTS (Text-to-Speech) actions - Accessibility
     TtsNext,           // Next message (sequential, includes read)
     TtsPrevious,       // Previous message (sequential, includes read)
@@ -159,6 +173,66 @@ pub enum KeyAction {
 
     // Macro - send literal text
     SendMacro(String),
+}
+
+/// One slice of the controller radial wheel: a label drawn on the wheel
+/// and either a command to fire (game text or dot-command) or a child
+/// ring of slices (a folder — opened with South while the wheel is held).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WheelSlice {
+    pub label: String,
+    #[serde(default)]
+    pub command: String,
+    /// Optional wedge tint (hex or palette name) — dim normally, bright
+    /// while aimed, so wheels can be color-coded by function.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slices: Vec<WheelSlice>,
+}
+
+impl WheelSlice {
+    pub fn is_folder(&self) -> bool {
+        !self.slices.is_empty()
+    }
+}
+
+/// Rumble (haptics) event map: pattern per game event. Patterns:
+/// "off", "short", "long", "double".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RumbleConfig {
+    #[serde(default = "default_rumble_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_rumble_short")]
+    pub roundtime_end: String,
+    #[serde(default = "default_rumble_long")]
+    pub stunned: String,
+    #[serde(default = "default_rumble_double")]
+    pub death: String,
+}
+
+fn default_rumble_enabled() -> bool {
+    true
+}
+fn default_rumble_short() -> String {
+    "short".to_string()
+}
+fn default_rumble_long() -> String {
+    "long".to_string()
+}
+fn default_rumble_double() -> String {
+    "double".to_string()
+}
+
+impl Default for RumbleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            roundtime_end: default_rumble_short(),
+            stunned: default_rumble_long(),
+            death: default_rumble_double(),
+        }
+    }
 }
 
 /// Keybinds for menu system (popups, browsers, forms, editors)
@@ -496,6 +570,9 @@ impl KeyAction {
     /// editor's action dropdown; a test keeps every entry parseable.
     pub const CONTROLLER_ACTION_NAMES: &'static [&'static str] = &[
         "interact_mode",
+        "controller_shift",
+        "controller_wheel",
+        "controller_overlay",
         "stop_travel",
         "scroll_current_window_up_page",
         "scroll_current_window_down_page",
@@ -554,6 +631,13 @@ impl KeyAction {
             "toggle_sounds" => Some(Self::ToggleSounds),
             "stop_travel" => Some(Self::StopTravel),
             "interact_mode" => Some(Self::InteractMode),
+            "controller_shift" => Some(Self::ControllerShift),
+            // "controller_wheel" opens the default wheel;
+            // "controller_wheel:<name>" opens a named [controller_wheels.<name>].
+            s if s == "controller_wheel" || s.starts_with("controller_wheel:") => {
+                Some(Self::ControllerWheel)
+            }
+            "controller_overlay" => Some(Self::ControllerOverlay),
             "tts_next" => Some(Self::TtsNext),
             "tts_previous" => Some(Self::TtsPrevious),
             "tts_next_unread" => Some(Self::TtsNextUnread),
@@ -777,15 +861,230 @@ impl Config {
         }
     }
 
-    /// Load controller (gamepad) bindings from the `[controller]` section of
-    /// the global keybinds.toml. Controller binds are global-only: pads are
-    /// per-desk, not per-character. Falls back to the shipped defaults when
-    /// the file has no `[controller]` section yet (pre-refresh installs).
-    pub fn load_controller_binds() -> Result<HashMap<String, KeyBindAction>> {
+    /// Load the radial wheel slices from `[[controller_wheel]]` of the
+    /// global keybinds.toml, falling back to the shipped defaults when
+    /// absent.
+    pub fn load_controller_wheel() -> Result<Vec<WheelSlice>> {
+        let slices_from = |contents: &str| -> Option<Vec<WheelSlice>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            let array = toml_value.get("controller_wheel")?;
+            array.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(slices) = slices_from(&contents) {
+                return Ok(slices);
+            }
+        }
+        Ok(slices_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Load the overlay legend's curated entries from
+    /// `[controller_overlay] buttons` of the global keybinds.toml:
+    /// button names, with a `shift/` prefix for shift-layer entries.
+    pub fn load_controller_overlay() -> Result<Vec<String>> {
+        let list_from = |contents: &str| -> Option<Vec<String>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            toml_value
+                .get("controller_overlay")?
+                .get("buttons")?
+                .clone()
+                .try_into()
+                .ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(list) = list_from(&contents) {
+                return Ok(list);
+            }
+        }
+        Ok(list_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the overlay legend's curated entry list.
+    pub fn save_controller_overlay(buttons: &[String]) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        let section = toml_table
+            .entry("controller_overlay".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        if let toml::Value::Table(table) = section {
+            table.insert(
+                "buttons".to_string(),
+                toml::Value::try_from(buttons).context("Failed to serialize overlay list")?,
+            );
+        }
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
+    }
+
+    /// Load the rumble event map from `[controller_rumble]` of the global
+    /// keybinds.toml (shipped defaults when absent).
+    pub fn load_controller_rumble() -> Result<RumbleConfig> {
+        let section_from = |contents: &str| -> Option<RumbleConfig> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            toml_value.get("controller_rumble")?.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(config) = section_from(&contents) {
+                return Ok(config);
+            }
+        }
+        Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the `[controller_rumble]` section.
+    pub fn save_controller_rumble(rumble: &RumbleConfig) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        toml_table.insert(
+            "controller_rumble".to_string(),
+            toml::Value::try_from(rumble).context("Failed to serialize rumble config")?,
+        );
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
+    }
+
+    /// Load the named wheels from `[controller_wheels.<name>]` arrays of
+    /// the global keybinds.toml (bound via "controller_wheel:<name>").
+    pub fn load_controller_wheels() -> Result<HashMap<String, Vec<WheelSlice>>> {
+        let wheels_from = |contents: &str| -> Option<HashMap<String, Vec<WheelSlice>>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            let table = toml_value.get("controller_wheels")?;
+            table.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(wheels) = wheels_from(&contents) {
+                return Ok(wheels);
+            }
+        }
+        Ok(wheels_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace one wheel's slice list in the global keybinds.toml:
+    /// None = the default wheel ([[controller_wheel]]), Some(name) =
+    /// [controller_wheels.<name>]. An empty slice list deletes a named
+    /// wheel outright.
+    pub fn save_controller_wheel_named(name: Option<&str>, slices: &[WheelSlice]) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        match name {
+            None => {
+                let array =
+                    toml::Value::try_from(slices).context("Failed to serialize wheel slices")?;
+                toml_table.insert("controller_wheel".to_string(), array);
+            }
+            Some(wheel) => {
+                let section = toml_table
+                    .entry("controller_wheels".to_string())
+                    .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+                if let toml::Value::Table(table) = section {
+                    if slices.is_empty() {
+                        table.remove(wheel);
+                    } else {
+                        let array = toml::Value::try_from(slices)
+                            .context("Failed to serialize wheel slices")?;
+                        table.insert(wheel.to_string(), array);
+                    }
+                }
+            }
+        }
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
+    }
+
+    /// Replace the whole `[[controller_wheel]]` array in the global
+    /// keybinds.toml (the wheel editor saves the full slice list).
+    pub fn save_controller_wheel(slices: &[WheelSlice]) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        let array = toml::Value::try_from(slices).context("Failed to serialize wheel slices")?;
+        toml_table.insert("controller_wheel".to_string(), array);
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
+    }
+
+    fn controller_section_name(shift: bool) -> &'static str {
+        if shift {
+            "controller_shift"
+        } else {
+            "controller"
+        }
+    }
+
+    /// Load controller (gamepad) bindings from a `[controller]`-family
+    /// section of the global keybinds.toml. Controller binds are
+    /// global-only: pads are per-desk, not per-character. Falls back to
+    /// the shipped defaults when the file lacks the section
+    /// (pre-refresh installs).
+    pub fn load_controller_binds_layer(shift: bool) -> Result<HashMap<String, KeyBindAction>> {
+        let section = Self::controller_section_name(shift);
         let section_from = |contents: &str| -> Option<HashMap<String, KeyBindAction>> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
-            let section = toml_value.get("controller")?;
-            section.clone().try_into().ok()
+            let table = toml_value.get(section)?;
+            table.clone().try_into().ok()
         };
 
         let path = Self::common_keybinds_path()?;
@@ -799,9 +1098,18 @@ impl Config {
         Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
     }
 
-    /// Save one controller binding into `[controller]` of the global
-    /// keybinds.toml (created if missing).
-    pub fn save_single_controller_bind(button: &str, action: &KeyBindAction) -> Result<()> {
+    /// Base-layer controller bindings (`[controller]`).
+    pub fn load_controller_binds() -> Result<HashMap<String, KeyBindAction>> {
+        Self::load_controller_binds_layer(false)
+    }
+
+    /// Save one controller binding into a `[controller]`-family section of
+    /// the global keybinds.toml (created if missing).
+    pub fn save_single_controller_bind(
+        button: &str,
+        action: &KeyBindAction,
+        shift: bool,
+    ) -> Result<()> {
         let path = Self::common_keybinds_path()?;
         let mut toml_table: toml::value::Table = if path.exists() {
             let contents = fs::read_to_string(&path)
@@ -816,7 +1124,7 @@ impl Config {
         };
 
         let section = toml_table
-            .entry("controller".to_string())
+            .entry(Self::controller_section_name(shift).to_string())
             .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
         if let toml::Value::Table(table) = section {
             let action_value = match action {
@@ -841,9 +1149,9 @@ impl Config {
         Ok(())
     }
 
-    /// Delete one controller binding from `[controller]` of the global
-    /// keybinds.toml.
-    pub fn delete_single_controller_bind(button: &str) -> Result<()> {
+    /// Delete one controller binding from a `[controller]`-family section
+    /// of the global keybinds.toml.
+    pub fn delete_single_controller_bind(button: &str, shift: bool) -> Result<()> {
         let path = Self::common_keybinds_path()?;
         if !path.exists() {
             return Ok(());
@@ -852,7 +1160,9 @@ impl Config {
             .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
         let mut toml_table: toml::value::Table = toml::from_str(&contents)
             .with_context(|| format!("Failed to parse keybinds file: {:?}", path))?;
-        if let Some(toml::Value::Table(table)) = toml_table.get_mut("controller") {
+        if let Some(toml::Value::Table(table)) =
+            toml_table.get_mut(Self::controller_section_name(shift))
+        {
             if table.remove(button).is_some() {
                 let contents =
                     toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;

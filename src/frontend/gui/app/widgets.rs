@@ -207,7 +207,65 @@ impl VellumGuiApp {
             return;
         }
         let job = std::mem::take(job);
-        ui.add(egui::Label::new(job));
+        if super::color_emoji::should_overlay(&job.text) {
+            Self::add_label_with_color_emoji(ui, egui::Label::new(job), false, None);
+        } else {
+            ui.add(egui::Label::new(job));
+        }
+    }
+
+    /// Add a label whose text contains emoji, then paint color emoji
+    /// textures over the monochrome glyphs.
+    ///
+    /// `Label::ui` never exposes its galley, so this path uses the public
+    /// `Label::layout_in_ui` (identical layout, allocation, and response)
+    /// and mirrors the paint block of `impl Widget for Label` from the egui
+    /// fork (rev 426ef99, crates/egui/src/widgets/label.rs), minus the
+    /// elided-text hover tooltip: our jobs never elide (no
+    /// max_rows/truncate). Callers pass `interactive` = whether the label
+    /// was given a non-hover sense, and the explicit `selectable` override
+    /// if one was set on the label, matching what `Label::ui` derives.
+    fn add_label_with_color_emoji(
+        ui: &mut egui::Ui,
+        label: egui::Label,
+        interactive: bool,
+        selectable: Option<bool>,
+    ) -> egui::Response {
+        let (galley_pos, galley, response) = label.layout_in_ui(ui);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), galley.text())
+        });
+        if ui.is_rect_visible(response.rect) {
+            let response_color = if interactive {
+                ui.style().interact(&response).text_color()
+            } else {
+                ui.style().visuals.text_color()
+            };
+            let underline = if response.has_focus() || response.highlighted() {
+                egui::Stroke::new(1.0, response_color)
+            } else {
+                egui::Stroke::NONE
+            };
+            let selectable =
+                selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
+            if selectable {
+                egui::text_selection::LabelSelectionState::label_text_selection(
+                    ui,
+                    &response,
+                    galley_pos,
+                    galley.clone(),
+                    response_color,
+                    underline,
+                );
+            } else {
+                ui.painter().add(
+                    egui::epaint::TextShape::new(galley_pos, galley.clone(), response_color)
+                        .with_underline(underline),
+                );
+            }
+            super::color_emoji::paint_color_emoji(ui.ctx(), ui.painter(), &galley, galley_pos);
+        }
+        response
     }
 
     /// Format a line's arrival time for display, matching the TUI's style
@@ -289,13 +347,16 @@ impl VellumGuiApp {
                             search_match,
                             font_id,
                         );
-                        let response = ui
-                            .add(
-                                egui::Label::new(rich)
-                                    .sense(egui::Sense::click_and_drag())
-                                    .selectable(!Self::link_drag_blocks_selection(ui)),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let selectable = !Self::link_drag_blocks_selection(ui);
+                        let label = egui::Label::new(rich)
+                            .sense(egui::Sense::click_and_drag())
+                            .selectable(selectable);
+                        let response = if super::color_emoji::should_overlay(&segment.text) {
+                            Self::add_label_with_color_emoji(ui, label, true, Some(selectable))
+                        } else {
+                            ui.add(label)
+                        }
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
                         if let Some(link_data) = &segment.link_data {
                             if let Some(drop) = Self::handle_link_dnd(ui, &response, link_data) {
                                 clicked_link.get_or_insert(drop);
@@ -3295,11 +3356,72 @@ impl VellumGuiApp {
             }
         }
 
-        let scroll_area = if wrap {
+        // Viewport height for keyboard/controller paging (see
+        // try_gui_scroll_action) — refreshed every frame.
+        outer_ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new(("text_scroll_view_h", scroll_id)),
+                max_height,
+            );
+        });
+
+        let mut scroll_area = if wrap {
             egui::ScrollArea::vertical()
         } else {
             egui::ScrollArea::both()
         };
+
+        // Programmatic scroll (page keys / controller). egui's private
+        // stuck-to-end flag only clears on USER input — a one-frame
+        // explicit offset snaps back to the bottom next frame. So while a
+        // key/pad scroll has us paged up, we HOLD the offset by
+        // re-applying it every frame, and release the hold when the user
+        // touches the wheel/drag, reaches the bottom, or presses End.
+        let pending_key = egui::Id::new(("text_scroll_pending", scroll_id));
+        let hold_key = egui::Id::new(("text_scroll_hold", scroll_id));
+        let pending: Option<(u8, f32)> = outer_ctx.data_mut(|data| {
+            let value = data.get_temp(pending_key);
+            if value.is_some() {
+                data.remove::<(u8, f32)>(pending_key);
+            }
+            value
+        });
+        let mut hold: Option<f32> = outer_ctx.data_mut(|data| data.get_temp(hold_key));
+
+        // The user's own scroll input takes over instantly.
+        let user_scrolled = ui.input(|input| {
+            input.raw.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::MouseWheel { .. } | egui::Event::PointerButton { pressed: true, .. }
+                )
+            })
+        });
+        if user_scrolled {
+            hold = None;
+        }
+
+        if let Some((kind, value)) = pending {
+            let current = hold.or_else(|| {
+                outer_ctx
+                    .data_mut(|data| data.get_temp::<egui::Id>(area_id_key))
+                    .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
+                    .map(|state| state.offset.y)
+            });
+            hold = match kind {
+                1 => Some(0.0),      // home
+                2 => None,           // end: drop the hold, stickiness resumes
+                _ => Some((current.unwrap_or(0.0) + value).max(0.0)),
+            };
+            if hold.is_none() {
+                // Nudge to the bottom so stick_to_bottom re-engages.
+                scroll_area = scroll_area.vertical_scroll_offset(f32::MAX / 4.0);
+            }
+        }
+        if let Some(target) = hold {
+            scroll_area = scroll_area.vertical_scroll_offset(target);
+        }
+
         let output = scroll_area
             .id_salt(format!("text_scroll_{}", scroll_id))
             .stick_to_bottom(true)
@@ -3685,7 +3807,13 @@ impl VellumGuiApp {
                             }
                         }
                         ui.painter()
-                            .galley(galley_pos, galley, visuals.text_color());
+                            .galley(galley_pos, galley.clone(), visuals.text_color());
+                        super::color_emoji::paint_color_emoji(
+                            &ctx,
+                            ui.painter(),
+                            &galley,
+                            galley_pos,
+                        );
                     }
                 }
                 // A press on the blank area below the last line clears the
@@ -3710,6 +3838,21 @@ impl VellumGuiApp {
             });
         // Next frame's anchoring pre-pass targets this area's real id.
         outer_ctx.data_mut(|data| data.insert_temp(area_id_key, output.id));
+
+        // Settle the programmatic hold against the real layout: clamp to
+        // the actual max offset, and release it once we're at the bottom
+        // so stick-to-bottom auto-scroll resumes.
+        let max_offset = (output.content_size.y - output.inner_rect.height()).max(0.0);
+        let settled = hold.map(|h| h.min(max_offset)).filter(|h| *h < max_offset - 4.0);
+        outer_ctx.data_mut(|data| match settled {
+            Some(value) => {
+                data.insert_temp(hold_key, value);
+            }
+            None => {
+                data.remove::<f32>(hold_key);
+            }
+        });
+
         clicked_link
     }
 

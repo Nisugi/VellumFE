@@ -157,7 +157,11 @@ fn refresh_user_keybinds(
     let mut on_disk = BTreeSet::new();
     let mut changed = false;
 
-    for (table, prefix) in [("user", ""), ("controller", "controller/")] {
+    for (table, prefix) in [
+        ("user", ""),
+        ("controller", "controller/"),
+        ("controller_shift", "controller_shift/"),
+    ] {
         let embedded_tbl_keys = table_keys(&embedded_doc, table, prefix);
         let on_disk_tbl_keys = table_keys(&user_doc, table, prefix);
         let to_add = keys_to_add(&embedded_tbl_keys, &on_disk_tbl_keys, seen);
@@ -186,6 +190,54 @@ fn refresh_user_keybinds(
 
         embedded_keys.extend(embedded_tbl_keys);
         on_disk.extend(on_disk_tbl_keys);
+    }
+
+    // [[controller_wheel]] slices refresh additively by label, with
+    // wheel/-prefixed seen keys (deleted slices stay deleted).
+    {
+        let wheel_labels = |doc: &DocumentMut| -> BTreeSet<String> {
+            doc.get("controller_wheel")
+                .and_then(|item| item.as_array_of_tables())
+                .map(|slices| {
+                    slices
+                        .iter()
+                        .filter_map(|t| t.get("label").and_then(|l| l.as_str()))
+                        .map(|l| format!("wheel/{}", l))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let embedded_wheel = wheel_labels(&embedded_doc);
+        let on_disk_wheel = wheel_labels(&user_doc);
+        let to_add = keys_to_add(&embedded_wheel, &on_disk_wheel, seen);
+        if !to_add.is_empty() {
+            if user_doc
+                .get("controller_wheel")
+                .and_then(|item| item.as_array_of_tables())
+                .is_none()
+            {
+                user_doc.as_table_mut().insert(
+                    "controller_wheel",
+                    toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+                );
+            }
+            let embedded_slices = embedded_doc
+                .get("controller_wheel")
+                .and_then(|item| item.as_array_of_tables())
+                .expect("embedded keybinds have [[controller_wheel]]");
+            let user_slices = user_doc["controller_wheel"]
+                .as_array_of_tables_mut()
+                .expect("just ensured [[controller_wheel]] exists");
+            for slice in embedded_slices.iter() {
+                let label = slice.get("label").and_then(|l| l.as_str()).unwrap_or("");
+                if to_add.iter().any(|add| add == &format!("wheel/{}", label)) {
+                    user_slices.push(slice.clone());
+                    changed = true;
+                }
+            }
+        }
+        embedded_keys.extend(embedded_wheel);
+        on_disk.extend(on_disk_wheel);
     }
 
     let updated_file = changed.then(|| user_doc.to_string());
@@ -409,6 +461,17 @@ mod tests {
         assert!(outcome.seen.contains("controller/start"));
         assert!(outcome.seen.contains("controller/south"));
         assert!(outcome.seen.contains("f5"));
+    }
+
+    #[test]
+    fn controller_shift_table_refreshes_with_prefixed_seen_keys() {
+        let embedded = "[controller]\nstart = \"interact_mode\"\n\n[controller_shift]\nsouth = \"tts_stop\"\n";
+        let user = "[controller]\nstart = \"interact_mode\"\n";
+        let seen: BTreeSet<String> = ["controller/start".to_string()].into();
+        let outcome = refresh_user_keybinds(user, embedded, Some(&seen)).unwrap();
+        let updated = outcome.updated_file.expect("shift table should be added");
+        assert!(updated.contains("[controller_shift]"), "{}", updated);
+        assert!(outcome.seen.contains("controller_shift/south"));
     }
 
     #[test]

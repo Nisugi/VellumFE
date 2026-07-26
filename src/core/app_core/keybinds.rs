@@ -253,6 +253,18 @@ impl AppCore {
                 self.toggle_interact_mode();
             }
 
+            // Controller shift modifier / wheel: state is read live by the
+            // gamepad layer; the actions do nothing when dispatched.
+            KeyAction::ControllerShift => {
+                tracing::debug!("controller_shift is a hold modifier; nothing to execute");
+            }
+            KeyAction::ControllerWheel => {
+                tracing::debug!("controller_wheel is a hold modifier; nothing to execute");
+            }
+            KeyAction::ControllerOverlay => {
+                tracing::debug!("controller_overlay toggle is handled by the GUI");
+            }
+
             // TTS (Text-to-Speech) actions - Accessibility
             KeyAction::TtsNext => {
                 if let Err(e) = self.tts_manager.speak_next() {
