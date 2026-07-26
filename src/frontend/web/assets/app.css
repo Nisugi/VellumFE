@@ -2116,6 +2116,9 @@ body.hide-compass #compass { display: none !important; }
 .cs-control-row {
   display: flex;
   align-items: center;
+  /* Long statuses (server error text) wrap under the controls instead of
+     squeezing the input to a sliver / overflowing the sheet sideways. */
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -2125,7 +2128,7 @@ body.hide-compass #compass { display: none !important; }
 .cs-control-row select,
 .cs-control-row textarea {
   flex: 1;
-  min-width: 0;
+  min-width: 140px;
   padding: 8px;
   background: var(--bg);
   color: var(--fg);
@@ -2145,8 +2148,9 @@ body.hide-compass #compass { display: none !important; }
 }
 
 .cs-status {
-  flex-shrink: 0;
+  flex: 0 1 auto;
   min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--fg-dim);
   font-size: 11px;
 }

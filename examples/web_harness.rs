@@ -185,6 +185,95 @@ async fn main() {
         ..Default::default()
     };
 
+    // Scripted settings catalog for the phone "Client settings" sheet: one
+    // entry of every kind (plus a sensitive redacted row and character-only
+    // rows), same wire shape as settings_catalog_json. Puts validate
+    // against the kind (range / options / JSON type) like the registry
+    // setters do, and update the stored value so a re-open shows the edit.
+    let mut settings_catalog = serde_json::json!([
+        {
+            "key": "ui.echo_commands",
+            "label": "Echo commands",
+            "category": "UI",
+            "description": "Show commands you send in the main window.",
+            "kind": { "type": "bool" },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": true
+        },
+        {
+            "key": "ui.buffer_size",
+            "label": "Scrollback lines",
+            "category": "UI",
+            "description": "Lines kept per text window.",
+            "kind": { "type": "int", "min": 100, "max": 10000 },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": 5000
+        },
+        {
+            "key": "ui.timestamp_position",
+            "label": "Timestamps",
+            "category": "UI",
+            "description": "Where line timestamps are drawn.",
+            "kind": { "type": "enum", "options": ["off", "left", "right"] },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": "left"
+        },
+        {
+            "key": "sound.volume",
+            "label": "Alert volume",
+            "category": "Sound",
+            "description": "Playback volume for highlight sounds.",
+            "kind": { "type": "float", "min": 0.0, "max": 1.0 },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": 0.7
+        },
+        {
+            "key": "tts.voice",
+            "label": "Speech voice",
+            "category": "Speech",
+            "description": "Host TTS voice (empty = system default).",
+            "kind": { "type": "optional_text" },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": ""
+        },
+        {
+            "key": "tts.gags",
+            "label": "Speech gags",
+            "category": "Speech",
+            "description": "Lines matching these are never spoken.",
+            "kind": { "type": "list" },
+            "scope": "global_or_character",
+            "sensitive": false,
+            "value": ["a chill wind blows"]
+        },
+        {
+            "key": "connection.account",
+            "label": "Account",
+            "category": "Connection",
+            "description": "Play.net account name.",
+            "kind": { "type": "text" },
+            "scope": "character_only",
+            "sensitive": false,
+            "value": "HARNESS"
+        },
+        {
+            "key": "connection.password",
+            "label": "Password",
+            "category": "Connection",
+            "description": "Stored account password.",
+            "kind": { "type": "text" },
+            "scope": "character_only",
+            "sensitive": true,
+            "value": "",
+            "redacted": true
+        }
+    ]);
+
     while let Some(event) = event_rx.recv().await {
         match event {
             RemoteEvent::Command(text) if login_mode && text == "drop" => {
@@ -273,6 +362,73 @@ async fn main() {
                     );
                 }
             }
+            RemoteEvent::SettingsGet {
+                client_id,
+                request_id,
+            } => {
+                println!("EVENT settings_get");
+                sink.push_settings(
+                    client_id,
+                    request_id,
+                    settings_catalog.clone(),
+                    None,
+                    None,
+                    false,
+                );
+            }
+            RemoteEvent::SettingsPut {
+                client_id,
+                request_id,
+                key,
+                value,
+                scope,
+            } => {
+                println!("EVENT settings_put: key={key:?} value={value} scope={scope:?}");
+                let error = apply_scripted_setting(&mut settings_catalog, &key, &value);
+                let saved = error.is_none();
+                sink.push_settings(
+                    client_id,
+                    request_id,
+                    serde_json::Value::Null,
+                    Some(key),
+                    error,
+                    saved,
+                );
+            }
+            RemoteEvent::HighlightsGet {
+                client_id,
+                request_id,
+                scope,
+            } => {
+                println!("EVENT highlights_get: scope={scope:?}");
+                let rules = serde_json::json!({
+                    "bandit": { "pattern": "bandit", "fg": "#ff5050", "bold": true },
+                    "treasure": { "pattern": "chest|coffer", "fg": "#d9b44f" },
+                });
+                sink.push_highlights(
+                    client_id,
+                    request_id,
+                    scope,
+                    rules,
+                    vec!["alert.mp3".to_string()],
+                    None,
+                );
+            }
+            RemoteEvent::ColorsGet {
+                client_id,
+                request_id,
+                scope,
+            } => {
+                println!("EVENT colors_get: scope={scope:?}");
+                let colors = serde_json::json!({
+                    "presets": {
+                        "speech": { "fg": "#a0d0ff" },
+                        "whisper": { "fg": "#80ff80", "bg": "#102010" },
+                    },
+                    "prompt_colors": [ { "character": ">", "fg": "#888888" } ],
+                });
+                sink.push_colors(client_id, request_id, scope, colors, None, false);
+            }
             RemoteEvent::Command(text) => {
                 println!("EVENT cmd: {text:?}");
                 // `echo <text>` / `echot <text>` / `echod <text>` send the
@@ -334,4 +490,61 @@ async fn main() {
             other => println!("EVENT other: {other:?}"),
         }
     }
+}
+
+/// Validate one settings_put against the scripted catalog the way the
+/// registry setters would (JSON type, int/float range, enum options) and
+/// store the accepted value. Returns the rejection message, or None on
+/// success. Sensitive rows keep `""` + redacted, like the real server.
+fn apply_scripted_setting(
+    catalog: &mut serde_json::Value,
+    key: &str,
+    value: &serde_json::Value,
+) -> Option<String> {
+    let Some(entry) = catalog
+        .as_array_mut()
+        .and_then(|a| a.iter_mut().find(|e| e["key"] == key))
+    else {
+        return Some(format!("Unknown setting '{key}'"));
+    };
+    let kind = entry["kind"].clone();
+    let err = match kind["type"].as_str().unwrap_or("") {
+        "bool" if !value.is_boolean() => Some("expected a boolean".to_string()),
+        "int" => match value.as_i64() {
+            None => Some("expected an integer".to_string()),
+            Some(n) => {
+                let (min, max) = (kind["min"].as_i64().unwrap(), kind["max"].as_i64().unwrap());
+                (n < min || n > max).then(|| format!("must be between {min} and {max}"))
+            }
+        },
+        "float" => match value.as_f64() {
+            None => Some("expected a number".to_string()),
+            Some(n) => {
+                let (min, max) = (kind["min"].as_f64().unwrap(), kind["max"].as_f64().unwrap());
+                (n < min || n > max).then(|| format!("must be between {min} and {max}"))
+            }
+        },
+        "enum" => match value.as_str() {
+            None => Some("expected text".to_string()),
+            Some(s) => {
+                let options = kind["options"].as_array().unwrap();
+                (!options.iter().any(|o| o == s))
+                    .then(|| format!("'{s}' is not one of the allowed options"))
+            }
+        },
+        "text" | "optional_text" if !value.is_string() => Some("expected text".to_string()),
+        "list" => {
+            let ok = value
+                .as_array()
+                .is_some_and(|items| items.iter().all(serde_json::Value::is_string));
+            (!ok).then(|| "expected a list of text entries".to_string())
+        }
+        _ => None,
+    };
+    if err.is_none() && entry["sensitive"] != true {
+        entry["value"] = value.clone();
+    } else if err.is_none() {
+        entry["redacted"] = serde_json::json!(true);
+    }
+    err
 }
