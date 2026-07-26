@@ -164,10 +164,12 @@ num_0 = { macro_text = "down\r" }
 # south (confirm), and east (cancel) are fixed; bindings below apply
 # outside those modes. Controller binds are global (all characters).
 
+# The left stick walks the 8 compass directions natively; the d-pad
+# covers the vertical axis and portals.
 [controller]
 start = "interact_mode"                # Enter/exit interact mode
-dpad_up = { macro_text = "n\r" }       # Movement on the d-pad
-dpad_down = { macro_text = "s\r" }
-dpad_left = { macro_text = "w\r" }
-dpad_right = { macro_text = "e\r" }
+dpad_up = { macro_text = "up\r" }      # Climb / go up
+dpad_down = { macro_text = "down\r" }  # Go down
+dpad_right = { macro_text = "out\r" }  # Leave (buildings, rooms)
+dpad_left = { macro_text = ".portal\r" } # Walk the room's door/arch/gate
 south = { macro_text = "look\r" }      # A / cross

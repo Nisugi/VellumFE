@@ -146,14 +146,23 @@ keys with Steam Input or similar) and anyone who'd rather not mouse:
 
 Plug in a gamepad and the GUI reads it natively (Xbox and PlayStation
 pads verified on Windows; no mapper software needed — turn yours off to
-avoid doubled inputs). While [interact mode](#interact-mode) or a
-context menu is open, the **d-pad navigates, South (A/cross) confirms,
-East (B/circle) cancels** — that part is fixed. Everything else is
-yours to bind with **`.controller`**: each button maps to a keybind
-action or macro, with a "press a button" capture in the editor. The
-shipped defaults put movement on the d-pad, `look` on South, and
-interact mode on Start. Bindings live in the `[controller]` table of
-the global keybinds.toml and apply to all characters.
+avoid doubled inputs).
+
+- **Left stick** walks the 8 compass directions — deflect toward
+  northeast to head `ne`; one step per deflection.
+- **D-pad** covers the rest of movement by default: up/down go `up` and
+  `down`, right goes `out`, and left runs [`.portal`](../reference/commands.md)
+  — walk the room's door/arch/gate, with a pick list when there are
+  several.
+- While [interact mode](#interact-mode) or a context menu is open, the
+  **d-pad navigates, South (A/cross) confirms, East (B/circle)
+  cancels** — that part is fixed.
+
+Everything else is yours to bind with **`.controller`**: each button
+maps to a keybind action or macro, with a "press a button" capture in
+the editor (`look` on South and interact mode on Start ship as
+defaults). Bindings live in the `[controller]` table of the global
+keybinds.toml and apply to all characters.
 
 ## Speech (Text-to-Speech)
 

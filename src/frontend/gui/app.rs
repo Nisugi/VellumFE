@@ -214,6 +214,10 @@ pub struct VellumGuiApp {
     /// Gamepad context; None when init failed or the feature is disabled.
     #[cfg(feature = "gamepad")]
     gamepad: Option<gilrs::Gilrs>,
+    /// Left-stick compass sector currently deflected (0=n..7=nw); None at
+    /// center. Movement sends on sector *change* with hysteresis.
+    #[cfg(feature = "gamepad")]
+    gp_stick_sector: Option<usize>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -512,6 +516,8 @@ impl VellumGuiApp {
             gamepad: gilrs::Gilrs::new()
                 .inspect_err(|e| tracing::warn!("gamepad init failed: {}", e))
                 .ok(),
+            #[cfg(feature = "gamepad")]
+            gp_stick_sector: None,
             ui_settings,
             tab_settings,
             tab_groups,

@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-9015fd64.js";
+            window.path_to_searchindex_js = "../searchindex-15e7b0a9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -302,14 +302,23 @@ overlay, and announced through TTS when speech is enabled.</li>
 <h2 id="controllers"><a class="header" href="#controllers">Controllers</a></h2>
 <p>Plug in a gamepad and the GUI reads it natively (Xbox and PlayStation
 pads verified on Windows; no mapper software needed — turn yours off to
-avoid doubled inputs). While <a href="#interact-mode">interact mode</a> or a
-context menu is open, the <strong>d-pad navigates, South (A/cross) confirms,
-East (B/circle) cancels</strong> — that part is fixed. Everything else is
-yours to bind with <strong><code>.controller</code></strong>: each button maps to a keybind
-action or macro, with a “press a button” capture in the editor. The
-shipped defaults put movement on the d-pad, <code>look</code> on South, and
-interact mode on Start. Bindings live in the <code>[controller]</code> table of
-the global keybinds.toml and apply to all characters.</p>
+avoid doubled inputs).</p>
+<ul>
+<li><strong>Left stick</strong> walks the 8 compass directions — deflect toward
+northeast to head <code>ne</code>; one step per deflection.</li>
+<li><strong>D-pad</strong> covers the rest of movement by default: up/down go <code>up</code> and
+<code>down</code>, right goes <code>out</code>, and left runs <a href="../reference/commands.html"><code>.portal</code></a>
+— walk the room’s door/arch/gate, with a pick list when there are
+several.</li>
+<li>While <a href="#interact-mode">interact mode</a> or a context menu is open, the
+<strong>d-pad navigates, South (A/cross) confirms, East (B/circle)
+cancels</strong> — that part is fixed.</li>
+</ul>
+<p>Everything else is yours to bind with <strong><code>.controller</code></strong>: each button
+maps to a keybind action or macro, with a “press a button” capture in
+the editor (<code>look</code> on South and interact mode on Start ship as
+defaults). Bindings live in the <code>[controller]</code> table of the global
+keybinds.toml and apply to all characters.</p>
 <h2 id="speech-text-to-speech"><a class="header" href="#speech-text-to-speech">Speech (Text-to-Speech)</a></h2>
 <p><strong>Settings &gt; Speech</strong> holds the TTS controls: enable, rate, volume, a
 voice picker, pronunciation substitutions, gag patterns, and a <strong>Test</strong>

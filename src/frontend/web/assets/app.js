@@ -1275,8 +1275,11 @@ const GP_BUTTON_ORDER = [
   "l1", "r1", "l2", "r2", "l3", "r3",
   "select", "start", "guide",
 ];
+// The left stick walks the 8 compass directions; the d-pad covers the
+// vertical axis and portals (.portal resolves go door / climb stair on
+// the host).
 const GP_DEFAULT_BINDS = {
-  dpad_up: "n", dpad_down: "s", dpad_left: "w", dpad_right: "e",
+  dpad_up: "up", dpad_down: "down", dpad_right: "out", dpad_left: ".portal",
   south: "look",
 };
 
@@ -1325,10 +1328,24 @@ window.addEventListener("gamepaddisconnected", () => {
   if (controllerSheetActive()) renderControllerSheet();
 });
 
+// Left stick: 8-way compass movement. One command per deflection into a
+// 45-degree sector (clockwise from north), re-armed by returning toward
+// center — hysteresis keeps a wobbling stick from spamming moves.
+const GP_STICK_DIRS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+let gpStickSector = null;
+
+function gpStickSectorFor(x, yUp, previous) {
+  const magnitude = Math.hypot(x, yUp);
+  if (magnitude < (previous !== null ? 0.35 : 0.6)) return null;
+  const angle = (Math.atan2(x, yUp) * 180) / Math.PI; // 0 = north, cw
+  return Math.floor(((angle + 382.5) % 360) / 45) % 8;
+}
+
 function pollGamepads() {
   const pads = gamepadPads();
   if (!pads.length) {
     stopGamepadLoop();
+    gpStickSector = null;
     return;
   }
   for (const pad of pads) {
@@ -1338,6 +1355,16 @@ function pollGamepads() {
       if (pressed && !prev[i]) handleGamepadButton(i);
     });
     gpPrev.set(pad.index, pad.buttons.map((b) => !!(b && b.pressed)));
+  }
+
+  const axes = pads[0].axes || [];
+  const sector = gpStickSectorFor(axes[0] || 0, -(axes[1] || 0), gpStickSector);
+  if (sector !== gpStickSector) {
+    // Quiet while any sheet is open or bindings are disabled.
+    if (sector !== null && sheet.hidden && controllerPrefs.enabled) {
+      sendCommand(GP_STICK_DIRS[sector]);
+    }
+    gpStickSector = sector;
   }
 }
 

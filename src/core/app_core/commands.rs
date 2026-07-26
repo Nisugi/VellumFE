@@ -2,6 +2,40 @@ use anyhow::Result;
 
 use super::AppCore;
 
+/// Compass/vertical movement words — everything else in a room's wayto
+/// edges is a "portal" (go door, climb stair, enter hole, ...).
+const COMPASS_WORDS: [&str; 22] = [
+    "north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest", "up",
+    "down", "out", "n", "ne", "e", "se", "s", "sw", "w", "nw", "u", "d", "o",
+];
+
+/// Room-object nouns that look like walkable portals, for the fallback
+/// when the mapdb doesn't know the current room.
+const PORTAL_NOUNS: [&str; 18] = [
+    "door", "gate", "arch", "archway", "portal", "stair", "stairs", "stairway", "steps",
+    "ladder", "trapdoor", "opening", "entrance", "path", "trail", "bridge", "ramp", "curtain",
+];
+
+/// Distinct non-compass, non-StringProc movement commands from a room's
+/// wayto edges, in stable (BTreeMap value) order.
+fn portal_candidates<'a>(wayto: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for command in wayto {
+        let trimmed = command.trim();
+        if crate::core::mapdb::is_proc_command(trimmed) {
+            continue;
+        }
+        if COMPASS_WORDS.contains(&trimmed.to_ascii_lowercase().as_str()) {
+            continue;
+        }
+        if seen.insert(trimmed.to_ascii_lowercase()) {
+            out.push(trimmed.to_string());
+        }
+    }
+    out
+}
+
 impl AppCore {
     /// Send command to server
     pub fn send_command(&mut self, command: String) -> Result<String> {
@@ -290,6 +324,72 @@ impl AppCore {
             }
         }
         self.add_system_message(&summary);
+    }
+
+    /// `.portal [n|text]` — walk through the room's non-compass exit
+    /// ("go door", "climb stair", ...). One candidate: walk it. Several:
+    /// list them; `.portal 2` or `.portal arch` picks. Candidates come
+    /// from the mapdb room's wayto edges, falling back to portal-looking
+    /// nouns among the room objects when the map doesn't know the room.
+    /// Returns the movement command to send upstream, or None.
+    fn handle_portal_command(&mut self, args: &[String]) -> Option<String> {
+        let mut candidates: Vec<String> = Vec::new();
+        if let (Some(room_id), Some(db)) = (self.map.current_room_id, self.map.mapdb()) {
+            if let Some(room) = db.room(room_id) {
+                candidates = portal_candidates(room.wayto.values());
+            }
+        }
+        if candidates.is_empty() {
+            candidates = self
+                .game_state
+                .room_objects
+                .iter()
+                .filter_map(|obj| {
+                    let noun = obj.noun.as_deref()?;
+                    PORTAL_NOUNS
+                        .contains(&noun.to_ascii_lowercase().as_str())
+                        .then(|| format!("go {}", noun))
+                })
+                .collect();
+            candidates.dedup();
+        }
+
+        match (candidates.len(), args.first()) {
+            (0, _) => {
+                self.add_system_message("No portal found here.");
+                None
+            }
+            (1, None) => Some(candidates.remove(0)),
+            (_, None) => {
+                let listing = candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(i, cmd)| format!("{}) {}", i + 1, cmd))
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                self.add_system_message(&format!(
+                    "Portals: {}  — .portal <number|word> picks one",
+                    listing
+                ));
+                None
+            }
+            (_, Some(pick)) => {
+                if let Ok(index) = pick.parse::<usize>() {
+                    if index >= 1 && index <= candidates.len() {
+                        return Some(candidates.remove(index - 1));
+                    }
+                }
+                let needle = pick.to_ascii_lowercase();
+                if let Some(found) = candidates
+                    .iter()
+                    .position(|cmd| cmd.to_ascii_lowercase().contains(&needle))
+                {
+                    return Some(candidates.remove(found));
+                }
+                self.add_system_message(&format!("No portal matches '{}'.", pick));
+                None
+            }
+        }
     }
 
     /// `.tts` — text-to-speech control from any frontend. Subcommands:
@@ -678,10 +778,19 @@ impl AppCore {
             }
 
             // Text-to-speech control from any frontend (the GUI also has
-            // Settings > Accessibility; on the TUI and phones this is THE way).
+            // Settings > Speech; on the TUI and phones this is THE way).
             "tts" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
                 self.handle_tts_command(&args);
+            }
+
+            // Walk the room's non-compass exit (go door / climb stair / ...);
+            // built for controller d-pad left, works typed from anywhere.
+            "portal" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                if let Some(command) = self.handle_portal_command(&args) {
+                    return Ok(command);
+                }
             }
 
             // Layout commands. The TUI intercepts both in
@@ -1106,6 +1215,87 @@ impl AppCore {
 
         // Don't send anything to server
         Ok(String::new())
+    }
+}
+
+#[cfg(test)]
+mod portal_tests {
+    use super::*;
+    use crate::core::state::RoomObject;
+
+    #[test]
+    fn candidates_skip_compass_and_procs_and_dupes() {
+        let wayto: Vec<String> = [
+            "north",
+            "sw",
+            "go door",
+            "go door", // second edge through the same door
+            "climb stair",
+            ";e StringProc stuff",
+            "Out",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            portal_candidates(wayto.iter()),
+            vec!["go door".to_string(), "climb stair".to_string()]
+        );
+    }
+
+    #[test]
+    fn fallback_uses_portal_nouns_from_room_objects() {
+        let mut core = AppCore::new_for_test();
+        core.game_state.room_objects = vec![
+            RoomObject {
+                name: "a wooden door".into(),
+                noun: Some("door".into()),
+                id: "1".into(),
+            },
+            RoomObject {
+                name: "a silver ring".into(),
+                noun: Some("ring".into()),
+                id: "2".into(),
+            },
+        ];
+        assert_eq!(core.handle_portal_command(&[]), Some("go door".into()));
+    }
+
+    #[test]
+    fn no_candidates_reports_and_returns_none() {
+        let mut core = AppCore::new_for_test();
+        assert_eq!(core.handle_portal_command(&[]), None);
+    }
+
+    #[test]
+    fn multiple_candidates_need_a_pick() {
+        let mut core = AppCore::new_for_test();
+        core.game_state.room_objects = vec![
+            RoomObject {
+                name: "a wooden door".into(),
+                noun: Some("door".into()),
+                id: "1".into(),
+            },
+            RoomObject {
+                name: "a stone arch".into(),
+                noun: Some("arch".into()),
+                id: "2".into(),
+            },
+        ];
+        // Ambiguous with no pick: list, send nothing.
+        assert_eq!(core.handle_portal_command(&[]), None);
+        // Pick by number and by word.
+        assert_eq!(
+            core.handle_portal_command(&["2".into()]),
+            Some("go arch".into())
+        );
+        assert_eq!(
+            core.handle_portal_command(&["door".into()]),
+            Some("go door".into())
+        );
+        // Bad picks send nothing.
+        assert_eq!(core.handle_portal_command(&["9".into()]), None);
+        assert_eq!(core.handle_portal_command(&["window".into()]), None);
     }
 }
 
