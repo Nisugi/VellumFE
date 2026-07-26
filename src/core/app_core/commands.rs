@@ -361,6 +361,22 @@ impl AppCore {
             }
             (1, None) => Some(candidates.remove(0)),
             (_, None) => {
+                // Several portals: open a local popup menu — keyboard and
+                // controller navigable on the desktop frontends. Phones
+                // (whose menus are server-driven) get the listing message.
+                let items: Vec<crate::data::ui_state::PopupMenuItem> = candidates
+                    .iter()
+                    .map(|cmd| crate::data::ui_state::PopupMenuItem {
+                        text: cmd.clone(),
+                        command: cmd.clone(),
+                        disabled: false,
+                    })
+                    .collect();
+                let position = self.last_link_click_pos.unwrap_or((200, 160));
+                self.ui_state.popup_menu =
+                    Some(crate::data::ui_state::PopupMenu::new(items, position));
+                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
+                self.needs_render = true;
                 let listing = candidates
                     .iter()
                     .enumerate()
@@ -368,7 +384,7 @@ impl AppCore {
                     .collect::<Vec<_>>()
                     .join("  ");
                 self.add_system_message(&format!(
-                    "Portals: {}  — .portal <number|word> picks one",
+                    "Portals: {}  — pick from the menu or .portal <number|word>",
                     listing
                 ));
                 None
@@ -1282,8 +1298,17 @@ mod portal_tests {
                 id: "2".into(),
             },
         ];
-        // Ambiguous with no pick: list, send nothing.
+        // Ambiguous with no pick: opens the local picker menu, sends nothing.
         assert_eq!(core.handle_portal_command(&[]), None);
+        let menu = core.ui_state.popup_menu.as_ref().expect("portal picker menu");
+        assert_eq!(menu.get_items().len(), 2);
+        assert_eq!(menu.get_items()[0].command, "go door");
+        assert_eq!(
+            core.ui_state.input_mode,
+            crate::data::ui_state::InputMode::Menu
+        );
+        core.ui_state.popup_menu = None;
+        core.ui_state.input_mode = crate::data::ui_state::InputMode::Normal;
         // Pick by number and by word.
         assert_eq!(
             core.handle_portal_command(&["2".into()]),

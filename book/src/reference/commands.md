@@ -23,7 +23,7 @@ command `quit` also saves your settings on the way out.)
 | `.go2 <target>` | | Native map travel: room id, uid (`u7150105`), tag (`bank`), saved name, or text search — see the [Travel chapter](../widgets/travel.md) |
 | `.go2 stop` / `.go2 status` | | Cancel / show the active trip |
 | `.go2 save <name> [id]` | | Save a travel target (`.go2 targets` lists them, `.go2 back` returns to the trip start) |
-| `.portal [n\|word]` | | Walk the room's non-compass exit (`go door`, `climb stair`, ...) from the map data (room objects as fallback). One candidate walks it; several list — pick by number or word. Controller d-pad left by default |
+| `.portal [n\|word]` | | Walk the room's non-compass exit (`go door`, `climb stair`, ...) from the map data (room objects as fallback). One candidate walks it; several open a picker menu (keyboard/pad navigable) — or pick by number or word. Controller d-pad left by default |
 
 ## Windows & Layout
 

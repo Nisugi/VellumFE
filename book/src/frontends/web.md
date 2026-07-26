@@ -116,12 +116,14 @@ The gear button (also reachable from the login screen) opens Settings:
   availability depends on the phone; the first utterance may need a tap.
 - **Controller** — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
   PlayStation, MFi): the left stick walks the 8 compass directions,
-  and the d-pad defaults to `up`/`down`/`out` with left running
-  `.portal` (walk the room's door or arch); `look` sits on South. All
+  the right stick scrolls the story, and the d-pad defaults to
+  `up`/`down`/`out` with left running `.portal`; `look` sits on South.
+  Bind a button to `shift` for a second bank while held. All
   rebindable here — tap a row, or press the button on the pad to jump
-  to it. Whenever a bottom sheet is open — context menus,
-  tap-to-target — the d-pad navigates it: up/down move, South taps,
-  East closes. Per-device.
+  to it. The pad also **rumbles** on chosen streams (whispers and
+  deaths by default; toggles in this sheet). Whenever a bottom sheet
+  is open — context menus, tap-to-target — the d-pad navigates it:
+  up/down move, South taps, East closes. Per-device.
 - **Sound alerts / login music** — browser playback toggles.
 - **Client settings (saved on host)** — the full desktop settings
   registry over the wire: every setting, editable at character or global

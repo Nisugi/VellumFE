@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-15e7b0a9.js";
+            window.path_to_searchindex_js = "../searchindex-ebfe9943.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -262,6 +262,16 @@ dpad_up = { macro_text = "n\r" }
 </code></pre>
 <p>Inside interact mode and context menus the d-pad, South, and East are
 fixed navigation keys; bindings apply outside those modes.</p>
+<p>Controller-specific actions: <code>controller_shift</code> (hold: buttons use
+<code>[controller_shift]</code>, a second bank in the same format),
+<code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> (hold: radial command
+wheel — default ring in <code>[[controller_wheel]]</code>, named rings in
+<code>[controller_wheels.&lt;name&gt;]</code>; slices take <code>label</code>, <code>command</code>, optional
+<code>color</code>, and nested <code>slices</code> for folders), and <code>controller_overlay</code>
+(toggle the binding legend — curated by <code>[controller_overlay]  buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
+lives in <code>[controller_rumble]</code> (patterns <code>off</code>/<code>short</code>/<code>long</code>/<code>double</code>
+per event). All of it is edited in the <code>.controller</code> editor’s tabs —
+hand-editing is never required.</p>
 <h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
 <p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
 <pre><code class="language-toml">[user]

@@ -164,6 +164,31 @@ the editor (`look` on South and interact mode on Start ship as
 defaults). Bindings live in the `[controller]` table of the global
 keybinds.toml and apply to all characters.
 
+Beyond plain bindings:
+
+- **Shift layer** — hold the button bound to `controller_shift` (l2 by
+  default) and every button switches to a second bank, edited on the
+  editor's Shift tab. Defaults: shift+d-pad pages the story window,
+  shift+South stands up.
+- **Radial command wheels** — hold the button bound to
+  `controller_wheel` (r2 by default), aim with the left stick, release
+  to fire. Slices can be **folders** (South opens, East backs up) and
+  carry **colors** — the whole pie wedge tints, dim at rest and bright
+  while aimed, so wheels can be color-coded by function. Multiple named
+  wheels via `controller_wheel:<name>` bindings; build it all on the
+  editor's Wheels tab.
+- **Binding legend** — Select toggles a compact overlay of your
+  bindings (`controller_overlay` action). It's curated: check **HUD**
+  on the rows you want shown. While shift is held the shift entries
+  read strong — the legend always shows what the pad does right now.
+- **Rumble** — the pad buzzes when roundtime ends, you're stunned, or
+  you die; pattern per event (off/short/long/double) on the editor's
+  Rumble tab.
+- **Right stick** scrolls the story window with an analog speed curve;
+  the same page-scroll actions work from any bound key or button.
+- With several portals in a room, `.portal` (d-pad left) opens a
+  pad-navigable picker menu.
+
 ## Speech (Text-to-Speech)
 
 **Settings > Speech** holds the TTS controls: enable, rate, volume, a

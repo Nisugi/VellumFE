@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-15e7b0a9.js";
+            window.path_to_searchindex_js = "searchindex-ebfe9943.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e125f080.js"></script>
@@ -668,6 +668,31 @@ maps to a keybind action or macro, with a “press a button” capture in
 the editor (<code>look</code> on South and interact mode on Start ship as
 defaults). Bindings live in the <code>[controller]</code> table of the global
 keybinds.toml and apply to all characters.</p>
+<p>Beyond plain bindings:</p>
+<ul>
+<li><strong>Shift layer</strong> — hold the button bound to <code>controller_shift</code> (l2 by
+default) and every button switches to a second bank, edited on the
+editor’s Shift tab. Defaults: shift+d-pad pages the story window,
+shift+South stands up.</li>
+<li><strong>Radial command wheels</strong> — hold the button bound to
+<code>controller_wheel</code> (r2 by default), aim with the left stick, release
+to fire. Slices can be <strong>folders</strong> (South opens, East backs up) and
+carry <strong>colors</strong> — the whole pie wedge tints, dim at rest and bright
+while aimed, so wheels can be color-coded by function. Multiple named
+wheels via <code>controller_wheel:&lt;name&gt;</code> bindings; build it all on the
+editor’s Wheels tab.</li>
+<li><strong>Binding legend</strong> — Select toggles a compact overlay of your
+bindings (<code>controller_overlay</code> action). It’s curated: check <strong>HUD</strong>
+on the rows you want shown. While shift is held the shift entries
+read strong — the legend always shows what the pad does right now.</li>
+<li><strong>Rumble</strong> — the pad buzzes when roundtime ends, you’re stunned, or
+you die; pattern per event (off/short/long/double) on the editor’s
+Rumble tab.</li>
+<li><strong>Right stick</strong> scrolls the story window with an analog speed curve;
+the same page-scroll actions work from any bound key or button.</li>
+<li>With several portals in a room, <code>.portal</code> (d-pad left) opens a
+pad-navigable picker menu.</li>
+</ul>
 <h2 id="speech-text-to-speech"><a class="header" href="#speech-text-to-speech">Speech (Text-to-Speech)</a></h2>
 <p><strong>Settings &gt; Speech</strong> holds the TTS controls: enable, rate, volume, a
 voice picker, pronunciation substitutions, gag patterns, and a <strong>Test</strong>
@@ -807,12 +832,14 @@ synthesis, with per-stream toggles (thoughts on by default). Voice
 availability depends on the phone; the first utterance may need a tap.</li>
 <li><strong>Controller</strong> — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
 PlayStation, MFi): the left stick walks the 8 compass directions,
-and the d-pad defaults to <code>up</code>/<code>down</code>/<code>out</code> with left running
-<code>.portal</code> (walk the room’s door or arch); <code>look</code> sits on South. All
+the right stick scrolls the story, and the d-pad defaults to
+<code>up</code>/<code>down</code>/<code>out</code> with left running <code>.portal</code>; <code>look</code> sits on South.
+Bind a button to <code>shift</code> for a second bank while held. All
 rebindable here — tap a row, or press the button on the pad to jump
-to it. Whenever a bottom sheet is open — context menus,
-tap-to-target — the d-pad navigates it: up/down move, South taps,
-East closes. Per-device.</li>
+to it. The pad also <strong>rumbles</strong> on chosen streams (whispers and
+deaths by default; toggles in this sheet). Whenever a bottom sheet
+is open — context menus, tap-to-target — the d-pad navigates it:
+up/down move, South taps, East closes. Per-device.</li>
 <li><strong>Sound alerts / login music</strong> — browser playback toggles.</li>
 <li><strong>Client settings (saved on host)</strong> — the full desktop settings
 registry over the wire: every setting, editable at character or global
@@ -1577,6 +1604,16 @@ dpad_up = { macro_text = "n\r" }
 </code></pre>
 <p>Inside interact mode and context menus the d-pad, South, and East are
 fixed navigation keys; bindings apply outside those modes.</p>
+<p>Controller-specific actions: <code>controller_shift</code> (hold: buttons use
+<code>[controller_shift]</code>, a second bank in the same format),
+<code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> (hold: radial command
+wheel — default ring in <code>[[controller_wheel]]</code>, named rings in
+<code>[controller_wheels.&lt;name&gt;]</code>; slices take <code>label</code>, <code>command</code>, optional
+<code>color</code>, and nested <code>slices</code> for folders), and <code>controller_overlay</code>
+(toggle the binding legend — curated by <code>[controller_overlay]  buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
+lives in <code>[controller_rumble]</code> (patterns <code>off</code>/<code>short</code>/<code>long</code>/<code>double</code>
+per event). All of it is edited in the <code>.controller</code> editor’s tabs —
+hand-editing is never required.</p>
 <h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
 <p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
 <pre><code class="language-toml">[user]
@@ -4127,7 +4164,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.go2 &lt;target&gt;</code></td><td></td><td>Native map travel: room id, uid (<code>u7150105</code>), tag (<code>bank</code>), saved name, or text search — see the <a href="#travel-go2-1">Travel chapter</a></td></tr>
 <tr><td><code>.go2 stop</code> / <code>.go2 status</code></td><td></td><td>Cancel / show the active trip</td></tr>
 <tr><td><code>.go2 save &lt;name&gt; [id]</code></td><td></td><td>Save a travel target (<code>.go2 targets</code> lists them, <code>.go2 back</code> returns to the trip start)</td></tr>
-<tr><td><code>.portal [n|word]</code></td><td></td><td>Walk the room’s non-compass exit (<code>go door</code>, <code>climb stair</code>, …) from the map data (room objects as fallback). One candidate walks it; several list — pick by number or word. Controller d-pad left by default</td></tr>
+<tr><td><code>.portal [n|word]</code></td><td></td><td>Walk the room’s non-compass exit (<code>go door</code>, <code>climb stair</code>, …) from the map data (room objects as fallback). One candidate walks it; several open a picker menu (keyboard/pad navigable) — or pick by number or word. Controller d-pad left by default</td></tr>
 </tbody>
 </table>
 </div>
