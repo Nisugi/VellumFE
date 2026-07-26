@@ -179,6 +179,10 @@ pub struct WheelSlice {
     pub label: String,
     #[serde(default)]
     pub command: String,
+    /// Optional wedge tint (hex or palette name) — dim normally, bright
+    /// while aimed, so wheels can be color-coded by function.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slices: Vec<WheelSlice>,
 }

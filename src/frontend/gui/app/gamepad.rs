@@ -427,26 +427,71 @@ impl VellumGuiApp {
             .show(ctx, |ui| {
                 let painter = ui.painter();
                 let bg = ui.visuals().window_fill.gamma_multiply(0.92);
-                painter.circle_filled(center, radius + 34.0, bg);
+                let outer = radius + 34.0;
+                let hub = 46.0;
+                painter.circle_filled(center, outer, bg);
                 painter.circle_stroke(
                     center,
-                    radius + 34.0,
+                    outer,
                     egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
                 );
                 let step = std::f32::consts::TAU / slices.len() as f32;
+
+                // Wedge fills: the whole pie piece carries the slice's
+                // color (dim at rest, bright while aimed); colorless
+                // slices highlight with the theme selection fill.
                 for (i, slice) in slices.iter().enumerate() {
-                    // Slice 0 at the top, clockwise (matches wheel_slice_at).
-                    let angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
-                    let pos = center + egui::vec2(angle.cos(), angle.sin()) * radius;
+                    let center_angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
+                    let is_selected = selected == Some(i);
+                    let tint = slice
+                        .color
+                        .as_deref()
+                        .and_then(super::theme::resolve_color);
+                    let fill = match (tint, is_selected) {
+                        (Some(c), true) => c.gamma_multiply(0.85),
+                        (Some(c), false) => c.gamma_multiply(0.22),
+                        (None, true) => ui.visuals().selection.bg_fill,
+                        (None, false) => egui::Color32::TRANSPARENT,
+                    };
+                    if fill != egui::Color32::TRANSPARENT {
+                        if slices.len() == 1 {
+                            painter.circle_filled(center, outer, fill);
+                        } else {
+                            let a0 = center_angle - step / 2.0;
+                            let a1 = center_angle + step / 2.0;
+                            let mut points = vec![center];
+                            const ARC_STEPS: usize = 16;
+                            for k in 0..=ARC_STEPS {
+                                let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
+                                points.push(center + egui::vec2(a.cos(), a.sin()) * outer);
+                            }
+                            painter.add(egui::Shape::convex_polygon(
+                                points,
+                                fill,
+                                egui::Stroke::NONE,
+                            ));
+                        }
+                    }
+                }
+
+                // Wedge separators + labels over the fills.
+                for (i, slice) in slices.iter().enumerate() {
+                    let center_angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
+                    if slices.len() > 1 {
+                        let a0 = center_angle - step / 2.0;
+                        let dir = egui::vec2(a0.cos(), a0.sin());
+                        painter.line_segment(
+                            [center + dir * hub, center + dir * outer],
+                            egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
+                        );
+                    }
+                    let pos = center + egui::vec2(center_angle.cos(), center_angle.sin()) * radius;
                     let is_selected = selected == Some(i);
                     let (color, size) = if is_selected {
-                        (ui.visuals().selection.stroke.color, 18.0)
+                        (ui.visuals().strong_text_color(), 18.0)
                     } else {
                         (ui.visuals().text_color(), 14.0)
                     };
-                    if is_selected {
-                        painter.circle_filled(pos, 26.0, ui.visuals().selection.bg_fill);
-                    }
                     let label = if slice.is_folder() {
                         format!("{} ▸", slice.label)
                     } else {
@@ -460,6 +505,9 @@ impl VellumGuiApp {
                         color,
                     );
                 }
+
+                // Center hub hosts the hint text.
+                painter.circle_filled(center, hub, bg);
                 let hint = match selected.and_then(|i| slices.get(i)) {
                     Some(slice) if slice.is_folder() => format!("{}: A opens", slice.label),
                     Some(slice) => slice.command.clone(),

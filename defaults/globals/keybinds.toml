@@ -222,18 +222,24 @@ command = ".portal"
 [[controller_wheel]]
 label = "stance"
 
+  # Optional color = wedge tint (hex or palette name): dim at rest,
+  # bright while aimed — color-code wheels by function.
   [[controller_wheel.slices]]
   label = "defensive"
   command = "stance defensive"
+  color = "#2e8b57"
 
   [[controller_wheel.slices]]
   label = "neutral"
   command = "stance neutral"
+  color = "#4682b4"
 
   [[controller_wheel.slices]]
   label = "forward"
   command = "stance forward"
+  color = "#cc8844"
 
   [[controller_wheel.slices]]
   label = "offensive"
   command = "stance offensive"
+  color = "#b03030"
