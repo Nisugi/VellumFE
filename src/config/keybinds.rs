@@ -490,6 +490,32 @@ impl MenuKeybinds {
 }
 
 impl KeyAction {
+    /// Action names that execute fully inside AppCore — the set that does
+    /// something useful from a controller button (everything else is
+    /// keyboard-widget-level and would no-op). Drives the controller
+    /// editor's action dropdown; a test keeps every entry parseable.
+    pub const CONTROLLER_ACTION_NAMES: &'static [&'static str] = &[
+        "interact_mode",
+        "stop_travel",
+        "scroll_current_window_up_page",
+        "scroll_current_window_down_page",
+        "scroll_current_window_up_one",
+        "scroll_current_window_down_one",
+        "scroll_current_window_home",
+        "scroll_current_window_end",
+        "toggle_sounds",
+        "toggle_performance_stats",
+        "tts_next",
+        "tts_previous",
+        "tts_next_unread",
+        "tts_stop",
+        "tts_mute_toggle",
+        "tts_increase_rate",
+        "tts_decrease_rate",
+        "tts_increase_volume",
+        "tts_decrease_volume",
+    ];
+
     pub fn from_str(action: &str) -> Option<Self> {
         match action {
             "send_command" => Some(Self::SendCommand),
@@ -1361,6 +1387,16 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controller_action_names_all_parse() {
+        for name in KeyAction::CONTROLLER_ACTION_NAMES {
+            assert!(
+                KeyAction::from_str(name).is_some(),
+                "'{name}' in CONTROLLER_ACTION_NAMES does not parse"
+            );
+        }
+    }
 
     // ===========================================
     // parse_key_string - basic keys

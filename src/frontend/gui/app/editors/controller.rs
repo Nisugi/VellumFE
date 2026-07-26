@@ -75,6 +75,9 @@ impl ControllerFormState {
             KeyBindAction::Macro(MacroAction { macro_text: text })
         } else {
             let name = self.action.trim().to_string();
+            if name.is_empty() {
+                return Err("Pick an action from the list.".to_string());
+            }
             if KeyAction::from_str(&name).is_none() {
                 return Err(format!("Unknown action '{}'.", name));
             }
@@ -271,14 +274,28 @@ impl VellumGuiApp {
                                 ui.end_row();
                             } else {
                                 ui.label("Action");
-                                ui.text_edit_singleline(&mut form.action);
+                                egui::ComboBox::from_id_salt("controller_action_pick")
+                                    .selected_text(if form.action.is_empty() {
+                                        "pick..."
+                                    } else {
+                                        form.action.as_str()
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        for name in KeyAction::CONTROLLER_ACTION_NAMES {
+                                            ui.selectable_value(
+                                                &mut form.action,
+                                                name.to_string(),
+                                                *name,
+                                            );
+                                        }
+                                    });
                                 ui.end_row();
                             }
                         });
                     if form.is_macro {
                         ui.weak("Use \\r for enter (e.g. \"hide\\r\").");
                     } else {
-                        ui.weak("Action name, e.g. interact_mode, tts_mute_toggle.");
+                        ui.weak("Actions that work from a pad; anything else, use a Macro.");
                     }
 
                     if let Some(error) = &form.error {
