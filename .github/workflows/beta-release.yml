@@ -320,22 +320,20 @@ jobs:
       - name: Build release (aarch64)
         run: cargo build --release
 
-      - name: Package artifact
+      # Bare binary, not a zip: final zips are produced (and signed) by the
+      # packaging job, and the release step's dist/*.zip glob must only ever
+      # see those.
+      - name: Stage binary
         shell: bash
         run: |
           mkdir -p dist
-          cp target/release/vellum-fe dist/
-          pushd dist >/dev/null
-          chmod +x vellum-fe
-          zip -9 "vellum-fe-macos-arm64.zip" vellum-fe
-          rm -f vellum-fe
-          popd >/dev/null
+          cp target/release/vellum-fe dist/vellum-fe-arm64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-arm64-zip
-          path: dist/*.zip
+          name: macos-arm64-bin
+          path: dist/vellum-fe-arm64
           if-no-files-found: error
 
   macos-intel:
@@ -354,62 +352,210 @@ jobs:
       - name: Build release (x86_64)
         run: cargo build --release
 
-      - name: Package artifact
+      - name: Stage binary
         shell: bash
         run: |
           mkdir -p dist
-          cp target/release/vellum-fe dist/
-          pushd dist >/dev/null
-          chmod +x vellum-fe
-          zip -9 "vellum-fe-macos-x64.zip" vellum-fe
-          rm -f vellum-fe
-          popd >/dev/null
+          cp target/release/vellum-fe dist/vellum-fe-x64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-x64-zip
-          path: dist/*.zip
+          name: macos-x64-bin
+          path: dist/vellum-fe-x64
           if-no-files-found: error
 
   macos-universal:
-    name: Build (macOS universal)
+    # Produces every macOS release asset: the three binary zips, the
+    # VellumFE.app bundle, and a dmg. When the Developer ID secrets exist,
+    # everything is codesigned (hardened runtime), notarized through the
+    # same App Store Connect API key TestFlight uses, and the dmg is
+    # stapled for offline Gatekeeper approval. Without the secrets it
+    # ships the same assets unsigned, with a workflow warning.
+    #
+    # Signing needs two secrets beyond the iOS set (the account holder
+    # issues a *Developer ID Application* certificate - a different type
+    # from the App Store's "Apple Distribution" - and exports it as p12):
+    #   DEVELOPER_ID_P12_BASE64, DEVELOPER_ID_P12_PASSWORD
+    name: Package macOS (universal, sign + notarize)
     runs-on: macos-latest
     needs: [macos-arm, macos-intel]
     steps:
       - name: Create workspace
-        run: mkdir -p dist
+        run: mkdir -p dist work
 
-      - name: Download arm64 artifact
+      - name: Download arm64 binary
         uses: actions/download-artifact@v4
         with:
-          name: macos-arm64-zip
-          path: dist_arm
+          name: macos-arm64-bin
+          path: work
 
-      - name: Download x64 artifact
+      - name: Download x64 binary
         uses: actions/download-artifact@v4
         with:
-          name: macos-x64-zip
-          path: dist_x64
+          name: macos-x64-bin
+          path: work
 
-      - name: Prepare binaries
+      - name: Build universal binary
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir work
-          unzip -q dist_arm/vellum-fe-macos-arm64.zip -d work/arm
-          unzip -q dist_x64/vellum-fe-macos-x64.zip -d work/x64
-          lipo -create -output work/vellum-fe-universal work/arm/vellum-fe work/x64/vellum-fe
-          chmod +x work/vellum-fe-universal
-          pushd work >/dev/null
-          zip -9 "../dist/vellum-fe-macos-universal.zip" vellum-fe-universal
-          popd >/dev/null
+          chmod +x work/vellum-fe-arm64 work/vellum-fe-x64
+          lipo -create -output work/vellum-fe-universal \
+            work/vellum-fe-arm64 work/vellum-fe-x64
+
+      - name: Decide whether signing secrets exist
+        id: signing
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+        run: |
+          if [ -n "$P12" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DEVELOPER_ID_P12_BASE64 not set - shipping UNSIGNED macOS assets"
+          fi
+
+      - name: Import Developer ID certificate into a temp keychain
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$P12_BASE64" | base64 -d > "$RUNNER_TEMP/developerid.p12"
+          security import "$RUNNER_TEMP/developerid.p12" -k "$KEYCHAIN" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/developerid.p12"
+          # Without this, codesign hangs forever on a keychain UI prompt
+          # that a headless runner can never answer.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk -F'"' '/Developer ID Application/ {print $2; exit}')
+          if [ -z "$IDENTITY" ]; then
+            echo "No 'Developer ID Application' identity in the imported p12" >&2
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Sign binaries (hardened runtime)
+        if: steps.signing.outputs.enabled == 'true'
+        run: |
+          for bin in work/vellum-fe-arm64 work/vellum-fe-x64 work/vellum-fe-universal; do
+            codesign --force --timestamp --options runtime \
+              --sign "$SIGN_IDENTITY" "$bin"
+          done
+
+      - name: Package binary zips
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # Same asset names and inner filenames the release has always
+          # shipped; the binaries are already signed when secrets exist
+          # (the signature lives in the Mach-O, so cp preserves it).
+          cp work/vellum-fe-arm64 work/vellum-fe
+          (cd work && zip -9 ../dist/vellum-fe-macos-arm64.zip vellum-fe && rm -f vellum-fe)
+          cp work/vellum-fe-x64 work/vellum-fe
+          (cd work && zip -9 ../dist/vellum-fe-macos-x64.zip vellum-fe && rm -f vellum-fe)
+          (cd work && zip -9 ../dist/vellum-fe-macos-universal.zip vellum-fe-universal)
+
+      - name: Derive bundle version from tag
+        run: |
+          # CFBundleShortVersionString must be plain x.y.z - strip the
+          # leading v and any -beta.N suffix (mirrors the iOS job).
+          REF="${{ inputs.tag || github.ref_name }}"
+          VER="${REF#v}"
+          VER="${VER%%-*}"
+          [[ "$VER" =~ ^[0-9]+(\.[0-9]+){2}$ ]] || VER="0.0.0"
+          echo "BUNDLE_VERSION=$VER" >> "$GITHUB_ENV"
+
+      - name: Build VellumFE.app
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # A bare double-click launches with no args, which main.rs routes
+          # to the GUI launcher - no wrapper script needed.
+          APP=work/VellumFE.app
+          mkdir -p "$APP/Contents/MacOS"
+          cp work/vellum-fe-universal "$APP/Contents/MacOS/vellum-fe"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>vellum-fe</string>
+            <key>CFBundleIdentifier</key><string>dev.vellumfe.desktop</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>VellumFE</string>
+            <key>CFBundleDisplayName</key><string>VellumFE</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${BUNDLE_VERSION}</string>
+            <key>CFBundleVersion</key><string>${{ github.run_number }}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Sign VellumFE.app
+        if: steps.signing.outputs.enabled == 'true'
+        run: |
+          codesign --force --timestamp --options runtime \
+            --sign "$SIGN_IDENTITY" work/VellumFE.app
+
+      - name: Create dmg
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p work/dmgroot
+          cp -R work/VellumFE.app work/dmgroot/
+          ln -s /Applications work/dmgroot/Applications
+          hdiutil create -volname "VellumFE" -srcfolder work/dmgroot \
+            -ov -format UDZO dist/vellum-fe-macos.dmg
+
+      - name: Notarize and staple
+        if: steps.signing.outputs.enabled == 'true'
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc/AuthKey.p8"
+          notarize() {
+            xcrun notarytool submit "$1" \
+              --key "$RUNNER_TEMP/asc/AuthKey.p8" \
+              --key-id "$APPSTORE_API_KEY_ID" \
+              --issuer "$APPSTORE_ISSUER_ID" \
+              --wait
+          }
+          notarize dist/vellum-fe-macos.dmg
+          # Stapling only works on the dmg/.app; the zipped bare binaries
+          # get an online Gatekeeper check from the notarization record.
+          xcrun stapler staple dist/vellum-fe-macos.dmg
+          for z in dist/vellum-fe-macos-*.zip; do
+            notarize "$z"
+          done
+
+      - name: Delete temp keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-universal-zip
-          path: dist/*.zip
+          name: macos-dist
+          path: |
+            dist/*.zip
+            dist/*.dmg
           if-no-files-found: error
 
   release:
@@ -440,7 +586,7 @@ jobs:
         run: |
           pushd dist >/dev/null
           shopt -s nullglob
-          sha256sum *.zip *.tar.gz *.apk | tee SHA256SUMS.txt
+          sha256sum *.zip *.tar.gz *.apk *.dmg | tee SHA256SUMS.txt
           popd >/dev/null
 
       - name: Build release notes from commits
@@ -489,6 +635,7 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/*.apk
+            dist/*.dmg
             dist/SHA256SUMS.txt
           prerelease: ${{ inputs.prerelease || contains(github.ref_name, '-beta') }}
         env:
