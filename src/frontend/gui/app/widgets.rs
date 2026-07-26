@@ -207,7 +207,65 @@ impl VellumGuiApp {
             return;
         }
         let job = std::mem::take(job);
-        ui.add(egui::Label::new(job));
+        if super::color_emoji::should_overlay(&job.text) {
+            Self::add_label_with_color_emoji(ui, egui::Label::new(job), false, None);
+        } else {
+            ui.add(egui::Label::new(job));
+        }
+    }
+
+    /// Add a label whose text contains emoji, then paint color emoji
+    /// textures over the monochrome glyphs.
+    ///
+    /// `Label::ui` never exposes its galley, so this path uses the public
+    /// `Label::layout_in_ui` (identical layout, allocation, and response)
+    /// and mirrors the paint block of `impl Widget for Label` from the egui
+    /// fork (rev 426ef99, crates/egui/src/widgets/label.rs), minus the
+    /// elided-text hover tooltip: our jobs never elide (no
+    /// max_rows/truncate). Callers pass `interactive` = whether the label
+    /// was given a non-hover sense, and the explicit `selectable` override
+    /// if one was set on the label, matching what `Label::ui` derives.
+    fn add_label_with_color_emoji(
+        ui: &mut egui::Ui,
+        label: egui::Label,
+        interactive: bool,
+        selectable: Option<bool>,
+    ) -> egui::Response {
+        let (galley_pos, galley, response) = label.layout_in_ui(ui);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), galley.text())
+        });
+        if ui.is_rect_visible(response.rect) {
+            let response_color = if interactive {
+                ui.style().interact(&response).text_color()
+            } else {
+                ui.style().visuals.text_color()
+            };
+            let underline = if response.has_focus() || response.highlighted() {
+                egui::Stroke::new(1.0, response_color)
+            } else {
+                egui::Stroke::NONE
+            };
+            let selectable =
+                selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
+            if selectable {
+                egui::text_selection::LabelSelectionState::label_text_selection(
+                    ui,
+                    &response,
+                    galley_pos,
+                    galley.clone(),
+                    response_color,
+                    underline,
+                );
+            } else {
+                ui.painter().add(
+                    egui::epaint::TextShape::new(galley_pos, galley.clone(), response_color)
+                        .with_underline(underline),
+                );
+            }
+            super::color_emoji::paint_color_emoji(ui.ctx(), ui.painter(), &galley, galley_pos);
+        }
+        response
     }
 
     /// Format a line's arrival time for display, matching the TUI's style
@@ -289,13 +347,16 @@ impl VellumGuiApp {
                             search_match,
                             font_id,
                         );
-                        let response = ui
-                            .add(
-                                egui::Label::new(rich)
-                                    .sense(egui::Sense::click_and_drag())
-                                    .selectable(!Self::link_drag_blocks_selection(ui)),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let selectable = !Self::link_drag_blocks_selection(ui);
+                        let label = egui::Label::new(rich)
+                            .sense(egui::Sense::click_and_drag())
+                            .selectable(selectable);
+                        let response = if super::color_emoji::should_overlay(&segment.text) {
+                            Self::add_label_with_color_emoji(ui, label, true, Some(selectable))
+                        } else {
+                            ui.add(label)
+                        }
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
                         if let Some(link_data) = &segment.link_data {
                             if let Some(drop) = Self::handle_link_dnd(ui, &response, link_data) {
                                 clicked_link.get_or_insert(drop);
@@ -3746,7 +3807,13 @@ impl VellumGuiApp {
                             }
                         }
                         ui.painter()
-                            .galley(galley_pos, galley, visuals.text_color());
+                            .galley(galley_pos, galley.clone(), visuals.text_color());
+                        super::color_emoji::paint_color_emoji(
+                            &ctx,
+                            ui.painter(),
+                            &galley,
+                            galley_pos,
+                        );
                     }
                 }
                 // A press on the blank area below the last line clears the

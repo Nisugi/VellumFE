@@ -579,6 +579,7 @@ impl Default for Config {
                 drag_modifier_key: default_drag_modifier_key(),
                 min_command_length: default_min_command_length(),
                 emoji_shortcodes: true,
+                color_emoji: true,
                 performance_stats_enabled: default_performance_stats_enabled(),
                 perf_stats_x: default_perf_stats_x(),
                 perf_stats_y: default_perf_stats_y(),

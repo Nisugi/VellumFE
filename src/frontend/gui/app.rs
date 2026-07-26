@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod color_emoji;
 mod detached;
 mod map_explorer;
 mod dialogs;
@@ -4015,6 +4016,8 @@ impl eframe::App for VellumGuiApp {
                 ctx.request_repaint_after(at - now);
             }
         }
+        // Publish the color-emoji toggle for this frame's text painters.
+        color_emoji::set_enabled(self.app_core.config.ui.color_emoji);
         // Publish the configured item-drag modifier for link renderers.
         ctx.data_mut(|data| {
             data.insert_temp(
