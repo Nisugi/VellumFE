@@ -1277,17 +1277,25 @@ const GP_BUTTON_ORDER = [
 ];
 // The left stick walks the 8 compass directions; the d-pad covers the
 // vertical axis and portals (.portal resolves go door / climb stair on
-// the host).
+// the host). Binding a button to the reserved word "shift" makes it a
+// hold-modifier: while held, buttons resolve against shiftBinds.
+const GP_SHIFT = "shift";
 const GP_DEFAULT_BINDS = {
   dpad_up: "up", dpad_down: "down", dpad_right: "out", dpad_left: ".portal",
-  south: "look",
+  south: "look", l2: GP_SHIFT,
 };
+const GP_DEFAULT_SHIFT_BINDS = { south: "stand" };
 
-let controllerPrefs = { enabled: true, binds: { ...GP_DEFAULT_BINDS } };
+let controllerPrefs = {
+  enabled: true,
+  binds: { ...GP_DEFAULT_BINDS },
+  shiftBinds: { ...GP_DEFAULT_SHIFT_BINDS },
+};
 try {
   const stored = JSON.parse(localStorage.getItem(CONTROLLER_PREFS_KEY) || "{}");
   controllerPrefs = { ...controllerPrefs, ...stored };
   if (!stored.binds) controllerPrefs.binds = { ...GP_DEFAULT_BINDS };
+  if (!stored.shiftBinds) controllerPrefs.shiftBinds = { ...GP_DEFAULT_SHIFT_BINDS };
 } catch { /* corrupted storage — defaults */ }
 
 function saveControllerPrefs() {
@@ -1412,12 +1420,33 @@ function handleGamepadButton(index) {
   }
 
   if (!controllerPrefs.enabled) return;
+  if (gpShiftHeld()) {
+    // Shift layer: strictly the shift bank — no fall-through.
+    const bind = controllerPrefs.shiftBinds[name];
+    if (bind && bind !== GP_SHIFT) sendCommand(bind);
+    return;
+  }
   const bind = controllerPrefs.binds[name];
-  if (bind) sendCommand(bind);
+  if (bind && bind !== GP_SHIFT) sendCommand(bind);
 }
+
+// True while any button bound to "shift" is held — read from live pad
+// state so there is no press/release bookkeeping to desync.
+function gpShiftHeld() {
+  const shiftIndexes = Object.entries(GP_BUTTON_NAMES)
+    .filter(([, name]) => controllerPrefs.binds[name] === GP_SHIFT)
+    .map(([index]) => Number(index));
+  if (!shiftIndexes.length) return false;
+  return gamepadPads().some((pad) =>
+    shiftIndexes.some((i) => !!(pad.buttons[i] && pad.buttons[i].pressed)),
+  );
+}
+
+let gpSheetShiftLayer = false;
 
 function openControllerSheet() {
   gpEditButton = null;
+  gpSheetShiftLayer = false;
   openSheet("Controller");
   renderControllerSheet();
 }
@@ -1446,21 +1475,38 @@ function renderControllerSheet() {
   });
   sheetItems.appendChild(enabledBtn);
 
+  const layerBtn = document.createElement("button");
+  layerBtn.type = "button";
+  layerBtn.className = "sheet-item";
+  layerBtn.textContent = gpSheetShiftLayer
+    ? "Editing: shift layer (while shift held) — tap for base"
+    : "Editing: base layer — tap for shift layer";
+  layerBtn.addEventListener("click", () => {
+    gpSheetShiftLayer = !gpSheetShiftLayer;
+    gpEditButton = null;
+    renderControllerSheet();
+  });
+  sheetItems.appendChild(layerBtn);
+
+  const activeBinds = gpSheetShiftLayer
+    ? controllerPrefs.shiftBinds
+    : controllerPrefs.binds;
+
   for (const name of GP_BUTTON_ORDER) {
     if (gpEditButton === name) {
       const row = document.createElement("div");
       row.className = "sheet-empty gp-edit-row";
       const input = document.createElement("input");
       input.type = "text";
-      input.value = controllerPrefs.binds[name] || "";
-      input.placeholder = "command (e.g. look, hide, sw)";
+      input.value = activeBinds[name] || "";
+      input.placeholder = "command (e.g. look, hide, sw) or shift";
       const save = document.createElement("button");
       save.type = "button";
       save.textContent = "Save";
       save.addEventListener("click", () => {
         const value = input.value.trim();
-        if (value) controllerPrefs.binds[name] = value;
-        else delete controllerPrefs.binds[name];
+        if (value) activeBinds[name] = value;
+        else delete activeBinds[name];
         saveControllerPrefs();
         gpEditButton = null;
         renderControllerSheet();
@@ -1480,7 +1526,7 @@ function renderControllerSheet() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "sheet-item";
-    const bind = controllerPrefs.binds[name];
+    const bind = activeBinds[name];
     btn.textContent = `${name} — ${bind || "unbound"}`;
     btn.addEventListener("click", () => {
       gpEditButton = name;
@@ -1490,8 +1536,9 @@ function renderControllerSheet() {
   }
 
   sheetNote(
-    "Tap a row (or press the button on the pad) to edit. In menus the " +
-      "d-pad always navigates: up/down move, A taps, B closes.",
+    "Tap a row (or press the button on the pad) to edit. Bind a button " +
+      'to "shift" to make it the hold-modifier for the shift layer. In ' +
+      "menus the d-pad always navigates: up/down move, A taps, B closes.",
     false,
   );
 }
