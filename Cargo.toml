@@ -72,6 +72,10 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }  # .
 # Sound (optional)
 rodio = { version = "0.19", optional = true }
 
+# Gamepad input for the GUI (Windows WGI, Linux evdev, macOS IOKit).
+# Desktop-only: the mobile builds get controllers via the browser Gamepad API.
+gilrs = { version = "0.11", optional = true }
+
 # TTS - Text-to-speech (feature-gated; stub on non-desktop builds)
 tts = { version = "0.26", optional = true }
 
@@ -102,9 +106,10 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 [features]
 # The Android build is `--no-default-features`: core + parser + network +
 # web frontend + (Phase A2) headless runtime only.
-default = ["tui", "gui", "sound", "tts", "desktop"]
+default = ["tui", "gui", "sound", "tts", "desktop", "gamepad"]
 tui = ["dep:ratatui", "dep:crossterm", "dep:tui-textarea"]
 gui = ["dep:egui", "dep:eframe", "dep:fontdb", "dep:skrifa", "dep:image"]
+gamepad = ["dep:gilrs"]
 sound = ["dep:rodio"]
 tts = ["dep:tts"]
 # Desktop OS integrations: clipboard, browser-open, process inspection,

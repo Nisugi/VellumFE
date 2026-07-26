@@ -27,6 +27,8 @@ mod map_explorer;
 mod dialogs;
 mod dock;
 mod editors;
+#[cfg(feature = "gamepad")]
+mod gamepad;
 mod interact;
 mod menus;
 mod status_icons;
@@ -209,6 +211,9 @@ pub struct VellumGuiApp {
     /// Numpad keybind names last pushed to eframe via `set_numpad_capture_keys`;
     /// `None` until the first sync so startup always pushes the initial set.
     numpad_capture_keys: Option<HashSet<String>>,
+    /// Gamepad context; None when init failed or the feature is disabled.
+    #[cfg(feature = "gamepad")]
+    gamepad: Option<gilrs::Gilrs>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -501,6 +506,10 @@ impl VellumGuiApp {
             registered_font_families: HashSet::new(),
             pending_font_families: None,
             numpad_capture_keys: None,
+            #[cfg(feature = "gamepad")]
+            gamepad: gilrs::Gilrs::new()
+                .inspect_err(|e| tracing::warn!("gamepad init failed: {}", e))
+                .ok(),
             ui_settings,
             tab_settings,
             tab_groups,
@@ -4001,6 +4010,8 @@ impl eframe::App for VellumGuiApp {
         }
 
         self.sync_numpad_capture_keys(frame);
+        #[cfg(feature = "gamepad")]
+        self.poll_gamepad(&ctx);
         self.handle_global_input(&ctx, frame);
 
         if self.close_requested {
