@@ -854,16 +854,13 @@ impl VellumGuiApp {
                     .constrain_to(root_rect)
                     .show(ctx, |ui| {
                         ui.push_id(&tab.id.key, |ui| {
-                            // Reserve the resize handle's row up front; content
-                            // that fills available height would otherwise push
-                            // the handle past the fixed window size, clipping
-                            // it out of reach entirely.
+                            // Content fills the full inner height; the vertical
+                            // resize affordance is a thin overlay band sensed at
+                            // the bottom edge of the frame rather than a reserved
+                            // strip, which read as a dead gap under content.
                             let content_size = Vec2::new(
                                 ui.available_width().max(1.0),
-                                (ui.available_height()
-                                    - resize_handle_height
-                                    - ui.spacing().item_spacing.y)
-                                    .max(1.0),
+                                ui.available_height().max(1.0),
                             );
                             let clicked = ui
                                 .allocate_ui(content_size, |ui| {
@@ -871,24 +868,33 @@ impl VellumGuiApp {
                                     self.render_window_or_group_content(ui, &tab)
                                 })
                                 .inner;
-                            let handle_response = ui.allocate_response(
-                                Vec2::new(ui.available_width().max(1.0), resize_handle_height),
+                            let frame_rect = ui.max_rect();
+                            let band_rect = Rect::from_min_max(
+                                Pos2::new(
+                                    frame_rect.min.x,
+                                    frame_rect.max.y - resize_handle_height,
+                                ),
+                                frame_rect.max,
+                            );
+                            // Registered after the content widgets, so within
+                            // this band the overlay wins hit-testing over
+                            // whatever content sits underneath it.
+                            let handle_response = ui.interact(
+                                band_rect,
+                                ui.id().with("sidebar_resize_handle"),
                                 egui::Sense::click_and_drag(),
                             );
                             let handle_active =
                                 handle_response.hovered() || handle_response.dragged();
-                            let stroke_color = if handle_active {
-                                ui.visuals().widgets.hovered.fg_stroke.color
-                            } else {
-                                ui.visuals().weak_text_color()
-                            };
-                            let handle_center = handle_response.rect.center();
-                            ui.painter().hline(
-                                (handle_center.x - 16.0)..=(handle_center.x + 16.0),
-                                handle_center.y,
-                                egui::Stroke::new(2.0, stroke_color),
-                            );
                             if handle_active {
+                                let stroke_color =
+                                    ui.visuals().widgets.hovered.fg_stroke.color;
+                                let handle_center = handle_response.rect.center();
+                                ui.painter().hline(
+                                    (handle_center.x - 16.0)..=(handle_center.x + 16.0),
+                                    handle_center.y,
+                                    egui::Stroke::new(2.0, stroke_color),
+                                );
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
                             }
                             if handle_response.dragged() {
