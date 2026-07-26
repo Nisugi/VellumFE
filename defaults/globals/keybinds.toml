@@ -216,3 +216,24 @@ command = "glance"
 [[controller_wheel]]
 label = "portal"
 command = ".portal"
+
+# A folder slice: aim it and press South (A) to open its child ring;
+# East (B) backs up a level. Folders can nest (keep it shallow).
+[[controller_wheel]]
+label = "stance"
+
+  [[controller_wheel.slices]]
+  label = "defensive"
+  command = "stance defensive"
+
+  [[controller_wheel.slices]]
+  label = "neutral"
+  command = "stance neutral"
+
+  [[controller_wheel.slices]]
+  label = "forward"
+  command = "stance forward"
+
+  [[controller_wheel.slices]]
+  label = "offensive"
+  command = "stance offensive"

@@ -218,10 +218,11 @@ pub struct VellumGuiApp {
     /// center. Movement sends on sector *change* with hysteresis.
     #[cfg(feature = "gamepad")]
     gp_stick_sector: Option<usize>,
-    /// Radial wheel state: Some(selected slice) while the wheel button is
-    /// held. Firing happens on release.
+    /// Radial wheel state while the wheel button is held: which named
+    /// wheel, the folder path descended so far, and the aimed slice.
+    /// Firing happens on release.
     #[cfg(feature = "gamepad")]
-    gp_wheel: Option<Option<usize>>,
+    gp_wheel: Option<gamepad::WheelUi>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the

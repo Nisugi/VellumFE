@@ -230,8 +230,10 @@ pub struct Config {
     pub controller_binds: HashMap<String, KeyBindAction>,
     #[serde(skip)] // Loaded from [controller_shift] (bindings while shift button held)
     pub controller_shift_binds: HashMap<String, KeyBindAction>,
-    #[serde(skip)] // Loaded from [[controller_wheel]] (radial wheel slices)
+    #[serde(skip)] // Loaded from [[controller_wheel]] (default radial wheel)
     pub controller_wheel: Vec<WheelSlice>,
+    #[serde(skip)] // Loaded from [controller_wheels.<name>] (named radial wheels)
+    pub controller_wheels: HashMap<String, Vec<WheelSlice>>,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml

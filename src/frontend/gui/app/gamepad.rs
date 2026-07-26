@@ -132,36 +132,54 @@ impl VellumGuiApp {
             self.handle_gamepad_button(button, ctx);
         }
 
-        // Radial wheel: while the wheel button is held, the left stick
-        // aims a slice; releasing fires it. Owns the stick while active
-        // (no movement) and swallows other buttons.
-        let wheel_held = self.gamepad_action_button_held("controller_wheel");
-        match (self.gp_wheel.is_some(), wheel_held) {
-            (false, true) => {
-                self.gp_wheel = Some(None);
+        // Radial wheel: while a wheel button is held, the left stick aims
+        // a slice; South opens a folder slice, East backs up, releasing
+        // fires the aimed leaf. Owns the stick while active (no movement)
+        // and swallows unrelated buttons.
+        let held_key = self.held_wheel_key();
+        match (self.gp_wheel.is_some(), held_key) {
+            (false, Some(key)) => {
+                self.gp_wheel = Some(WheelUi {
+                    key,
+                    path: Vec::new(),
+                    aimed: None,
+                });
                 self.app_core.needs_render = true;
             }
-            (true, false) => {
-                let selected = self.gp_wheel.take().flatten();
-                if let Some(index) = selected {
-                    if let Some(slice) = self.app_core.config.controller_wheel.get(index).cloned()
+            (true, None) => {
+                let ui = self.gp_wheel.take().expect("just matched Some");
+                if let Some(index) = ui.aimed {
+                    if let Some(slice) = self
+                        .wheel_level_slices(&ui.key, &ui.path)
+                        .and_then(|level| level.get(index).cloned())
                     {
-                        self.dispatch_command(slice.command);
+                        if !slice.is_folder() && !slice.command.is_empty() {
+                            self.dispatch_command(slice.command);
+                        }
                     }
                 }
                 self.app_core.needs_render = true;
             }
-            (true, true) => {
-                if let (Some((x, y_up)), Some(slot)) = (stick, self.gp_wheel.as_mut()) {
-                    let count = self.app_core.config.controller_wheel.len();
+            (true, Some(_)) => {
+                if let Some((x, y_up)) = stick {
+                    let (key, path) = {
+                        let ui = self.gp_wheel.as_ref().expect("just matched Some");
+                        (ui.key.clone(), ui.path.clone())
+                    };
+                    let count = self
+                        .wheel_level_slices(&key, &path)
+                        .map(|level| level.len())
+                        .unwrap_or(0);
                     let aimed = wheel_slice_at(x, y_up, count);
-                    if aimed.is_some() && *slot != aimed {
-                        *slot = aimed;
-                        self.app_core.needs_render = true;
+                    if let Some(ui) = self.gp_wheel.as_mut() {
+                        if aimed.is_some() && ui.aimed != aimed {
+                            ui.aimed = aimed;
+                            self.app_core.needs_render = true;
+                        }
                     }
                 }
             }
-            (false, false) => {}
+            (false, None) => {}
         }
 
         if let Some((x, y_up)) = stick.filter(|_| self.gp_wheel.is_none()) {
@@ -204,9 +222,43 @@ impl VellumGuiApp {
     fn handle_gamepad_button(&mut self, button: gilrs::Button, ctx: &egui::Context) {
         use gilrs::Button;
 
-        // The wheel owns the pad while it is up: buttons neither navigate
-        // nor dispatch (release of the wheel button fires the slice).
+        // The wheel owns the pad while it is up: South opens the aimed
+        // folder (or fires a leaf immediately), East backs up a level;
+        // everything else is swallowed.
         if self.gp_wheel.is_some() {
+            match button {
+                Button::South => {
+                    let (key, path, aimed) = {
+                        let ui = self.gp_wheel.as_ref().expect("wheel active");
+                        (ui.key.clone(), ui.path.clone(), ui.aimed)
+                    };
+                    let Some(index) = aimed else { return };
+                    let Some(slice) = self
+                        .wheel_level_slices(&key, &path)
+                        .and_then(|level| level.get(index).cloned())
+                    else {
+                        return;
+                    };
+                    if slice.is_folder() {
+                        if let Some(ui) = self.gp_wheel.as_mut() {
+                            ui.path.push(index);
+                            ui.aimed = None;
+                        }
+                    } else if !slice.command.is_empty() {
+                        self.gp_wheel = None;
+                        self.dispatch_command(slice.command);
+                    }
+                    self.app_core.needs_render = true;
+                }
+                Button::East => {
+                    if let Some(ui) = self.gp_wheel.as_mut() {
+                        ui.path.pop();
+                        ui.aimed = None;
+                        self.app_core.needs_render = true;
+                    }
+                }
+                _ => {}
+            }
             return;
         }
 
@@ -264,6 +316,55 @@ impl VellumGuiApp {
         self.gamepad_action_button_held("controller_shift")
     }
 
+    /// The wheel key of the wheel button currently held, if any:
+    /// "" for `controller_wheel` (the default wheel), "<name>" for
+    /// `controller_wheel:<name>`.
+    fn held_wheel_key(&self) -> Option<String> {
+        let gilrs = self.gamepad.as_ref()?;
+        for (button_name, action) in &self.app_core.config.controller_binds {
+            let crate::config::KeyBindAction::Action(name) = action else {
+                continue;
+            };
+            let key = if name == "controller_wheel" {
+                ""
+            } else if let Some(rest) = name.strip_prefix("controller_wheel:") {
+                rest
+            } else {
+                continue;
+            };
+            let Some(button) = gamepad_button_from_name(button_name) else {
+                continue;
+            };
+            if gilrs.gamepads().any(|(_, pad)| pad.is_pressed(button)) {
+                return Some(key.to_string());
+            }
+        }
+        None
+    }
+
+    /// The slice list at a folder path within a named wheel. Key "" is
+    /// the default wheel ([[controller_wheel]], falling back to
+    /// [controller_wheels.default]).
+    fn wheel_level_slices(
+        &self,
+        key: &str,
+        path: &[usize],
+    ) -> Option<&Vec<crate::config::WheelSlice>> {
+        let mut level = if key.is_empty() {
+            if self.app_core.config.controller_wheel.is_empty() {
+                self.app_core.config.controller_wheels.get("default")?
+            } else {
+                &self.app_core.config.controller_wheel
+            }
+        } else {
+            self.app_core.config.controller_wheels.get(key)?
+        };
+        for &index in path {
+            level = &level.get(index)?.slices;
+        }
+        Some(level)
+    }
+
     /// True while any button base-bound to the named action is held. Read
     /// from live pad state — no held/released bookkeeping to desync.
     fn gamepad_action_button_held(&self, action_name: &str) -> bool {
@@ -289,17 +390,33 @@ impl VellumGuiApp {
     }
 }
 
+/// Live radial-wheel state: which named wheel is up, the folder path
+/// descended so far, and the aimed slice at the current level.
+pub(super) struct WheelUi {
+    pub(super) key: String,
+    pub(super) path: Vec<usize>,
+    pub(super) aimed: Option<usize>,
+}
+
 impl VellumGuiApp {
     /// Draw the radial command wheel while its button is held: a ring of
     /// slice labels around the screen center, the aimed slice highlighted.
     pub(super) fn render_controller_wheel(&mut self, ctx: &egui::Context) {
-        let Some(selected) = self.gp_wheel else {
+        let Some((key, path, selected)) = self
+            .gp_wheel
+            .as_ref()
+            .map(|ui| (ui.key.clone(), ui.path.clone(), ui.aimed))
+        else {
             return;
         };
-        let slices = &self.app_core.config.controller_wheel;
+        let Some(slices) = self.wheel_level_slices(&key, &path).cloned() else {
+            return;
+        };
+        let slices = &slices;
         if slices.is_empty() {
             return;
         }
+        let in_folder = !path.is_empty();
         let center = ctx.content_rect().center();
         let radius = (ctx.content_rect().height() * 0.28).clamp(90.0, 220.0);
 
@@ -330,19 +447,23 @@ impl VellumGuiApp {
                     if is_selected {
                         painter.circle_filled(pos, 26.0, ui.visuals().selection.bg_fill);
                     }
+                    let label = if slice.is_folder() {
+                        format!("{} ▸", slice.label)
+                    } else {
+                        slice.label.clone()
+                    };
                     painter.text(
                         pos,
                         egui::Align2::CENTER_CENTER,
-                        &slice.label,
+                        label,
                         egui::FontId::proportional(size),
                         color,
                     );
                 }
-                let hint = match selected {
-                    Some(i) => slices
-                        .get(i)
-                        .map(|s| s.command.clone())
-                        .unwrap_or_default(),
+                let hint = match selected.and_then(|i| slices.get(i)) {
+                    Some(slice) if slice.is_folder() => format!("{}: A opens", slice.label),
+                    Some(slice) => slice.command.clone(),
+                    None if in_folder => "aim · A picks · B backs up".to_string(),
                     None => "aim with the left stick".to_string(),
                 };
                 painter.text(

@@ -172,11 +172,21 @@ pub enum KeyAction {
 }
 
 /// One slice of the controller radial wheel: a label drawn on the wheel
-/// and the command it fires (game text or dot-command).
+/// and either a command to fire (game text or dot-command) or a child
+/// ring of slices (a folder — opened with South while the wheel is held).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WheelSlice {
     pub label: String,
+    #[serde(default)]
     pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slices: Vec<WheelSlice>,
+}
+
+impl WheelSlice {
+    pub fn is_folder(&self) -> bool {
+        !self.slices.is_empty()
+    }
 }
 
 /// Keybinds for menu system (popups, browsers, forms, editors)
@@ -575,7 +585,11 @@ impl KeyAction {
             "stop_travel" => Some(Self::StopTravel),
             "interact_mode" => Some(Self::InteractMode),
             "controller_shift" => Some(Self::ControllerShift),
-            "controller_wheel" => Some(Self::ControllerWheel),
+            // "controller_wheel" opens the default wheel;
+            // "controller_wheel:<name>" opens a named [controller_wheels.<name>].
+            s if s == "controller_wheel" || s.starts_with("controller_wheel:") => {
+                Some(Self::ControllerWheel)
+            }
             "tts_next" => Some(Self::TtsNext),
             "tts_previous" => Some(Self::TtsPrevious),
             "tts_next_unread" => Some(Self::TtsNextUnread),
@@ -817,6 +831,25 @@ impl Config {
             }
         }
         Ok(slices_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Load the named wheels from `[controller_wheels.<name>]` arrays of
+    /// the global keybinds.toml (bound via "controller_wheel:<name>").
+    pub fn load_controller_wheels() -> Result<HashMap<String, Vec<WheelSlice>>> {
+        let wheels_from = |contents: &str| -> Option<HashMap<String, Vec<WheelSlice>>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            let table = toml_value.get("controller_wheels")?;
+            table.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(wheels) = wheels_from(&contents) {
+                return Ok(wheels);
+            }
+        }
+        Ok(wheels_from(DEFAULT_KEYBINDS).unwrap_or_default())
     }
 
     /// Replace the whole `[[controller_wheel]]` array in the global
