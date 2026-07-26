@@ -124,6 +124,16 @@ The gear button (also reachable from the login screen) opens Settings:
   deaths by default; toggles in this sheet). Whenever a bottom sheet
   is open — context menus, tap-to-target — the d-pad navigates it:
   up/down move, South taps, East closes. Per-device.
+
+  Hold a button bound to `wheel` (R2 by default) for the **radial
+  command wheel** — the same wheel the desktop GUI shows, defined once
+  in the host's `keybinds.toml`: aim a slice with the left stick,
+  release to fire it; South opens a folder slice, East backs up a
+  level. `wheel:<name>` opens a named wheel. Buttons can also run
+  client-side **UI actions** instead of game commands: `left_panel` /
+  `right_panel` toggle the drawers, `map` the map overlay, and
+  `effects`, `settings`, `appearance`, `speech`, `controller` open
+  those sheets (which the d-pad then navigates).
 - **Sound alerts / login music** — browser playback toggles.
 - **Client settings (saved on host)** — the full desktop settings
   registry over the wire: every setting, editable at character or global

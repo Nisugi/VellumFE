@@ -768,6 +768,10 @@ function handleMessage(msg) {
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
     case "macros": macros = msg.d; renderMacros(); break;
+    case "wheels":
+      wheels = { default: [], named: {}, ...(msg.d || {}) };
+      if (gpWheel) renderWheel();
+      break;
     case "session": setSession(msg.d); break;
     case "profiles": renderProfiles(msg.d.list || []); break;
     case "config_file": handleConfigReply(msg.d); break;
@@ -1261,6 +1265,12 @@ function speechStreamChoices() {
 // navigates it: up/down move focus, South taps, East closes. There is no
 // mapper software on phones, so this is the only controller path here.
 // Prefs are per-device (localStorage): pads travel with the phone.
+//
+// Beyond plain commands, a bind can be a reserved word: "shift" (hold
+// modifier), "wheel" / "wheel:<name>" (hold-open radial command wheel —
+// definitions come from the host's keybinds.toml via the `wheels`
+// message; picks resolve server-side like macro taps), or a client-side
+// UI action from GP_UI_ACTIONS (left_panel, right_panel, map, ...).
 
 const CONTROLLER_PREFS_KEY = "vellum-controller";
 const GP_BUTTON_NAMES = {
@@ -1283,7 +1293,7 @@ const GP_BUTTON_ORDER = [
 const GP_SHIFT = "shift";
 const GP_DEFAULT_BINDS = {
   dpad_up: "up", dpad_down: "down", dpad_right: "out", dpad_left: ".portal",
-  south: "look", l2: GP_SHIFT,
+  south: "look", l2: GP_SHIFT, r2: "wheel",
 };
 const GP_DEFAULT_SHIFT_BINDS = { south: "stand" };
 
@@ -1350,11 +1360,241 @@ function gpStickSectorFor(x, yUp, previous) {
   return Math.floor(((angle + 382.5) % 360) / 45) % 8;
 }
 
+// ---- Radial command wheel (hold a wheel-bound button, aim, release) --------
+// The phone counterpart of the desktop wheel: definitions arrive from the
+// host in the `wheels` message (labels/colors/folders only — commands
+// stay server-side and picks resolve there, like macro taps). While the
+// wheel is up it owns the pad: the left stick aims, South opens a folder
+// (or fires a leaf), East backs up a level, release fires the aimed leaf.
+
+let wheels = { default: [], named: {} };
+let gpWheel = null; // { key, path: [indexes], aimed: index|null }
+// South already fired a leaf during this hold of the wheel button; the
+// wheel stays closed (and the stick stays quiet) until a fresh hold, so
+// one hold never fires twice or walks on release.
+let gpWheelFired = false;
+
+// The wheel key of a bind value: "" for "wheel", the name for
+// "wheel:<name>", null for anything that is not a wheel bind.
+function gpWheelKeyOf(bind) {
+  if (bind === "wheel") return "";
+  if (typeof bind === "string" && bind.startsWith("wheel:")) return bind.slice(6);
+  return null;
+}
+
+// The wheel key of the wheel-bound button currently held, if any — read
+// from live pad state like the shift modifier (base layer only).
+function gpHeldWheelKey() {
+  for (const [index, name] of Object.entries(GP_BUTTON_NAMES)) {
+    const key = gpWheelKeyOf(controllerPrefs.binds[name]);
+    if (key === null) continue;
+    const i = Number(index);
+    if (gamepadPads().some((pad) => !!(pad.buttons[i] && pad.buttons[i].pressed))) {
+      return key;
+    }
+  }
+  return null;
+}
+
+// The slice list at a folder path within a wheel; null when the key or
+// path no longer resolves (stale after a host-side wheel edit).
+function wheelLevelSlices(key, path) {
+  let level = key ? (wheels.named || {})[key] : wheels.default;
+  if (!Array.isArray(level)) return null;
+  for (const index of path) {
+    level = (level[index] || {}).slices;
+    if (!Array.isArray(level)) return null;
+  }
+  return level;
+}
+
+// Which slice the stick aims at: slice 0 centered at the top, clockwise.
+// Null inside the dead zone — mirrors the desktop wheel's geometry.
+function wheelSliceAt(x, yUp, count) {
+  if (!count || Math.hypot(x, yUp) < 0.5) return null;
+  const step = 360 / count;
+  const angle = (Math.atan2(x, yUp) * 180) / Math.PI;
+  return Math.floor((angle + 360 + step / 2) / step) % count;
+}
+
+function sendWheelPick(key, path) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  state.ws.send(JSON.stringify({ t: "wheel_pick", d: { key, path } }));
+}
+
+const wheelOverlay = document.getElementById("wheel-overlay");
+const WHEEL_SVG_NS = "http://www.w3.org/2000/svg";
+
+function wheelSvgEl(tag, attrs, style) {
+  const el = document.createElementNS(WHEEL_SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  // Fills/strokes go through style so CSS variables resolve.
+  for (const [k, v] of Object.entries(style || {})) el.style[k] = v;
+  return el;
+}
+
+function hideWheel() {
+  wheelOverlay.hidden = true;
+  wheelOverlay.replaceChildren();
+}
+
+// Draw the current wheel level: a ring of wedges around the screen
+// center, the aimed slice highlighted; tinted wedges dim at rest and
+// brighten while aimed (matches the desktop wheel).
+function renderWheel() {
+  const slices = gpWheel && wheelLevelSlices(gpWheel.key, gpWheel.path);
+  if (!slices || !slices.length) {
+    hideWheel();
+    return;
+  }
+  const { aimed } = gpWheel;
+  const inFolder = gpWheel.path.length > 0;
+  const outer = 104;
+  const hub = 34;
+  const labelR = 70;
+  const step = (2 * Math.PI) / slices.length;
+  const top = -Math.PI / 2; // slice 0 centered at the top
+
+  const svg = wheelSvgEl("svg", { viewBox: "-110 -110 220 220" });
+  svg.appendChild(
+    wheelSvgEl("circle", { cx: 0, cy: 0, r: outer, "fill-opacity": 0.92 }, {
+      fill: "var(--bg-panel)",
+      stroke: "var(--border)",
+    }),
+  );
+
+  const point = (angle, radius) =>
+    `${(Math.cos(angle) * radius).toFixed(2)} ${(Math.sin(angle) * radius).toFixed(2)}`;
+
+  slices.forEach((slice, i) => {
+    const centerAngle = top + i * step;
+    const isAimed = aimed === i;
+    // Wedge fill: the slice's tint (dim at rest, bright while aimed);
+    // colorless slices highlight with the accent color.
+    const fill = slice.color || (isAimed ? "var(--accent, #6a9fb5)" : null);
+    if (fill) {
+      const opacity = slice.color ? (isAimed ? 0.85 : 0.22) : 0.5;
+      const wedge =
+        slices.length === 1
+          ? wheelSvgEl("circle", { cx: 0, cy: 0, r: outer, "fill-opacity": opacity }, { fill })
+          : wheelSvgEl(
+              "path",
+              {
+                d:
+                  `M 0 0 L ${point(centerAngle - step / 2, outer)} ` +
+                  `A ${outer} ${outer} 0 0 1 ${point(centerAngle + step / 2, outer)} Z`,
+                "fill-opacity": opacity,
+              },
+              { fill },
+            );
+      svg.appendChild(wedge);
+    }
+    if (slices.length > 1) {
+      const boundary = centerAngle - step / 2;
+      svg.appendChild(
+        wheelSvgEl(
+          "line",
+          {
+            x1: Math.cos(boundary) * hub,
+            y1: Math.sin(boundary) * hub,
+            x2: Math.cos(boundary) * outer,
+            y2: Math.sin(boundary) * outer,
+          },
+          { stroke: "var(--border)" },
+        ),
+      );
+    }
+    const isFolder = !!(slice.slices || []).length;
+    let label = `${slice.label || ""}${isFolder ? " ▸" : ""}`;
+    if (label.length > 16) label = `${label.slice(0, 15)}…`;
+    const text = wheelSvgEl(
+      "text",
+      {
+        x: Math.cos(centerAngle) * labelR,
+        y: Math.sin(centerAngle) * labelR,
+        "text-anchor": "middle",
+        "dominant-baseline": "middle",
+        "font-size": isAimed ? 13 : 10,
+        "font-weight": isAimed ? "bold" : "normal",
+      },
+      { fill: isAimed ? "var(--fg)" : "var(--fg-dim)" },
+    );
+    text.textContent = label;
+    svg.appendChild(text);
+  });
+
+  // Center hub hosts the hint text.
+  svg.appendChild(
+    wheelSvgEl("circle", { cx: 0, cy: 0, r: hub }, {
+      fill: "var(--bg-panel)",
+      stroke: "var(--border)",
+    }),
+  );
+  const aimedSlice = aimed !== null ? slices[aimed] : null;
+  const hint = aimedSlice
+    ? (aimedSlice.slices || []).length
+      ? "A opens"
+      : aimedSlice.label
+    : inFolder
+      ? "A picks · B backs up"
+      : "aim with the stick";
+  const hintText = wheelSvgEl(
+    "text",
+    {
+      x: 0,
+      y: 0,
+      "text-anchor": "middle",
+      "dominant-baseline": "middle",
+      "font-size": 8,
+    },
+    { fill: "var(--fg-dim)" },
+  );
+  hintText.textContent = hint;
+  svg.appendChild(hintText);
+
+  wheelOverlay.replaceChildren(svg);
+  wheelOverlay.hidden = false;
+}
+
+// ---- Controller UI actions -------------------------------------------------
+// Client-side panel toggles bindable to buttons alongside game commands:
+// the phone UI tucks everything into drawers/sheets/overlays, and a pad
+// user needs buttons to reach them. Sheets opened this way inherit the
+// d-pad navigation (up/down move, A taps, B closes).
+const GP_UI_ACTIONS = {
+  left_panel: () => {
+    if (drawerLeft.classList.contains("open")) closeDrawers();
+    else openDrawer("left");
+  },
+  right_panel: () => {
+    if (drawerRight.classList.contains("open")) closeDrawers();
+    else openDrawer("right");
+  },
+  map: () => (mapOverlay.hidden ? openMapOverlay() : closeMapOverlay()),
+  effects: () => openEffectsSheet(),
+  settings: () => openSettingsSheet(),
+  appearance: () => openAppearanceSheet(),
+  speech: () => openSpeechSheet(),
+  controller: () => openControllerSheet(),
+};
+
+// Dispatch a bind value: reserved words stay local (shift/wheel are
+// hold-modifiers handled elsewhere), UI actions run client-side, and
+// anything else is a game command (or dot-command) for the host.
+function gpDispatchBind(bind) {
+  if (!bind || bind === GP_SHIFT || gpWheelKeyOf(bind) !== null) return;
+  const action = GP_UI_ACTIONS[bind];
+  if (action) action();
+  else sendCommand(bind);
+}
+
 function pollGamepads() {
   const pads = gamepadPads();
   if (!pads.length) {
     stopGamepadLoop();
     gpStickSector = null;
+    gpWheel = null;
+    hideWheel();
     return;
   }
   for (const pad of pads) {
@@ -1367,13 +1607,58 @@ function pollGamepads() {
   }
 
   const axes = pads[0].axes || [];
-  const sector = gpStickSectorFor(axes[0] || 0, -(axes[1] || 0), gpStickSector);
-  if (sector !== gpStickSector) {
-    // Quiet while any sheet is open or bindings are disabled.
-    if (sector !== null && sheet.hidden && controllerPrefs.enabled) {
-      sendCommand(GP_STICK_DIRS[sector]);
+  const stickX = axes[0] || 0;
+  const stickYUp = -(axes[1] || 0);
+
+  // Radial wheel: while a wheel-bound button is held, the left stick aims
+  // a slice; releasing fires the aimed leaf. Owns the stick while active
+  // (no movement) and swallows unrelated buttons. A sheet stealing the
+  // screen cancels instead of firing.
+  const heldWheelKey =
+    controllerPrefs.enabled && sheet.hidden ? gpHeldWheelKey() : null;
+  if (heldWheelKey === null && gpWheelFired) {
+    // Fresh hold re-arms after a South-fired leaf; seed the movement
+    // hysteresis so the still-deflected stick doesn't walk on release.
+    gpWheelFired = false;
+    gpStickSector = gpStickSectorFor(stickX, stickYUp, gpStickSector);
+  }
+  if (!gpWheel && heldWheelKey !== null && !gpWheelFired) {
+    gpWheel = { key: heldWheelKey, path: [], aimed: null };
+    renderWheel();
+  } else if (gpWheel && heldWheelKey === null) {
+    const { key, path, aimed } = gpWheel;
+    gpWheel = null;
+    hideWheel();
+    if (sheet.hidden && aimed !== null) {
+      const level = wheelLevelSlices(key, path);
+      const slice = level && level[aimed];
+      if (slice && !(slice.slices || []).length) {
+        sendWheelPick(key, [...path, aimed]);
+      }
     }
-    gpStickSector = sector;
+    // The stick that aimed the slice is usually still deflected; seed the
+    // movement hysteresis so firing the wheel doesn't also walk.
+    gpStickSector = gpStickSectorFor(stickX, stickYUp, gpStickSector);
+  } else if (gpWheel) {
+    const count = (wheelLevelSlices(gpWheel.key, gpWheel.path) || []).length;
+    const aimed = wheelSliceAt(stickX, stickYUp, count);
+    if (aimed !== null && aimed !== gpWheel.aimed) {
+      gpWheel.aimed = aimed;
+      renderWheel();
+    }
+  }
+
+  // While a South-fired hold is still down the stick stays the wheel's:
+  // no compass movement until the button is released.
+  if (!gpWheel && !gpWheelFired) {
+    const sector = gpStickSectorFor(stickX, stickYUp, gpStickSector);
+    if (sector !== gpStickSector) {
+      // Quiet while any sheet is open or bindings are disabled.
+      if (sector !== null && sheet.hidden && controllerPrefs.enabled) {
+        sendCommand(GP_STICK_DIRS[sector]);
+      }
+      gpStickSector = sector;
+    }
   }
 
   // Right stick: analog scroll of the story pane (quadratic speed curve;
@@ -1404,6 +1689,34 @@ function handleGamepadButton(index) {
   const name = GP_BUTTON_NAMES[index];
   if (!name) return;
 
+  // The wheel owns the pad while it is up: South opens the aimed folder
+  // (or fires a leaf immediately), East backs up a level; everything
+  // else is swallowed. The wheel button itself re-opens the wheel from
+  // the poll loop if it is still held.
+  if (gpWheel) {
+    if (name === "south") {
+      const { key, path, aimed } = gpWheel;
+      if (aimed === null) return;
+      const slice = (wheelLevelSlices(key, path) || [])[aimed];
+      if (!slice) return;
+      if ((slice.slices || []).length) {
+        gpWheel.path.push(aimed);
+        gpWheel.aimed = null;
+        renderWheel();
+      } else {
+        gpWheel = null;
+        gpWheelFired = true;
+        hideWheel();
+        sendWheelPick(key, [...path, aimed]);
+      }
+    } else if (name === "east") {
+      gpWheel.path.pop();
+      gpWheel.aimed = null;
+      renderWheel();
+    }
+    return;
+  }
+
   // In the controller sheet, a physical press selects that button's row
   // for editing (capture) instead of dispatching.
   if (controllerSheetActive()) {
@@ -1430,12 +1743,10 @@ function handleGamepadButton(index) {
   if (!controllerPrefs.enabled) return;
   if (gpShiftHeld()) {
     // Shift layer: strictly the shift bank — no fall-through.
-    const bind = controllerPrefs.shiftBinds[name];
-    if (bind && bind !== GP_SHIFT) sendCommand(bind);
+    gpDispatchBind(controllerPrefs.shiftBinds[name]);
     return;
   }
-  const bind = controllerPrefs.binds[name];
-  if (bind && bind !== GP_SHIFT) sendCommand(bind);
+  gpDispatchBind(controllerPrefs.binds[name]);
 }
 
 // True while any button bound to "shift" is held — read from live pad
@@ -1557,7 +1868,7 @@ function renderControllerSheet() {
       const input = document.createElement("input");
       input.type = "text";
       input.value = activeBinds[name] || "";
-      input.placeholder = "command (e.g. look, hide, sw) or shift";
+      input.placeholder = "command, shift, wheel, or action (e.g. right_panel)";
       const save = document.createElement("button");
       save.type = "button";
       save.textContent = "Save";
@@ -1597,6 +1908,18 @@ function renderControllerSheet() {
     "Tap a row (or press the button on the pad) to edit. Bind a button " +
       'to "shift" to make it the hold-modifier for the shift layer. In ' +
       "menus the d-pad always navigates: up/down move, A taps, B closes.",
+    false,
+  );
+  const named = Object.keys(wheels.named || {});
+  sheetNote(
+    'Bind "wheel" to hold-open the radial command wheel (defined on the ' +
+      "host in keybinds.toml): aim with the left stick, release to fire; " +
+      "A opens folders, B backs up." +
+      (named.length ? ` Named wheels: ${named.map((n) => `wheel:${n}`).join(", ")}.` : ""),
+    false,
+  );
+  sheetNote(
+    `UI actions are bindable too: ${Object.keys(GP_UI_ACTIONS).join(", ")}.`,
     false,
   );
 }
@@ -4591,16 +4914,18 @@ function exitMapBrowse() {
   setMapFollow(true);
 }
 
-mapBtn.addEventListener("click", () => {
+function openMapOverlay() {
   mapOverlay.hidden = false;
   resizeMapCanvas();
   renderMapTitle();
   requestMapRender();
-});
-document.getElementById("map-close").addEventListener("click", () => {
+}
+function closeMapOverlay() {
   mapOverlay.hidden = true;
   mapPicker.hidden = true;
-});
+}
+mapBtn.addEventListener("click", openMapOverlay);
+document.getElementById("map-close").addEventListener("click", closeMapOverlay);
 mapFollowBtn.addEventListener("click", () => {
   if (mapBrowse) exitMapBrowse();
   else setMapFollow(!mapFollow);

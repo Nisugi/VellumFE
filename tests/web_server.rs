@@ -168,6 +168,8 @@ async fn connect_and_sync(addr: std::net::SocketAddr, resume_seq: u64) -> (WsCli
     assert_eq!(snapshot["t"], "snapshot");
     let macros = read_json_timeout(&mut client).await;
     assert_eq!(macros["t"], "macros");
+    let wheels = read_json_timeout(&mut client).await;
+    assert_eq!(wheels["t"], "wheels");
     (client, snapshot)
 }
 
@@ -419,6 +421,9 @@ async fn macros_flow_definitions_out_taps_in() {
     assert_eq!(d["groups"][0]["buttons"][2]["command"], "go");
     assert_eq!(d["groups"][0]["buttons"][0]["insert"], false);
 
+    // Wheel definitions follow the macros on connect.
+    assert_eq!(read_json_timeout(&mut client).await["t"], "wheels");
+
     // Stale-client guard: a tap id pointing at an insert button must not
     // resolve to an executable command server-side.
     assert_eq!(macros_config.resolve("g:0:b:2"), None);
@@ -441,6 +446,76 @@ async fn macros_flow_definitions_out_taps_in() {
     let update = read_json_timeout(&mut client).await;
     assert_eq!(update["t"], "macros");
     assert_eq!(update["d"]["groups"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn wheels_flow_definitions_out_picks_in() {
+    let (mut sink, mut event_rx, addr) = start_server(100).await;
+
+    let mut wheel_config = vellum_fe::config::Config::default();
+    wheel_config.controller_wheel = vec![
+        vellum_fe::config::WheelSlice {
+            label: "look".into(),
+            command: "look".into(),
+            color: None,
+            slices: vec![],
+        },
+        vellum_fe::config::WheelSlice {
+            label: "stance".into(),
+            command: String::new(),
+            color: None,
+            slices: vec![vellum_fe::config::WheelSlice {
+                label: "defensive".into(),
+                command: "stance defensive".into(),
+                color: Some("#2e8b57".into()),
+                slices: vec![],
+            }],
+        },
+    ];
+    sink.set_wheels(&wheel_config);
+
+    let mut client = WsClient::connect(addr).await;
+    assert_eq!(read_json_timeout(&mut client).await["t"], "hello");
+    client.send_resume(0).await;
+    assert_eq!(read_json_timeout(&mut client).await["t"], "snapshot");
+    assert_eq!(read_json_timeout(&mut client).await["t"], "macros");
+
+    // Definitions arrive after the macros: labels, colors, and folder
+    // structure — no commands.
+    let wheels = read_json_timeout(&mut client).await;
+    assert_eq!(wheels["t"], "wheels");
+    let d = &wheels["d"];
+    assert_eq!(d["default"][0]["label"], "look");
+    assert_eq!(d["default"][1]["slices"][0]["label"], "defensive");
+    assert_eq!(d["default"][1]["slices"][0]["color"], "#2e8b57");
+    assert!(
+        !wheels.to_string().contains("stance defensive"),
+        "commands must never reach the client"
+    );
+
+    // A pick comes back as a key+path event...
+    client
+        .send_text(r#"{"t":"wheel_pick","d":{"key":"","path":[1,0]}}"#)
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::WheelPick { key, path } = event else {
+        panic!("expected WheelPick event");
+    };
+    assert_eq!((key.as_str(), path.as_slice()), ("", &[1usize, 0][..]));
+    // ...which core resolves back to the command.
+    assert_eq!(
+        wheel_config.wheel_pick_command(&key, &path),
+        Some("stance defensive".to_string())
+    );
+
+    // A wheel-config change pushes fresh definitions as a delta.
+    sink.set_wheels(&vellum_fe::config::Config::default());
+    let update = read_json_timeout(&mut client).await;
+    assert_eq!(update["t"], "wheels");
+    assert_eq!(update["d"]["default"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]

@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, watch};
 
-use crate::config::MacrosConfig;
+use crate::config::{Config, MacrosConfig};
 use crate::data::remote_buffer::{RemoteBuffer, RemoteLine};
 use crate::data::widget::StyledLine;
 
@@ -104,6 +104,58 @@ pub struct RemoteMacroOption {
     /// editor can prefill and insert taps stay client-side.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+}
+
+/// Radial-wheel definitions serialized for remote clients: labels, wedge
+/// tints and folder structure only — commands stay server-side and are
+/// resolved by index path on activation (`Config::wheel_pick_command`),
+/// so a stale client can never fire outdated command text. Colors are
+/// palette-resolved to CSS hex before shipping.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteWheels {
+    /// The effective default wheel (`[[controller_wheel]]`, falling back
+    /// to `[controller_wheels.default]`), shown for a plain "wheel" bind.
+    pub default: Vec<RemoteWheelSlice>,
+    /// Named wheels, shown for "wheel:<name>" binds.
+    pub named: std::collections::HashMap<String, Vec<RemoteWheelSlice>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteWheelSlice {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub slices: Vec<RemoteWheelSlice>,
+}
+
+impl RemoteWheels {
+    pub fn from_config(config: &Config) -> Self {
+        fn wire_slices(config: &Config, slices: &[crate::config::WheelSlice]) -> Vec<RemoteWheelSlice> {
+            slices
+                .iter()
+                .map(|slice| RemoteWheelSlice {
+                    label: slice.label.clone(),
+                    color: slice
+                        .color
+                        .as_deref()
+                        .map(|c| config.resolve_palette_color(c)),
+                    slices: wire_slices(config, &slice.slices),
+                })
+                .collect()
+        }
+        Self {
+            default: config
+                .wheel_level_slices("", &[])
+                .map(|slices| wire_slices(config, slices))
+                .unwrap_or_default(),
+            named: config
+                .controller_wheels
+                .iter()
+                .map(|(name, slices)| (name.clone(), wire_slices(config, slices)))
+                .collect(),
+        }
+    }
 }
 
 impl RemoteMacros {
@@ -236,6 +288,9 @@ pub enum RemoteDelta {
     },
     /// Macro definitions changed (`.reloadmacros`); sent to every client.
     Macros(Arc<RemoteMacros>),
+    /// Radial-wheel definitions changed (keybinds reload or the desktop
+    /// wheel editor saved); sent to every client.
+    Wheels(Arc<RemoteWheels>),
     /// Active effects changed (spells/buffs/debuffs/cooldowns), in fixed
     /// category order.
     Effects(Vec<crate::data::ActiveEffectsContent>),
@@ -360,6 +415,12 @@ pub enum RemoteEvent {
     /// resolves the id against config (MacrosConfig::resolve) and runs
     /// the command through the same dispatch as typed input.
     Macro { id: String },
+    /// A radial-wheel slice picked on a remote client. `key` is "" for
+    /// the default wheel or a named wheel; `path` indexes down to the
+    /// leaf. The main loop resolves it against config
+    /// (Config::wheel_pick_command) and runs the command through the
+    /// same dispatch as typed input.
+    WheelPick { key: String, path: Vec<usize> },
     /// Create or edit a phone-authored macro button (lands in the
     /// macros-local.toml overlay; AppCore::apply_macro_save).
     MacroSave {
@@ -778,6 +839,8 @@ pub struct RemoteServerHandles {
     pub event_tx: mpsc::UnboundedSender<RemoteEvent>,
     /// Latest macro definitions, for connect-time delivery.
     pub macros_rx: watch::Receiver<Arc<RemoteMacros>>,
+    /// Latest radial-wheel definitions, for connect-time delivery.
+    pub wheels_rx: watch::Receiver<Arc<RemoteWheels>>,
     /// Identifies this process instance. Sent in `hello`; clients discard
     /// their resume cursor when it changes (seqs restart with the process).
     pub session: String,
@@ -792,6 +855,7 @@ pub struct RemoteSink {
     delta_tx: broadcast::Sender<RemoteDelta>,
     state_tx: watch::Sender<RemoteStateSnapshot>,
     macros_tx: watch::Sender<Arc<RemoteMacros>>,
+    wheels_tx: watch::Sender<Arc<RemoteWheels>>,
     bound_port: Arc<std::sync::OnceLock<u16>>,
     /// State as of the previous flush, for change detection.
     last: RemoteStateSnapshot,
@@ -812,6 +876,7 @@ impl RemoteSink {
         let (delta_tx, _) = broadcast::channel(DELTA_CHANNEL_CAPACITY);
         let (state_tx, state_rx) = watch::channel(RemoteStateSnapshot::default());
         let (macros_tx, macros_rx) = watch::channel(Arc::new(RemoteMacros::default()));
+        let (wheels_tx, wheels_rx) = watch::channel(Arc::new(RemoteWheels::default()));
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let session = format!(
             "{}-{}",
@@ -828,6 +893,7 @@ impl RemoteSink {
             state_rx,
             event_tx,
             macros_rx,
+            wheels_rx,
             session,
             bound_port: bound_port.clone(),
         };
@@ -837,6 +903,7 @@ impl RemoteSink {
                 delta_tx,
                 state_tx,
                 macros_tx,
+                wheels_tx,
                 bound_port,
                 last: RemoteStateSnapshot::default(),
                 session: RemoteSessionInfo::default(),
@@ -892,6 +959,15 @@ impl RemoteSink {
         let macros = Arc::new(RemoteMacros::from_config(config));
         self.macros_tx.send_replace(macros.clone());
         let _ = self.delta_tx.send(RemoteDelta::Macros(macros));
+    }
+
+    /// Publish radial-wheel definitions: stored for connect-time delivery
+    /// and broadcast to already-connected clients. Called on enable, on
+    /// keybinds reload, and by the desktop wheel editor.
+    pub fn set_wheels(&mut self, config: &Config) {
+        let wheels = Arc::new(RemoteWheels::from_config(config));
+        self.wheels_tx.send_replace(wheels.clone());
+        let _ = self.delta_tx.send(RemoteDelta::Wheels(wheels));
     }
 
     /// Reply to one client's map-locations request.

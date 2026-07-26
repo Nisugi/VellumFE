@@ -224,6 +224,11 @@ pub struct VellumGuiApp {
     /// Firing happens on release.
     #[cfg(feature = "gamepad")]
     gp_wheel: Option<gamepad::WheelUi>,
+    /// South already fired a leaf during this hold of the wheel button;
+    /// the wheel stays closed (and release fires nothing) until a fresh
+    /// hold, so one hold never fires twice.
+    #[cfg(feature = "gamepad")]
+    gp_wheel_fired: bool,
     /// Binding-legend overlay visibility (controller_overlay toggles it).
     #[cfg(feature = "gamepad")]
     gp_overlay: bool,
@@ -533,6 +538,8 @@ impl VellumGuiApp {
             gp_stick_sector: None,
             #[cfg(feature = "gamepad")]
             gp_wheel: None,
+            #[cfg(feature = "gamepad")]
+            gp_wheel_fired: false,
             #[cfg(feature = "gamepad")]
             gp_overlay: false,
             #[cfg(feature = "gamepad")]
@@ -2080,6 +2087,26 @@ impl VellumGuiApp {
                         None => tracing::warn!(
                             "remote macro id '{}' did not resolve (stale client?)",
                             id
+                        ),
+                    }
+                }
+                crate::core::remote::RemoteEvent::WheelPick { key, path } => {
+                    // Resolved against config like macros; same dispatch as
+                    // typed input.
+                    match self.app_core.config.wheel_pick_command(&key, &path) {
+                        Some(command) => {
+                            tracing::debug!(
+                                "remote wheel pick '{}' {:?}: '{}'",
+                                key,
+                                path,
+                                command
+                            );
+                            self.dispatch_command(command);
+                        }
+                        None => tracing::warn!(
+                            "remote wheel pick '{}' {:?} did not resolve (stale client?)",
+                            key,
+                            path
                         ),
                     }
                 }

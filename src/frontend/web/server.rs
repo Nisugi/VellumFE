@@ -695,6 +695,11 @@ async fn handle_client_message(
             .event_tx
             .send(RemoteEvent::Macro { id })
             .is_ok(),
+        ClientMessage::WheelPick { key, path } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::WheelPick { key, path })
+            .is_ok(),
         ClientMessage::MapLocations { request_id } => state
             .handles
             .event_tx
@@ -1055,11 +1060,17 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
         }
     }
 
-    // Macro definitions follow the snapshot; updates arrive as deltas.
+    // Macro and wheel definitions follow the snapshot; updates arrive as
+    // deltas.
     {
         let macros = state.handles.macros_rx.borrow().clone();
+        let wheels = state.handles.wheels_rx.borrow().clone();
         let (_, _, last_seq) = gather_snapshot(&state);
         let msg = protocol::macros(&macros, last_seq);
+        if socket.send(Message::Text(msg.into())).await.is_err() {
+            return;
+        }
+        let msg = protocol::wheels(&wheels, last_seq);
         if socket.send(Message::Text(msg.into())).await.is_err() {
             return;
         }

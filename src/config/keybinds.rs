@@ -997,6 +997,35 @@ impl Config {
         Ok(wheels_from(DEFAULT_KEYBINDS).unwrap_or_default())
     }
 
+    /// The slice list at a folder path within a wheel. Key "" is the
+    /// default wheel (`[[controller_wheel]]`, falling back to
+    /// `[controller_wheels.default]`), anything else a named wheel.
+    /// Canonical lookup shared by the GUI wheel and remote clients.
+    pub fn wheel_level_slices(&self, key: &str, path: &[usize]) -> Option<&Vec<WheelSlice>> {
+        let mut level = if key.is_empty() {
+            if self.controller_wheel.is_empty() {
+                self.controller_wheels.get("default")?
+            } else {
+                &self.controller_wheel
+            }
+        } else {
+            self.controller_wheels.get(key)?
+        };
+        for &index in path {
+            level = &level.get(index)?.slices;
+        }
+        Some(level)
+    }
+
+    /// Resolve a wheel pick from a remote client: `path` indexes down to
+    /// a leaf slice, whose non-empty command is returned. Folder slices
+    /// and empty commands resolve to None (nothing to fire).
+    pub fn wheel_pick_command(&self, key: &str, path: &[usize]) -> Option<String> {
+        let (&leaf, folders) = path.split_last()?;
+        let slice = self.wheel_level_slices(key, folders)?.get(leaf)?;
+        (!slice.is_folder() && !slice.command.is_empty()).then(|| slice.command.clone())
+    }
+
     /// Replace one wheel's slice list in the global keybinds.toml:
     /// None = the default wheel ([[controller_wheel]]), Some(name) =
     /// [controller_wheels.<name>]. An empty slice list deletes a named
@@ -1697,6 +1726,89 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn wheel_config() -> crate::config::Config {
+        let mut config = crate::config::Config::default();
+        config.controller_wheel = vec![
+            WheelSlice {
+                label: "look".into(),
+                command: "look".into(),
+                color: None,
+                slices: vec![],
+            },
+            WheelSlice {
+                label: "stance".into(),
+                command: String::new(),
+                color: None,
+                slices: vec![WheelSlice {
+                    label: "defensive".into(),
+                    command: "stance defensive".into(),
+                    color: None,
+                    slices: vec![],
+                }],
+            },
+        ];
+        config.controller_wheels.insert(
+            "spells".into(),
+            vec![WheelSlice {
+                label: "prep".into(),
+                command: "prep 101".into(),
+                color: None,
+                slices: vec![],
+            }],
+        );
+        config
+    }
+
+    #[test]
+    fn wheel_level_slices_walks_folders_and_named_wheels() {
+        let config = wheel_config();
+        assert_eq!(config.wheel_level_slices("", &[]).unwrap().len(), 2);
+        assert_eq!(
+            config.wheel_level_slices("", &[1]).unwrap()[0].label,
+            "defensive"
+        );
+        assert_eq!(
+            config.wheel_level_slices("spells", &[]).unwrap()[0].label,
+            "prep"
+        );
+        assert!(config.wheel_level_slices("missing", &[]).is_none());
+        assert!(config.wheel_level_slices("", &[9]).is_none());
+
+        // Empty default falls back to [controller_wheels.default].
+        let mut config = wheel_config();
+        config.controller_wheel.clear();
+        assert!(config.wheel_level_slices("", &[]).is_none());
+        config.controller_wheels.insert(
+            "default".into(),
+            vec![WheelSlice {
+                label: "hide".into(),
+                command: "hide".into(),
+                color: None,
+                slices: vec![],
+            }],
+        );
+        assert_eq!(config.wheel_level_slices("", &[]).unwrap()[0].label, "hide");
+    }
+
+    #[test]
+    fn wheel_pick_resolves_leaves_only() {
+        let config = wheel_config();
+        assert_eq!(config.wheel_pick_command("", &[0]), Some("look".into()));
+        assert_eq!(
+            config.wheel_pick_command("", &[1, 0]),
+            Some("stance defensive".into())
+        );
+        assert_eq!(
+            config.wheel_pick_command("spells", &[0]),
+            Some("prep 101".into())
+        );
+        // Folders, empty paths and out-of-range indexes never fire.
+        assert_eq!(config.wheel_pick_command("", &[1]), None);
+        assert_eq!(config.wheel_pick_command("", &[]), None);
+        assert_eq!(config.wheel_pick_command("", &[7]), None);
+        assert_eq!(config.wheel_pick_command("missing", &[0]), None);
+    }
 
     #[test]
     fn controller_action_names_all_parse() {

@@ -828,6 +828,27 @@ html, body {
   font-style: italic;
 }
 
+/* Radial command wheel: shown while a wheel-bound controller button is
+   held. Pure display — the pad drives it, so it never takes touches. */
+#wheel-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* Above the map/status overlays (25), below sheets (29+): sheets
+     steal the pad, so the wheel never opens under one. */
+  z-index: 28;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#wheel-overlay svg {
+  width: min(78vmin, 380px);
+  height: min(78vmin, 380px);
+}
+
 /* Gamepad d-pad focus over sheet items */
 .sheet-item.gp-focus {
   outline: 2px solid var(--accent, #6a9fb5);

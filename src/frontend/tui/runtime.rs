@@ -659,6 +659,26 @@ async fn async_run(
                             let _ = command_tx.send(cmd);
                         }
                     }
+                    crate::core::remote::RemoteEvent::WheelPick { key, path } => {
+                        // Resolved against config like macros; same dispatch
+                        // as typed input, skipping history.
+                        let Some(command) = app_core.config.wheel_pick_command(&key, &path)
+                        else {
+                            tracing::warn!(
+                                "remote wheel pick '{}' {:?} did not resolve (stale client?)",
+                                key,
+                                path
+                            );
+                            continue;
+                        };
+                        tracing::debug!("remote wheel pick '{}' {:?}: '{}'", key, path, command);
+                        if let Some(cmd) = frontend.handle_command_submission(command, &mut app_core)? {
+                            app_core
+                                .perf_stats
+                                .record_bytes_sent((cmd.len() + 1) as u64);
+                            let _ = command_tx.send(cmd);
+                        }
+                    }
                 }
             }
         }

@@ -104,6 +104,10 @@ pub struct AppCore {
     pub map_updater: crate::core::mapdb_update::MapDbUpdater,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
+    /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
+    /// their pause, drained by take_outbound once due (insertion order
+    /// preserved among same-tick due commands).
+    timed_commands: Vec<(std::time::Instant, String)>,
     /// Cache for the wire-format map scene sent to web clients, keyed by
     /// (scene Arc pointer, sheet, building cluster) so a rebuild only
     /// happens when the drawn view actually changes.
@@ -209,6 +213,7 @@ impl AppCore {
             ),
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(temp.join("mapdb")),
             travel: Default::default(),
+            timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),
@@ -333,6 +338,7 @@ impl AppCore {
                 crate::core::mapdb_update::download_dir(&map_base),
             ),
             travel: Default::default(),
+            timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
             pending_map_views: Vec::new(),
@@ -553,9 +559,26 @@ impl AppCore {
     }
 
     /// Commands automation wants sent to the game; frontends drain this
-    /// through the same path as typed commands.
+    /// through the same path as typed commands. Includes macro sleep
+    /// segments whose pause has elapsed.
     pub fn take_outbound(&mut self) -> Vec<String> {
-        self.travel.take_outbound()
+        let mut commands = self.travel.take_outbound();
+        let now = std::time::Instant::now();
+        let mut i = 0;
+        while i < self.timed_commands.len() {
+            if self.timed_commands[i].0 <= now {
+                commands.push(self.timed_commands.remove(i).1);
+            } else {
+                i += 1;
+            }
+        }
+        commands
+    }
+
+    /// Queue a command to go out after a pause (macro sleep segments).
+    pub fn queue_timed_command(&mut self, delay: std::time::Duration, command: String) {
+        self.timed_commands
+            .push((std::time::Instant::now() + delay, command));
     }
 
     /// Plan and begin a trip to a mapdb room id.
@@ -1135,7 +1158,17 @@ impl AppCore {
     /// Called by the runtime after it spawns the web server task.
     pub fn enable_remote(&mut self, mut sink: crate::core::remote::RemoteSink) {
         sink.set_macros(&self.config.macros);
+        sink.set_wheels(&self.config);
         self.message_processor.remote = Some(sink);
+    }
+
+    /// Re-publish radial-wheel definitions to remote clients after the
+    /// wheel config changed (keybinds reload, desktop wheel editor).
+    /// No-op when web is disabled.
+    pub fn push_remote_wheels(&mut self) {
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.set_wheels(&self.config);
+        }
     }
 
     /// Declare that this runtime accepts session control (Connect /
@@ -4666,6 +4699,8 @@ impl AppCore {
                     crate::config::Config::load_controller_rumble().unwrap_or_default();
                 // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
                 self.rebuild_keybind_map();
+                // Web clients render the wheel from a shipped copy.
+                self.push_remote_wheels();
                 self.add_system_message("Keybinds reloaded");
             }
             Err(e) => {

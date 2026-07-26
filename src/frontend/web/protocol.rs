@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::remote::{
     RemoteCharInfo, RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteSessionInfo,
-    RemoteStateSnapshot, RemoteTarget,
+    RemoteStateSnapshot, RemoteTarget, RemoteWheels,
 };
 use crate::core::state::{StatusInfo, Vitals};
 use crate::data::remote_buffer::RemoteLine;
@@ -247,6 +247,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             },
         ),
         RemoteDelta::Macros(m) => macros(m, last_seq),
+        RemoteDelta::Wheels(w) => wheels(w, last_seq),
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
         RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
@@ -415,6 +416,12 @@ pub fn macros(m: &RemoteMacros, seq: u64) -> String {
     encode("macros", seq, m)
 }
 
+/// Radial-wheel definitions; sent on connect and after the wheel config
+/// changes (keybinds reload, desktop wheel editor).
+pub fn wheels(w: &RemoteWheels, seq: u64) -> String {
+    encode("wheels", seq, w)
+}
+
 /// Sent right before closing an unauthenticated connection, so the client
 /// can show its pairing prompt instead of retry-looping.
 pub fn denied() -> String {
@@ -446,6 +453,11 @@ pub enum ClientMessage {
     /// (`insert`) buttons never arrive here — the client handles them
     /// locally.
     Macro { id: String },
+    /// A radial-wheel slice picked (wheel button released or South on a
+    /// leaf). `key` is "" for the default wheel, else a named wheel;
+    /// `path` indexes down to the leaf. Resolved to its command
+    /// server-side, like macros.
+    WheelPick { key: String, path: Vec<usize> },
     /// Create/edit a phone-authored macro button (macros-local.toml).
     MacroSave {
         group: Option<String>,
@@ -610,6 +622,25 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         "macro" => {
             let id = msg.d.get("id")?.as_str()?.to_string();
             Some(ClientMessage::Macro { id })
+        }
+        "wheel_pick" => {
+            let key = msg
+                .d
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let path: Vec<usize> = msg
+                .d
+                .get("path")?
+                .as_array()?
+                .iter()
+                .map(|v| v.as_u64().map(|i| i as usize))
+                .collect::<Option<_>>()?;
+            if path.is_empty() {
+                return None;
+            }
+            Some(ClientMessage::WheelPick { key, path })
         }
         "macro_save" => {
             let label = msg.d.get("label")?.as_str()?.trim().to_string();
@@ -984,6 +1015,74 @@ mod tests {
             serde_json::from_str(&snapshot(&state, Vec::new(), SnapshotMode::Full, 0)).unwrap();
         assert_eq!(json["d"]["session"]["state"], "reconnecting");
         assert_eq!(json["d"]["session"]["character"], "Testy");
+    }
+
+    #[test]
+    fn parse_wheel_pick_messages() {
+        assert_eq!(
+            parse_client_message(r#"{"t":"wheel_pick","d":{"key":"","path":[2]}}"#),
+            Some(ClientMessage::WheelPick {
+                key: String::new(),
+                path: vec![2]
+            })
+        );
+        // Named wheel, folder descent; a missing key means the default.
+        assert_eq!(
+            parse_client_message(r#"{"t":"wheel_pick","d":{"key":"spells","path":[1,0]}}"#),
+            Some(ClientMessage::WheelPick {
+                key: "spells".to_string(),
+                path: vec![1, 0]
+            })
+        );
+        assert_eq!(
+            parse_client_message(r#"{"t":"wheel_pick","d":{"path":[0]}}"#),
+            Some(ClientMessage::WheelPick {
+                key: String::new(),
+                path: vec![0]
+            })
+        );
+        // Empty, missing or non-numeric paths → rejected.
+        assert_eq!(
+            parse_client_message(r#"{"t":"wheel_pick","d":{"key":"","path":[]}}"#),
+            None
+        );
+        assert_eq!(parse_client_message(r#"{"t":"wheel_pick","d":{}}"#), None);
+        assert_eq!(
+            parse_client_message(r#"{"t":"wheel_pick","d":{"path":["x"]}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn wheels_delta_ships_structure_without_commands() {
+        use crate::core::remote::RemoteWheelSlice;
+        let w = RemoteWheels {
+            default: vec![
+                RemoteWheelSlice {
+                    label: "look".to_string(),
+                    color: None,
+                    slices: vec![],
+                },
+                RemoteWheelSlice {
+                    label: "stance".to_string(),
+                    color: Some("#2e8b57".to_string()),
+                    slices: vec![RemoteWheelSlice {
+                        label: "defensive".to_string(),
+                        color: None,
+                        slices: vec![],
+                    }],
+                },
+            ],
+            named: Default::default(),
+        };
+        let json: serde_json::Value =
+            serde_json::from_str(&delta(&RemoteDelta::Wheels(Arc::new(w)), 5)).unwrap();
+        assert_eq!(json["t"], "wheels");
+        assert_eq!(json["d"]["default"][0]["label"], "look");
+        assert_eq!(json["d"]["default"][1]["color"], "#2e8b57");
+        assert_eq!(json["d"]["default"][1]["slices"][0]["label"], "defensive");
+        // Commands are resolved server-side on pick; they never ship.
+        assert!(json["d"]["default"][0].get("command").is_none());
     }
 
     #[test]

@@ -71,6 +71,43 @@ async fn main() {
     let mut local = MacrosConfig::default();
     sink.set_macros(&MacrosConfig::merge(base.clone(), local.clone()));
 
+    // Scripted radial wheels for the controller wheel (hold a wheel-bound
+    // pad button): a default ring with a folder slice plus a named wheel.
+    // wheel_pick resolves against this config exactly like the runtimes.
+    let wheel_config = {
+        use vellum_fe::config::WheelSlice;
+        let slice = |label: &str, command: &str, color: Option<&str>| WheelSlice {
+            label: label.into(),
+            command: command.into(),
+            color: color.map(str::to_owned),
+            slices: vec![],
+        };
+        let mut config = vellum_fe::config::Config::default();
+        config.controller_wheel = vec![
+            slice("look", "look", None),
+            slice("search", "search", None),
+            slice("stand", "stand", None),
+            WheelSlice {
+                label: "stance".into(),
+                command: String::new(),
+                color: None,
+                slices: vec![
+                    slice("defensive", "stance defensive", Some("#2e8b57")),
+                    slice("neutral", "stance neutral", Some("#4682b4")),
+                    slice("offensive", "stance offensive", Some("#b03030")),
+                ],
+            },
+            slice("hide", "hide", None),
+            slice("portal", ".portal", Some("#d9b44f")),
+        ];
+        config.controller_wheels.insert(
+            "spells".into(),
+            vec![slice("prep 101", "prep 101", None), slice("cast", "cast", None)],
+        );
+        config
+    };
+    sink.set_wheels(&wheel_config);
+
     sink.push_text(
         "main",
         std::sync::Arc::new(StyledLine {
@@ -553,6 +590,10 @@ async fn main() {
                 }
             }
             RemoteEvent::Macro { id } => println!("EVENT macro tap: {id:?}"),
+            RemoteEvent::WheelPick { key, path } => {
+                let resolved = wheel_config.wheel_pick_command(&key, &path);
+                println!("EVENT wheel_pick: key={key:?} path={path:?} resolved={resolved:?}");
+            }
             RemoteEvent::MacroSave {
                 group,
                 label,

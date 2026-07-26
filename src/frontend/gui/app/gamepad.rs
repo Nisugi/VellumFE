@@ -137,14 +137,27 @@ impl VellumGuiApp {
         // fires the aimed leaf. Owns the stick while active (no movement)
         // and swallows unrelated buttons.
         let held_key = self.held_wheel_key();
+        if held_key.is_none() && self.gp_wheel_fired {
+            // Fresh hold re-arms the wheel after a South-fired leaf; seed
+            // the movement hysteresis so the still-deflected stick doesn't
+            // walk on the release frame.
+            self.gp_wheel_fired = false;
+            self.gp_stick_sector =
+                stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
+        }
         match (self.gp_wheel.is_some(), held_key) {
             (false, Some(key)) => {
-                self.gp_wheel = Some(WheelUi {
-                    key,
-                    path: Vec::new(),
-                    aimed: None,
-                });
-                self.app_core.needs_render = true;
+                // A South-fired leaf keeps the wheel closed for the rest
+                // of this hold — otherwise it would instantly reopen with
+                // the stick still aimed and release would fire twice.
+                if !self.gp_wheel_fired {
+                    self.gp_wheel = Some(WheelUi {
+                        key,
+                        path: Vec::new(),
+                        aimed: None,
+                    });
+                    self.app_core.needs_render = true;
+                }
             }
             (true, None) => {
                 let ui = self.gp_wheel.take().expect("just matched Some");
@@ -158,6 +171,11 @@ impl VellumGuiApp {
                         }
                     }
                 }
+                // The stick that aimed the slice is usually still deflected
+                // on release; seed the movement hysteresis so firing the
+                // wheel doesn't also walk a compass direction.
+                self.gp_stick_sector =
+                    stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
                 self.app_core.needs_render = true;
             }
             (true, Some(_)) => {
@@ -182,7 +200,10 @@ impl VellumGuiApp {
             (false, None) => {}
         }
 
-        if let Some((x, y_up)) = stick.filter(|_| self.gp_wheel.is_none()) {
+        // While a South-fired hold is still down the stick stays the
+        // wheel's: no compass movement until the button is released.
+        if let Some((x, y_up)) = stick.filter(|_| self.gp_wheel.is_none() && !self.gp_wheel_fired)
+        {
             let sector = stick_sector(x, y_up, self.gp_stick_sector);
             if sector != self.gp_stick_sector {
                 // Movement while a menu is open would be disorienting; the
@@ -320,6 +341,7 @@ impl VellumGuiApp {
                         }
                     } else if !slice.command.is_empty() {
                         self.gp_wheel = None;
+                        self.gp_wheel_fired = true;
                         self.dispatch_command(slice.command);
                     }
                     self.app_core.needs_render = true;
@@ -416,27 +438,14 @@ impl VellumGuiApp {
         None
     }
 
-    /// The slice list at a folder path within a named wheel. Key "" is
-    /// the default wheel ([[controller_wheel]], falling back to
-    /// [controller_wheels.default]).
+    /// The slice list at a folder path within a named wheel; canonical
+    /// lookup lives on Config (shared with remote wheel picks).
     fn wheel_level_slices(
         &self,
         key: &str,
         path: &[usize],
     ) -> Option<&Vec<crate::config::WheelSlice>> {
-        let mut level = if key.is_empty() {
-            if self.app_core.config.controller_wheel.is_empty() {
-                self.app_core.config.controller_wheels.get("default")?
-            } else {
-                &self.app_core.config.controller_wheel
-            }
-        } else {
-            self.app_core.config.controller_wheels.get(key)?
-        };
-        for &index in path {
-            level = &level.get(index)?.slices;
-        }
-        Some(level)
+        self.app_core.config.wheel_level_slices(key, path)
     }
 
     /// True while any button base-bound to the named action is held. Read

@@ -91,7 +91,8 @@ Controller-specific actions: `controller_shift` (hold: buttons use
 `controller_wheel` / `controller_wheel:<name>` (hold: radial command
 wheel — default ring in `[[controller_wheel]]`, named rings in
 `[controller_wheels.<name>]`; slices take `label`, `command`, optional
-`color`, and nested `slices` for folders), and `controller_overlay`
+`color`, and nested `slices` for folders — the phone client renders
+these same wheels for its `wheel` binds), and `controller_overlay`
 (toggle the binding legend — curated by `[controller_overlay]
 buttons`, with `shift/<button>` entries for the shift bank). Rumble
 lives in `[controller_rumble]` (patterns `off`/`short`/`long`/`double`
@@ -112,6 +113,22 @@ f6 = { macro_text = "hide\r" }              # omit \r to just type it
 
 The default file ships numpad movement macros (`num_1`–`num_9` for
 directions, `num_0` down, `"num_."` up, `"num_+"` look, and so on).
+
+A macro can chain several commands with `\r` between them, and pause
+between commands with a **sleep segment**: a segment that is just `s`
+followed by seconds (`s0.5`, `s2`, `s90` — decimals fine, no upper
+bound). Everything after the sleep goes out when the pause elapses;
+consecutive sleeps add up. Spaces around segments are ignored, and a
+bare `s` is still south.
+
+```toml
+f7 = { macro_text = "stand\rs1.5\rout\r" }   # stand, wait 1.5s, leave
+f8 = { macro_text = "prep 101\r s3.2 \rcast\r" }
+```
+
+Sleep segments work anywhere command text is dispatched — keyboard
+macros, controller binds, hotbar buttons, macro buttons (including taps
+from the phone client), and wheel slices.
 
 ## Keybind Profiles
 

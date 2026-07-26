@@ -410,6 +410,7 @@ impl VellumGuiApp {
                             Config::load_controller_wheel().unwrap_or_default();
                         self.app_core.config.controller_wheels =
                             Config::load_controller_wheels().unwrap_or_default();
+                        self.app_core.push_remote_wheels();
                         state.wheel_status = Some(if buffer.is_empty() && name.is_some() {
                             "Wheel deleted (no slices).".to_string()
                         } else {

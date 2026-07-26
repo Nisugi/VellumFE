@@ -872,6 +872,22 @@ fn handle_remote_event(
             }
             true
         }
+        RemoteEvent::WheelPick { key, path } => {
+            match app_core.config.wheel_pick_command(&key, &path) {
+                Some(command) => {
+                    tracing::debug!("remote wheel pick '{}' {:?}: '{}'", key, path, command);
+                    if dispatch_command(app_core, connection, command) {
+                        session_requests.push(SessionRequest::UserQuit);
+                    }
+                }
+                None => tracing::warn!(
+                    "remote wheel pick '{}' {:?} did not resolve (stale client?)",
+                    key,
+                    path
+                ),
+            }
+            true
+        }
         RemoteEvent::SessionConnect {
             profile,
             account,

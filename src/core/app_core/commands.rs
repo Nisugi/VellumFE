@@ -36,10 +36,78 @@ fn portal_candidates<'a>(wayto: impl Iterator<Item = &'a String>) -> Vec<String>
     out
 }
 
+/// Seconds encoded by a macro sleep segment: the whole segment (modulo
+/// surrounding spaces) must be `s` followed by a number — `s2`, `s0.5`,
+/// `s90` (no upper bound). Anything else is a game command; a bare `s`
+/// stays the game's "south".
+fn sleep_segment_seconds(segment: &str) -> Option<f64> {
+    let digits = segment.trim().strip_prefix('s')?;
+    if digits.is_empty()
+        || !digits.chars().all(|c| c.is_ascii_digit() || c == '.')
+        || !digits.chars().any(|c| c.is_ascii_digit())
+        || digits.chars().filter(|&c| c == '.').count() > 1
+    {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+/// Split a multi-command macro containing sleep segments into the part to
+/// send immediately (joined by \r, the way multi-command strings always
+/// ride to the server) and the paused remainder as (cumulative delay,
+/// command) pairs. None when the string has no sleep segments — the
+/// normal send path handles it untouched.
+fn split_sleep_macro(
+    text: &str,
+) -> Option<(Option<String>, Vec<(std::time::Duration, String)>)> {
+    if !text.contains('\r') || !text.split('\r').any(|s| sleep_segment_seconds(s).is_some()) {
+        return None;
+    }
+    let mut immediate: Vec<&str> = Vec::new();
+    let mut delayed: Vec<(std::time::Duration, String)> = Vec::new();
+    let mut pause = 0.0_f64;
+    for segment in text.split('\r') {
+        if let Some(seconds) = sleep_segment_seconds(segment) {
+            pause += seconds;
+            continue;
+        }
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        if pause == 0.0 {
+            immediate.push(segment);
+        } else {
+            delayed.push((
+                std::time::Duration::from_secs_f64(pause),
+                segment.to_string(),
+            ));
+        }
+    }
+    Some((
+        (!immediate.is_empty()).then(|| immediate.join("\r")),
+        delayed,
+    ))
+}
+
 impl AppCore {
     /// Send command to server
     pub fn send_command(&mut self, command: String) -> Result<String> {
         use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
+
+        // Macro sleep segments: `look\rs2.5\rhide` pauses 2.5s between the
+        // commands (paused segments go out via take_outbound when due).
+        // Only strings containing a sleep segment take this path — plain
+        // multi-command macros ride through unchanged.
+        if let Some((immediate, delayed)) = split_sleep_macro(&command) {
+            for (delay, segment) in delayed {
+                self.queue_timed_command(delay, segment);
+            }
+            return match immediate {
+                Some(text) => self.send_command(text),
+                None => Ok(String::new()),
+            };
+        }
 
         // Check for dot commands (local client commands)
         if command.starts_with('.') {
@@ -1326,6 +1394,64 @@ mod portal_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::{sleep_segment_seconds, split_sleep_macro};
+    use std::time::Duration;
+
+    #[test]
+    fn sleep_segments_parse_seconds() {
+        assert_eq!(sleep_segment_seconds("s2"), Some(2.0));
+        assert_eq!(sleep_segment_seconds("s0.1"), Some(0.1));
+        assert_eq!(sleep_segment_seconds(" s3.2 "), Some(3.2)); // spaces ok
+        assert_eq!(sleep_segment_seconds("s90"), Some(90.0)); // no max
+        // Game commands stay game commands.
+        assert_eq!(sleep_segment_seconds("s"), None); // south
+        assert_eq!(sleep_segment_seconds("sw"), None);
+        assert_eq!(sleep_segment_seconds("stance defensive"), None);
+        assert_eq!(sleep_segment_seconds("s1.2.3"), None);
+        assert_eq!(sleep_segment_seconds("s."), None);
+        assert_eq!(sleep_segment_seconds("s1e3"), None);
+        assert_eq!(sleep_segment_seconds("look"), None);
+    }
+
+    #[test]
+    fn sleep_macros_split_into_immediate_and_delayed() {
+        // No sleep segments: the normal path handles it untouched.
+        assert_eq!(split_sleep_macro("look"), None);
+        assert_eq!(split_sleep_macro("hide\rlook"), None);
+
+        // command\rs3.2\rcommand — and the spaced variant.
+        for text in ["hide\rs3.2\rlook", "hide\r s3.2 \r look"] {
+            let (immediate, delayed) = split_sleep_macro(text).unwrap();
+            assert_eq!(immediate.as_deref(), Some("hide"));
+            assert_eq!(
+                delayed,
+                vec![(Duration::from_secs_f64(3.2), "look".to_string())]
+            );
+        }
+
+        // Leading sleep: nothing immediate. Consecutive sleeps accumulate.
+        let (immediate, delayed) = split_sleep_macro("s1\rlook\rs2\rs0.5\rhide").unwrap();
+        assert_eq!(immediate, None);
+        assert_eq!(
+            delayed,
+            vec![
+                (Duration::from_secs(1), "look".to_string()),
+                (Duration::from_secs_f64(3.5), "hide".to_string()),
+            ]
+        );
+
+        // Segments before the first sleep ride together, as today.
+        let (immediate, delayed) = split_sleep_macro("n\rn\rs2\rlook").unwrap();
+        assert_eq!(immediate.as_deref(), Some("n\rn"));
+        assert_eq!(delayed.len(), 1);
+
+        // Trailing \r (wrayth-style macros) doesn't produce a phantom
+        // command.
+        let (immediate, delayed) = split_sleep_macro("hide\rs1\rlook\r").unwrap();
+        assert_eq!(immediate.as_deref(), Some("hide"));
+        assert_eq!(delayed, vec![(Duration::from_secs(1), "look".to_string())]);
+    }
+
     // ========== Dot Command Parsing Tests ==========
     //
     // These tests verify the dot command parsing logic by testing:
