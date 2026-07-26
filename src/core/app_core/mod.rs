@@ -6,9 +6,11 @@
 
 mod commands;
 mod config_editor;
+mod interact;
 mod keybinds;
 mod layout;
 mod state;
 
+pub use interact::{InteractAction, InteractEntity};
 pub use keybinds::HotbarKeyConflict;
 pub use state::*;

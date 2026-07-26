@@ -248,6 +248,11 @@ impl AppCore {
                 self.stop_travel();
             }
 
+            // Interact mode (pointer-free entity focus cycling)
+            KeyAction::InteractMode => {
+                self.toggle_interact_mode();
+            }
+
             // TTS (Text-to-Speech) actions - Accessibility
             KeyAction::TtsNext => {
                 if let Err(e) = self.tts_manager.speak_next() {

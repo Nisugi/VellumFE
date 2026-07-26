@@ -48,12 +48,14 @@ fn get_action_context(mode: &InputMode) -> ActionContext {
         InputMode::WindowEditor => ActionContext::WindowEditor,
 
         // Normal modes - should not route through menu system
+        // (Interact is handled directly by the frontend's modal keys)
         InputMode::Normal
         | InputMode::Navigation
         | InputMode::History
         | InputMode::Search
         | InputMode::Menu
-        | InputMode::Dialog => ActionContext::Browser, // Fallback (shouldn't be called)
+        | InputMode::Dialog
+        | InputMode::Interact => ActionContext::Browser, // Fallback (shouldn't be called)
     }
 }
 

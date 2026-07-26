@@ -40,6 +40,9 @@ pub struct UiState {
     /// Deep submenu (level 4) - shown when clicking item in nested_submenu
     pub deep_submenu: Option<PopupMenu>,
 
+    /// Interact-mode focus (Some only while InputMode::Interact)
+    pub interact: Option<InteractState>,
+
     /// Status bar text
     pub status_text: String,
 
@@ -195,6 +198,47 @@ pub enum InputMode {
     SettingsEditor,
     /// Indicator template editor is open
     IndicatorTemplateEditor,
+    /// Interact mode: arrow-key/controller focus cycling over room entities
+    Interact,
+}
+
+/// Entity category the interact-mode focus is cycling through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InteractCategory {
+    Creatures,
+    Objects,
+    Players,
+    Exits,
+}
+
+impl InteractCategory {
+    /// Cycle order for left/right category navigation.
+    pub const ORDER: [InteractCategory; 4] = [
+        InteractCategory::Creatures,
+        InteractCategory::Objects,
+        InteractCategory::Players,
+        InteractCategory::Exits,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            InteractCategory::Creatures => "Creatures",
+            InteractCategory::Objects => "Objects",
+            InteractCategory::Players => "Players",
+            InteractCategory::Exits => "Exits",
+        }
+    }
+}
+
+/// Interact-mode focus state. Present only while the mode is active
+/// (`InputMode::Interact`). `focus_key` remembers the focused entity's
+/// stable key (exist id, or exit direction) so focus survives room
+/// updates rewriting the entity lists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InteractState {
+    pub category: InteractCategory,
+    pub index: usize,
+    pub focus_key: Option<String>,
 }
 
 /// Dialog popup state
@@ -377,6 +421,7 @@ impl UiState {
             submenu: None,
             nested_submenu: None,
             deep_submenu: None,
+            interact: None,
             status_text: String::from("Ready"),
             mouse_drag: None,
             selection_state: None,

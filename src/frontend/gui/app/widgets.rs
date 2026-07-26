@@ -2715,6 +2715,7 @@ impl VellumGuiApp {
         scroll_id: &str,
         text_size: f32,
         font_id: &egui::FontId,
+        interact_focus: Option<&str>, // exist id to draw the focus ring on
     ) -> Option<GuiLinkClick> {
         // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
         let style = ui.style().clone();
@@ -2749,6 +2750,24 @@ impl VellumGuiApp {
         }
         if show_exits {
             body.extend(room.exits.iter().cloned());
+        }
+
+        // Interact-mode focus ring: paint the focused entity's link with the
+        // selection background so keyboard focus is visible in the room text.
+        if let Some(focus) = interact_focus {
+            let sel = visuals.selection.bg_fill;
+            let sel_hex = format!("#{:02x}{:02x}{:02x}", sel.r(), sel.g(), sel.b());
+            for line in &mut body {
+                for segment in &mut line.segments {
+                    if segment
+                        .link_data
+                        .as_ref()
+                        .is_some_and(|l| l.exist_id.trim_start_matches('#') == focus)
+                    {
+                        segment.bg = Some(sel_hex.clone());
+                    }
+                }
+            }
         }
 
         egui::ScrollArea::vertical()
@@ -3822,6 +3841,7 @@ impl VellumGuiApp {
                     ),
                     _ => (true, true, true, true),
                 };
+                let interact_focus = app_core.interact_focus_exist_id();
                 Self::render_room_content(
                     ui,
                     room,
@@ -3829,6 +3849,7 @@ impl VellumGuiApp {
                     &tab.window_name,
                     text_size,
                     &font_id,
+                    interact_focus.as_deref(),
                 )
             }
             WindowContent::ActiveEffects(content) => {

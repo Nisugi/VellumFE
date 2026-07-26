@@ -19,7 +19,7 @@
 #   switch_current_window, scroll_current_window_up_one, scroll_current_window_down_one,
 #   scroll_current_window_up_page, scroll_current_window_down_page,
 #   start_search, next_search_match, prev_search_match, clear_search,
-#   toggle_performance_stats,
+#   toggle_performance_stats, interact_mode,
 #   tts_next, tts_previous, tts_pause_resume, tts_mute_toggle
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -120,9 +120,13 @@ esc = "clear_search"  # Exit search mode
 # Performance stats
 f12 = "toggle_performance_stats"
 
+# Interact mode (GUI): cycle room entities with arrows, Enter opens the
+# context menu, Esc exits. Built for controller d-pads via key mappers.
+f6 = "interact_mode"
+
 # Text-to-Speech (Accessibility)
 # Ctrl+Alt combinations avoid terminal interception
-# Enable in Settings > Accessibility (GUI) or with .tts on
+# Enable in Settings > Speech (GUI) or with .tts on
 "ctrl+alt+left" = "tts_previous"       # Previous message (sequential, includes read)
 "ctrl+alt+right" = "tts_next"          # Next message (sequential, includes read)
 "ctrl+alt+up" = "tts_next_unread"      # Skip to next unread message
