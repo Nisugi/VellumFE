@@ -81,3 +81,8 @@ Yes — `squelch = true` on a highlight pattern. See
 **Can I import my Wrayth highlights?**
 Yes: `vellum-fe import-highlights settings.xml`. See the
 [CLI Reference](./cli.md).
+
+**Where can I get help or show off my setup?**
+The [VellumFE Discord](https://discord.gg/6nKhWRTkSN) — help, bug
+reports, layout/skin/wheel showcases, beta testing, and release
+announcements. GitHub issues work too.

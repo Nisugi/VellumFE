@@ -55,5 +55,6 @@ Most settings can also be changed in-app: type `.settings`, or see the
 
 ## Getting Help
 
+- **Discord**: [discord.gg/6nKhWRTkSN](https://discord.gg/6nKhWRTkSN) — help, showcases, beta testing, release announcements
 - **GitHub Issues**: [github.com/Nisugi/VellumFE/issues](https://github.com/Nisugi/VellumFE/issues)
 - **In-Game**: Find us on the amunet channel
