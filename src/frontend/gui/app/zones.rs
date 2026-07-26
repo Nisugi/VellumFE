@@ -452,30 +452,6 @@ impl VellumGuiApp {
         (max_col.max(1.0), max_row.max(1.0))
     }
 
-    fn docked_inner_size_for_outer(
-        ctx: &egui::Context,
-        outer_size: Vec2,
-        include_title_bar: bool,
-    ) -> Vec2 {
-        let style = ctx.global_style();
-        let window_frame = egui::Frame::window(&style).shadow(egui::epaint::Shadow::NONE);
-        let mut margins = window_frame.total_margin().sum();
-        if include_title_bar {
-            let title_font = egui::TextStyle::Heading.resolve(&style);
-            let title_bar_inner_height = ctx
-                .fonts_mut(|fonts| fonts.row_height(&title_font))
-                .max(style.spacing.interact_size.y);
-            let title_bar_height_with_margin =
-                title_bar_inner_height + window_frame.inner_margin.sum().y;
-            let title_content_spacing = window_frame.stroke.width;
-            margins += Vec2::new(0.0, title_bar_height_with_margin + title_content_spacing);
-        }
-        Vec2::new(
-            (outer_size.x - margins.x).max(1.0),
-            (outer_size.y - margins.y).max(1.0),
-        )
-    }
-
     fn tab_window_rect(
         root_rect: Rect,
         layout_bounds: (f32, f32),
@@ -848,6 +824,10 @@ impl VellumGuiApp {
                     (tab, min_height, desired_height)
                 })
                 .collect();
+            // Each entry is "separator gap + min height"; the running total is
+            // consumed at the top of each iteration, so it hits exactly zero
+            // for the last window and its height clamp reaches the zone
+            // bottom flush.
             let mut remaining_min: f32 = tab_metrics
                 .iter()
                 .map(|(_, min_height, _)| min_height + gap)
@@ -860,7 +840,8 @@ impl VellumGuiApp {
             let zone_inner_height = (root_rect.height() - margin * 2.0).max(0.0);
             let stack_items: Vec<(f32, f32)> = tab_metrics
                 .iter()
-                .map(|(tab, min_height, desired_height)| {
+                .enumerate()
+                .map(|(index, (tab, min_height, desired_height))| {
                     let desired_gap = self
                         .sidebar_gap_above
                         .get(&tab.id.key)
@@ -868,7 +849,15 @@ impl VellumGuiApp {
                         .filter(|value| value.is_finite())
                         .unwrap_or(0.0)
                         .max(0.0);
-                    (desired_gap, desired_height.max(*min_height) + gap)
+                    // The trailing inter-window gap belongs to every window
+                    // except the last: the free space the gap math hands out
+                    // must let the final window sit flush at the zone bottom.
+                    let trailing_gap = if index + 1 == tab_metrics.len() {
+                        0.0
+                    } else {
+                        gap
+                    };
+                    (desired_gap, desired_height.max(*min_height) + trailing_gap)
                 })
                 .collect();
             let stack_keys: Vec<TabKey> = tab_metrics
@@ -902,6 +891,7 @@ impl VellumGuiApp {
                 let mut clicked_link = None;
                 let mut resize_delta_y = 0.0f32;
                 let mut gap_drag_delta = 0.0f32;
+                let mut zone_width_drag_delta = 0.0f32;
                 let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
                 let window_id =
                     egui::Id::new(("gui_zone_window", zone.id_fragment(), &tab.id.key));
@@ -917,14 +907,15 @@ impl VellumGuiApp {
                 // window chrome then shows up as a slightly different next-y
                 // instead of windows overlapping or leaving gaps.
                 let mut next_y = slot_bottom;
+                // In this egui fork `fixed_size` sizes the whole window rect
+                // (title bar and frame chrome render inside it), so the slot's
+                // outer size is passed as-is; converting to an "inner" size
+                // here left every window a frame-margin short of the slot on
+                // the right and bottom.
                 if let Some(inner) = egui::Window::new(self.window_display_title(&tab))
                     .id(window_id)
                     .fixed_pos(slot_rect.min)
-                    .fixed_size(Self::docked_inner_size_for_outer(
-                        ctx,
-                        slot_rect.size(),
-                        !title_bar_hidden,
-                    ))
+                    .fixed_size(slot_rect.size())
                     .resizable(false)
                     .movable(false)
                     .title_bar(!title_bar_hidden)
@@ -1022,6 +1013,58 @@ impl VellumGuiApp {
                             {
                                 gap_drag_delta += ui.ctx().input(|i| i.pointer.delta().y);
                             }
+                            // Zone-width band: now that windows span the full
+                            // zone width they cover the splitter at the
+                            // sidebar/center boundary, so each window overlays
+                            // its own thin vertical band on that inner edge
+                            // (right edge of the left sidebar, left edge of
+                            // the right one) to resize the whole sidebar.
+                            // Registered after the horizontal bands so the
+                            // vertical strip wins where they meet in corners.
+                            let zone_band_width = 8.0f32;
+                            let zone_band_rect = if zone == GuiShellZone::RightSidebar {
+                                Rect::from_min_max(
+                                    Pos2::new(root_rect.min.x, slot_rect.min.y),
+                                    Pos2::new(
+                                        root_rect.min.x + zone_band_width,
+                                        slot_rect.max.y,
+                                    ),
+                                )
+                            } else {
+                                Rect::from_min_max(
+                                    Pos2::new(
+                                        root_rect.max.x - zone_band_width,
+                                        slot_rect.min.y,
+                                    ),
+                                    Pos2::new(root_rect.max.x, slot_rect.max.y),
+                                )
+                            };
+                            let zone_band_response = ui.interact(
+                                zone_band_rect,
+                                ui.id().with("sidebar_zone_width_handle"),
+                                egui::Sense::click_and_drag(),
+                            );
+                            let zone_band_active = zone_band_response.hovered()
+                                || zone_band_response.dragged();
+                            if zone_band_active {
+                                let stroke_color =
+                                    ui.visuals().widgets.hovered.fg_stroke.color;
+                                let band_center = zone_band_rect.center();
+                                // Part of the band sits in the frame margin
+                                // outside this ui's clip rect; paint on the
+                                // window's layer so the grab line shows there.
+                                ui.ctx().layer_painter(ui.layer_id()).vline(
+                                    band_center.x,
+                                    (band_center.y - 16.0)..=(band_center.y + 16.0),
+                                    egui::Stroke::new(2.0, stroke_color),
+                                );
+                                ui.ctx()
+                                    .set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                            }
+                            if zone_band_response.dragged() {
+                                zone_width_drag_delta +=
+                                    ui.ctx().input(|i| i.pointer.delta().x);
+                            }
                             clicked
                         })
                         .inner
@@ -1068,6 +1111,25 @@ impl VellumGuiApp {
 
                 if let Some(click) = clicked_link {
                     actions.link_clicks.push(click);
+                }
+                if zone_width_drag_delta.abs() > 0.0 {
+                    // Same math, clamps, and persistence as the boundary
+                    // splitter in app.rs; this is just its overlay twin for
+                    // the area the windows now cover.
+                    if zone == GuiShellZone::RightSidebar {
+                        self.shell_layout.right_sidebar_width = (self
+                            .shell_layout
+                            .right_sidebar_width
+                            - zone_width_drag_delta)
+                            .clamp(220.0, 700.0);
+                    } else {
+                        self.shell_layout.left_sidebar_width = (self
+                            .shell_layout
+                            .left_sidebar_width
+                            + zone_width_drag_delta)
+                            .clamp(220.0, 700.0);
+                    }
+                    self.layout_dirty = true;
                 }
                 if resize_delta_y.abs() > 0.0 {
                     let resized_height = (slot_rect.height() + resize_delta_y)
@@ -1212,13 +1274,11 @@ impl VellumGuiApp {
                 docked_window_frame.stroke.color = accent;
             }
             self.apply_skin_border_to_frame(&tab.window_name, &mut docked_window_frame);
+            // `default_size` (like `fixed_size`) is the whole window rect in
+            // this egui fork, so every zone passes the outer size directly.
             let mut window_builder = egui::Window::new(self.window_display_title(&tab))
                 .id(window_id)
-                .default_size(if zone == GuiShellZone::Center {
-                    initial_rect.size()
-                } else {
-                    Self::docked_inner_size_for_outer(ctx, initial_rect.size(), !title_bar_hidden)
-                })
+                .default_size(initial_rect.size())
                 .min_size(min_window_size)
                 .max_size(max_window_size)
                 .resizable(true)
@@ -1236,12 +1296,9 @@ impl VellumGuiApp {
                 window_builder = window_builder.interactable(false);
             }
             if is_hand_widget {
-                let fixed_inner_size = if zone == GuiShellZone::Center {
-                    initial_rect.size()
-                } else {
-                    Self::docked_inner_size_for_outer(ctx, initial_rect.size(), !title_bar_hidden)
-                };
-                window_builder = window_builder.fixed_size(fixed_inner_size).resizable(false);
+                window_builder = window_builder
+                    .fixed_size(initial_rect.size())
+                    .resizable(false);
             }
             let is_compact_center_widget =
                 zone == GuiShellZone::Center && Self::is_compact_center_widget(&window.widget_type);
@@ -1560,6 +1617,28 @@ mod tests {
 
         let gaps = super::sidebar_gaps_after_drag(1000.0, &items, 1, -300.0);
         assert_eq!(gaps, vec![80.0, 0.0]);
+    }
+
+    #[test]
+    fn test_sidebar_last_window_reaches_zone_bottom() {
+        // Items mirror how render_zone_surface builds them: the 4pt
+        // inter-window gap is folded into every occupied height except the
+        // last window's, so nothing is reserved below the stack. Dragging
+        // the last window down must be able to consume ALL remaining free
+        // space, leaving gaps + heights summing to exactly the zone height
+        // (the last window sits flush on the zone's bottom edge).
+        let items = [(0.0, 204.0), (0.0, 100.0)];
+        let gaps = super::sidebar_gaps_after_drag(400.0, &items, 1, 500.0);
+        assert_eq!(gaps, vec![0.0, 96.0]);
+        let occupied: f32 =
+            items.iter().map(|(_, height)| height).sum::<f32>() + gaps.iter().sum::<f32>();
+        assert_eq!(occupied, 400.0);
+
+        // A persisted stack whose gaps + heights already equal the zone
+        // height exactly keeps every gap: the flush-bottom layout survives
+        // a round-trip through the gap-granting math unchanged.
+        let gaps = super::effective_sidebar_gaps(400.0, &[(96.0, 204.0), (0.0, 100.0)]);
+        assert_eq!(gaps, vec![96.0, 0.0]);
     }
 
     #[test]
