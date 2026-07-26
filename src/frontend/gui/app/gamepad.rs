@@ -132,7 +132,39 @@ impl VellumGuiApp {
             self.handle_gamepad_button(button, ctx);
         }
 
-        if let Some((x, y_up)) = stick {
+        // Radial wheel: while the wheel button is held, the left stick
+        // aims a slice; releasing fires it. Owns the stick while active
+        // (no movement) and swallows other buttons.
+        let wheel_held = self.gamepad_action_button_held("controller_wheel");
+        match (self.gp_wheel.is_some(), wheel_held) {
+            (false, true) => {
+                self.gp_wheel = Some(None);
+                self.app_core.needs_render = true;
+            }
+            (true, false) => {
+                let selected = self.gp_wheel.take().flatten();
+                if let Some(index) = selected {
+                    if let Some(slice) = self.app_core.config.controller_wheel.get(index).cloned()
+                    {
+                        self.dispatch_command(slice.command);
+                    }
+                }
+                self.app_core.needs_render = true;
+            }
+            (true, true) => {
+                if let (Some((x, y_up)), Some(slot)) = (stick, self.gp_wheel.as_mut()) {
+                    let count = self.app_core.config.controller_wheel.len();
+                    let aimed = wheel_slice_at(x, y_up, count);
+                    if aimed.is_some() && *slot != aimed {
+                        *slot = aimed;
+                        self.app_core.needs_render = true;
+                    }
+                }
+            }
+            (false, false) => {}
+        }
+
+        if let Some((x, y_up)) = stick.filter(|_| self.gp_wheel.is_none()) {
             let sector = stick_sector(x, y_up, self.gp_stick_sector);
             if sector != self.gp_stick_sector {
                 // Movement while a menu is open would be disorienting; the
@@ -171,6 +203,12 @@ impl VellumGuiApp {
 
     fn handle_gamepad_button(&mut self, button: gilrs::Button, ctx: &egui::Context) {
         use gilrs::Button;
+
+        // The wheel owns the pad while it is up: buttons neither navigate
+        // nor dispatch (release of the wheel button fires the slice).
+        if self.gp_wheel.is_some() {
+            return;
+        }
 
         // While interact mode or a popup menu is up, the d-pad and the
         // confirm/cancel face buttons are fixed navigation keys — unless
@@ -221,30 +259,112 @@ impl VellumGuiApp {
         }
     }
 
-    /// True while any button bound to `controller_shift` is held. Read
-    /// from live pad state each press — no held/released bookkeeping to
-    /// desync.
+    /// True while any button bound to `controller_shift` is held.
     fn gamepad_shift_held(&self) -> bool {
+        self.gamepad_action_button_held("controller_shift")
+    }
+
+    /// True while any button base-bound to the named action is held. Read
+    /// from live pad state — no held/released bookkeeping to desync.
+    fn gamepad_action_button_held(&self, action_name: &str) -> bool {
         let Some(gilrs) = self.gamepad.as_ref() else {
             return false;
         };
-        let shift_buttons: Vec<gilrs::Button> = self
+        let buttons: Vec<gilrs::Button> = self
             .app_core
             .config
             .controller_binds
             .iter()
             .filter(|(_, action)| {
-                matches!(action, crate::config::KeyBindAction::Action(name) if name == "controller_shift")
+                matches!(action, crate::config::KeyBindAction::Action(name) if name == action_name)
             })
             .filter_map(|(name, _)| gamepad_button_from_name(name))
             .collect();
-        if shift_buttons.is_empty() {
+        if buttons.is_empty() {
             return false;
         }
         gilrs
             .gamepads()
-            .any(|(_, pad)| shift_buttons.iter().any(|b| pad.is_pressed(*b)))
+            .any(|(_, pad)| buttons.iter().any(|b| pad.is_pressed(*b)))
     }
+}
+
+impl VellumGuiApp {
+    /// Draw the radial command wheel while its button is held: a ring of
+    /// slice labels around the screen center, the aimed slice highlighted.
+    pub(super) fn render_controller_wheel(&mut self, ctx: &egui::Context) {
+        let Some(selected) = self.gp_wheel else {
+            return;
+        };
+        let slices = &self.app_core.config.controller_wheel;
+        if slices.is_empty() {
+            return;
+        }
+        let center = ctx.content_rect().center();
+        let radius = (ctx.content_rect().height() * 0.28).clamp(90.0, 220.0);
+
+        egui::Area::new(egui::Id::new("controller_wheel"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(center - egui::vec2(radius + 70.0, radius + 40.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                let painter = ui.painter();
+                let bg = ui.visuals().window_fill.gamma_multiply(0.92);
+                painter.circle_filled(center, radius + 34.0, bg);
+                painter.circle_stroke(
+                    center,
+                    radius + 34.0,
+                    egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
+                );
+                let step = std::f32::consts::TAU / slices.len() as f32;
+                for (i, slice) in slices.iter().enumerate() {
+                    // Slice 0 at the top, clockwise (matches wheel_slice_at).
+                    let angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
+                    let pos = center + egui::vec2(angle.cos(), angle.sin()) * radius;
+                    let is_selected = selected == Some(i);
+                    let (color, size) = if is_selected {
+                        (ui.visuals().selection.stroke.color, 18.0)
+                    } else {
+                        (ui.visuals().text_color(), 14.0)
+                    };
+                    if is_selected {
+                        painter.circle_filled(pos, 26.0, ui.visuals().selection.bg_fill);
+                    }
+                    painter.text(
+                        pos,
+                        egui::Align2::CENTER_CENTER,
+                        &slice.label,
+                        egui::FontId::proportional(size),
+                        color,
+                    );
+                }
+                let hint = match selected {
+                    Some(i) => slices
+                        .get(i)
+                        .map(|s| s.command.clone())
+                        .unwrap_or_default(),
+                    None => "aim with the left stick".to_string(),
+                };
+                painter.text(
+                    center,
+                    egui::Align2::CENTER_CENTER,
+                    hint,
+                    egui::FontId::proportional(13.0),
+                    ui.visuals().weak_text_color(),
+                );
+            });
+    }
+}
+
+/// Which wheel slice the stick is aiming at: slice 0 centered at the top,
+/// clockwise. None inside the dead zone or with no slices.
+fn wheel_slice_at(x: f32, y_up: f32, count: usize) -> Option<usize> {
+    if count == 0 || (x * x + y_up * y_up).sqrt() < 0.5 {
+        return None;
+    }
+    let step = 360.0 / count as f32;
+    let angle = x.atan2(y_up).to_degrees();
+    Some((((angle + 360.0 + step / 2.0) / step) as usize) % count)
 }
 
 /// Reverse of `gamepad_button_name`, for config-driven button lookups.
@@ -317,5 +437,24 @@ mod tests {
             let name = gamepad_button_name(button).expect("named button");
             assert!(GAMEPAD_BUTTON_NAMES.contains(&name), "{name} missing from editor list");
         }
+    }
+}
+
+#[cfg(test)]
+mod wheel_tests {
+    use super::*;
+
+    #[test]
+    fn wheel_slices_map_clockwise_from_top() {
+        // 8 slices: up = 0, right = 2, down = 4, left = 6.
+        assert_eq!(wheel_slice_at(0.0, 1.0, 8), Some(0));
+        assert_eq!(wheel_slice_at(1.0, 0.0, 8), Some(2));
+        assert_eq!(wheel_slice_at(0.0, -1.0, 8), Some(4));
+        assert_eq!(wheel_slice_at(-1.0, 0.0, 8), Some(6));
+        // Dead zone and empty wheel.
+        assert_eq!(wheel_slice_at(0.2, 0.2, 8), None);
+        assert_eq!(wheel_slice_at(0.0, 1.0, 0), None);
+        // Odd slice counts still cover the full circle.
+        assert_eq!(wheel_slice_at(0.0, 1.0, 3), Some(0));
     }
 }

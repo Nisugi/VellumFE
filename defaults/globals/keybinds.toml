@@ -174,6 +174,7 @@ dpad_right = { macro_text = "out\r" }  # Leave (buildings, rooms)
 dpad_left = { macro_text = ".portal\r" } # Walk the room's door/arch/gate
 south = { macro_text = "look\r" }      # A / cross
 l2 = "controller_shift"                # Hold: buttons use [controller_shift]
+r2 = "controller_wheel"                # Hold: radial command wheel (left stick picks)
 
 # Bindings while the shift button (l2 above) is held — a second bank for
 # every button. Same format as [controller].
@@ -181,3 +182,37 @@ l2 = "controller_shift"                # Hold: buttons use [controller_shift]
 dpad_up = "scroll_current_window_up_page"
 dpad_down = "scroll_current_window_down_page"
 south = { macro_text = "stand\r" }
+
+# Radial command wheel (hold r2, aim the left stick, release to fire).
+# Edit in the .controller editor's Wheel tab.
+[[controller_wheel]]
+label = "look"
+command = "look"
+
+[[controller_wheel]]
+label = "search"
+command = "search"
+
+[[controller_wheel]]
+label = "stand"
+command = "stand"
+
+[[controller_wheel]]
+label = "hide"
+command = "hide"
+
+[[controller_wheel]]
+label = "exp"
+command = "exp"
+
+[[controller_wheel]]
+label = "health"
+command = "health"
+
+[[controller_wheel]]
+label = "glance"
+command = "glance"
+
+[[controller_wheel]]
+label = "portal"
+command = ".portal"

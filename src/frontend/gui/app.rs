@@ -218,6 +218,10 @@ pub struct VellumGuiApp {
     /// center. Movement sends on sector *change* with hysteresis.
     #[cfg(feature = "gamepad")]
     gp_stick_sector: Option<usize>,
+    /// Radial wheel state: Some(selected slice) while the wheel button is
+    /// held. Firing happens on release.
+    #[cfg(feature = "gamepad")]
+    gp_wheel: Option<Option<usize>>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -518,6 +522,8 @@ impl VellumGuiApp {
                 .ok(),
             #[cfg(feature = "gamepad")]
             gp_stick_sector: None,
+            #[cfg(feature = "gamepad")]
+            gp_wheel: None,
             ui_settings,
             tab_settings,
             tab_groups,
@@ -4538,6 +4544,8 @@ impl eframe::App for VellumGuiApp {
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
         self.render_interact_overlay(&ctx);
+        #[cfg(feature = "gamepad")]
+        self.render_controller_wheel(&ctx);
         self.render_injuries_popup(&ctx);
         self.render_editors(&ctx);
         self.render_server_dialog(&ctx);

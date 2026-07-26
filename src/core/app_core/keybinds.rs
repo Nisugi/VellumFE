@@ -253,10 +253,13 @@ impl AppCore {
                 self.toggle_interact_mode();
             }
 
-            // Controller shift modifier: state is read live by the gamepad
-            // layer; the action itself does nothing when dispatched.
+            // Controller shift modifier / wheel: state is read live by the
+            // gamepad layer; the actions do nothing when dispatched.
             KeyAction::ControllerShift => {
                 tracing::debug!("controller_shift is a hold modifier; nothing to execute");
+            }
+            KeyAction::ControllerWheel => {
+                tracing::debug!("controller_wheel is a hold modifier; nothing to execute");
             }
 
             // TTS (Text-to-Speech) actions - Accessibility

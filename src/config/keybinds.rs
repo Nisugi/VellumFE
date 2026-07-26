@@ -151,6 +151,11 @@ pub enum KeyAction {
     // gamepad layer; a no-op from a keyboard key.
     ControllerShift,
 
+    // Controller radial wheel: hold the bound button to show the command
+    // wheel, pick a slice with the left stick, release to fire. Handled
+    // by the gamepad layer; a no-op from a keyboard key.
+    ControllerWheel,
+
     // TTS (Text-to-Speech) actions - Accessibility
     TtsNext,           // Next message (sequential, includes read)
     TtsPrevious,       // Previous message (sequential, includes read)
@@ -164,6 +169,14 @@ pub enum KeyAction {
 
     // Macro - send literal text
     SendMacro(String),
+}
+
+/// One slice of the controller radial wheel: a label drawn on the wheel
+/// and the command it fires (game text or dot-command).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WheelSlice {
+    pub label: String,
+    pub command: String,
 }
 
 /// Keybinds for menu system (popups, browsers, forms, editors)
@@ -502,6 +515,7 @@ impl KeyAction {
     pub const CONTROLLER_ACTION_NAMES: &'static [&'static str] = &[
         "interact_mode",
         "controller_shift",
+        "controller_wheel",
         "stop_travel",
         "scroll_current_window_up_page",
         "scroll_current_window_down_page",
@@ -561,6 +575,7 @@ impl KeyAction {
             "stop_travel" => Some(Self::StopTravel),
             "interact_mode" => Some(Self::InteractMode),
             "controller_shift" => Some(Self::ControllerShift),
+            "controller_wheel" => Some(Self::ControllerWheel),
             "tts_next" => Some(Self::TtsNext),
             "tts_previous" => Some(Self::TtsPrevious),
             "tts_next_unread" => Some(Self::TtsNextUnread),
@@ -782,6 +797,50 @@ impl Config {
         } else {
             Ok(HashMap::new())
         }
+    }
+
+    /// Load the radial wheel slices from `[[controller_wheel]]` of the
+    /// global keybinds.toml, falling back to the shipped defaults when
+    /// absent.
+    pub fn load_controller_wheel() -> Result<Vec<WheelSlice>> {
+        let slices_from = |contents: &str| -> Option<Vec<WheelSlice>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            let array = toml_value.get("controller_wheel")?;
+            array.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(slices) = slices_from(&contents) {
+                return Ok(slices);
+            }
+        }
+        Ok(slices_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the whole `[[controller_wheel]]` array in the global
+    /// keybinds.toml (the wheel editor saves the full slice list).
+    pub fn save_controller_wheel(slices: &[WheelSlice]) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        let array = toml::Value::try_from(slices).context("Failed to serialize wheel slices")?;
+        toml_table.insert("controller_wheel".to_string(), array);
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
     }
 
     fn controller_section_name(shift: bool) -> &'static str {

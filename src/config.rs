@@ -39,7 +39,7 @@ pub use hotbars::{
     HotbarCountdownSource, HotbarDef, HotbarStyle, HotbarsConfig, NameMatch, VitalKind, VitalUnit,
 };
 pub use keybinds::{
-    parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
+    parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds, WheelSlice,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
@@ -230,6 +230,8 @@ pub struct Config {
     pub controller_binds: HashMap<String, KeyBindAction>,
     #[serde(skip)] // Loaded from [controller_shift] (bindings while shift button held)
     pub controller_shift_binds: HashMap<String, KeyBindAction>,
+    #[serde(skip)] // Loaded from [[controller_wheel]] (radial wheel slices)
+    pub controller_wheel: Vec<WheelSlice>,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml

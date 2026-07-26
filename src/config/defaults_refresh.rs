@@ -192,6 +192,54 @@ fn refresh_user_keybinds(
         on_disk.extend(on_disk_tbl_keys);
     }
 
+    // [[controller_wheel]] slices refresh additively by label, with
+    // wheel/-prefixed seen keys (deleted slices stay deleted).
+    {
+        let wheel_labels = |doc: &DocumentMut| -> BTreeSet<String> {
+            doc.get("controller_wheel")
+                .and_then(|item| item.as_array_of_tables())
+                .map(|slices| {
+                    slices
+                        .iter()
+                        .filter_map(|t| t.get("label").and_then(|l| l.as_str()))
+                        .map(|l| format!("wheel/{}", l))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let embedded_wheel = wheel_labels(&embedded_doc);
+        let on_disk_wheel = wheel_labels(&user_doc);
+        let to_add = keys_to_add(&embedded_wheel, &on_disk_wheel, seen);
+        if !to_add.is_empty() {
+            if user_doc
+                .get("controller_wheel")
+                .and_then(|item| item.as_array_of_tables())
+                .is_none()
+            {
+                user_doc.as_table_mut().insert(
+                    "controller_wheel",
+                    toml_edit::Item::ArrayOfTables(toml_edit::ArrayOfTables::new()),
+                );
+            }
+            let embedded_slices = embedded_doc
+                .get("controller_wheel")
+                .and_then(|item| item.as_array_of_tables())
+                .expect("embedded keybinds have [[controller_wheel]]");
+            let user_slices = user_doc["controller_wheel"]
+                .as_array_of_tables_mut()
+                .expect("just ensured [[controller_wheel]] exists");
+            for slice in embedded_slices.iter() {
+                let label = slice.get("label").and_then(|l| l.as_str()).unwrap_or("");
+                if to_add.iter().any(|add| add == &format!("wheel/{}", label)) {
+                    user_slices.push(slice.clone());
+                    changed = true;
+                }
+            }
+        }
+        embedded_keys.extend(embedded_wheel);
+        on_disk.extend(on_disk_wheel);
+    }
+
     let updated_file = changed.then(|| user_doc.to_string());
     Ok(RefreshOutcome {
         updated_file,

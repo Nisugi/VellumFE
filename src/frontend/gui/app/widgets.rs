@@ -3310,10 +3310,14 @@ impl VellumGuiApp {
             egui::ScrollArea::both()
         };
 
-        // Pending programmatic scroll (page keys / controller): applied
-        // through the builder so egui treats it as an explicit adjustment —
-        // the private stuck-to-end flag re-pins plain offset writes.
+        // Programmatic scroll (page keys / controller). egui's private
+        // stuck-to-end flag only clears on USER input — a one-frame
+        // explicit offset snaps back to the bottom next frame. So while a
+        // key/pad scroll has us paged up, we HOLD the offset by
+        // re-applying it every frame, and release the hold when the user
+        // touches the wheel/drag, reaches the bottom, or presses End.
         let pending_key = egui::Id::new(("text_scroll_pending", scroll_id));
+        let hold_key = egui::Id::new(("text_scroll_hold", scroll_id));
         let pending: Option<(u8, f32)> = outer_ctx.data_mut(|data| {
             let value = data.get_temp(pending_key);
             if value.is_some() {
@@ -3321,17 +3325,39 @@ impl VellumGuiApp {
             }
             value
         });
+        let mut hold: Option<f32> = outer_ctx.data_mut(|data| data.get_temp(hold_key));
+
+        // The user's own scroll input takes over instantly.
+        let user_scrolled = ui.input(|input| {
+            input.raw.events.iter().any(|event| {
+                matches!(
+                    event,
+                    egui::Event::MouseWheel { .. } | egui::Event::PointerButton { pressed: true, .. }
+                )
+            })
+        });
+        if user_scrolled {
+            hold = None;
+        }
+
         if let Some((kind, value)) = pending {
-            let current = outer_ctx
-                .data_mut(|data| data.get_temp::<egui::Id>(area_id_key))
-                .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
-                .map(|state| state.offset.y)
-                .unwrap_or(0.0);
-            let target = match kind {
-                1 => 0.0,                  // home
-                2 => f32::MAX / 4.0,       // end (clamped; re-sticks to bottom)
-                _ => (current + value).max(0.0),
+            let current = hold.or_else(|| {
+                outer_ctx
+                    .data_mut(|data| data.get_temp::<egui::Id>(area_id_key))
+                    .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
+                    .map(|state| state.offset.y)
+            });
+            hold = match kind {
+                1 => Some(0.0),      // home
+                2 => None,           // end: drop the hold, stickiness resumes
+                _ => Some((current.unwrap_or(0.0) + value).max(0.0)),
             };
+            if hold.is_none() {
+                // Nudge to the bottom so stick_to_bottom re-engages.
+                scroll_area = scroll_area.vertical_scroll_offset(f32::MAX / 4.0);
+            }
+        }
+        if let Some(target) = hold {
             scroll_area = scroll_area.vertical_scroll_offset(target);
         }
 
@@ -3745,6 +3771,21 @@ impl VellumGuiApp {
             });
         // Next frame's anchoring pre-pass targets this area's real id.
         outer_ctx.data_mut(|data| data.insert_temp(area_id_key, output.id));
+
+        // Settle the programmatic hold against the real layout: clamp to
+        // the actual max offset, and release it once we're at the bottom
+        // so stick-to-bottom auto-scroll resumes.
+        let max_offset = (output.content_size.y - output.inner_rect.height()).max(0.0);
+        let settled = hold.map(|h| h.min(max_offset)).filter(|h| *h < max_offset - 4.0);
+        outer_ctx.data_mut(|data| match settled {
+            Some(value) => {
+                data.insert_temp(hold_key, value);
+            }
+            None => {
+                data.remove::<f32>(hold_key);
+            }
+        });
+
         clicked_link
     }
 
