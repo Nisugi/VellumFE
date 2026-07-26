@@ -627,3 +627,60 @@ mod wheel_tests {
         assert_eq!(wheel_slice_at(0.0, 1.0, 3), Some(0));
     }
 }
+
+impl VellumGuiApp {
+    /// Binding-legend overlay: a compact right-edge panel listing the
+    /// curated entries from [controller_overlay] (base and shift/
+    /// bindings), with the shift bank marked. Toggled by the
+    /// controller_overlay action (Select by default).
+    pub(super) fn render_controller_overlay(&mut self, ctx: &egui::Context) {
+        if !self.gp_overlay {
+            return;
+        }
+        let entries = self.app_core.config.controller_overlay.clone();
+        if entries.is_empty() {
+            return;
+        }
+        let shift_held = self.gamepad_shift_held();
+        egui::Area::new(egui::Id::new("controller_overlay"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(-12.0, 0.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.strong("Controller");
+                    for entry in &entries {
+                        let (is_shift, button) = match entry.strip_prefix("shift/") {
+                            Some(rest) => (true, rest),
+                            None => (false, entry.as_str()),
+                        };
+                        let binds = if is_shift {
+                            &self.app_core.config.controller_shift_binds
+                        } else {
+                            &self.app_core.config.controller_binds
+                        };
+                        let Some(action) = binds.get(button) else {
+                            continue;
+                        };
+                        let what = match action {
+                            crate::config::KeyBindAction::Action(name) => name.clone(),
+                            crate::config::KeyBindAction::Macro(m) => {
+                                m.macro_text.replace(['\r', '\n'], " ").trim().to_string()
+                            }
+                        };
+                        let line = if is_shift {
+                            format!("[shift] {} - {}", button, what)
+                        } else {
+                            format!("{} - {}", button, what)
+                        };
+                        // The active bank reads strong while shift is held.
+                        if is_shift == shift_held {
+                            ui.label(egui::RichText::new(line).strong());
+                        } else {
+                            ui.weak(line);
+                        }
+                    }
+                });
+            });
+    }
+}

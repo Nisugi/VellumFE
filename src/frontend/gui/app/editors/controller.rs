@@ -239,6 +239,7 @@ impl VellumGuiApp {
         let mut open_form: Option<ControllerFormState> = None;
         let mut delete_request: Option<String> = None;
         let mut wheel_save = false;
+        let mut overlay_toggle: Option<String> = None;
 
         let pad_connected = self
             .gamepad
@@ -297,6 +298,28 @@ impl VellumGuiApp {
                                 if ui.small_button("Delete").clicked() {
                                     delete_request = Some(button.clone());
                                 }
+                                // Curate the binding-legend overlay: only
+                                // checked rows appear in the HUD.
+                                let overlay_entry = if state.shift_layer() {
+                                    format!("shift/{}", button)
+                                } else {
+                                    button.to_string()
+                                };
+                                let mut in_overlay = self
+                                    .app_core
+                                    .config
+                                    .controller_overlay
+                                    .contains(&overlay_entry);
+                                if ui
+                                    .checkbox(&mut in_overlay, "HUD")
+                                    .on_hover_text(
+                                        "Show this binding in the overlay legend \
+                                         (controller_overlay toggles it; Select by default)",
+                                    )
+                                    .changed()
+                                {
+                                    overlay_toggle = Some(overlay_entry);
+                                }
                                 ui.label(egui::RichText::new(button).monospace().strong());
                                 ui.weak(display_action(action));
                             });
@@ -306,6 +329,22 @@ impl VellumGuiApp {
                         }
                     });
             });
+
+        if let Some(entry) = overlay_toggle {
+            let mut list = self.app_core.config.controller_overlay.clone();
+            match list.iter().position(|e| *e == entry) {
+                Some(index) => {
+                    list.remove(index);
+                }
+                None => list.push(entry),
+            }
+            match Config::save_controller_overlay(&list) {
+                Ok(()) => self.app_core.config.controller_overlay = list,
+                Err(err) => self
+                    .app_core
+                    .add_system_message(&format!("Failed to save overlay list: {}", err)),
+            }
+        }
 
         if wheel_save {
             if let Some(buffer) = state.wheel_buffer.clone() {

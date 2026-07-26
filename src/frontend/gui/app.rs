@@ -223,6 +223,9 @@ pub struct VellumGuiApp {
     /// Firing happens on release.
     #[cfg(feature = "gamepad")]
     gp_wheel: Option<gamepad::WheelUi>,
+    /// Binding-legend overlay visibility (controller_overlay toggles it).
+    #[cfg(feature = "gamepad")]
+    gp_overlay: bool,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -525,6 +528,8 @@ impl VellumGuiApp {
             gp_stick_sector: None,
             #[cfg(feature = "gamepad")]
             gp_wheel: None,
+            #[cfg(feature = "gamepad")]
+            gp_overlay: false,
             ui_settings,
             tab_settings,
             tab_groups,
@@ -3001,6 +3006,12 @@ impl VellumGuiApp {
         if self.try_gui_scroll_action(action, ctx) {
             return;
         }
+        #[cfg(feature = "gamepad")]
+        if matches!(action, KeyBindAction::Action(name) if name == "controller_overlay") {
+            self.gp_overlay = !self.gp_overlay;
+            ctx.request_repaint();
+            return;
+        }
         match self.app_core.execute_keybind_action(action) {
             Ok(commands) => {
                 for outbound in commands {
@@ -4547,6 +4558,8 @@ impl eframe::App for VellumGuiApp {
         self.render_interact_overlay(&ctx);
         #[cfg(feature = "gamepad")]
         self.render_controller_wheel(&ctx);
+        #[cfg(feature = "gamepad")]
+        self.render_controller_overlay(&ctx);
         self.render_injuries_popup(&ctx);
         self.render_editors(&ctx);
         self.render_server_dialog(&ctx);

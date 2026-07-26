@@ -4651,6 +4651,8 @@ impl AppCore {
                     crate::config::Config::load_controller_wheel().unwrap_or_default();
                 self.config.controller_wheels =
                     crate::config::Config::load_controller_wheels().unwrap_or_default();
+                self.config.controller_overlay =
+                    crate::config::Config::load_controller_overlay().unwrap_or_default();
                 // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
                 self.rebuild_keybind_map();
                 self.add_system_message("Keybinds reloaded");

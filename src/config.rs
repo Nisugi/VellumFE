@@ -234,6 +234,8 @@ pub struct Config {
     pub controller_wheel: Vec<WheelSlice>,
     #[serde(skip)] // Loaded from [controller_wheels.<name>] (named radial wheels)
     pub controller_wheels: HashMap<String, Vec<WheelSlice>>,
+    #[serde(skip)] // Loaded from [controller_overlay] (curated HUD legend entries)
+    pub controller_overlay: Vec<String>,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml

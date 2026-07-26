@@ -156,6 +156,10 @@ pub enum KeyAction {
     // by the gamepad layer; a no-op from a keyboard key.
     ControllerWheel,
 
+    // Toggle the controller binding-legend overlay (curated via the
+    // HUD checkboxes in the .controller editor). GUI-handled.
+    ControllerOverlay,
+
     // TTS (Text-to-Speech) actions - Accessibility
     TtsNext,           // Next message (sequential, includes read)
     TtsPrevious,       // Previous message (sequential, includes read)
@@ -530,6 +534,7 @@ impl KeyAction {
         "interact_mode",
         "controller_shift",
         "controller_wheel",
+        "controller_overlay",
         "stop_travel",
         "scroll_current_window_up_page",
         "scroll_current_window_down_page",
@@ -594,6 +599,7 @@ impl KeyAction {
             s if s == "controller_wheel" || s.starts_with("controller_wheel:") => {
                 Some(Self::ControllerWheel)
             }
+            "controller_overlay" => Some(Self::ControllerOverlay),
             "tts_next" => Some(Self::TtsNext),
             "tts_previous" => Some(Self::TtsPrevious),
             "tts_next_unread" => Some(Self::TtsNextUnread),
@@ -835,6 +841,60 @@ impl Config {
             }
         }
         Ok(slices_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Load the overlay legend's curated entries from
+    /// `[controller_overlay] buttons` of the global keybinds.toml:
+    /// button names, with a `shift/` prefix for shift-layer entries.
+    pub fn load_controller_overlay() -> Result<Vec<String>> {
+        let list_from = |contents: &str| -> Option<Vec<String>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            toml_value
+                .get("controller_overlay")?
+                .get("buttons")?
+                .clone()
+                .try_into()
+                .ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(list) = list_from(&contents) {
+                return Ok(list);
+            }
+        }
+        Ok(list_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the overlay legend's curated entry list.
+    pub fn save_controller_overlay(buttons: &[String]) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        let section = toml_table
+            .entry("controller_overlay".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        if let toml::Value::Table(table) = section {
+            table.insert(
+                "buttons".to_string(),
+                toml::Value::try_from(buttons).context("Failed to serialize overlay list")?,
+            );
+        }
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
     }
 
     /// Load the named wheels from `[controller_wheels.<name>]` arrays of

@@ -261,6 +261,9 @@ impl AppCore {
             KeyAction::ControllerWheel => {
                 tracing::debug!("controller_wheel is a hold modifier; nothing to execute");
             }
+            KeyAction::ControllerOverlay => {
+                tracing::debug!("controller_overlay toggle is handled by the GUI");
+            }
 
             // TTS (Text-to-Speech) actions - Accessibility
             KeyAction::TtsNext => {
