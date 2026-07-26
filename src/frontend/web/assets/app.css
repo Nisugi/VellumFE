@@ -828,6 +828,71 @@ html, body {
   font-style: italic;
 }
 
+/* Interact mode: focus-cycle bar over the room's entities, pinned above
+   the bottom bar. Touch drives the buttons; a controller drives it with
+   the d-pad (up/down entity, left/right category, A menu, B exit). */
+#interact-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(var(--panel-rgb), 0.93);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  z-index: 9;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#interact-bar button {
+  min-width: 40px;
+  padding: 8px 6px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+#interact-bar button:active {
+  background: var(--border);
+}
+
+#ia-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+  gap: 1px;
+}
+
+#ia-cat {
+  color: var(--fg-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+#ia-entity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+#ia-go {
+  color: var(--accent, #6a9fb5);
+  font-weight: bold;
+}
+
 /* Radial command wheel: shown while a wheel-bound controller button is
    held. Pure display — the pad drives it, so it never takes touches. */
 #wheel-overlay {

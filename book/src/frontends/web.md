@@ -131,9 +131,22 @@ The gear button (also reachable from the login screen) opens Settings:
   release to fire it; South opens a folder slice, East backs up a
   level. `wheel:<name>` opens a named wheel. Buttons can also run
   client-side **UI actions** instead of game commands: `left_panel` /
-  `right_panel` toggle the drawers, `map` the map overlay, and
-  `effects`, `settings`, `appearance`, `speech`, `controller` open
-  those sheets (which the d-pad then navigates).
+  `right_panel` toggle the drawers, `map` the map overlay, `interact`
+  toggles interact mode, and `effects`, `settings`, `appearance`,
+  `speech`, `controller` open those sheets (which the d-pad then
+  navigates).
+
+- **Interact mode** — the desktop focus cycle, phone-sized: the ◎
+  button (or a pad button bound to `interact`; Start by default)
+  opens a bar that walks the room's **Creatures / Objects / Players /
+  Exits**. On a pad, up/down cycle entities, left/right switch
+  categories, South opens the entity's server context menu (the usual
+  bottom sheet, pad-navigable), East closes; on screen the bar has
+  the same arrows plus **Go**. Activating an exit walks it. Focus
+  follows the entity by id, so room churn doesn't steal it. Any bound
+  macro may use `<target_id>` / `<target_noun>` — filled from the
+  focused entity at press time, so `target #<target_id>\rincant 611`
+  on a button (or the shift bank) casts at whatever the ring is on.
 - **Sound alerts / login music** — browser playback toggles.
 - **Client settings (saved on host)** — the full desktop settings
   registry over the wire: every setting, editable at character or global

@@ -299,6 +299,8 @@ pub enum RemoteDelta {
     Injuries(std::collections::HashMap<String, u8>),
     /// The targetable-creature list changed.
     Targets(Vec<RemoteTarget>),
+    /// The room entity lists (interact mode) changed.
+    Entities(RemoteRoomEntities),
     /// Character-sheet lines changed (experience/encumbrance/bounty/society).
     CharInfo(RemoteCharInfo),
     /// Game-session status changed (headless runtime only).
@@ -571,6 +573,8 @@ pub struct RemoteStateSnapshot {
     pub injuries: std::collections::HashMap<String, u8>,
     /// Targetable creatures in the room (tap-to-target list).
     pub targets: Vec<RemoteTarget>,
+    /// Room entity lists for interact mode (creatures/objects/players).
+    pub entities: RemoteRoomEntities,
     /// Character sheet: experience/encumbrance/bounty/society lines.
     pub char_info: RemoteCharInfo,
     /// Session status + session-control capability. Overlaid by the sink in
@@ -581,6 +585,33 @@ pub struct RemoteStateSnapshot {
     pub map_scene: RemoteMapSceneRef,
     /// Per-step map position/ghost state, paired with `map_scene`.
     pub map_state: RemoteMapState,
+}
+
+/// Room entity lists for the phone's interact mode — the same three
+/// categories the desktop focus cycle reads from GameState (exits ride
+/// the room payload). Labels are pre-built (creature statuses baked in)
+/// and nouns pre-resolved with the last-word fallback, so activation is
+/// a plain link-tap round-trip client-side.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RemoteRoomEntities {
+    pub creatures: Vec<RemoteRoomEntity>,
+    pub objects: Vec<RemoteRoomEntity>,
+    pub players: Vec<RemoteRoomEntity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteRoomEntity {
+    /// Exist id without the leading '#' (the link-tap exist_id).
+    pub id: String,
+    pub label: String,
+    pub noun: String,
+}
+
+/// Menus want "hog", not "a muddy hog": last word of the display name
+/// when the feed omitted a noun (mirror of interact.rs fallback_noun).
+fn entity_noun(noun: Option<&str>, name: &str) -> String {
+    noun.map(str::to_string)
+        .unwrap_or_else(|| name.rsplit(' ').next().unwrap_or(name).to_string())
 }
 
 /// A targetable creature in the room, for the status drawer's tap-to-
@@ -788,6 +819,42 @@ impl RemoteStateSnapshot {
                         current: c.id == game_state.target_list.current_target,
                     })
                     .collect()
+            },
+            entities: RemoteRoomEntities {
+                creatures: game_state
+                    .room_creatures
+                    .iter()
+                    .map(|c| {
+                        let statuses = c.display_statuses();
+                        RemoteRoomEntity {
+                            id: c.id.trim_start_matches('#').to_string(),
+                            label: if statuses.is_empty() {
+                                c.name.clone()
+                            } else {
+                                format!("{} ({})", c.name, statuses.join(", "))
+                            },
+                            noun: entity_noun(c.noun.as_deref(), &c.name),
+                        }
+                    })
+                    .collect(),
+                objects: game_state
+                    .room_objects
+                    .iter()
+                    .map(|o| RemoteRoomEntity {
+                        id: o.id.trim_start_matches('#').to_string(),
+                        label: o.name.clone(),
+                        noun: entity_noun(o.noun.as_deref(), &o.name),
+                    })
+                    .collect(),
+                players: game_state
+                    .room_players
+                    .iter()
+                    .map(|p| RemoteRoomEntity {
+                        id: p.id.trim_start_matches('#').to_string(),
+                        label: p.name.clone(),
+                        noun: p.name.clone(),
+                    })
+                    .collect(),
             },
             char_info: {
                 let mut info = RemoteCharInfo::default();
@@ -1193,6 +1260,11 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Targets(snap.targets.clone()));
+        }
+        if snap.entities != self.last.entities {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Entities(snap.entities.clone()));
         }
         if snap.char_info != self.last.char_info {
             let _ = self

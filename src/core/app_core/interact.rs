@@ -278,6 +278,26 @@ impl AppCore {
         }
     }
 
+    /// Fill `<target_id>` / `<target_noun>` in a macro from the focused
+    /// interact entity, so a bound `target #<target_id>\rincant 611\r`
+    /// attacks whatever the focus ring is on. Text without placeholders
+    /// passes through untouched; None means the macro needs a target but
+    /// none is focused (mode off, empty category, or an exit) — callers
+    /// drop the command instead of sending the literal placeholder.
+    pub fn substitute_interact_placeholders(&self, text: String) -> Option<String> {
+        if !text.contains("<target_id>") && !text.contains("<target_noun>") {
+            return Some(text);
+        }
+        let (_, _, _, entity) = self.interact_current()?;
+        let InteractAction::Menu { exist_id, noun } = entity.action else {
+            return None; // exits have no exist id
+        };
+        Some(
+            text.replace("<target_id>", &exist_id)
+                .replace("<target_noun>", &noun),
+        )
+    }
+
     /// One-line summary for a status overlay:
     /// "Creatures 2/5: a muddy hog (stunned)".
     pub fn interact_overlay_line(&self) -> Option<String> {
@@ -473,6 +493,46 @@ mod tests {
         assert_eq!(
             core.interact_overlay_line().unwrap(),
             "Creatures 2/2: a kobold (stunned)"
+        );
+    }
+
+    #[test]
+    fn placeholders_fill_from_interact_focus() {
+        let mut core = core_with_room();
+        core.enter_interact_mode(); // Creatures, hog #111
+        assert_eq!(
+            core.substitute_interact_placeholders(
+                "target #<target_id>\rincant 611\rhide".to_string()
+            ),
+            Some("target #111\rincant 611\rhide".to_string())
+        );
+        assert_eq!(
+            core.substitute_interact_placeholders("whisper <target_noun> hi".to_string()),
+            Some("whisper hog hi".to_string())
+        );
+        // No placeholders: untouched, even with the mode off.
+        core.exit_interact_mode();
+        assert_eq!(
+            core.substitute_interact_placeholders("look\r".to_string()),
+            Some("look\r".to_string())
+        );
+        // Placeholder without a focus: dropped, not sent literally.
+        assert_eq!(
+            core.substitute_interact_placeholders("target #<target_id>".to_string()),
+            None
+        );
+    }
+
+    #[test]
+    fn placeholders_refuse_exits() {
+        let mut core = core_with_room();
+        core.game_state.room_creatures.clear();
+        core.game_state.room_objects.clear();
+        core.game_state.room_players.clear();
+        core.enter_interact_mode(); // Exits only
+        assert_eq!(
+            core.substitute_interact_placeholders("target #<target_id>".to_string()),
+            None
         );
     }
 

@@ -434,6 +434,11 @@ function setRoom(room) {
   roomExits = room.exits || [];
   renderTitle();
   renderCompass();
+  // Exits are an interact category; keep its focus in sync.
+  if (interact) {
+    syncInteractFocus();
+    renderInteract();
+  }
 }
 
 // ---- Compass ----------------------------------------------------------------
@@ -731,6 +736,7 @@ function handleSnapshot(d) {
   setEffects(d.effects || []);
   setInjuries(d.injuries || {});
   setTargets(d.targets || []);
+  setRoomEntities(d.entities || {});
   setCharInfo(d.char_info || {});
   setRt(d.rt);
   if (d.map_scene) setMapScene(d.map_scene);
@@ -782,6 +788,7 @@ function handleMessage(msg) {
     case "streams": handleStreamsReply(msg.d); break;
     case "injuries": setInjuries(msg.d); break;
     case "targets": setTargets(msg.d); break;
+    case "entities": setRoomEntities(msg.d); break;
     case "charinfo": setCharInfo(msg.d); break;
     case "map_scene": setMapScene(msg.d); break;
     case "map_state": setMapState(msg.d); break;
@@ -1293,7 +1300,7 @@ const GP_BUTTON_ORDER = [
 const GP_SHIFT = "shift";
 const GP_DEFAULT_BINDS = {
   dpad_up: "up", dpad_down: "down", dpad_right: "out", dpad_left: ".portal",
-  south: "look", l2: GP_SHIFT, r2: "wheel",
+  south: "look", l2: GP_SHIFT, r2: "wheel", start: "interact",
 };
 const GP_DEFAULT_SHIFT_BINDS = { south: "stand" };
 
@@ -1571,6 +1578,7 @@ const GP_UI_ACTIONS = {
     else openDrawer("right");
   },
   map: () => (mapOverlay.hidden ? openMapOverlay() : closeMapOverlay()),
+  interact: () => toggleInteract(),
   effects: () => openEffectsSheet(),
   settings: () => openSettingsSheet(),
   appearance: () => openAppearanceSheet(),
@@ -1580,13 +1588,250 @@ const GP_UI_ACTIONS = {
 
 // Dispatch a bind value: reserved words stay local (shift/wheel are
 // hold-modifiers handled elsewhere), UI actions run client-side, and
-// anything else is a game command (or dot-command) for the host.
+// anything else is a game command (or dot-command) for the host —
+// with <target_id>/<target_noun> filled from the interact focus, so a
+// bound "target #<target_id>\rincant 611" attacks whatever the focus
+// ring is on.
 function gpDispatchBind(bind) {
   if (!bind || bind === GP_SHIFT || gpWheelKeyOf(bind) !== null) return;
   const action = GP_UI_ACTIONS[bind];
-  if (action) action();
-  else sendCommand(bind);
+  if (action) return action();
+  const resolved = substituteInteractPlaceholders(bind);
+  if (resolved === null) {
+    flashInteractNote("macro needs an interact target");
+    return;
+  }
+  sendCommand(resolved);
 }
+
+// Fill <target_id>/<target_noun> from the focused interact entity; text
+// without placeholders passes through untouched. Null = the macro needs
+// a target but none is focused (mode off, empty category, or an exit) —
+// drop it rather than send the literal placeholder.
+function substituteInteractPlaceholders(text) {
+  if (!text.includes("<target_id>") && !text.includes("<target_noun>")) {
+    return text;
+  }
+  const current = interactCurrent();
+  const entity = current && current.entity;
+  if (!entity || entity.command) return null; // exits have no exist id
+  return text
+    .replaceAll("<target_id>", entity.existId)
+    .replaceAll("<target_noun>", entity.noun || "");
+}
+
+// ---- Interact mode ---------------------------------------------------------
+// The phone port of the desktop focus cycle (core/app_core/interact.rs):
+// walk the room's Creatures / Objects / Players / Exits without touching
+// the screen or rendering a room window. Entity lists arrive in the
+// snapshot and `entities` deltas (exits ride the room payload);
+// activation is the ordinary link-tap round-trip, so the server menu
+// opens as the usual bottom sheet — which the d-pad already navigates.
+// Toggle by the ◎ button (touch) or a button bound to "interact" (pad,
+// Start by default); up/down cycle entities, left/right categories.
+// Focus is remembered by exist id so room churn can't steal it.
+
+const INTERACT_ORDER = ["creatures", "objects", "players", "exits"];
+const INTERACT_LABELS = {
+  creatures: "Creatures", objects: "Objects", players: "Players", exits: "Exits",
+};
+// Compass short code -> movement command word (full words pass through).
+const EXIT_COMMANDS = {
+  n: "north", ne: "northeast", e: "east", se: "southeast",
+  s: "south", sw: "southwest", w: "west", nw: "northwest",
+};
+
+let roomEntities = { creatures: [], objects: [], players: [] };
+let interact = null; // { category, index, focusKey }
+
+function setRoomEntities(entities) {
+  roomEntities = {
+    creatures: entities.creatures || [],
+    objects: entities.objects || [],
+    players: entities.players || [],
+  };
+  if (interact) {
+    syncInteractFocus();
+    renderInteract();
+  }
+}
+
+/// Entities for one category, in display order: { key, label } plus
+/// either { existId, noun } (menu entities) or { command } (exits).
+function interactEntities(category) {
+  if (category === "exits") {
+    return roomExits.map((dir) => {
+      const command = EXIT_COMMANDS[dir] || dir;
+      return { key: dir, label: command, command };
+    });
+  }
+  return (roomEntities[category] || []).map((e) => ({
+    key: e.id, label: e.label, existId: e.id, noun: e.noun,
+  }));
+}
+
+function toggleInteract() {
+  if (interact) exitInteract();
+  else enterInteract();
+}
+
+function enterInteract() {
+  const category = INTERACT_ORDER.find((c) => interactEntities(c).length);
+  if (!category) {
+    flashInteractNote("nothing here to interact with");
+    return;
+  }
+  interact = { category, index: 0, focusKey: null };
+  syncInteractFocus();
+  renderInteract();
+  announceInteractFocus();
+}
+
+function exitInteract() {
+  interact = null;
+  interactBar.hidden = true;
+}
+
+// Re-resolve the stored focus against current lists: find the remembered
+// key, else clamp the index — room churn between deltas can't leave a
+// stale index.
+function syncInteractFocus() {
+  if (!interact) return;
+  const entities = interactEntities(interact.category);
+  if (!entities.length) {
+    interact.index = 0;
+    interact.focusKey = null;
+    return;
+  }
+  const found = interact.focusKey === null
+    ? -1
+    : entities.findIndex((e) => e.key === interact.focusKey);
+  if (found >= 0) {
+    interact.index = found;
+  } else {
+    interact.index = Math.min(interact.index, entities.length - 1);
+    interact.focusKey = entities[interact.index].key;
+  }
+}
+
+function interactCurrent() {
+  if (!interact) return null;
+  const entities = interactEntities(interact.category);
+  const entity = entities[interact.index];
+  return entity ? { category: interact.category, index: interact.index, count: entities.length, entity } : null;
+}
+
+/// Move focus within the category (+1 / -1), wrapping.
+function interactMove(delta) {
+  if (!interact) return;
+  syncInteractFocus();
+  const entities = interactEntities(interact.category);
+  if (!entities.length) return renderInteract();
+  interact.index = (interact.index + delta + entities.length) % entities.length;
+  interact.focusKey = entities[interact.index].key;
+  renderInteract();
+  announceInteractFocus();
+}
+
+/// Switch category (+1 / -1), skipping empty ones, wrapping.
+function interactCategoryMove(delta) {
+  if (!interact) return;
+  const start = INTERACT_ORDER.indexOf(interact.category);
+  const len = INTERACT_ORDER.length;
+  for (let step = 1; step <= len; step++) {
+    const candidate = INTERACT_ORDER[(start + delta * step + len * len) % len];
+    if (candidate === interact.category) continue;
+    if (interactEntities(candidate).length) {
+      interact.category = candidate;
+      interact.index = 0;
+      interact.focusKey = null;
+      syncInteractFocus();
+      renderInteract();
+      announceInteractFocus();
+      return;
+    }
+  }
+}
+
+/// Activate the focused entity: the server context menu for entities
+/// (same link-tap round-trip as tapping a name in the story), a bare
+/// movement command for exits — walking leaves the room, so the mode
+/// drops with it.
+function interactActivate() {
+  syncInteractFocus();
+  const current = interactCurrent();
+  if (!current) return;
+  const { entity } = current;
+  if (entity.command) {
+    exitInteract();
+    sendCommand(entity.command);
+    return;
+  }
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  const requestId = ++menuRequestCounter;
+  pendingMenuRequest = requestId;
+  openSheetLoading(entity.noun || entity.label);
+  state.ws.send(JSON.stringify({
+    t: "link_tap",
+    d: {
+      request_id: requestId,
+      exist_id: entity.existId,
+      noun: entity.noun || "",
+      text: entity.label,
+    },
+  }));
+}
+
+const interactBar = document.getElementById("interact-bar");
+let interactNoteTimer = 0;
+
+function flashInteractNote(text) {
+  interactBar.hidden = false;
+  document.getElementById("ia-cat").textContent = "";
+  document.getElementById("ia-entity").textContent = text;
+  clearTimeout(interactNoteTimer);
+  interactNoteTimer = setTimeout(() => {
+    if (!interact) interactBar.hidden = true;
+  }, 1600);
+}
+
+function renderInteract() {
+  if (!interact) {
+    interactBar.hidden = true;
+    return;
+  }
+  const current = interactCurrent();
+  const cat = document.getElementById("ia-cat");
+  const entity = document.getElementById("ia-entity");
+  if (current) {
+    cat.textContent = `${INTERACT_LABELS[current.category]} ${current.index + 1}/${current.count}`;
+    entity.textContent = current.entity.label;
+  } else {
+    cat.textContent = INTERACT_LABELS[interact.category];
+    entity.textContent = "nothing here";
+  }
+  interactBar.hidden = false;
+}
+
+/// Speak focus changes when speech is on (ephemeral UI — skip the queue
+/// caps, mirror of the desktop TTS announce).
+function announceInteractFocus() {
+  const current = interactCurrent();
+  if (!current || !speechPrefs.enabled || !speechAvailable()) return;
+  const utterance = new SpeechSynthesisUtterance(
+    `${current.entity.label}, ${INTERACT_LABELS[current.category]}`,
+  );
+  speechSynthesis.speak(utterance);
+}
+
+document.getElementById("interact-btn").addEventListener("click", toggleInteract);
+document.getElementById("ia-close").addEventListener("click", exitInteract);
+document.getElementById("ia-prev").addEventListener("click", () => interactMove(-1));
+document.getElementById("ia-next").addEventListener("click", () => interactMove(1));
+document.getElementById("ia-cat-prev").addEventListener("click", () => interactCategoryMove(-1));
+document.getElementById("ia-cat-next").addEventListener("click", () => interactCategoryMove(1));
+document.getElementById("ia-go").addEventListener("click", interactActivate);
+document.getElementById("ia-label").addEventListener("click", interactActivate);
 
 function pollGamepads() {
   const pads = gamepadPads();
@@ -1738,6 +1983,19 @@ function handleGamepadButton(index) {
     }
     if (name === "east") return closeSheet();
     return; // other buttons stay quiet while a sheet is open
+  }
+
+  // Interact mode: the d-pad and confirm/cancel are fixed navigation
+  // keys, mirroring desktop; other buttons still dispatch so the mode
+  // can be toggled off from the pad — unless shift is held, which
+  // always means "the other bank".
+  if (interact && !gpShiftHeld()) {
+    if (name === "dpad_up") return interactMove(-1);
+    if (name === "dpad_down") return interactMove(1);
+    if (name === "dpad_left") return interactCategoryMove(-1);
+    if (name === "dpad_right") return interactCategoryMove(1);
+    if (name === "south") return interactActivate();
+    if (name === "east") return exitInteract();
   }
 
   if (!controllerPrefs.enabled) return;
@@ -2767,6 +3025,8 @@ document.addEventListener("click", (ev) => {
   if (ev.target.closest("#macro-rail")) return; // rail taps retarget the sheet
   if (ev.target.closest("#chips")) return; // long-press opens arrange
   if (ev.target.closest(".fx-pill")) return; // opens the effects sheet
+  if (ev.target.closest("#interact-bar")) return; // Go opens the entity menu
+  if (ev.target.closest("#interact-btn")) return; // toggling shouldn't dismiss
   if (ev.target.closest("#textsize-btn")) return; // opens the size stepper
   if (ev.target.closest("#settings-btn")) return; // opens the settings sheet
   if (ev.target.closest("#session-settings")) return; // login-screen settings

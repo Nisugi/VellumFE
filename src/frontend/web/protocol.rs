@@ -12,8 +12,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::core::remote::{
-    RemoteCharInfo, RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteSessionInfo,
-    RemoteStateSnapshot, RemoteTarget, RemoteWheels,
+    RemoteCharInfo, RemoteDelta, RemoteMacros, RemoteMenuItem, RemoteRoomEntities,
+    RemoteSessionInfo, RemoteStateSnapshot, RemoteTarget, RemoteWheels,
 };
 use crate::core::state::{StatusInfo, Vitals};
 use crate::data::remote_buffer::RemoteLine;
@@ -115,6 +115,7 @@ struct SnapshotPayload {
     effects: Vec<ActiveEffectsContent>,
     injuries: std::collections::HashMap<String, u8>,
     targets: Vec<RemoteTarget>,
+    entities: RemoteRoomEntities,
     char_info: RemoteCharInfo,
     session: RemoteSessionInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,6 +172,7 @@ pub fn snapshot(
         effects: state.effects.clone(),
         injuries: state.injuries.clone(),
         targets: state.targets.clone(),
+        entities: state.entities.clone(),
         char_info: state.char_info.clone(),
         session: state.session.clone(),
         map_scene: state.map_scene.0.clone(),
@@ -252,6 +254,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Session(info) => encode("session", last_seq, info),
         RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
         RemoteDelta::Targets(targets) => encode("targets", last_seq, targets),
+        RemoteDelta::Entities(entities) => encode("entities", last_seq, entities),
         RemoteDelta::CharInfo(info) => encode("charinfo", last_seq, info),
         RemoteDelta::Sound { file, volume } => encode(
             "sound",

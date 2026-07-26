@@ -182,6 +182,25 @@ async fn main() {
         ] {
             snap.injuries.insert(part.to_string(), level);
         }
+        // Scripted room entities so interact mode has something to cycle:
+        // two creatures (one with statuses), loot, a player. Exits ride
+        // the room payload; the harness has no room, so exits stay empty
+        // unless a snapshot sets them.
+        {
+            use vellum_fe::core::remote::RemoteRoomEntity;
+            let entity = |label: &str, id: &str, noun: &str| RemoteRoomEntity {
+                id: id.into(),
+                label: label.into(),
+                noun: noun.into(),
+            };
+            snap.entities.creatures = vec![
+                entity("a muddy hog (stunned)", "111", "hog"),
+                entity("a kobold", "222", "kobold"),
+            ];
+            snap.entities.objects = vec![entity("a silver ring", "333", "ring")];
+            snap.entities.players = vec![entity("Testy", "444", "Testy")];
+            snap.exits = vec!["n".into(), "sw".into(), "out".into()];
+        }
         snap.map_scene = RemoteMapSceneRef(Some(scene));
         snap.map_state = RemoteMapState {
             available: true,
@@ -590,6 +609,30 @@ async fn main() {
                 }
             }
             RemoteEvent::Macro { id } => println!("EVENT macro tap: {id:?}"),
+            RemoteEvent::LinkTap {
+                client_id,
+                request_id,
+                exist_id,
+                noun,
+                ..
+            } => {
+                use vellum_fe::core::remote::RemoteMenuItem;
+                println!("EVENT link_tap: exist_id={exist_id:?} noun={noun:?}");
+                let item = |text: &str, command: &str| RemoteMenuItem {
+                    text: text.into(),
+                    command: command.into(),
+                    disabled: false,
+                };
+                sink.push_menu(
+                    client_id,
+                    request_id,
+                    noun.clone(),
+                    vec![
+                        item(&format!("look at {noun}"), &format!("look #{exist_id}")),
+                        item(&format!("attack {noun}"), &format!("attack #{exist_id}")),
+                    ],
+                );
+            }
             RemoteEvent::WheelPick { key, path } => {
                 let resolved = wheel_config.wheel_pick_command(&key, &path);
                 println!("EVENT wheel_pick: key={key:?} path={path:?} resolved={resolved:?}");

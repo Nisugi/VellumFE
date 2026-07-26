@@ -449,6 +449,41 @@ async fn macros_flow_definitions_out_taps_in() {
 }
 
 #[tokio::test]
+async fn entities_flow_in_snapshot_and_deltas() {
+    use vellum_fe::core::remote::{RemoteRoomEntity, RemoteStateSnapshot};
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    let entity = |id: &str, label: &str, noun: &str| RemoteRoomEntity {
+        id: id.to_string(),
+        label: label.to_string(),
+        noun: noun.to_string(),
+    };
+    let mut snap = RemoteStateSnapshot::default();
+    snap.entities.creatures = vec![entity("111", "a muddy hog (stunned)", "hog")];
+    sink.flush_state(snap.clone());
+
+    let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    assert_eq!(snapshot["d"]["entities"]["creatures"][0]["id"], "111");
+    assert_eq!(
+        snapshot["d"]["entities"]["creatures"][0]["label"],
+        "a muddy hog (stunned)"
+    );
+    assert_eq!(snapshot["d"]["entities"]["creatures"][0]["noun"], "hog");
+    assert_eq!(
+        snapshot["d"]["entities"]["objects"].as_array().unwrap().len(),
+        0
+    );
+
+    // A room change flows as a coalesced entities delta.
+    snap.entities.players = vec![entity("444", "Testy", "Testy")];
+    sink.flush_state(snap);
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "entities");
+    assert_eq!(delta["d"]["players"][0]["id"], "444");
+    assert_eq!(delta["d"]["creatures"][0]["id"], "111");
+}
+
+#[tokio::test]
 async fn wheels_flow_definitions_out_picks_in() {
     let (mut sink, mut event_rx, addr) = start_server(100).await;
 

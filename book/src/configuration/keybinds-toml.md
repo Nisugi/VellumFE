@@ -130,6 +130,17 @@ Sleep segments work anywhere command text is dispatched — keyboard
 macros, controller binds, hotbar buttons, macro buttons (including taps
 from the phone client), and wheel slices.
 
+While **interact mode** is focused on an entity, macros may reference it
+with `<target_id>` (exist id) and `<target_noun>`:
+
+```toml
+[controller]
+west = { macro_text = "target #<target_id>\rincant 611\r" }
+```
+
+A placeholder macro pressed with nothing focused is dropped (with a
+message) rather than sent literally. Exits have no exist id.
+
 ## Keybind Profiles
 
 Save and swap whole keybind sets:

@@ -125,6 +125,16 @@ impl AppCore {
                 let clean_text =
                     macro_action.macro_text.trim_end_matches(&['\r', '\n'][..]).to_string();
 
+                // <target_id>/<target_noun> resolve against the interact
+                // focus; a targetless placeholder macro is dropped rather
+                // than sent literally.
+                let Some(clean_text) = self.substitute_interact_placeholders(clean_text) else {
+                    self.add_system_message(
+                        "Macro needs an interact-mode target (focus something first)",
+                    );
+                    return Ok(vec![]);
+                };
+
                 tracing::info!(
                     "[MACRO] Executing macro: '{}' (raw: '{}')",
                     clean_text,
