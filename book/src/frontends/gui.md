@@ -154,9 +154,17 @@ avoid doubled inputs).
   `down`, right goes `out`, and left runs [`.portal`](../reference/commands.md)
   — walk the room's door/arch/gate, with a pick list when there are
   several.
-- While [interact mode](#interact-mode) or a context menu is open, the
-  **d-pad navigates, South (A/cross) confirms, East (B/circle)
-  cancels** — that part is fixed.
+- While a **context menu** is open, the d-pad navigates, South
+  (A/cross) confirms, East (B/circle) cancels — that part is fixed.
+- In **[interact mode](#interact-mode)** the **right stick** does the
+  cycling — up/down switch categories, left/right step entities — and
+  **South selects** (menu, or walk the exit). Everything else keeps
+  its binds: the left stick still walks, the d-pad still runs its
+  commands, and the other face buttons (plus the shift bank) fire
+  their macros. Macros may use `<target_id>` / `<target_noun>`,
+  filled from the focused entity at press time — bind
+  `target #<target_id>\rincant 611\r` to West and cast at whatever
+  the ring is on. Toggle the mode off from its Start bind.
 
 Everything else is yours to bind with **`.controller`**: each button
 maps to a keybind action or macro, with a "press a button" capture in

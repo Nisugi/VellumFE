@@ -139,14 +139,18 @@ The gear button (also reachable from the login screen) opens Settings:
 - **Interact mode** — the desktop focus cycle, phone-sized: the ◎
   button (or a pad button bound to `interact`; Start by default)
   opens a bar that walks the room's **Creatures / Objects / Players /
-  Exits**. On a pad, up/down cycle entities, left/right switch
-  categories, South opens the entity's server context menu (the usual
-  bottom sheet, pad-navigable), East closes; on screen the bar has
-  the same arrows plus **Go**. Activating an exit walks it. Focus
-  follows the entity by id, so room churn doesn't steal it. Any bound
-  macro may use `<target_id>` / `<target_noun>` — filled from the
+  Exits**. On a pad the **right stick** does the cycling — up/down
+  switch categories, left/right step entities — and **South** selects:
+  the entity's server context menu (the usual bottom sheet, which the
+  d-pad navigates) or walking the exit. Everything else keeps its
+  binds: the left stick still walks, the d-pad still runs its
+  commands, and West/North/East (plus the whole shift bank) fire
+  their macros — with `<target_id>` / `<target_noun>` filled from the
   focused entity at press time, so `target #<target_id>\rincant 611`
-  on a button (or the shift bank) casts at whatever the ring is on.
+  on a face button casts at whatever the ring is on. Close the mode
+  with its toggle or the ✕ (walking an exit closes it too). On
+  screen, the bar has category/entity arrows plus **Go**. Focus
+  follows the entity by id, so room churn doesn't steal it.
 - **Sound alerts / login music** — browser playback toggles.
 - **Client settings (saved on host)** — the full desktop settings
   registry over the wire: every setting, editable at character or global

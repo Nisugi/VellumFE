@@ -1906,12 +1906,35 @@ function pollGamepads() {
     }
   }
 
-  // Right stick: analog scroll of the story pane (quadratic speed curve;
-  // stick up scrolls up). Quiet while a sheet is open.
+  // Right stick: in interact mode it cycles the focus — up/down switch
+  // categories, left/right step entities, one step per deflection with
+  // the same hysteresis as movement. Otherwise it scrolls the story
+  // (quadratic speed curve; stick up scrolls up). Quiet while a sheet
+  // is open.
+  const rightX = axes[2] || 0;
   const rightY = axes[3] || 0;
-  if (Math.abs(rightY) > 0.25 && sheet.hidden) {
+  if (interact && sheet.hidden) {
+    const dir = gpFourWay(rightX, -rightY, gpRightDir);
+    if (dir !== gpRightDir) {
+      if (dir === "up") interactCategoryMove(-1);
+      else if (dir === "down") interactCategoryMove(1);
+      else if (dir === "left") interactMove(-1);
+      else if (dir === "right") interactMove(1);
+      gpRightDir = dir;
+    }
+  } else if (Math.abs(rightY) > 0.25 && sheet.hidden) {
     pane.scrollBy(0, rightY * Math.abs(rightY) * 40);
   }
+}
+
+// Dominant-axis four-way read of a stick with the movement hysteresis:
+// one direction per deflection, re-armed by returning toward center.
+let gpRightDir = null;
+function gpFourWay(x, yUp, previous) {
+  const magnitude = Math.hypot(x, yUp);
+  if (magnitude < (previous !== null ? 0.35 : 0.6)) return null;
+  if (Math.abs(x) > Math.abs(yUp)) return x > 0 ? "right" : "left";
+  return yUp > 0 ? "up" : "down";
 }
 
 function sheetItemButtons() {
@@ -1985,17 +2008,13 @@ function handleGamepadButton(index) {
     return; // other buttons stay quiet while a sheet is open
   }
 
-  // Interact mode: the d-pad and confirm/cancel are fixed navigation
-  // keys, mirroring desktop; other buttons still dispatch so the mode
-  // can be toggled off from the pad — unless shift is held, which
-  // always means "the other bank".
-  if (interact && !gpShiftHeld()) {
-    if (name === "dpad_up") return interactMove(-1);
-    if (name === "dpad_down") return interactMove(1);
-    if (name === "dpad_left") return interactCategoryMove(-1);
-    if (name === "dpad_right") return interactCategoryMove(1);
-    if (name === "south") return interactActivate();
-    if (name === "east") return exitInteract();
+  // Interact mode: South selects (menu / walk); every other button —
+  // d-pad, the remaining face buttons, and the whole shift bank — stays
+  // on its binds, so West/North/East can carry <target_id> attack
+  // macros. The right stick does the cycling (see pollGamepads); the
+  // mode closes from its toggle, the ✕, or walking an exit.
+  if (interact && !gpShiftHeld() && name === "south") {
+    return interactActivate();
   }
 
   if (!controllerPrefs.enabled) return;

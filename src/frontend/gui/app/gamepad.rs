@@ -106,7 +106,7 @@ impl VellumGuiApp {
 
         // Left stick: 8-way compass movement, one command per deflection.
         // Right stick: analog story-window scroll (speed follows deflection).
-        let (stick, right_y) = self
+        let (stick, right_x, right_y) = self
             .gamepad
             .as_ref()
             .and_then(|g| g.gamepads().next())
@@ -116,10 +116,11 @@ impl VellumGuiApp {
                         pad.value(gilrs::Axis::LeftStickX),
                         pad.value(gilrs::Axis::LeftStickY),
                     )),
+                    pad.value(gilrs::Axis::RightStickX),
                     pad.value(gilrs::Axis::RightStickY),
                 )
             })
-            .unwrap_or((None, 0.0));
+            .unwrap_or((None, 0.0, 0.0));
 
         for button in pressed {
             // The controller editor's "press a button" capture wins over
@@ -220,10 +221,25 @@ impl VellumGuiApp {
             }
         }
 
-        // Right stick up/down scrolls the main story window; quadratic
-        // curve so small deflections creep and full tilt flies. Stick up
-        // scrolls up (negative offset delta).
-        if right_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
+        // Right stick: in interact mode it cycles the focus — up/down
+        // switch categories, left/right step entities, one step per
+        // deflection with the movement hysteresis. Otherwise up/down
+        // scrolls the main story window; quadratic curve so small
+        // deflections creep and full tilt flies. Stick up scrolls up
+        // (negative offset delta).
+        if self.app_core.ui_state.input_mode == InputMode::Interact {
+            let dir = four_way(right_x, right_y, self.gp_right_dir);
+            if dir != self.gp_right_dir {
+                match dir {
+                    Some(FourWay::Up) => self.app_core.interact_category_move(-1),
+                    Some(FourWay::Down) => self.app_core.interact_category_move(1),
+                    Some(FourWay::Left) => self.app_core.interact_move(-1),
+                    Some(FourWay::Right) => self.app_core.interact_move(1),
+                    None => {}
+                }
+                self.gp_right_dir = dir;
+            }
+        } else if right_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
             let delta = -right_y.signum() * right_y * right_y * 40.0;
             ctx.data_mut(|d| {
                 d.insert_temp(
@@ -358,15 +374,11 @@ impl VellumGuiApp {
             return;
         }
 
-        // While interact mode or a popup menu is up, the d-pad and the
-        // confirm/cancel face buttons are fixed navigation keys — unless
-        // the shift button is held, which always means "the other bank".
+        // While a popup menu is up, the d-pad and the confirm/cancel face
+        // buttons are fixed navigation keys — unless the shift button is
+        // held, which always means "the other bank".
         let shift_held = self.gamepad_shift_held();
-        let modal = matches!(
-            self.app_core.ui_state.input_mode,
-            InputMode::Interact | InputMode::Menu
-        );
-        if modal && !shift_held {
+        if self.app_core.ui_state.input_mode == InputMode::Menu && !shift_held {
             let code = match button {
                 Button::DPadUp => Some(KeyCode::Up),
                 Button::DPadDown => Some(KeyCode::Down),
@@ -381,8 +393,22 @@ impl VellumGuiApp {
                 self.handle_modal_nav_key(&key, ctx);
                 return;
             }
-            // Other buttons (e.g. start = interact_mode) still dispatch so
-            // the mode can be toggled off from the pad.
+            // Other buttons still dispatch so modes can be toggled off
+            // from the pad.
+        }
+
+        // Interact mode: only South is claimed (select — open the menu,
+        // walk the exit). The right stick does the cycling (see
+        // poll_gamepad); the d-pad and the other face buttons stay on
+        // their binds so West/North/East can carry <target_id> attack
+        // macros. Exit via the interact_mode toggle or walking an exit.
+        if self.app_core.ui_state.input_mode == InputMode::Interact
+            && !shift_held
+            && button == Button::South
+        {
+            let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+            self.handle_modal_nav_key(&key, ctx);
+            return;
         }
 
         let Some(name) = gamepad_button_name(button) else {
@@ -608,6 +634,41 @@ impl VellumGuiApp {
     }
 }
 
+/// Dominant-axis four-way stick read, used by the interact-mode right
+/// stick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FourWay {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// Read a stick as a four-way direction with the movement hysteresis:
+/// one direction per deflection, re-armed by returning toward center.
+fn four_way(x: f32, y_up: f32, previous: Option<FourWay>) -> Option<FourWay> {
+    let magnitude = (x * x + y_up * y_up).sqrt();
+    let threshold = if previous.is_some() {
+        STICK_RELEASE
+    } else {
+        STICK_DEFLECT
+    };
+    if magnitude < threshold {
+        return None;
+    }
+    Some(if x.abs() > y_up.abs() {
+        if x > 0.0 {
+            FourWay::Right
+        } else {
+            FourWay::Left
+        }
+    } else if y_up > 0.0 {
+        FourWay::Up
+    } else {
+        FourWay::Down
+    })
+}
+
 /// Which wheel slice the stick is aiming at: slice 0 centered at the top,
 /// clockwise. None inside the dead zone or with no slices.
 fn wheel_slice_at(x: f32, y_up: f32, count: usize) -> Option<usize> {
@@ -664,6 +725,21 @@ mod tests {
         for ((x, y), expected) in cases {
             assert_eq!(stick_sector(x, y, None), Some(expected), "({x},{y})");
         }
+    }
+
+    #[test]
+    fn four_way_picks_dominant_axis_with_hysteresis() {
+        assert_eq!(four_way(0.0, 1.0, None), Some(FourWay::Up));
+        assert_eq!(four_way(0.0, -1.0, None), Some(FourWay::Down));
+        assert_eq!(four_way(-1.0, 0.0, None), Some(FourWay::Left));
+        assert_eq!(four_way(1.0, 0.0, None), Some(FourWay::Right));
+        // Dominant axis wins on diagonals.
+        assert_eq!(four_way(0.9, 0.5, None), Some(FourWay::Right));
+        assert_eq!(four_way(0.4, -0.8, None), Some(FourWay::Down));
+        // Dead zone and hysteresis mirror the movement stick.
+        assert_eq!(four_way(0.3, 0.3, None), None);
+        assert_eq!(four_way(0.0, 0.5, Some(FourWay::Up)), Some(FourWay::Up));
+        assert_eq!(four_way(0.0, 0.2, Some(FourWay::Up)), None);
     }
 
     #[test]

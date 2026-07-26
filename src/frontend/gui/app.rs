@@ -219,6 +219,10 @@ pub struct VellumGuiApp {
     /// center. Movement sends on sector *change* with hysteresis.
     #[cfg(feature = "gamepad")]
     gp_stick_sector: Option<usize>,
+    /// Right-stick four-way direction currently deflected (interact-mode
+    /// cycling); None at center. Steps on direction *change*.
+    #[cfg(feature = "gamepad")]
+    gp_right_dir: Option<gamepad::FourWay>,
     /// Radial wheel state while the wheel button is held: which named
     /// wheel, the folder path descended so far, and the aimed slice.
     /// Firing happens on release.
@@ -536,6 +540,8 @@ impl VellumGuiApp {
                 .ok(),
             #[cfg(feature = "gamepad")]
             gp_stick_sector: None,
+            #[cfg(feature = "gamepad")]
+            gp_right_dir: None,
             #[cfg(feature = "gamepad")]
             gp_wheel: None,
             #[cfg(feature = "gamepad")]
