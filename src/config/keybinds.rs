@@ -490,6 +490,32 @@ impl MenuKeybinds {
 }
 
 impl KeyAction {
+    /// Action names that execute fully inside AppCore — the set that does
+    /// something useful from a controller button (everything else is
+    /// keyboard-widget-level and would no-op). Drives the controller
+    /// editor's action dropdown; a test keeps every entry parseable.
+    pub const CONTROLLER_ACTION_NAMES: &'static [&'static str] = &[
+        "interact_mode",
+        "stop_travel",
+        "scroll_current_window_up_page",
+        "scroll_current_window_down_page",
+        "scroll_current_window_up_one",
+        "scroll_current_window_down_one",
+        "scroll_current_window_home",
+        "scroll_current_window_end",
+        "toggle_sounds",
+        "toggle_performance_stats",
+        "tts_next",
+        "tts_previous",
+        "tts_next_unread",
+        "tts_stop",
+        "tts_mute_toggle",
+        "tts_increase_rate",
+        "tts_decrease_rate",
+        "tts_increase_volume",
+        "tts_decrease_volume",
+    ];
+
     pub fn from_str(action: &str) -> Option<Self> {
         match action {
             "send_command" => Some(Self::SendCommand),
@@ -749,6 +775,93 @@ impl Config {
         } else {
             Ok(HashMap::new())
         }
+    }
+
+    /// Load controller (gamepad) bindings from the `[controller]` section of
+    /// the global keybinds.toml. Controller binds are global-only: pads are
+    /// per-desk, not per-character. Falls back to the shipped defaults when
+    /// the file has no `[controller]` section yet (pre-refresh installs).
+    pub fn load_controller_binds() -> Result<HashMap<String, KeyBindAction>> {
+        let section_from = |contents: &str| -> Option<HashMap<String, KeyBindAction>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            let section = toml_value.get("controller")?;
+            section.clone().try_into().ok()
+        };
+
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(binds) = section_from(&contents) {
+                return Ok(binds);
+            }
+        }
+        Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Save one controller binding into `[controller]` of the global
+    /// keybinds.toml (created if missing).
+    pub fn save_single_controller_bind(button: &str, action: &KeyBindAction) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+
+        let section = toml_table
+            .entry("controller".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        if let toml::Value::Table(table) = section {
+            let action_value = match action {
+                KeyBindAction::Action(a) => toml::Value::String(a.clone()),
+                KeyBindAction::Macro(m) => {
+                    let mut macro_table = toml::value::Table::new();
+                    macro_table.insert(
+                        "macro_text".to_string(),
+                        toml::Value::String(m.macro_text.clone()),
+                    );
+                    toml::Value::Table(macro_table)
+                }
+            };
+            table.insert(button.to_string(), action_value);
+        }
+
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        tracing::info!("Saved controller bind '{}' to {:?}", button, path);
+        Ok(())
+    }
+
+    /// Delete one controller binding from `[controller]` of the global
+    /// keybinds.toml.
+    pub fn delete_single_controller_bind(button: &str) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        if !path.exists() {
+            return Ok(());
+        }
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+        let mut toml_table: toml::value::Table = toml::from_str(&contents)
+            .with_context(|| format!("Failed to parse keybinds file: {:?}", path))?;
+        if let Some(toml::Value::Table(table)) = toml_table.get_mut("controller") {
+            if table.remove(button).is_some() {
+                let contents =
+                    toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+                write_atomic(&path, contents)
+                    .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+                tracing::info!("Deleted controller bind '{}' from {:?}", button, path);
+            }
+        }
+        Ok(())
     }
 
     /// Save keybinds to keybinds.toml for a character
@@ -1274,6 +1387,16 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controller_action_names_all_parse() {
+        for name in KeyAction::CONTROLLER_ACTION_NAMES {
+            assert!(
+                KeyAction::from_str(name).is_some(),
+                "'{name}' in CONTROLLER_ACTION_NAMES does not parse"
+            );
+        }
+    }
 
     // ===========================================
     // parse_key_string - basic keys

@@ -2492,6 +2492,15 @@ impl MessageProcessor {
         }
     }
 
+    /// Expand `:grin:`-style emoji shortcodes in the pending line, gated by
+    /// the `ui.emoji_shortcodes` toggle. Called from the flush path right
+    /// after highlights are applied.
+    fn apply_emoji_shortcodes(&mut self) {
+        if self.config.ui.emoji_shortcodes {
+            super::emoji::apply_to_segments(&mut self.current_segments);
+        }
+    }
+
     /// Flush current text to appropriate window
     pub fn flush_current_stream(&mut self, ui_state: &mut UiState) {
         self.flush_current_stream_with_tts(ui_state, None);
@@ -2580,6 +2589,11 @@ impl MessageProcessor {
             .apply_highlights(&self.current_segments, &self.current_stream);
         self.current_segments = highlight_result.segments;
         let deferred_replacements = highlight_result.deferred_replacements;
+
+        // Expand :grin:-style emoji shortcodes at the same seam as highlight
+        // text replacement, so every frontend sees the expanded text. Gated
+        // by ui.emoji_shortcodes (mirrors the highlight_settings toggles).
+        self.apply_emoji_shortcodes();
 
         // Queue sounds from highlight processing
         self.pending_sounds.extend(highlight_result.sounds);
@@ -4341,6 +4355,35 @@ mod tests {
             result,
             Some((_window, crate::config::RedirectMode::RedirectOnly, 3))
         ));
+    }
+
+    // ===========================================
+    // Emoji shortcode toggle tests
+    // ===========================================
+
+    #[test]
+    fn test_emoji_shortcodes_applied_when_enabled() {
+        let mut processor = create_test_processor();
+        assert!(processor.config.ui.emoji_shortcodes, "default must be on");
+        processor.current_segments = vec![TextSegment::plain("You :grin: at 12:30:45.")];
+        processor.apply_emoji_shortcodes();
+        assert_eq!(
+            processor.current_segments[0].text,
+            "You \u{1F601} at 12:30:45."
+        );
+    }
+
+    #[test]
+    fn test_emoji_shortcodes_toggle_off_passthrough() {
+        let mut config = Config::default();
+        config.ui.emoji_shortcodes = false;
+        let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+        processor.current_segments = vec![TextSegment::plain("You :grin: at :notarealcode:.")];
+        processor.apply_emoji_shortcodes();
+        assert_eq!(
+            processor.current_segments[0].text,
+            "You :grin: at :notarealcode:."
+        );
     }
 
     // ===========================================

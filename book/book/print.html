@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-c3709f10.js";
+            window.path_to_searchindex_js = "searchindex-15e7b0a9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e125f080.js"></script>
@@ -648,6 +648,26 @@ and Enter navigate it, Esc backs out to interact mode.</li>
 overlay, and announced through TTS when speech is enabled.</li>
 <li><strong>Esc</strong> exits the mode.</li>
 </ul>
+<h2 id="controllers"><a class="header" href="#controllers">Controllers</a></h2>
+<p>Plug in a gamepad and the GUI reads it natively (Xbox and PlayStation
+pads verified on Windows; no mapper software needed — turn yours off to
+avoid doubled inputs).</p>
+<ul>
+<li><strong>Left stick</strong> walks the 8 compass directions — deflect toward
+northeast to head <code>ne</code>; one step per deflection.</li>
+<li><strong>D-pad</strong> covers the rest of movement by default: up/down go <code>up</code> and
+<code>down</code>, right goes <code>out</code>, and left runs <a href="#command-reference"><code>.portal</code></a>
+— walk the room’s door/arch/gate, with a pick list when there are
+several.</li>
+<li>While <a href="#interact-mode">interact mode</a> or a context menu is open, the
+<strong>d-pad navigates, South (A/cross) confirms, East (B/circle)
+cancels</strong> — that part is fixed.</li>
+</ul>
+<p>Everything else is yours to bind with <strong><code>.controller</code></strong>: each button
+maps to a keybind action or macro, with a “press a button” capture in
+the editor (<code>look</code> on South and interact mode on Start ship as
+defaults). Bindings live in the <code>[controller]</code> table of the global
+keybinds.toml and apply to all characters.</p>
 <h2 id="speech-text-to-speech"><a class="header" href="#speech-text-to-speech">Speech (Text-to-Speech)</a></h2>
 <p><strong>Settings &gt; Speech</strong> holds the TTS controls: enable, rate, volume, a
 voice picker, pronunciation substitutions, gag patterns, and a <strong>Test</strong>
@@ -785,6 +805,14 @@ connect); the chrome toggles and opacities stay per-device.</li>
 <li><strong>Speech</strong> — read incoming lines aloud with the browser’s speech
 synthesis, with per-stream toggles (thoughts on by default). Voice
 availability depends on the phone; the first utterance may need a tap.</li>
+<li><strong>Controller</strong> — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
+PlayStation, MFi): the left stick walks the 8 compass directions,
+and the d-pad defaults to <code>up</code>/<code>down</code>/<code>out</code> with left running
+<code>.portal</code> (walk the room’s door or arch); <code>look</code> sits on South. All
+rebindable here — tap a row, or press the button on the pad to jump
+to it. Whenever a bottom sheet is open — context menus,
+tap-to-target — the d-pad navigates it: up/down move, South taps,
+East closes. Per-device.</li>
 <li><strong>Sound alerts / login music</strong> — browser playback toggles.</li>
 <li><strong>Client settings (saved on host)</strong> — the full desktop settings
 registry over the wire: every setting, editable at character or global
@@ -1537,6 +1565,18 @@ lines to see what your terminal actually sends.</p>
 </tbody>
 </table>
 </div>
+<h2 id="controller-bindings"><a class="header" href="#controller-bindings">Controller Bindings</a></h2>
+<p>The <code>[controller]</code> table (global file only — pads are per-desk, not
+per-character) maps gamepad buttons to the same actions and macros as
+<code>[user]</code>. Edit with <code>.controller</code> in the GUI. Buttons: <code>south</code>, <code>east</code>,
+<code>north</code>, <code>west</code>, <code>dpad_up</code>/<code>down</code>/<code>left</code>/<code>right</code>, <code>l1</code>, <code>r1</code>, <code>l2</code>,
+<code>r2</code>, <code>l3</code>, <code>r3</code>, <code>select</code>, <code>start</code>, <code>guide</code>.</p>
+<pre><code class="language-toml">[controller]
+start = "interact_mode"
+dpad_up = { macro_text = "n\r" }
+</code></pre>
+<p>Inside interact mode and context menus the d-pad, South, and East are
+fixed navigation keys; bindings apply outside those modes.</p>
 <h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
 <p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
 <pre><code class="language-toml">[user]
@@ -4087,6 +4127,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.go2 &lt;target&gt;</code></td><td></td><td>Native map travel: room id, uid (<code>u7150105</code>), tag (<code>bank</code>), saved name, or text search — see the <a href="#travel-go2-1">Travel chapter</a></td></tr>
 <tr><td><code>.go2 stop</code> / <code>.go2 status</code></td><td></td><td>Cancel / show the active trip</td></tr>
 <tr><td><code>.go2 save &lt;name&gt; [id]</code></td><td></td><td>Save a travel target (<code>.go2 targets</code> lists them, <code>.go2 back</code> returns to the trip start)</td></tr>
+<tr><td><code>.portal [n|word]</code></td><td></td><td>Walk the room’s non-compass exit (<code>go door</code>, <code>climb stair</code>, …) from the map data (room objects as fallback). One candidate walks it; several list — pick by number or word. Controller d-pad left by default</td></tr>
 </tbody>
 </table>
 </div>
@@ -4140,6 +4181,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 </thead>
 <tbody>
 <tr><td><code>.keybinds</code></td><td><code>.kb</code></td><td>Browse keybinds (press <code>f</code> to cycle the scope filter: all / global / character)</td></tr>
+<tr><td><code>.controller</code></td><td></td><td>Edit gamepad button bindings (GUI; see <a href="#controllers">Controllers</a>)</td></tr>
 <tr><td><code>.addkeybind</code></td><td><code>.addkey</code></td><td>Create a keybind</td></tr>
 <tr><td><code>.savekeybinds [name]</code></td><td><code>.savekb</code></td><td>Save keybinds as a named profile</td></tr>
 <tr><td><code>.loadkeybinds &lt;name&gt;</code></td><td><code>.loadkb</code></td><td>Load a keybind profile</td></tr>

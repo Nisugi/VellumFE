@@ -347,6 +347,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Commands shorter than this are not saved to history", 0..=100, usize, ui.min_command_length),
         bool_entry!("ui.command_echo", "Command Echo", "UI",
             "Echo sent commands into the main window", ui.command_echo),
+        bool_entry!("ui.emoji_shortcodes", "Emoji Shortcodes", "UI",
+            "Render :grin:-style shortcodes in incoming text as emoji", ui.emoji_shortcodes),
         text_entry!("ui.terminal_title", "Terminal Title", "UI",
             "Terminal title template ({character}, {room}, {health}, ...); empty leaves the title alone",
             ui.terminal_title),

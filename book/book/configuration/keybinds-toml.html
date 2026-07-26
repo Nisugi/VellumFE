@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-c3709f10.js";
+            window.path_to_searchindex_js = "../searchindex-15e7b0a9.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -250,6 +250,18 @@ lines to see what your terminal actually sends.</p>
 </tbody>
 </table>
 </div>
+<h2 id="controller-bindings"><a class="header" href="#controller-bindings">Controller Bindings</a></h2>
+<p>The <code>[controller]</code> table (global file only — pads are per-desk, not
+per-character) maps gamepad buttons to the same actions and macros as
+<code>[user]</code>. Edit with <code>.controller</code> in the GUI. Buttons: <code>south</code>, <code>east</code>,
+<code>north</code>, <code>west</code>, <code>dpad_up</code>/<code>down</code>/<code>left</code>/<code>right</code>, <code>l1</code>, <code>r1</code>, <code>l2</code>,
+<code>r2</code>, <code>l3</code>, <code>r3</code>, <code>select</code>, <code>start</code>, <code>guide</code>.</p>
+<pre><code class="language-toml">[controller]
+start = "interact_mode"
+dpad_up = { macro_text = "n\r" }
+</code></pre>
+<p>Inside interact mode and context menus the d-pad, South, and East are
+fixed navigation keys; bindings apply outside those modes.</p>
 <h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
 <p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
 <pre><code class="language-toml">[user]

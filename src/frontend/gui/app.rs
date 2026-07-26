@@ -27,6 +27,8 @@ mod map_explorer;
 mod dialogs;
 mod dock;
 mod editors;
+#[cfg(feature = "gamepad")]
+mod gamepad;
 mod interact;
 mod menus;
 mod status_icons;
@@ -209,6 +211,13 @@ pub struct VellumGuiApp {
     /// Numpad keybind names last pushed to eframe via `set_numpad_capture_keys`;
     /// `None` until the first sync so startup always pushes the initial set.
     numpad_capture_keys: Option<HashSet<String>>,
+    /// Gamepad context; None when init failed or the feature is disabled.
+    #[cfg(feature = "gamepad")]
+    gamepad: Option<gilrs::Gilrs>,
+    /// Left-stick compass sector currently deflected (0=n..7=nw); None at
+    /// center. Movement sends on sector *change* with hysteresis.
+    #[cfg(feature = "gamepad")]
+    gp_stick_sector: Option<usize>,
     ui_settings: GuiUiSettings,
     tab_settings: HashMap<TabKey, TabSettings>,
     /// Windows locked together; each group renders as one window in the
@@ -233,6 +242,8 @@ pub struct VellumGuiApp {
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
+    #[cfg(feature = "gamepad")]
+    controller_editor: Option<editors::ControllerEditorState>,
     hotbar_editor: Option<editors::HotbarEditorState>,
     colors_editor: Option<editors::ColorsEditorState>,
     theme_browser: Option<editors::ThemeBrowserState>,
@@ -501,6 +512,12 @@ impl VellumGuiApp {
             registered_font_families: HashSet::new(),
             pending_font_families: None,
             numpad_capture_keys: None,
+            #[cfg(feature = "gamepad")]
+            gamepad: gilrs::Gilrs::new()
+                .inspect_err(|e| tracing::warn!("gamepad init failed: {}", e))
+                .ok(),
+            #[cfg(feature = "gamepad")]
+            gp_stick_sector: None,
             ui_settings,
             tab_settings,
             tab_groups,
@@ -512,6 +529,8 @@ impl VellumGuiApp {
             settings_editor: None,
             highlight_editor: None,
             keybind_editor: None,
+            #[cfg(feature = "gamepad")]
+            controller_editor: None,
             hotbar_editor: None,
             colors_editor: None,
             theme_browser: None,
@@ -3664,6 +3683,14 @@ impl VellumGuiApp {
             self.open_keybind_editor();
             return true;
         }
+        if action == "action:controller" {
+            #[cfg(feature = "gamepad")]
+            self.open_controller_editor();
+            #[cfg(not(feature = "gamepad"))]
+            self.app_core
+                .add_system_message("This build has no gamepad support.");
+            return true;
+        }
         if action == "action:hotbars" {
             self.open_hotbar_editor();
             return true;
@@ -4001,6 +4028,8 @@ impl eframe::App for VellumGuiApp {
         }
 
         self.sync_numpad_capture_keys(frame);
+        #[cfg(feature = "gamepad")]
+        self.poll_gamepad(&ctx);
         self.handle_global_input(&ctx, frame);
 
         if self.close_requested {

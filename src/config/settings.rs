@@ -91,6 +91,9 @@ pub struct UiConfig {
     // Command echo settings
     #[serde(default = "default_command_echo")]
     pub command_echo: bool, // Echo sent commands into main window
+    /// Render `:grin:`-style shortcodes in incoming text as emoji
+    #[serde(default = "default_true")]
+    pub emoji_shortcodes: bool,
     // Performance stats settings
     #[serde(default = "default_performance_stats_enabled")]
     pub performance_stats_enabled: bool, // Global toggle for performance overlay
@@ -164,6 +167,7 @@ impl Default for UiConfig {
             drag_modifier_key: default_drag_modifier_key(),
             min_command_length: default_min_command_length(),
             command_echo: default_command_echo(),
+            emoji_shortcodes: true,
             performance_stats_enabled: default_performance_stats_enabled(),
             perf_stats_x: default_perf_stats_x(),
             perf_stats_y: default_perf_stats_y(),

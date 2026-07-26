@@ -226,6 +226,8 @@ pub struct Config {
     pub highlights: HashMap<String, HighlightPattern>,
     #[serde(skip)] // Loaded from separate keybinds.toml file
     pub keybinds: HashMap<String, KeyBindAction>,
+    #[serde(skip)] // Loaded from [controller] section of global keybinds.toml
+    pub controller_binds: HashMap<String, KeyBindAction>,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml

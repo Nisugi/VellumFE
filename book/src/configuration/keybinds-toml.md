@@ -69,6 +69,23 @@ Bind any of these in `[user]`:
 | `tts_next` / `tts_previous` / `tts_next_unread` / `tts_stop` | Text-to-speech navigation |
 | `tts_mute_toggle` / `tts_increase_volume` / `tts_decrease_volume` / `tts_increase_rate` / `tts_decrease_rate` | TTS controls |
 
+## Controller Bindings
+
+The `[controller]` table (global file only — pads are per-desk, not
+per-character) maps gamepad buttons to the same actions and macros as
+`[user]`. Edit with `.controller` in the GUI. Buttons: `south`, `east`,
+`north`, `west`, `dpad_up`/`down`/`left`/`right`, `l1`, `r1`, `l2`,
+`r2`, `l3`, `r3`, `select`, `start`, `guide`.
+
+```toml
+[controller]
+start = "interact_mode"
+dpad_up = { macro_text = "n\r" }
+```
+
+Inside interact mode and context menus the d-pad, South, and East are
+fixed navigation keys; bindings apply outside those modes.
+
 ## Macros
 
 Send text with a keypress using the inline-table form. `\r` presses Enter:

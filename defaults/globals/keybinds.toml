@@ -153,3 +153,23 @@ num_0 = { macro_text = "down\r" }
 "num_-" = { macro_text = "info\r" }
 "num_*" = { macro_text = "exp\r" }
 "num_/" = { macro_text = "health\r" }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONTROLLER (GUI gamepad — edit with the .controller editor)
+# ═══════════════════════════════════════════════════════════════════════════
+# Buttons: south, east, west, north, dpad_up, dpad_down, dpad_left,
+# dpad_right, l1, r1, l2, r2, l3, r3, start, select.
+# Values are keybind action names or { macro_text = "..." } like [user].
+# While interact mode or a context menu is open, the d-pad (navigate),
+# south (confirm), and east (cancel) are fixed; bindings below apply
+# outside those modes. Controller binds are global (all characters).
+
+# The left stick walks the 8 compass directions natively; the d-pad
+# covers the vertical axis and portals.
+[controller]
+start = "interact_mode"                # Enter/exit interact mode
+dpad_up = { macro_text = "up\r" }      # Climb / go up
+dpad_down = { macro_text = "down\r" }  # Go down
+dpad_right = { macro_text = "out\r" }  # Leave (buildings, rooms)
+dpad_left = { macro_text = ".portal\r" } # Walk the room's door/arch/gate
+south = { macro_text = "look\r" }      # A / cross

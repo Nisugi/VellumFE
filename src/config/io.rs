@@ -43,6 +43,7 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
+        config.controller_binds = Self::load_controller_binds().unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
@@ -401,6 +402,7 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
+        config.controller_binds = Self::load_controller_binds().unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;
@@ -566,6 +568,7 @@ impl Default for Config {
                 selection_auto_copy: default_selection_auto_copy(),
                 drag_modifier_key: default_drag_modifier_key(),
                 min_command_length: default_min_command_length(),
+                emoji_shortcodes: true,
                 performance_stats_enabled: default_performance_stats_enabled(),
                 perf_stats_x: default_perf_stats_x(),
                 perf_stats_y: default_perf_stats_y(),
@@ -596,6 +599,7 @@ impl Default for Config {
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
+            controller_binds: HashMap::new(), // Loaded from [controller] of keybinds.toml
             hotbars: HotbarsConfig::default(), // Loaded from hotbars.toml
             app_keybinds: AppKeybinds::default(), // Loaded from [app] section of keybinds.toml
             colors: ColorConfig::default(), // Loaded from colors.toml

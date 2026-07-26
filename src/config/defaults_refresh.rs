@@ -130,7 +130,10 @@ fn refresh_named_tables(
     })
 }
 
-/// Keybinds: entries live under the `[user]` table.
+/// Keybinds: entries live under the `[user]` and `[controller]` tables.
+/// `[controller]` keys carry a `controller/` prefix in the seen-set so
+/// they can't collide with `[user]` combos (sidecars from before the
+/// controller table remain valid unchanged).
 fn refresh_user_keybinds(
     user: &str,
     embedded: &str,
@@ -139,38 +142,53 @@ fn refresh_user_keybinds(
     let mut user_doc: DocumentMut = user.parse().context("user keybinds did not parse")?;
     let embedded_doc: DocumentMut = embedded.parse().context("embedded keybinds did not parse")?;
 
-    let table_keys = |doc: &DocumentMut| -> BTreeSet<String> {
-        doc.get("user")
+    let table_keys = |doc: &DocumentMut, table: &str, prefix: &str| -> BTreeSet<String> {
+        doc.get(table)
             .and_then(|item| item.as_table())
-            .map(|tbl| tbl.iter().map(|(key, _)| key.to_string()).collect())
+            .map(|tbl| {
+                tbl.iter()
+                    .map(|(key, _)| format!("{}{}", prefix, key))
+                    .collect()
+            })
             .unwrap_or_default()
     };
-    let embedded_keys = table_keys(&embedded_doc);
-    let on_disk = table_keys(&user_doc);
 
-    let to_add = keys_to_add(&embedded_keys, &on_disk, seen);
-    let updated_file = if to_add.is_empty() {
-        None
-    } else {
-        if user_doc.get("user").and_then(|item| item.as_table()).is_none() {
-            user_doc
+    let mut embedded_keys = BTreeSet::new();
+    let mut on_disk = BTreeSet::new();
+    let mut changed = false;
+
+    for (table, prefix) in [("user", ""), ("controller", "controller/")] {
+        let embedded_tbl_keys = table_keys(&embedded_doc, table, prefix);
+        let on_disk_tbl_keys = table_keys(&user_doc, table, prefix);
+        let to_add = keys_to_add(&embedded_tbl_keys, &on_disk_tbl_keys, seen);
+
+        if !to_add.is_empty() {
+            if user_doc.get(table).and_then(|item| item.as_table()).is_none() {
+                user_doc
+                    .as_table_mut()
+                    .insert(table, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            let user_tbl = user_doc[table]
                 .as_table_mut()
-                .insert("user", toml_edit::Item::Table(toml_edit::Table::new()));
-        }
-        let user_tbl = user_doc["user"]
-            .as_table_mut()
-            .expect("just ensured [user] exists");
-        let embedded_tbl = embedded_doc
-            .get("user")
-            .and_then(|item| item.as_table())
-            .expect("embedded keybinds have [user]");
-        for key in &to_add {
-            if let Some(item) = embedded_tbl.get(key) {
-                user_tbl.insert(key, item.clone());
+                .expect("just ensured the table exists");
+            let embedded_tbl = embedded_doc
+                .get(table)
+                .and_then(|item| item.as_table())
+                .expect("embedded keybinds have the table");
+            for prefixed in &to_add {
+                let key = prefixed.strip_prefix(prefix).unwrap_or(prefixed);
+                if let Some(item) = embedded_tbl.get(key) {
+                    user_tbl.insert(key, item.clone());
+                    changed = true;
+                }
             }
         }
-        Some(user_doc.to_string())
-    };
+
+        embedded_keys.extend(embedded_tbl_keys);
+        on_disk.extend(on_disk_tbl_keys);
+    }
+
+    let updated_file = changed.then(|| user_doc.to_string());
     Ok(RefreshOutcome {
         updated_file,
         seen: merged_seen(&embedded_keys, &on_disk, seen),
@@ -372,6 +390,37 @@ mod tests {
         // User's own f5 override and their [app] section are untouched.
         assert!(updated.contains("f5 = \"custom\""), "{}", updated);
         assert!(updated.contains("quit = \"ctrl+q\""), "{}", updated);
+    }
+
+    #[test]
+    fn controller_binds_refresh_into_their_own_table() {
+        // A pre-controller user file gains the whole [controller] table;
+        // its seen keys carry the controller/ prefix so they can't collide
+        // with same-named [user] combos.
+        let embedded =
+            "[user]\nf5 = \"look\"\n\n[controller]\nstart = \"interact_mode\"\nsouth = \"look\"\n";
+        let user = "[user]\nf5 = \"custom\"\n";
+        let seen: BTreeSet<String> = ["f5".to_string()].into();
+        let outcome = refresh_user_keybinds(user, embedded, Some(&seen)).unwrap();
+        let updated = outcome.updated_file.expect("controller table should be added");
+        assert!(updated.contains("[controller]"), "{}", updated);
+        assert!(updated.contains("start = \"interact_mode\""), "{}", updated);
+        assert!(updated.contains("f5 = \"custom\""), "{}", updated);
+        assert!(outcome.seen.contains("controller/start"));
+        assert!(outcome.seen.contains("controller/south"));
+        assert!(outcome.seen.contains("f5"));
+    }
+
+    #[test]
+    fn deleted_controller_bind_stays_deleted() {
+        let embedded = "[user]\nf5 = \"look\"\n\n[controller]\nstart = \"interact_mode\"\n";
+        let user = "[user]\nf5 = \"look\"\n\n[controller]\n";
+        let seen: BTreeSet<String> = ["f5".to_string(), "controller/start".to_string()].into();
+        let outcome = refresh_user_keybinds(user, embedded, Some(&seen)).unwrap();
+        assert!(
+            outcome.updated_file.is_none(),
+            "tombstoned controller bind must not resurrect"
+        );
     }
 
     #[test]
