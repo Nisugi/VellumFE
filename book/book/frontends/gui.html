@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-0594047d.js";
+            window.path_to_searchindex_js = "../searchindex-c3709f10.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -285,6 +285,20 @@ light/dark bar text for contrast.</li>
 <li>Per-window overrides: text size, accent (border) color, wrapping, fonts.</li>
 </ul>
 <p>Every size is adjustable — the Wrayth-like defaults are just defaults.</p>
+<h2 id="interact-mode"><a class="header" href="#interact-mode">Interact Mode</a></h2>
+<p>Press <strong>F6</strong> (keybind action <code>interact_mode</code>) for pointer-free interaction
+with the room — built for controller players (map your d-pad to the arrow
+keys with Steam Input or similar) and anyone who’d rather not mouse:</p>
+<ul>
+<li><strong>↑/↓</strong> cycle entities in the current category, <strong>←/→</strong> switch category
+(creatures → objects → players → exits).</li>
+<li><strong>Enter</strong> opens the same server context menu a click would — arrow keys
+and Enter navigate it, Esc backs out to interact mode.</li>
+<li>Activating an <strong>exit</strong> walks that direction and leaves the mode.</li>
+<li>The focused entity is highlighted in the room window, named in a status
+overlay, and announced through TTS when speech is enabled.</li>
+<li><strong>Esc</strong> exits the mode.</li>
+</ul>
 <h2 id="speech-text-to-speech"><a class="header" href="#speech-text-to-speech">Speech (Text-to-Speech)</a></h2>
 <p><strong>Settings &gt; Speech</strong> holds the TTS controls: enable, rate, volume, a
 voice picker, pronunciation substitutions, gag patterns, and a <strong>Test</strong>

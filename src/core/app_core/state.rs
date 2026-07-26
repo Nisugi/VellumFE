@@ -175,6 +175,77 @@ pub struct AppCore {
 
 impl AppCore {
     /// Create a new AppCore instance
+    /// Disk-free constructor for unit tests: default config, empty layout,
+    /// no cmdlist/sound, TTS disabled. Never touches VELLUM_FE_DIR.
+    #[cfg(test)]
+    pub(crate) fn new_for_test() -> Self {
+        let config = Config::default();
+        let layout = Layout {
+            windows: Vec::new(),
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        let saved_dialog_positions: crate::config::SavedDialogPositions = Default::default();
+        let message_processor =
+            MessageProcessor::new(config.clone(), saved_dialog_positions.clone());
+        let parser = XmlParser::with_presets(Vec::new(), config.event_patterns.clone());
+        let tts_manager = crate::tts::TtsManager::new(false, 1.0, 1.0);
+        let keybind_map = Self::build_keybind_map(&config);
+        let temp = std::env::temp_dir().join("vellum-fe-test");
+
+        Self {
+            config,
+            map: crate::core::map_service::MapService::new(
+                temp.join("cache"),
+                temp.join("map_overrides.json"),
+            ),
+            map_updater: crate::core::mapdb_update::MapDbUpdater::new(temp.join("mapdb")),
+            travel: Default::default(),
+            remote_map_cache: None,
+            last_remote_map_revision: 0,
+            pending_map_views: Vec::new(),
+            layout: layout.clone(),
+            baseline_layout: Some(layout),
+            game_state: GameState::new(),
+            ui_state: UiState::new(),
+            parser,
+            message_processor,
+            current_stream: String::from("main"),
+            discard_current_stream: false,
+            stream_buffer: String::new(),
+            server_time_offset: 0,
+            cmdlist: None,
+            menu_request_counter: 0,
+            pending_menu_requests: HashMap::new(),
+            menu_categories: HashMap::new(),
+            last_link_click_pos: None,
+            perf_stats: PerformanceStats::new(),
+            show_perf_stats: false,
+            sound_player: None,
+            tts_manager,
+            evidence: crate::core::evidence::EvidenceStore::default(),
+            nav_room_id: None,
+            lich_room_id: None,
+            room_subtitle: None,
+            room_components: HashMap::new(),
+            current_room_component: None,
+            room_window_dirty: false,
+            running: true,
+            needs_render: true,
+            chunk_has_main_text: false,
+            chunk_has_silent_updates: false,
+            layout_modified_since_save: false,
+            save_reminder_shown: false,
+            base_layout_name: None,
+            keybind_map,
+            hotbar_key_conflicts: Vec::new(),
+            saved_dialog_positions,
+        }
+    }
+
     pub fn new(config: Config) -> Result<Self> {
         // Load layout from file system
         let layout = Layout::load(config.character.as_deref())?;

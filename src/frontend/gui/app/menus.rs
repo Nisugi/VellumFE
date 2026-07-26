@@ -118,6 +118,90 @@ impl VellumGuiApp {
         self.popup_menu_host = None;
     }
 
+    /// Close the menu stack and drop to Normal input, abandoning any
+    /// interact-mode flow (used when a menu command opens an editor or
+    /// other UI that takes over input).
+    fn close_menus_to_normal(&mut self) {
+        self.close_all_popup_menus();
+        self.app_core.ui_state.interact = None;
+        self.app_core.ui_state.input_mode = InputMode::Normal;
+    }
+
+    /// Close the menu stack and return to whatever was underneath: interact
+    /// mode if it is still active (the menu was opened from it), else Normal.
+    fn close_menus_restore(&mut self) {
+        self.close_all_popup_menus();
+        self.app_core.ui_state.input_mode = self.input_mode_after_menu_close();
+    }
+
+    /// Arrow/enter/escape navigation over the deepest open popup menu.
+    /// Returns true when the key was consumed.
+    pub(super) fn handle_menu_nav_key(&mut self, code: crate::data::input::KeyCode) -> bool {
+        use crate::data::input::KeyCode;
+
+        let deepest = {
+            let ui = &self.app_core.ui_state;
+            if ui.deep_submenu.is_some() {
+                Some(GuiMenuLayer::Deep)
+            } else if ui.nested_submenu.is_some() {
+                Some(GuiMenuLayer::Nested)
+            } else if ui.submenu.is_some() {
+                Some(GuiMenuLayer::Submenu)
+            } else if ui.popup_menu.is_some() {
+                Some(GuiMenuLayer::Main)
+            } else {
+                None
+            }
+        };
+        let Some(layer) = deepest else {
+            return false;
+        };
+
+        match code {
+            KeyCode::Up => {
+                if let Some(menu) = self.popup_menu_layer_mut(layer) {
+                    menu.select_prev();
+                }
+                self.app_core.needs_render = true;
+                true
+            }
+            KeyCode::Down => {
+                if let Some(menu) = self.popup_menu_layer_mut(layer) {
+                    menu.select_next();
+                }
+                self.app_core.needs_render = true;
+                true
+            }
+            KeyCode::Enter => {
+                let command = self.popup_menu_layer_mut(layer).and_then(|menu| {
+                    menu.selected_item()
+                        .filter(|item| !item.disabled)
+                        .map(|item| item.command.clone())
+                });
+                if let Some(command) = command {
+                    self.handle_popup_menu_command(GuiMenuCommand { layer, command });
+                }
+                true
+            }
+            KeyCode::Esc => {
+                self.close_menus_restore();
+                self.app_core.needs_render = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn popup_menu_layer_mut(&mut self, layer: GuiMenuLayer) -> Option<&mut PopupMenu> {
+        let ui = &mut self.app_core.ui_state;
+        match layer {
+            GuiMenuLayer::Main => ui.popup_menu.as_mut(),
+            GuiMenuLayer::Submenu => ui.submenu.as_mut(),
+            GuiMenuLayer::Nested => ui.nested_submenu.as_mut(),
+            GuiMenuLayer::Deep => ui.deep_submenu.as_mut(),
+        }
+    }
+
     fn apply_window_menu_command(
         &mut self,
         request: &GuiWindowMenuRequest,
@@ -414,6 +498,7 @@ impl VellumGuiApp {
         ctx: &egui::Context,
         layer: GuiMenuLayer,
         menu: &PopupMenu,
+        keyboard_active: bool,
     ) -> (Option<GuiMenuCommand>, Option<Rect>) {
         let layer_id = match layer {
             GuiMenuLayer::Main => "gui_popup_menu_main",
@@ -431,8 +516,12 @@ impl VellumGuiApp {
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(220.0);
-                    for item in menu.get_items() {
-                        let button = egui::Button::new(item.text.as_str());
+                    let selected_index = menu.get_selected_index();
+                    for (index, item) in menu.get_items().iter().enumerate() {
+                        let mut button = egui::Button::new(item.text.as_str());
+                        if keyboard_active && index == selected_index {
+                            button = button.fill(ui.visuals().selection.bg_fill);
+                        }
                         let response = ui.add_enabled(!item.disabled, button);
                         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                         if response.clicked() {
@@ -540,8 +629,7 @@ impl VellumGuiApp {
             if items.is_empty() {
                 self.app_core
                     .add_system_message(&format!("Menu '{}' has no entries.", submenu));
-                self.close_all_popup_menus();
-                self.app_core.ui_state.input_mode = InputMode::Normal;
+                self.close_menus_restore();
             } else {
                 self.open_child_menu_for_layer(menu_command.layer, items);
             }
@@ -553,15 +641,15 @@ impl VellumGuiApp {
                 self.app_core
                     .add_system_message(&format!("GUI action not implemented yet: {}", command));
             }
-            self.close_all_popup_menus();
-            self.app_core.ui_state.input_mode = InputMode::Normal;
+            // Actions open editors/panels that own input next — leave
+            // interact mode rather than fighting them for the keyboard.
+            self.close_menus_to_normal();
             return;
         }
 
         if command == "__INDICATOR_EDITOR" {
             self.open_indicator_templates_editor();
-            self.close_all_popup_menus();
-            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.close_menus_to_normal();
             return;
         }
 
@@ -604,8 +692,7 @@ impl VellumGuiApp {
         if let Some(template) = command.strip_prefix("__ADD__") {
             let template = template.to_string();
             self.add_window_from_template(&template);
-            self.close_all_popup_menus();
-            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.close_menus_to_normal();
             return;
         }
 
@@ -627,8 +714,7 @@ impl VellumGuiApp {
                     widget_type, widget_type
                 )),
             }
-            self.close_all_popup_menus();
-            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.close_menus_to_normal();
             return;
         }
 
@@ -636,14 +722,14 @@ impl VellumGuiApp {
         if command.starts_with("__") {
             self.app_core
                 .add_system_message(&format!("GUI menu command not implemented yet: {}", command));
-            self.close_all_popup_menus();
-            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.close_menus_restore();
             return;
         }
 
+        // A real command (context-menu verb) executed: return to interact
+        // mode if the menu was opened from it.
         self.dispatch_raw_command(command);
-        self.close_all_popup_menus();
-        self.app_core.ui_state.input_mode = InputMode::Normal;
+        self.close_menus_restore();
     }
 
     /// Render the four popup-menu layers against `ctx`'s current viewport.
@@ -662,8 +748,21 @@ impl VellumGuiApp {
         let mut clicked_command: Option<GuiMenuCommand> = None;
         let mut menu_rects: Vec<Rect> = Vec::new();
 
+        // Keyboard selection highlights only the deepest layer — the one
+        // arrow keys act on.
+        let deepest = if deep.is_some() {
+            3
+        } else if nested.is_some() {
+            2
+        } else if submenu.is_some() {
+            1
+        } else {
+            0
+        };
+
         if let Some(menu) = main {
-            let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Main, menu);
+            let (command, rect) =
+                Self::render_menu_layer(ctx, GuiMenuLayer::Main, menu, deepest == 0);
             clicked_command = command;
             if let Some(rect) = rect {
                 menu_rects.push(rect);
@@ -671,7 +770,8 @@ impl VellumGuiApp {
         }
         if clicked_command.is_none() {
             if let Some(menu) = submenu {
-                let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Submenu, menu);
+                let (command, rect) =
+                    Self::render_menu_layer(ctx, GuiMenuLayer::Submenu, menu, deepest == 1);
                 clicked_command = command;
                 if let Some(rect) = rect {
                     menu_rects.push(rect);
@@ -680,7 +780,8 @@ impl VellumGuiApp {
         }
         if clicked_command.is_none() {
             if let Some(menu) = nested {
-                let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Nested, menu);
+                let (command, rect) =
+                    Self::render_menu_layer(ctx, GuiMenuLayer::Nested, menu, deepest == 2);
                 clicked_command = command;
                 if let Some(rect) = rect {
                     menu_rects.push(rect);
@@ -689,7 +790,8 @@ impl VellumGuiApp {
         }
         if clicked_command.is_none() {
             if let Some(menu) = deep {
-                let (command, rect) = Self::render_menu_layer(ctx, GuiMenuLayer::Deep, menu);
+                let (command, rect) =
+                    Self::render_menu_layer(ctx, GuiMenuLayer::Deep, menu, deepest == 3);
                 clicked_command = command;
                 if let Some(rect) = rect {
                     menu_rects.push(rect);
@@ -721,8 +823,7 @@ impl VellumGuiApp {
             return;
         }
         if should_close {
-            self.close_all_popup_menus();
-            self.app_core.ui_state.input_mode = InputMode::Normal;
+            self.close_menus_restore();
         }
     }
 

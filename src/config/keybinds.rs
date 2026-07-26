@@ -143,6 +143,9 @@ pub enum KeyAction {
     // Travel
     StopTravel, // Cancel the active .go2 trip (Esc does this by default)
 
+    // Interact mode: pointer-free entity focus cycling (controller-friendly)
+    InteractMode, // Toggle interact mode on/off
+
     // TTS (Text-to-Speech) actions - Accessibility
     TtsNext,           // Next message (sequential, includes read)
     TtsPrevious,       // Previous message (sequential, includes read)
@@ -524,6 +527,7 @@ impl KeyAction {
             "toggle_performance_stats" => Some(Self::TogglePerformanceStats),
             "toggle_sounds" => Some(Self::ToggleSounds),
             "stop_travel" => Some(Self::StopTravel),
+            "interact_mode" => Some(Self::InteractMode),
             "tts_next" => Some(Self::TtsNext),
             "tts_previous" => Some(Self::TtsPrevious),
             "tts_next_unread" => Some(Self::TtsNextUnread),

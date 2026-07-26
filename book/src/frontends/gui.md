@@ -127,6 +127,21 @@ Open `.settings` → GUI panel:
 
 Every size is adjustable — the Wrayth-like defaults are just defaults.
 
+## Interact Mode
+
+Press **F6** (keybind action `interact_mode`) for pointer-free interaction
+with the room — built for controller players (map your d-pad to the arrow
+keys with Steam Input or similar) and anyone who'd rather not mouse:
+
+- **↑/↓** cycle entities in the current category, **←/→** switch category
+  (creatures → objects → players → exits).
+- **Enter** opens the same server context menu a click would — arrow keys
+  and Enter navigate it, Esc backs out to interact mode.
+- Activating an **exit** walks that direction and leaves the mode.
+- The focused entity is highlighted in the room window, named in a status
+  overlay, and announced through TTS when speech is enabled.
+- **Esc** exits the mode.
+
 ## Speech (Text-to-Speech)
 
 **Settings > Speech** holds the TTS controls: enable, rate, volume, a

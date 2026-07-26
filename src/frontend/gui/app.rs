@@ -27,6 +27,7 @@ mod map_explorer;
 mod dialogs;
 mod dock;
 mod editors;
+mod interact;
 mod menus;
 mod status_icons;
 mod theme;
@@ -2625,6 +2626,27 @@ impl VellumGuiApp {
                 continue;
             }
 
+            // Interact mode and popup-menu keyboard navigation take plain
+            // arrows/enter/escape before keybinds or text input see them.
+            // Window-move and window-context-menu keep their own Esc
+            // semantics (handled later this frame).
+            if !suppress_macro_dispatch
+                && self.window_move_state.is_none()
+                && self.window_context_menu.is_none()
+                && self.handle_modal_nav_key(&key_press.key_event, ctx)
+            {
+                consumed_keyboard_input = true;
+                ctx.input_mut(|input| {
+                    if let Some(logical_key) = key_press.logical_key {
+                        input.consume_key(key_press.modifiers, logical_key);
+                    }
+                    if let Some(physical_key) = key_press.physical_key {
+                        input.consume_key(key_press.modifiers, physical_key);
+                    }
+                });
+                continue;
+            }
+
             let target = Self::resolve_global_dispatch_target(
                 key_press.key_event,
                 &self.app_core.keybind_map,
@@ -4413,6 +4435,7 @@ impl eframe::App for VellumGuiApp {
         }
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
+        self.render_interact_overlay(&ctx);
         self.render_injuries_popup(&ctx);
         self.render_editors(&ctx);
         self.render_server_dialog(&ctx);
