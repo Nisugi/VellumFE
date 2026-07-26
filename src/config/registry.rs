@@ -123,6 +123,7 @@ pub const EXEMPT_PREFIXES: &[&str] = &[
     "go2.saved",                  // captured travel targets (.go2 save)
     "go2.pathcodes",              // captured maze routes, never hand-edited
     "tts.substitutions",          // pattern/replacement pairs; Accessibility panel
+    "streams.routes",             // per-stream route map; dedicated Streams panel editor later
 ];
 
 macro_rules! bool_entry {
@@ -557,6 +558,10 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         bool_entry!("logging.timestamps", "Log Timestamps", "Logging",
             "Prefix each logged line with HH:MM:SS", logging.timestamps),
         // ---- Streams -------------------------------------------------
+        // LEGACY: stays registered while the field exists (the leaf-coverage
+        // test requires it), but load-time migration folds every entry into
+        // streams.routes and clears the list, so its runtime value is
+        // always empty. Retire alongside the field once routes fully land.
         list_entry!("streams.drop_unsubscribed", "Drop Unsubscribed", "Streams",
             "Streams silently discarded when nothing subscribes", streams.drop_unsubscribed),
         text_entry!("streams.fallback", "Fallback Window", "Streams",

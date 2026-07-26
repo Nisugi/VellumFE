@@ -27,6 +27,10 @@ impl Config {
         let mut config: Config = toml::from_str(&contents)
             .context(format!("Failed to parse config file: {:?}", path))?;
 
+        // Same legacy drop-list migration as load_with_options (in-memory
+        // only; never writes files).
+        config.streams.migrate_drop_list_to_routes();
+
         // Override port from command line (if specified)
         if let Some(port) = port_override {
             config.connection.port = port;
@@ -378,6 +382,12 @@ impl Config {
         // keys a file actually states override the layer below — a profile
         // file that sets one value no longer resets whole sections.
         let mut config = Self::load_layered_config(character)?;
+
+        // Legacy [streams] drop_unsubscribed entries become routes."<id>" =
+        // "discard" and the drop list is cleared, so runtime code has one
+        // source of truth. In-memory only — load never writes files; the
+        // next sparse save carries routes and ages the old key out.
+        config.streams.migrate_drop_list_to_routes();
 
         // Override port from command line (if specified)
         if let Some(port) = port_override {

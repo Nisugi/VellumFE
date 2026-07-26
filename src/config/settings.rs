@@ -484,19 +484,100 @@ impl LoggingConfig {
     }
 }
 
+/// Where an orphaned stream (no subscribed window) is routed.
+///
+/// Serialized as a plain string: `"discard"`, `"main"`, or
+/// `"window:<name>"`. Anything else is rejected at deserialization with a
+/// clear error, and the string form round-trips exactly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamRoute {
+    /// Silently drop the stream's text.
+    Discard,
+    /// Route the stream to the main window.
+    Main,
+    /// Route the stream to the named window if one exists (its buffer
+    /// receives the text even while hidden). Windows are never
+    /// auto-created or auto-opened for a route; if no window by this
+    /// name exists, the stream falls back to `StreamsConfig::fallback`.
+    Window(String),
+}
+
+impl std::fmt::Display for StreamRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StreamRoute::Discard => f.write_str("discard"),
+            StreamRoute::Main => f.write_str("main"),
+            StreamRoute::Window(name) => write!(f, "window:{}", name),
+        }
+    }
+}
+
+impl std::str::FromStr for StreamRoute {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "discard" => Ok(StreamRoute::Discard),
+            "main" => Ok(StreamRoute::Main),
+            _ => match s.strip_prefix("window:") {
+                Some("") => Err(format!(
+                    "invalid stream route {:?}: window name is empty \
+                     (expected \"window:<name>\")",
+                    s
+                )),
+                Some(name) => Ok(StreamRoute::Window(name.to_string())),
+                None => Err(format!(
+                    "invalid stream route {:?} (expected \"discard\", \
+                     \"main\", or \"window:<name>\")",
+                    s
+                )),
+            },
+        }
+    }
+}
+
+impl Serialize for StreamRoute {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for StreamRoute {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Configuration for text stream routing behavior.
 /// Controls how orphaned streams (no widget subscriber) are handled.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamsConfig {
-    /// Streams to silently discard if no widget subscribes to them.
-    /// Example: ["speech", "bounty", "whisper"]
+    /// LEGACY: streams to silently discard if no widget subscribes.
+    /// Superseded by `routes` — at config load every entry here becomes
+    /// `routes.<id> = "discard"` and this list is cleared in memory (see
+    /// `migrate_drop_list_to_routes`), so runtime code only consults
+    /// `routes`. The field stays (and stays registered) so old config
+    /// files keep loading; sparse saves age it out of user files.
     #[serde(default)]
     pub drop_unsubscribed: Vec<String>,
 
-    /// Where to route orphaned streams that aren't in the drop list.
+    /// Where to route orphaned streams that have no `routes` entry.
     /// Default: "main"
     #[serde(default = "default_streams_fallback")]
     pub fallback: String,
+
+    /// Per-stream orphan policy: where a stream goes when no window
+    /// subscribes to it. Values: "discard", "main", "window:<name>".
+    /// Subscribed windows always win; streams absent from this map use
+    /// `fallback`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub routes: std::collections::BTreeMap<String, StreamRoute>,
 
     /// When true (default), <streamWindow id='room'> does NOT change current_stream.
     /// Room text will flow to main window (room window uses components, not text).
@@ -529,7 +610,25 @@ impl Default for StreamsConfig {
                 "conversation".to_string(),
             ],
             fallback: default_streams_fallback(),
+            routes: std::collections::BTreeMap::new(),
             room_in_main: default_room_in_main(),
+        }
+    }
+}
+
+impl StreamsConfig {
+    /// Fold legacy `drop_unsubscribed` entries into `routes` (as
+    /// `"discard"`) and clear the legacy list, so the rest of the app has
+    /// one source of truth. Runs in memory at config load — never writes
+    /// files; sparse saves age the old key out of user files on the next
+    /// save. An existing route for a stream (any letter case) is never
+    /// clobbered by its drop-list entry.
+    pub fn migrate_drop_list_to_routes(&mut self) {
+        for id in std::mem::take(&mut self.drop_unsubscribed) {
+            let already_routed = self.routes.keys().any(|k| k.eq_ignore_ascii_case(&id));
+            if !already_routed {
+                self.routes.insert(id, StreamRoute::Discard);
+            }
         }
     }
 }
@@ -647,5 +746,126 @@ impl Default for MapConfig {
             mapdb_repo: default_mapdb_repo(),
             mapping_mode: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- StreamRoute string form --------------------------------------
+
+    #[test]
+    fn stream_route_round_trips_exactly() {
+        let cases = [
+            (StreamRoute::Discard, "discard"),
+            (StreamRoute::Main, "main"),
+            (StreamRoute::Window("bounty".to_string()), "window:bounty"),
+            // Window names keep their exact case and inner punctuation.
+            (StreamRoute::Window("My Window".to_string()), "window:My Window"),
+        ];
+        for (route, text) in cases {
+            assert_eq!(route.to_string(), text);
+            assert_eq!(text.parse::<StreamRoute>().unwrap(), route);
+            // serde round-trip (string repr on the wire)
+            let json = serde_json::to_string(&route).unwrap();
+            assert_eq!(json, format!("{:?}", text)); // JSON string literal
+            let back: StreamRoute = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, route);
+        }
+    }
+
+    #[test]
+    fn stream_route_rejects_unknown_strings() {
+        for bad in ["", "garbage", "Discard", "MAIN", "window:", "windows:foo", "drop"] {
+            let err = bad.parse::<StreamRoute>().unwrap_err();
+            assert!(
+                err.contains("stream route"),
+                "error for {:?} should mention stream route: {}",
+                bad,
+                err
+            );
+            assert!(
+                serde_json::from_str::<StreamRoute>(&format!("{:?}", bad)).is_err(),
+                "serde should reject {:?}",
+                bad
+            );
+        }
+    }
+
+    #[test]
+    fn stream_routes_deserialize_from_toml_table() {
+        let cfg: StreamsConfig = toml::from_str(
+            r#"
+            fallback = "main"
+            [routes]
+            speech = "discard"
+            ooc = "main"
+            bounty = "window:bounty"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(cfg.routes["speech"], StreamRoute::Discard);
+        assert_eq!(cfg.routes["ooc"], StreamRoute::Main);
+        assert_eq!(cfg.routes["bounty"], StreamRoute::Window("bounty".to_string()));
+
+        // And a bad value fails loudly, not silently.
+        let err = toml::from_str::<StreamsConfig>(
+            r#"
+            [routes]
+            speech = "yeet"
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("stream route"), "{}", err);
+    }
+
+    // ---- drop_unsubscribed migration ----------------------------------
+
+    #[test]
+    fn migration_converts_drop_list_to_discard_routes() {
+        let mut cfg = StreamsConfig::default();
+        assert!(!cfg.drop_unsubscribed.is_empty(), "default drop list feeds migration");
+        let dropped = cfg.drop_unsubscribed.clone();
+        cfg.migrate_drop_list_to_routes();
+        assert!(cfg.drop_unsubscribed.is_empty(), "legacy list cleared in memory");
+        for id in dropped {
+            assert_eq!(cfg.routes.get(&id), Some(&StreamRoute::Discard), "{}", id);
+        }
+    }
+
+    #[test]
+    fn migration_never_clobbers_existing_routes() {
+        let mut cfg = StreamsConfig {
+            drop_unsubscribed: vec!["speech".to_string(), "Bounty".to_string()],
+            ..Default::default()
+        };
+        cfg.routes
+            .insert("speech".to_string(), StreamRoute::Main);
+        cfg.routes
+            .insert("bounty".to_string(), StreamRoute::Window("bounty".to_string()));
+        cfg.migrate_drop_list_to_routes();
+        assert!(cfg.drop_unsubscribed.is_empty());
+        // Existing route wins over the drop-list entry, case-insensitively.
+        assert_eq!(cfg.routes["speech"], StreamRoute::Main);
+        assert_eq!(cfg.routes["bounty"], StreamRoute::Window("bounty".to_string()));
+        assert!(!cfg.routes.contains_key("Bounty"));
+    }
+
+    #[test]
+    fn migration_is_idempotent_and_empty_routes_stay_unserialized() {
+        let mut cfg = StreamsConfig::default();
+        cfg.migrate_drop_list_to_routes();
+        let routes = cfg.routes.clone();
+        cfg.migrate_drop_list_to_routes();
+        assert_eq!(cfg.routes, routes);
+
+        // skip_serializing_if: an empty map writes no [streams.routes] key.
+        let empty = StreamsConfig {
+            routes: std::collections::BTreeMap::new(),
+            ..StreamsConfig::default()
+        };
+        let toml_text = toml::to_string(&empty).unwrap();
+        assert!(!toml_text.contains("routes"), "{}", toml_text);
     }
 }

@@ -46,7 +46,8 @@ pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
 pub use paths::{write_atomic, DialogPosition, SavedDialogPositions};
 pub use settings::{
     ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
-    SoundConfig, StreamsConfig, TargetListConfig, TtsConfig, TtsSubstitution, UiConfig, WebConfig,
+    SoundConfig, StreamRoute, StreamsConfig, TargetListConfig, TtsConfig, TtsSubstitution,
+    UiConfig, WebConfig,
 };
 pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore};
 pub use widgets::{

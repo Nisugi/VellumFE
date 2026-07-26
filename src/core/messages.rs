@@ -3,12 +3,67 @@
 //! Handles parsing and routing of XML messages from the game server.
 //! Updates GameState and UiState based on incoming messages.
 
-use crate::config::{Config, SavedDialogPositions, SpellColorStyle};
+use crate::config::{Config, SavedDialogPositions, SpellColorStyle, StreamRoute};
 use crate::core::bounty_parser;
 use crate::core::GameState;
 use crate::data::*;
 use crate::parser::ParsedElement;
 // std::time unused here
+
+/// Where a line from a stream should go, decided purely from subscription
+/// state + the `[streams.routes]` map + the fallback window name. No
+/// window-existence checks happen here — delivery walks `candidates` and
+/// uses the first window that actually exists (never creating or opening
+/// one). The GUI Streams panel reuses this to preview routing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteDecision {
+    /// A subscribed window handles the stream; orphan routing does not apply.
+    Subscribed,
+    /// Drop the line silently.
+    Discard,
+    /// Deliver to the first window in `candidates` that exists.
+    Deliver { candidates: Vec<String> },
+}
+
+/// Routing precedence for a stream: subscribed window > `routes` entry >
+/// `fallback`. Route lookup is case-insensitive (matching the legacy
+/// drop-list comparison). A `window:<name>` route lists its window first,
+/// then the fallback window, then "main" as the last resort — windows are
+/// never auto-created or auto-opened for a route.
+pub fn route_for(
+    stream_id: &str,
+    has_subscriber: bool,
+    routes: &std::collections::BTreeMap<String, StreamRoute>,
+    fallback: &str,
+) -> RouteDecision {
+    if has_subscriber {
+        return RouteDecision::Subscribed;
+    }
+    let route = routes
+        .iter()
+        .find(|(id, _)| id.eq_ignore_ascii_case(stream_id))
+        .map(|(_, route)| route);
+    let mut candidates: Vec<String> = Vec::new();
+    match route {
+        Some(StreamRoute::Discard) => return RouteDecision::Discard,
+        Some(StreamRoute::Main) => candidates.push("main".to_string()),
+        Some(StreamRoute::Window(name)) => {
+            candidates.push(name.clone());
+            candidates.push(fallback.to_string());
+            candidates.push("main".to_string());
+        }
+        None => {
+            // Unrouted stream: existing fallback behavior ("main" as the
+            // last resort when the fallback window itself is missing).
+            candidates.push(fallback.to_string());
+            candidates.push("main".to_string());
+        }
+    }
+    // Order-preserving dedup (e.g. fallback == "main").
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|c| seen.insert(c.clone()));
+    RouteDecision::Deliver { candidates }
+}
 
 /// Processes incoming game messages and updates state
 pub struct MessageProcessor {
@@ -160,7 +215,12 @@ impl MessageProcessor {
             }
         }
     }
-    pub fn new(config: Config, saved_dialog_positions: SavedDialogPositions) -> Self {
+    pub fn new(mut config: Config, saved_dialog_positions: SavedDialogPositions) -> Self {
+        // Routing consults only [streams.routes]; normalize any legacy
+        // drop list on our copy in case the caller's config didn't go
+        // through Config::load_* (tests, embedders). Idempotent.
+        config.streams.migrate_drop_list_to_routes();
+
         // Create parser with presets from config, resolving palette names to hex values
         let preset_list = config
             .colors
@@ -268,6 +328,9 @@ impl MessageProcessor {
     /// Refresh internal config, parser presets, and caches after a reload.
     pub fn apply_config(&mut self, mut config: Config) {
         let apply_start = std::time::Instant::now();
+        // Same legacy drop-list normalization as `new` — routing consults
+        // only [streams.routes].
+        config.streams.migrate_drop_list_to_routes();
         crate::config::Config::compile_highlight_patterns(&mut config.highlights);
         tracing::debug!(
             "apply_config: compiled highlight patterns in {:?}",
@@ -440,23 +503,24 @@ impl MessageProcessor {
                     // Stream has subscribers - route normally
                     self.discard_current_stream = false;
                 } else {
-                    // No subscribers - check drop list vs fallback routing
+                    // No subscribers - consult the route map / fallback
                     match self.resolve_orphaned_stream(id) {
-                        None => {
-                            // Stream is in drop_unsubscribed list - discard content
+                        RouteDecision::Discard => {
+                            // Routed to discard (or migrated drop-list entry)
                             self.discard_current_stream = true;
                             tracing::debug!(
-                                "Stream '{}' has no subscribers and is in drop list, discarding content",
+                                "Stream '{}' has no subscribers and routes to discard, dropping content",
                                 id
                             );
                         }
-                        Some(fallback) => {
-                            // Not in drop list - will route to fallback window later
+                        decision => {
+                            // Will deliver at flush time (first existing
+                            // candidate window; never auto-created)
                             self.discard_current_stream = false;
                             tracing::debug!(
-                                "Stream '{}' has no subscribers, will route to fallback '{}'",
+                                "Stream '{}' has no subscribers, will deliver per {:?}",
                                 id,
-                                fallback
+                                decision
                             );
                         }
                     }
@@ -1876,14 +1940,14 @@ impl MessageProcessor {
             // Check stream subscribers for discard logic (case-insensitive lookup)
             if !self.get_stream_subscribers(id).is_empty() {
                 self.discard_current_stream = false;
-            } else if self.config.streams.drop_unsubscribed.contains(&id.to_string()) {
+            } else if matches!(self.resolve_orphaned_stream(id), RouteDecision::Discard) {
                 self.discard_current_stream = true;
-                tracing::debug!("Discarding stream '{}' (in drop_unsubscribed list)", id);
+                tracing::debug!("Discarding stream '{}' (routed to discard)", id);
             } else {
-                // No subscribers - route to fallback
+                // No subscribers - deliver per route/fallback at flush time
                 self.discard_current_stream = false;
                 tracing::debug!(
-                    "Routing stream '{}' to fallback '{}'",
+                    "Routing stream '{}' per route map (fallback '{}')",
                     id,
                     self.config.streams.fallback
                 );
@@ -2941,29 +3005,43 @@ impl MessageProcessor {
         // Restore the subscriber index taken before the loop
         self.text_stream_subscribers = subscribers_map;
 
-        // Fallback routing if no window handled the stream
-        // Uses config.streams settings: drop_unsubscribed list and fallback window
+        // Orphan routing if no subscribed window handled the stream:
+        // [streams.routes] entry (discard / main / window:<name>) else the
+        // fallback window
         if !text_added_to_any_window {
             // A move implies text was added, so the line is always present here
             let line = line_slot.as_ref().expect("line present when nothing was added");
             match self.resolve_orphaned_stream(&self.current_stream) {
-                None => {
-                    // Stream is in drop list - discard silently
+                // resolve_orphaned_stream passes has_subscriber = false, so
+                // Subscribed can't come back; nothing to do if it did.
+                RouteDecision::Subscribed => {}
+                RouteDecision::Discard => {
+                    // Routed to discard - drop silently
                     tracing::trace!(
-                        "Dropping line from stream '{}' (in drop_unsubscribed list)",
+                        "Dropping line from stream '{}' (routed to discard)",
                         self.current_stream
                     );
                     self.chunk_has_silent_updates = true;
                 }
-                Some(fallback_window) => {
-                    // Route to fallback window (defaults to "main")
-                    tracing::trace!(
-                        "Stream '{}' has no subscribers, routing to fallback '{}'",
-                        self.current_stream,
-                        fallback_window
-                    );
-                    if let Some(fallback) = ui_state.get_window_mut(&fallback_window) {
-                        if let WindowContent::Text(ref mut content) = fallback.content {
+                RouteDecision::Deliver { candidates } => {
+                    // The first candidate window that exists receives the
+                    // line (into its buffer even while hidden). Windows are
+                    // never auto-created or auto-opened here; a missing
+                    // window:<name> target falls through to the fallback
+                    // window, then "main".
+                    let mut delivered = false;
+                    for target in &candidates {
+                        let Some(window) = ui_state.get_window_mut(target) else {
+                            continue;
+                        };
+                        tracing::trace!(
+                            "Stream '{}' has no subscribers, routing to '{}'",
+                            self.current_stream,
+                            target
+                        );
+                        // First existing candidate wins; as before, a
+                        // non-text window swallows the line.
+                        if let WindowContent::Text(ref mut content) = window.content {
                             // Apply window-specific replacements if any
                             let final_line = if deferred_replacements.is_empty() {
                                 line.clone()
@@ -2972,7 +3050,7 @@ impl MessageProcessor {
                                     segments: super::highlight_engine::apply_deferred_for_window(
                                         &line.segments,
                                         &deferred_replacements,
-                                        &fallback_window,
+                                        target,
                                     ),
                                     stream: line.stream.clone(),
                                     timestamp: line.timestamp,
@@ -2980,37 +3058,18 @@ impl MessageProcessor {
                             };
                             content.add_line(final_line);
                             if let Some(tts_mgr) = tts_manager.as_deref_mut() {
-                                self.enqueue_tts(tts_mgr, &fallback_window, &line);
+                                self.enqueue_tts(tts_mgr, target, &line);
                             }
                         }
-                    } else if fallback_window != "main" {
-                        // Fallback window doesn't exist, try main as last resort
+                        delivered = true;
+                        break;
+                    }
+                    if !delivered {
                         tracing::trace!(
-                            "Fallback window '{}' not found, routing to main",
-                            fallback_window
+                            "No routing candidate exists for stream '{}' (tried {:?}), line dropped",
+                            self.current_stream,
+                            candidates
                         );
-                        if let Some(main_window) = ui_state.get_window_mut("main") {
-                            if let WindowContent::Text(ref mut content) = main_window.content {
-                                // Apply window-specific replacements if any
-                                let final_line = if deferred_replacements.is_empty() {
-                                    line.clone()
-                                } else {
-                                    StyledLine {
-                                        segments: super::highlight_engine::apply_deferred_for_window(
-                                            &line.segments,
-                                            &deferred_replacements,
-                                            "main",
-                                        ),
-                                        stream: line.stream.clone(),
-                                        timestamp: line.timestamp,
-                                    }
-                                };
-                                content.add_line(final_line);
-                                if let Some(tts_mgr) = tts_manager.as_deref_mut() {
-                                    self.enqueue_tts(tts_mgr, "main", &line);
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -3606,17 +3665,16 @@ impl MessageProcessor {
         false
     }
 
-    /// Determine what to do with an orphaned stream (no subscribers).
-    /// Returns: Some(window_name) to route to, or None to discard.
-    fn resolve_orphaned_stream(&self, stream: &str) -> Option<String> {
-        // Check if stream is in the drop list
-        if self.config.streams.drop_unsubscribed.iter().any(|s| s.eq_ignore_ascii_case(stream)) {
-            tracing::debug!("Stream '{}' is in drop_unsubscribed list, discarding", stream);
-            return None;
-        }
-
-        // Return the fallback window (defaults to "main")
-        Some(self.config.streams.fallback.clone())
+    /// Determine what to do with an orphaned stream (no subscribers):
+    /// `[streams.routes]` entry (discard / main / window:<name>) if present,
+    /// else the fallback window. Never returns `RouteDecision::Subscribed`.
+    fn resolve_orphaned_stream(&self, stream: &str) -> RouteDecision {
+        route_for(
+            stream,
+            false,
+            &self.config.streams.routes,
+            &self.config.streams.fallback,
+        )
     }
 
     /// Clear inventory cache to force next inventory update to render
@@ -4025,6 +4083,72 @@ impl MessageProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ===========================================
+    // Stream routing precedence (route_for)
+    // ===========================================
+
+    fn routes(
+        entries: &[(&str, StreamRoute)],
+    ) -> std::collections::BTreeMap<String, StreamRoute> {
+        entries
+            .iter()
+            .map(|(id, route)| (id.to_string(), route.clone()))
+            .collect()
+    }
+
+    fn deliver(candidates: &[&str]) -> RouteDecision {
+        RouteDecision::Deliver {
+            candidates: candidates.iter().map(|c| c.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn route_subscribed_window_always_wins() {
+        // Even a discard route loses to a subscribed window.
+        let map = routes(&[("speech", StreamRoute::Discard)]);
+        assert_eq!(route_for("speech", true, &map, "main"), RouteDecision::Subscribed);
+    }
+
+    #[test]
+    fn route_discard_drops_orphaned_stream() {
+        let map = routes(&[("speech", StreamRoute::Discard)]);
+        assert_eq!(route_for("speech", false, &map, "main"), RouteDecision::Discard);
+        // Lookup is case-insensitive, matching the legacy drop list.
+        assert_eq!(route_for("SPEECH", false, &map, "main"), RouteDecision::Discard);
+    }
+
+    #[test]
+    fn route_main_delivers_to_main() {
+        let map = routes(&[("ooc", StreamRoute::Main)]);
+        assert_eq!(route_for("ooc", false, &map, "story"), deliver(&["main"]));
+    }
+
+    #[test]
+    fn route_window_prefers_window_then_fallback_then_main() {
+        let map = routes(&[("bounty", StreamRoute::Window("bounty".to_string()))]);
+        // Delivery takes the first candidate window that exists, so a
+        // missing "bounty" window falls back to "story", then "main" —
+        // never auto-creating or auto-opening anything.
+        assert_eq!(
+            route_for("bounty", false, &map, "story"),
+            deliver(&["bounty", "story", "main"])
+        );
+        // Duplicates collapse (fallback already "main").
+        assert_eq!(
+            route_for("bounty", false, &map, "main"),
+            deliver(&["bounty", "main"])
+        );
+    }
+
+    #[test]
+    fn route_unrouted_stream_keeps_fallback_behavior() {
+        let map = routes(&[("speech", StreamRoute::Discard)]);
+        assert_eq!(route_for("bounty", false, &map, "story"), deliver(&["story", "main"]));
+        assert_eq!(route_for("bounty", false, &map, "main"), deliver(&["main"]));
+        let empty = routes(&[]);
+        assert_eq!(route_for("anything", false, &empty, "main"), deliver(&["main"]));
+    }
 
     // ===========================================
     // Helper function to create minimal processor for testing
