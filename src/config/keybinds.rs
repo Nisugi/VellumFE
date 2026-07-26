@@ -856,6 +856,51 @@ impl Config {
         Ok(wheels_from(DEFAULT_KEYBINDS).unwrap_or_default())
     }
 
+    /// Replace one wheel's slice list in the global keybinds.toml:
+    /// None = the default wheel ([[controller_wheel]]), Some(name) =
+    /// [controller_wheels.<name>]. An empty slice list deletes a named
+    /// wheel outright.
+    pub fn save_controller_wheel_named(name: Option<&str>, slices: &[WheelSlice]) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        match name {
+            None => {
+                let array =
+                    toml::Value::try_from(slices).context("Failed to serialize wheel slices")?;
+                toml_table.insert("controller_wheel".to_string(), array);
+            }
+            Some(wheel) => {
+                let section = toml_table
+                    .entry("controller_wheels".to_string())
+                    .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+                if let toml::Value::Table(table) = section {
+                    if slices.is_empty() {
+                        table.remove(wheel);
+                    } else {
+                        let array = toml::Value::try_from(slices)
+                            .context("Failed to serialize wheel slices")?;
+                        table.insert(wheel.to_string(), array);
+                    }
+                }
+            }
+        }
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
+    }
+
     /// Replace the whole `[[controller_wheel]]` array in the global
     /// keybinds.toml (the wheel editor saves the full slice list).
     pub fn save_controller_wheel(slices: &[WheelSlice]) -> Result<()> {

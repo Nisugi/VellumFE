@@ -4,21 +4,98 @@
 //! Bindings are global — controllers belong to the desk, not a character.
 
 use super::super::VellumGuiApp;
-use crate::config::{Config, KeyAction, KeyBindAction, MacroAction};
+use crate::config::{Config, KeyAction, KeyBindAction, MacroAction, WheelSlice};
 use eframe::egui;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ControllerTab {
+    Base,
+    Shift,
+    Wheels,
+}
 
 pub(in super::super) struct ControllerEditorState {
     form: Option<ControllerFormState>,
-    /// Which binding bank is shown/edited: false = [controller],
-    /// true = [controller_shift] (while the shift button is held).
-    shift_layer: bool,
+    tab: ControllerTab,
+    /// Selected wheel in the Wheels tab: "" = the default wheel.
+    wheel_selected: String,
+    /// Unsaved working copy of the selected wheel's slices.
+    wheel_buffer: Option<Vec<WheelSlice>>,
+    wheel_new_name: String,
+    wheel_status: Option<String>,
 }
 
 impl ControllerEditorState {
     fn new() -> Self {
         Self {
             form: None,
-            shift_layer: false,
+            tab: ControllerTab::Base,
+            wheel_selected: String::new(),
+            wheel_buffer: None,
+            wheel_new_name: String::new(),
+            wheel_status: None,
+        }
+    }
+
+    fn shift_layer(&self) -> bool {
+        self.tab == ControllerTab::Shift
+    }
+}
+
+/// Structural edit collected while rendering the slice tree (applied
+/// after the pass; in-place text/color edits mutate the buffer directly).
+enum WheelOp {
+    Delete(Vec<usize>),
+    AddChild(Vec<usize>),
+    MoveUp(Vec<usize>),
+}
+
+fn wheel_slices_at<'a>(slices: &'a mut Vec<WheelSlice>, path: &[usize]) -> Option<&'a mut Vec<WheelSlice>> {
+    let mut level = slices;
+    for &index in path {
+        level = &mut level.get_mut(index)?.slices;
+    }
+    Some(level)
+}
+
+fn apply_wheel_op(slices: &mut Vec<WheelSlice>, op: WheelOp) {
+    match op {
+        WheelOp::Delete(path) => {
+            let (last, parent) = match path.split_last() {
+                Some(split) => split,
+                None => return,
+            };
+            if let Some(level) = wheel_slices_at(slices, parent) {
+                if *last < level.len() {
+                    level.remove(*last);
+                }
+            }
+        }
+        WheelOp::AddChild(path) => {
+            // path addresses the slice whose children gain the new entry
+            // (an empty path adds a top-level slice).
+            if let Some(level) = wheel_slices_at(slices, &path) {
+                level.push(WheelSlice {
+                    label: "new".to_string(),
+                    command: String::new(),
+                    color: None,
+                    slices: Vec::new(),
+                });
+            }
+        }
+        WheelOp::MoveUp(path) => {
+            let (last, parent) = match path.split_last() {
+                Some(split) => split,
+                None => return,
+            };
+            if *last == 0 {
+                return;
+            }
+            if let Some(level) = wheel_slices_at(slices, parent) {
+                if *last < level.len() {
+                    level.swap(*last, *last - 1);
+                }
+            }
         }
     }
 }
@@ -161,6 +238,7 @@ impl VellumGuiApp {
         let mut open = true;
         let mut open_form: Option<ControllerFormState> = None;
         let mut delete_request: Option<String> = None;
+        let mut wheel_save = false;
 
         let pad_connected = self
             .gamepad
@@ -179,19 +257,25 @@ impl VellumGuiApp {
                     ui.weak("No controller detected — connect one and it will announce itself.");
                 }
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut state.shift_layer, false, "Base");
-                    ui.selectable_value(&mut state.shift_layer, true, "Shift layer");
+                    ui.selectable_value(&mut state.tab, ControllerTab::Base, "Base");
+                    ui.selectable_value(&mut state.tab, ControllerTab::Shift, "Shift layer");
+                    ui.selectable_value(&mut state.tab, ControllerTab::Wheels, "Wheels");
                     ui.separator();
-                    if ui.button("Add binding").clicked() {
+                    if state.tab != ControllerTab::Wheels && ui.button("Add binding").clicked() {
                         open_form = Some(ControllerFormState::empty());
                     }
                 });
-                if state.shift_layer {
+                if state.tab == ControllerTab::Shift {
                     ui.weak("Bindings while the shift button (bind one to controller_shift) is held.");
                 }
                 ui.separator();
 
-                let binds = if state.shift_layer {
+                if state.tab == ControllerTab::Wheels {
+                    render_wheels_tab(ui, &mut state, &self.app_core.config, &mut wheel_save);
+                    return;
+                }
+
+                let binds = if state.shift_layer() {
                     &self.app_core.config.controller_shift_binds
                 } else {
                     &self.app_core.config.controller_binds
@@ -223,8 +307,29 @@ impl VellumGuiApp {
                     });
             });
 
+        if wheel_save {
+            if let Some(buffer) = state.wheel_buffer.clone() {
+                let name = (!state.wheel_selected.is_empty())
+                    .then_some(state.wheel_selected.as_str());
+                match Config::save_controller_wheel_named(name, &buffer) {
+                    Ok(()) => {
+                        self.app_core.config.controller_wheel =
+                            Config::load_controller_wheel().unwrap_or_default();
+                        self.app_core.config.controller_wheels =
+                            Config::load_controller_wheels().unwrap_or_default();
+                        state.wheel_status = Some(if buffer.is_empty() && name.is_some() {
+                            "Wheel deleted (no slices).".to_string()
+                        } else {
+                            "Saved.".to_string()
+                        });
+                    }
+                    Err(err) => state.wheel_status = Some(format!("Save failed: {}", err)),
+                }
+            }
+        }
+
         if let Some(button) = delete_request {
-            match Config::delete_single_controller_bind(&button, state.shift_layer) {
+            match Config::delete_single_controller_bind(&button, state.shift_layer()) {
                 Ok(()) => {
                     self.reload_controller_binds();
                     self.app_core
@@ -339,7 +444,7 @@ impl VellumGuiApp {
                 });
 
             if submitted {
-                match self.save_controller_bind_from_form(&form, state.shift_layer) {
+                match self.save_controller_bind_from_form(&form, state.shift_layer()) {
                     Ok(()) => {
                         self.app_core.add_system_message(&format!(
                             "Controller bind '{}' saved.",
@@ -359,5 +464,155 @@ impl VellumGuiApp {
         if open {
             self.controller_editor = Some(state);
         }
+    }
+}
+
+/// Wheels tab: pick or create a wheel, edit its slice tree (labels,
+/// commands, colors, folders), save the whole wheel at once. Saving a
+/// named wheel with no slices deletes it.
+fn render_wheels_tab(
+    ui: &mut egui::Ui,
+    state: &mut ControllerEditorState,
+    config: &Config,
+    save_clicked: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        let mut names: Vec<String> = config.controller_wheels.keys().cloned().collect();
+        names.sort();
+        egui::ComboBox::from_id_salt("controller_wheel_pick")
+            .selected_text(if state.wheel_selected.is_empty() {
+                "default"
+            } else {
+                state.wheel_selected.as_str()
+            })
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(state.wheel_selected.is_empty(), "default")
+                    .clicked()
+                {
+                    state.wheel_selected.clear();
+                    state.wheel_buffer = None;
+                    state.wheel_status = None;
+                }
+                for name in &names {
+                    if ui
+                        .selectable_label(state.wheel_selected == *name, name)
+                        .clicked()
+                    {
+                        state.wheel_selected = name.clone();
+                        state.wheel_buffer = None;
+                        state.wheel_status = None;
+                    }
+                }
+            });
+        ui.add(
+            egui::TextEdit::singleline(&mut state.wheel_new_name)
+                .desired_width(110.0)
+                .hint_text("new wheel name"),
+        );
+        if ui.button("New wheel").clicked() {
+            let name = state.wheel_new_name.trim().to_string();
+            if !name.is_empty() {
+                state.wheel_selected = name;
+                state.wheel_new_name.clear();
+                state.wheel_buffer = Some(Vec::new());
+                state.wheel_status = None;
+            }
+        }
+    });
+    ui.weak(
+        "Bind a button to controller_wheel (default) or controller_wheel:<name>. \
+         A slice with sub-slices is a folder; leave its command empty.",
+    );
+    ui.separator();
+
+    let selected = state.wheel_selected.clone();
+    let buffer = state.wheel_buffer.get_or_insert_with(|| {
+        if selected.is_empty() {
+            config.controller_wheel.clone()
+        } else {
+            config
+                .controller_wheels
+                .get(&selected)
+                .cloned()
+                .unwrap_or_default()
+        }
+    });
+
+    let mut ops: Vec<WheelOp> = Vec::new();
+    egui::ScrollArea::vertical()
+        .id_salt("controller_wheel_slices")
+        .auto_shrink([false, false])
+        .max_height((ui.available_height() - 40.0).max(60.0))
+        .show(ui, |ui| {
+            render_slice_rows(ui, buffer, &mut Vec::new(), &mut ops);
+            if ui.button("+ Add slice").clicked() {
+                ops.push(WheelOp::AddChild(Vec::new()));
+            }
+        });
+    for op in ops {
+        apply_wheel_op(buffer, op);
+    }
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        if ui.button("Save wheel").clicked() {
+            *save_clicked = true;
+        }
+        if let Some(status) = &state.wheel_status {
+            ui.weak(status);
+        }
+    });
+}
+
+fn render_slice_rows(
+    ui: &mut egui::Ui,
+    slices: &mut Vec<WheelSlice>,
+    path: &mut Vec<usize>,
+    ops: &mut Vec<WheelOp>,
+) {
+    for i in 0..slices.len() {
+        path.push(i);
+        {
+            let is_folder = slices[i].is_folder();
+            let slice = &mut slices[i];
+            ui.horizontal(|ui| {
+                ui.add_space((path.len() - 1) as f32 * 18.0);
+                ui.add(
+                    egui::TextEdit::singleline(&mut slice.label)
+                        .desired_width(100.0)
+                        .hint_text("label"),
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut slice.command)
+                        .desired_width(150.0)
+                        .hint_text(if is_folder { "(folder)" } else { "command" }),
+                );
+                let mut color = slice.color.clone().unwrap_or_default();
+                super::color_field(ui, &mut color);
+                slice.color = if color.trim().is_empty() {
+                    None
+                } else {
+                    Some(color)
+                };
+                if ui.small_button("^").on_hover_text("Move up").clicked() {
+                    ops.push(WheelOp::MoveUp(path.clone()));
+                }
+                if ui
+                    .small_button("+sub")
+                    .on_hover_text("Add a child slice (makes this a folder)")
+                    .clicked()
+                {
+                    ops.push(WheelOp::AddChild(path.clone()));
+                }
+                if ui.small_button("X").on_hover_text("Delete").clicked() {
+                    ops.push(WheelOp::Delete(path.clone()));
+                }
+            });
+        }
+        if !slices[i].slices.is_empty() {
+            render_slice_rows(ui, &mut slices[i].slices, path, ops);
+        }
+        path.pop();
     }
 }
