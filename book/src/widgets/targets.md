@@ -41,7 +41,8 @@ always wins.
 
 ## Configuration
 
-Configure via `config.toml`:
+In the GUI, edit these on the targets window itself (right-click →
+**Edit Window…**). The file form lives in `config.toml`:
 
 ```toml
 [target_list]

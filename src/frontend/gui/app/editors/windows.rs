@@ -883,7 +883,7 @@ impl VellumGuiApp {
                             ui.checkbox(tts_speak, "speak new lines (TTS)")
                                 .on_hover_text(
                                     "Read lines routed to this window aloud. TTS must \
-                                     be enabled in Settings > Accessibility.",
+                                     be enabled in Settings > Speech.",
                                 );
                             ui.end_row();
                         }

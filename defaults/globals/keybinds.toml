@@ -10,7 +10,7 @@
 #   delete = "cursor_backspace"
 #
 # To find what key code your terminal sends, run with RUST_LOG=debug
-# and check ~/.vellum-fe/debug.log for "KEY EVENT" lines
+# and check ~/.vellum-fe/vellum-fe.log for "KEY EVENT" lines
 #
 # Available actions:
 #   send_command, cursor_left, cursor_right, cursor_word_left, cursor_word_right,

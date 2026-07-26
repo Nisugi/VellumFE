@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f407e694.js";
+            window.path_to_searchindex_js = "../searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -192,6 +192,7 @@
 <tr><td><a href="./keybinds-toml.html">keybinds.toml</a></td><td>Keyboard shortcuts</td></tr>
 <tr><td><a href="./highlights-toml.html">highlights.toml</a></td><td>Text highlighting, sounds, squelch rules</td></tr>
 <tr><td><a href="./colors-toml.html">colors.toml</a></td><td>Color palette, stream presets, spell colors</td></tr>
+<tr><td><a href="./hotbars-toml.html">hotbars.toml</a></td><td>Hotkey bars (command buttons)</td></tr>
 <tr><td><a href="./macros-toml.html">macros.toml</a></td><td>Macro buttons for the mobile web frontend</td></tr>
 </tbody>
 </table>
@@ -204,6 +205,7 @@
 │   ├── keybinds.toml
 │   ├── highlights.toml
 │   ├── colors.toml
+│   ├── hotbars.toml
 │   ├── macros.toml
 │   └── sounds/           # Sound files for highlight alerts
 ├── layouts/              # Saved layouts (.savelayout / .loadlayout)
@@ -222,11 +224,15 @@
 <tr><th>Command</th><th>Opens</th></tr>
 </thead>
 <tbody>
-<tr><td><code>.settings</code></td><td>Settings editor (connection, UI, sound, theme)</td></tr>
+<tr><td><code>.settings</code></td><td>Settings editor — every registered setting, on both frontends</td></tr>
 <tr><td><code>.highlights</code></td><td>Highlights browser</td></tr>
 <tr><td><code>.keybinds</code></td><td>Keybinds browser</td></tr>
+<tr><td><code>.hotbars</code></td><td>Hotbar editor</td></tr>
+<tr><td><code>.streams</code></td><td>Stream routing editor</td></tr>
 <tr><td><code>.colors</code></td><td>Color palette browser</td></tr>
+<tr><td><code>.uicolors</code> / <code>.spellcolors</code></td><td>UI element / spell-circle colors</td></tr>
 <tr><td><code>.themes</code></td><td>Theme browser</td></tr>
+<tr><td><code>.tts</code></td><td>Text-to-speech controls (GUI: Settings &gt; Speech)</td></tr>
 </tbody>
 </table>
 </div>
@@ -235,11 +241,26 @@
 .reload highlights   # or just one: highlights, keybinds, settings, colors, layout
 .reloadmacros        # macros.toml (also pushes to connected phones)
 </code></pre>
+<h2 id="how-saves-work"><a class="header" href="#how-saves-work">How Saves Work</a></h2>
+<p>You shouldn’t need to care, but for the curious:</p>
+<ul>
+<li><strong>Sparse saves</strong> — user files only contain what you’ve changed from the
+shipped defaults, with your comments preserved. Settings you never
+touched pick up new defaults automatically on upgrade.</li>
+<li><strong>Atomic writes with backups</strong> — every save writes a temp file and swaps
+it in, keeping a <code>.bak</code> of the previous version. A crash mid-save can’t
+corrupt your config.</li>
+<li><strong>Additive default refresh</strong> — new shipped highlights/keybinds/hotbars
+appear after an upgrade, but ones you deleted stay deleted (a
+<code>.defaults-seen.toml</code> sidecar remembers what you’ve already been given).</li>
+</ul>
 <h2 id="resetting-to-defaults"><a class="header" href="#resetting-to-defaults">Resetting to Defaults</a></h2>
 <p>Delete a configuration file and it is recreated with defaults on next launch:</p>
 <pre><code class="language-bash">rm ~/.vellum-fe/global/keybinds.toml
 </code></pre>
-<p>Or delete the entire directory for a full reset.</p>
+<p>Or delete the entire directory for a full reset. (Individual shipped
+entries you deleted from collection files like highlights stay deleted
+across upgrades — deleting the whole file is the reset switch.)</p>
 
                     </main>
 

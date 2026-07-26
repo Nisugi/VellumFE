@@ -21,6 +21,14 @@ window dragging.
 - Use a Nerd Font if you want the default countdown glyphs and compass to
   render perfectly.
 
+## Editors in the Terminal
+
+Everything the GUI edits in panels has a keyboard-driven TUI counterpart:
+`.settings` renders every registered setting, `.streams` opens the
+per-stream routing picker (the mirror of the GUI's Streams panel), and
+the window editor's Streams field has a `Ctrl+P` picker of streams seen
+this session.
+
 ## TUI-Only Features
 
 A few things only make sense in a terminal:

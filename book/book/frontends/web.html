@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f407e694.js";
+            window.path_to_searchindex_js = "../searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -230,7 +230,8 @@ port.</p>
 <h2 id="playing-from-the-browser"><a class="header" href="#playing-from-the-browser">Playing from the Browser</a></h2>
 <ul>
 <li><strong>Read the game</strong> live, with streams as filter chips (unread badges;
-long-press a chip to reorder — remembered per device).</li>
+long-press a chip to reorder — the order follows your character across
+devices).</li>
 <li><strong>Send commands</strong> — identical to typing at the PC, including
 dot-commands. With a keyboard, Up/Down browse command history; the ↻
 button resends the last command, and long-pressing it opens a history
@@ -273,7 +274,16 @@ output” marker for long gaps. Multiple devices can connect at once.</li>
 contrast, parchment), show/hide toggles for every piece of chrome
 (macro bar, compass, vitals, hands, RT label, effect pills, chips),
 and opacity sliders for floating buttons, drawers, and bottom sheets.
-The <strong>Aa</strong> button sets story text from 6 to 24 px. All per-device.</li>
+The <strong>Aa</strong> button sets story text from 6 to 24 px. Theme, text size,
+and chip order <strong>roam with your character</strong> (the profile value wins on
+connect); the chrome toggles and opacities stay per-device.</li>
+<li><strong>Speech</strong> — read incoming lines aloud with the browser’s speech
+synthesis, with per-stream toggles (thoughts on by default). Voice
+availability depends on the phone; the first utterance may need a tap.</li>
+<li><strong>Sound alerts / login music</strong> — browser playback toggles.</li>
+<li><strong>Client settings (saved on host)</strong> — the full desktop settings
+registry over the wire: every setting, editable at character or global
+scope, saved on the hosting machine exactly as if edited there.</li>
 <li><strong>Highlight editor</strong> — add/edit highlight rules with color pickers, a
 sound dropdown, and a live preview; fields the form doesn’t cover
 (redirects, squelch, …) are preserved for desktop editing.</li>

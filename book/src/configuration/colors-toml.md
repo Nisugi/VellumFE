@@ -59,7 +59,7 @@ Color individual prompt status characters:
 ```toml
 [[prompt_colors]]
 character = "R"   # roundtime
-color = "#ff0000"
+fg = "#ff0000"    # bg = "..." also supported ("color" is a legacy alias for fg)
 ```
 
 Defaults cover `R` (roundtime), `S` (stunned), `H` (hiding), `>` (prompt),
@@ -67,8 +67,7 @@ Defaults cover `R` (roundtime), `S` (stunned), `H` (hiding), `>` (prompt),
 
 ## UI Colors
 
-Default colors for UI elements (per-window overrides live in layout.toml).
-Edit with `.uicolors`:
+Default colors for UI elements. Edit with `.uicolors`:
 
 ```toml
 [ui]
@@ -78,7 +77,13 @@ focused_border_color = "#ffff00"
 text_color = "#ffffff"
 background_color = "#000000"
 selection_bg_color = "#4a4a4a"
+textarea_background = "-"       # "-" or unchanged = fall through to theme
 ```
+
+These sit in the middle of the window color chain: a per-window color in
+layout.toml wins, then a `[ui]` value **you have changed** applies, and
+anything left at its default (or set to `"-"`) falls through to the
+active theme.
 
 ## Spell Colors
 

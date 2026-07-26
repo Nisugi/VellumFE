@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-f407e694.js";
+            window.path_to_searchindex_js = "searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e125f080.js"></script>
@@ -302,7 +302,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.9</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.10</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>
@@ -512,6 +512,12 @@ WezTerm, iTerm2) and leave <code>color_mode = "direct"</code>.</li>
 <li>Use a Nerd Font if you want the default countdown glyphs and compass to
 render perfectly.</li>
 </ul>
+<h2 id="editors-in-the-terminal"><a class="header" href="#editors-in-the-terminal">Editors in the Terminal</a></h2>
+<p>Everything the GUI edits in panels has a keyboard-driven TUI counterpart:
+<code>.settings</code> renders every registered setting, <code>.streams</code> opens the
+per-stream routing picker (the mirror of the GUI’s Streams panel), and
+the window editor’s Streams field has a <code>Ctrl+P</code> picker of streams seen
+this session.</p>
 <h2 id="tui-only-features"><a class="header" href="#tui-only-features">TUI-Only Features</a></h2>
 <p>A few things only make sense in a terminal:</p>
 <ul>
@@ -554,7 +560,9 @@ categorized templates, toggle visibility, or reassign a window’s zone.</li>
 Window…</strong>, which opens the window editor; title bars can be hidden
 per-window.</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
-sessions), or locked together into tab groups that move as a unit.</li>
+sessions), or locked together into tab groups that move as a unit. The
+context menu reorders group members (<strong>Move Up / Move Down</strong>) and can
+ungroup one member or the whole group.</li>
 </ul>
 <h2 id="the-map"><a class="header" href="#the-map">The Map</a></h2>
 <p>The GUI renders a live <a href="#map-1">map</a> of your surroundings: a
@@ -577,17 +585,30 @@ modes (<code>value/max</code> or bare <code>value</code> instead of a filled bar
 <li><strong>Countdowns</strong>: a <strong>fill color</strong> override (defaults: roundtime red,
 casttime blue).</li>
 <li><strong>Active effects</strong>: category (spells/buffs/debuffs/cooldowns).</li>
+<li><strong>Vitals bars</strong>: orientation, height, text format, and per-bar toggles
+are edited here, on the vitals window itself.</li>
+<li><strong>Targets windows</strong>: also edit the global <code>target_list.*</code> display
+settings (status position, truncation, boss colors) in place.</li>
+<li><strong>Speech</strong>: a <strong>speak new lines (TTS)</strong> checkbox reads everything routed
+to this window aloud (needs TTS on in Settings &gt; Speech).</li>
 <li><strong>Delete Window</strong> — actually removes the window from the layout
 (unlike hiding, or the <code>.deletewindow</code> command, which only hides).</li>
 </ul>
-<h2 id="custom-windows"><a class="header" href="#custom-windows">Custom Windows</a></h2>
-<p><strong>Windows menu → Add → Custom Window…</strong> opens an authoring panel for
-custom text windows fed by any Lich stream id. Name the window, type
-comma-separated stream ids — or click one from the <strong>streams seen this
-session</strong> list — and it starts collecting that output. The panel also
-edits or deletes existing custom windows. (The TUI can do the same from
-its window editor’s Streams field; <code>Ctrl+P</code> there opens the same
-seen-streams picker.)</p>
+<h2 id="streams--custom-windows"><a class="header" href="#streams--custom-windows">Streams &amp; Custom Windows</a></h2>
+<p><strong>Windows menu → Streams &amp; Custom Windows…</strong> opens a panel that does two
+things:</p>
+<ul>
+<li><strong>Stream routing</strong> — every stream seen this session, with a route for
+each: a window, main, or discard. This is the GUI counterpart of the
+<code>.streams</code> editor and writes <code>[streams.routes]</code> in
+<a href="#stream-routing">config.toml</a>.</li>
+<li><strong>Custom windows</strong> — author text windows fed by any Lich stream id.
+Name the window, type comma-separated stream ids — or click one from
+the seen-streams list — and it starts collecting that output. The panel
+also edits or deletes existing custom windows. (The TUI can do the same
+from its window editor’s Streams field; <code>Ctrl+P</code> there opens the same
+seen-streams picker.)</li>
+</ul>
 <h2 id="lich-webui-panels"><a class="header" href="#lich-webui-panels">Lich WebUI Panels</a></h2>
 <p>Lich 5.18+ scripts can register live UI pages (<code>;ui</code>). The GUI renders
 those pages as <strong>native docked panels</strong> — real widgets, not an embedded
@@ -597,7 +618,9 @@ browser:</p>
 .webui off        # disconnect the bridge
 </code></pre>
 <p>Open panels are saved with your layout and reconnect automatically at
-login. Requires a Lich proxy connection (not <code>--direct</code>).</p>
+login. Requires a Lich proxy connection (not <code>--direct</code>). Works with
+containerized Lich too — the bridge follows the host Lich advertises in
+its handshake instead of assuming localhost.</p>
 <h2 id="appearance"><a class="header" href="#appearance">Appearance</a></h2>
 <p>Open <code>.settings</code> → GUI panel:</p>
 <ul>
@@ -611,6 +634,13 @@ light/dark bar text for contrast.</li>
 <li>Per-window overrides: text size, accent (border) color, wrapping, fonts.</li>
 </ul>
 <p>Every size is adjustable — the Wrayth-like defaults are just defaults.</p>
+<h2 id="speech-text-to-speech"><a class="header" href="#speech-text-to-speech">Speech (Text-to-Speech)</a></h2>
+<p><strong>Settings &gt; Speech</strong> holds the TTS controls: enable, rate, volume, a
+voice picker, pronunciation substitutions, gag patterns, and a <strong>Test</strong>
+button that speaks a sample line. Pick which windows are read aloud with
+the per-window <strong>speak new lines</strong> checkbox in the window editor; the
+<a href="#text-to-speech-1"><code>.tts</code> commands</a> drive the same
+settings from the input line.</p>
 <h2 id="graphics"><a class="header" href="#graphics">Graphics</a></h2>
 <p>The GUI draws real graphics where the terminal uses characters:</p>
 <ul>
@@ -691,7 +721,8 @@ port.</p>
 <h2 id="playing-from-the-browser"><a class="header" href="#playing-from-the-browser">Playing from the Browser</a></h2>
 <ul>
 <li><strong>Read the game</strong> live, with streams as filter chips (unread badges;
-long-press a chip to reorder — remembered per device).</li>
+long-press a chip to reorder — the order follows your character across
+devices).</li>
 <li><strong>Send commands</strong> — identical to typing at the PC, including
 dot-commands. With a keyboard, Up/Down browse command history; the ↻
 button resends the last command, and long-pressing it opens a history
@@ -704,7 +735,7 @@ lift and drag it anywhere — the spot is remembered per device.</li>
 available (<code>.mapdb download</code>); it opens a full-screen canvas map that
 follows your character. Tap a room to walk there with native <code>.go2</code>,
 drag to pan, pinch to zoom. See the <a href="#map-1">Map</a> and
-<a href="#travel-go2">Travel</a> chapters.</li>
+<a href="#travel-go2-1">Travel</a> chapters.</li>
 <li><strong>Side drawers</strong> — swipe from the screen edges (or tap the handles):
 the left drawer is a vertical <strong>macro tray</strong>; the right is a <strong>status
 panel</strong> with the injury doll, injuries list, hands, character sheet
@@ -734,7 +765,16 @@ output” marker for long gaps. Multiple devices can connect at once.</li>
 contrast, parchment), show/hide toggles for every piece of chrome
 (macro bar, compass, vitals, hands, RT label, effect pills, chips),
 and opacity sliders for floating buttons, drawers, and bottom sheets.
-The <strong>Aa</strong> button sets story text from 6 to 24 px. All per-device.</li>
+The <strong>Aa</strong> button sets story text from 6 to 24 px. Theme, text size,
+and chip order <strong>roam with your character</strong> (the profile value wins on
+connect); the chrome toggles and opacities stay per-device.</li>
+<li><strong>Speech</strong> — read incoming lines aloud with the browser’s speech
+synthesis, with per-stream toggles (thoughts on by default). Voice
+availability depends on the phone; the first utterance may need a tap.</li>
+<li><strong>Sound alerts / login music</strong> — browser playback toggles.</li>
+<li><strong>Client settings (saved on host)</strong> — the full desktop settings
+registry over the wire: every setting, editable at character or global
+scope, saved on the hosting machine exactly as if edited there.</li>
 <li><strong>Highlight editor</strong> — add/edit highlight rules with color pickers, a
 sound dropdown, and a live preview; fields the form doesn’t cover
 (redirects, squelch, …) are preserved for desktop editing.</li>
@@ -934,6 +974,7 @@ relogging all night.</p>
 <tr><td><a href="#keybindstoml">keybinds.toml</a></td><td>Keyboard shortcuts</td></tr>
 <tr><td><a href="#highlightstoml">highlights.toml</a></td><td>Text highlighting, sounds, squelch rules</td></tr>
 <tr><td><a href="#colorstoml">colors.toml</a></td><td>Color palette, stream presets, spell colors</td></tr>
+<tr><td><a href="#hotbarstoml">hotbars.toml</a></td><td>Hotkey bars (command buttons)</td></tr>
 <tr><td><a href="#macrostoml">macros.toml</a></td><td>Macro buttons for the mobile web frontend</td></tr>
 </tbody>
 </table>
@@ -946,6 +987,7 @@ relogging all night.</p>
 │   ├── keybinds.toml
 │   ├── highlights.toml
 │   ├── colors.toml
+│   ├── hotbars.toml
 │   ├── macros.toml
 │   └── sounds/           # Sound files for highlight alerts
 ├── layouts/              # Saved layouts (.savelayout / .loadlayout)
@@ -964,11 +1006,15 @@ relogging all night.</p>
 <tr><th>Command</th><th>Opens</th></tr>
 </thead>
 <tbody>
-<tr><td><code>.settings</code></td><td>Settings editor (connection, UI, sound, theme)</td></tr>
+<tr><td><code>.settings</code></td><td>Settings editor — every registered setting, on both frontends</td></tr>
 <tr><td><code>.highlights</code></td><td>Highlights browser</td></tr>
 <tr><td><code>.keybinds</code></td><td>Keybinds browser</td></tr>
+<tr><td><code>.hotbars</code></td><td>Hotbar editor</td></tr>
+<tr><td><code>.streams</code></td><td>Stream routing editor</td></tr>
 <tr><td><code>.colors</code></td><td>Color palette browser</td></tr>
+<tr><td><code>.uicolors</code> / <code>.spellcolors</code></td><td>UI element / spell-circle colors</td></tr>
 <tr><td><code>.themes</code></td><td>Theme browser</td></tr>
+<tr><td><code>.tts</code></td><td>Text-to-speech controls (GUI: Settings &gt; Speech)</td></tr>
 </tbody>
 </table>
 </div>
@@ -977,11 +1023,26 @@ relogging all night.</p>
 .reload highlights   # or just one: highlights, keybinds, settings, colors, layout
 .reloadmacros        # macros.toml (also pushes to connected phones)
 </code></pre>
+<h2 id="how-saves-work"><a class="header" href="#how-saves-work">How Saves Work</a></h2>
+<p>You shouldn’t need to care, but for the curious:</p>
+<ul>
+<li><strong>Sparse saves</strong> — user files only contain what you’ve changed from the
+shipped defaults, with your comments preserved. Settings you never
+touched pick up new defaults automatically on upgrade.</li>
+<li><strong>Atomic writes with backups</strong> — every save writes a temp file and swaps
+it in, keeping a <code>.bak</code> of the previous version. A crash mid-save can’t
+corrupt your config.</li>
+<li><strong>Additive default refresh</strong> — new shipped highlights/keybinds/hotbars
+appear after an upgrade, but ones you deleted stay deleted (a
+<code>.defaults-seen.toml</code> sidecar remembers what you’ve already been given).</li>
+</ul>
 <h2 id="resetting-to-defaults"><a class="header" href="#resetting-to-defaults">Resetting to Defaults</a></h2>
 <p>Delete a configuration file and it is recreated with defaults on next launch:</p>
 <pre><code class="language-bash">rm ~/.vellum-fe/global/keybinds.toml
 </code></pre>
-<p>Or delete the entire directory for a full reset.</p>
+<p>Or delete the entire directory for a full reset. (Individual shipped
+entries you deleted from collection files like highlights stay deleted
+across upgrades — deleting the whole file is the reset switch.)</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="configtoml"><a class="header" href="#configtoml">config.toml</a></h1>
 <p>General client settings: connection, UI behavior, sound, TTS, and the web
@@ -990,13 +1051,14 @@ edits with <code>.reload settings</code>.</p>
 <h2 id="connection"><a class="header" href="#connection">Connection</a></h2>
 <pre><code class="language-toml">[connection]
 host = "127.0.0.1"
-port = 8001
+port = 8000
 character = "YourName"
 
 # For direct connection (optional - can use CLI instead)
 account = "your_account"
 password = "your_password"  # Stored in plain text!
-game = "prime"              # prime, platinum, shattered, test, dr, ...
+game = "prime"              # GS4: prime, platinum, shattered, test
+                            # DR: dr, drplatinum, drfallen, drtest
 </code></pre>
 <blockquote>
 <p><strong>Tip</strong>: For security, omit <code>password</code> — VellumFE prompts for it securely
@@ -1022,7 +1084,9 @@ min_command_length = 3          # Min length to save in history
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
 
 # Prevent specific server dialogs from auto-opening windows
-open_dialog_blocklist = ["bank", "combat", "injuries"]
+# (default blocks combat, injuries, stance, minivitals, and other
+# dialogs that have dedicated widgets)
+open_dialog_blocklist = ["combat", "injuries", "stance"]
 </code></pre>
 <h3 id="color-modes"><a class="header" href="#color-modes">Color Modes</a></h3>
 <div class="table-wrapper">
@@ -1080,6 +1144,18 @@ mapping_mode = false               # Cartography mode: sketch unmapped rooms
 map data outranks the Lich folder; an empty <code>mapdb_repo</code> disables
 downloads. <code>mapping_mode</code> gates ghost-room sketches — see
 <a href="#ghost-rooms-unmapped-interiors">ghost rooms</a>.</p>
+<h2 id="travel-go2"><a class="header" href="#travel-go2">Travel (.go2)</a></h2>
+<p>Managed by the client — you normally never edit this section:</p>
+<pre><code class="language-toml">[go2]
+native_map_clicks = true   # Map clicks travel natively; false sends ;go2 to Lich
+
+[go2.saved]                # .go2 save &lt;name&gt; writes these
+bank = 3517
+
+[go2.pathcodes]            # Maze routes, captured automatically in-game
+</code></pre>
+<p><code>native_map_clicks</code> is also in <strong>Settings → Travel</strong> in the GUI. See the
+<a href="#travel-go2-1">Travel chapter</a> for the <code>.go2</code> command family.</p>
 <h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
 <pre><code class="language-toml">[sound]
 enabled = true
@@ -1089,15 +1165,27 @@ startup_music = true
 startup_music_delay_ms = 0      # Delay before the login theme starts
 </code></pre>
 <h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
+<p>Prefer the editors: <strong>Settings &gt; Speech</strong> in the GUI, or the
+<a href="#text-to-speech-1"><code>.tts</code> commands</a> on any frontend.</p>
 <pre><code class="language-toml">[tts]
 enabled = false
-rate = 1.0                      # 0.5 (slow) to 2.0 (fast)
+rate = 1.0                      # 0.5 (slow) to 3.0 (engine max)
 volume = 1.0
 speak_thoughts = true
 speak_speech = true
 speak_main = false              # Usually too noisy
+# voice = "Microsoft Zira"      # Voice by name (.tts voices lists them)
+
+# Lines matching these regexes are shown but never spoken
+# gags = ["^You feel fully rested"]
+
+# Pronunciation fixes applied before speaking
+# substitutions = [{ pattern = "Wehnimer's", replacement = "Wenimers" }]
 </code></pre>
-<p>TTS navigation keys are bound in <a href="#keybindstoml">keybinds.toml</a>
+<p>The three <code>speak_*</code> toggles are classic shortcuts for main/thoughts/speech.
+Any other window can opt in per-window: the “speak new lines” checkbox in
+its window editor (<code>tts_speak</code> in <a href="#layouttoml">layout.toml</a>).</p>
+<p>TTS queue navigation keys are bound in <a href="#keybindstoml">keybinds.toml</a>
 (defaults: <code>Ctrl+Alt+arrows</code>, <code>F7</code>–<code>F11</code>).</p>
 <h2 id="web-server-mobile-frontend"><a class="header" href="#web-server-mobile-frontend">Web Server (Mobile Frontend)</a></h2>
 <p>Embedded HTTP + WebSocket server that lets a phone browser join the
@@ -1130,17 +1218,27 @@ entries = [
 ]
 </code></pre>
 <h2 id="stream-routing"><a class="header" href="#stream-routing">Stream Routing</a></h2>
-<p>Control how text streams without a subscribed window are handled:</p>
+<p>Controls where a stream’s text goes when no window subscribes to it.
+Prefer the editor: <code>.streams</code> (or the GUI’s Streams panel) lists every
+known stream and lets you set its route.</p>
 <pre><code class="language-toml">[streams]
-# Streams to silently discard (prevents duplicates/noise)
-drop_unsubscribed = [
-  "speech", "whisper", "talk", "conversation",
-  "targetcount", "playercount", "targetlist", "playerlist"
-]
-
-fallback = "main"               # Route unknown streams here
+fallback = "main"               # Streams with no route entry go here
 room_in_main = true             # Show room text in main (DR only)
+
+[streams.routes]
+# Per-stream policy: "discard", "main", or "window:&lt;name&gt;"
+speech = "discard"              # Already echoed in main; drop the duplicate
+targetlist = "discard"          # Lich script noise without a widget
+logons = "window:arrivals"      # Send to a window (received even while hidden)
 </code></pre>
+<p>Windows that subscribe to a stream always win; routes only decide what
+happens to <em>orphaned</em> streams. A <code>window:&lt;name&gt;</code> route never creates or
+opens the window — if it doesn’t exist, the stream uses <code>fallback</code>.</p>
+<blockquote>
+<p><strong>Legacy</strong>: older configs used <code>drop_unsubscribed = [...]</code>. It still
+loads — each entry is migrated to <code>routes.&lt;stream&gt; = "discard"</code> — but
+<code>routes</code> is the current mechanism.</p>
+</blockquote>
 <h2 id="logging"><a class="header" href="#logging">Logging</a></h2>
 <p>Capture raw XML for debugging (written to <code>profiles/&lt;character&gt;/logs/</code>):</p>
 <pre><code class="language-toml">[logging]
@@ -1224,6 +1322,10 @@ cols = 120
 <tr><td><code>background_color</code></td><td>string</td><td>-</td><td>Background color</td></tr>
 <tr><td><code>text_color</code></td><td>string</td><td>-</td><td>Default text color</td></tr>
 <tr><td><code>transparent_background</code></td><td>bool</td><td><code>false</code></td><td>See-through background</td></tr>
+<tr><td><code>text_size</code></td><td>float</td><td>-</td><td>Per-window font point size (GUI)</td></tr>
+<tr><td><code>font_family</code></td><td>string</td><td>-</td><td>Per-window font (GUI)</td></tr>
+<tr><td><code>content_align</code></td><td>string</td><td>-</td><td>Content alignment override</td></tr>
+<tr><td><code>tts_speak</code></td><td>bool</td><td><code>false</code></td><td>Speak new lines routed here (<a href="#text-to-speech">TTS</a>)</td></tr>
 </tbody>
 </table>
 </div>
@@ -1244,6 +1346,7 @@ widget_type = "text"
 streams = ["main"]              # Streams to display
 buffer_size = 10000
 compact = false                 # Remove blank lines
+wordwrap = true                 # Wrap long lines (also on inventory/tabbed)
 </code></pre>
 <h3 id="tabbed-text"><a class="header" href="#tabbed-text">Tabbed Text</a></h3>
 <pre><code class="language-toml">[[windows]]
@@ -1590,13 +1693,12 @@ and <code>target_indicator</code>.</p>
 <p>Color individual prompt status characters:</p>
 <pre><code class="language-toml">[[prompt_colors]]
 character = "R"   # roundtime
-color = "#ff0000"
+fg = "#ff0000"    # bg = "..." also supported ("color" is a legacy alias for fg)
 </code></pre>
 <p>Defaults cover <code>R</code> (roundtime), <code>S</code> (stunned), <code>H</code> (hiding), <code>&gt;</code> (prompt),
 <code>!</code> (bleeding).</p>
 <h2 id="ui-colors"><a class="header" href="#ui-colors">UI Colors</a></h2>
-<p>Default colors for UI elements (per-window overrides live in layout.toml).
-Edit with <code>.uicolors</code>:</p>
+<p>Default colors for UI elements. Edit with <code>.uicolors</code>:</p>
 <pre><code class="language-toml">[ui]
 command_echo_color = "#ffffff"
 border_color = "#00ffff"
@@ -1604,7 +1706,12 @@ focused_border_color = "#ffff00"
 text_color = "#ffffff"
 background_color = "#000000"
 selection_bg_color = "#4a4a4a"
+textarea_background = "-"       # "-" or unchanged = fall through to theme
 </code></pre>
+<p>These sit in the middle of the window color chain: a per-window color in
+layout.toml wins, then a <code>[ui]</code> value <strong>you have changed</strong> applies, and
+anything left at its default (or set to <code>"-"</code>) falls through to the
+active theme.</p>
 <h2 id="spell-colors"><a class="header" href="#spell-colors">Spell Colors</a></h2>
 <p>Color active-spell indicators by spell circle. Edit with <code>.spellcolors</code>,
 add with <code>.addspellcolor</code>:</p>
@@ -2631,6 +2738,10 @@ show_exits = false
 │ Obvious exits: north, east, south     │
 └───────────────────────────────────────┘
 </code></pre>
+<p>In the <strong>GUI</strong>, the room renders as one Wrayth-style flowing block — the
+description runs into “You also see…” with clickable links throughout,
+and the room name is a heading sized to the window’s text size (the
+<code>show_name</code> toggle and border-title behavior above are TUI-specific).</p>
 <h2 id="interaction-1"><a class="header" href="#interaction-1">Interaction</a></h2>
 <ul>
 <li>Click creature/player names to interact</li>
@@ -2658,7 +2769,7 @@ zoom = 16          # pixels per grid cell (optional)
 <p>The mini map follows your character: it recenters as you move and swaps
 sheets automatically when you go inside a building (interiors render as
 their own floor plan). Click a room to walk there — natively via the
-built-in <a href="#travel-go2">travel engine</a>, no Lich needed (switchable to
+built-in <a href="#travel-go2-1">travel engine</a>, no Lich needed (switchable to
 <code>;go2</code> pass-through in <strong>Settings → Travel</strong>).</p>
 <p>Right-click the window for a zoom control and <strong>Open Map Explorer</strong>.</p>
 <h2 id="ghost-rooms-unmapped-interiors"><a class="header" href="#ghost-rooms-unmapped-interiors">Ghost Rooms (Unmapped Interiors)</a></h2>
@@ -2702,7 +2813,7 @@ map, not just where you’re standing:</p>
 <li><strong>Room inspection</strong> — click a room for its details in collapsible
 sections: Description, Environment (climate/terrain, plus wildlife and
 structures you’ve sensed this session), Forageables (from <code>forage  sense</code>), Tags, and Exits</li>
-<li><strong>Walk-to</strong> — double-click a room to travel there (<a href="#travel-go2">native travel</a>)</li>
+<li><strong>Walk-to</strong> — double-click a room to travel there (<a href="#travel-go2-1">native travel</a>)</li>
 <li><strong>Override editor</strong> — an edit mode where you drag room groups (Alt-drag
 a single room) to tidy a layout; edits are saved as per-room override
 diffs that survive mapdb updates, and edges can be restyled (e.g.
@@ -2740,7 +2851,7 @@ desktop mini map shows — auto-following your character, switching to the
 building’s floor plan indoors, ghost rooms included when Cartography
 mode is on. Drag to pan (which
 pauses following until you tap <strong>Follow</strong>), pinch to zoom, and tap a
-room to walk there with <a href="#travel-go2">native travel</a>.</p>
+room to walk there with <a href="#travel-go2-1">native travel</a>.</p>
 <p>Tap the <strong>location name</strong> in the title bar to browse any other mapped
 location — filter the list, pick one, and tap a room there to travel
 across the world; <strong>Return</strong> brings the view back to where you’re
@@ -2767,7 +2878,7 @@ and exits against the database — and only trusts an unambiguous match,
 holding in place otherwise.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="travel-go2"><a class="header" href="#travel-go2">Travel (.go2)</a></h1>
+<h1 id="travel-go2-1"><a class="header" href="#travel-go2-1">Travel (.go2)</a></h1>
 <p>Native map travel — VellumFE walks you across the world using its own
 pathfinding over the map database. No Lich session needed, which means it
 works everywhere the map does, including the mobile apps.</p>
@@ -3011,7 +3122,8 @@ text is used</li>
 flagged “challenging” in <code>challenging_color</code>. The current-target color
 always wins.</p>
 <h2 id="configuration-3"><a class="header" href="#configuration-3">Configuration</a></h2>
-<p>Configure via <code>config.toml</code>:</p>
+<p>In the GUI, edit these on the targets window itself (right-click →
+<strong>Edit Window…</strong>). The file form lives in <code>config.toml</code>:</p>
 <pre><code class="language-toml">[target_list]
 status_position = "end"         # "end" or "start"
 truncation_mode = "noun"        # "full" or "noun"
@@ -3938,7 +4050,8 @@ from another install (e.g. your local Wrayth graphics) without copying.</li>
 <h1 id="command-reference"><a class="header" href="#command-reference">Command Reference</a></h1>
 <p>Anything you type starting with <code>.</code> is handled by VellumFE instead of being
 sent to the game. Command names are case-insensitive; <code>Tab</code> completes them.
-<code>.help</code> prints this list in-game. Unknown commands print a hint.</p>
+<code>.help</code> prints an abbreviated version of this list in-game. Unknown commands
+print a hint.</p>
 <p>Everything else you type goes to the game unchanged. (Typing the game
 command <code>quit</code> also saves your settings on the way out.)</p>
 <h2 id="general"><a class="header" href="#general">General</a></h2>
@@ -3956,7 +4069,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.reload [what]</code></td><td></td><td>Reload config from disk: <code>highlights</code>, <code>keybinds</code>, <code>hotbars</code>, <code>settings</code>, <code>colors</code>, <code>layout</code>, or everything</td></tr>
 <tr><td><code>.room</code></td><td></td><td>Show how the current room resolved against the map database (stream ids, mapdb room/location, routable exits, tags) — for debugging the map and pathing</td></tr>
 <tr><td><code>.mapdb [download|remove|repo &lt;r&gt;]</code></td><td></td><td>Manage downloaded map data from any frontend (no args = status). On phones this is <em>the</em> way to fetch the map — there’s no Settings &gt; Map panel there</td></tr>
-<tr><td><code>.go2 &lt;target&gt;</code></td><td></td><td>Native map travel: room id, uid (<code>u7150105</code>), tag (<code>bank</code>), saved name, or text search — see the <a href="#travel-go2">Travel chapter</a></td></tr>
+<tr><td><code>.go2 &lt;target&gt;</code></td><td></td><td>Native map travel: room id, uid (<code>u7150105</code>), tag (<code>bank</code>), saved name, or text search — see the <a href="#travel-go2-1">Travel chapter</a></td></tr>
 <tr><td><code>.go2 stop</code> / <code>.go2 status</code></td><td></td><td>Cancel / show the active trip</td></tr>
 <tr><td><code>.go2 save &lt;name&gt; [id]</code></td><td></td><td>Save a travel target (<code>.go2 targets</code> lists them, <code>.go2 back</code> returns to the trip start)</td></tr>
 </tbody>
@@ -3983,6 +4096,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size (TUI)</td></tr>
 <tr><td><code>.nexttab</code> / <code>.prevtab</code></td><td></td><td>Switch tabs in a tabbed window</td></tr>
 <tr><td><code>.gonew</code></td><td><code>.nextunread</code></td><td>Jump to the next tab with unread messages</td></tr>
+<tr><td><code>.streams</code></td><td></td><td>Open the stream routing editor: every known stream and where it goes (a window, <code>main</code>, or discard)</td></tr>
 </tbody>
 </table>
 </div>
@@ -4053,6 +4167,29 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 </tbody>
 </table>
 </div>
+<h2 id="text-to-speech-1"><a class="header" href="#text-to-speech-1">Text-to-Speech</a></h2>
+<p><code>.tts</code> with no subcommand shows status. Settings changes save immediately.
+The GUI has the same controls in Settings &gt; Speech; per-window speech is
+the “speak new lines” checkbox in the window editor (<code>tts_speak</code> in
+layout.toml).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.tts on</code> / <code>.tts off</code></td><td>Enable / disable text-to-speech</td></tr>
+<tr><td><code>.tts mute</code></td><td>Toggle mute without turning TTS off</td></tr>
+<tr><td><code>.tts rate &lt;0.5-3.0&gt;</code></td><td>Speech rate (1.0 = normal)</td></tr>
+<tr><td><code>.tts volume &lt;0.0-1.0&gt;</code></td><td>Speech volume</td></tr>
+<tr><td><code>.tts voice &lt;name|default&gt;</code></td><td>Pick a voice by name, or return to the engine default</td></tr>
+<tr><td><code>.tts voices</code></td><td>List available voices</td></tr>
+<tr><td><code>.tts test</code></td><td>Speak a sample line</td></tr>
+<tr><td><code>.tts clear</code></td><td>Clear the pending speech queue</td></tr>
+<tr><td><code>.tts status</code></td><td>Show enabled/muted state, rate, volume, voice, and queue depth</td></tr>
+</tbody>
+</table>
+</div>
 <h2 id="misc"><a class="header" href="#misc">Misc</a></h2>
 <div class="table-wrapper">
 <table>
@@ -4092,7 +4229,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>--direct</code></td><td>Connect directly via eAccess (no Lich)</td></tr>
 <tr><td><code>--account &lt;ACCOUNT&gt;</code></td><td>Account name (direct mode)</td></tr>
 <tr><td><code>--password &lt;PASSWORD&gt;</code></td><td>Password (direct mode; omit to be prompted securely)</td></tr>
-<tr><td><code>--game &lt;GAME&gt;</code></td><td>World for direct mode: <code>prime</code>, <code>platinum</code>, <code>shattered</code>, <code>test</code>, <code>dr</code>, <code>dr-platinum</code>, <code>dr-fallen</code>, <code>dr-test</code></td></tr>
+<tr><td><code>--game &lt;GAME&gt;</code></td><td>World for direct mode: <code>prime</code>, <code>platinum</code>, <code>shattered</code>, <code>test</code>, <code>dr</code>, <code>drplatinum</code>, <code>drfallen</code>, <code>drtest</code></td></tr>
 <tr><td><code>-c, --config &lt;FILE&gt;</code></td><td>Use a specific config.toml</td></tr>
 <tr><td><code>--data-dir &lt;DIR&gt;</code></td><td>Data directory (default <code>~/.vellum-fe</code>; also <code>VELLUM_FE_DIR</code> env var)</td></tr>
 <tr><td><code>--web-port &lt;PORT&gt;</code></td><td>Enable the <a href="#mobile-web">mobile web server</a> on this port</td></tr>

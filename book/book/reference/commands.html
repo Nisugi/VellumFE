@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f407e694.js";
+            window.path_to_searchindex_js = "../searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -180,7 +180,8 @@
                         <h1 id="command-reference"><a class="header" href="#command-reference">Command Reference</a></h1>
 <p>Anything you type starting with <code>.</code> is handled by VellumFE instead of being
 sent to the game. Command names are case-insensitive; <code>Tab</code> completes them.
-<code>.help</code> prints this list in-game. Unknown commands print a hint.</p>
+<code>.help</code> prints an abbreviated version of this list in-game. Unknown commands
+print a hint.</p>
 <p>Everything else you type goes to the game unchanged. (Typing the game
 command <code>quit</code> also saves your settings on the way out.)</p>
 <h2 id="general"><a class="header" href="#general">General</a></h2>
@@ -225,6 +226,7 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size (TUI)</td></tr>
 <tr><td><code>.nexttab</code> / <code>.prevtab</code></td><td></td><td>Switch tabs in a tabbed window</td></tr>
 <tr><td><code>.gonew</code></td><td><code>.nextunread</code></td><td>Jump to the next tab with unread messages</td></tr>
+<tr><td><code>.streams</code></td><td></td><td>Open the stream routing editor: every known stream and where it goes (a window, <code>main</code>, or discard)</td></tr>
 </tbody>
 </table>
 </div>
@@ -292,6 +294,29 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.addspellcolor</code></td><td><code>.newspellcolor</code></td><td>Add a spell color entry</td></tr>
 <tr><td><code>.setpalette</code></td><td></td><td>Load palette into terminal slots (TUI, 256-color mode)</td></tr>
 <tr><td><code>.resetpalette</code></td><td></td><td>Reset the terminal palette (TUI)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
+<p><code>.tts</code> with no subcommand shows status. Settings changes save immediately.
+The GUI has the same controls in Settings &gt; Speech; per-window speech is
+the “speak new lines” checkbox in the window editor (<code>tts_speak</code> in
+layout.toml).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.tts on</code> / <code>.tts off</code></td><td>Enable / disable text-to-speech</td></tr>
+<tr><td><code>.tts mute</code></td><td>Toggle mute without turning TTS off</td></tr>
+<tr><td><code>.tts rate &lt;0.5-3.0&gt;</code></td><td>Speech rate (1.0 = normal)</td></tr>
+<tr><td><code>.tts volume &lt;0.0-1.0&gt;</code></td><td>Speech volume</td></tr>
+<tr><td><code>.tts voice &lt;name|default&gt;</code></td><td>Pick a voice by name, or return to the engine default</td></tr>
+<tr><td><code>.tts voices</code></td><td>List available voices</td></tr>
+<tr><td><code>.tts test</code></td><td>Speak a sample line</td></tr>
+<tr><td><code>.tts clear</code></td><td>Clear the pending speech queue</td></tr>
+<tr><td><code>.tts status</code></td><td>Show enabled/muted state, rate, volume, voice, and queue depth</td></tr>
 </tbody>
 </table>
 </div>

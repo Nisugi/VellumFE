@@ -63,7 +63,8 @@ port.
 ## Playing from the Browser
 
 - **Read the game** live, with streams as filter chips (unread badges;
-  long-press a chip to reorder — remembered per device).
+  long-press a chip to reorder — the order follows your character across
+  devices).
 - **Send commands** — identical to typing at the PC, including
   dot-commands. With a keyboard, Up/Down browse command history; the ↻
   button resends the last command, and long-pressing it opens a history
@@ -107,7 +108,16 @@ The gear button (also reachable from the login screen) opens Settings:
   contrast, parchment), show/hide toggles for every piece of chrome
   (macro bar, compass, vitals, hands, RT label, effect pills, chips),
   and opacity sliders for floating buttons, drawers, and bottom sheets.
-  The **Aa** button sets story text from 6 to 24 px. All per-device.
+  The **Aa** button sets story text from 6 to 24 px. Theme, text size,
+  and chip order **roam with your character** (the profile value wins on
+  connect); the chrome toggles and opacities stay per-device.
+- **Speech** — read incoming lines aloud with the browser's speech
+  synthesis, with per-stream toggles (thoughts on by default). Voice
+  availability depends on the phone; the first utterance may need a tap.
+- **Sound alerts / login music** — browser playback toggles.
+- **Client settings (saved on host)** — the full desktop settings
+  registry over the wire: every setting, editable at character or global
+  scope, saved on the hosting machine exactly as if edited there.
 - **Highlight editor** — add/edit highlight rules with color pickers, a
   sound dropdown, and a live preview; fields the form doesn't cover
   (redirects, squelch, ...) are preserved for desktop editing.

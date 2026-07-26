@@ -245,7 +245,7 @@ startup_music_delay_ms = 0  # Delay before startup music (0 = immediate)
 # ------------------------------------------------------------
 # Screen reader support via native TTS engines.
 # TTS operates independently of the sound system above.
-# Prefer the editors: Settings > Accessibility (GUI) or .tts (any frontend).
+# Prefer the editors: Settings > Speech (GUI) or .tts (any frontend).
 # Queue controls: Ctrl+Alt+Left/Right (prev/next), Ctrl+Alt+Up (next unread),
 #                 Ctrl+Alt+Down (stop), F11 (mute) - see keybinds.toml
 # Per-window speech lives in each window's editor (tts_speak in layout.toml);
@@ -417,7 +417,7 @@ pinned = false
 # file documents every config surface.
 #
 # [map]
-# mapdb_repo = "Nisugi/gs-mapdb"   # GitHub repo for map database downloads
+# mapdb_repo = "Nisugi/mapdb"      # GitHub repo for map database downloads
 # lich_dir = ""                    # Lich install dir (auto-detected if empty)
 # mapdb_path = ""                  # Explicit mapdb file (overrides downloads)
 # mapping_mode = false             # Capture session evidence for mapping

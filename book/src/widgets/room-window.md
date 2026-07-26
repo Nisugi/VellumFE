@@ -82,6 +82,11 @@ show_exits = false
 └───────────────────────────────────────┘
 ```
 
+In the **GUI**, the room renders as one Wrayth-style flowing block — the
+description runs into "You also see…" with clickable links throughout,
+and the room name is a heading sized to the window's text size (the
+`show_name` toggle and border-title behavior above are TUI-specific).
+
 ## Interaction
 
 - Click creature/player names to interact

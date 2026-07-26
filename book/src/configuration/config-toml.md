@@ -9,13 +9,14 @@ edits with `.reload settings`.
 ```toml
 [connection]
 host = "127.0.0.1"
-port = 8001
+port = 8000
 character = "YourName"
 
 # For direct connection (optional - can use CLI instead)
 account = "your_account"
 password = "your_password"  # Stored in plain text!
-game = "prime"              # prime, platinum, shattered, test, dr, ...
+game = "prime"              # GS4: prime, platinum, shattered, test
+                            # DR: dr, drplatinum, drfallen, drtest
 ```
 
 > **Tip**: For security, omit `password` — VellumFE prompts for it securely
@@ -43,7 +44,9 @@ min_command_length = 3          # Min length to save in history
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
 
 # Prevent specific server dialogs from auto-opening windows
-open_dialog_blocklist = ["bank", "combat", "injuries"]
+# (default blocks combat, injuries, stance, minivitals, and other
+# dialogs that have dedicated widgets)
+open_dialog_blocklist = ["combat", "injuries", "stance"]
 ```
 
 ### Color Modes
@@ -115,6 +118,23 @@ map data outranks the Lich folder; an empty `mapdb_repo` disables
 downloads. `mapping_mode` gates ghost-room sketches — see
 [ghost rooms](../widgets/map.md#ghost-rooms-unmapped-interiors).
 
+## Travel (.go2)
+
+Managed by the client — you normally never edit this section:
+
+```toml
+[go2]
+native_map_clicks = true   # Map clicks travel natively; false sends ;go2 to Lich
+
+[go2.saved]                # .go2 save <name> writes these
+bank = 3517
+
+[go2.pathcodes]            # Maze routes, captured automatically in-game
+```
+
+`native_map_clicks` is also in **Settings → Travel** in the GUI. See the
+[Travel chapter](../widgets/travel.md) for the `.go2` command family.
+
 ## Sound
 
 ```toml
@@ -128,17 +148,31 @@ startup_music_delay_ms = 0      # Delay before the login theme starts
 
 ## Text-to-Speech
 
+Prefer the editors: **Settings > Speech** in the GUI, or the
+[`.tts` commands](../reference/commands.md#text-to-speech) on any frontend.
+
 ```toml
 [tts]
 enabled = false
-rate = 1.0                      # 0.5 (slow) to 2.0 (fast)
+rate = 1.0                      # 0.5 (slow) to 3.0 (engine max)
 volume = 1.0
 speak_thoughts = true
 speak_speech = true
 speak_main = false              # Usually too noisy
+# voice = "Microsoft Zira"      # Voice by name (.tts voices lists them)
+
+# Lines matching these regexes are shown but never spoken
+# gags = ["^You feel fully rested"]
+
+# Pronunciation fixes applied before speaking
+# substitutions = [{ pattern = "Wehnimer's", replacement = "Wenimers" }]
 ```
 
-TTS navigation keys are bound in [keybinds.toml](./keybinds-toml.md)
+The three `speak_*` toggles are classic shortcuts for main/thoughts/speech.
+Any other window can opt in per-window: the "speak new lines" checkbox in
+its window editor (`tts_speak` in [layout.toml](./layout-toml.md)).
+
+TTS queue navigation keys are bound in [keybinds.toml](./keybinds-toml.md)
 (defaults: `Ctrl+Alt+arrows`, `F7`–`F11`).
 
 ## Web Server (Mobile Frontend)
@@ -181,19 +215,29 @@ entries = [
 
 ## Stream Routing
 
-Control how text streams without a subscribed window are handled:
+Controls where a stream's text goes when no window subscribes to it.
+Prefer the editor: `.streams` (or the GUI's Streams panel) lists every
+known stream and lets you set its route.
 
 ```toml
 [streams]
-# Streams to silently discard (prevents duplicates/noise)
-drop_unsubscribed = [
-  "speech", "whisper", "talk", "conversation",
-  "targetcount", "playercount", "targetlist", "playerlist"
-]
-
-fallback = "main"               # Route unknown streams here
+fallback = "main"               # Streams with no route entry go here
 room_in_main = true             # Show room text in main (DR only)
+
+[streams.routes]
+# Per-stream policy: "discard", "main", or "window:<name>"
+speech = "discard"              # Already echoed in main; drop the duplicate
+targetlist = "discard"          # Lich script noise without a widget
+logons = "window:arrivals"      # Send to a window (received even while hidden)
 ```
+
+Windows that subscribe to a stream always win; routes only decide what
+happens to *orphaned* streams. A `window:<name>` route never creates or
+opens the window — if it doesn't exist, the stream uses `fallback`.
+
+> **Legacy**: older configs used `drop_unsubscribed = [...]`. It still
+> loads — each entry is migrated to `routes.<stream> = "discard"` — but
+> `routes` is the current mechanism.
 
 ## Logging
 

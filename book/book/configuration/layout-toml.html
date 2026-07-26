@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f407e694.js";
+            window.path_to_searchindex_js = "../searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -231,6 +231,10 @@ cols = 120
 <tr><td><code>background_color</code></td><td>string</td><td>-</td><td>Background color</td></tr>
 <tr><td><code>text_color</code></td><td>string</td><td>-</td><td>Default text color</td></tr>
 <tr><td><code>transparent_background</code></td><td>bool</td><td><code>false</code></td><td>See-through background</td></tr>
+<tr><td><code>text_size</code></td><td>float</td><td>-</td><td>Per-window font point size (GUI)</td></tr>
+<tr><td><code>font_family</code></td><td>string</td><td>-</td><td>Per-window font (GUI)</td></tr>
+<tr><td><code>content_align</code></td><td>string</td><td>-</td><td>Content alignment override</td></tr>
+<tr><td><code>tts_speak</code></td><td>bool</td><td><code>false</code></td><td>Speak new lines routed here (<a href="./config-toml.html#text-to-speech">TTS</a>)</td></tr>
 </tbody>
 </table>
 </div>
@@ -251,6 +255,7 @@ widget_type = "text"
 streams = ["main"]              # Streams to display
 buffer_size = 10000
 compact = false                 # Remove blank lines
+wordwrap = true                 # Wrap long lines (also on inventory/tabbed)
 </code></pre>
 <h3 id="tabbed-text"><a class="header" href="#tabbed-text">Tabbed Text</a></h3>
 <pre><code class="language-toml">[[windows]]

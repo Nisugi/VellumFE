@@ -21,7 +21,7 @@ Run with **no arguments** to open [the Launcher](../getting-started/launcher.md)
 | `--direct` | Connect directly via eAccess (no Lich) |
 | `--account <ACCOUNT>` | Account name (direct mode) |
 | `--password <PASSWORD>` | Password (direct mode; omit to be prompted securely) |
-| `--game <GAME>` | World for direct mode: `prime`, `platinum`, `shattered`, `test`, `dr`, `dr-platinum`, `dr-fallen`, `dr-test` |
+| `--game <GAME>` | World for direct mode: `prime`, `platinum`, `shattered`, `test`, `dr`, `drplatinum`, `drfallen`, `drtest` |
 | `-c, --config <FILE>` | Use a specific config.toml |
 | `--data-dir <DIR>` | Data directory (default `~/.vellum-fe`; also `VELLUM_FE_DIR` env var) |
 | `--web-port <PORT>` | Enable the [mobile web server](../frontends/web.md) on this port |

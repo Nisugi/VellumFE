@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f407e694.js";
+            window.path_to_searchindex_js = "../searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -225,13 +225,12 @@ and <code>target_indicator</code>.</p>
 <p>Color individual prompt status characters:</p>
 <pre><code class="language-toml">[[prompt_colors]]
 character = "R"   # roundtime
-color = "#ff0000"
+fg = "#ff0000"    # bg = "..." also supported ("color" is a legacy alias for fg)
 </code></pre>
 <p>Defaults cover <code>R</code> (roundtime), <code>S</code> (stunned), <code>H</code> (hiding), <code>&gt;</code> (prompt),
 <code>!</code> (bleeding).</p>
 <h2 id="ui-colors"><a class="header" href="#ui-colors">UI Colors</a></h2>
-<p>Default colors for UI elements (per-window overrides live in layout.toml).
-Edit with <code>.uicolors</code>:</p>
+<p>Default colors for UI elements. Edit with <code>.uicolors</code>:</p>
 <pre><code class="language-toml">[ui]
 command_echo_color = "#ffffff"
 border_color = "#00ffff"
@@ -239,7 +238,12 @@ focused_border_color = "#ffff00"
 text_color = "#ffffff"
 background_color = "#000000"
 selection_bg_color = "#4a4a4a"
+textarea_background = "-"       # "-" or unchanged = fall through to theme
 </code></pre>
+<p>These sit in the middle of the window color chain: a per-window color in
+layout.toml wins, then a <code>[ui]</code> value <strong>you have changed</strong> applies, and
+anything left at its default (or set to <code>"-"</code>) falls through to the
+active theme.</p>
 <h2 id="spell-colors"><a class="header" href="#spell-colors">Spell Colors</a></h2>
 <p>Color active-spell indicators by spell circle. Edit with <code>.spellcolors</code>,
 add with <code>.addspellcolor</code>:</p>

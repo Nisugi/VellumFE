@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f407e694.js";
+            window.path_to_searchindex_js = "../searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -184,13 +184,14 @@ edits with <code>.reload settings</code>.</p>
 <h2 id="connection"><a class="header" href="#connection">Connection</a></h2>
 <pre><code class="language-toml">[connection]
 host = "127.0.0.1"
-port = 8001
+port = 8000
 character = "YourName"
 
 # For direct connection (optional - can use CLI instead)
 account = "your_account"
 password = "your_password"  # Stored in plain text!
-game = "prime"              # prime, platinum, shattered, test, dr, ...
+game = "prime"              # GS4: prime, platinum, shattered, test
+                            # DR: dr, drplatinum, drfallen, drtest
 </code></pre>
 <blockquote>
 <p><strong>Tip</strong>: For security, omit <code>password</code> — VellumFE prompts for it securely
@@ -216,7 +217,9 @@ min_command_length = 3          # Min length to save in history
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
 
 # Prevent specific server dialogs from auto-opening windows
-open_dialog_blocklist = ["bank", "combat", "injuries"]
+# (default blocks combat, injuries, stance, minivitals, and other
+# dialogs that have dedicated widgets)
+open_dialog_blocklist = ["combat", "injuries", "stance"]
 </code></pre>
 <h3 id="color-modes"><a class="header" href="#color-modes">Color Modes</a></h3>
 <div class="table-wrapper">
@@ -274,6 +277,18 @@ mapping_mode = false               # Cartography mode: sketch unmapped rooms
 map data outranks the Lich folder; an empty <code>mapdb_repo</code> disables
 downloads. <code>mapping_mode</code> gates ghost-room sketches — see
 <a href="../widgets/map.html#ghost-rooms-unmapped-interiors">ghost rooms</a>.</p>
+<h2 id="travel-go2"><a class="header" href="#travel-go2">Travel (.go2)</a></h2>
+<p>Managed by the client — you normally never edit this section:</p>
+<pre><code class="language-toml">[go2]
+native_map_clicks = true   # Map clicks travel natively; false sends ;go2 to Lich
+
+[go2.saved]                # .go2 save &lt;name&gt; writes these
+bank = 3517
+
+[go2.pathcodes]            # Maze routes, captured automatically in-game
+</code></pre>
+<p><code>native_map_clicks</code> is also in <strong>Settings → Travel</strong> in the GUI. See the
+<a href="../widgets/travel.html">Travel chapter</a> for the <code>.go2</code> command family.</p>
 <h2 id="sound"><a class="header" href="#sound">Sound</a></h2>
 <pre><code class="language-toml">[sound]
 enabled = true
@@ -283,15 +298,27 @@ startup_music = true
 startup_music_delay_ms = 0      # Delay before the login theme starts
 </code></pre>
 <h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
+<p>Prefer the editors: <strong>Settings &gt; Speech</strong> in the GUI, or the
+<a href="../reference/commands.html#text-to-speech"><code>.tts</code> commands</a> on any frontend.</p>
 <pre><code class="language-toml">[tts]
 enabled = false
-rate = 1.0                      # 0.5 (slow) to 2.0 (fast)
+rate = 1.0                      # 0.5 (slow) to 3.0 (engine max)
 volume = 1.0
 speak_thoughts = true
 speak_speech = true
 speak_main = false              # Usually too noisy
+# voice = "Microsoft Zira"      # Voice by name (.tts voices lists them)
+
+# Lines matching these regexes are shown but never spoken
+# gags = ["^You feel fully rested"]
+
+# Pronunciation fixes applied before speaking
+# substitutions = [{ pattern = "Wehnimer's", replacement = "Wenimers" }]
 </code></pre>
-<p>TTS navigation keys are bound in <a href="./keybinds-toml.html">keybinds.toml</a>
+<p>The three <code>speak_*</code> toggles are classic shortcuts for main/thoughts/speech.
+Any other window can opt in per-window: the “speak new lines” checkbox in
+its window editor (<code>tts_speak</code> in <a href="./layout-toml.html">layout.toml</a>).</p>
+<p>TTS queue navigation keys are bound in <a href="./keybinds-toml.html">keybinds.toml</a>
 (defaults: <code>Ctrl+Alt+arrows</code>, <code>F7</code>–<code>F11</code>).</p>
 <h2 id="web-server-mobile-frontend"><a class="header" href="#web-server-mobile-frontend">Web Server (Mobile Frontend)</a></h2>
 <p>Embedded HTTP + WebSocket server that lets a phone browser join the
@@ -324,17 +351,27 @@ entries = [
 ]
 </code></pre>
 <h2 id="stream-routing"><a class="header" href="#stream-routing">Stream Routing</a></h2>
-<p>Control how text streams without a subscribed window are handled:</p>
+<p>Controls where a stream’s text goes when no window subscribes to it.
+Prefer the editor: <code>.streams</code> (or the GUI’s Streams panel) lists every
+known stream and lets you set its route.</p>
 <pre><code class="language-toml">[streams]
-# Streams to silently discard (prevents duplicates/noise)
-drop_unsubscribed = [
-  "speech", "whisper", "talk", "conversation",
-  "targetcount", "playercount", "targetlist", "playerlist"
-]
-
-fallback = "main"               # Route unknown streams here
+fallback = "main"               # Streams with no route entry go here
 room_in_main = true             # Show room text in main (DR only)
+
+[streams.routes]
+# Per-stream policy: "discard", "main", or "window:&lt;name&gt;"
+speech = "discard"              # Already echoed in main; drop the duplicate
+targetlist = "discard"          # Lich script noise without a widget
+logons = "window:arrivals"      # Send to a window (received even while hidden)
 </code></pre>
+<p>Windows that subscribe to a stream always win; routes only decide what
+happens to <em>orphaned</em> streams. A <code>window:&lt;name&gt;</code> route never creates or
+opens the window — if it doesn’t exist, the stream uses <code>fallback</code>.</p>
+<blockquote>
+<p><strong>Legacy</strong>: older configs used <code>drop_unsubscribed = [...]</code>. It still
+loads — each entry is migrated to <code>routes.&lt;stream&gt; = "discard"</code> — but
+<code>routes</code> is the current mechanism.</p>
+</blockquote>
 <h2 id="logging"><a class="header" href="#logging">Logging</a></h2>
 <p>Capture raw XML for debugging (written to <code>profiles/&lt;character&gt;/logs/</code>):</p>
 <pre><code class="language-toml">[logging]

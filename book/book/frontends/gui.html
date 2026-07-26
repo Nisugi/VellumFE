@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f407e694.js";
+            window.path_to_searchindex_js = "../searchindex-0594047d.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -211,7 +211,9 @@ categorized templates, toggle visibility, or reassign a window’s zone.</li>
 Window…</strong>, which opens the window editor; title bars can be hidden
 per-window.</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
-sessions), or locked together into tab groups that move as a unit.</li>
+sessions), or locked together into tab groups that move as a unit. The
+context menu reorders group members (<strong>Move Up / Move Down</strong>) and can
+ungroup one member or the whole group.</li>
 </ul>
 <h2 id="the-map"><a class="header" href="#the-map">The Map</a></h2>
 <p>The GUI renders a live <a href="../widgets/map.html">map</a> of your surroundings: a
@@ -234,17 +236,30 @@ modes (<code>value/max</code> or bare <code>value</code> instead of a filled bar
 <li><strong>Countdowns</strong>: a <strong>fill color</strong> override (defaults: roundtime red,
 casttime blue).</li>
 <li><strong>Active effects</strong>: category (spells/buffs/debuffs/cooldowns).</li>
+<li><strong>Vitals bars</strong>: orientation, height, text format, and per-bar toggles
+are edited here, on the vitals window itself.</li>
+<li><strong>Targets windows</strong>: also edit the global <code>target_list.*</code> display
+settings (status position, truncation, boss colors) in place.</li>
+<li><strong>Speech</strong>: a <strong>speak new lines (TTS)</strong> checkbox reads everything routed
+to this window aloud (needs TTS on in Settings &gt; Speech).</li>
 <li><strong>Delete Window</strong> — actually removes the window from the layout
 (unlike hiding, or the <code>.deletewindow</code> command, which only hides).</li>
 </ul>
-<h2 id="custom-windows"><a class="header" href="#custom-windows">Custom Windows</a></h2>
-<p><strong>Windows menu → Add → Custom Window…</strong> opens an authoring panel for
-custom text windows fed by any Lich stream id. Name the window, type
-comma-separated stream ids — or click one from the <strong>streams seen this
-session</strong> list — and it starts collecting that output. The panel also
-edits or deletes existing custom windows. (The TUI can do the same from
-its window editor’s Streams field; <code>Ctrl+P</code> there opens the same
-seen-streams picker.)</p>
+<h2 id="streams--custom-windows"><a class="header" href="#streams--custom-windows">Streams &amp; Custom Windows</a></h2>
+<p><strong>Windows menu → Streams &amp; Custom Windows…</strong> opens a panel that does two
+things:</p>
+<ul>
+<li><strong>Stream routing</strong> — every stream seen this session, with a route for
+each: a window, main, or discard. This is the GUI counterpart of the
+<code>.streams</code> editor and writes <code>[streams.routes]</code> in
+<a href="../configuration/config-toml.html#stream-routing">config.toml</a>.</li>
+<li><strong>Custom windows</strong> — author text windows fed by any Lich stream id.
+Name the window, type comma-separated stream ids — or click one from
+the seen-streams list — and it starts collecting that output. The panel
+also edits or deletes existing custom windows. (The TUI can do the same
+from its window editor’s Streams field; <code>Ctrl+P</code> there opens the same
+seen-streams picker.)</li>
+</ul>
 <h2 id="lich-webui-panels"><a class="header" href="#lich-webui-panels">Lich WebUI Panels</a></h2>
 <p>Lich 5.18+ scripts can register live UI pages (<code>;ui</code>). The GUI renders
 those pages as <strong>native docked panels</strong> — real widgets, not an embedded
@@ -254,7 +269,9 @@ browser:</p>
 .webui off        # disconnect the bridge
 </code></pre>
 <p>Open panels are saved with your layout and reconnect automatically at
-login. Requires a Lich proxy connection (not <code>--direct</code>).</p>
+login. Requires a Lich proxy connection (not <code>--direct</code>). Works with
+containerized Lich too — the bridge follows the host Lich advertises in
+its handshake instead of assuming localhost.</p>
 <h2 id="appearance"><a class="header" href="#appearance">Appearance</a></h2>
 <p>Open <code>.settings</code> → GUI panel:</p>
 <ul>
@@ -268,6 +285,13 @@ light/dark bar text for contrast.</li>
 <li>Per-window overrides: text size, accent (border) color, wrapping, fonts.</li>
 </ul>
 <p>Every size is adjustable — the Wrayth-like defaults are just defaults.</p>
+<h2 id="speech-text-to-speech"><a class="header" href="#speech-text-to-speech">Speech (Text-to-Speech)</a></h2>
+<p><strong>Settings &gt; Speech</strong> holds the TTS controls: enable, rate, volume, a
+voice picker, pronunciation substitutions, gag patterns, and a <strong>Test</strong>
+button that speaks a sample line. Pick which windows are read aloud with
+the per-window <strong>speak new lines</strong> checkbox in the window editor; the
+<a href="../reference/commands.html#text-to-speech"><code>.tts</code> commands</a> drive the same
+settings from the input line.</p>
 <h2 id="graphics"><a class="header" href="#graphics">Graphics</a></h2>
 <p>The GUI draws real graphics where the terminal uses characters:</p>
 <ul>

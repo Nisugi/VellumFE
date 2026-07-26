@@ -12,6 +12,7 @@ VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
 | [keybinds.toml](./keybinds-toml.md) | Keyboard shortcuts |
 | [highlights.toml](./highlights-toml.md) | Text highlighting, sounds, squelch rules |
 | [colors.toml](./colors-toml.md) | Color palette, stream presets, spell colors |
+| [hotbars.toml](./hotbars-toml.md) | Hotkey bars (command buttons) |
 | [macros.toml](./macros-toml.md) | Macro buttons for the mobile web frontend |
 
 ## Directory Layout
@@ -24,6 +25,7 @@ VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
 │   ├── keybinds.toml
 │   ├── highlights.toml
 │   ├── colors.toml
+│   ├── hotbars.toml
 │   ├── macros.toml
 │   └── sounds/           # Sound files for highlight alerts
 ├── layouts/              # Saved layouts (.savelayout / .loadlayout)
@@ -42,11 +44,15 @@ Most things can be edited in-app without touching files:
 
 | Command | Opens |
 |---------|-------|
-| `.settings` | Settings editor (connection, UI, sound, theme) |
+| `.settings` | Settings editor — every registered setting, on both frontends |
 | `.highlights` | Highlights browser |
 | `.keybinds` | Keybinds browser |
+| `.hotbars` | Hotbar editor |
+| `.streams` | Stream routing editor |
 | `.colors` | Color palette browser |
+| `.uicolors` / `.spellcolors` | UI element / spell-circle colors |
 | `.themes` | Theme browser |
+| `.tts` | Text-to-speech controls (GUI: Settings > Speech) |
 
 If you edit files directly, apply changes without restarting:
 
@@ -56,6 +62,20 @@ If you edit files directly, apply changes without restarting:
 .reloadmacros        # macros.toml (also pushes to connected phones)
 ```
 
+## How Saves Work
+
+You shouldn't need to care, but for the curious:
+
+- **Sparse saves** — user files only contain what you've changed from the
+  shipped defaults, with your comments preserved. Settings you never
+  touched pick up new defaults automatically on upgrade.
+- **Atomic writes with backups** — every save writes a temp file and swaps
+  it in, keeping a `.bak` of the previous version. A crash mid-save can't
+  corrupt your config.
+- **Additive default refresh** — new shipped highlights/keybinds/hotbars
+  appear after an upgrade, but ones you deleted stay deleted (a
+  `.defaults-seen.toml` sidecar remembers what you've already been given).
+
 ## Resetting to Defaults
 
 Delete a configuration file and it is recreated with defaults on next launch:
@@ -64,4 +84,6 @@ Delete a configuration file and it is recreated with defaults on next launch:
 rm ~/.vellum-fe/global/keybinds.toml
 ```
 
-Or delete the entire directory for a full reset.
+Or delete the entire directory for a full reset. (Individual shipped
+entries you deleted from collection files like highlights stay deleted
+across upgrades — deleting the whole file is the reset switch.)

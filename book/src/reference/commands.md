@@ -2,7 +2,8 @@
 
 Anything you type starting with `.` is handled by VellumFE instead of being
 sent to the game. Command names are case-insensitive; `Tab` completes them.
-`.help` prints this list in-game. Unknown commands print a hint.
+`.help` prints an abbreviated version of this list in-game. Unknown commands
+print a hint.
 
 Everything else you type goes to the game unchanged. (Typing the game
 command `quit` also saves your settings on the way out.)
@@ -41,6 +42,7 @@ command `quit` also saves your settings on the way out.)
 | `.resize` | | Refit layout to the current terminal size (TUI) |
 | `.nexttab` / `.prevtab` | | Switch tabs in a tabbed window |
 | `.gonew` | `.nextunread` | Jump to the next tab with unread messages |
+| `.streams` | | Open the stream routing editor: every known stream and where it goes (a window, `main`, or discard) |
 
 ## Highlights
 
@@ -88,6 +90,25 @@ command `quit` also saves your settings on the way out.)
 | `.addspellcolor` | `.newspellcolor` | Add a spell color entry |
 | `.setpalette` | | Load palette into terminal slots (TUI, 256-color mode) |
 | `.resetpalette` | | Reset the terminal palette (TUI) |
+
+## Text-to-Speech
+
+`.tts` with no subcommand shows status. Settings changes save immediately.
+The GUI has the same controls in Settings > Speech; per-window speech is
+the "speak new lines" checkbox in the window editor (`tts_speak` in
+layout.toml).
+
+| Command | Description |
+|---------|-------------|
+| `.tts on` / `.tts off` | Enable / disable text-to-speech |
+| `.tts mute` | Toggle mute without turning TTS off |
+| `.tts rate <0.5-3.0>` | Speech rate (1.0 = normal) |
+| `.tts volume <0.0-1.0>` | Speech volume |
+| `.tts voice <name\|default>` | Pick a voice by name, or return to the engine default |
+| `.tts voices` | List available voices |
+| `.tts test` | Speak a sample line |
+| `.tts clear` | Clear the pending speech queue |
+| `.tts status` | Show enabled/muted state, rate, volume, voice, and queue depth |
 
 ## Misc
 

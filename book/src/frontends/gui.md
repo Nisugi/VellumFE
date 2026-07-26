@@ -42,7 +42,9 @@ center, and right sidebar. Toggle zones from the top toolbar.
   Window…**, which opens the window editor; title bars can be hidden
   per-window.
 - Windows can be **detached** into separate OS windows (restored across
-  sessions), or locked together into tab groups that move as a unit.
+  sessions), or locked together into tab groups that move as a unit. The
+  context menu reorders group members (**Move Up / Move Down**) and can
+  ungroup one member or the whole group.
 
 ## The Map
 
@@ -68,18 +70,30 @@ it in place. Beyond title, streams, and buffer size, the editor exposes:
 - **Countdowns**: a **fill color** override (defaults: roundtime red,
   casttime blue).
 - **Active effects**: category (spells/buffs/debuffs/cooldowns).
+- **Vitals bars**: orientation, height, text format, and per-bar toggles
+  are edited here, on the vitals window itself.
+- **Targets windows**: also edit the global `target_list.*` display
+  settings (status position, truncation, boss colors) in place.
+- **Speech**: a **speak new lines (TTS)** checkbox reads everything routed
+  to this window aloud (needs TTS on in Settings > Speech).
 - **Delete Window** — actually removes the window from the layout
   (unlike hiding, or the `.deletewindow` command, which only hides).
 
-## Custom Windows
+## Streams & Custom Windows
 
-**Windows menu → Add → Custom Window…** opens an authoring panel for
-custom text windows fed by any Lich stream id. Name the window, type
-comma-separated stream ids — or click one from the **streams seen this
-session** list — and it starts collecting that output. The panel also
-edits or deletes existing custom windows. (The TUI can do the same from
-its window editor's Streams field; `Ctrl+P` there opens the same
-seen-streams picker.)
+**Windows menu → Streams & Custom Windows…** opens a panel that does two
+things:
+
+- **Stream routing** — every stream seen this session, with a route for
+  each: a window, main, or discard. This is the GUI counterpart of the
+  `.streams` editor and writes `[streams.routes]` in
+  [config.toml](../configuration/config-toml.md#stream-routing).
+- **Custom windows** — author text windows fed by any Lich stream id.
+  Name the window, type comma-separated stream ids — or click one from
+  the seen-streams list — and it starts collecting that output. The panel
+  also edits or deletes existing custom windows. (The TUI can do the same
+  from its window editor's Streams field; `Ctrl+P` there opens the same
+  seen-streams picker.)
 
 ## Lich WebUI Panels
 
@@ -94,7 +108,9 @@ browser:
 ```
 
 Open panels are saved with your layout and reconnect automatically at
-login. Requires a Lich proxy connection (not `--direct`).
+login. Requires a Lich proxy connection (not `--direct`). Works with
+containerized Lich too — the bridge follows the host Lich advertises in
+its handshake instead of assuming localhost.
 
 ## Appearance
 
@@ -110,6 +126,15 @@ Open `.settings` → GUI panel:
 - Per-window overrides: text size, accent (border) color, wrapping, fonts.
 
 Every size is adjustable — the Wrayth-like defaults are just defaults.
+
+## Speech (Text-to-Speech)
+
+**Settings > Speech** holds the TTS controls: enable, rate, volume, a
+voice picker, pronunciation substitutions, gag patterns, and a **Test**
+button that speaks a sample line. Pick which windows are read aloud with
+the per-window **speak new lines** checkbox in the window editor; the
+[`.tts` commands](../reference/commands.md#text-to-speech) drive the same
+settings from the input line.
 
 ## Graphics
 
