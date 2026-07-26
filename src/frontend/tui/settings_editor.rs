@@ -88,6 +88,54 @@ pub struct SettingItem {
     pub editable: bool,
     pub name_width: Option<u16>, // Custom width for name column
     pub is_global: bool,         // true = from global config, false = character override
+    pub sensitive: bool,         // never render the value in clear text
+}
+
+/// Map a registry setting's current value in `config` to the TUI editor's
+/// value model. Lists render/edit as comma-separated text.
+pub fn tui_value_for(
+    def: &crate::config::registry::SettingDef,
+    config: &crate::config::Config,
+) -> SettingValue {
+    use crate::config::registry::{SettingKind, SettingValue as RegistryValue};
+    match (def.get)(config) {
+        RegistryValue::Bool(v) => SettingValue::Boolean(v),
+        RegistryValue::Int(v) => SettingValue::Number(v),
+        RegistryValue::Float(v) => SettingValue::Float(v),
+        RegistryValue::List(v) => SettingValue::String(v.join(", ")),
+        RegistryValue::Text(v) => match &def.kind {
+            SettingKind::Enum { options } => {
+                SettingValue::Enum(v, options.iter().map(|opt| opt.to_string()).collect())
+            }
+            _ => SettingValue::String(v),
+        },
+    }
+}
+
+/// Convert an edited TUI value back into a registry value for `def.set`.
+fn registry_value_from_item(
+    def: &crate::config::registry::SettingDef,
+    value: &SettingValue,
+) -> crate::config::registry::SettingValue {
+    use crate::config::registry::{SettingKind, SettingValue as RegistryValue};
+    match value {
+        SettingValue::Boolean(v) => RegistryValue::Bool(*v),
+        SettingValue::Number(v) => RegistryValue::Int(*v),
+        SettingValue::Float(v) => RegistryValue::Float(*v),
+        SettingValue::Enum(v, _) => RegistryValue::Text(v.clone()),
+        SettingValue::String(v) | SettingValue::Color(v) => {
+            if matches!(def.kind, SettingKind::List) {
+                RegistryValue::List(
+                    v.split(',')
+                        .map(|part| part.trim().to_string())
+                        .filter(|part| !part.is_empty())
+                        .collect(),
+                )
+            } else {
+                RegistryValue::Text(v.clone())
+            }
+        }
+    }
 }
 
 pub struct SettingsEditor {
@@ -232,7 +280,13 @@ impl SettingsEditor {
                 (
                     item.editable,
                     matches!(item.value, SettingValue::Boolean(_)),
-                    item.value.to_display_string(),
+                    // Sensitive values are never echoed back; editing starts
+                    // from an empty buffer (typing replaces the old value).
+                    if item.sensitive {
+                        String::new()
+                    } else {
+                        item.value.to_display_string()
+                    },
                     *abs_idx,
                 )
             } else {
@@ -282,12 +336,15 @@ impl SettingsEditor {
     }
 
     /// Toggle scope between global and character for the selected setting
-    /// NOTE: Connection settings CANNOT be toggled - they are always character-specific
+    /// NOTE: Character-only settings (connection.*, pinned ports) CANNOT be
+    /// toggled - the registry marks them as always character-specific.
     pub fn toggle_scope(&mut self) {
+        use crate::config::registry::{self, SettingScope};
         if let Some(item) = self.get_selected_mut() {
-            // Connection settings are ALWAYS character-specific (never allow global)
-            if item.key.starts_with("connection.") {
-                // Cannot toggle - connection is always character-specific
+            let character_only = registry::find(&item.key)
+                .map(|def| def.scope == SettingScope::CharacterOnly)
+                .unwrap_or(false);
+            if character_only {
                 return;
             }
             item.is_global = !item.is_global;
@@ -310,96 +367,24 @@ impl SettingsEditor {
         self.items.iter()
     }
 
-    /// Apply all setting values from the editor back to a Config
-    pub fn apply_to_config(&self, config: &mut crate::config::Config) {
-        for item in &self.items {
-            match item.key.as_str() {
-                // Connection settings
-                "connection.host" => {
-                    if let SettingValue::String(ref v) = item.value {
-                        config.connection.host = v.clone();
-                    }
-                }
-                "connection.port" => {
-                    if let SettingValue::Number(v) = item.value {
-                        config.connection.port = v as u16;
-                    }
-                }
-                "connection.character" => {
-                    if let SettingValue::String(ref v) = item.value {
-                        config.connection.character = Some(v.clone());
-                    }
-                }
-
-                // UI settings
-                "ui.buffer_size" => {
-                    if let SettingValue::Number(v) = item.value {
-                        config.ui.buffer_size = v as usize;
-                    }
-                }
-                "ui.border_style" => {
-                    if let SettingValue::Enum(ref v, _) = item.value {
-                        config.ui.border_style = v.clone();
-                    }
-                }
-                "ui.countdown_icon" => {
-                    if let SettingValue::String(ref v) = item.value {
-                        config.ui.countdown_icon = v.clone();
-                    }
-                }
-                "ui.selection_enabled" => {
-                    if let SettingValue::Boolean(v) = item.value {
-                        config.ui.selection_enabled = v;
-                    }
-                }
-                "ui.selection_respect_window_boundaries" => {
-                    if let SettingValue::Boolean(v) = item.value {
-                        config.ui.selection_respect_window_boundaries = v;
-                    }
-                }
-                "ui.selection_auto_copy" => {
-                    if let SettingValue::Boolean(v) = item.value {
-                        config.ui.selection_auto_copy = v;
-                    }
-                }
-                "ui.drag_modifier_key" => {
-                    if let SettingValue::Enum(ref v, _) = item.value {
-                        config.ui.drag_modifier_key = v.clone();
-                    }
-                }
-                "ui.min_command_length" => {
-                    if let SettingValue::Number(v) = item.value {
-                        config.ui.min_command_length = v as usize;
-                    }
-                }
-
-                // Sound settings
-                "sound.enabled" => {
-                    if let SettingValue::Boolean(v) = item.value {
-                        config.sound.enabled = v;
-                    }
-                }
-                "sound.volume" => {
-                    if let SettingValue::Float(v) = item.value {
-                        config.sound.volume = v as f32;
-                    }
-                }
-                "sound.cooldown_ms" => {
-                    if let SettingValue::Number(v) = item.value {
-                        config.sound.cooldown_ms = v as u64;
-                    }
-                }
-
-                // Theme settings
-                "active_theme" => {
-                    if let SettingValue::String(ref v) = item.value {
-                        config.active_theme = v.clone();
-                    }
-                }
-
-                _ => {}
+    /// Apply all setting values from the editor back to a Config via the
+    /// settings registry. Returns validation errors; items whose values the
+    /// registry rejects (out of range, unknown enum option) are reverted to
+    /// the config's current value so the error does not repeat forever.
+    pub fn apply_to_config(&mut self, config: &mut crate::config::Config) -> Vec<String> {
+        let mut errors = Vec::new();
+        for item in &mut self.items {
+            let Some(def) = crate::config::registry::find(&item.key) else {
+                tracing::warn!("settings editor item '{}' is not in the registry", item.key);
+                continue;
+            };
+            let value = registry_value_from_item(def, &item.value);
+            if let Err(msg) = (def.set)(config, &value) {
+                errors.push(msg);
+                item.value = tui_value_for(def, config);
             }
         }
+        errors
     }
 
     fn cycle_enum(&mut self, forward: bool) {
@@ -982,13 +967,19 @@ impl SettingsEditor {
             cell.set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
 
-        // Render value
+        // Render value (sensitive values are always masked)
         let value_x = sep_x + 2;
-        let value_text = if is_editing {
-            &self.edit_buffer
+        let raw_value = if is_editing {
+            self.edit_buffer.clone()
         } else {
-            &item.value.to_display_string()
+            item.value.to_display_string()
         };
+        let value_text = if item.sensitive {
+            "*".repeat(raw_value.chars().count())
+        } else {
+            raw_value
+        };
+        let value_text = &value_text;
 
         let value_bg = if is_editing {
             textarea_bg
@@ -1176,3 +1167,142 @@ impl Cyclable for SettingsEditor {
 
 // Note: TextEditable trait not implemented - SettingsEditor uses a String edit_buffer
 // rather than TextArea fields. Clipboard operations are handled internally via handle_input().
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::frontend::tui::menu_builders::build_settings_items;
+
+    fn set_item(editor: &mut SettingsEditor, key: &str, value: SettingValue) {
+        let item = editor
+            .items
+            .iter_mut()
+            .find(|item| item.key == key)
+            .unwrap_or_else(|| panic!("settings editor has no item for key '{}'", key));
+        item.value = value;
+    }
+
+    /// Edit one representative of every registry kind (Bool, Int, Float,
+    /// Text, OptionalText, Enum, List) and round-trip through
+    /// apply_to_config into the Config.
+    #[test]
+    fn apply_to_config_round_trips_every_kind() {
+        let mut config = Config::default();
+        let defaults = Config::default();
+        let mut editor = SettingsEditor::new(build_settings_items(&config));
+
+        // Bool
+        set_item(
+            &mut editor,
+            "ui.command_echo",
+            SettingValue::Boolean(!defaults.ui.command_echo),
+        );
+        // Int
+        set_item(&mut editor, "ui.buffer_size", SettingValue::Number(4242));
+        // Float
+        set_item(&mut editor, "sound.volume", SettingValue::Float(0.25));
+        // Text
+        set_item(
+            &mut editor,
+            "active_theme",
+            SettingValue::String("zz-test-theme".to_string()),
+        );
+        // OptionalText
+        set_item(
+            &mut editor,
+            "tts.voice",
+            SettingValue::String("Test Voice".to_string()),
+        );
+        // Enum
+        set_item(
+            &mut editor,
+            "ui.border_style",
+            SettingValue::Enum("double".to_string(), Vec::new()),
+        );
+        // List (edited as comma-separated text; blanks dropped)
+        set_item(
+            &mut editor,
+            "tts.gags",
+            SettingValue::String("one, two, , three".to_string()),
+        );
+
+        let errors = editor.apply_to_config(&mut config);
+        assert!(errors.is_empty(), "unexpected apply errors: {:?}", errors);
+
+        assert_eq!(config.ui.command_echo, !defaults.ui.command_echo);
+        assert_eq!(config.ui.buffer_size, 4242);
+        assert!((config.sound.volume - 0.25).abs() < 1e-5);
+        assert_eq!(config.active_theme, "zz-test-theme");
+        assert_eq!(config.tts.voice.as_deref(), Some("Test Voice"));
+        assert_eq!(config.ui.border_style, "double");
+        assert_eq!(
+            config.tts.gags,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        );
+    }
+
+    /// OptionalText settings clear to None when edited to empty text.
+    #[test]
+    fn apply_to_config_clears_optional_text_on_empty() {
+        let mut config = Config::default();
+        config.tts.voice = Some("Old Voice".to_string());
+        let mut editor = SettingsEditor::new(build_settings_items(&config));
+        set_item(&mut editor, "tts.voice", SettingValue::String(String::new()));
+
+        let errors = editor.apply_to_config(&mut config);
+        assert!(errors.is_empty(), "unexpected apply errors: {:?}", errors);
+        assert_eq!(config.tts.voice, None);
+    }
+
+    /// Registry-rejected values (out of range) surface an error, leave the
+    /// config untouched, and revert the item so the error does not repeat.
+    #[test]
+    fn apply_to_config_rejects_and_reverts_invalid_values() {
+        let mut config = Config::default();
+        let default_buffer_size = config.ui.buffer_size;
+        let mut editor = SettingsEditor::new(build_settings_items(&config));
+        set_item(&mut editor, "ui.buffer_size", SettingValue::Number(-5));
+
+        let errors = editor.apply_to_config(&mut config);
+        assert_eq!(errors.len(), 1, "expected exactly one error: {:?}", errors);
+        assert_eq!(config.ui.buffer_size, default_buffer_size);
+
+        // Item reverted to the config's value; a second apply is clean.
+        let item = editor
+            .items
+            .iter()
+            .find(|item| item.key == "ui.buffer_size")
+            .unwrap();
+        assert_eq!(item.value, SettingValue::Number(default_buffer_size as i64));
+        assert!(editor.apply_to_config(&mut config).is_empty());
+    }
+
+    /// Character-only settings never toggle to global scope.
+    #[test]
+    fn toggle_scope_refuses_character_only_settings() {
+        let config = Config::default();
+        let mut editor = SettingsEditor::new(build_settings_items(&config));
+
+        // Select connection.host (character-only) and try to toggle it.
+        let host_index = editor
+            .items
+            .iter()
+            .position(|item| item.key == "connection.host")
+            .unwrap();
+        editor.selected_index = host_index;
+        editor.toggle_scope();
+        assert!(!editor.items[host_index].is_global);
+
+        // A GlobalOrCharacter setting toggles normally.
+        let echo_index = editor
+            .items
+            .iter()
+            .position(|item| item.key == "ui.command_echo")
+            .unwrap();
+        editor.selected_index = echo_index;
+        let before = editor.items[echo_index].is_global;
+        editor.toggle_scope();
+        assert_eq!(editor.items[echo_index].is_global, !before);
+    }
+}

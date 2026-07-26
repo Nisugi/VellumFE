@@ -5,7 +5,7 @@
 use crate::config;
 use crate::core::AppCore;
 use crate::data::ui_state::PopupMenuItem;
-use crate::frontend::tui::settings_editor::{SettingItem, SettingValue};
+use crate::frontend::tui::settings_editor::{tui_value_for, SettingItem};
 
 /// Build configuration submenu
 pub fn build_config_submenu() -> Vec<PopupMenuItem> {
@@ -30,203 +30,52 @@ pub fn build_settings_items(config: &config::Config) -> Vec<SettingItem> {
     build_settings_items_with_source(config, false)
 }
 
-/// Build settings items with source tracking
-/// If character_config_exists is true, non-connection settings are marked as character overrides
+/// Build settings items with source tracking, generated from the settings
+/// registry so every registered setting is editable in the TUI.
+///
+/// If character_config_exists is true, scope-toggleable settings are marked
+/// as character overrides. Character-only settings (connection identity,
+/// pinned ports) are always character-scoped and cannot be toggled global.
 pub fn build_settings_items_with_source(
     config: &config::Config,
     character_config_exists: bool,
 ) -> Vec<SettingItem> {
-    let mut items = Vec::new();
+    use crate::config::registry::{self, SettingScope};
 
-    // Connection settings - ALWAYS character-specific (never global)
-    items.push(SettingItem {
-        category: "Connection".to_string(),
-        key: "connection.host".to_string(),
-        display_name: "Host".to_string(),
-        value: SettingValue::String(config.connection.host.clone()),
-        description: Some("Game server hostname or IP address".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: false, // Connection is ALWAYS character-specific
-    });
+    let mut items: Vec<SettingItem> = registry::registry()
+        .iter()
+        .map(|def| {
+            let character_only = def.scope == SettingScope::CharacterOnly;
+            SettingItem {
+                category: def.category.to_string(),
+                key: def.key.to_string(),
+                display_name: def.label.to_string(),
+                value: tui_value_for(def, config),
+                description: Some(def.description.to_string()),
+                editable: true,
+                name_width: None,
+                // Character-only settings are ALWAYS character-scoped;
+                // everything else starts global unless a character config
+                // already overrides settings.
+                is_global: if character_only {
+                    false
+                } else {
+                    !character_config_exists
+                },
+                sensitive: def.sensitive,
+            }
+        })
+        .collect();
 
-    items.push(SettingItem {
-        category: "Connection".to_string(),
-        key: "connection.port".to_string(),
-        display_name: "Port".to_string(),
-        value: SettingValue::Number(config.connection.port as i64),
-        description: Some("Game server port number".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: false, // Connection is ALWAYS character-specific
-    });
-
-    if let Some(ref character) = config.connection.character {
-        items.push(SettingItem {
-            category: "Connection".to_string(),
-            key: "connection.character".to_string(),
-            display_name: "Character".to_string(),
-            value: SettingValue::String(character.clone()),
-            description: Some("Default character name".to_string()),
-            editable: true,
-            name_width: None,
-            is_global: false, // Connection is ALWAYS character-specific
-        });
-    }
-
-    // UI settings - can be global or character override
-    let ui_is_global = !character_config_exists;
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.buffer_size".to_string(),
-        display_name: "Buffer Size".to_string(),
-        value: SettingValue::Number(config.ui.buffer_size as i64),
-        description: Some("Number of lines to keep in text window buffers".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    // NOTE: show_timestamps removed from global config - use per-window settings instead
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.border_style".to_string(),
-        display_name: "Border Style".to_string(),
-        value: SettingValue::Enum(
-            config.ui.border_style.clone(),
-            vec![
-                "single".to_string(),
-                "double".to_string(),
-                "rounded".to_string(),
-                "thick".to_string(),
-                "none".to_string(),
-            ],
-        ),
-        description: Some("Widget border style".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.countdown_icon".to_string(),
-        display_name: "Countdown Icon".to_string(),
-        value: SettingValue::String(config.ui.countdown_icon.clone()),
-        description: Some("Unicode character for countdown blocks".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.selection_enabled".to_string(),
-        display_name: "Selection Enabled".to_string(),
-        value: SettingValue::Boolean(config.ui.selection_enabled),
-        description: Some("Enable text selection with mouse".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.selection_respect_window_boundaries".to_string(),
-        display_name: "Selection Respects Windows".to_string(),
-        value: SettingValue::Boolean(config.ui.selection_respect_window_boundaries),
-        description: Some("Prevent selection from crossing window boundaries".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.selection_auto_copy".to_string(),
-        display_name: "Selection Auto-Copy".to_string(),
-        value: SettingValue::Boolean(config.ui.selection_auto_copy),
-        description: Some("Copy mouse selection to clipboard on release".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.drag_modifier_key".to_string(),
-        display_name: "Drag Modifier Key".to_string(),
-        value: SettingValue::Enum(
-            config.ui.drag_modifier_key.clone(),
-            vec!["ctrl".to_string(), "alt".to_string(), "shift".to_string()],
-        ),
-        description: Some("Modifier key required for drag and drop".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "UI".to_string(),
-        key: "ui.min_command_length".to_string(),
-        display_name: "Min Command Length".to_string(),
-        value: SettingValue::Number(config.ui.min_command_length as i64),
-        description: Some("Minimum command length to save to history".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: ui_is_global,
-    });
-
-    // Sound settings - can be global or character override
-    let sound_is_global = !character_config_exists;
-
-    items.push(SettingItem {
-        category: "Sound".to_string(),
-        key: "sound.enabled".to_string(),
-        display_name: "Sound Enabled".to_string(),
-        value: SettingValue::Boolean(config.sound.enabled),
-        description: Some("Enable sound effects".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: sound_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "Sound".to_string(),
-        key: "sound.volume".to_string(),
-        display_name: "Master Volume".to_string(),
-        value: SettingValue::Float(config.sound.volume as f64),
-        description: Some("Master volume (0.0 to 1.0)".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: sound_is_global,
-    });
-
-    items.push(SettingItem {
-        category: "Sound".to_string(),
-        key: "sound.cooldown_ms".to_string(),
-        display_name: "Sound Cooldown (ms)".to_string(),
-        value: SettingValue::Number(config.sound.cooldown_ms as i64),
-        description: Some("Cooldown between same sound plays".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: sound_is_global,
-    });
-
-    // Theme settings - can be global or character override
-    let theme_is_global = !character_config_exists;
-
-    items.push(SettingItem {
-        category: "Theme".to_string(),
-        key: "active_theme".to_string(),
-        display_name: "Active Theme".to_string(),
-        value: SettingValue::String(config.active_theme.clone()),
-        description: Some("Currently active color theme".to_string()),
-        editable: true,
-        name_width: None,
-        is_global: theme_is_global,
+    // Group items by category so the editor's section headers render each
+    // category exactly once. Connection (identity) first, the rest
+    // alphabetical, settings alphabetical by label within a category.
+    items.sort_by(|a, b| {
+        (a.category != "Connection", &a.category, &a.display_name).cmp(&(
+            b.category != "Connection",
+            &b.category,
+            &b.display_name,
+        ))
     });
 
     items
@@ -267,4 +116,66 @@ pub fn build_hidewindow_picker(app_core: &AppCore) -> Vec<PopupMenuItem> {
     }
 
     items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::registry::{self, SettingScope};
+
+    /// The generated settings list must cover EVERY registry key exactly
+    /// once, with non-empty categories and registry-sourced labels.
+    #[test]
+    fn settings_items_cover_every_registry_key_exactly_once() {
+        let config = config::Config::default();
+        let items = build_settings_items_with_source(&config, false);
+
+        assert_eq!(
+            items.len(),
+            registry::registry().len(),
+            "item count must match the registry"
+        );
+        for def in registry::registry() {
+            let matching: Vec<_> = items.iter().filter(|item| item.key == def.key).collect();
+            assert_eq!(
+                matching.len(),
+                1,
+                "registry key {} appears {} times in the settings editor",
+                def.key,
+                matching.len()
+            );
+            let item = matching[0];
+            assert!(!item.category.is_empty(), "{} has an empty category", def.key);
+            assert_eq!(item.display_name, def.label, "{} label mismatch", def.key);
+            assert_eq!(
+                item.description.as_deref(),
+                Some(def.description),
+                "{} description mismatch",
+                def.key
+            );
+            assert_eq!(item.sensitive, def.sensitive, "{} sensitive mismatch", def.key);
+        }
+    }
+
+    /// Character-only settings (connection.*, web.pinned) always start as
+    /// [C]; scope-toggleable settings follow character_config_exists.
+    #[test]
+    fn settings_items_scope_tracks_registry() {
+        let config = config::Config::default();
+        for character_config_exists in [false, true] {
+            let items = build_settings_items_with_source(&config, character_config_exists);
+            for item in &items {
+                let def = registry::find(&item.key).expect("item key is registered");
+                if def.scope == SettingScope::CharacterOnly {
+                    assert!(!item.is_global, "{} must always be character-scoped", item.key);
+                } else {
+                    assert_eq!(
+                        item.is_global, !character_config_exists,
+                        "{} initial scope should track character config presence",
+                        item.key
+                    );
+                }
+            }
+        }
+    }
 }

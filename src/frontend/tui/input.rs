@@ -2787,7 +2787,9 @@ impl TuiFrontend {
 
                     if handled {
                         // Check if this was a value change - apply to config immediately
-                        editor.apply_to_config(&mut app_core.config);
+                        for err in editor.apply_to_config(&mut app_core.config) {
+                            app_core.add_system_message(&format!("Setting rejected: {}", err));
+                        }
                         app_core.needs_render = true;
                         return Ok(None);
                     }
@@ -2795,7 +2797,9 @@ impl TuiFrontend {
                     // Check for Ctrl+S to save all settings
                     if modifiers.ctrl && matches!(code, KeyCode::Char('s') | KeyCode::Char('S')) {
                         // Apply and save all settings with their scopes
-                        editor.apply_to_config(&mut app_core.config);
+                        for err in editor.apply_to_config(&mut app_core.config) {
+                            app_core.add_system_message(&format!("Setting rejected: {}", err));
+                        }
 
                         // Get all items and save each with its scope
                         let items_to_save: Vec<_> = editor.all_items()
@@ -2828,7 +2832,9 @@ impl TuiFrontend {
                     // Handle Cancel/Escape to close editor
                     if matches!(code, KeyCode::Esc) {
                         // Apply changes to in-memory config before closing
-                        editor.apply_to_config(&mut app_core.config);
+                        for err in editor.apply_to_config(&mut app_core.config) {
+                            app_core.add_system_message(&format!("Setting rejected: {}", err));
+                        }
                         self.settings_editor = None;
                         app_core.ui_state.input_mode = InputMode::Normal;
                     }
