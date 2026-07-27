@@ -627,9 +627,19 @@ impl AppCore {
 
                 current_row += new_rows;
 
-                // If constraints prevented full use of delta, distribute remainder
-                if remainder != 0 {
+                // If constraints prevented full use of delta, distribute the
+                // remainder onto later windows in this column. Repeat passes
+                // until the remainder is exhausted — a single pass applies at
+                // most one unit per window, so |remainder| larger than the
+                // eligible-window count would otherwise be silently dropped
+                // (breaking size conservation). Stop if a full pass applies
+                // nothing (no window can absorb more), so this can't hang.
+                while remainder != 0 {
+                    let mut applied_this_pass = false;
                     for (name, _, _) in windows_at_col_with_meta.iter().skip(idx + 1) {
+                        if remainder == 0 {
+                            break;
+                        }
                         if static_both.contains(name.as_str())
                             || static_height.contains(name.as_str())
                             || height_applied.contains(name)
@@ -637,9 +647,6 @@ impl AppCore {
                             continue;
                         }
                         if let Some(d) = col_height_deltas.get_mut(name) {
-                            if remainder == 0 {
-                                break;
-                            }
                             if remainder > 0 {
                                 *d += 1;
                                 remainder -= 1;
@@ -647,7 +654,13 @@ impl AppCore {
                                 *d -= 1;
                                 remainder += 1;
                             }
+                            applied_this_pass = true;
                         }
+                    }
+                    if !applied_this_pass {
+                        // No eligible later window absorbed anything; give up
+                        // rather than loop forever.
+                        break;
                     }
                 }
             }
@@ -955,16 +968,21 @@ impl AppCore {
 
                 current_col_pos += new_cols;
 
-                // If constraints prevented full use of delta, distribute remainder
-                if remainder != 0 {
+                // If constraints prevented full use of delta, distribute the
+                // remainder onto later windows in this row. Repeat passes until
+                // exhausted (one unit per window per pass), stopping if a full
+                // pass applies nothing — mirrors the height pass above and
+                // prevents both silent remainder loss and infinite loops.
+                while remainder != 0 {
+                    let mut applied_this_pass = false;
                     for (name, _, _) in windows_at_row_with_meta.iter().skip(idx + 1) {
+                        if remainder == 0 {
+                            break;
+                        }
                         if static_both.contains(name.as_str()) || width_applied.contains(name) {
                             continue;
                         }
                         if let Some(d) = row_width_deltas.get_mut(name) {
-                            if remainder == 0 {
-                                break;
-                            }
                             if remainder > 0 {
                                 *d += 1;
                                 remainder -= 1;
@@ -972,7 +990,11 @@ impl AppCore {
                                 *d -= 1;
                                 remainder += 1;
                             }
+                            applied_this_pass = true;
                         }
+                    }
+                    if !applied_this_pass {
+                        break;
                     }
                 }
             }
@@ -2205,10 +2227,8 @@ mod tests {
     }
 
     /// When shrinking would push a window below its min_rows, the window
-    /// stops at min and the unused delta is recoupled onto later windows in
-    /// the column. This pins the remainder-recoupling behavior (invariant E)
-    /// — AND documents a real conservation bug it currently has: see
-    /// `resize_min_clamp_currently_drops_remainder_units` below.
+    /// stops at min and the ENTIRE unused delta is recoupled onto later
+    /// windows in the column, preserving size conservation. Pins invariant E.
     #[test]
     fn resize_min_clamp_stops_at_min_and_recouples_to_sibling() {
         let mut top = text_def("top", 0, 0, 80, 6);
@@ -2217,11 +2237,9 @@ mod tests {
         core.resize_windows(80, 12); // -12
 
         // top wanted -3 (6 -> 3) but min_rows=5 clamps it to 5 (only -1 used);
-        // the -2 remainder is pushed onto bottom.
+        // the full -2 remainder is pushed onto bottom: 18 - 9 - 2 = 7.
         assert_eq!(row_rows(&core, "top"), (0, 5));
-        // bottom currently ends at 8 (see the conservation-bug test for why
-        // this is not 7).
-        assert_eq!(row_rows(&core, "bottom"), (5, 8));
+        assert_eq!(row_rows(&core, "bottom"), (5, 7));
     }
 
     /// A window spanning multiple columns has its height delta applied exactly
@@ -2292,16 +2310,13 @@ mod tests {
         assert_eq!(row_rows(&core, "bottom"), (15, 19));
     }
 
-    /// KNOWN BUG (documented, not yet fixed): the remainder-recoupling loop
-    /// visits each later window at most ONCE (`for … skip(idx+1)`), so when
-    /// |remainder| exceeds the number of eligible later windows, the excess
-    /// units are silently dropped and total height no longer equals the
-    /// target terminal height. Here shrinking to 12 rows yields windows that
-    /// sum to 13. This test pins the buggy behavior so a future fix (loop
-    /// until remainder is exhausted, like the leftover loop at layout.rs:508)
-    /// is a deliberate, visible change rather than a silent one.
+    /// Regression guard for the remainder-recoupling conservation bug: the
+    /// loop previously visited each later window at most once, so a remainder
+    /// larger than the eligible-window count dropped units and the heights no
+    /// longer summed to the terminal size (this case summed to 13, not 12).
+    /// After the fix the loop exhausts the remainder, so conservation holds.
     #[test]
-    fn resize_min_clamp_currently_drops_remainder_units() {
+    fn resize_min_clamp_preserves_total_height() {
         let mut top = text_def("top", 0, 0, 80, 6);
         top.base_mut().min_rows = Some(5);
         let mut core = core_with_baseline(vec![top, text_def("bottom", 0, 6, 80, 18)], 80, 24);
@@ -2309,8 +2324,10 @@ mod tests {
 
         let (_, top_rows) = row_rows(&core, "top");
         let (_, bottom_rows) = row_rows(&core, "bottom");
-        // BUG: sums to 13, not the requested 12. When fixed, this becomes 12
-        // (top=5, bottom=7) and this test should be updated/removed.
-        assert_eq!(top_rows + bottom_rows, 13);
+        assert_eq!(
+            top_rows + bottom_rows,
+            12,
+            "window heights must sum to the requested terminal height"
+        );
     }
 }
