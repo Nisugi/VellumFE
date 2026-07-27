@@ -160,9 +160,15 @@ num_0 = { macro_text = "down\r" }
 # Buttons: south, east, west, north, dpad_up, dpad_down, dpad_left,
 # dpad_right, l1, r1, l2, r2, l3, r3, start, select.
 # Values are keybind action names or { macro_text = "..." } like [user].
-# While interact mode or a context menu is open, the d-pad (navigate),
-# south (confirm), and east (cancel) are fixed; bindings below apply
-# outside those modes. Controller binds are global (all characters).
+# While interact mode or a context menu is open, the d-pad navigates,
+# south confirms/activates, and east cancels BY DEFAULT. These are now
+# configurable: bind a button to menu_up / menu_down / menu_left /
+# menu_right (menu navigation), interact_select (activate the interact
+# focus / confirm a menu), or menu_cancel (close a menu) to move those
+# roles onto other buttons. Assigning one frees the physical default.
+# East always cancels a menu, and the interact_mode button always exits
+# interact mode, as guaranteed escape hatches. Bindings apply outside
+# those modes. Controller binds are global (all characters).
 
 # The left stick walks the 8 compass directions natively; the d-pad
 # covers the vertical axis and portals.

@@ -404,19 +404,41 @@ impl VellumGuiApp {
             return;
         }
 
-        // While a popup menu is up, the d-pad and the confirm/cancel face
-        // buttons are fixed navigation keys — unless the shift button is
-        // held, which always means "the other bank".
         let shift_held = self.gamepad_shift_held();
+        let button_name = gamepad_button_name(button);
+        // The action this button resolves to in [controller] (base layer),
+        // if any — used to drive the configurable menu/interact nav below.
+        let bound_action = button_name.and_then(|n| self.controller_base_action(n));
+
+        // While a popup menu is up, navigation/confirm/cancel resolve from
+        // the bindable menu_* / interact_select actions when the user has
+        // assigned them; otherwise the physical d-pad/South/East fall back
+        // to their historical roles, so menus are drivable out of the box
+        // even though those buttons carry movement/look macros elsewhere.
+        // East ALWAYS cancels as a hard fallback so a menu can never be
+        // undrivable no matter how things are rebound. Shift always means
+        // "the other bank", so it bypasses this.
         if self.app_core.ui_state.input_mode == InputMode::Menu && !shift_held {
-            let code = match button {
-                Button::DPadUp => Some(KeyCode::Up),
-                Button::DPadDown => Some(KeyCode::Down),
-                Button::DPadLeft => Some(KeyCode::Left),
-                Button::DPadRight => Some(KeyCode::Right),
-                Button::South => Some(KeyCode::Enter),
-                Button::East => Some(KeyCode::Esc),
-                _ => None,
+            let code = match bound_action.as_deref() {
+                Some("menu_up") => Some(KeyCode::Up),
+                Some("menu_down") => Some(KeyCode::Down),
+                Some("menu_left") => Some(KeyCode::Left),
+                Some("menu_right") => Some(KeyCode::Right),
+                Some("interact_select") => Some(KeyCode::Enter),
+                Some("menu_cancel") => Some(KeyCode::Esc),
+                // Physical fallbacks: a d-pad/South button navigates the
+                // menu only when the matching menu action isn't bound to
+                // some OTHER button (so an explicit rebind wins and frees
+                // the physical button). East is a hard cancel regardless.
+                _ => match button {
+                    Button::DPadUp if !self.controller_action_bound_anywhere("menu_up") => Some(KeyCode::Up),
+                    Button::DPadDown if !self.controller_action_bound_anywhere("menu_down") => Some(KeyCode::Down),
+                    Button::DPadLeft if !self.controller_action_bound_anywhere("menu_left") => Some(KeyCode::Left),
+                    Button::DPadRight if !self.controller_action_bound_anywhere("menu_right") => Some(KeyCode::Right),
+                    Button::South if !self.controller_action_bound_anywhere("interact_select") => Some(KeyCode::Enter),
+                    Button::East => Some(KeyCode::Esc), // hard fallback, always
+                    _ => None,
+                },
             };
             if let Some(code) = code {
                 let key = KeyEvent::new(code, KeyModifiers::NONE);
@@ -427,21 +449,26 @@ impl VellumGuiApp {
             // from the pad.
         }
 
-        // Interact mode: only South is claimed (select — open the menu,
-        // walk the exit). The right stick does the cycling (see
-        // poll_gamepad); the d-pad and the other face buttons stay on
-        // their binds so West/North/East can carry <target_id> attack
-        // macros. Exit via the interact_mode toggle or walking an exit.
+        // Interact mode: the bindable interact_select action activates the
+        // focus (walk an exit, open a creature/object menu); if nothing is
+        // bound to interact_select, South falls back to it. The right stick
+        // cycles focus (see poll_gamepad); every other button stays on its
+        // binds so West/North/East can carry <target_id> attack macros.
+        // Exit via the interact_mode toggle (which always works — it runs
+        // through normal action dispatch below) or by walking an exit.
+        let interact_select = bound_action.as_deref() == Some("interact_select")
+            || (button == Button::South
+                && !self.controller_action_bound_anywhere("interact_select"));
         if self.app_core.ui_state.input_mode == InputMode::Interact
             && !shift_held
-            && button == Button::South
+            && interact_select
         {
             let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
             self.handle_modal_nav_key(&key, ctx);
             return;
         }
 
-        let Some(name) = gamepad_button_name(button) else {
+        let Some(name) = button_name else {
             return;
         };
         if shift_held {
@@ -461,6 +488,27 @@ impl VellumGuiApp {
         if let Some(binding) = self.app_core.config.controller_binds.get(name).cloned() {
             self.execute_macro_keybind(&binding, ctx);
         }
+    }
+
+    /// The base-layer `[controller]` action-name bound to a button, if it
+    /// is a plain action (not a macro). Lets the menu/interact handlers
+    /// resolve configurable nav (`menu_up`, `interact_select`, …) from the
+    /// user's binds instead of hardwired buttons.
+    fn controller_base_action(&self, button_name: &str) -> Option<String> {
+        match self.app_core.config.controller_binds.get(button_name) {
+            Some(crate::config::KeyBindAction::Action(name)) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// True if any base-layer `[controller]` button is bound to the named
+    /// action. Used to decide whether a physical fallback (e.g. South =
+    /// select) applies: it does not once the user has assigned that action
+    /// to some button explicitly.
+    fn controller_action_bound_anywhere(&self, action: &str) -> bool {
+        self.app_core.config.controller_binds.values().any(|b| {
+            matches!(b, crate::config::KeyBindAction::Action(name) if name == action)
+        })
     }
 
     /// True while any button bound to `controller_shift` is held.

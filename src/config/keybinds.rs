@@ -146,6 +146,21 @@ pub enum KeyAction {
     // Interact mode: pointer-free entity focus cycling (controller-friendly)
     InteractMode, // Toggle interact mode on/off
 
+    // Activate the focused entity in interact mode (walk an exit, open a
+    // creature/object menu) AND confirm the highlighted item in a popup
+    // menu. Bindable so "select" isn't hardwired to South; the gamepad
+    // layer resolves it. No-op from a keyboard key.
+    InteractSelect,
+
+    // Popup-menu navigation as bindable controller actions (so nothing in
+    // menus is hardwired). Fed to the modal-nav handler as arrow keys.
+    // East always cancels as a hard fallback even if MenuCancel is rebound.
+    MenuUp,
+    MenuDown,
+    MenuLeft,
+    MenuRight,
+    MenuCancel,
+
     // Controller shift modifier: while the bound button is held, other
     // buttons resolve against [controller_shift]. Handled entirely by the
     // gamepad layer; a no-op from a keyboard key.
@@ -670,6 +685,12 @@ impl KeyAction {
     /// editor's action dropdown; a test keeps every entry parseable.
     pub const CONTROLLER_ACTION_NAMES: &'static [&'static str] = &[
         "interact_mode",
+        "interact_select",
+        "menu_up",
+        "menu_down",
+        "menu_left",
+        "menu_right",
+        "menu_cancel",
         "controller_shift",
         "controller_wheel",
         "controller_overlay",
@@ -731,6 +752,12 @@ impl KeyAction {
             "toggle_sounds" => Some(Self::ToggleSounds),
             "stop_travel" => Some(Self::StopTravel),
             "interact_mode" => Some(Self::InteractMode),
+            "interact_select" => Some(Self::InteractSelect),
+            "menu_up" => Some(Self::MenuUp),
+            "menu_down" => Some(Self::MenuDown),
+            "menu_left" => Some(Self::MenuLeft),
+            "menu_right" => Some(Self::MenuRight),
+            "menu_cancel" => Some(Self::MenuCancel),
             "controller_shift" => Some(Self::ControllerShift),
             // "controller_wheel" opens the default wheel;
             // "controller_wheel:<name>" opens a named [controller_wheels.<name>].
@@ -2086,6 +2113,22 @@ mod tests {
                 KeyAction::from_str(name).is_some(),
                 "'{name}' in CONTROLLER_ACTION_NAMES does not parse"
             );
+        }
+    }
+
+    #[test]
+    fn interact_and_menu_nav_actions_map_correctly() {
+        // Configurable interact/menu nav actions must map to their exact
+        // variants (a from_str typo would silently break menu control).
+        assert_eq!(KeyAction::from_str("interact_select"), Some(KeyAction::InteractSelect));
+        assert_eq!(KeyAction::from_str("menu_up"), Some(KeyAction::MenuUp));
+        assert_eq!(KeyAction::from_str("menu_down"), Some(KeyAction::MenuDown));
+        assert_eq!(KeyAction::from_str("menu_left"), Some(KeyAction::MenuLeft));
+        assert_eq!(KeyAction::from_str("menu_right"), Some(KeyAction::MenuRight));
+        assert_eq!(KeyAction::from_str("menu_cancel"), Some(KeyAction::MenuCancel));
+        // And they're all offered in the controller editor dropdown.
+        for n in ["interact_select","menu_up","menu_down","menu_left","menu_right","menu_cancel"] {
+            assert!(KeyAction::CONTROLLER_ACTION_NAMES.contains(&n), "{n} missing from dropdown list");
         }
     }
 
