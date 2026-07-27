@@ -214,10 +214,76 @@ pub enum WindowContent {
 /// Window position and size
 #[derive(Clone, Debug)]
 pub struct WindowPosition {
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
-    pub height: u16,
+    pub x: super::geometry::Col,
+    pub y: super::geometry::Row,
+    pub width: super::geometry::Width,
+    pub height: super::geometry::Height,
+}
+
+/// Compute the new window position for a mouse drag, given the position at
+/// drag-start (`orig`), the accumulated pointer delta (`dx`, `dy`), the
+/// window's minimum size, and the terminal size.
+///
+/// Pure geometry extracted from the TUI mouse-drag handler so it can be unit
+/// tested (and so a future geometry newtype has one place to touch instead of
+/// four inline branches). Behavior mirrors the original exactly:
+/// - Move: shift the top-left by the delta, floored at (0,0), then clamp so the
+///   window stays fully on screen (its size is unchanged, so max origin =
+///   term - size, saturating).
+/// - Resize*: grow/shrink the dragged edge(s) by the delta, floored at the
+///   window's min size, then clamp to the terminal edge (max extent =
+///   term - origin, saturating). The origin never moves on a resize.
+pub fn apply_window_drag(
+    op: crate::data::ui_state::DragOperation,
+    orig: WindowPosition,
+    dx: i32,
+    dy: i32,
+    min_width: u16,
+    min_height: u16,
+    term_width: u16,
+    term_height: u16,
+) -> WindowPosition {
+    use crate::data::ui_state::DragOperation;
+
+    use super::geometry::{Col, Height, Row, Width};
+
+    let mut pos = orig.clone();
+    match op {
+        DragOperation::Move => {
+            let new_x = Col::from_i32_saturating(orig.x.get() as i32 + dx);
+            let new_y = Row::from_i32_saturating(orig.y.get() as i32 + dy);
+            // Window size is unchanged on a move, so the max origin keeps the
+            // window fully on screen: term - size (saturating).
+            let max_x = Col::new(term_width) - orig.width;
+            let max_y = Row::new(term_height) - orig.height;
+            pos.x = new_x.min(max_x);
+            pos.y = new_y.min(max_y);
+        }
+        DragOperation::ResizeRight => {
+            let new_width =
+                Width::from_i32_saturating(orig.width.get() as i32 + dx).max(Width::new(min_width));
+            // The origin never moves on a resize, so max extent = term - origin.
+            let max_width = Width::new(term_width) - Width::new(orig.x.get());
+            pos.width = new_width.min(max_width);
+        }
+        DragOperation::ResizeBottom => {
+            let new_height = Height::from_i32_saturating(orig.height.get() as i32 + dy)
+                .max(Height::new(min_height));
+            let max_height = Height::new(term_height) - Height::new(orig.y.get());
+            pos.height = new_height.min(max_height);
+        }
+        DragOperation::ResizeBottomRight => {
+            let new_width =
+                Width::from_i32_saturating(orig.width.get() as i32 + dx).max(Width::new(min_width));
+            let new_height = Height::from_i32_saturating(orig.height.get() as i32 + dy)
+                .max(Height::new(min_height));
+            let max_width = Width::new(term_width) - Width::new(orig.x.get());
+            let max_height = Height::new(term_height) - Height::new(orig.y.get());
+            pos.width = new_width.min(max_width);
+            pos.height = new_height.min(max_height);
+        }
+    }
+    pos
 }
 
 impl WindowState {
@@ -228,10 +294,10 @@ impl WindowState {
             widget_type: WidgetType::Text,
             content: WindowContent::Text(TextContent::new(name, max_lines)),
             position: WindowPosition {
-                x: 0,
-                y: 0,
-                width: 80,
-                height: 24,
+                x: super::geometry::Col::new(0),
+                y: super::geometry::Row::new(0),
+                width: super::geometry::Width::new(80),
+                height: super::geometry::Height::new(24),
             },
             visible: true,
             focused: false,
@@ -251,10 +317,10 @@ impl WindowState {
                 history_index: None,
             },
             position: WindowPosition {
-                x: 0,
-                y: 23,
-                width: 80,
-                height: 1,
+                x: super::geometry::Col::new(0),
+                y: super::geometry::Row::new(23),
+                width: super::geometry::Width::new(80),
+                height: super::geometry::Height::new(1),
             },
             visible: true,
             focused: false,
@@ -274,26 +340,16 @@ mod tests {
 
     #[test]
     fn test_window_position_fields() {
-        let pos = WindowPosition {
-            x: 10,
-            y: 20,
-            width: 80,
-            height: 24,
-        };
-        assert_eq!(pos.x, 10);
-        assert_eq!(pos.y, 20);
-        assert_eq!(pos.width, 80);
-        assert_eq!(pos.height, 24);
+        let pos = pos(10, 20, 80, 24);
+        assert_eq!(pos.x.get(), 10);
+        assert_eq!(pos.y.get(), 20);
+        assert_eq!(pos.width.get(), 80);
+        assert_eq!(pos.height.get(), 24);
     }
 
     #[test]
     fn test_window_position_clone() {
-        let pos = WindowPosition {
-            x: 5,
-            y: 10,
-            width: 40,
-            height: 20,
-        };
+        let pos = pos(5, 10, 40, 20);
         let cloned = pos.clone();
         assert_eq!(cloned.x, pos.x);
         assert_eq!(cloned.y, pos.y);
@@ -303,14 +359,9 @@ mod tests {
 
     #[test]
     fn test_window_position_zero_size() {
-        let pos = WindowPosition {
-            x: 0,
-            y: 0,
-            width: 0,
-            height: 0,
-        };
-        assert_eq!(pos.width, 0);
-        assert_eq!(pos.height, 0);
+        let pos = pos(0, 0, 0, 0);
+        assert_eq!(pos.width.get(), 0);
+        assert_eq!(pos.height.get(), 0);
     }
 
     // ===========================================
@@ -407,10 +458,10 @@ mod tests {
     #[test]
     fn test_new_text_window_default_position() {
         let window = WindowState::new_text("test", 100);
-        assert_eq!(window.position.x, 0);
-        assert_eq!(window.position.y, 0);
-        assert_eq!(window.position.width, 80);
-        assert_eq!(window.position.height, 24);
+        assert_eq!(window.position.x.get(), 0);
+        assert_eq!(window.position.y.get(), 0);
+        assert_eq!(window.position.width.get(), 80);
+        assert_eq!(window.position.height.get(), 24);
     }
 
     #[test]
@@ -465,10 +516,10 @@ mod tests {
     #[test]
     fn test_new_command_input_position() {
         let window = WindowState::new_command_input("input");
-        assert_eq!(window.position.x, 0);
-        assert_eq!(window.position.y, 23);
-        assert_eq!(window.position.width, 80);
-        assert_eq!(window.position.height, 1);
+        assert_eq!(window.position.x.get(), 0);
+        assert_eq!(window.position.y.get(), 23);
+        assert_eq!(window.position.width.get(), 80);
+        assert_eq!(window.position.height.get(), 1);
     }
 
     #[test]
@@ -574,5 +625,119 @@ mod tests {
         let debug_str = format!("{:?}", window);
         assert!(debug_str.contains("WindowState"));
         assert!(debug_str.contains("test"));
+    }
+
+    // ========== apply_window_drag characterization ==========
+    use crate::data::ui_state::DragOperation;
+
+    fn pos(x: u16, y: u16, w: u16, h: u16) -> WindowPosition {
+        use crate::data::geometry::{Col, Height, Row, Width};
+        WindowPosition {
+            x: Col::new(x),
+            y: Row::new(y),
+            width: Width::new(w),
+            height: Height::new(h),
+        }
+    }
+
+    /// Move shifts the origin by the delta; size is unchanged.
+    #[test]
+    fn apply_window_drag_move_shifts_origin() {
+        let out = apply_window_drag(DragOperation::Move, pos(10, 5, 20, 8), 3, -2, 5, 3, 100, 40);
+        assert_eq!(
+            (out.x.get(), out.y.get(), out.width.get(), out.height.get()),
+            (13, 3, 20, 8)
+        );
+    }
+
+    /// Move floors the origin at (0,0) — dragging past the top-left edge.
+    #[test]
+    fn apply_window_drag_move_floors_at_origin() {
+        let out = apply_window_drag(DragOperation::Move, pos(2, 2, 20, 8), -10, -10, 5, 3, 100, 40);
+        assert_eq!((out.x.get(), out.y.get()), (0, 0));
+    }
+
+    /// Move clamps so the window stays fully on screen (max origin = term-size).
+    #[test]
+    fn apply_window_drag_move_clamps_to_stay_onscreen() {
+        // term 100x40, window 20x8 -> max origin (80, 32). Drag far right/down.
+        let out =
+            apply_window_drag(DragOperation::Move, pos(50, 20, 20, 8), 1000, 1000, 5, 3, 100, 40);
+        assert_eq!((out.x.get(), out.y.get()), (80, 32));
+    }
+
+    /// ResizeRight grows the width by dx; origin and height untouched.
+    #[test]
+    fn apply_window_drag_resize_right_grows_width() {
+        let out =
+            apply_window_drag(DragOperation::ResizeRight, pos(10, 5, 20, 8), 15, 0, 5, 3, 100, 40);
+        assert_eq!(
+            (out.x.get(), out.y.get(), out.width.get(), out.height.get()),
+            (10, 5, 35, 8)
+        );
+    }
+
+    /// ResizeRight floors the width at the window minimum.
+    #[test]
+    fn apply_window_drag_resize_right_floors_at_min_width() {
+        let out = apply_window_drag(
+            DragOperation::ResizeRight,
+            pos(10, 5, 20, 8),
+            -100,
+            0,
+            5, // min_width
+            3,
+            100,
+            40,
+        );
+        assert_eq!(out.width.get(), 5);
+    }
+
+    /// ResizeRight clamps the width to the terminal edge (max = term - x).
+    #[test]
+    fn apply_window_drag_resize_right_clamps_to_terminal_edge() {
+        // x=90 in a 100-wide terminal -> max width 10.
+        let out =
+            apply_window_drag(DragOperation::ResizeRight, pos(90, 5, 5, 8), 1000, 0, 3, 3, 100, 40);
+        assert_eq!(out.width.get(), 10);
+    }
+
+    /// ResizeBottom grows height by dy, floored at min, clamped to term-y.
+    #[test]
+    fn apply_window_drag_resize_bottom() {
+        let grow =
+            apply_window_drag(DragOperation::ResizeBottom, pos(0, 10, 20, 8), 0, 12, 5, 3, 100, 40);
+        assert_eq!(grow.height.get(), 20);
+        // Clamp: y=35 in 40-tall term -> max height 5.
+        let clamp = apply_window_drag(
+            DragOperation::ResizeBottom,
+            pos(0, 35, 20, 3),
+            0,
+            1000,
+            3,
+            3,
+            100,
+            40,
+        );
+        assert_eq!(clamp.height.get(), 5);
+    }
+
+    /// ResizeBottomRight applies both width and height changes independently.
+    #[test]
+    fn apply_window_drag_resize_bottom_right() {
+        let out = apply_window_drag(
+            DragOperation::ResizeBottomRight,
+            pos(10, 5, 20, 8),
+            10,
+            6,
+            5,
+            3,
+            100,
+            40,
+        );
+        assert_eq!(
+            (out.x.get(), out.y.get(), out.width.get(), out.height.get()),
+            (10, 5, 30, 14)
+        );
     }
 }

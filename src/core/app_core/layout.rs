@@ -5,6 +5,128 @@ use crate::data::{WindowContent, WindowPosition};
 
 use super::AppCore;
 
+/// One resizable track along a single axis (a window as seen by one column of
+/// the height pass, or one row of the width pass).
+#[derive(Debug, Clone)]
+struct Track {
+    /// Window name (identity, for mapping results back).
+    name: String,
+    /// Baseline size along this axis (rows for height, cols for width).
+    base_size: u16,
+    /// Minimum size this track may shrink to.
+    min: u16,
+    /// Maximum size this track may grow to (None = unbounded).
+    max: Option<u16>,
+    /// Static tracks never scale — they keep `base_size` exactly.
+    is_static: bool,
+}
+
+/// Distribute a size `delta` across `tracks` along one axis, returning the new
+/// size for each track (indexed the same as the input).
+///
+/// Guarantees, in order of priority:
+/// 1. Static tracks keep `base_size`.
+/// 2. Every size stays within `[min, max]`.
+/// 3. CONSERVATION: the sizes sum to `Σ base_size + delta` whenever that total
+///    is feasible under the clamps (i.e. within `[Σmin, Σmax]` over the
+///    scalable tracks). When infeasible, the sum is clamped to the nearest
+///    feasible bound — no units are silently lost.
+///
+/// This unifies what used to be three separate steps (floor-proportional
+/// share, leftover correction, and min/max remainder recoupling) into ONE
+/// reconciliation loop. Keeping them separate let a floor-overshoot and a
+/// clamp interact so a unit went missing (breaking conservation); a single
+/// loop that pushes ±1 onto any track with headroom until the delta is exactly
+/// consumed cannot have that failure mode.
+fn distribute_1d(tracks: &[Track], delta: i32) -> Vec<u16> {
+    // Start everyone at their baseline size.
+    let mut sizes: Vec<i32> = tracks.iter().map(|t| t.base_size as i32).collect();
+
+    // Total baseline size of the scalable tracks — the denominator for the
+    // proportional first pass. Static tracks are excluded entirely.
+    let scalable_total: i32 = tracks
+        .iter()
+        .filter(|t| !t.is_static)
+        .map(|t| t.base_size as i32)
+        .sum();
+
+    // Effective clamp bounds per track. Static tracks are pinned to their
+    // baseline (min == max == base_size) so the reconciliation loop never
+    // touches them.
+    let lo: Vec<i32> = tracks
+        .iter()
+        .map(|t| if t.is_static { t.base_size as i32 } else { t.min as i32 })
+        .collect();
+    let hi: Vec<i32> = tracks
+        .iter()
+        .map(|t| {
+            if t.is_static {
+                t.base_size as i32
+            } else {
+                t.max.map(|m| m as i32).unwrap_or(i32::MAX)
+            }
+        })
+        .collect();
+
+    // First pass: floor-proportional share for each scalable track (only when
+    // there is something to scale). This is just a good starting point; the
+    // reconciliation loop below is what actually guarantees conservation.
+    if scalable_total > 0 && delta != 0 {
+        for (i, t) in tracks.iter().enumerate() {
+            if t.is_static {
+                continue;
+            }
+            let proportion = t.base_size as f64 / scalable_total as f64;
+            let share = (proportion * delta as f64).floor() as i32;
+            sizes[i] = (sizes[i] + share).clamp(lo[i], hi[i]);
+        }
+    }
+
+    // Reconciliation: push ±1 onto any track that still has headroom in the
+    // needed direction until the total change equals `delta`, or no track can
+    // absorb more (target infeasible under the clamps). One unit at a time,
+    // round-robin, so the result is balanced and can never drop a unit.
+    let target_total: i32 = scalable_total
+        + tracks
+            .iter()
+            .filter(|t| t.is_static)
+            .map(|t| t.base_size as i32)
+            .sum::<i32>()
+        + delta;
+    loop {
+        let current_total: i32 = sizes.iter().sum();
+        let diff = target_total - current_total;
+        if diff == 0 {
+            break;
+        }
+        let step = if diff > 0 { 1 } else { -1 };
+        let mut applied = false;
+        for i in 0..tracks.len() {
+            if tracks[i].is_static {
+                continue;
+            }
+            let candidate = sizes[i] + step;
+            if candidate >= lo[i] && candidate <= hi[i] {
+                sizes[i] = candidate;
+                applied = true;
+                // Re-check the running total after each unit so we stop exactly
+                // on target rather than overshooting.
+                if sizes.iter().sum::<i32>() == target_total {
+                    break;
+                }
+            }
+        }
+        if !applied {
+            // No scalable track can absorb more in this direction: the target
+            // is infeasible under the clamps. Stop at the nearest feasible sum
+            // rather than looping forever.
+            break;
+        }
+    }
+
+    sizes.iter().map(|&s| s.max(0) as u16).collect()
+}
+
 impl AppCore {
     /// Apply a layout-provided theme, returning the applied theme (if changed)
     pub(super) fn apply_layout_theme(
@@ -87,10 +209,10 @@ impl AppCore {
                         idx,
                         window_def.name(),
                         window_def.widget_type(),
-                        base.col,
-                        base.row,
-                        base.cols,
-                        base.rows
+                        base.col.get(),
+                        base.row.get(),
+                        base.cols.get(),
+                        base.rows.get()
                     );
                 }
 
@@ -98,8 +220,8 @@ impl AppCore {
                 let mut terminal_too_small = false;
                 for window_def in &new_layout.windows {
                     let base = window_def.base();
-                    let required_width = base.col.saturating_add(base.cols);
-                    let required_height = base.row.saturating_add(base.rows);
+                    let required_width = base.col.get().saturating_add(base.cols.get());
+                    let required_height = base.row.get().saturating_add(base.rows.get());
                     if terminal_width < required_width || terminal_height < required_height {
                         terminal_too_small = true;
                         tracing::error!(
@@ -108,8 +230,8 @@ impl AppCore {
                             window_def.widget_type(),
                             required_width,
                             required_height,
-                            base.col,
-                            base.row,
+                            base.col.get(),
+                            base.row.get(),
                             terminal_width,
                             terminal_height
                         );
@@ -232,20 +354,36 @@ impl AppCore {
                     .windows
                     .iter()
                     .filter(|w| w.base().visible)
-                    .map(|w| (w.name().to_string(), w.base().row, w.base().rows))
+                    .map(|w| (w.name().to_string(), w.base().row.get(), w.base().rows.get()))
                     .collect()
             } else {
                 self.layout
                     .windows
                     .iter()
                     .filter(|w| w.base().visible)
-                    .map(|w| (w.base().name.clone(), w.base().row, w.base().rows))
+                    .map(|w| (w.base().name.clone(), w.base().row.get(), w.base().rows.get()))
                     .collect()
             };
 
         // Apply VellumFE's proportional distribution algorithm
         self.apply_height_resize(height_delta, &static_both, &static_height);
         self.apply_width_resize(width_delta, &static_both, &baseline_rows);
+
+        // Safety net: no window may extend past the terminal edge. The cascade
+        // relies on conservation to keep everything on screen, but subtle
+        // multi-column / static-window interactions can leave a bottom or right
+        // edge one row/col past the terminal (a full-width static command_input
+        // has been observed at row == terminal_height, i.e. fully off screen).
+        // Pull such a window back on screen WITHOUT resizing it (max origin =
+        // terminal - size, saturating), so a fixed-height input keeps its size.
+        // This never moves a window that already fits.
+        for window_def in self.layout.windows.iter_mut().filter(|w| w.base().visible) {
+            let base = window_def.base_mut();
+            let max_col = crate::data::geometry::Col::new(terminal_width) - base.cols;
+            let max_row = crate::data::geometry::Row::new(terminal_height) - base.rows;
+            base.col = base.col.min(max_col);
+            base.row = base.row.min(max_row);
+        }
 
         // Update layout terminal size to current
         self.layout.terminal_width = Some(terminal_width);
@@ -279,10 +417,10 @@ impl AppCore {
                 tracing::debug!(
                     "Applied to UI: '{}' @ ({},{}) size {}x{}",
                     base.name,
-                    base.col,
-                    base.row,
-                    base.cols,
-                    base.rows
+                    base.col.get(),
+                    base.row.get(),
+                    base.cols.get(),
+                    base.rows.get()
                 );
             }
         }
@@ -347,7 +485,7 @@ impl AppCore {
             .filter(|w| w.base().visible)
             .map(|w| {
                 let base = w.base();
-                (base.name.clone(), (base.row, base.rows))
+                (base.name.clone(), (base.row.get(), base.rows.get()))
             })
             .collect();
 
@@ -359,7 +497,7 @@ impl AppCore {
             .filter(|w| w.base().visible)
             .map(|w| {
                 let base = w.base();
-                base.col + base.cols
+                base.col.get().saturating_add(base.cols.get())
             })
             .max()
             .unwrap_or(0);
@@ -379,7 +517,9 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.col <= current_col && base.col + base.cols > current_col {
+                    if base.col.get() <= current_col
+                        && base.col.get().saturating_add(base.cols.get()) > current_col
+                    {
                         Some(base.name.clone())
                     } else {
                         None
@@ -397,153 +537,49 @@ impl AppCore {
                 windows_at_col.len()
             );
 
-            // Calculate total scalable height (only windows that can actually grow)
-            // Skip static windows AND windows already at max_rows
-            let mut total_scalable_height = 0u16;
-            for window_name in &windows_at_col {
-                // Skip if static
-                if static_both.contains(window_name.as_str())
-                    || static_height.contains(window_name.as_str())
-                {
-                    continue;
-                }
+            // Build the axis tracks for this column (in row order) and let the
+            // shared distribute_1d compute the new sizes. This replaces the
+            // former hand-rolled proportional + leftover + remainder logic with
+            // one conserving pass (see distribute_1d). Sort by baseline row so
+            // proportional order matches the cascade order below.
+            windows_at_col.sort_by_key(|name| baseline_rows.get(name).map(|(r, _)| *r).unwrap_or(0));
 
-                // Check if window is already at max_rows (can't grow)
-                let window_def = self.layout.windows.iter().find(|w| w.name() == window_name);
-                if let Some(w) = window_def {
-                    let base = w.base();
-                    if let Some(max_rows) = base.max_rows {
-                        let (_, current_rows) =
-                            baseline_rows.get(window_name).copied().unwrap_or((0, 0));
-                        if current_rows >= max_rows {
-                            // Window is at max, can't grow - don't count it
-                            continue;
-                        }
+            let tracks: Vec<Track> = windows_at_col
+                .iter()
+                .map(|name| {
+                    let (_, base_rows) = baseline_rows.get(name).copied().unwrap_or((0, 0));
+                    let is_static = static_both.contains(name.as_str())
+                        || static_height.contains(name.as_str());
+                    let (min_c, max_c) = if let Some(w) =
+                        self.layout.windows.iter().find(|w| w.name() == name)
+                    {
+                        let base = w.base();
+                        let (_, min_rows) = self.widget_min_size(w.widget_type());
+                        (base.min_rows.unwrap_or(min_rows), base.max_rows)
+                    } else {
+                        (0, None)
+                    };
+                    Track {
+                        name: name.clone(),
+                        base_size: base_rows,
+                        min: min_c,
+                        max: max_c,
+                        is_static,
                     }
-                }
+                })
+                .collect();
 
-                // Get window height (only windows that can grow)
-                let (_, base_rows) = baseline_rows.get(window_name).copied().unwrap_or((0, 0));
-                total_scalable_height += base_rows;
-            }
-
-            if total_scalable_height == 0 {
+            // If nothing in this column can scale, skip it.
+            if tracks.iter().all(|t| t.is_static) {
                 continue;
             }
 
-            tracing::debug!(
-                "  Total scalable height at column {}: {}",
-                current_col,
-                total_scalable_height
-            );
-
-            // Distribute height_delta proportionally
-            let mut col_height_deltas: HashMap<String, i32> = HashMap::new();
-            let mut distributed: i32 = 0;
-            for window_name in &windows_at_col {
-                // Handle static windows
-                if static_both.contains(window_name.as_str())
-                    || static_height.contains(window_name.as_str())
-                {
-                    col_height_deltas.insert(window_name.clone(), 0);
-                    continue;
-                }
-
-                // Check if window is already at max_rows (can't grow)
-                let mut at_max = false;
-                if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
-                    let base = w.base();
-                    if let Some(max_rows) = base.max_rows {
-                        let (_, current_rows) =
-                            baseline_rows.get(window_name).copied().unwrap_or((0, 0));
-                        if current_rows >= max_rows {
-                            at_max = true;
-                        }
-                    }
-                }
-
-                if at_max {
-                    // Window at max_rows gets 0 delta (but still repositions)
-                    col_height_deltas.insert(window_name.clone(), 0);
-                    tracing::debug!(
-                        "    {} (rows={}): at max_rows, delta=0",
-                        window_name,
-                        baseline_rows.get(window_name).map(|(_, r)| r).unwrap_or(&0)
-                    );
-                    continue;
-                }
-
-                // Calculate proportional delta for this window at this column
-                let (_, base_rows) = baseline_rows.get(window_name).copied().unwrap_or((0, 0));
-                let proportion = base_rows as f64 / total_scalable_height as f64;
-                let delta = (proportion * height_delta as f64).floor() as i32;
-
-                col_height_deltas.insert(window_name.clone(), delta);
-                distributed += delta;
-
-                tracing::debug!(
-                    "    {} (rows={}): proportion={:.4}, delta={}",
-                    window_name,
-                    base_rows,
-                    proportion,
-                    delta
-                );
-            }
-
-            // Distribute leftover rows within this column only
-            let mut leftover = height_delta - distributed;
-            if leftover != 0 {
-                // Sort by row (top to bottom)
-                windows_at_col.sort_by_key(|name| {
-                    self.layout
-                        .windows
-                        .iter()
-                        .find(|w| w.name() == name)
-                        .map(|w| w.base().row)
-                        .unwrap_or(0)
-                });
-
-                let mut idx = 0usize;
-                // At least one non-static window exists (total_scalable_height > 0)
-                while leftover != 0 {
-                    let name = &windows_at_col[idx % windows_at_col.len()];
-
-                    // Skip static windows
-                    if static_both.contains(name.as_str()) || static_height.contains(name.as_str())
-                    {
-                        idx += 1;
-                        continue;
-                    }
-
-                    // Skip windows at max_rows
-                    let mut at_max = false;
-                    if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
-                        let base = w.base();
-                        if let Some(max_rows) = base.max_rows {
-                            let (_, current_rows) =
-                                baseline_rows.get(name).copied().unwrap_or((0, 0));
-                            if current_rows >= max_rows {
-                                at_max = true;
-                            }
-                        }
-                    }
-                    if at_max {
-                        idx += 1;
-                        continue;
-                    }
-
-                    if let Some(delta) = col_height_deltas.get_mut(name) {
-                        if leftover > 0 {
-                            *delta += 1;
-                            leftover -= 1;
-                        } else {
-                            *delta -= 1;
-                            leftover += 1;
-                        }
-                    }
-                    idx += 1;
-                }
-            }
+            let new_sizes = distribute_1d(&tracks, height_delta);
+            let col_height_deltas: HashMap<String, i32> = tracks
+                .iter()
+                .zip(new_sizes.iter())
+                .map(|(t, &new_size)| (t.name.clone(), new_size as i32 - t.base_size as i32))
+                .collect();
 
             // Cascade and apply (discarding deltas for already-applied windows)
             let mut windows_at_col_with_meta: Vec<(String, u16, u16)> = self
@@ -553,11 +589,13 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.col <= current_col && base.col + base.cols > current_col {
+                    if base.col.get() <= current_col
+                        && base.col.get().saturating_add(base.cols.get()) > current_col
+                    {
                         let (orig_row, orig_rows) = baseline_rows
                             .get(&base.name)
                             .copied()
-                            .unwrap_or((base.row, base.rows));
+                            .unwrap_or((base.row.get(), base.rows.get()));
                         Some((base.name.clone(), orig_row, orig_rows))
                     } else {
                         None
@@ -570,37 +608,26 @@ impl AppCore {
             let mut current_row = windows_at_col_with_meta[0].1;
             let win_count = windows_at_col_with_meta.len();
 
+            // Position pass: distribute_1d already produced final, clamped,
+            // conserved sizes, so this loop is a pure cascade — assign each
+            // window its new size (baseline + delta) and stack it directly
+            // below the previous one. A window spanning multiple columns is
+            // sized once (tracked in height_applied); at later columns we only
+            // advance the cascade cursor past it.
             for idx in 0..win_count {
-                let (window_name, original_row, original_rows) =
+                let (window_name, _original_row, original_rows) =
                     windows_at_col_with_meta[idx].clone();
-                let assigned_delta = *col_height_deltas.get(&window_name).unwrap_or(&0);
-
-                let window_def = self
-                    .layout
-                    .windows
-                    .iter()
-                    .find(|w| w.name() == window_name)
-                    .expect("window in metadata must exist in layout");
-                let base = window_def.base();
-                let widget_type = window_def.widget_type();
-                let (_, min_rows) = self.widget_min_size(widget_type);
-                let min_constraint = base.min_rows.unwrap_or(min_rows);
-                let max_constraint = base.max_rows;
 
                 if height_applied.contains(&window_name) {
-                    // Already applied: keep existing size/position but advance the cascade
-                    current_row = base.row + base.rows;
+                    // Already sized at an earlier column: keep it, advance cursor.
+                    if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
+                        current_row = w.base().row.get().saturating_add(w.base().rows.get());
+                    }
                     continue;
                 }
 
-                let mut new_rows =
-                    (original_rows as i32 + assigned_delta).max(min_constraint as i32) as u16;
-                if let Some(max) = max_constraint {
-                    new_rows = new_rows.min(max);
-                }
-
-                let used_delta = new_rows as i32 - original_rows as i32;
-                let mut remainder = assigned_delta - used_delta;
+                let assigned_delta = *col_height_deltas.get(&window_name).unwrap_or(&0);
+                let new_rows = (original_rows as i32 + assigned_delta).max(0) as u16;
 
                 if let Some(w) = self
                     .layout
@@ -609,47 +636,12 @@ impl AppCore {
                     .find(|w| w.name() == window_name)
                 {
                     let base = w.base_mut();
-                    base.row = current_row;
-                    base.rows = new_rows;
+                    base.row = crate::data::geometry::Row::new(current_row);
+                    base.rows = crate::data::geometry::Height::new(new_rows);
                     height_applied.insert(window_name.clone());
-
-                    tracing::debug!(
-                        "  Col {}: {} row {} -> {}, rows {} -> {} (delta={})",
-                        current_col,
-                        window_name,
-                        original_row,
-                        current_row,
-                        original_rows,
-                        new_rows,
-                        assigned_delta
-                    );
                 }
 
                 current_row += new_rows;
-
-                // If constraints prevented full use of delta, distribute remainder
-                if remainder != 0 {
-                    for (name, _, _) in windows_at_col_with_meta.iter().skip(idx + 1) {
-                        if static_both.contains(name.as_str())
-                            || static_height.contains(name.as_str())
-                            || height_applied.contains(name)
-                        {
-                            continue;
-                        }
-                        if let Some(d) = col_height_deltas.get_mut(name) {
-                            if remainder == 0 {
-                                break;
-                            }
-                            if remainder > 0 {
-                                *d += 1;
-                                remainder -= 1;
-                            } else {
-                                *d -= 1;
-                                remainder += 1;
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -680,7 +672,7 @@ impl AppCore {
             .filter(|w| w.base().visible)
             .map(|w| {
                 let base = w.base();
-                (base.name.clone(), (base.col, base.cols))
+                (base.name.clone(), (base.col.get(), base.cols.get()))
             })
             .collect();
 
@@ -692,7 +684,7 @@ impl AppCore {
             .filter(|w| w.base().visible)
             .map(|w| {
                 let base = w.base();
-                base.row + base.rows
+                base.row.get().saturating_add(base.rows.get())
             })
             .max()
             .unwrap_or(0);
@@ -712,7 +704,9 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.row <= current_row && base.row + base.rows > current_row {
+                    if base.row.get() <= current_row
+                        && base.row.get().saturating_add(base.rows.get()) > current_row
+                    {
                         Some(base.name.clone())
                     } else {
                         None
@@ -730,148 +724,47 @@ impl AppCore {
                 windows_at_row.len()
             );
 
-            // Calculate total scalable width (only windows that can actually grow)
-            // Skip static windows AND windows already at max_cols
-            let mut total_scalable_width = 0u16;
-            for window_name in &windows_at_row {
-                // Skip if static
-                if static_both.contains(window_name.as_str()) {
-                    continue;
-                }
+            // Build the axis tracks for this row (in column order) and let the
+            // shared distribute_1d compute the new widths — the transpose of the
+            // height pass. Replaces the former proportional + leftover +
+            // remainder logic with one conserving pass.
+            windows_at_row.sort_by_key(|name| baseline_cols.get(name).map(|(c, _)| *c).unwrap_or(0));
 
-                // Check if window is already at max_cols (can't grow)
-                let window_def = self.layout.windows.iter().find(|w| w.name() == window_name);
-                if let Some(w) = window_def {
-                    let base = w.base();
-                    if let Some(max_cols) = base.max_cols {
-                        let (_, current_cols) =
-                            baseline_cols.get(window_name).copied().unwrap_or((0, 0));
-                        if current_cols >= max_cols {
-                            // Window is at max, can't grow - don't count it
-                            continue;
-                        }
+            let tracks: Vec<Track> = windows_at_row
+                .iter()
+                .map(|name| {
+                    let (_, base_cols) = baseline_cols.get(name).copied().unwrap_or((0, 0));
+                    // Width has only the `static_both` category (no static_width).
+                    let is_static = static_both.contains(name.as_str());
+                    let (min_c, max_c) = if let Some(w) =
+                        self.layout.windows.iter().find(|w| w.name() == name)
+                    {
+                        let base = w.base();
+                        let (min_cols, _) = self.widget_min_size(w.widget_type());
+                        (base.min_cols.unwrap_or(min_cols), base.max_cols)
+                    } else {
+                        (0, None)
+                    };
+                    Track {
+                        name: name.clone(),
+                        base_size: base_cols,
+                        min: min_c,
+                        max: max_c,
+                        is_static,
                     }
-                }
+                })
+                .collect();
 
-                // Get window width (only windows that can grow)
-                let (_, base_cols) = baseline_cols.get(window_name).copied().unwrap_or((0, 0));
-                total_scalable_width += base_cols;
-            }
-
-            if total_scalable_width == 0 {
+            if tracks.iter().all(|t| t.is_static) {
                 continue;
             }
 
-            tracing::debug!(
-                "  Total scalable width at row {}: {}",
-                current_row,
-                total_scalable_width
-            );
-
-            // Distribute width_delta proportionally
-            let mut row_width_deltas: HashMap<String, i32> = HashMap::new();
-            let mut distributed: i32 = 0;
-            for window_name in &windows_at_row {
-                // Handle static windows
-                if static_both.contains(window_name.as_str()) {
-                    row_width_deltas.insert(window_name.clone(), 0);
-                    continue;
-                }
-
-                // Check if window is already at max_cols (can't grow)
-                let mut at_max = false;
-                if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
-                    let base = w.base();
-                    if let Some(max_cols) = base.max_cols {
-                        let (_, current_cols) =
-                            baseline_cols.get(window_name).copied().unwrap_or((0, 0));
-                        if current_cols >= max_cols {
-                            at_max = true;
-                        }
-                    }
-                }
-
-                if at_max {
-                    // Window at max_cols gets 0 delta (but still repositions)
-                    row_width_deltas.insert(window_name.clone(), 0);
-                    tracing::debug!(
-                        "    {} (cols={}): at max_cols, delta=0",
-                        window_name,
-                        baseline_cols.get(window_name).map(|(_, c)| c).unwrap_or(&0)
-                    );
-                    continue;
-                }
-
-                // Calculate proportional delta for this window at this row
-                let (_, base_cols) = baseline_cols.get(window_name).copied().unwrap_or((0, 0));
-                let proportion = base_cols as f64 / total_scalable_width as f64;
-                let delta = (proportion * width_delta as f64).floor() as i32;
-
-                row_width_deltas.insert(window_name.clone(), delta);
-                distributed += delta;
-
-                tracing::debug!(
-                    "    {} (cols={}): proportion={:.4}, delta={}",
-                    window_name,
-                    base_cols,
-                    proportion,
-                    delta
-                );
-            }
-
-            // Distribute leftover columns within this row only
-            let mut leftover = width_delta - distributed;
-            if leftover != 0 {
-                // Sort by column (left to right)
-                windows_at_row.sort_by_key(|name| {
-                    self.layout
-                        .windows
-                        .iter()
-                        .find(|w| w.name() == name)
-                        .map(|w| w.base().col)
-                        .unwrap_or(0)
-                });
-
-                let mut idx = 0usize;
-                // At least one non-static window exists (total_scalable_width > 0)
-                while leftover != 0 {
-                    let name = &windows_at_row[idx % windows_at_row.len()];
-
-                    // Skip static windows
-                    if static_both.contains(name.as_str()) {
-                        idx += 1;
-                        continue;
-                    }
-
-                    // Skip windows at max_cols
-                    let mut at_max = false;
-                    if let Some(w) = self.layout.windows.iter().find(|w| w.name() == name) {
-                        let base = w.base();
-                        if let Some(max_cols) = base.max_cols {
-                            let (_, current_cols) =
-                                baseline_cols.get(name).copied().unwrap_or((0, 0));
-                            if current_cols >= max_cols {
-                                at_max = true;
-                            }
-                        }
-                    }
-                    if at_max {
-                        idx += 1;
-                        continue;
-                    }
-
-                    if let Some(delta) = row_width_deltas.get_mut(name) {
-                        if leftover > 0 {
-                            *delta += 1;
-                            leftover -= 1;
-                        } else {
-                            *delta -= 1;
-                            leftover += 1;
-                        }
-                    }
-                    idx += 1;
-                }
-            }
+            let new_sizes = distribute_1d(&tracks, width_delta);
+            let row_width_deltas: HashMap<String, i32> = tracks
+                .iter()
+                .zip(new_sizes.iter())
+                .map(|(t, &new_size)| (t.name.clone(), new_size as i32 - t.base_size as i32))
+                .collect();
 
             // Cascade and apply (discarding deltas for already-applied windows)
             let mut windows_at_row_with_meta: Vec<(String, u16, u16)> = self
@@ -881,11 +774,13 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.row <= current_row && base.row + base.rows > current_row {
+                    if base.row.get() <= current_row
+                        && base.row.get().saturating_add(base.rows.get()) > current_row
+                    {
                         let (orig_col, orig_cols) = baseline_cols
                             .get(&base.name)
                             .copied()
-                            .unwrap_or((base.col, base.cols));
+                            .unwrap_or((base.col.get(), base.cols.get()));
                         Some((base.name.clone(), orig_col, orig_cols))
                     } else {
                         None
@@ -898,37 +793,23 @@ impl AppCore {
             let mut current_col_pos = windows_at_row_with_meta[0].1;
             let win_count = windows_at_row_with_meta.len();
 
+            // Position pass: distribute_1d already produced final, clamped,
+            // conserved widths, so this is a pure cascade (transpose of the
+            // height positioner). A window spanning multiple rows is sized once
+            // (width_applied); at later rows we only advance the cursor.
             for idx in 0..win_count {
-                let (window_name, original_col, original_cols) =
+                let (window_name, _original_col, original_cols) =
                     windows_at_row_with_meta[idx].clone();
-                let assigned_delta = *row_width_deltas.get(&window_name).unwrap_or(&0);
-
-                let window_def = self
-                    .layout
-                    .windows
-                    .iter()
-                    .find(|w| w.name() == window_name)
-                    .expect("window in metadata must exist in layout");
-                let base = window_def.base();
-                let widget_type = window_def.widget_type();
-                let (min_cols, _) = self.widget_min_size(widget_type);
-                let min_constraint = base.min_cols.unwrap_or(min_cols);
-                let max_constraint = base.max_cols;
 
                 if width_applied.contains(&window_name) {
-                    // Already applied: keep existing size/position but advance the cascade
-                    current_col_pos = base.col + base.cols;
+                    if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
+                        current_col_pos = w.base().col.get().saturating_add(w.base().cols.get());
+                    }
                     continue;
                 }
 
-                let mut new_cols =
-                    (original_cols as i32 + assigned_delta).max(min_constraint as i32) as u16;
-                if let Some(max) = max_constraint {
-                    new_cols = new_cols.min(max);
-                }
-
-                let used_delta = new_cols as i32 - original_cols as i32;
-                let mut remainder = assigned_delta - used_delta;
+                let assigned_delta = *row_width_deltas.get(&window_name).unwrap_or(&0);
+                let new_cols = (original_cols as i32 + assigned_delta).max(0) as u16;
 
                 if let Some(w) = self
                     .layout
@@ -937,44 +818,12 @@ impl AppCore {
                     .find(|w| w.name() == window_name)
                 {
                     let base = w.base_mut();
-                    base.col = current_col_pos;
-                    base.cols = new_cols;
+                    base.col = crate::data::geometry::Col::new(current_col_pos);
+                    base.cols = crate::data::geometry::Width::new(new_cols);
                     width_applied.insert(window_name.clone());
-
-                    tracing::debug!(
-                        "  Row {}: {} col {} -> {}, cols {} -> {} (delta={})",
-                        current_row,
-                        window_name,
-                        original_col,
-                        current_col_pos,
-                        original_cols,
-                        new_cols,
-                        assigned_delta
-                    );
                 }
 
                 current_col_pos += new_cols;
-
-                // If constraints prevented full use of delta, distribute remainder
-                if remainder != 0 {
-                    for (name, _, _) in windows_at_row_with_meta.iter().skip(idx + 1) {
-                        if static_both.contains(name.as_str()) || width_applied.contains(name) {
-                            continue;
-                        }
-                        if let Some(d) = row_width_deltas.get_mut(name) {
-                            if remainder == 0 {
-                                break;
-                            }
-                            if remainder > 0 {
-                                *d += 1;
-                                remainder -= 1;
-                            } else {
-                                *d -= 1;
-                                remainder += 1;
-                            }
-                        }
-                    }
-                }
             }
         }
 
@@ -1039,10 +888,10 @@ impl AppCore {
             tracing::debug!(
                 "Processing window '{}': exact pos=({},{}) size={}x{}",
                 window_name,
-                position.x,
-                position.y,
-                position.width,
-                position.height
+                position.x.get(),
+                position.y.get(),
+                position.width.get(),
+                position.height.get()
             );
 
             if let Some(window_state) = self.ui_state.windows.get_mut(&window_name) {
@@ -1053,14 +902,14 @@ impl AppCore {
                 tracing::info!(
                     "UPDATING window '{}': pos ({},{})ΓåÆ({},{}) size {}x{}ΓåÆ{}x{}",
                     window_name,
-                    old_pos.x,
-                    old_pos.y,
-                    position.x,
-                    position.y,
-                    old_pos.width,
-                    old_pos.height,
-                    position.width,
-                    position.height
+                    old_pos.x.get(),
+                    old_pos.y.get(),
+                    position.x.get(),
+                    position.y.get(),
+                    old_pos.width.get(),
+                    old_pos.height.get(),
+                    position.width.get(),
+                    position.height.get()
                 );
             } else {
                 // Window doesn't exist - queue for creation
@@ -1167,184 +1016,15 @@ impl AppCore {
         }
     }
 
-    /// Resize layout using delta-based proportional distribution
-    /// This method is called by the .resize command and requires manual invocation
-    pub fn resize_to_terminal(&mut self, terminal_width: u16, terminal_height: u16) {
-        // Need a baseline layout to calculate delta from
-        let baseline = match &self.baseline_layout {
-            Some(baseline) => baseline,
-            None => {
-                self.add_system_message(
-                    "No baseline layout - save current layout first with .savelayout",
-                );
-                return;
-            }
-        };
-
-        // Get baseline terminal size
-        let baseline_width = baseline.terminal_width.unwrap_or(80);
-        let baseline_height = baseline.terminal_height.unwrap_or(24);
-
-        // Calculate delta
-        let width_delta = terminal_width as i32 - baseline_width as i32;
-        let height_delta = terminal_height as i32 - baseline_height as i32;
-
-        if width_delta == 0 && height_delta == 0 {
-            self.add_system_message(&format!(
-                "Terminal size unchanged ({}x{})",
-                terminal_width, terminal_height
-            ));
-            return;
-        }
-
-        tracing::info!(
-            "Resizing layout: baseline {}x{} -> current {}x{} (delta: {}x{})",
-            baseline_width,
-            baseline_height,
-            terminal_width,
-            terminal_height,
-            width_delta,
-            height_delta
-        );
-
-        // Simple delta-based proportional distribution
-        // For each window: calculate its proportion of total size, then distribute delta proportionally
-
-        // Calculate total scalable width and height from baseline
-        let total_baseline_width: u16 = baseline.windows.iter().map(|w| w.base().cols).sum();
-        let total_baseline_height: u16 = baseline.windows.iter().map(|w| w.base().rows).sum();
-
-        let mut width_remainder = width_delta;
-        let mut height_remainder = height_delta;
-
-        // Apply proportional resize to each window in the layout
-        for window_def in &mut self.layout.windows {
-            let window_name = window_def.name().to_string();
-            let baseline_window = baseline.windows.iter().find(|w| w.name() == window_name);
-
-            if let Some(baseline_win) = baseline_window {
-                let baseline_base = baseline_win.base();
-                let base = window_def.base_mut();
-
-                // Calculate width adjustment
-                if total_baseline_width > 0 && width_delta != 0 {
-                    let proportion = baseline_base.cols as f64 / total_baseline_width as f64;
-                    let width_share = (proportion * width_delta as f64).floor() as i32;
-                    let new_width = (baseline_base.cols as i32 + width_share).max(1) as u16;
-                    base.cols = new_width;
-                    width_remainder -= width_share;
-                }
-
-                // Calculate height adjustment
-                if total_baseline_height > 0 && height_delta != 0 {
-                    let proportion = baseline_base.rows as f64 / total_baseline_height as f64;
-                    let height_share = (proportion * height_delta as f64).floor() as i32;
-                    let new_height = (baseline_base.rows as i32 + height_share).max(1) as u16;
-                    base.rows = new_height;
-                    height_remainder -= height_share;
-                }
-            }
-        }
-
-        // Distribute remainders to first windows (simple round-robin)
-        if width_remainder != 0 {
-            for window_def in &mut self.layout.windows {
-                if width_remainder == 0 {
-                    break;
-                }
-                let base = window_def.base_mut();
-                if width_remainder > 0 {
-                    base.cols += 1;
-                    width_remainder -= 1;
-                } else if base.cols > 1 {
-                    base.cols -= 1;
-                    width_remainder += 1;
-                }
-            }
-        }
-
-        if height_remainder != 0 {
-            for window_def in &mut self.layout.windows {
-                if height_remainder == 0 {
-                    break;
-                }
-                let base = window_def.base_mut();
-                if height_remainder > 0 {
-                    base.rows += 1;
-                    height_remainder -= 1;
-                } else if base.rows > 1 {
-                    base.rows -= 1;
-                    height_remainder += 1;
-                }
-            }
-        }
-
-        // Recalculate positions for vertically stacked windows
-        // Sort windows by baseline Y position to maintain stacking order
-        let mut window_positions: Vec<(String, u16, u16, u16, u16)> = baseline
-            .windows
-            .iter()
-            .map(|w| {
-                (
-                    w.name().to_string(),
-                    w.base().col,
-                    w.base().row,
-                    w.base().cols,
-                    w.base().rows,
-                )
-            })
-            .collect();
-        window_positions.sort_by_key(|(_, _, row, _, _)| *row);
-
-        // Track both baseline bottoms and current bottoms per column
-        // This fixes the bug where size changes caused position cascade to fail
-        let mut col_baseline_bottom: std::collections::HashMap<u16, u16> =
-            std::collections::HashMap::new();
-        let mut col_current_bottom: std::collections::HashMap<u16, u16> =
-            std::collections::HashMap::new();
-
-        // Recalculate Y positions for stacked windows
-        for (name, baseline_col, baseline_row, _baseline_cols, baseline_rows) in window_positions {
-            if let Some(window_def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
-                let base = window_def.base_mut();
-
-                // Check if this window was stacked with the previous one in baseline
-                if let Some(&prev_baseline_bottom) = col_baseline_bottom.get(&baseline_col) {
-                    if baseline_row == prev_baseline_bottom {
-                        // Windows were adjacent in baseline - cascade position using current bottom
-                        base.row = *col_current_bottom.get(&baseline_col).unwrap_or(&0);
-                    }
-                }
-
-                // Update tracking for both baseline and current bottoms
-                col_baseline_bottom.insert(baseline_col, baseline_row + baseline_rows);
-                col_current_bottom.insert(baseline_col, base.row + base.rows);
-            }
-        }
-
-        // Update layout terminal size
-        self.layout.terminal_width = Some(terminal_width);
-        self.layout.terminal_height = Some(terminal_height);
-
-        // Mark as modified and trigger re-init
-        self.layout_modified_since_save = true;
-        self.init_windows(terminal_width, terminal_height);
-        self.needs_render = true;
-
-        // Signal frontend to reset widget caches
-        self.ui_state.needs_widget_reset = true;
-
-        self.add_system_message(&format!(
-            "Layout resized to {}x{} (delta: {:+}x{:+})",
-            terminal_width, terminal_height, width_delta, height_delta
-        ));
-    }
-
-    /// Wrapper for resize command - gets terminal size from layout
+    /// Fallback for the `.resize` dot-command in frontends without a cell grid
+    /// (GUI, headless). Resizes the layout to its own stored terminal size —
+    /// a zero delta in practice — routed through the single resize algorithm.
+    /// The TUI's real `.resize` handler calls `resize_windows` directly with
+    /// the actual terminal size (see frontend/tui/input_handlers.rs).
     pub(super) fn resize_to_current_terminal(&mut self) {
         let width = self.layout.terminal_width.unwrap_or(80);
         let height = self.layout.terminal_height.unwrap_or(24);
-        self.resize_to_terminal(width, height);
+        self.resize_windows(width, height);
     }
 }
 
@@ -1359,10 +1039,10 @@ mod tests {
     fn test_window_base(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowBase {
         WindowBase {
             name: name.to_string(),
-            row,
-            col,
-            rows,
-            cols,
+            row: crate::data::geometry::Row::new(row),
+            col: crate::data::geometry::Col::new(col),
+            rows: crate::data::geometry::Height::new(rows),
+            cols: crate::data::geometry::Width::new(cols),
             show_border: false,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -1416,12 +1096,45 @@ mod tests {
             "indicator" => (2, 1),
             "progress" | "countdown" | "hands" | "hand" => (10, 1),
             "compass" => (13, 5),
+            "map" => (10, 5),
             "injury_doll" => (20, 10),
             "dashboard" => (15, 3),
             "command_input" => (20, 1),
             "quickbar" => (20, 1),
             "hotkeybar" => (20, 1),
             _ => (5, 3), // text, room, tabbed, etc.
+        }
+    }
+
+    /// Guard: the standalone replica above must stay in sync with the real
+    /// `AppCore::widget_min_size`. This copy silently drifted once already
+    /// (it was missing the "map" arm), so pin every type against the source.
+    #[test]
+    fn widget_min_size_standalone_matches_real_impl() {
+        let core = AppCore::new_for_test();
+        for wt in [
+            "indicator",
+            "progress",
+            "countdown",
+            "hands",
+            "hand",
+            "compass",
+            "map",
+            "injury_doll",
+            "dashboard",
+            "command_input",
+            "quickbar",
+            "hotkeybar",
+            "text",
+            "room",
+            "tabbedtext",
+            "unknown_type",
+        ] {
+            assert_eq!(
+                widget_min_size_standalone(wt),
+                core.widget_min_size(wt),
+                "widget_min_size mismatch for '{wt}' — standalone replica drifted from the real impl"
+            );
         }
     }
 
@@ -1882,10 +1595,10 @@ mod tests {
             data: SpacerWidgetData {},
         };
         let b = spacer.base();
-        assert_eq!(b.col, 10);
-        assert_eq!(b.row, 20);
-        assert_eq!(b.cols, 40);
-        assert_eq!(b.rows, 15);
+        assert_eq!(b.col.get(), 10);
+        assert_eq!(b.row.get(), 20);
+        assert_eq!(b.cols.get(), 40);
+        assert_eq!(b.rows.get(), 15);
     }
 
     #[test]
@@ -1947,10 +1660,10 @@ mod tests {
     #[test]
     fn test_window_position_clone() {
         let pos = WindowPosition {
-            x: 10,
-            y: 20,
-            width: 80,
-            height: 24,
+            x: crate::data::geometry::Col::new(10),
+            y: crate::data::geometry::Row::new(20),
+            width: crate::data::geometry::Width::new(80),
+            height: crate::data::geometry::Height::new(24),
         };
         let cloned = pos.clone();
         assert_eq!(pos.x, cloned.x);
@@ -1968,10 +1681,10 @@ mod tests {
             width: base.cols,
             height: base.rows,
         };
-        assert_eq!(pos.x, 15);
-        assert_eq!(pos.y, 5);
-        assert_eq!(pos.width, 50);
-        assert_eq!(pos.height, 18);
+        assert_eq!(pos.x.get(), 15);
+        assert_eq!(pos.y.get(), 5);
+        assert_eq!(pos.width.get(), 50);
+        assert_eq!(pos.height.get(), 18);
     }
 
     // ========== Remainder distribution tests ==========
@@ -1998,5 +1711,637 @@ mod tests {
         let distributed: i32 = 20;
         let remainder = total_delta - distributed;
         assert_eq!(remainder, 0); // Perfect distribution
+    }
+
+    // ================================================================
+    // Characterization tests for the REAL resize cascade.
+    //
+    // Unlike the arithmetic-in-a-vacuum tests above, these build a real
+    // AppCore + Layout, set a baseline, call the actual resize_windows(),
+    // and assert on the resulting window geometry. They pin the cascade
+    // behaviors that were previously untested (proportional distribution,
+    // row cascade, min-clamp remainder recoupling, delta-from-baseline
+    // idempotence, multi-column apply-once, static widgets).
+    // ================================================================
+
+    use crate::core::AppCore;
+
+    /// Build an AppCore whose `layout` and `baseline_layout` are the given
+    /// windows at the given baseline terminal size, with ui_state populated
+    /// so the write-back path runs. Returns the ready-to-resize core.
+    fn core_with_baseline(windows: Vec<WindowDef>, base_w: u16, base_h: u16) -> AppCore {
+        let layout = Layout {
+            windows,
+            terminal_width: Some(base_w),
+            terminal_height: Some(base_h),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        let mut core = AppCore::new_for_test();
+        for def in &layout.windows {
+            core.ui_state.set_window(
+                def.name().to_string(),
+                crate::data::WindowState::new_text(def.name().to_string(), 100),
+            );
+        }
+        core.baseline_layout = Some(layout.clone());
+        core.layout = layout;
+        core
+    }
+
+    fn text_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
+        WindowDef::Text {
+            base: test_window_base(name, col, row, cols, rows),
+            data: crate::config::TextWidgetData {
+                streams: vec![],
+                buffer_size: 100,
+                wordwrap: true,
+                show_timestamps: false,
+                timestamp_position: None,
+                compact: false,
+            },
+        }
+    }
+
+    /// A static-height command_input window (min_rows == max_rows == `rows`),
+    /// mirroring the default layout's bottom bar.
+    fn command_input_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
+        let mut base = test_window_base(name, col, row, cols, rows);
+        base.min_rows = Some(rows);
+        base.max_rows = Some(rows);
+        WindowDef::CommandInput {
+            base,
+            data: crate::config::CommandInputWidgetData::default(),
+        }
+    }
+
+    /// Repro of the default TUI layout losing its command input on the first
+    /// resize of a fresh profile: full-width `main` stacked over a static
+    /// 3-row `command_input`, baseline 120x40, shrunk to a shorter terminal.
+    /// The command input must stay fully on screen (bottom edge <= new height).
+    #[test]
+    fn resize_shrink_keeps_static_command_input_on_screen() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("main", 0, 0, 120, 37),
+                command_input_def("command_input", 0, 37, 120, 3),
+            ],
+            120,
+            40,
+        );
+        // Sweep a range of terminal heights (grow and shrink, odd and even),
+        // since the real bug surfaced on a fresh profile whose terminal size we
+        // don't know. The static command_input must ALWAYS stay on screen.
+        for h in [
+            10u16, 15, 20, 23, 24, 25, 29, 30, 31, 40, 45, 50, 55, 60, 61, 74, 88, 100,
+        ] {
+            // The FULL default layout: main + command_input plus the hidden
+            // windows (thoughts/room/society) that ship visible=false. They span
+            // other columns; command_input spans all columns, so if hidden
+            // windows leak into the column cascade they can corrupt its row.
+            // A full-width static command_input under a two-column split of
+            // main/thoughts/society — the multi-column arrangement where the
+            // cascade has been seen to leave command_input off the bottom edge.
+            let mut c = core_with_baseline(
+                vec![
+                    text_def("main", 0, 0, 60, 37),
+                    text_def("thoughts", 60, 0, 60, 20),
+                    text_def("society", 60, 20, 60, 17),
+                    command_input_def("command_input", 0, 37, 120, 3),
+                ],
+                120,
+                40,
+            );
+            c.resize_windows(120, h);
+
+            // The on-screen safety net: NO visible window may extend past the
+            // terminal edge after a resize.
+            for w in c.layout.windows.iter().filter(|w| w.base().visible) {
+                let b = w.base();
+                assert!(
+                    b.row.get() + b.rows.get() <= h,
+                    "h={h}: '{}' bottom edge {} > {h}",
+                    b.name,
+                    b.row.get() + b.rows.get()
+                );
+                assert!(
+                    b.col.get() + b.cols.get() <= 120,
+                    "h={h}: '{}' right edge {} > 120",
+                    b.name,
+                    b.col.get() + b.cols.get()
+                );
+            }
+            // command_input specifically keeps its fixed 3-row height.
+            assert_eq!(row_rows(&c, "command_input").1, 3);
+        }
+    }
+
+    /// (row, rows) of a window in the current (post-resize) layout.
+    fn row_rows(core: &AppCore, name: &str) -> (u16, u16) {
+        let b = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == name)
+            .unwrap()
+            .base();
+        (b.row.get(), b.rows.get())
+    }
+
+    /// (col, cols).
+    fn col_cols(core: &AppCore, name: &str) -> (u16, u16) {
+        let b = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == name)
+            .unwrap()
+            .base();
+        (b.col.get(), b.cols.get())
+    }
+
+    /// Two stacked full-width text windows grow proportionally and the
+    /// bottom one cascades to sit directly below the resized top one.
+    /// Pins: proportional floor() distribution, leftover-to-first, cascade.
+    #[test]
+    fn resize_grows_stacked_windows_proportionally_and_cascades() {
+        // Baseline 80x24: top rows 0..10, bottom rows 10..24. Grow +10 -> 34.
+        let mut core = core_with_baseline(
+            vec![
+                text_def("top", 0, 0, 80, 10),
+                text_def("bottom", 0, 10, 80, 14),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 34);
+
+        // top: floor(10/24 * 10) = 4, +1 leftover (top is first) -> 15.
+        // bottom: floor(14/24 * 10) = 5 -> 19. Cascade: bottom.row = 15.
+        assert_eq!(row_rows(&core, "top"), (0, 15));
+        assert_eq!(row_rows(&core, "bottom"), (15, 19));
+        // Conservation: heights sum to the new terminal height.
+        assert_eq!(15 + 19, 34);
+    }
+
+    /// The resize is always computed from the pristine baseline, never the
+    /// current layout, so resizing in two steps equals resizing in one.
+    /// Pins the delta-from-baseline invariant (layout.rs:206) — the single
+    /// most load-bearing line in the cascade.
+    #[test]
+    fn resize_is_idempotent_from_baseline() {
+        let make = || {
+            core_with_baseline(
+                vec![
+                    text_def("top", 0, 0, 80, 10),
+                    text_def("bottom", 0, 10, 80, 14),
+                ],
+                80,
+                24,
+            )
+        };
+
+        let mut twice = make();
+        twice.resize_windows(80, 34);
+        twice.resize_windows(80, 44);
+
+        let mut once = make();
+        once.resize_windows(80, 44);
+
+        assert_eq!(row_rows(&twice, "top"), row_rows(&once, "top"));
+        assert_eq!(row_rows(&twice, "bottom"), row_rows(&once, "bottom"));
+        assert_eq!(row_rows(&once, "top"), (0, 19));
+        assert_eq!(row_rows(&once, "bottom"), (19, 25));
+    }
+
+    /// Two side-by-side windows split a width increase evenly.
+    /// Pins the width transpose + column-span predicate.
+    #[test]
+    fn resize_grows_side_by_side_windows_in_width() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("left", 0, 0, 40, 24),
+                text_def("right", 40, 0, 40, 24),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(100, 24); // +20 width
+
+        assert_eq!(col_cols(&core, "left"), (0, 50));
+        assert_eq!(col_cols(&core, "right"), (50, 50));
+    }
+
+    /// A static widget (indicator) keeps its height on a height resize; the
+    /// scalable window absorbs the entire delta and cascades below it.
+    /// Pins the static categorization coupling.
+    #[test]
+    fn resize_leaves_static_widget_height_unchanged() {
+        let ind = WindowDef::Indicator {
+            base: test_window_base("ind", 0, 0, 80, 1),
+            data: crate::config::IndicatorWidgetData {
+                icon: None,
+                indicator_id: None,
+                inactive_color: None,
+                active_color: None,
+                default_status: None,
+                default_color: None,
+            },
+        };
+        let mut core = core_with_baseline(vec![ind, text_def("body", 0, 1, 80, 23)], 80, 24);
+        core.resize_windows(80, 34); // +10
+
+        // Indicator height stays 1; body takes the full +10 and stays below it.
+        assert_eq!(row_rows(&core, "ind"), (0, 1));
+        assert_eq!(row_rows(&core, "body"), (1, 33));
+    }
+
+    /// When shrinking would push a window below its min_rows, the window
+    /// stops at min and the ENTIRE unused delta is recoupled onto later
+    /// windows in the column, preserving size conservation. Pins invariant E.
+    #[test]
+    fn resize_min_clamp_stops_at_min_and_recouples_to_sibling() {
+        let mut top = text_def("top", 0, 0, 80, 6);
+        top.base_mut().min_rows = Some(5);
+        let mut core = core_with_baseline(vec![top, text_def("bottom", 0, 6, 80, 18)], 80, 24);
+        core.resize_windows(80, 12); // -12
+
+        // top wanted -3 (6 -> 3) but min_rows=5 clamps it to 5 (only -1 used);
+        // the full -2 remainder is pushed onto bottom: 18 - 9 - 2 = 7.
+        assert_eq!(row_rows(&core, "top"), (0, 5));
+        assert_eq!(row_rows(&core, "bottom"), (5, 7));
+    }
+
+    /// A window spanning multiple columns has its height delta applied exactly
+    /// ONCE, even though the column-by-column pass visits it at every column it
+    /// spans. Pins invariant F (apply-once + advance-cursor at later columns).
+    #[test]
+    fn resize_applies_multi_column_window_delta_once() {
+        // 80 wide: `wide` spans the full width above two side-by-side columns.
+        let mut core = core_with_baseline(
+            vec![
+                text_def("wide", 0, 0, 80, 8),
+                text_def("leftcol", 0, 8, 40, 16),
+                text_def("rightcol", 40, 8, 40, 16),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 34); // +10 height
+
+        // wide grows by 4 exactly once (not 4 per spanned column); the two
+        // lower windows each grow to 22 and cascade below the resized `wide`.
+        assert_eq!(row_rows(&core, "wide"), (0, 12));
+        assert_eq!(row_rows(&core, "leftcol"), (12, 22));
+        assert_eq!(row_rows(&core, "rightcol"), (12, 22));
+    }
+
+    /// Shrinking far past every window's minimum must terminate (all windows
+    /// clamp to min) and never hang. Pins invariant G — the leftover loop's
+    /// termination when the scalable set empties.
+    #[test]
+    fn resize_terminates_when_all_windows_hit_min() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("a", 0, 0, 80, 6),
+                text_def("b", 0, 6, 80, 6),
+                text_def("c", 0, 12, 80, 12),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 9); // -15; text min_rows is 3, 3 windows
+
+        // Every window bottoms out at min_rows (3) and cascades in order.
+        assert_eq!(row_rows(&core, "a"), (0, 3));
+        assert_eq!(row_rows(&core, "b"), (3, 3));
+        assert_eq!(row_rows(&core, "c"), (6, 3));
+    }
+
+    /// The `.resize` dot-command fallback (GUI/headless frontends without a
+    /// cell grid) goes through `resize_to_current_terminal`, which resizes the
+    /// layout to its OWN already-stored terminal size — a zero delta — so it
+    /// must leave geometry unchanged. This pins the behavior after collapsing
+    /// the former second algorithm (`resize_to_terminal`) into `resize_windows`.
+    #[test]
+    fn resize_to_current_terminal_is_a_noop_at_stored_size() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("top", 0, 0, 80, 10),
+                text_def("bottom", 0, 10, 80, 14),
+            ],
+            80,
+            24,
+        );
+        core.resize_to_current_terminal();
+
+        // Stored size == baseline size == 80x24, so nothing moves or resizes.
+        assert_eq!(row_rows(&core, "top"), (0, 10));
+        assert_eq!(row_rows(&core, "bottom"), (10, 14));
+    }
+
+    /// Regression guard for the remainder-recoupling conservation bug: the
+    /// loop previously visited each later window at most once, so a remainder
+    /// larger than the eligible-window count dropped units and the heights no
+    /// longer summed to the terminal size (this case summed to 13, not 12).
+    /// After the fix the loop exhausts the remainder, so conservation holds.
+    #[test]
+    fn resize_min_clamp_preserves_total_height() {
+        let mut top = text_def("top", 0, 0, 80, 6);
+        top.base_mut().min_rows = Some(5);
+        let mut core = core_with_baseline(vec![top, text_def("bottom", 0, 6, 80, 18)], 80, 24);
+        core.resize_windows(80, 12); // target total height = 12
+
+        let (_, top_rows) = row_rows(&core, "top");
+        let (_, bottom_rows) = row_rows(&core, "bottom");
+        assert_eq!(
+            top_rows + bottom_rows,
+            12,
+            "window heights must sum to the requested terminal height"
+        );
+    }
+
+    /// Three windows stacked in one column grow proportionally with the
+    /// leftover distributed round-robin, and conservation holds across 3.
+    #[test]
+    fn resize_three_stacked_windows_conserve_and_cascade() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("a", 0, 0, 80, 6),
+                text_def("b", 0, 6, 80, 6),
+                text_def("c", 0, 12, 80, 12),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 31); // +7
+
+        assert_eq!(row_rows(&core, "a"), (0, 8));
+        assert_eq!(row_rows(&core, "b"), (8, 8));
+        assert_eq!(row_rows(&core, "c"), (16, 15));
+        // Cascade + conservation: contiguous, summing to 31.
+        assert_eq!(8 + 8 + 15, 31);
+    }
+
+    /// A column with both a min-clamped window AND a max-clamped window still
+    /// conserves total height: the fully-recoupled remainder lands on the
+    /// unconstrained sibling.
+    #[test]
+    fn resize_mixed_min_and_max_clamps_conserve() {
+        let mut top = text_def("top", 0, 0, 80, 8);
+        top.base_mut().min_rows = Some(7);
+        let mut mid = text_def("mid", 0, 8, 80, 8);
+        mid.base_mut().max_rows = Some(8);
+        let mut core = core_with_baseline(vec![top, mid, text_def("bot", 0, 16, 80, 8)], 80, 24);
+        core.resize_windows(80, 18); // -6
+
+        // top stops at its min_rows (7); the remaining shrink is spread across
+        // mid and bot by distribute_1d's balanced reconciliation (the old
+        // three-loop code dumped it all on bot as 7/4; both conserve, but the
+        // unified pass distributes more evenly). Conservation holds either way.
+        assert_eq!(row_rows(&core, "top"), (0, 7));
+        assert_eq!(row_rows(&core, "mid"), (7, 5));
+        assert_eq!(row_rows(&core, "bot"), (12, 6));
+        assert_eq!(7 + 5 + 6, 18);
+    }
+
+    /// A simultaneous width + height resize applies both passes correctly to a
+    /// 2x2 grid (no interference between the axes).
+    #[test]
+    fn resize_asymmetric_width_and_height_together() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("tl", 0, 0, 40, 12),
+                text_def("tr", 40, 0, 40, 12),
+                text_def("bl", 0, 12, 40, 12),
+                text_def("br", 40, 12, 40, 12),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(100, 34); // +20 width, +10 height
+
+        // Each cell: 40 -> 50 wide, 12 -> 17 tall; bottom row cascades to 17.
+        assert_eq!(col_cols(&core, "tl"), (0, 50));
+        assert_eq!(col_cols(&core, "tr"), (50, 50));
+        assert_eq!(row_rows(&core, "tl"), (0, 17));
+        assert_eq!(row_rows(&core, "bl"), (17, 17));
+        assert_eq!(col_cols(&core, "br"), (50, 50));
+        assert_eq!(row_rows(&core, "br"), (17, 17));
+    }
+
+    /// A single full-screen window absorbs the entire delta on both axes.
+    #[test]
+    fn resize_single_window_takes_whole_delta() {
+        let mut core = core_with_baseline(vec![text_def("only", 0, 0, 80, 24)], 80, 24);
+        core.resize_windows(90, 30); // +10 w, +6 h
+
+        assert_eq!(col_cols(&core, "only"), (0, 90));
+        assert_eq!(row_rows(&core, "only"), (0, 30));
+    }
+
+    /// Growing only the width leaves every window's height (and row) untouched.
+    #[test]
+    fn resize_width_only_leaves_height_untouched() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("l", 0, 0, 40, 24),
+                text_def("r", 40, 0, 40, 24),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(96, 24); // +16 w, 0 h
+
+        assert_eq!(col_cols(&core, "l"), (0, 48));
+        assert_eq!(col_cols(&core, "r"), (48, 48));
+        assert_eq!(row_rows(&core, "l"), (0, 24));
+        assert_eq!(row_rows(&core, "r"), (0, 24));
+    }
+
+    /// max_rows clamp on GROW (mirror of the min clamp on shrink): the capped
+    /// window stops at max and the remainder flows to its sibling; conserved.
+    #[test]
+    fn resize_max_clamp_on_grow_recouples_to_sibling() {
+        let mut cap = text_def("cap", 0, 0, 80, 10);
+        cap.base_mut().max_rows = Some(12);
+        let mut core = core_with_baseline(vec![cap, text_def("rest", 0, 10, 80, 14)], 80, 24);
+        core.resize_windows(80, 44); // +20
+
+        assert_eq!(row_rows(&core, "cap"), (0, 12)); // capped at max_rows
+        assert_eq!(row_rows(&core, "rest"), (12, 32)); // absorbed the rest
+        assert_eq!(12 + 32, 44);
+    }
+
+    // ========== distribute_1d unit tests (pure, no AppCore) ==========
+
+    fn track(name: &str, base: u16, min: u16, max: Option<u16>, is_static: bool) -> Track {
+        Track {
+            name: name.to_string(),
+            base_size: base,
+            min,
+            max,
+            is_static,
+        }
+    }
+
+    #[test]
+    fn distribute_1d_grows_proportionally_and_conserves() {
+        let tracks = vec![
+            track("top", 10, 3, None, false),
+            track("bottom", 14, 3, None, false),
+        ];
+        let out = distribute_1d(&tracks, 10);
+        // Matches the cascade characterization: top 15, bottom 19, sum 34.
+        assert_eq!(out, vec![15, 19]);
+        assert_eq!(out.iter().map(|&s| s as i32).sum::<i32>(), 24 + 10);
+    }
+
+    #[test]
+    fn distribute_1d_min_clamp_recouples_and_conserves() {
+        let tracks = vec![
+            track("top", 6, 5, None, false), // min 5
+            track("bottom", 18, 3, None, false),
+        ];
+        let out = distribute_1d(&tracks, -12);
+        assert_eq!(out, vec![5, 7]); // top stops at min 5, bottom absorbs the rest
+        assert_eq!(out.iter().map(|&s| s as i32).sum::<i32>(), 24 - 12);
+    }
+
+    #[test]
+    fn distribute_1d_conserves_the_previously_buggy_case() {
+        // [5,8,4,5] shrink to 14 (delta -8) — the case the golden test caught
+        // as a conservation violation in the old three-loop code.
+        let tracks = vec![
+            track("w0", 5, 3, None, false),
+            track("w1", 8, 3, None, false),
+            track("w2", 4, 3, None, false),
+            track("w3", 5, 3, None, false),
+        ];
+        let out = distribute_1d(&tracks, -8);
+        assert_eq!(out.iter().map(|&s| s as i32).sum::<i32>(), 22 - 8);
+        // Every window respects its min.
+        assert!(out.iter().all(|&s| s >= 3));
+    }
+
+    #[test]
+    fn distribute_1d_max_clamp_on_grow_conserves() {
+        let tracks = vec![
+            track("cap", 10, 3, Some(12), false), // capped at 12
+            track("rest", 14, 3, None, false),
+        ];
+        let out = distribute_1d(&tracks, 20);
+        assert_eq!(out, vec![12, 32]);
+        assert_eq!(out.iter().map(|&s| s as i32).sum::<i32>(), 24 + 20);
+    }
+
+    #[test]
+    fn distribute_1d_static_track_never_changes() {
+        let tracks = vec![
+            track("ind", 1, 1, None, true), // static
+            track("body", 23, 3, None, false),
+        ];
+        let out = distribute_1d(&tracks, 10);
+        assert_eq!(out[0], 1); // static unchanged
+        assert_eq!(out[1], 33); // scalable absorbs the whole delta
+    }
+
+    #[test]
+    fn distribute_1d_infeasible_target_stops_at_nearest_bound() {
+        // Two windows, min 3 each; ask to shrink far below Σmin. Result clamps
+        // to [3,3] rather than looping forever or going negative.
+        let tracks = vec![
+            track("a", 10, 3, None, false),
+            track("b", 10, 3, None, false),
+        ];
+        let out = distribute_1d(&tracks, -100);
+        assert_eq!(out, vec![3, 3]);
+    }
+
+    #[test]
+    fn distribute_1d_zero_delta_is_identity() {
+        let tracks = vec![
+            track("a", 10, 3, None, false),
+            track("b", 14, 3, Some(20), false),
+        ];
+        assert_eq!(distribute_1d(&tracks, 0), vec![10, 14]);
+    }
+
+    /// Property/golden backstop: across many pseudo-random single-column
+    /// stacks and resize targets, the resize must preserve two universal
+    /// invariants — CONSERVATION (visible full-width windows sum to the
+    /// terminal height) and NO GAPS/OVERLAPS (the cascade is contiguous from
+    /// row 0). This guards the whole behavior space, not just fixed examples,
+    /// so a transpose-extraction bug can't slip between the named cases. Uses a
+    /// seeded LCG for determinism (no Math.random / wall clock).
+    #[test]
+    fn resize_preserves_conservation_and_contiguity_over_random_layouts() {
+        // Deterministic LCG (numerical recipes constants).
+        let mut seed: u64 = 0x9E3779B97F4A7C15;
+        let mut next = |bound: u16| -> u16 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as u16) % bound
+        };
+
+        for _ in 0..500 {
+            let n = 2 + next(3); // 2..=4 windows stacked full-width
+            let base_h: u16 = 20 + next(20); // 20..=39
+            // Partition base_h into n chunks of >= 3 rows each (text min = 3).
+            let mut rows_list = Vec::new();
+            let mut remaining = base_h;
+            for i in 0..n {
+                let left = n - i;
+                // Leave >= 3 rows for each remaining window.
+                let max_here = remaining.saturating_sub(3 * (left - 1)).max(3);
+                let r = if i == n - 1 {
+                    remaining
+                } else {
+                    3 + next((max_here.saturating_sub(3)).max(1))
+                };
+                rows_list.push(r);
+                remaining = remaining.saturating_sub(r);
+            }
+            // Build stacked defs.
+            let mut defs = Vec::new();
+            let mut row = 0u16;
+            for (i, &r) in rows_list.iter().enumerate() {
+                defs.push(text_def(
+                    Box::leak(format!("w{i}").into_boxed_str()),
+                    0,
+                    row,
+                    80,
+                    r,
+                ));
+                row += r;
+            }
+            let names: Vec<String> = (0..n).map(|i| format!("w{i}")).collect();
+
+            let mut core = core_with_baseline(defs, 80, base_h);
+            // Target height: base_h +/- up to 12, floored so every window can
+            // still hit its min (n * 3).
+            let min_total = n * 3;
+            let delta = next(25) as i32 - 12; // -12..=12
+            let target = ((base_h as i32 + delta).max(min_total as i32)) as u16;
+            core.resize_windows(80, target);
+
+            // Invariant 1: contiguous cascade from row 0.
+            let mut expected_row = 0u16;
+            let mut total = 0u16;
+            for name in &names {
+                let (r, h) = row_rows(&core, name);
+                assert_eq!(
+                    r, expected_row,
+                    "gap/overlap: {name} at row {r}, expected {expected_row} (base_h={base_h}, target={target}, rows={rows_list:?})"
+                );
+                expected_row += h;
+                total += h;
+            }
+            // Invariant 2: conservation — heights sum to the target height.
+            assert_eq!(
+                total, target,
+                "conservation broken: sum {total} != target {target} (base_h={base_h}, rows={rows_list:?})"
+            );
+        }
     }
 }

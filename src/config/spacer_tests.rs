@@ -2,6 +2,7 @@
 //! and layout resize behavior for spacer windows.
 
 use super::*;
+use crate::data::geometry::{Col, Height, Row, Width};
 
 
     #[test]
@@ -44,8 +45,8 @@ use super::*;
             assert_eq!(base.name, "");
 
             // Dimensions - minimal 2x2 spacer
-            assert_eq!(base.rows, 2);
-            assert_eq!(base.cols, 2);
+            assert_eq!(base.rows.get(), 2);
+            assert_eq!(base.cols.get(), 2);
 
             // Spacer should NOT show borders
             assert!(!base.show_border);
@@ -115,10 +116,10 @@ use super::*;
         let spacer = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_1".to_string(),
-                row: 2,
-                col: 5,
-                rows: 3,
-                cols: 8,
+                row: Row::new(2),
+                col: Col::new(5),
+                rows: Height::new(3),
+                cols: Width::new(8),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -190,10 +191,10 @@ visible = true
         let spacer = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_2".to_string(),
-                row: 5,
-                col: 10,
-                rows: 4,
-                cols: 6,
+                row: Row::new(5),
+                col: Col::new(10),
+                rows: Height::new(4),
+                cols: Width::new(6),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -244,10 +245,10 @@ visible = true
         assert_eq!(restored_layout.windows[0].widget_type(), "spacer");
         assert_eq!(restored_layout.windows[0].name(), "spacer_2");
         let base = restored_layout.windows[0].base();
-        assert_eq!(base.row, 5);
-        assert_eq!(base.col, 10);
-        assert_eq!(base.rows, 4);
-        assert_eq!(base.cols, 6);
+        assert_eq!(base.row.get(), 5);
+        assert_eq!(base.col.get(), 10);
+        assert_eq!(base.rows.get(), 4);
+        assert_eq!(base.cols.get(), 6);
         assert!(!base.show_border);
         assert!(!base.show_title);
         assert!(!base.transparent_background);
@@ -260,10 +261,10 @@ visible = true
         let spacer1 = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_1".to_string(),
-                row: 0,
-                col: 0,
-                rows: 2,
-                cols: 5,
+                row: Row::new(0),
+                col: Col::new(0),
+                rows: Height::new(2),
+                cols: Width::new(5),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -291,10 +292,10 @@ visible = true
         let spacer2 = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_2".to_string(),
-                row: 10,
-                col: 20,
-                rows: 3,
-                cols: 8,
+                row: Row::new(10),
+                col: Col::new(20),
+                rows: Height::new(3),
+                cols: Width::new(8),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -336,8 +337,8 @@ visible = true
         assert_eq!(restored_layout.windows.len(), 2);
         assert_eq!(restored_layout.windows[0].name(), "spacer_1");
         assert_eq!(restored_layout.windows[1].name(), "spacer_2");
-        assert_eq!(restored_layout.windows[0].base().row, 0);
-        assert_eq!(restored_layout.windows[1].base().row, 10);
+        assert_eq!(restored_layout.windows[0].base().row.get(), 0);
+        assert_eq!(restored_layout.windows[1].base().row.get(), 10);
     }
 
     #[test]
@@ -346,10 +347,10 @@ visible = true
         let visible_spacer = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_1".to_string(),
-                row: 0,
-                col: 0,
-                rows: 2,
-                cols: 5,
+                row: Row::new(0),
+                col: Col::new(0),
+                rows: Height::new(2),
+                cols: Width::new(5),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -377,10 +378,10 @@ visible = true
         let hidden_spacer = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_2".to_string(),
-                row: 5,
-                col: 10,
-                rows: 2,
-                cols: 5,
+                row: Row::new(5),
+                col: Col::new(10),
+                rows: Height::new(2),
+                cols: Width::new(5),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -435,10 +436,10 @@ visible = true
         let widget_a = WindowDef::Text {
             base: WindowBase {
                 name: "widget_a".to_string(),
-                row: 0,
-                col: 0,
-                rows: 10,
-                cols: 10,
+                row: Row::new(0),
+                col: Col::new(0),
+                rows: Height::new(10),
+                cols: Width::new(10),
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -473,10 +474,10 @@ visible = true
         let spacer = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_1".to_string(),
-                row: 0,
-                col: 10,
-                rows: 10,
-                cols: 5,
+                row: Row::new(0),
+                col: Col::new(10),
+                rows: Height::new(10),
+                cols: Width::new(5),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -504,10 +505,10 @@ visible = true
         let widget_b = WindowDef::Text {
             base: WindowBase {
                 name: "widget_b".to_string(),
-                row: 0,
-                col: 15,
-                rows: 10,
-                cols: 10,
+                row: Row::new(0),
+                col: Col::new(15),
+                rows: Height::new(10),
+                cols: Width::new(10),
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -553,10 +554,10 @@ visible = true
 
         // Verify spacer scaled proportionally
         let spacer_base = layout.windows[1].base();
-        assert_eq!(spacer_base.col, 20); // 10 * 2 = 20
-        assert_eq!(spacer_base.cols, 10); // 5 * 2 = 10
-        assert_eq!(spacer_base.row, 0); // 0 * 2 = 0
-        assert_eq!(spacer_base.rows, 20); // 10 * 2 = 20
+        assert_eq!(spacer_base.col.get(), 20); // 10 * 2 = 20
+        assert_eq!(spacer_base.cols.get(), 10); // 5 * 2 = 10
+        assert_eq!(spacer_base.row.get(), 0); // 0 * 2 = 0
+        assert_eq!(spacer_base.rows.get(), 20); // 10 * 2 = 20
     }
 
     #[test]
@@ -566,10 +567,10 @@ visible = true
         let widget_a = WindowDef::Text {
             base: WindowBase {
                 name: "a".to_string(),
-                row: 0,
-                col: 0,
-                rows: 10,
-                cols: 10,
+                row: Row::new(0),
+                col: Col::new(0),
+                rows: Height::new(10),
+                cols: Width::new(10),
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -604,10 +605,10 @@ visible = true
         let spacer = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_1".to_string(),
-                row: 0,
-                col: 10,
-                rows: 10,
-                cols: 5,
+                row: Row::new(0),
+                col: Col::new(10),
+                rows: Height::new(10),
+                cols: Width::new(5),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -635,10 +636,10 @@ visible = true
         let widget_b = WindowDef::Text {
             base: WindowBase {
                 name: "b".to_string(),
-                row: 0,
-                col: 15,
-                rows: 10,
-                cols: 10,
+                row: Row::new(0),
+                col: Col::new(15),
+                rows: Height::new(10),
+                cols: Width::new(10),
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -680,9 +681,9 @@ visible = true
         };
 
         // Verify gap before resize: A ends at 10, spacer starts at 10, B starts at 15
-        assert_eq!(layout.windows[0].base().col + layout.windows[0].base().cols, 10); // A: 0+10
-        assert_eq!(layout.windows[1].base().col, 10); // Spacer starts at 10
-        assert_eq!(layout.windows[2].base().col, 15); // B starts at 15
+        assert_eq!((layout.windows[0].base().col + layout.windows[0].base().cols).get(), 10); // A: 0+10
+        assert_eq!(layout.windows[1].base().col.get(), 10); // Spacer starts at 10
+        assert_eq!(layout.windows[2].base().col.get(), 15); // B starts at 15
 
         // Resize to 100x40 (2x scale)
         layout.scale_to_terminal_size(100, 40);
@@ -710,10 +711,10 @@ visible = true
         let widget_a = WindowDef::Text {
             base: WindowBase {
                 name: "main".to_string(),
-                row: 0,
-                col: 0,
-                rows: 20,
-                cols: 30,
+                row: Row::new(0),
+                col: Col::new(0),
+                rows: Height::new(20),
+                cols: Width::new(30),
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -748,10 +749,10 @@ visible = true
         let spacer = WindowDef::Spacer {
             base: WindowBase {
                 name: "spacer_1".to_string(),
-                row: 0,
-                col: 30,
-                rows: 20,
-                cols: 2,
+                row: Row::new(0),
+                col: Col::new(30),
+                rows: Height::new(20),
+                cols: Width::new(2),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -779,10 +780,10 @@ visible = true
         let widget_b = WindowDef::Text {
             base: WindowBase {
                 name: "status".to_string(),
-                row: 0,
-                col: 32,
-                rows: 20,
-                cols: 20,
+                row: Row::new(0),
+                col: Col::new(32),
+                rows: Height::new(20),
+                cols: Width::new(20),
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),

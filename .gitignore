@@ -1,4 +1,8 @@
 /target
+# Secondary cargo target dir from verification builds
+/target-verify
+# Local skin-asset scratch (Gemini-generated PNGs, prompt notes, dekey.py)
+/skins
 /Cargo.toml
 Cargo.lock
 .vscode/

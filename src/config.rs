@@ -379,12 +379,12 @@ fn default_true() -> bool {
     true
 }
 
-fn default_rows() -> u16 {
-    1
+fn default_rows() -> crate::data::geometry::Height {
+    crate::data::geometry::Height::new(1)
 }
 
-fn default_cols() -> u16 {
-    1
+fn default_cols() -> crate::data::geometry::Width {
+    crate::data::geometry::Width::new(1)
 }
 
 fn default_show_border() -> bool {

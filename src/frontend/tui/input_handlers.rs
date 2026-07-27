@@ -506,7 +506,7 @@ impl super::TuiFrontend {
                 let click_pos = app_core
                     .ui_state
                     .get_window(window_name)
-                    .map(|w| (w.position.x, w.position.y))
+                    .map(|w| (w.position.x.get(), w.position.y.get()))
                     .unwrap_or((0, 0));
                 Some(app_core.request_menu(exist, noun, click_pos))
             }

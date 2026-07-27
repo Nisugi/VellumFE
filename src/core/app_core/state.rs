@@ -1705,10 +1705,10 @@ impl AppCore {
                 .get(window_def.name())
                 .cloned()
                 .unwrap_or(WindowPosition {
-                    x: 0,
-                    y: 0,
-                    width: 80,
-                    height: 24,
+                    x: crate::data::geometry::Col::new(0),
+                    y: crate::data::geometry::Row::new(0),
+                    width: crate::data::geometry::Width::new(80),
+                    height: crate::data::geometry::Height::new(24),
                 });
 
             let widget_type = WidgetType::from_str(window_def.widget_type());
@@ -2057,10 +2057,10 @@ impl AppCore {
         tracing::debug!(
             "Window '{}' will be created at exact pos=({},{}) size={}x{}",
             window_def.name(),
-            position.x,
-            position.y,
-            position.width,
-            position.height
+            position.x.get(),
+            position.y.get(),
+            position.width.get(),
+            position.height.get()
         );
 
         let is_room_window = window_def.widget_type() == "room";
@@ -2365,10 +2365,10 @@ impl AppCore {
         tracing::info!(
             "Created new window '{}' at ({}, {}) size {}x{}",
             window_def.name(),
-            position.x,
-            position.y,
-            position.width,
-            position.height
+            position.x.get(),
+            position.y.get(),
+            position.width.get(),
+            position.height.get()
         );
 
         // Update text stream subscriber map (new window may have stream subscriptions)
@@ -2401,10 +2401,10 @@ impl AppCore {
             tracing::info!(
                 "Updated window '{}' to EXACT position ({}, {}) size {}x{}",
                 window_def.name(),
-                position.x,
-                position.y,
-                position.width,
-                position.height
+                position.x.get(),
+                position.y.get(),
+                position.width.get(),
+                position.height.get()
             );
         }
     }
@@ -3067,10 +3067,10 @@ impl AppCore {
             tracing::debug!(
                 "Window '{}' BEFORE capture: pos=({},{}) size={}x{}",
                 window_name,
-                base.col,
-                base.row,
-                base.cols,
-                base.rows
+                base.col.get(),
+                base.row.get(),
+                base.cols.get(),
+                base.rows.get()
             );
 
             if let Some(window_state) = self.ui_state.windows.get(&window_name) {
@@ -3078,40 +3078,40 @@ impl AppCore {
                 tracing::info!(
                     "Window '{}' - Capturing from UI state: pos=({},{}) size={}x{}",
                     window_name,
-                    ui_pos.x,
-                    ui_pos.y,
-                    ui_pos.width,
-                    ui_pos.height
+                    ui_pos.x.get(),
+                    ui_pos.y.get(),
+                    ui_pos.width.get(),
+                    ui_pos.height.get()
                 );
 
                 // Clamp window position and size to terminal boundaries before saving
-                let clamped_x = ui_pos.x.min(terminal_width.saturating_sub(1));
-                let clamped_y = ui_pos.y.min(terminal_height.saturating_sub(1));
+                let clamped_x = ui_pos.x.get().min(terminal_width.saturating_sub(1));
+                let clamped_y = ui_pos.y.get().min(terminal_height.saturating_sub(1));
 
                 // Ensure width doesn't exceed available space
                 // Use window's min_cols constraint (default 1) instead of hardcoded 10
                 let max_width = terminal_width.saturating_sub(clamped_x);
                 let min_width = base.min_cols.unwrap_or(1);
-                let clamped_width = ui_pos.width.min(max_width).max(min_width);
+                let clamped_width = ui_pos.width.get().min(max_width).max(min_width);
 
                 // Ensure height doesn't exceed available space
                 // Use window's min_rows constraint (default 1)
                 let max_height = terminal_height.saturating_sub(clamped_y);
                 let min_height = base.min_rows.unwrap_or(1);
-                let clamped_height = ui_pos.height.min(max_height).max(min_height);
+                let clamped_height = ui_pos.height.get().min(max_height).max(min_height);
 
-                if clamped_x != ui_pos.x
-                    || clamped_y != ui_pos.y
-                    || clamped_width != ui_pos.width
-                    || clamped_height != ui_pos.height
+                if clamped_x != ui_pos.x.get()
+                    || clamped_y != ui_pos.y.get()
+                    || clamped_width != ui_pos.width.get()
+                    || clamped_height != ui_pos.height.get()
                 {
                     tracing::warn!(
                         "Window '{}' clamped: ({},{} {}x{}) -> ({},{} {}x{}) to fit terminal {}x{}",
                         window_name,
-                        ui_pos.x,
-                        ui_pos.y,
-                        ui_pos.width,
-                        ui_pos.height,
+                        ui_pos.x.get(),
+                        ui_pos.y.get(),
+                        ui_pos.width.get(),
+                        ui_pos.height.get(),
                         clamped_x,
                         clamped_y,
                         clamped_width,
@@ -3122,18 +3122,18 @@ impl AppCore {
                 }
 
                 let base = window_def.base_mut();
-                base.row = clamped_y;
-                base.col = clamped_x;
-                base.rows = clamped_height;
-                base.cols = clamped_width;
+                base.row = crate::data::geometry::Row::new(clamped_y);
+                base.col = crate::data::geometry::Col::new(clamped_x);
+                base.rows = crate::data::geometry::Height::new(clamped_height);
+                base.cols = crate::data::geometry::Width::new(clamped_width);
 
                 tracing::debug!(
                     "Window '{}' AFTER capture: pos=({},{}) size={}x{}",
                     window_name,
-                    base.col,
-                    base.row,
-                    base.cols,
-                    base.rows
+                    base.col.get(),
+                    base.row.get(),
+                    base.cols.get(),
+                    base.rows.get()
                 );
             } else {
                 tracing::warn!(
@@ -3226,10 +3226,10 @@ impl AppCore {
             window_info.push(format!(
                 "  {} - {}x{} at ({},{}) - {} - {}",
                 name,
-                pos.width,
-                pos.height,
-                pos.x,
-                pos.y,
+                pos.width.get(),
+                pos.height.get(),
+                pos.x.get(),
+                pos.y.get(),
                 visible,
                 format!("{:?}", window.widget_type)
             ));
@@ -3416,10 +3416,10 @@ impl AppCore {
                 container_title: container_title.to_string(),
             },
             position: WindowPosition {
-                x,
-                y,
-                width: w,
-                height: h,
+                x: crate::data::geometry::Col::new(x),
+                y: crate::data::geometry::Row::new(y),
+                width: crate::data::geometry::Width::new(w),
+                height: crate::data::geometry::Height::new(h),
             },
             visible: true,
             focused: false,
@@ -3641,10 +3641,10 @@ impl AppCore {
             widget_type: widget_type.clone(),
             content,
             position: WindowPosition {
-                x,
-                y,
-                width,
-                height,
+                x: crate::data::geometry::Col::new(x),
+                y: crate::data::geometry::Row::new(y),
+                width: crate::data::geometry::Width::new(width),
+                height: crate::data::geometry::Height::new(height),
             },
             visible: true,
             content_align: None,
@@ -3660,10 +3660,10 @@ impl AppCore {
 
         let base = WindowBase {
             name: name.to_string(),
-            row: y,
-            col: x,
-            rows: height,
-            cols: width,
+            row: crate::data::geometry::Row::new(y),
+            col: crate::data::geometry::Col::new(x),
+            rows: crate::data::geometry::Height::new(height),
+            cols: crate::data::geometry::Width::new(width),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -3773,10 +3773,10 @@ impl AppCore {
             widget_type: WidgetType::WebUi,
             content: WindowContent::WebUi(content),
             position: WindowPosition {
-                x: 0,
-                y: 0,
-                width,
-                height,
+                x: crate::data::geometry::Col::new(0),
+                y: crate::data::geometry::Row::new(0),
+                width: crate::data::geometry::Width::new(width),
+                height: crate::data::geometry::Height::new(height),
             },
             visible: true,
             content_align: None,
@@ -3787,10 +3787,10 @@ impl AppCore {
 
         let base = crate::config::WindowBase {
             name: name.clone(),
-            row: 0,
-            col: 0,
-            rows: height,
-            cols: width,
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(height),
+            cols: crate::data::geometry::Width::new(width),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: crate::config::BorderSides::default(),
@@ -3988,57 +3988,57 @@ impl AppCore {
 
             // Apply min/max constraints from window settings
             if let Some(min_cols) = window_def.base().min_cols {
-                if window_width < min_cols {
+                if window_width.get() < min_cols {
                     tracing::debug!(
                         "Window '{}': enforcing min_cols={} (was {})",
                         window_def.name(),
                         min_cols,
-                        window_width
+                        window_width.get()
                     );
-                    window_width = min_cols;
+                    window_width = crate::data::geometry::Width::new(min_cols);
                 }
             }
             if let Some(max_cols) = window_def.base().max_cols {
-                if window_width > max_cols {
+                if window_width.get() > max_cols {
                     tracing::debug!(
                         "Window '{}': enforcing max_cols={} (was {})",
                         window_def.name(),
                         max_cols,
-                        window_width
+                        window_width.get()
                     );
-                    window_width = max_cols;
+                    window_width = crate::data::geometry::Width::new(max_cols);
                 }
             }
             if let Some(min_rows) = window_def.base().min_rows {
-                if window_height < min_rows {
+                if window_height.get() < min_rows {
                     tracing::debug!(
                         "Window '{}': enforcing min_rows={} (was {})",
                         window_def.name(),
                         min_rows,
-                        window_height
+                        window_height.get()
                     );
-                    window_height = min_rows;
+                    window_height = crate::data::geometry::Height::new(min_rows);
                 }
             }
             if let Some(max_rows) = window_def.base().max_rows {
-                if window_height > max_rows {
+                if window_height.get() > max_rows {
                     tracing::debug!(
                         "Window '{}': enforcing max_rows={} (was {})",
                         window_def.name(),
                         max_rows,
-                        window_height
+                        window_height.get()
                     );
-                    window_height = max_rows;
+                    window_height = crate::data::geometry::Height::new(max_rows);
                 }
             }
 
             tracing::debug!(
                 "Window '{}': pos=({},{}) size={}x{}",
                 window_def.name(),
-                window_def.base().col,
-                window_def.base().row,
-                window_width,
-                window_height
+                window_def.base().col.get(),
+                window_def.base().row.get(),
+                window_width.get(),
+                window_height.get()
             );
 
             positions.insert(
@@ -4629,7 +4629,7 @@ impl AppCore {
                     .max(base.min_rows.unwrap_or(1))
                     .min(base.max_rows.unwrap_or(u16::MAX));
 
-                if base.rows != new_rows {
+                if base.rows.get() != new_rows {
                     changes.push((base.name.clone(), new_rows));
                 }
             }
@@ -4641,7 +4641,7 @@ impl AppCore {
             for window_def in &mut self.layout.windows {
                 if window_def.name() == name {
                     if let crate::config::WindowDef::Betrayer { base, .. } = window_def {
-                        base.rows = new_rows;
+                        base.rows = crate::data::geometry::Height::new(new_rows);
                     }
                     break;
                 }
@@ -4649,7 +4649,7 @@ impl AppCore {
 
             // Update ui_state window position height
             if let Some(window) = self.ui_state.windows.get_mut(&name) {
-                window.position.height = new_rows;
+                window.position.height = crate::data::geometry::Height::new(new_rows);
             }
 
             // Mark modified but don't show the save reminder for auto-resizes
@@ -5568,10 +5568,10 @@ mod tests {
     fn test_window_base(name: &str) -> WindowBase {
         WindowBase {
             name: name.to_string(),
-            row: 0,
-            col: 0,
-            rows: 2,
-            cols: 5,
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(2),
+            cols: crate::data::geometry::Width::new(5),
             show_border: false,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -5832,6 +5832,88 @@ mod tests {
 
         let name = AppCore::generate_spacer_name(&layout);
         assert_eq!(name, "spacer_100");
+    }
+
+    // ========== calculate_window_positions characterization ==========
+    // This is the load/init positioning pass: it copies each window's EXACT
+    // col/row (no scaling — deliberately, so windows may sit offscreen) and
+    // clamps width/height to any min/max constraints. Pin that contract before
+    // a geometry newtype touches it.
+
+    fn positioned_text_def(
+        name: &str,
+        col: u16,
+        row: u16,
+        cols: u16,
+        rows: u16,
+    ) -> WindowDef {
+        let mut base = test_window_base(name);
+        base.col = crate::data::geometry::Col::new(col);
+        base.row = crate::data::geometry::Row::new(row);
+        base.cols = crate::data::geometry::Width::new(cols);
+        base.rows = crate::data::geometry::Height::new(rows);
+        WindowDef::Text {
+            base,
+            data: crate::config::TextWidgetData {
+                streams: vec![],
+                buffer_size: 1000,
+                wordwrap: true,
+                show_timestamps: false,
+                timestamp_position: None,
+                compact: false,
+            },
+        }
+    }
+
+    fn core_with_layout(windows: Vec<WindowDef>) -> AppCore {
+        let mut core = AppCore::new_for_test();
+        core.layout = Layout {
+            windows,
+            terminal_width: Some(80),
+            terminal_height: Some(24),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        core
+    }
+
+    /// Positions and sizes pass through exactly (no scaling), even when the
+    /// window extends beyond the given terminal size.
+    #[test]
+    fn calculate_window_positions_uses_exact_values() {
+        let core = core_with_layout(vec![
+            positioned_text_def("a", 3, 5, 40, 10),
+            positioned_text_def("offscreen", 100, 50, 20, 8), // beyond 80x24
+        ]);
+        let positions = core.calculate_window_positions(80, 24);
+
+        let a = &positions["a"];
+        assert_eq!(
+            (a.x.get(), a.y.get(), a.width.get(), a.height.get()),
+            (3, 5, 40, 10)
+        );
+        // Deliberately NOT clamped to the terminal — offscreen is allowed.
+        let off = &positions["offscreen"];
+        assert_eq!(
+            (off.x.get(), off.y.get(), off.width.get(), off.height.get()),
+            (100, 50, 20, 8)
+        );
+    }
+
+    /// min/max constraints clamp the size (never the position).
+    #[test]
+    fn calculate_window_positions_applies_min_max_constraints() {
+        let mut narrow = positioned_text_def("narrow", 0, 0, 4, 30);
+        narrow.base_mut().min_cols = Some(10); // widen up to min
+        narrow.base_mut().max_rows = Some(20); // cap height
+        let core = core_with_layout(vec![narrow]);
+
+        let p = &core.calculate_window_positions(80, 24)["narrow"];
+        assert_eq!(p.x.get(), 0); // position untouched
+        assert_eq!(p.y.get(), 0);
+        assert_eq!(p.width.get(), 10); // 4 raised to min_cols
+        assert_eq!(p.height.get(), 20); // 30 capped at max_rows
     }
 }
 

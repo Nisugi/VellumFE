@@ -242,38 +242,38 @@ impl Layout {
             let old_cols = base.cols;
             let old_rows = base.rows;
 
-            base.col = (base.col as f32 * scale_x).round() as u16;
-            base.row = (base.row as f32 * scale_y).round() as u16;
-            base.cols = (base.cols as f32 * scale_x).round() as u16;
-            base.rows = (base.rows as f32 * scale_y).round() as u16;
+            base.col = crate::data::geometry::Col::new((base.col.get() as f32 * scale_x).round() as u16);
+            base.row = crate::data::geometry::Row::new((base.row.get() as f32 * scale_y).round() as u16);
+            base.cols = crate::data::geometry::Width::new((base.cols.get() as f32 * scale_x).round() as u16);
+            base.rows = crate::data::geometry::Height::new((base.rows.get() as f32 * scale_y).round() as u16);
 
             // Ensure minimum sizes
-            if base.cols < 1 {
-                base.cols = 1;
+            if base.cols.get() < 1 {
+                base.cols = crate::data::geometry::Width::new(1);
             }
-            if base.rows < 1 {
-                base.rows = 1;
+            if base.rows.get() < 1 {
+                base.rows = crate::data::geometry::Height::new(1);
             }
 
             // Respect min/max constraints if set
             if let Some(min_cols) = base.min_cols {
-                if base.cols < min_cols {
-                    base.cols = min_cols;
+                if base.cols.get() < min_cols {
+                    base.cols = crate::data::geometry::Width::new(min_cols);
                 }
             }
             if let Some(max_cols) = base.max_cols {
-                if base.cols > max_cols {
-                    base.cols = max_cols;
+                if base.cols.get() > max_cols {
+                    base.cols = crate::data::geometry::Width::new(max_cols);
                 }
             }
             if let Some(min_rows) = base.min_rows {
-                if base.rows < min_rows {
-                    base.rows = min_rows;
+                if base.rows.get() < min_rows {
+                    base.rows = crate::data::geometry::Height::new(min_rows);
                 }
             }
             if let Some(max_rows) = base.max_rows {
-                if base.rows > max_rows {
-                    base.rows = max_rows;
+                if base.rows.get() > max_rows {
+                    base.rows = crate::data::geometry::Height::new(max_rows);
                 }
             }
 
@@ -281,14 +281,14 @@ impl Layout {
                 "  {} [{}]: pos {}x{} -> {}x{}, size {}x{} -> {}x{}",
                 window_name,
                 window_type,
-                old_col,
-                old_row,
-                base.col,
-                base.row,
-                old_cols,
-                old_rows,
-                base.cols,
-                base.rows
+                old_col.get(),
+                old_row.get(),
+                base.col.get(),
+                base.row.get(),
+                old_cols.get(),
+                old_rows.get(),
+                base.cols.get(),
+                base.rows.get()
             );
         }
 
@@ -381,11 +381,11 @@ impl Layout {
         {
             // Command input exists but might have invalid values (cols=0, rows=0, etc)
             let cmd_input_base = layout.windows[idx].base_mut();
-            if cmd_input_base.cols == 0 || cmd_input_base.rows == 0 {
+            if cmd_input_base.cols.get() == 0 || cmd_input_base.rows.get() == 0 {
                 tracing::warn!(
                     "Command input has invalid size ({}x{}), fixing with defaults",
-                    cmd_input_base.rows,
-                    cmd_input_base.cols
+                    cmd_input_base.rows.get(),
+                    cmd_input_base.cols.get()
                 );
                 // Get defaults from default_windows()
                 if let Some(default_cmd) = default_windows()
@@ -569,11 +569,11 @@ impl Layout {
             let base = window.base();
 
             // Check for zero dimensions
-            if base.rows == 0 {
+            if base.rows.get() == 0 {
                 eprintln!("✗ Error: Window '{}' has zero height", name);
                 errors += 1;
             }
-            if base.cols == 0 {
+            if base.cols.get() == 0 {
                 eprintln!("✗ Error: Window '{}' has zero width", name);
                 errors += 1;
             }
@@ -585,10 +585,10 @@ impl Layout {
             }
 
             // Warn about very small windows
-            if base.rows == 1 && base.cols < 10 {
+            if base.rows.get() == 1 && base.cols.get() < 10 {
                 eprintln!(
                     "⚠ Warning: Window '{}' is very small ({}x{})",
-                    name, base.cols, base.rows
+                    name, base.cols.get(), base.rows.get()
                 );
                 warnings += 1;
             }
@@ -855,5 +855,205 @@ zoom = 3
             reparsed.windows[0].base().font_family.as_deref(),
             Some("Consolas")
         );
+    }
+
+    // ========== ContentAlign::calculate_offset characterization ==========
+    // Pin the load-path content-centering geometry for all 9 alignments plus
+    // the saturating edge (content larger than area). This is exactly the
+    // kind of bare-u16 geometry a future Col/Row/Width/Height newtype will
+    // touch, so lock its behavior first. Returns (row_offset, col_offset).
+
+    /// 20x10 content inside a 100x40 area: horizontal slack 80, vertical 30.
+    /// Centering halves each (col 40, row 15); right/bottom take the full slack.
+    #[test]
+    fn calculate_offset_all_nine_alignments() {
+        let cw = 20; // content width
+        let ch = 10; // content height
+        let aw = 100; // area width
+        let ah = 40; // area height
+
+        // (row, col) expected per alignment.
+        let cases = [
+            (ContentAlign::TopLeft, (0, 0)),
+            (ContentAlign::Top, (0, 40)),
+            (ContentAlign::TopRight, (0, 80)),
+            (ContentAlign::Left, (15, 0)),
+            (ContentAlign::Center, (15, 40)),
+            (ContentAlign::Right, (15, 80)),
+            (ContentAlign::BottomLeft, (30, 0)),
+            (ContentAlign::Bottom, (30, 40)),
+            (ContentAlign::BottomRight, (30, 80)),
+        ];
+
+        for (align, expected) in cases {
+            assert_eq!(
+                align.calculate_offset(cw, ch, aw, ah),
+                expected,
+                "offset mismatch for {align:?}"
+            );
+        }
+    }
+
+    /// When content is larger than the area, the saturating_sub floors every
+    /// offset at 0 rather than underflowing/panicking.
+    #[test]
+    fn calculate_offset_content_larger_than_area_saturates_to_zero() {
+        // content 50x30, area 20x10 — content exceeds the area on both axes.
+        for align in [
+            ContentAlign::TopLeft,
+            ContentAlign::Center,
+            ContentAlign::BottomRight,
+            ContentAlign::Right,
+            ContentAlign::Bottom,
+        ] {
+            assert_eq!(
+                align.calculate_offset(50, 30, 20, 10),
+                (0, 0),
+                "overflow should saturate to (0,0) for {align:?}"
+            );
+        }
+    }
+
+    /// Odd slack is floored by the integer division in the centering branch
+    /// (slack 9 -> offset 4, not 4.5), so centered content leans toward the
+    /// top-left by one cell.
+    #[test]
+    fn calculate_offset_center_floors_odd_slack() {
+        // area 29 wide, content 20 -> slack 9 -> col offset 9/2 = 4.
+        // area 11 tall, content 10 -> slack 1 -> row offset 1/2 = 0.
+        assert_eq!(
+            ContentAlign::Center.calculate_offset(20, 10, 29, 11),
+            (0, 4)
+        );
+    }
+
+    /// Exact fit (content == area) yields zero offset for every alignment.
+    #[test]
+    fn calculate_offset_exact_fit_is_zero() {
+        for align in [
+            ContentAlign::TopLeft,
+            ContentAlign::Center,
+            ContentAlign::BottomRight,
+        ] {
+            assert_eq!(align.calculate_offset(40, 20, 40, 20), (0, 0));
+        }
+    }
+
+    // ========== scale_to_terminal_size characterization ==========
+    // scale_to_terminal_size is a THIRD, distinct scaling algorithm (used by
+    // the load path in load_with_terminal_size): multiplicative per-window
+    // scaling (col*scale_x, rounded), NOT the delta-based conserving cascade of
+    // resize_windows. It scales each window independently, so it neither
+    // conserves total size nor prevents overlap — pin that behavior so a future
+    // geometry newtype (or a well-meaning "unify the scalers" refactor) can't
+    // silently change it.
+
+    fn scale_text_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
+        WindowDef::Text {
+            base: WindowBase {
+                name: name.to_string(),
+                row: crate::data::geometry::Row::new(row),
+                col: crate::data::geometry::Col::new(col),
+                rows: crate::data::geometry::Height::new(rows),
+                cols: crate::data::geometry::Width::new(cols),
+                show_border: false,
+                border_style: "single".to_string(),
+                border_sides: BorderSides::default(),
+                border_color: None,
+                show_title: false,
+                title: None,
+                background_color: None,
+                text_color: None,
+                transparent_background: false,
+                locked: false,
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visible: true,
+                content_align: None,
+                tts_speak: false,
+                text_size: None,
+                font_family: None,
+                title_position: "top-left".to_string(),
+            },
+            data: TextWidgetData {
+                streams: vec![],
+                buffer_size: 1000,
+                wordwrap: true,
+                show_timestamps: false,
+                timestamp_position: None,
+                compact: false,
+            },
+        }
+    }
+
+    fn scale_layout(windows: Vec<WindowDef>, tw: u16, th: u16) -> Layout {
+        Layout {
+            windows,
+            terminal_width: Some(tw),
+            terminal_height: Some(th),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        }
+    }
+
+    /// 2x scale doubles every coordinate and size.
+    #[test]
+    fn scale_to_terminal_size_doubles_geometry() {
+        let mut layout = scale_layout(
+            vec![
+                scale_text_def("a", 0, 0, 40, 12),
+                scale_text_def("b", 40, 12, 40, 12),
+            ],
+            80,
+            24,
+        );
+        layout.scale_to_terminal_size(160, 48); // 2x both axes
+
+        let b = layout.windows[1].base();
+        assert_eq!((b.col.get(), b.row.get(), b.cols.get(), b.rows.get()), (80, 24, 80, 24));
+        assert_eq!(layout.terminal_width, Some(160));
+        assert_eq!(layout.terminal_height, Some(48));
+    }
+
+    /// Scaling rounds to the nearest cell (0.5 rounds up via f32::round).
+    #[test]
+    fn scale_to_terminal_size_rounds_to_nearest() {
+        // 80 -> 100 is 1.25x. A window of cols=10 -> 12.5 -> 13 (round half up).
+        let mut layout = scale_layout(vec![scale_text_def("w", 8, 0, 10, 24)], 80, 24);
+        layout.scale_to_terminal_size(100, 24);
+
+        let b = layout.windows[0].base();
+        assert_eq!(b.cols.get(), 13); // 10 * 1.25 = 12.5 -> 13
+        assert_eq!(b.col.get(), 10); // 8 * 1.25 = 10.0 -> 10
+        assert_eq!(b.rows.get(), 24); // height unchanged (1.0x)
+    }
+
+    /// Shrinking never produces a zero-size window: cols/rows floor at 1.
+    #[test]
+    fn scale_to_terminal_size_floors_size_at_one() {
+        // 0.1x scale would round a 2-wide window to 0; must floor to 1.
+        let mut layout = scale_layout(vec![scale_text_def("tiny", 0, 0, 2, 2)], 100, 100);
+        layout.scale_to_terminal_size(10, 10);
+
+        let b = layout.windows[0].base();
+        assert!(b.cols.get() >= 1, "cols floored at 1, got {}", b.cols.get());
+        assert!(b.rows.get() >= 1, "rows floored at 1, got {}", b.rows.get());
+    }
+
+    /// min/max constraints override the scaled result.
+    #[test]
+    fn scale_to_terminal_size_respects_min_max_constraints() {
+        let mut def = scale_text_def("clamped", 0, 0, 40, 10);
+        def.base_mut().max_cols = Some(50); // cap growth
+        def.base_mut().min_rows = Some(15); // floor shrink
+        let mut layout = scale_layout(vec![def], 80, 24);
+        layout.scale_to_terminal_size(160, 12); // 2x width, 0.5x height
+
+        let b = layout.windows[0].base();
+        assert_eq!(b.cols.get(), 50); // 40*2=80 capped at max_cols 50
+        assert_eq!(b.rows.get(), 15); // 10*0.5=5 raised to min_rows 15
     }
 }
