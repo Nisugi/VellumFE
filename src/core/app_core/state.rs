@@ -3656,9 +3656,7 @@ impl AppCore {
         self.ui_state.set_window(name.to_string(), window);
 
         // Create window definition for layout
-        use crate::config::{
-            BorderSides, CommandInputWidgetData, RoomWidgetData, TextWidgetData, WindowBase,
-        };
+        use crate::config::{BorderSides, TextWidgetData, WindowBase};
 
         let base = WindowBase {
             name: name.to_string(),
@@ -3688,54 +3686,29 @@ impl AppCore {
             font_family: None,
         };
 
-        let window_def = match widget_type_str.to_lowercase().as_str() {
-            "text" => WindowDef::Text {
-                base,
+        // Persist the window with its REAL widget type. Previously only
+        // text/room/command_input/webui were handled and every other type fell
+        // back to WindowDef::Text, so progress/countdown/compass/indicator/hand
+        // windows reloaded as empty text boxes (and landed in the wrong resize
+        // bucket). WindowDef::blank builds the correct variant for each type.
+        //
+        // `widget_type_str` was already validated by WidgetType::try_from_str
+        // near the top of this function, so blank() cannot return None here;
+        // fall back to a plain text def defensively rather than panicking.
+        let fallback_base = base.clone();
+        let window_def = WindowDef::blank(widget_type_str, base).unwrap_or_else(|| {
+            WindowDef::Text {
+                base: fallback_base,
                 data: TextWidgetData {
                     streams: vec![],
-                    buffer_size: 1000,
+                    buffer_size: 10_000,
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
                     compact: false,
                 },
-            },
-            "room" => WindowDef::Room {
-                base,
-                data: RoomWidgetData {
-                    buffer_size: 0,
-                    show_desc: true,
-                    show_objs: true,
-                    show_players: true,
-                    show_exits: true,
-                    show_name: false,
-                },
-            },
-            "command_input" | "commandinput" => WindowDef::CommandInput {
-                base,
-                data: CommandInputWidgetData::default(),
-            },
-            "webui" | "lichui" => WindowDef::WebUi {
-                base,
-                data: crate::config::WebUiWidgetData {
-                    page: name.to_string(),
-                },
-            },
-            _ => {
-                // Default to text window for unknown types
-                WindowDef::Text {
-                    base,
-                    data: TextWidgetData {
-                        streams: vec![],
-                        buffer_size: 1000,
-                        wordwrap: true,
-                        show_timestamps: false,
-                        timestamp_position: None,
-                    compact: false,
-                    },
-                }
             }
-        };
+        });
 
         // Add to layout at the front (so new windows appear on top)
         self.layout.windows.insert(0, window_def);
