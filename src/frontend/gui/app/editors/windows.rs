@@ -61,6 +61,8 @@ pub(in super::super) struct WindowEditorState {
     tts_speak: Option<bool>,
     /// Some for tabbed-text windows: the editable tab list.
     tabs: Option<Vec<TabBuffer>>,
+    /// True for injury-doll windows: surfaces the skin calibrator launcher.
+    is_injury_doll: bool,
     error: Option<String>,
 }
 
@@ -208,6 +210,7 @@ impl WindowEditorState {
             locked: None,
             tts_speak: None,
             tabs: None,
+            is_injury_doll: false,
             error: None,
         }
     }
@@ -268,6 +271,7 @@ impl VellumGuiApp {
         state.locked = None;
         state.tts_speak = None;
         state.tabs = None;
+        state.is_injury_doll = matches!(window.content, WindowContent::InjuryDoll(_));
         // Def-backed options (lock flag, room/targets display settings).
         if let Some(def) = self
             .app_core
@@ -740,6 +744,14 @@ impl VellumGuiApp {
         } else {
             Vec::new()
         };
+        // Injury-doll windows launch the skin calibrator from here too; it
+        // works against the *loaded* skin, so it needs saved doll base art
+        // (same gate as the Settings > Appearance button).
+        let mut calibrate_doll_clicked = false;
+        let can_calibrate_doll = self
+            .skin_state
+            .widget_art()
+            .is_some_and(|art| art.doll_base.is_some());
 
         egui::Window::new("Window Editor")
             .id(egui::Id::new("gui_window_editor"))
@@ -1228,6 +1240,27 @@ impl VellumGuiApp {
                     }
                 }
 
+                if state.is_injury_doll {
+                    ui.separator();
+                    if ui
+                        .add_enabled(
+                            can_calibrate_doll,
+                            egui::Button::new("Calibrate injury doll…"),
+                        )
+                        .on_hover_text(
+                            "Click each body part on the skin's doll image to \
+                             place its wound dot",
+                        )
+                        .on_disabled_hover_text(
+                            "Needs an active (saved) skin with base art under \
+                             [injury_doll] in its skin.toml",
+                        )
+                        .clicked()
+                    {
+                        calibrate_doll_clicked = true;
+                    }
+                }
+
                 if let Some(error) = &state.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
@@ -1258,6 +1291,10 @@ impl VellumGuiApp {
 
         if let Some(id) = append_stream {
             append_stream_id(&mut state.streams, &id);
+        }
+
+        if calibrate_doll_clicked {
+            self.open_doll_calibration();
         }
 
         // Apply the global targets edits: write through the registry setter
