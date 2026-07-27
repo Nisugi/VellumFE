@@ -214,10 +214,13 @@ impl VellumGuiApp {
         let min_h = MIN_DOCKED_WINDOW_HEIGHT.min(bounds_h);
         let width = rect.width().clamp(min_w, bounds_w);
         let height = rect.height().clamp(min_h, bounds_h);
+        // Bounds can be narrower than the minimum window size (or inverted,
+        // e.g. a center zone squeezed below zero width); f32::clamp panics
+        // when min > max, so floor the upper limits at the lower ones.
         let min_x = bounds.left();
-        let max_x = bounds.right() - width;
+        let max_x = (bounds.right() - width).max(min_x);
         let min_y = bounds.top();
-        let max_y = bounds.bottom() - height;
+        let max_y = (bounds.bottom() - height).max(min_y);
         let x = rect.min.x.clamp(min_x, max_x);
         let y = rect.min.y.clamp(min_y, max_y);
         Rect::from_min_size(Pos2::new(x, y), Vec2::new(width, height))
