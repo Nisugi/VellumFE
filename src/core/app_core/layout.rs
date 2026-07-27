@@ -1416,12 +1416,45 @@ mod tests {
             "indicator" => (2, 1),
             "progress" | "countdown" | "hands" | "hand" => (10, 1),
             "compass" => (13, 5),
+            "map" => (10, 5),
             "injury_doll" => (20, 10),
             "dashboard" => (15, 3),
             "command_input" => (20, 1),
             "quickbar" => (20, 1),
             "hotkeybar" => (20, 1),
             _ => (5, 3), // text, room, tabbed, etc.
+        }
+    }
+
+    /// Guard: the standalone replica above must stay in sync with the real
+    /// `AppCore::widget_min_size`. This copy silently drifted once already
+    /// (it was missing the "map" arm), so pin every type against the source.
+    #[test]
+    fn widget_min_size_standalone_matches_real_impl() {
+        let core = AppCore::new_for_test();
+        for wt in [
+            "indicator",
+            "progress",
+            "countdown",
+            "hands",
+            "hand",
+            "compass",
+            "map",
+            "injury_doll",
+            "dashboard",
+            "command_input",
+            "quickbar",
+            "hotkeybar",
+            "text",
+            "room",
+            "tabbedtext",
+            "unknown_type",
+        ] {
+            assert_eq!(
+                widget_min_size_standalone(wt),
+                core.widget_min_size(wt),
+                "widget_min_size mismatch for '{wt}' — standalone replica drifted from the real impl"
+            );
         }
     }
 
@@ -1998,5 +2031,218 @@ mod tests {
         let distributed: i32 = 20;
         let remainder = total_delta - distributed;
         assert_eq!(remainder, 0); // Perfect distribution
+    }
+
+    // ================================================================
+    // Characterization tests for the REAL resize cascade.
+    //
+    // Unlike the arithmetic-in-a-vacuum tests above, these build a real
+    // AppCore + Layout, set a baseline, call the actual resize_windows(),
+    // and assert on the resulting window geometry. They pin the cascade
+    // behaviors that were previously untested (proportional distribution,
+    // row cascade, min-clamp remainder recoupling, delta-from-baseline
+    // idempotence, multi-column apply-once, static widgets).
+    // ================================================================
+
+    use crate::core::AppCore;
+
+    /// Build an AppCore whose `layout` and `baseline_layout` are the given
+    /// windows at the given baseline terminal size, with ui_state populated
+    /// so the write-back path runs. Returns the ready-to-resize core.
+    fn core_with_baseline(windows: Vec<WindowDef>, base_w: u16, base_h: u16) -> AppCore {
+        let layout = Layout {
+            windows,
+            terminal_width: Some(base_w),
+            terminal_height: Some(base_h),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        let mut core = AppCore::new_for_test();
+        for def in &layout.windows {
+            core.ui_state.set_window(
+                def.name().to_string(),
+                crate::data::WindowState::new_text(def.name().to_string(), 100),
+            );
+        }
+        core.baseline_layout = Some(layout.clone());
+        core.layout = layout;
+        core
+    }
+
+    fn text_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
+        WindowDef::Text {
+            base: test_window_base(name, col, row, cols, rows),
+            data: crate::config::TextWidgetData {
+                streams: vec![],
+                buffer_size: 100,
+                wordwrap: true,
+                show_timestamps: false,
+                timestamp_position: None,
+                compact: false,
+            },
+        }
+    }
+
+    /// (row, rows) of a window in the current (post-resize) layout.
+    fn row_rows(core: &AppCore, name: &str) -> (u16, u16) {
+        let b = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == name)
+            .unwrap()
+            .base();
+        (b.row, b.rows)
+    }
+
+    /// (col, cols).
+    fn col_cols(core: &AppCore, name: &str) -> (u16, u16) {
+        let b = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == name)
+            .unwrap()
+            .base();
+        (b.col, b.cols)
+    }
+
+    /// Two stacked full-width text windows grow proportionally and the
+    /// bottom one cascades to sit directly below the resized top one.
+    /// Pins: proportional floor() distribution, leftover-to-first, cascade.
+    #[test]
+    fn resize_grows_stacked_windows_proportionally_and_cascades() {
+        // Baseline 80x24: top rows 0..10, bottom rows 10..24. Grow +10 -> 34.
+        let mut core = core_with_baseline(
+            vec![
+                text_def("top", 0, 0, 80, 10),
+                text_def("bottom", 0, 10, 80, 14),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 34);
+
+        // top: floor(10/24 * 10) = 4, +1 leftover (top is first) -> 15.
+        // bottom: floor(14/24 * 10) = 5 -> 19. Cascade: bottom.row = 15.
+        assert_eq!(row_rows(&core, "top"), (0, 15));
+        assert_eq!(row_rows(&core, "bottom"), (15, 19));
+        // Conservation: heights sum to the new terminal height.
+        assert_eq!(15 + 19, 34);
+    }
+
+    /// The resize is always computed from the pristine baseline, never the
+    /// current layout, so resizing in two steps equals resizing in one.
+    /// Pins the delta-from-baseline invariant (layout.rs:206) — the single
+    /// most load-bearing line in the cascade.
+    #[test]
+    fn resize_is_idempotent_from_baseline() {
+        let make = || {
+            core_with_baseline(
+                vec![
+                    text_def("top", 0, 0, 80, 10),
+                    text_def("bottom", 0, 10, 80, 14),
+                ],
+                80,
+                24,
+            )
+        };
+
+        let mut twice = make();
+        twice.resize_windows(80, 34);
+        twice.resize_windows(80, 44);
+
+        let mut once = make();
+        once.resize_windows(80, 44);
+
+        assert_eq!(row_rows(&twice, "top"), row_rows(&once, "top"));
+        assert_eq!(row_rows(&twice, "bottom"), row_rows(&once, "bottom"));
+        assert_eq!(row_rows(&once, "top"), (0, 19));
+        assert_eq!(row_rows(&once, "bottom"), (19, 25));
+    }
+
+    /// Two side-by-side windows split a width increase evenly.
+    /// Pins the width transpose + column-span predicate.
+    #[test]
+    fn resize_grows_side_by_side_windows_in_width() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("left", 0, 0, 40, 24),
+                text_def("right", 40, 0, 40, 24),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(100, 24); // +20 width
+
+        assert_eq!(col_cols(&core, "left"), (0, 50));
+        assert_eq!(col_cols(&core, "right"), (50, 50));
+    }
+
+    /// A static widget (indicator) keeps its height on a height resize; the
+    /// scalable window absorbs the entire delta and cascades below it.
+    /// Pins the static categorization coupling.
+    #[test]
+    fn resize_leaves_static_widget_height_unchanged() {
+        let ind = WindowDef::Indicator {
+            base: test_window_base("ind", 0, 0, 80, 1),
+            data: crate::config::IndicatorWidgetData {
+                icon: None,
+                indicator_id: None,
+                inactive_color: None,
+                active_color: None,
+                default_status: None,
+                default_color: None,
+            },
+        };
+        let mut core = core_with_baseline(vec![ind, text_def("body", 0, 1, 80, 23)], 80, 24);
+        core.resize_windows(80, 34); // +10
+
+        // Indicator height stays 1; body takes the full +10 and stays below it.
+        assert_eq!(row_rows(&core, "ind"), (0, 1));
+        assert_eq!(row_rows(&core, "body"), (1, 33));
+    }
+
+    /// When shrinking would push a window below its min_rows, the window
+    /// stops at min and the unused delta is recoupled onto later windows in
+    /// the column. This pins the remainder-recoupling behavior (invariant E)
+    /// — AND documents a real conservation bug it currently has: see
+    /// `resize_min_clamp_currently_drops_remainder_units` below.
+    #[test]
+    fn resize_min_clamp_stops_at_min_and_recouples_to_sibling() {
+        let mut top = text_def("top", 0, 0, 80, 6);
+        top.base_mut().min_rows = Some(5);
+        let mut core = core_with_baseline(vec![top, text_def("bottom", 0, 6, 80, 18)], 80, 24);
+        core.resize_windows(80, 12); // -12
+
+        // top wanted -3 (6 -> 3) but min_rows=5 clamps it to 5 (only -1 used);
+        // the -2 remainder is pushed onto bottom.
+        assert_eq!(row_rows(&core, "top"), (0, 5));
+        // bottom currently ends at 8 (see the conservation-bug test for why
+        // this is not 7).
+        assert_eq!(row_rows(&core, "bottom"), (5, 8));
+    }
+
+    /// KNOWN BUG (documented, not yet fixed): the remainder-recoupling loop
+    /// visits each later window at most ONCE (`for … skip(idx+1)`), so when
+    /// |remainder| exceeds the number of eligible later windows, the excess
+    /// units are silently dropped and total height no longer equals the
+    /// target terminal height. Here shrinking to 12 rows yields windows that
+    /// sum to 13. This test pins the buggy behavior so a future fix (loop
+    /// until remainder is exhausted, like the leftover loop at layout.rs:508)
+    /// is a deliberate, visible change rather than a silent one.
+    #[test]
+    fn resize_min_clamp_currently_drops_remainder_units() {
+        let mut top = text_def("top", 0, 0, 80, 6);
+        top.base_mut().min_rows = Some(5);
+        let mut core = core_with_baseline(vec![top, text_def("bottom", 0, 6, 80, 18)], 80, 24);
+        core.resize_windows(80, 12); // target total height = 12
+
+        let (_, top_rows) = row_rows(&core, "top");
+        let (_, bottom_rows) = row_rows(&core, "bottom");
+        // BUG: sums to 13, not the requested 12. When fixed, this becomes 12
+        // (top=5, bottom=7) and this test should be updated/removed.
+        assert_eq!(top_rows + bottom_rows, 13);
     }
 }
