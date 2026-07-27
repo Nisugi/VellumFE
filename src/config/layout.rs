@@ -856,4 +856,86 @@ zoom = 3
             Some("Consolas")
         );
     }
+
+    // ========== ContentAlign::calculate_offset characterization ==========
+    // Pin the load-path content-centering geometry for all 9 alignments plus
+    // the saturating edge (content larger than area). This is exactly the
+    // kind of bare-u16 geometry a future Col/Row/Width/Height newtype will
+    // touch, so lock its behavior first. Returns (row_offset, col_offset).
+
+    /// 20x10 content inside a 100x40 area: horizontal slack 80, vertical 30.
+    /// Centering halves each (col 40, row 15); right/bottom take the full slack.
+    #[test]
+    fn calculate_offset_all_nine_alignments() {
+        let cw = 20; // content width
+        let ch = 10; // content height
+        let aw = 100; // area width
+        let ah = 40; // area height
+
+        // (row, col) expected per alignment.
+        let cases = [
+            (ContentAlign::TopLeft, (0, 0)),
+            (ContentAlign::Top, (0, 40)),
+            (ContentAlign::TopRight, (0, 80)),
+            (ContentAlign::Left, (15, 0)),
+            (ContentAlign::Center, (15, 40)),
+            (ContentAlign::Right, (15, 80)),
+            (ContentAlign::BottomLeft, (30, 0)),
+            (ContentAlign::Bottom, (30, 40)),
+            (ContentAlign::BottomRight, (30, 80)),
+        ];
+
+        for (align, expected) in cases {
+            assert_eq!(
+                align.calculate_offset(cw, ch, aw, ah),
+                expected,
+                "offset mismatch for {align:?}"
+            );
+        }
+    }
+
+    /// When content is larger than the area, the saturating_sub floors every
+    /// offset at 0 rather than underflowing/panicking.
+    #[test]
+    fn calculate_offset_content_larger_than_area_saturates_to_zero() {
+        // content 50x30, area 20x10 — content exceeds the area on both axes.
+        for align in [
+            ContentAlign::TopLeft,
+            ContentAlign::Center,
+            ContentAlign::BottomRight,
+            ContentAlign::Right,
+            ContentAlign::Bottom,
+        ] {
+            assert_eq!(
+                align.calculate_offset(50, 30, 20, 10),
+                (0, 0),
+                "overflow should saturate to (0,0) for {align:?}"
+            );
+        }
+    }
+
+    /// Odd slack is floored by the integer division in the centering branch
+    /// (slack 9 -> offset 4, not 4.5), so centered content leans toward the
+    /// top-left by one cell.
+    #[test]
+    fn calculate_offset_center_floors_odd_slack() {
+        // area 29 wide, content 20 -> slack 9 -> col offset 9/2 = 4.
+        // area 11 tall, content 10 -> slack 1 -> row offset 1/2 = 0.
+        assert_eq!(
+            ContentAlign::Center.calculate_offset(20, 10, 29, 11),
+            (0, 4)
+        );
+    }
+
+    /// Exact fit (content == area) yields zero offset for every alignment.
+    #[test]
+    fn calculate_offset_exact_fit_is_zero() {
+        for align in [
+            ContentAlign::TopLeft,
+            ContentAlign::Center,
+            ContentAlign::BottomRight,
+        ] {
+            assert_eq!(align.calculate_offset(40, 20, 40, 20), (0, 0));
+        }
+    }
 }
