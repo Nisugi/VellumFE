@@ -195,9 +195,13 @@ impl VellumGuiApp {
                 let ui = self.gp_wheel.take().expect("just matched Some");
                 if let Some(display) = ui.aimed {
                     let view = self.wheel_view(&ui.key, &ui.path);
-                    if let Some(Some(real)) = view.as_ref().and_then(|v| v.real(display)) {
+                    // `view.slices` is the DISPLAY-ordered (Back-injected,
+                    // rotated) ring, so index it by `display`, not the real
+                    // index — indexing by `real` double-applied the rotation
+                    // and fired the wrong slice inside a rotated folder.
+                    if let Some(Some(_real)) = view.as_ref().and_then(|v| v.real(display)) {
                         if let Some(slice) =
-                            view.as_ref().and_then(|v| v.slices.get(real)).cloned()
+                            view.as_ref().and_then(|v| v.slices.get(display)).cloned()
                         {
                             if !slice.is_folder() && !slice.command.is_empty() {
                                 self.wheel_fire(slice.command);
@@ -696,7 +700,9 @@ impl VellumGuiApp {
                 }
             }
             Some(Some(real)) => {
-                let slice = match view.slices.get(real) {
+                // Look the slice up by DISPLAY index (view.slices is the
+                // rotated ring); `real` is only for path.push on descend.
+                let slice = match view.slices.get(display) {
                     Some(s) => s.clone(),
                     None => return,
                 };
