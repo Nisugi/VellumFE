@@ -196,6 +196,21 @@ roundtime_end = "short"   # hands free again
 stunned = "long"
 death = "double"
 
+# Controller input feel. Every field is optional — an absent table or
+# field uses the value shown here. Edit in the .controller editor's
+# Tuning tab. Dwell gates when a wheel slice commits: rest on your target,
+# then release to fire; return the stick to center before releasing to
+# cancel. Folders auto-descend on dwell, and each folder reserves a Back
+# slice (dwell it to go up a level).
+[controller_tuning]
+movement_stick = "left"    # "left" | "right" — which stick walks
+back_slice = "down"        # up|down|left|right|up-left|up-right|down-left|down-right
+deadzone = 50              # % stick deflection before a wheel slice registers
+aim_dwell_ms = 150         # hold a leaf this long before it arms to fire
+nav_dwell_ms = 150         # hold a folder / Back slice this long before it navigates
+fire_debounce_ms = 300     # suppress repeat fires
+release_grace_ms = 40      # hush movement briefly after release so firing doesn't walk
+
 # Bindings while the shift button (l2 above) is held — a second bank for
 # every button. Same format as [controller].
 [controller_shift]

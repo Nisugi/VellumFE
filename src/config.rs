@@ -40,7 +40,7 @@ pub use hotbars::{
 };
 pub use keybinds::{
     parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
-    RumbleConfig, WheelSlice,
+    RumbleConfig, TuningConfig, WheelSlice,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
@@ -239,6 +239,8 @@ pub struct Config {
     pub controller_overlay: Vec<String>,
     #[serde(skip)] // Loaded from [controller_rumble] (haptic event map)
     pub controller_rumble: RumbleConfig,
+    #[serde(skip)] // Loaded from [controller_tuning] (input-feel tuning)
+    pub controller_tuning: TuningConfig,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml

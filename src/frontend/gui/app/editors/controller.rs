@@ -13,9 +13,17 @@ enum ControllerTab {
     Shift,
     Wheels,
     Rumble,
+    Tuning,
 }
 
 const RUMBLE_PATTERNS: [&str; 4] = ["off", "short", "long", "double"];
+
+/// Movement-stick choices for the Tuning tab.
+const MOVEMENT_STICKS: [&str; 2] = ["left", "right"];
+/// Screen-anchor choices for the reserved Back slice.
+const BACK_ANCHORS: [&str; 8] = [
+    "up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right",
+];
 
 pub(in super::super) struct ControllerEditorState {
     form: Option<ControllerFormState>,
@@ -244,6 +252,7 @@ impl VellumGuiApp {
         let mut wheel_save = false;
         let mut overlay_toggle: Option<String> = None;
         let mut rumble_save: Option<crate::config::RumbleConfig> = None;
+        let mut tuning_save: Option<crate::config::TuningConfig> = None;
 
         let pad_connected = self
             .gamepad
@@ -266,6 +275,7 @@ impl VellumGuiApp {
                     ui.selectable_value(&mut state.tab, ControllerTab::Shift, "Shift layer");
                     ui.selectable_value(&mut state.tab, ControllerTab::Wheels, "Wheels");
                     ui.selectable_value(&mut state.tab, ControllerTab::Rumble, "Rumble");
+                    ui.selectable_value(&mut state.tab, ControllerTab::Tuning, "Tuning");
                     ui.separator();
                     if matches!(state.tab, ControllerTab::Base | ControllerTab::Shift)
                         && ui.button("Add binding").clicked()
@@ -317,6 +327,141 @@ impl VellumGuiApp {
                     ui.weak("short = light tap · long = strong buzz · double = two pulses");
                     if changed {
                         rumble_save = Some(rumble);
+                    }
+                    return;
+                }
+
+                if state.tab == ControllerTab::Tuning {
+                    let mut tuning = self.app_core.config.controller_tuning.clone();
+                    let mut changed = false;
+
+                    let combo_row = |ui: &mut egui::Ui,
+                                     label: &str,
+                                     hover: &str,
+                                     value: &mut String,
+                                     options: &[&str],
+                                     changed: &mut bool| {
+                        ui.horizontal(|ui| {
+                            ui.label(label).on_hover_text(hover);
+                            egui::ComboBox::from_id_salt(format!("tuning_{label}"))
+                                .selected_text(value.as_str())
+                                .show_ui(ui, |ui| {
+                                    for opt in options {
+                                        if ui
+                                            .selectable_value(value, opt.to_string(), *opt)
+                                            .changed()
+                                        {
+                                            *changed = true;
+                                        }
+                                    }
+                                });
+                        });
+                    };
+
+                    combo_row(
+                        ui,
+                        "Movement stick",
+                        "Which analog stick walks the eight compass directions. The other \
+                         stick aims the wheel and scrolls the story window.",
+                        &mut tuning.movement_stick,
+                        &MOVEMENT_STICKS,
+                        &mut changed,
+                    );
+                    combo_row(
+                        ui,
+                        "Back slice anchor",
+                        "Screen side the reserved Back slice is pinned to inside a folder. \
+                         Back is always a real, aimable slice; the ring rotates so it sits \
+                         nearest this side at every level.",
+                        &mut tuning.back_slice,
+                        &BACK_ANCHORS,
+                        &mut changed,
+                    );
+
+                    // Numeric feel knobs. Ranges are generous guard-rails,
+                    // not hard game limits.
+                    let slider_row = |ui: &mut egui::Ui,
+                                      label: &str,
+                                      hover: &str,
+                                      value: &mut u32,
+                                      range: std::ops::RangeInclusive<u32>,
+                                      suffix: &str,
+                                      changed: &mut bool| {
+                        ui.horizontal(|ui| {
+                            ui.label(label).on_hover_text(hover);
+                            if ui
+                                .add(egui::Slider::new(value, range).suffix(suffix))
+                                .changed()
+                            {
+                                *changed = true;
+                            }
+                        });
+                    };
+
+                    ui.horizontal(|ui| {
+                        ui.label("Wheel dead zone").on_hover_text(
+                            "Stick deflection needed before a wheel slice registers. \
+                             Higher values stop a drifting stick from picking a slice the \
+                             instant the wheel opens.",
+                        );
+                        let mut dz = tuning.deadzone as u32;
+                        if ui
+                            .add(egui::Slider::new(&mut dz, 0..=95).suffix("%"))
+                            .changed()
+                        {
+                            tuning.deadzone = dz as u8;
+                            changed = true;
+                        }
+                    });
+                    slider_row(
+                        ui,
+                        "Aim dwell",
+                        "Hold a leaf slice this long before it commits and arms to fire on \
+                         release. Slices you merely sweep across never commit.",
+                        &mut tuning.aim_dwell_ms,
+                        0..=1000,
+                        " ms",
+                        &mut changed,
+                    );
+                    slider_row(
+                        ui,
+                        "Navigation dwell",
+                        "Hold a folder (or the Back slice) this long before it auto-descends \
+                         (or auto-ascends). Shared by both navigation moves.",
+                        &mut tuning.nav_dwell_ms,
+                        0..=1000,
+                        " ms",
+                        &mut changed,
+                    );
+                    slider_row(
+                        ui,
+                        "Fire debounce",
+                        "Suppress a repeat fire for this long after one fires, so a noisy \
+                         button contact can't double-send.",
+                        &mut tuning.fire_debounce_ms,
+                        0..=1000,
+                        " ms",
+                        &mut changed,
+                    );
+                    slider_row(
+                        ui,
+                        "Release grace",
+                        "After the wheel button comes up the aiming stick is usually still \
+                         deflected; over this window movement stays hushed so firing the \
+                         wheel doesn't also walk a direction.",
+                        &mut tuning.release_grace_ms,
+                        0..=300,
+                        " ms",
+                        &mut changed,
+                    );
+
+                    ui.separator();
+                    ui.weak(
+                        "Dwell gates when a slice commits: rest on your target, then release \
+                         to fire. Return the stick to center before releasing to cancel.",
+                    );
+                    if changed {
+                        tuning_save = Some(tuning);
                     }
                     return;
                 }
@@ -381,6 +526,15 @@ impl VellumGuiApp {
                 Err(err) => self
                     .app_core
                     .add_system_message(&format!("Failed to save rumble config: {}", err)),
+            }
+        }
+
+        if let Some(tuning) = tuning_save {
+            match Config::save_controller_tuning(&tuning) {
+                Ok(()) => self.app_core.config.controller_tuning = tuning,
+                Err(err) => self
+                    .app_core
+                    .add_system_message(&format!("Failed to save tuning config: {}", err)),
             }
         }
 

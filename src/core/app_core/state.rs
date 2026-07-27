@@ -4761,6 +4761,8 @@ impl AppCore {
                     crate::config::Config::load_controller_overlay().unwrap_or_default();
                 self.config.controller_rumble =
                     crate::config::Config::load_controller_rumble().unwrap_or_default();
+                self.config.controller_tuning =
+                    crate::config::Config::load_controller_tuning().unwrap_or_default();
                 // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
                 self.rebuild_keybind_map();
                 // Web clients render the wheel from a shipped copy.

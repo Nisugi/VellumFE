@@ -235,6 +235,86 @@ impl Default for RumbleConfig {
     }
 }
 
+/// Controller input-feel tuning (`[controller_tuning]`). Every field is
+/// optional; an absent table (or an absent field) uses the shipped
+/// default, which mostly reproduces the historical hardcoded feel — the
+/// one intentional change is that `aim_dwell_ms`/`nav_dwell_ms` now gate
+/// when a wheel slice commits, so sweeping across the ring no longer
+/// flickers every slice into a fireable state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TuningConfig {
+    /// Which analog stick walks the eight compass directions: "left" or
+    /// "right". The other stick then aims the wheel / scrolls the story.
+    #[serde(default = "default_movement_stick")]
+    pub movement_stick: String,
+    /// Screen anchor for the reserved "back" slice inside a non-top wheel
+    /// folder: one of "up", "down", "left", "right", "up-left",
+    /// "up-right", "down-left", "down-right". Back is always a real,
+    /// aimable slice; the ring is rotated so it sits nearest this anchor
+    /// and the other slices fill in around it, keeping Back in the same
+    /// place at every level.
+    #[serde(default = "default_back_slice")]
+    pub back_slice: String,
+    /// Stick deflection, as a percent 0–100, before a wheel slice
+    /// registers (the wheel's dead zone). Stored as a percent for the
+    /// config/editor; divided by 100 at read time.
+    #[serde(default = "default_deadzone")]
+    pub deadzone: u8,
+    /// Hold a leaf slice this long (ms) before it commits and arms to
+    /// fire on release. Slices merely swept through never reach it.
+    #[serde(default = "default_aim_dwell_ms")]
+    pub aim_dwell_ms: u32,
+    /// Hold a folder (or the Back slice) this long (ms) before it
+    /// auto-descends (or auto-ascends). Shared by both navigation moves.
+    #[serde(default = "default_nav_dwell_ms")]
+    pub nav_dwell_ms: u32,
+    /// Suppress a repeat fire for this long (ms) after one fires, so a
+    /// noisy button contact can't double-send.
+    #[serde(default = "default_fire_debounce_ms")]
+    pub fire_debounce_ms: u32,
+    /// After the wheel button comes up the aiming stick is usually still
+    /// deflected; this grace (ms) is the window over which movement stays
+    /// seeded/hushed so firing the wheel doesn't also walk a direction.
+    #[serde(default = "default_release_grace_ms")]
+    pub release_grace_ms: u32,
+}
+
+fn default_movement_stick() -> String {
+    "left".to_string()
+}
+fn default_back_slice() -> String {
+    "down".to_string()
+}
+fn default_deadzone() -> u8 {
+    50
+}
+fn default_aim_dwell_ms() -> u32 {
+    150
+}
+fn default_nav_dwell_ms() -> u32 {
+    150
+}
+fn default_fire_debounce_ms() -> u32 {
+    300
+}
+fn default_release_grace_ms() -> u32 {
+    40
+}
+
+impl Default for TuningConfig {
+    fn default() -> Self {
+        Self {
+            movement_stick: default_movement_stick(),
+            back_slice: default_back_slice(),
+            deadzone: default_deadzone(),
+            aim_dwell_ms: default_aim_dwell_ms(),
+            nav_dwell_ms: default_nav_dwell_ms(),
+            fire_debounce_ms: default_fire_debounce_ms(),
+            release_grace_ms: default_release_grace_ms(),
+        }
+    }
+}
+
 /// Keybinds for menu system (popups, browsers, forms, editors)
 /// These are separate from game keybinds and only active when menus have focus
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -970,6 +1050,49 @@ impl Config {
         toml_table.insert(
             "controller_rumble".to_string(),
             toml::Value::try_from(rumble).context("Failed to serialize rumble config")?,
+        );
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
+    }
+
+    /// Load the input-feel tuning from `[controller_tuning]` of the global
+    /// keybinds.toml (shipped defaults when absent).
+    pub fn load_controller_tuning() -> Result<TuningConfig> {
+        let section_from = |contents: &str| -> Option<TuningConfig> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            toml_value.get("controller_tuning")?.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(config) = section_from(&contents) {
+                return Ok(config);
+            }
+        }
+        Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the `[controller_tuning]` section.
+    pub fn save_controller_tuning(tuning: &TuningConfig) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        toml_table.insert(
+            "controller_tuning".to_string(),
+            toml::Value::try_from(tuning).context("Failed to serialize tuning config")?,
         );
         let contents =
             toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
