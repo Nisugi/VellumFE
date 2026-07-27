@@ -369,6 +369,22 @@ impl AppCore {
         self.apply_height_resize(height_delta, &static_both, &static_height);
         self.apply_width_resize(width_delta, &static_both, &baseline_rows);
 
+        // Safety net: no window may extend past the terminal edge. The cascade
+        // relies on conservation to keep everything on screen, but subtle
+        // multi-column / static-window interactions can leave a bottom or right
+        // edge one row/col past the terminal (a full-width static command_input
+        // has been observed at row == terminal_height, i.e. fully off screen).
+        // Pull such a window back on screen WITHOUT resizing it (max origin =
+        // terminal - size, saturating), so a fixed-height input keeps its size.
+        // This never moves a window that already fits.
+        for window_def in self.layout.windows.iter_mut().filter(|w| w.base().visible) {
+            let base = window_def.base_mut();
+            let max_col = crate::data::geometry::Col::new(terminal_width) - base.cols;
+            let max_row = crate::data::geometry::Row::new(terminal_height) - base.rows;
+            base.col = base.col.min(max_col);
+            base.row = base.row.min(max_row);
+        }
+
         // Update layout terminal size to current
         self.layout.terminal_width = Some(terminal_width);
         self.layout.terminal_height = Some(terminal_height);
@@ -1745,6 +1761,79 @@ mod tests {
                 timestamp_position: None,
                 compact: false,
             },
+        }
+    }
+
+    /// A static-height command_input window (min_rows == max_rows == `rows`),
+    /// mirroring the default layout's bottom bar.
+    fn command_input_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
+        let mut base = test_window_base(name, col, row, cols, rows);
+        base.min_rows = Some(rows);
+        base.max_rows = Some(rows);
+        WindowDef::CommandInput {
+            base,
+            data: crate::config::CommandInputWidgetData::default(),
+        }
+    }
+
+    /// Repro of the default TUI layout losing its command input on the first
+    /// resize of a fresh profile: full-width `main` stacked over a static
+    /// 3-row `command_input`, baseline 120x40, shrunk to a shorter terminal.
+    /// The command input must stay fully on screen (bottom edge <= new height).
+    #[test]
+    fn resize_shrink_keeps_static_command_input_on_screen() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("main", 0, 0, 120, 37),
+                command_input_def("command_input", 0, 37, 120, 3),
+            ],
+            120,
+            40,
+        );
+        // Sweep a range of terminal heights (grow and shrink, odd and even),
+        // since the real bug surfaced on a fresh profile whose terminal size we
+        // don't know. The static command_input must ALWAYS stay on screen.
+        for h in [
+            10u16, 15, 20, 23, 24, 25, 29, 30, 31, 40, 45, 50, 55, 60, 61, 74, 88, 100,
+        ] {
+            // The FULL default layout: main + command_input plus the hidden
+            // windows (thoughts/room/society) that ship visible=false. They span
+            // other columns; command_input spans all columns, so if hidden
+            // windows leak into the column cascade they can corrupt its row.
+            // A full-width static command_input under a two-column split of
+            // main/thoughts/society — the multi-column arrangement where the
+            // cascade has been seen to leave command_input off the bottom edge.
+            let mut c = core_with_baseline(
+                vec![
+                    text_def("main", 0, 0, 60, 37),
+                    text_def("thoughts", 60, 0, 60, 20),
+                    text_def("society", 60, 20, 60, 17),
+                    command_input_def("command_input", 0, 37, 120, 3),
+                ],
+                120,
+                40,
+            );
+            c.resize_windows(120, h);
+
+            // The on-screen safety net: NO visible window may extend past the
+            // terminal edge after a resize.
+            for w in c.layout.windows.iter().filter(|w| w.base().visible) {
+                let b = w.base();
+                assert!(
+                    b.row.get() + b.rows.get() <= h,
+                    "h={h}: '{}' bottom edge {} > {h}",
+                    b.name,
+                    b.row.get() + b.rows.get()
+                );
+                assert!(
+                    b.col.get() + b.cols.get() <= 120,
+                    "h={h}: '{}' right edge {} > 120",
+                    b.name,
+                    b.col.get() + b.cols.get()
+                );
+            }
+            // command_input specifically keeps its fixed 3-row height.
+            assert_eq!(row_rows(&c, "command_input").1, 3);
         }
     }
 
