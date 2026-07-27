@@ -481,7 +481,7 @@ impl AppCore {
             .filter(|w| w.base().visible)
             .map(|w| {
                 let base = w.base();
-                base.col + base.cols
+                base.col.saturating_add(base.cols)
             })
             .max()
             .unwrap_or(0);
@@ -501,7 +501,7 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.col <= current_col && base.col + base.cols > current_col {
+                    if base.col <= current_col && base.col.saturating_add(base.cols) > current_col {
                         Some(base.name.clone())
                     } else {
                         None
@@ -571,7 +571,7 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.col <= current_col && base.col + base.cols > current_col {
+                    if base.col <= current_col && base.col.saturating_add(base.cols) > current_col {
                         let (orig_row, orig_rows) = baseline_rows
                             .get(&base.name)
                             .copied()
@@ -601,7 +601,7 @@ impl AppCore {
                 if height_applied.contains(&window_name) {
                     // Already sized at an earlier column: keep it, advance cursor.
                     if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
-                        current_row = w.base().row + w.base().rows;
+                        current_row = w.base().row.saturating_add(w.base().rows);
                     }
                     continue;
                 }
@@ -664,7 +664,7 @@ impl AppCore {
             .filter(|w| w.base().visible)
             .map(|w| {
                 let base = w.base();
-                base.row + base.rows
+                base.row.saturating_add(base.rows)
             })
             .max()
             .unwrap_or(0);
@@ -684,7 +684,7 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.row <= current_row && base.row + base.rows > current_row {
+                    if base.row <= current_row && base.row.saturating_add(base.rows) > current_row {
                         Some(base.name.clone())
                     } else {
                         None
@@ -752,7 +752,7 @@ impl AppCore {
                 .filter(|w| w.base().visible)
                 .filter_map(|w| {
                     let base = w.base();
-                    if base.row <= current_row && base.row + base.rows > current_row {
+                    if base.row <= current_row && base.row.saturating_add(base.rows) > current_row {
                         let (orig_col, orig_cols) = baseline_cols
                             .get(&base.name)
                             .copied()
@@ -779,7 +779,7 @@ impl AppCore {
 
                 if width_applied.contains(&window_name) {
                     if let Some(w) = self.layout.windows.iter().find(|w| w.name() == window_name) {
-                        current_col_pos = w.base().col + w.base().cols;
+                        current_col_pos = w.base().col.saturating_add(w.base().cols);
                     }
                     continue;
                 }
