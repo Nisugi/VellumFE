@@ -835,6 +835,9 @@ html, body {
    the d-pad (up/down entity, left/right category, A menu, B exit). */
 #interact-bar {
   position: absolute;
+  /* Default dock: full-width along an edge. JS sets `bottom` or `top`
+     for edge docks, or switches to free-float geometry (left/top with an
+     explicit width) when dragged into the middle. */
   left: 8px;
   right: 8px;
   bottom: 8px;
@@ -842,13 +845,38 @@ html, body {
   align-items: stretch;
   gap: 4px;
   padding: 4px;
-  background: rgba(var(--panel-rgb), 0.93);
+  background: rgba(var(--panel-rgb), var(--interact-alpha, 0.93));
   border: 1px solid var(--border);
   border-radius: 10px;
   z-index: 9;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+  touch-action: none; /* we own the gesture (tap vs long-press drag) */
+}
+
+/* Free-float mode: a compact, content-width puck the user can place
+   anywhere. JS sets left/top and clears right/bottom. max-width keeps a
+   crowded bar from spanning the whole screen. */
+#interact-bar.floating {
+  right: auto;
+  width: max-content;
+  max-width: 90%;
+}
+
+/* In a content-width (floating) bar the label must size to its text — a
+   flex:1 child collapses to zero under max-content, which left only the
+   fixed icon buttons showing and spilled the label out of the bar. */
+#interact-bar.floating #ia-label {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Engaged drag: lift it so it reads as grabbed, and let the drop show. */
+#interact-bar.dragging {
+  opacity: 0.85;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  cursor: grabbing;
 }
 
 /* `display: flex` on the id selector outranks the UA's [hidden] rule. */

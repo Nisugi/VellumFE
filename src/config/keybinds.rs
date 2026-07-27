@@ -235,6 +235,106 @@ impl Default for RumbleConfig {
     }
 }
 
+/// Controller input-feel tuning (`[controller_tuning]`). Every field is
+/// optional; an absent table (or an absent field) uses the shipped
+/// default, which mostly reproduces the historical hardcoded feel — the
+/// one intentional change is that `aim_dwell_ms`/`nav_dwell_ms` now gate
+/// when a wheel slice commits, so sweeping across the ring no longer
+/// flickers every slice into a fireable state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TuningConfig {
+    /// Which analog stick walks the eight compass directions: "left" or
+    /// "right". The other stick then aims the wheel / scrolls the story.
+    #[serde(default = "default_movement_stick")]
+    pub movement_stick: String,
+    /// Screen anchor for the reserved "back" slice inside a non-top wheel
+    /// folder: one of "up", "down", "left", "right", "up-left",
+    /// "up-right", "down-left", "down-right". Back is always a real,
+    /// aimable slice; the ring is rotated so it sits nearest this anchor
+    /// and the other slices fill in around it, keeping Back in the same
+    /// place at every level.
+    #[serde(default = "default_back_slice")]
+    pub back_slice: String,
+    /// Stick deflection, as a percent 0–100, before a wheel slice
+    /// registers (the wheel's dead zone). Stored as a percent for the
+    /// config/editor; divided by 100 at read time.
+    #[serde(default = "default_deadzone")]
+    pub deadzone: u8,
+    /// Hold a leaf slice this long (ms) before it commits and arms to
+    /// fire on release. Slices merely swept through never reach it.
+    #[serde(default = "default_aim_dwell_ms")]
+    pub aim_dwell_ms: u32,
+    /// Hold a folder (or the Back slice) this long (ms) before it
+    /// auto-descends (or auto-ascends). Shared by both navigation moves.
+    #[serde(default = "default_nav_dwell_ms")]
+    pub nav_dwell_ms: u32,
+    /// Suppress a repeat fire for this long (ms) after one fires, so a
+    /// noisy button contact can't double-send.
+    #[serde(default = "default_fire_debounce_ms")]
+    pub fire_debounce_ms: u32,
+    /// After the wheel button comes up the aiming stick is usually still
+    /// deflected; this grace (ms) is the window over which movement stays
+    /// seeded/hushed so firing the wheel doesn't also walk a direction.
+    #[serde(default = "default_release_grace_ms")]
+    pub release_grace_ms: u32,
+}
+
+fn default_movement_stick() -> String {
+    "left".to_string()
+}
+fn default_back_slice() -> String {
+    "down".to_string()
+}
+fn default_deadzone() -> u8 {
+    50
+}
+fn default_aim_dwell_ms() -> u32 {
+    150
+}
+fn default_nav_dwell_ms() -> u32 {
+    150
+}
+fn default_fire_debounce_ms() -> u32 {
+    300
+}
+fn default_release_grace_ms() -> u32 {
+    40
+}
+
+impl Default for TuningConfig {
+    fn default() -> Self {
+        Self {
+            movement_stick: default_movement_stick(),
+            back_slice: default_back_slice(),
+            deadzone: default_deadzone(),
+            aim_dwell_ms: default_aim_dwell_ms(),
+            nav_dwell_ms: default_nav_dwell_ms(),
+            fire_debounce_ms: default_fire_debounce_ms(),
+            release_grace_ms: default_release_grace_ms(),
+        }
+    }
+}
+
+/// Per-wheel metadata (`[controller_wheels_meta.<name>]`): which button
+/// opens the wheel and which stick aims it. Stored separately from the
+/// wheel's slice array (`[[controller_wheels.<name>]]`) so old configs,
+/// which have only the slice array, load unchanged with both fields None.
+///
+/// `button` is editor metadata — the runtime binding authority stays
+/// `[controller]` (the wheel opens when its `controller_wheel:<name>`
+/// action's button is held). The editor writes both, and a load-time
+/// check warns when they disagree or two wheels claim one button.
+/// `stick` is authoritative (nothing else stores it): while the wheel is
+/// open that stick aims it, overriding the global movement-stick choice;
+/// None falls back to the non-movement stick.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WheelMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stick: Option<String>,
+}
+
 /// Keybinds for menu system (popups, browsers, forms, editors)
 /// These are separate from game keybinds and only active when menus have focus
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -978,6 +1078,49 @@ impl Config {
         Ok(())
     }
 
+    /// Load the input-feel tuning from `[controller_tuning]` of the global
+    /// keybinds.toml (shipped defaults when absent).
+    pub fn load_controller_tuning() -> Result<TuningConfig> {
+        let section_from = |contents: &str| -> Option<TuningConfig> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            toml_value.get("controller_tuning")?.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(config) = section_from(&contents) {
+                return Ok(config);
+            }
+        }
+        Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the `[controller_tuning]` section.
+    pub fn save_controller_tuning(tuning: &TuningConfig) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        toml_table.insert(
+            "controller_tuning".to_string(),
+            toml::Value::try_from(tuning).context("Failed to serialize tuning config")?,
+        );
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
+    }
+
     /// Load the named wheels from `[controller_wheels.<name>]` arrays of
     /// the global keybinds.toml (bound via "controller_wheel:<name>").
     pub fn load_controller_wheels() -> Result<HashMap<String, Vec<WheelSlice>>> {
@@ -995,6 +1138,59 @@ impl Config {
             }
         }
         Ok(wheels_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Load per-wheel metadata from `[controller_wheels_meta.<name>]`
+    /// (button/stick). Absent = empty map = today's behavior.
+    pub fn load_controller_wheels_meta() -> Result<HashMap<String, WheelMeta>> {
+        let meta_from = |contents: &str| -> Option<HashMap<String, WheelMeta>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            let table = toml_value.get("controller_wheels_meta")?;
+            table.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(meta) = meta_from(&contents) {
+                return Ok(meta);
+            }
+        }
+        Ok(meta_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the `[controller_wheels_meta]` section. Entries with both
+    /// fields None are dropped so the section stays tidy.
+    pub fn save_controller_wheels_meta(meta: &HashMap<String, WheelMeta>) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        let pruned: HashMap<&String, &WheelMeta> = meta
+            .iter()
+            .filter(|(_, m)| m.button.is_some() || m.stick.is_some())
+            .collect();
+        if pruned.is_empty() {
+            toml_table.remove("controller_wheels_meta");
+        } else {
+            toml_table.insert(
+                "controller_wheels_meta".to_string(),
+                toml::Value::try_from(&pruned).context("Failed to serialize wheel meta")?,
+            );
+        }
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
     }
 
     /// The slice list at a folder path within a wheel. Key "" is the
@@ -1030,67 +1226,140 @@ impl Config {
     /// None = the default wheel ([[controller_wheel]]), Some(name) =
     /// [controller_wheels.<name>]. An empty slice list deletes a named
     /// wheel outright.
-    pub fn save_controller_wheel_named(name: Option<&str>, slices: &[WheelSlice]) -> Result<()> {
+    /// Serialize a wheel slice array to a TOML fragment under the given
+    /// top-level key, with nested folder `slices` emitted as inline arrays
+    /// of inline tables. `toml::to_string_pretty` writes a folder's nested
+    /// `[[key.slices]]` blocks in file order that, once re-parsed, can bind
+    /// to a LATER sibling instead of the folder (it corrupted stance's
+    /// children onto exp/health). Inline tables keep each slice's children
+    /// syntactically inside that slice, so the parent-child grouping is
+    /// unambiguous no matter the sibling order.
+    fn wheel_slices_to_inline(slices: &[WheelSlice]) -> toml_edit::Value {
+        use toml_edit::{Array, InlineTable, Value};
+        let mut arr = Array::new();
+        for slice in slices {
+            let mut t = InlineTable::new();
+            t.insert("label", Value::from(slice.label.clone()));
+            if !slice.command.is_empty() {
+                t.insert("command", Value::from(slice.command.clone()));
+            }
+            if let Some(color) = &slice.color {
+                t.insert("color", Value::from(color.clone()));
+            }
+            if !slice.slices.is_empty() {
+                t.insert("slices", Self::wheel_slices_to_inline(&slice.slices));
+            }
+            arr.push(Value::InlineTable(t));
+        }
+        Value::Array(arr)
+    }
+
+    /// Set a top-level key to a value AND guarantee it renders above every
+    /// `[table]` in the document. A bare `key = ...` written after a
+    /// `[section]` header parses as a member of that section, not the
+    /// document root — so a wheel array appended to a doc ending in
+    /// `[controller_shift.south]` would silently nest there and the loader
+    /// would miss it (falling back to the shipped default wheel).
+    ///
+    /// `toml_edit`'s per-item render position is fiddly to reorder across a
+    /// mixed doc, so take the unambiguous route: drop any existing copy of
+    /// the key, render just `key = value` from a one-key document, and
+    /// prepend that line to the rest of the file. A root-level key at the
+    /// very top can never be captured by a later section header.
+    fn set_root_value_before_tables(
+        doc: &mut toml_edit::DocumentMut,
+        key: &str,
+        value: toml_edit::Value,
+    ) {
+        // Remove any stale copy (top-level or mis-nested) so we don't leave
+        // a duplicate behind.
+        doc.as_table_mut().remove(key);
+        let rest = doc.to_string();
+        let mut head = toml_edit::DocumentMut::new();
+        head.insert(key, toml_edit::Item::Value(value));
+        let head_str = head.to_string();
+        // Re-parse the concatenation so `doc` reflects the final layout.
+        let combined = format!("{head_str}\n{rest}");
+        *doc = combined
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap_or_else(|_| {
+                // Fallback: if concatenation somehow fails to parse, at
+                // least set the key (nesting risk) rather than lose data.
+                let mut d = toml_edit::DocumentMut::new();
+                d.insert(key, head[key].clone());
+                d
+            });
+    }
+
+    /// Load the keybinds file as a comment-preserving `toml_edit` document
+    /// (empty doc when absent), ensuring the parent dir exists. Shared by
+    /// the wheel savers so they can splice wheel arrays with inline-table
+    /// slices without disturbing the rest of the file.
+    fn load_keybinds_document() -> Result<(std::path::PathBuf, toml_edit::DocumentMut)> {
         let path = Self::common_keybinds_path()?;
-        let mut toml_table: toml::value::Table = if path.exists() {
+        let doc = if path.exists() {
             let contents = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+            contents
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap_or_default()
         } else {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("Failed to create directory: {:?}", parent))?;
             }
-            toml::value::Table::new()
+            toml_edit::DocumentMut::new()
         };
+        Ok((path, doc))
+    }
+
+    pub fn save_controller_wheel_named(name: Option<&str>, slices: &[WheelSlice]) -> Result<()> {
+        let (path, mut doc) = Self::load_keybinds_document()?;
         match name {
             None => {
-                let array =
-                    toml::Value::try_from(slices).context("Failed to serialize wheel slices")?;
-                toml_table.insert("controller_wheel".to_string(), array);
+                Self::set_root_value_before_tables(
+                    &mut doc,
+                    "controller_wheel",
+                    Self::wheel_slices_to_inline(slices),
+                );
             }
             Some(wheel) => {
-                let section = toml_table
-                    .entry("controller_wheels".to_string())
-                    .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
-                if let toml::Value::Table(table) = section {
-                    if slices.is_empty() {
-                        table.remove(wheel);
-                    } else {
-                        let array = toml::Value::try_from(slices)
-                            .context("Failed to serialize wheel slices")?;
-                        table.insert(wheel.to_string(), array);
+                if slices.is_empty() {
+                    if let Some(t) = doc
+                        .get_mut("controller_wheels")
+                        .and_then(|i| i.as_table_mut())
+                    {
+                        t.remove(wheel);
                     }
+                } else {
+                    // Ensure the parent table exists, then set the named
+                    // wheel's slice array (inline tables so nested folders
+                    // stay bound to their parent).
+                    if doc.get("controller_wheels").is_none() {
+                        doc["controller_wheels"] = toml_edit::table();
+                    }
+                    doc["controller_wheels"][wheel] =
+                        toml_edit::Item::Value(Self::wheel_slices_to_inline(slices));
                 }
             }
         }
-        let contents =
-            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        write_atomic(&path, contents)
+        write_atomic(&path, doc.to_string())
             .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
         Ok(())
     }
 
     /// Replace the whole `[[controller_wheel]]` array in the global
-    /// keybinds.toml (the wheel editor saves the full slice list).
+    /// keybinds.toml (the wheel editor saves the full slice list). Nested
+    /// folder slices are written as inline tables so a folder's children
+    /// can never re-bind to a later sibling on reload.
     pub fn save_controller_wheel(slices: &[WheelSlice]) -> Result<()> {
-        let path = Self::common_keybinds_path()?;
-        let mut toml_table: toml::value::Table = if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
-        } else {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
-            }
-            toml::value::Table::new()
-        };
-        let array = toml::Value::try_from(slices).context("Failed to serialize wheel slices")?;
-        toml_table.insert("controller_wheel".to_string(), array);
-        let contents =
-            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        write_atomic(&path, contents)
+        let (path, mut doc) = Self::load_keybinds_document()?;
+        Self::set_root_value_before_tables(
+            &mut doc,
+            "controller_wheel",
+            Self::wheel_slices_to_inline(slices),
+        );
+        write_atomic(&path, doc.to_string())
             .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
         Ok(())
     }
@@ -1820,6 +2089,132 @@ mod tests {
         }
     }
 
+    #[test]
+    fn nested_wheel_slices_round_trip_to_correct_parent() {
+        // A folder slice ("stance") followed by sibling leaves, where the
+        // folder's children must stay bound to the folder — not scatter
+        // onto later siblings. Regression for the keybinds.toml corruption
+        // where stance's stances landed on exp/health.
+        let stance = WheelSlice {
+            label: "stance".into(),
+            command: String::new(),
+            color: None,
+            slices: vec![
+                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), color: None, slices: vec![] },
+                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), color: None, slices: vec![] },
+            ],
+        };
+        let leaf = |l: &str| WheelSlice { label: l.into(), command: l.into(), color: None, slices: vec![] };
+        let wheel = vec![leaf("look"), stance, leaf("exp"), leaf("health")];
+
+        // Serialize the way the writer does, re-parse, and confirm the
+        // folder kept its two children and the leaves kept none.
+        let mut doc = toml_edit::DocumentMut::new();
+        doc.insert(
+            "controller_wheel",
+            toml_edit::Item::Value(Config::wheel_slices_to_inline(&wheel)),
+        );
+        let serialized = doc.to_string();
+        let reparsed: Vec<WheelSlice> = {
+            let doc: toml::Value = toml::from_str(&serialized).expect("valid TOML");
+            doc.get("controller_wheel").expect("wheel array").clone().try_into().expect("parse slices")
+        };
+        assert_eq!(reparsed.len(), 4, "top-level slice count preserved");
+        assert_eq!(reparsed[0].label, "look");
+        assert_eq!(reparsed[0].slices.len(), 0, "look is a leaf");
+        assert_eq!(reparsed[1].label, "stance");
+        assert_eq!(reparsed[1].slices.len(), 2, "stance keeps BOTH children");
+        assert_eq!(reparsed[1].slices[0].label, "offensive");
+        assert_eq!(reparsed[2].label, "exp");
+        assert_eq!(reparsed[2].slices.len(), 0, "exp is NOT a folder");
+        assert_eq!(reparsed[3].label, "health");
+        assert_eq!(reparsed[3].slices.len(), 0, "health is NOT a folder");
+    }
+
+    #[test]
+    fn wheel_written_at_root_survives_trailing_section() {
+        // A doc that ends in a nested section header ([controller_shift.
+        // south]) is exactly what bit the real config: a bare
+        // `controller_wheel = [...]` appended after it parses as a member
+        // of that section, so the loader finds no top-level wheel and falls
+        // back to defaults. set_root_value_before_tables must keep the key
+        // at document root.
+        let existing = "[controller_shift]\ndpad_up = \"x\"\n\n[controller_shift.south]\nmacro_text = \"stand\\r\"\n";
+        let mut doc: toml_edit::DocumentMut = existing.parse().unwrap();
+        let stance = WheelSlice {
+            label: "stance".into(), command: String::new(), color: None,
+            slices: vec![
+                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), color: None, slices: vec![] },
+                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), color: None, slices: vec![] },
+            ],
+        };
+        let wheel = vec![
+            WheelSlice { label: "look".into(), command: "look".into(), color: None, slices: vec![] },
+            stance,
+            WheelSlice { label: "exp".into(), command: "exp".into(), color: None, slices: vec![] },
+        ];
+        Config::set_root_value_before_tables(
+            &mut doc, "controller_wheel", Config::wheel_slices_to_inline(&wheel),
+        );
+        let out = doc.to_string();
+
+        // Parse like the loader does: top-level key must exist and be the
+        // full wheel (NOT nested under controller_shift.south).
+        let v: toml::Value = toml::from_str(&out).expect("valid TOML");
+        let arr = v.get("controller_wheel").expect("controller_wheel at ROOT");
+        assert!(
+            v.get("controller_shift")
+                .and_then(|s| s.get("south"))
+                .and_then(|s| s.get("controller_wheel"))
+                .is_none(),
+            "wheel must NOT nest under the trailing section"
+        );
+        let slices: Vec<WheelSlice> = arr.clone().try_into().expect("parse slices");
+        assert_eq!(slices.len(), 3);
+        assert_eq!(slices[1].label, "stance");
+        assert_eq!(slices[1].slices.len(), 2, "stance keeps its children");
+        assert_eq!(slices[2].label, "exp");
+        assert_eq!(slices[2].slices.len(), 0, "exp stays a leaf");
+        // The trailing section survived intact.
+        assert_eq!(
+            v.get("controller_shift").and_then(|s| s.get("south")).and_then(|s| s.get("macro_text")).and_then(|m| m.as_str()),
+            Some("stand\r")
+        );
+    }
+
+    #[test]
+    fn wheel_meta_round_trips_and_prunes() {
+        // A [controller_wheels_meta.NAME] table deserializes to WheelMeta.
+        let toml_src = r#"
+[controller_wheels_meta.combat]
+button = "r2"
+stick = "left"
+
+[controller_wheels_meta.exits]
+stick = "right"
+"#;
+        let value: toml::Value = toml::from_str(toml_src).unwrap();
+        let map: HashMap<String, WheelMeta> = value
+            .get("controller_wheels_meta")
+            .unwrap()
+            .clone()
+            .try_into()
+            .unwrap();
+        assert_eq!(map["combat"].button.as_deref(), Some("r2"));
+        assert_eq!(map["combat"].stick.as_deref(), Some("left"));
+        assert_eq!(map["exits"].button, None);
+        assert_eq!(map["exits"].stick.as_deref(), Some("right"));
+
+        // Absent fields default to None (old configs with no meta).
+        let empty: HashMap<String, WheelMeta> = HashMap::new();
+        assert!(empty.get("combat").is_none());
+
+        // An all-None meta serializes to an empty table (both fields skip).
+        let bare = WheelMeta::default();
+        let serialized = toml::Value::try_from(&bare).unwrap();
+        assert_eq!(serialized.as_table().map(|t| t.len()), Some(0));
+    }
+
     // ===========================================
     // parse_key_string - basic keys
     // ===========================================
@@ -2475,3 +2870,5 @@ mod tests {
         assert_eq!(action, cloned);
     }
 }
+
+

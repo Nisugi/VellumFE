@@ -777,6 +777,10 @@ function handleMessage(msg) {
     case "macros": macros = msg.d; renderMacros(); break;
     case "wheels":
       wheels = { default: [], named: {}, ...(msg.d || {}) };
+      // Input feel + per-wheel aim stick ride along so the phone matches
+      // the desktop wheel (one source of truth: host keybinds.toml).
+      wheelTuning = { ...WHEEL_TUNING_DEFAULTS, ...(wheels.tuning || {}) };
+      wheelStick = wheels.wheel_stick || {};
       if (gpWheel) renderWheel();
       break;
     case "session": setSession(msg.d); break;
@@ -1381,11 +1385,37 @@ function gpStickSectorFor(x, yUp, previous) {
 // (or fires a leaf), East backs up a level, release fires the aimed leaf.
 
 let wheels = { default: [], named: {} };
-let gpWheel = null; // { key, path: [indexes], aimed: index|null }
-// South already fired a leaf during this hold of the wheel button; the
-// wheel stays closed (and the stick stays quiet) until a fresh hold, so
-// one hold never fires twice or walks on release.
+// Input-feel tuning + per-wheel aim stick, pushed by the host in the
+// `wheels` message (mirrors [controller_tuning] / per-wheel stick). The
+// defaults reproduce the historical feel until the host pushes real
+// values.
+const WHEEL_TUNING_DEFAULTS = {
+  movement_stick: "left",
+  back_slice: "down",
+  deadzone: 50,
+  aim_dwell_ms: 150,
+  nav_dwell_ms: 150,
+  fire_debounce_ms: 300,
+  release_grace_ms: 40,
+};
+let wheelTuning = { ...WHEEL_TUNING_DEFAULTS };
+let wheelStick = {}; // wheel name ("default" = default wheel) -> "left"|"right"
+// Dwell wheel state. `aimed` is the committed display slice (release
+// fires it); `candidate`/`candidateSince` track the slice the stick is
+// over but hasn't dwelt on yet; `rearmUntilCenter` blocks a new dwell
+// until the stick re-neutralizes after an auto descend/ascend (so a
+// still-deflected stick can't chain through folders). Indices are into
+// the DISPLAYED ring (Back slice injected inside folders).
+let gpWheel = null; // { key, path, aimed, candidate, candidateSince, rearmUntilCenter }
+// A leaf already fired during this hold of the wheel button; the wheel
+// stays closed (and the stick stays quiet) until a fresh hold, so one
+// hold never fires twice or walks on release.
 let gpWheelFired = false;
+// After a wheel closes with the aim stick still deflected, its normal
+// function (scroll / interact cycle) stays suppressed until it recenters.
+let gpAimRecenterNeeded = false;
+// Sentinel command/marker for the injected Back slice.
+const WHEEL_BACK = " __wheel_back__";
 
 // The wheel key of a bind value: "" for "wheel", the name for
 // "wheel:<name>", null for anything that is not a wheel bind.
@@ -1441,12 +1471,64 @@ function wheelLevelSlices(key, path) {
 }
 
 // Which slice the stick aims at: slice 0 centered at the top, clockwise.
-// Null inside the dead zone — mirrors the desktop wheel's geometry.
-function wheelSliceAt(x, yUp, count) {
-  if (!count || Math.hypot(x, yUp) < 0.5) return null;
+// Null inside the dead zone (`deadzone`, 0..1) — mirrors the desktop
+// wheel's geometry.
+function wheelSliceAt(x, yUp, count, deadzone) {
+  const dz = deadzone == null ? 0.5 : deadzone;
+  if (!count || Math.hypot(x, yUp) < dz) return null;
   const step = 360 / count;
   const angle = (Math.atan2(x, yUp) * 180) / Math.PI;
   return Math.floor((angle + 360 + step / 2) / step) % count;
+}
+
+// Wheel dead zone as a 0..1 stick magnitude (percent in tuning).
+function wheelDeadzone() {
+  return Math.min(0.99, Math.max(0, (wheelTuning.deadzone || 0) / 100));
+}
+
+// Display index (0 = top, cw) whose seat is nearest a screen-anchor word,
+// for `count` even seats. Places the reserved Back slice at its side.
+function anchorDisplayIndex(anchor, count) {
+  if (!count) return 0;
+  const map = {
+    up: [0, 1], down: [0, -1], left: [-1, 0], right: [1, 0],
+    "up-left": [-1, 1], "up-right": [1, 1],
+    "down-left": [-1, -1], "down-right": [1, -1],
+  };
+  const [ax, ay] = map[anchor] || [0, -1];
+  return wheelSliceAt(ax, ay, count, 0) || 0;
+}
+
+// The displayed ring for a wheel level: the real slices plus, inside a
+// folder, a synthetic Back slice at the configured anchor. Returns
+// { slices, realIndex } where realIndex[d] is the real slice index for
+// display index d, or null for the Back slice. Mirrors WheelView (Rust).
+function wheelView(key, path) {
+  const real = wheelLevelSlices(key, path);
+  if (!Array.isArray(real)) return null;
+  if (!path.length) {
+    return { slices: real.slice(), realIndex: real.map((_, i) => i) };
+  }
+  const count = real.length + 1;
+  const back = { label: "◂ Back", command: WHEEL_BACK };
+  const slices = real.slice();
+  slices.push(back);
+  const realIndex = real.map((_, i) => i);
+  realIndex.push(null);
+  // Back is last; rotate right so it lands at the anchor seat.
+  const target = anchorDisplayIndex(wheelTuning.back_slice, count);
+  const shift = (target + 1) % count;
+  rotateRight(slices, shift);
+  rotateRight(realIndex, shift);
+  return { slices, realIndex };
+}
+
+function rotateRight(arr, n) {
+  const len = arr.length;
+  if (!len) return;
+  n = ((n % len) + len) % len;
+  const tail = arr.splice(len - n, n);
+  arr.unshift(...tail);
 }
 
 function sendWheelPick(key, path) {
@@ -1474,7 +1556,8 @@ function hideWheel() {
 // center, the aimed slice highlighted; tinted wedges dim at rest and
 // brighten while aimed (matches the desktop wheel).
 function renderWheel() {
-  const slices = gpWheel && wheelLevelSlices(gpWheel.key, gpWheel.path);
+  const view = gpWheel && wheelView(gpWheel.key, gpWheel.path);
+  const slices = view && view.slices;
   if (!slices || !slices.length) {
     hideWheel();
     return;
@@ -1564,12 +1647,14 @@ function renderWheel() {
   );
   const aimedSlice = aimed !== null ? slices[aimed] : null;
   const hint = aimedSlice
-    ? (aimedSlice.slices || []).length
-      ? "A opens"
-      : aimedSlice.label
+    ? aimedSlice.command === WHEEL_BACK
+      ? "dwell to go back"
+      : (aimedSlice.slices || []).length
+        ? "dwell to open"
+        : "release to fire"
     : inFolder
-      ? "A picks · B backs up"
-      : "aim with the stick";
+      ? "dwell · release fires · center to cancel"
+      : "aim, dwell, release to fire";
   const hintText = wheelSvgEl(
     "text",
     {
@@ -1810,7 +1895,156 @@ function interactActivate() {
 const interactBar = document.getElementById("interact-bar");
 let interactNoteTimer = 0;
 
+// Interact-bar placement (persisted per device in uiPrefs.interactPos):
+//   { mode: "dock", edge: "top"|"bottom" }        full-width along an edge
+//   { mode: "float", x: 0..1, y: 0..1, w: px }    free-floating, dropped
+// Default is a bottom dock (the historical position). Long-pressing the
+// bar drags it; dropping near the top/bottom edge snaps to a dock, else
+// it free-floats where dropped. Taps on the buttons still change target.
+function defaultInteractPos() {
+  return { mode: "dock", edge: "bottom" };
+}
+
+function applyInteractPos() {
+  const p = (uiPrefs.interactPos && uiPrefs.interactPos.mode)
+    ? uiPrefs.interactPos
+    : defaultInteractPos();
+  const s = interactBar.style;
+  if (p.mode === "float") {
+    // A floating bar is a compact, content-width puck (CSS .floating sets
+    // width:max-content) so it can move in both axes; docked stays full
+    // width for easy tapping. Clamp the anchor into the viewport.
+    interactBar.classList.add("floating");
+    s.width = "";
+    s.right = "auto";
+    s.bottom = "auto";
+    s.left = `${Math.min(0.98, Math.max(0.02, p.x != null ? p.x : 0.5)) * 100}%`;
+    s.top = `${Math.min(0.95, Math.max(0.02, p.y != null ? p.y : 0.85)) * 100}%`;
+  } else {
+    interactBar.classList.remove("floating");
+    s.width = "";
+    s.left = "8px";
+    s.right = "8px";
+    if (p.edge === "top") {
+      s.top = "8px";
+      s.bottom = "auto";
+    } else {
+      s.bottom = "8px";
+      s.top = "auto";
+    }
+  }
+}
+
+// Long-press to drag; a plain tap falls through to the buttons. Mirrors
+// the floating-button gesture (hold timer + movement threshold + capture),
+// then snaps to an edge dock or free-floats on drop.
+(function attachInteractDrag() {
+  // Drag is MOVEMENT-driven, not hold-driven: a tap (down+up with no real
+  // movement) falls through to the buttons/target-select; moving the
+  // finger past MOVE_EPS starts a drag. (An earlier 300ms hold gate made
+  // a natural quick grab-and-drag register as a tap — the bar never moved,
+  // which read as "stuck".)
+  const MOVE_EPS = 8; // px of movement before a press becomes a drag
+  const EDGE_PX = 64; // finger within this of a container edge on release = dock
+  let tracking = false; // pointer is down on the bar, watching for movement
+  let dragging = false;
+  let pointerId = null;
+  let startX = 0, startY = 0;
+  let lastPointerY = 0; // live finger Y, for edge-distance snap on release
+
+  const parentRect = () => interactBar.offsetParent
+    ? interactBar.offsetParent.getBoundingClientRect()
+    : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+
+  interactBar.addEventListener("pointerdown", (ev) => {
+    tracking = true;
+    dragging = false;
+    pointerId = ev.pointerId;
+    startX = ev.clientX;
+    startY = ev.clientY;
+    lastPointerY = ev.clientY;
+  });
+
+  interactBar.addEventListener("pointermove", (ev) => {
+    if (!tracking && !dragging) return;
+    lastPointerY = ev.clientY;
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    if (!dragging) {
+      if (Math.hypot(dx, dy) < MOVE_EPS) return; // not enough movement = still a tap
+      dragging = true;
+      // .floating shrinks the bar to content width (a movable puck) so it
+      // tracks the finger in both axes instead of staying full-width.
+      interactBar.classList.add("dragging", "floating");
+      try { interactBar.setPointerCapture(ev.pointerId); } catch { /* ok */ }
+      // Clear the docked anchors so only `top` drives vertical position.
+      // Leaving `bottom` (or `right`) set alongside `top`/`left` makes CSS
+      // stretch the bar to span between both anchors during the drag.
+      interactBar.style.width = "";
+      interactBar.style.right = "auto";
+      interactBar.style.bottom = "auto";
+    }
+    const r = parentRect();
+    const w = interactBar.offsetWidth;
+    const h = interactBar.offsetHeight;
+    // Anchor by the bar's top-left, keeping the grab point under the finger.
+    let x = (ev.clientX - r.left - w / 2) / r.width;
+    let y = (ev.clientY - r.top - h / 2) / r.height;
+    x = Math.min(0.98, Math.max(0.02, x));
+    y = Math.min(0.95, Math.max(0.02, y));
+    interactBar.style.left = `${x * 100}%`;
+    interactBar.style.top = `${y * 100}%`;
+    interactBar.dataset.dx = x;
+    interactBar.dataset.dy = y;
+  });
+
+  const endDrag = (ev) => {
+    tracking = false;
+    pointerId = null;
+    if (dragging) {
+      // Snap by the finger's distance from an edge of the bar's OWN
+      // positioning container (#pane-wrap), not the window — the bar sits
+      // below the header/chips, so window.innerHeight math was off and a
+      // bottom-docked bar kept re-docking. Measure release-Y inside the
+      // container; dock only within EDGE_PX of its top/bottom edge.
+      const r = parentRect();
+      // Prefer the release event's own Y; fall back to the last move.
+      const rawY = (ev && typeof ev.clientY === "number") ? ev.clientY : lastPointerY;
+      const relY = rawY - r.top; // finger Y within the container
+      if (relY <= EDGE_PX) {
+        uiPrefs.interactPos = { mode: "dock", edge: "top" };
+      } else if (relY >= r.height - EDGE_PX) {
+        uiPrefs.interactPos = { mode: "dock", edge: "bottom" };
+      } else {
+        uiPrefs.interactPos = {
+          mode: "float",
+          x: parseFloat(interactBar.dataset.dx || "0.5"),
+          y: parseFloat(interactBar.dataset.dy || "0.85"),
+        };
+      }
+      saveUiPrefs();
+      interactBar.classList.remove("dragging");
+      applyInteractPos();
+    }
+    // Clear on a timeout so the click that follows pointerup still sees
+    // dragging=true and the buttons skip activation on a drag-release.
+    setTimeout(() => { dragging = false; }, 0);
+  };
+  interactBar.addEventListener("pointerup", endDrag);
+  interactBar.addEventListener("pointercancel", endDrag);
+  interactBar.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  // Swallow a button tap that concludes a drag.
+  interactBar.addEventListener("click", (ev) => {
+    if (dragging) { ev.stopPropagation(); ev.preventDefault(); }
+  }, true);
+
+  // Expose so drag-end/apply can be reused; also apply the saved position
+  // once at startup.
+  window.__applyInteractPos = applyInteractPos;
+})();
+
 function flashInteractNote(text) {
+  applyInteractPos();
   interactBar.hidden = false;
   document.getElementById("ia-cat").textContent = "";
   document.getElementById("ia-entity").textContent = text;
@@ -1835,6 +2069,7 @@ function renderInteract() {
     cat.textContent = INTERACT_LABELS[interact.category];
     entity.textContent = "nothing here";
   }
+  applyInteractPos();
   interactBar.hidden = false;
 }
 
@@ -1864,6 +2099,8 @@ function pollGamepads() {
     stopGamepadLoop();
     gpStickSector = null;
     gpWheel = null;
+    gpWheelFired = false;
+    gpAimRecenterNeeded = false;
     hideWheel();
     return;
   }
@@ -1877,53 +2114,73 @@ function pollGamepads() {
   }
 
   const axes = pads[0].axes || [];
-  const stickX = axes[0] || 0;
-  const stickYUp = -(axes[1] || 0);
+  const leftX = axes[0] || 0;
+  const leftYUp = -(axes[1] || 0);
+  const rightXRaw = axes[2] || 0;
+  const rightYUp = -(axes[3] || 0);
 
-  // Radial wheel: while a wheel-bound button is held, the left stick aims
-  // a slice; releasing fires the aimed leaf. Owns the stick while active
-  // (no movement) and swallows unrelated buttons. A sheet stealing the
-  // screen cancels instead of firing.
+  // Assign stick roles from movement_stick: the movement stick walks the
+  // compass; the other ("aim" stick) aims the wheel, scrolls, and does
+  // the interact cycling.
+  const moveOnRight = wheelTuning.movement_stick === "right";
+  const stickX = moveOnRight ? rightXRaw : leftX;
+  const stickYUp = moveOnRight ? rightYUp : leftYUp;
+
+  // Radial wheel: while a wheel-bound button is held, the aim stick aims
+  // and a dwell commits a slice; releasing fires the committed leaf.
+  // A sheet stealing the screen cancels instead of firing.
   const heldWheelKey =
     controllerPrefs.enabled && sheet.hidden ? gpHeldWheelKey() : null;
+  // Which stick aims: a held wheel's `stick` override wins, else the
+  // default aim stick (the non-movement one).
+  const wheelName = heldWheelKey === "" ? "default" : heldWheelKey;
+  const override = wheelName != null ? wheelStick[wheelName] : null;
+  const aimOnRight = override === "right" ? true
+    : override === "left" ? false
+    : !moveOnRight;
+  const aimX = aimOnRight ? rightXRaw : leftX;
+  const aimYUp = aimOnRight ? rightYUp : leftYUp;
+  const aimIsMoveStick = aimOnRight === moveOnRight;
+
   if (heldWheelKey === null && gpWheelFired) {
-    // Fresh hold re-arms after a South-fired leaf; seed the movement
-    // hysteresis so the still-deflected stick doesn't walk on release.
+    // Fresh hold re-arms after a fired leaf; seed the movement hysteresis
+    // so a still-deflected movement stick doesn't walk on release.
     gpWheelFired = false;
     gpStickSector = gpStickSectorFor(stickX, stickYUp, gpStickSector);
   }
   if (!gpWheel && heldWheelKey !== null && !gpWheelFired) {
-    gpWheel = { key: heldWheelKey, path: [], aimed: null };
+    gpWheel = {
+      key: heldWheelKey, path: [], aimed: null,
+      candidate: null, candidateSince: 0, rearmUntilCenter: false,
+    };
     renderWheel();
   } else if (gpWheel && heldWheelKey === null) {
+    // Release: fire the committed leaf (via host, with debounce).
     const { key, path, aimed } = gpWheel;
     gpWheel = null;
     hideWheel();
     if (sheet.hidden && aimed !== null) {
-      const level = wheelLevelSlices(key, path);
-      const slice = level && level[aimed];
-      if (slice && !(slice.slices || []).length) {
-        sendWheelPick(key, [...path, aimed]);
+      const view = wheelView(key, path);
+      const real = view && view.realIndex[aimed];
+      const slice = view && real != null ? view.slices[aimed] : null;
+      if (slice && slice.command !== WHEEL_BACK && !(slice.slices || []).length) {
+        wheelFire(key, [...path, real]);
       }
     }
-    // The stick that aimed the slice is usually still deflected; seed the
-    // movement hysteresis so firing the wheel doesn't also walk.
     gpStickSector = gpStickSectorFor(stickX, stickYUp, gpStickSector);
+    gpAimRecenterNeeded = true;
   } else if (gpWheel) {
-    const count = (wheelLevelSlices(gpWheel.key, gpWheel.path) || []).length;
-    const aimed = wheelSliceAt(stickX, stickYUp, count);
-    if (aimed !== null && aimed !== gpWheel.aimed) {
-      gpWheel.aimed = aimed;
-      renderWheel();
-    }
+    wheelAim(aimX, aimYUp);
   }
 
-  // While a South-fired hold is still down the stick stays the wheel's:
-  // no compass movement until the button is released.
-  if (!gpWheel && !gpWheelFired) {
+  // Compass movement. Suppressed while a wheel owns the aim stick *and*
+  // that aim stick is the movement stick, plus the fired-hold tail. When
+  // the wheel aims with the other stick, walking stays live.
+  const wheelUp = !!gpWheel || gpWheelFired;
+  const wheelOwnsMove = wheelUp && aimIsMoveStick;
+  if (!wheelOwnsMove) {
     const sector = gpStickSectorFor(stickX, stickYUp, gpStickSector);
     if (sector !== gpStickSector) {
-      // Quiet while any sheet is open or bindings are disabled.
       if (sector !== null && sheet.hidden && controllerPrefs.enabled) {
         sendCommand(GP_STICK_DIRS[sector]);
       }
@@ -1931,15 +2188,19 @@ function pollGamepads() {
     }
   }
 
-  // Right stick: in interact mode it cycles the focus — up/down switch
-  // categories, left/right step entities, one step per deflection with
-  // the same hysteresis as movement. Otherwise it scrolls the story
-  // (quadratic speed curve; stick up scrolls up). Quiet while a sheet
-  // is open.
-  const rightX = axes[2] || 0;
-  const rightY = axes[3] || 0;
-  if (interact && sheet.hidden) {
-    const dir = gpFourWay(rightX, -rightY, gpRightDir);
+  // Aim stick: interact-mode focus cycling, else story scroll. Silenced
+  // while it aims an open wheel, and until it recenters after a wheel
+  // closes (so leftover deflection can't scroll or cycle).
+  if (gpAimRecenterNeeded && Math.hypot(aimX, aimYUp) < 0.35) {
+    gpAimRecenterNeeded = false;
+  }
+  const aimOwnedByWheel = !!gpWheel || gpWheelFired || gpAimRecenterNeeded;
+  if (aimOwnedByWheel) {
+    // Keep the interact hysteresis synced so resuming doesn't fire a
+    // stale cycle step.
+    gpRightDir = gpFourWay(aimX, aimYUp, gpRightDir);
+  } else if (interact && sheet.hidden) {
+    const dir = gpFourWay(aimX, aimYUp, gpRightDir);
     if (dir !== gpRightDir) {
       if (dir === "up") interactCategoryMove(-1);
       else if (dir === "down") interactCategoryMove(1);
@@ -1947,9 +2208,75 @@ function pollGamepads() {
       else if (dir === "right") interactMove(1);
       gpRightDir = dir;
     }
-  } else if (Math.abs(rightY) > 0.25 && sheet.hidden) {
-    pane.scrollBy(0, rightY * Math.abs(rightY) * 40);
+  } else if (Math.abs(aimYUp) > 0.25 && sheet.hidden) {
+    // Stick up scrolls up (negative delta); quadratic speed curve.
+    pane.scrollBy(0, -aimYUp * Math.abs(aimYUp) * 40);
   }
+}
+
+// Advance the dwell state machine for one frame while the wheel is up and
+// the aim stick is at (x, yUp). Mirrors the desktop wheel_aim: commit a
+// leaf after aim_dwell_ms, auto-descend a folder / auto-ascend via Back
+// after nav_dwell_ms; the recenter latch blocks chaining. Indices are
+// display indices (Back injected).
+function wheelAim(x, yUp) {
+  const view = wheelView(gpWheel.key, gpWheel.path);
+  if (!view) return;
+  const dz = wheelDeadzone();
+  const aimMs = wheelTuning.aim_dwell_ms || 0;
+  const navMs = wheelTuning.nav_dwell_ms || 0;
+  const candidate = wheelSliceAt(x, yUp, view.slices.length, dz);
+  const centered = candidate === null;
+
+  // Re-neutralizing is the only thing that clears the latch (keyed on
+  // physical stick state, never a display index).
+  if (gpWheel.rearmUntilCenter && centered) gpWheel.rearmUntilCenter = false;
+
+  if (gpWheel.candidate !== candidate) {
+    gpWheel.candidate = candidate;
+    gpWheel.candidateSince = performance.now();
+    gpWheel.aimed = null; // drop a stale commit the moment the stick moves
+    renderWheel();
+  }
+  if (gpWheel.rearmUntilCenter || candidate === null) return;
+
+  const dwelt = performance.now() - gpWheel.candidateSince;
+  const real = view.realIndex[candidate];
+  if (real == null) {
+    // Back slice: auto-ascend.
+    if (dwelt >= navMs) {
+      gpWheel.path.pop();
+      gpWheel.aimed = null;
+      gpWheel.candidate = null;
+      gpWheel.rearmUntilCenter = true;
+      renderWheel();
+    }
+    return;
+  }
+  const slice = view.slices[candidate];
+  if ((slice.slices || []).length) {
+    if (dwelt >= navMs) {
+      gpWheel.path.push(real);
+      gpWheel.aimed = null;
+      gpWheel.candidate = null;
+      gpWheel.rearmUntilCenter = true;
+      renderWheel();
+    }
+  } else if (dwelt >= aimMs && gpWheel.aimed !== candidate) {
+    gpWheel.aimed = candidate; // commit; release fires
+    renderWheel();
+  }
+}
+
+// Send a wheel pick to the host (commands + <target_id> resolve there),
+// honoring a fire debounce so a bounced button can't double-send.
+let gpWheelLastFire = 0;
+function wheelFire(key, path) {
+  const debounce = Math.max(50, wheelTuning.fire_debounce_ms || 0);
+  const now = performance.now();
+  if (now - gpWheelLastFire < debounce) return;
+  gpWheelLastFire = now;
+  sendWheelPick(key, path);
 }
 
 // Dominant-axis four-way read of a stick with the movement hysteresis:
@@ -1982,30 +2309,51 @@ function handleGamepadButton(index) {
   const name = GP_BUTTON_NAMES[index];
   if (!name) return;
 
-  // The wheel owns the pad while it is up: South opens the aimed folder
-  // (or fires a leaf immediately), East backs up a level; everything
-  // else is swallowed. The wheel button itself re-opens the wheel from
-  // the poll loop if it is still held.
+  // The wheel owns the pad while it is up. Dwell drives navigation and
+  // commit; South/East stay as optional accelerators — South fires the
+  // slice under the stick now (or descends a folder / ascends via Back),
+  // East backs up a level. Everything else is swallowed.
   if (gpWheel) {
     if (name === "south") {
-      const { key, path, aimed } = gpWheel;
-      if (aimed === null) return;
-      const slice = (wheelLevelSlices(key, path) || [])[aimed];
-      if (!slice) return;
+      const { key, path } = gpWheel;
+      const display = gpWheel.candidate != null ? gpWheel.candidate : gpWheel.aimed;
+      if (display == null) return;
+      const view = wheelView(key, path);
+      if (!view) return;
+      const real = view.realIndex[display];
+      if (real == null) {
+        // Back slice.
+        if (gpWheel.path.length) {
+          gpWheel.path.pop();
+          gpWheel.aimed = null;
+          gpWheel.candidate = null;
+          gpWheel.rearmUntilCenter = true;
+          renderWheel();
+        }
+        return;
+      }
+      const slice = view.slices[display];
       if ((slice.slices || []).length) {
-        gpWheel.path.push(aimed);
+        gpWheel.path.push(real);
         gpWheel.aimed = null;
+        gpWheel.candidate = null;
+        gpWheel.rearmUntilCenter = true;
         renderWheel();
       } else {
         gpWheel = null;
         gpWheelFired = true;
+        gpAimRecenterNeeded = true;
         hideWheel();
-        sendWheelPick(key, [...path, aimed]);
+        wheelFire(key, [...path, real]);
       }
     } else if (name === "east") {
-      gpWheel.path.pop();
-      gpWheel.aimed = null;
-      renderWheel();
+      if (gpWheel.path.length) {
+        gpWheel.path.pop();
+        gpWheel.aimed = null;
+        gpWheel.candidate = null;
+        gpWheel.rearmUntilCenter = true;
+        renderWheel();
+      }
     }
     return;
   }
@@ -2386,7 +2734,9 @@ let uiPrefs = { theme: "dark", hide: {} };
 try {
   const stored = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || "{}");
   if (stored && typeof stored === "object") {
-    uiPrefs = { theme: stored.theme || "dark", hide: stored.hide || {} };
+    // Spread so per-device extras (opacity, interactPos, …) survive a
+    // reload; only theme/hide have hard defaults.
+    uiPrefs = { ...stored, theme: stored.theme || "dark", hide: stored.hide || {} };
   }
 } catch { /* defaults */ }
 // The bottom macro rail duplicates the tray + floating buttons on very
@@ -2425,6 +2775,7 @@ const OPACITY_SETTINGS = [
   ["float", "Floating buttons", "--float-alpha", 82],
   ["drawer", "Side drawers", "--drawer-alpha", 93],
   ["sheet", "Bottom menus", "--sheet-alpha", 100],
+  ["interact", "Interact bar", "--interact-alpha", 93],
 ];
 
 const CHROME_TOGGLES = [
@@ -2461,6 +2812,7 @@ function applyUiPrefs() {
     const pct = Number.isFinite(opacity[key]) ? opacity[key] : dflt;
     root.style.setProperty(cssVar, String(Math.min(100, Math.max(20, pct)) / 100));
   }
+  applyInteractPos();
 }
 applyUiPrefs();
 

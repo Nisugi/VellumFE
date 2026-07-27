@@ -12,6 +12,7 @@
 //! GameController-framework bridge).
 
 use super::VellumGuiApp;
+use crate::config::WheelSlice;
 use crate::data::input::{KeyCode, KeyEvent, KeyModifiers};
 use crate::data::ui_state::InputMode;
 use eframe::egui;
@@ -104,23 +105,44 @@ impl VellumGuiApp {
             });
         }
 
-        // Left stick: 8-way compass movement, one command per deflection.
-        // Right stick: analog story-window scroll (speed follows deflection).
-        let (stick, right_x, right_y) = self
+        // Read both sticks, then assign roles from [controller_tuning]
+        // movement_stick: the movement stick walks the compass; the other
+        // ("aim" stick) aims the wheel, scrolls the story, and does the
+        // interact-mode cycling. y_up follows gilrs (positive = up).
+        let (left_xy, right_xy) = self
             .gamepad
             .as_ref()
             .and_then(|g| g.gamepads().next())
             .map(|(_, pad)| {
                 (
-                    Some((
+                    (
                         pad.value(gilrs::Axis::LeftStickX),
                         pad.value(gilrs::Axis::LeftStickY),
-                    )),
-                    pad.value(gilrs::Axis::RightStickX),
-                    pad.value(gilrs::Axis::RightStickY),
+                    ),
+                    (
+                        pad.value(gilrs::Axis::RightStickX),
+                        pad.value(gilrs::Axis::RightStickY),
+                    ),
                 )
             })
-            .unwrap_or((None, 0.0, 0.0));
+            .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
+        let move_on_right = self.app_core.config.controller_tuning.movement_stick == "right";
+        // `stick` is the movement stick; `aim_x/aim_y` the default aiming
+        // stick (the non-movement one). A wheel whose meta names a `stick`
+        // overrides the aim stick for its duration (resolved below); when
+        // that override picks the movement stick, movement is silenced by
+        // the wheel-owns-move guard, so aiming never also walks.
+        let stick = Some(if move_on_right { right_xy } else { left_xy });
+        // Which stick aims: a held wheel's `stick` override wins (true =
+        // right), else the default aim stick (the non-movement one).
+        let wheel_override = self
+            .held_wheel_key()
+            .and_then(|key| self.wheel_aim_stick(&key));
+        let aim_on_right = resolve_aim_stick(move_on_right, wheel_override);
+        let (aim_x, aim_y) = if aim_on_right { right_xy } else { left_xy };
+        // True when the in-effect aim stick is also the movement stick, so
+        // movement must be silenced while that wheel is open.
+        let aim_is_move_stick = aim_on_right == move_on_right;
 
         for button in pressed {
             // The controller editor's "press a button" capture wins over
@@ -133,78 +155,85 @@ impl VellumGuiApp {
             self.handle_gamepad_button(button, ctx);
         }
 
-        // Radial wheel: while a wheel button is held, the left stick aims
-        // a slice; South opens a folder slice, East backs up, releasing
-        // fires the aimed leaf. Owns the stick while active (no movement)
-        // and swallows unrelated buttons.
+        // Radial wheel: while a wheel button is held, the aim stick points
+        // at a slice and a dwell commits it. Dwelling a folder auto-
+        // descends; dwelling the reserved Back slice auto-ascends;
+        // releasing fires the committed leaf. Returning the stick to
+        // center (nothing committed) then releasing cancels. The wheel
+        // owns the aim stick while up (that stick's normal job — movement
+        // if it is the movement stick, or scroll — is silenced) and
+        // swallows unrelated buttons.
         let held_key = self.held_wheel_key();
         if held_key.is_none() && self.gp_wheel_fired {
-            // Fresh hold re-arms the wheel after a South-fired leaf; seed
-            // the movement hysteresis so the still-deflected stick doesn't
-            // walk on the release frame.
+            // Fresh hold re-arms after a fired leaf; seed the movement
+            // hysteresis so a still-deflected movement stick doesn't walk
+            // on the release frame.
             self.gp_wheel_fired = false;
             self.gp_stick_sector =
                 stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
         }
         match (self.gp_wheel.is_some(), held_key) {
             (false, Some(key)) => {
-                // A South-fired leaf keeps the wheel closed for the rest
-                // of this hold — otherwise it would instantly reopen with
-                // the stick still aimed and release would fire twice.
+                // A fired leaf keeps the wheel closed for the rest of this
+                // hold — otherwise it would instantly reopen with the stick
+                // still aimed and could fire again.
                 if !self.gp_wheel_fired {
                     self.gp_wheel = Some(WheelUi {
                         key,
                         path: Vec::new(),
                         aimed: None,
+                        candidate: None,
+                        candidate_since: None,
+                        rearm_until_center: false,
                     });
                     self.app_core.needs_render = true;
                 }
             }
             (true, None) => {
+                // Release: fire the committed leaf, if any and if the
+                // debounce window has elapsed.
                 let ui = self.gp_wheel.take().expect("just matched Some");
-                if let Some(index) = ui.aimed {
-                    if let Some(slice) = self
-                        .wheel_level_slices(&ui.key, &ui.path)
-                        .and_then(|level| level.into_iter().nth(index))
-                    {
-                        if !slice.is_folder() && !slice.command.is_empty() {
-                            self.dispatch_command(slice.command);
+                if let Some(display) = ui.aimed {
+                    let view = self.wheel_view(&ui.key, &ui.path);
+                    // `view.slices` is the DISPLAY-ordered (Back-injected,
+                    // rotated) ring, so index it by `display`, not the real
+                    // index — indexing by `real` double-applied the rotation
+                    // and fired the wrong slice inside a rotated folder.
+                    if let Some(Some(_real)) = view.as_ref().and_then(|v| v.real(display)) {
+                        if let Some(slice) =
+                            view.as_ref().and_then(|v| v.slices.get(display)).cloned()
+                        {
+                            if !slice.is_folder() && !slice.command.is_empty() {
+                                self.wheel_fire(slice.command);
+                            }
                         }
                     }
                 }
-                // The stick that aimed the slice is usually still deflected
-                // on release; seed the movement hysteresis so firing the
-                // wheel doesn't also walk a compass direction.
+                // The aim stick is usually still deflected on release; if it
+                // is also the movement stick, seed the hysteresis so firing
+                // doesn't also walk. And require the aim stick to return to
+                // center before its scroll / interact-cycle function resumes,
+                // so the leftover deflection can't scroll or cycle.
                 self.gp_stick_sector =
                     stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
+                self.gp_aim_recenter_needed = true;
                 self.app_core.needs_render = true;
             }
             (true, Some(_)) => {
-                if let Some((x, y_up)) = stick {
-                    let (key, path) = {
-                        let ui = self.gp_wheel.as_ref().expect("just matched Some");
-                        (ui.key.clone(), ui.path.clone())
-                    };
-                    let count = self
-                        .wheel_level_slices(&key, &path)
-                        .map(|level| level.len())
-                        .unwrap_or(0);
-                    let aimed = wheel_slice_at(x, y_up, count);
-                    if let Some(ui) = self.gp_wheel.as_mut() {
-                        if aimed.is_some() && ui.aimed != aimed {
-                            ui.aimed = aimed;
-                            self.app_core.needs_render = true;
-                        }
-                    }
-                }
+                self.wheel_aim(aim_x, aim_y);
             }
             (false, None) => {}
         }
 
-        // While a South-fired hold is still down the stick stays the
-        // wheel's: no compass movement until the button is released.
-        if let Some((x, y_up)) = stick.filter(|_| self.gp_wheel.is_none() && !self.gp_wheel_fired)
-        {
+        // Compass movement. Suppressed while a wheel owns the aim stick
+        // *and* that aim stick is the movement stick (aim_is_move_stick),
+        // plus the fired-hold tail. When the wheel aims with the other
+        // stick, walking stays live even with the wheel up — matching
+        // Niffy's "movement stays on the left" case (e.g. an exits wheel
+        // that aims with the right stick).
+        let wheel_up = self.gp_wheel.is_some() || self.gp_wheel_fired;
+        let wheel_owns_move = wheel_up && aim_is_move_stick;
+        if let Some((x, y_up)) = stick.filter(|_| !wheel_owns_move) {
             let sector = stick_sector(x, y_up, self.gp_stick_sector);
             if sector != self.gp_stick_sector {
                 // Movement while a menu is open would be disorienting; the
@@ -221,14 +250,27 @@ impl VellumGuiApp {
             }
         }
 
-        // Right stick: in interact mode it cycles the focus — up/down
-        // switch categories, left/right step entities, one step per
-        // deflection with the movement hysteresis. Otherwise up/down
-        // scrolls the main story window; quadratic curve so small
-        // deflections creep and full tilt flies. Stick up scrolls up
-        // (negative offset delta).
-        if self.app_core.ui_state.input_mode == InputMode::Interact {
-            let dir = four_way(right_x, right_y, self.gp_right_dir);
+        // Aim stick (the in-effect aiming stick — the non-movement one by
+        // default, or a wheel's `stick` override): in interact mode it
+        // cycles the focus — up/down switch categories, left/right step
+        // entities, one step per deflection with the movement hysteresis.
+        // Otherwise up/down scrolls the main story window; quadratic curve
+        // so small deflections creep and full tilt flies. Stick up scrolls
+        // up (negative offset delta). Silenced while it is aiming an open
+        // wheel so aiming never also scrolls or cycles.
+        // A wheel that just closed leaves the stick deflected; hold the
+        // aim stick's normal function until it returns to center once.
+        if self.gp_aim_recenter_needed && aim_stick_centered(aim_x, aim_y) {
+            self.gp_aim_recenter_needed = false;
+        }
+        let aim_owned_by_wheel =
+            self.gp_wheel.is_some() || self.gp_wheel_fired || self.gp_aim_recenter_needed;
+        if aim_owned_by_wheel {
+            // Keep the interact hysteresis in sync with the deflected stick
+            // so resuming doesn't fire a stale cycle step.
+            self.gp_right_dir = four_way(aim_x, aim_y, self.gp_right_dir);
+        } else if self.app_core.ui_state.input_mode == InputMode::Interact {
+            let dir = four_way(aim_x, aim_y, self.gp_right_dir);
             if dir != self.gp_right_dir {
                 match dir {
                     Some(FourWay::Up) => self.app_core.interact_category_move(-1),
@@ -239,8 +281,8 @@ impl VellumGuiApp {
                 }
                 self.gp_right_dir = dir;
             }
-        } else if right_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
-            let delta = -right_y.signum() * right_y * right_y * 40.0;
+        } else if aim_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
+            let delta = -aim_y.signum() * aim_y * aim_y * 40.0;
             ctx.data_mut(|d| {
                 d.insert_temp(
                     egui::Id::new(("text_scroll_pending", "main")),
@@ -333,40 +375,28 @@ impl VellumGuiApp {
     fn handle_gamepad_button(&mut self, button: gilrs::Button, ctx: &egui::Context) {
         use gilrs::Button;
 
-        // The wheel owns the pad while it is up: South opens the aimed
-        // folder (or fires a leaf immediately), East backs up a level;
-        // everything else is swallowed.
+        // The wheel owns the pad while it is up. Dwell drives navigation
+        // and commit on its own; South/East stay as optional accelerators
+        // for anyone who wants to skip the wait — South fires the aimed
+        // leaf now (or descends the aimed folder), East backs up a level.
+        // Everything else is swallowed. (These are hardwired accelerators,
+        // not the [controller] binds, so a user can rebind those buttons
+        // freely for use outside the wheel.)
         if self.gp_wheel.is_some() {
             match button {
-                Button::South => {
-                    let (key, path, aimed) = {
-                        let ui = self.gp_wheel.as_ref().expect("wheel active");
-                        (ui.key.clone(), ui.path.clone(), ui.aimed)
-                    };
-                    let Some(index) = aimed else { return };
-                    let Some(slice) = self
-                        .wheel_level_slices(&key, &path)
-                        .and_then(|level| level.into_iter().nth(index))
-                    else {
-                        return;
-                    };
-                    if slice.is_folder() {
-                        if let Some(ui) = self.gp_wheel.as_mut() {
-                            ui.path.push(index);
-                            ui.aimed = None;
-                        }
-                    } else if !slice.command.is_empty() {
-                        self.gp_wheel = None;
-                        self.gp_wheel_fired = true;
-                        self.dispatch_command(slice.command);
-                    }
-                    self.app_core.needs_render = true;
-                }
+                Button::South => self.wheel_accelerator_south(),
                 Button::East => {
                     if let Some(ui) = self.gp_wheel.as_mut() {
-                        ui.path.pop();
-                        ui.aimed = None;
-                        self.app_core.needs_render = true;
+                        if ui.path.pop().is_some() {
+                            ui.aimed = None;
+                            ui.candidate = None;
+                            ui.candidate_since = None;
+                            // Stick is still deflected after backing out;
+                            // require re-neutralize before the parent level
+                            // can navigate again.
+                            ui.rearm_until_center = true;
+                            self.app_core.needs_render = true;
+                        }
                     }
                 }
                 _ => {}
@@ -475,6 +505,228 @@ impl VellumGuiApp {
         self.app_core.wheel_slices(key, path)
     }
 
+    /// Per-wheel aim-stick override for `key`: `Some(true)` = right stick,
+    /// `Some(false)` = left, `None` = no override (caller uses the default
+    /// non-movement stick). Reads `[controller_wheels_meta.<name>].stick`;
+    /// the default wheel uses the "default" key.
+    fn wheel_aim_stick(&self, key: &str) -> Option<bool> {
+        let name = if key.is_empty() { "default" } else { key };
+        let stick = self
+            .app_core
+            .config
+            .controller_wheels_meta
+            .get(name)?
+            .stick
+            .as_deref()?;
+        match stick {
+            "right" => Some(true),
+            "left" => Some(false),
+            _ => None,
+        }
+    }
+
+    /// The displayed ring at the wheel's current level: the real slices
+    /// plus, inside a folder, the reserved Back slice at its anchor.
+    pub(super) fn wheel_view(&self, key: &str, path: &[usize]) -> Option<WheelView> {
+        let real = self.wheel_level_slices(key, path)?;
+        let anchor = &self.app_core.config.controller_tuning.back_slice;
+        Some(WheelView::build(&real, !path.is_empty(), anchor))
+    }
+
+    /// Advance the dwell state machine for one frame while the wheel is
+    /// up and the aim stick is at `(x, y_up)`. Tracks the candidate slice
+    /// and its dwell time; commits a leaf (arming release-fire), auto-
+    /// descends a folder, or auto-ascends via the Back slice once the
+    /// relevant dwell elapses. The re-arm block prevents a still-deflected
+    /// stick from chaining through nested levels.
+    fn wheel_aim(&mut self, x: f32, y_up: f32) {
+        let (key, path) = {
+            let ui = self.gp_wheel.as_ref().expect("wheel active");
+            (ui.key.clone(), ui.path.clone())
+        };
+        let Some(view) = self.wheel_view(&key, &path) else {
+            return;
+        };
+        let deadzone = self.wheel_deadzone();
+        let aim_ms = self.app_core.config.controller_tuning.aim_dwell_ms as u128;
+        let nav_ms = self.app_core.config.controller_tuning.nav_dwell_ms as u128;
+        let candidate = wheel_slice_at(x, y_up, view.len(), deadzone);
+        // The stick is "neutral" when it has fallen back inside the dead
+        // zone (candidate None). Re-neutralizing is the ONLY thing that
+        // clears the re-arm latch — keyed on physical stick state, not a
+        // display index (indices are meaningless across a level change,
+        // since seat counts differ).
+        let centered = candidate.is_none();
+        let latched = self
+            .gp_wheel
+            .as_ref()
+            .map(|ui| ui.rearm_until_center)
+            .unwrap_or(true);
+        let (latch_after, may_dwell) = dwell_rearm_step(latched, centered);
+
+        if let Some(ui) = self.gp_wheel.as_mut() {
+            ui.rearm_until_center = latch_after;
+            // Track the candidate and restart its dwell clock whenever it
+            // changes. Any change also drops a prior commit — release only
+            // fires a leaf the stick is *currently* dwelling, never a stale
+            // one it has already moved off (whether to center or to another
+            // slice).
+            if ui.candidate != candidate {
+                ui.candidate = candidate;
+                ui.candidate_since = Some(std::time::Instant::now());
+                ui.aimed = None;
+                self.app_core.needs_render = true;
+            }
+        }
+
+        // While the latch is up (stick hasn't re-neutralized since the last
+        // auto descend/ascend), no dwell may accrue — this is what stops a
+        // still-deflected stick from chaining through nested folders.
+        if !may_dwell {
+            return;
+        }
+
+        // Nothing under the stick: nothing to dwell.
+        let Some(display) = candidate else { return };
+        let dwelt = self
+            .gp_wheel
+            .as_ref()
+            .and_then(|ui| ui.candidate_since)
+            .map(|t| t.elapsed().as_millis())
+            .unwrap_or(0);
+
+        match view.real(display) {
+            // Back slice: auto-ascend once the nav dwell elapses.
+            Some(None) => {
+                if dwelt >= nav_ms {
+                    if let Some(ui) = self.gp_wheel.as_mut() {
+                        ui.path.pop();
+                        ui.aimed = None;
+                        ui.candidate = None;
+                        ui.candidate_since = None;
+                        ui.rearm_until_center = true;
+                        self.app_core.needs_render = true;
+                    }
+                }
+            }
+            // A real slice.
+            Some(Some(real)) => {
+                let is_folder = view.slices.get(real).map(|s| s.is_folder()).unwrap_or(false);
+                if is_folder {
+                    if dwelt >= nav_ms {
+                        if let Some(ui) = self.gp_wheel.as_mut() {
+                            ui.path.push(real);
+                            ui.aimed = None;
+                            ui.candidate = None;
+                            ui.candidate_since = None;
+                            ui.rearm_until_center = true;
+                            self.app_core.needs_render = true;
+                        }
+                    }
+                } else if dwelt >= aim_ms {
+                    // Leaf: commit (arm release-fire).
+                    if let Some(ui) = self.gp_wheel.as_mut() {
+                        if ui.aimed != Some(display) {
+                            ui.aimed = Some(display);
+                            self.app_core.needs_render = true;
+                        }
+                    }
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Dispatch a wheel command, honoring the fire debounce. A small floor
+    /// is always applied even when fire_debounce_ms is 0, so a bounced
+    /// button (release+repress inside one frame or two) can't double-send
+    /// the same fire; the configured value extends it further.
+    fn wheel_fire(&mut self, command: String) {
+        const DEBOUNCE_FLOOR_MS: u128 = 50;
+        let debounce =
+            (self.app_core.config.controller_tuning.fire_debounce_ms as u128).max(DEBOUNCE_FLOOR_MS);
+        if let Some(last) = self.gp_wheel_last_fire {
+            if last.elapsed().as_millis() < debounce {
+                return;
+            }
+        }
+        // Resolve <target_id>/<target_noun> against the interact focus, so
+        // a combat wheel slice like `cast at <target_id>` fires at the
+        // selected creature. Slices without placeholders pass straight
+        // through; a placeholder with nothing focused drops the fire
+        // (rather than sending the literal text) — same contract as bound
+        // interact macros.
+        let Some(command) = self.app_core.substitute_interact_placeholders(command) else {
+            self.app_core
+                .add_system_message("Wheel slice needs an interact-mode target (focus something first)");
+            return;
+        };
+        self.gp_wheel_last_fire = Some(std::time::Instant::now());
+        self.dispatch_command(command);
+    }
+
+    /// Wheel dead zone as a 0.0–1.0 stick magnitude (percent in config).
+    fn wheel_deadzone(&self) -> f32 {
+        (self.app_core.config.controller_tuning.deadzone as f32 / 100.0).clamp(0.0, 0.99)
+    }
+
+    /// South accelerator while the wheel is up: act on whatever the stick
+    /// is over right now (the committed slice, or the live candidate if a
+    /// dwell hasn't landed yet), skipping the dwell wait. Fires a leaf,
+    /// descends a folder, or ascends via the Back slice.
+    fn wheel_accelerator_south(&mut self) {
+        // Act on the slice the stick is over *right now* — the live
+        // candidate wins over any earlier commit, so South never fires a
+        // slice the stick has already moved off.
+        let (key, path, target) = {
+            let ui = self.gp_wheel.as_ref().expect("wheel active");
+            (ui.key.clone(), ui.path.clone(), ui.candidate.or(ui.aimed))
+        };
+        let Some(display) = target else { return };
+        let Some(view) = self.wheel_view(&key, &path) else {
+            return;
+        };
+        match view.real(display) {
+            Some(None) => {
+                // Back slice.
+                if let Some(ui) = self.gp_wheel.as_mut() {
+                    if ui.path.pop().is_some() {
+                        ui.aimed = None;
+                        ui.candidate = None;
+                        ui.candidate_since = None;
+                        ui.rearm_until_center = true;
+                        self.app_core.needs_render = true;
+                    }
+                }
+            }
+            Some(Some(real)) => {
+                // Look the slice up by DISPLAY index (view.slices is the
+                // rotated ring); `real` is only for path.push on descend.
+                let slice = match view.slices.get(display) {
+                    Some(s) => s.clone(),
+                    None => return,
+                };
+                if slice.is_folder() {
+                    if let Some(ui) = self.gp_wheel.as_mut() {
+                        ui.path.push(real);
+                        ui.aimed = None;
+                        ui.candidate = None;
+                        ui.candidate_since = None;
+                        ui.rearm_until_center = true;
+                        self.app_core.needs_render = true;
+                    }
+                } else if !slice.command.is_empty() {
+                    self.gp_wheel = None;
+                    self.gp_wheel_fired = true;
+                    self.gp_aim_recenter_needed = true;
+                    self.wheel_fire(slice.command);
+                    self.app_core.needs_render = true;
+                }
+            }
+            None => {}
+        }
+    }
+
     /// True while any button base-bound to the named action is held. Read
     /// from live pad state — no held/released bookkeeping to desync.
     fn gamepad_action_button_held(&self, action_name: &str) -> bool {
@@ -502,10 +754,27 @@ impl VellumGuiApp {
 
 /// Live radial-wheel state: which named wheel is up, the folder path
 /// descended so far, and the aimed slice at the current level.
+///
+/// `aimed` is the *committed* display slice — the one a dwell has settled
+/// on and that release will fire. `candidate` is the display slice the
+/// stick is currently over but that has not yet dwelt long enough to
+/// commit; `candidate_since` stamps when it was first seen so the dwell
+/// gate can measure the hold. `rearm_until_center` latches on an auto
+/// descend/ascend: after the level changes the stick is still deflected,
+/// so no new dwell may start until the stick returns to (below) the dead
+/// zone. Keyed on physical stick neutrality — NOT a display index, which
+/// is meaningless across a level change because seat counts differ — so a
+/// still-deflected stick can't chain through nested folders.
+///
+/// Indices here are into the *displayed* ring (Back slice injected,
+/// rotated to its anchor) — see `WheelView`.
 pub(super) struct WheelUi {
     pub(super) key: String,
     pub(super) path: Vec<usize>,
     pub(super) aimed: Option<usize>,
+    pub(super) candidate: Option<usize>,
+    pub(super) candidate_since: Option<std::time::Instant>,
+    pub(super) rearm_until_center: bool,
 }
 
 impl VellumGuiApp {
@@ -519,10 +788,10 @@ impl VellumGuiApp {
         else {
             return;
         };
-        let Some(slices) = self.wheel_level_slices(&key, &path) else {
+        let Some(view) = self.wheel_view(&key, &path) else {
             return;
         };
-        let slices = &slices;
+        let slices = &view.slices;
         if slices.is_empty() {
             return;
         }
@@ -616,13 +885,22 @@ impl VellumGuiApp {
                     );
                 }
 
-                // Center hub hosts the hint text.
+                // Center hub hosts the hint text. `selected` is the
+                // committed slice (post-dwell); until a dwell lands it is
+                // None and the prompt explains the gesture.
                 painter.circle_filled(center, hub, bg);
+                let stick_word = if self.app_core.config.controller_tuning.movement_stick == "right"
+                {
+                    "left stick"
+                } else {
+                    "right stick"
+                };
                 let hint = match selected.and_then(|i| slices.get(i)) {
-                    Some(slice) if slice.is_folder() => format!("{}: A opens", slice.label),
-                    Some(slice) => slice.command.clone(),
-                    None if in_folder => "aim · A picks · B backs up".to_string(),
-                    None => "aim with the left stick".to_string(),
+                    Some(slice) if slice.command == BACK_COMMAND => "dwell to go back".to_string(),
+                    Some(slice) if slice.is_folder() => format!("{}: dwell to open", slice.label),
+                    Some(slice) => format!("release to fire: {}", slice.command),
+                    None if in_folder => "dwell a slice · release fires · center to cancel".to_string(),
+                    None => format!("aim with the {stick_word}, dwell, release to fire"),
                 };
                 painter.text(
                     center,
@@ -671,14 +949,122 @@ fn four_way(x: f32, y_up: f32, previous: Option<FourWay>) -> Option<FourWay> {
 }
 
 /// Which wheel slice the stick is aiming at: slice 0 centered at the top,
-/// clockwise. None inside the dead zone or with no slices.
-fn wheel_slice_at(x: f32, y_up: f32, count: usize) -> Option<usize> {
-    if count == 0 || (x * x + y_up * y_up).sqrt() < 0.5 {
+/// clockwise. None inside the dead zone (`deadzone`, 0.0–1.0) or with no
+/// slices.
+fn wheel_slice_at(x: f32, y_up: f32, count: usize, deadzone: f32) -> Option<usize> {
+    if count == 0 || (x * x + y_up * y_up).sqrt() < deadzone {
         return None;
     }
     let step = 360.0 / count as f32;
     let angle = x.atan2(y_up).to_degrees();
     Some((((angle + 360.0 + step / 2.0) / step) as usize) % count)
+}
+
+/// Display index (0 = top, clockwise) whose seat center lies nearest a
+/// screen-anchor word, given `count` evenly-spaced seats. Used to place
+/// the reserved Back slice at its configured side.
+fn anchor_display_index(anchor: &str, count: usize) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    // Anchor screen direction as a (x, y_up) unit-ish vector, y_up
+    // positive = up (matching the stick convention wheel_slice_at reads).
+    let (ax, ay) = match anchor {
+        "up" => (0.0, 1.0),
+        "down" => (0.0, -1.0),
+        "left" => (-1.0, 0.0),
+        "right" => (1.0, 0.0),
+        "up-left" => (-1.0, 1.0),
+        "up-right" => (1.0, 1.0),
+        "down-left" => (-1.0, -1.0),
+        "down-right" => (1.0, -1.0),
+        _ => (0.0, -1.0), // default: down
+    };
+    wheel_slice_at(ax, ay, count, 0.0).unwrap_or(0)
+}
+
+/// One step of the wheel re-arm gate. Given whether the latch is up and
+/// whether the stick is currently neutral (inside the dead zone, i.e. no
+/// candidate), returns `(latch_after, may_dwell)`:
+///   - re-neutralizing (`centered`) is the only thing that lowers the
+///     latch — never a display index, which is meaningless across a level
+///     change;
+///   - no dwell may accrue while the latch is up, so a still-deflected
+///     stick can't chain through nested folders.
+fn dwell_rearm_step(latched: bool, centered: bool) -> (bool, bool) {
+    let latch_after = latched && !centered;
+    let may_dwell = !latch_after && !centered;
+    (latch_after, may_dwell)
+}
+
+/// True when the aim stick has returned close enough to center to clear
+/// the post-wheel recenter latch (reuses the movement release threshold).
+fn aim_stick_centered(x: f32, y_up: f32) -> bool {
+    (x * x + y_up * y_up).sqrt() < STICK_RELEASE
+}
+
+/// Which physical stick aims the wheel (true = right). A per-wheel
+/// override (`Some(true/false)`) wins; otherwise the default aim stick is
+/// the one that isn't the movement stick.
+fn resolve_aim_stick(move_on_right: bool, wheel_override: Option<bool>) -> bool {
+    wheel_override.unwrap_or(!move_on_right)
+}
+
+/// The displayed ring for a wheel level: the real slices plus, inside a
+/// folder, a synthetic Back slice reserved at the configured screen
+/// anchor. `real_index` maps a displayed index back to the real slice
+/// list (`None` marks the Back slice). Built in the GUI layer only so the
+/// shared/remote wheel definitions stay untouched.
+pub(super) struct WheelView {
+    pub(super) slices: Vec<WheelSlice>,
+    real_index: Vec<Option<usize>>,
+}
+
+/// Sentinel command marking the injected Back slice.
+const BACK_COMMAND: &str = "\u{0}__wheel_back__";
+
+impl WheelView {
+    /// Build the display ring. `in_folder` injects the Back slice at the
+    /// anchor; the top level (no parent) shows only real slices.
+    fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str) -> Self {
+        if !in_folder {
+            return Self {
+                slices: real.to_vec(),
+                real_index: (0..real.len()).map(Some).collect(),
+            };
+        }
+        // Displayed count includes the Back seat; rotate the assembled
+        // ring so Back lands nearest the anchor while the real slices stay
+        // in order around it.
+        let count = real.len() + 1;
+        let back = WheelSlice {
+            label: "◂ Back".to_string(),
+            command: BACK_COMMAND.to_string(),
+            color: None,
+            slices: Vec::new(),
+        };
+        // Assemble as [real..., Back] then rotate right so Back moves from
+        // the last seat to the anchor seat.
+        let target = anchor_display_index(back_anchor, count);
+        let mut slices: Vec<WheelSlice> = real.to_vec();
+        slices.push(back);
+        let mut real_index: Vec<Option<usize>> = (0..real.len()).map(Some).collect();
+        real_index.push(None);
+        // Back currently at index count-1; rotate so it sits at `target`.
+        let shift = (target + count - (count - 1)) % count; // = (target + 1) % count
+        slices.rotate_right(shift);
+        real_index.rotate_right(shift);
+        Self { slices, real_index }
+    }
+
+    fn len(&self) -> usize {
+        self.slices.len()
+    }
+
+    /// Real slice index for a displayed index; None = the Back slice.
+    fn real(&self, display: usize) -> Option<Option<usize>> {
+        self.real_index.get(display).copied()
+    }
 }
 
 /// Reverse of `gamepad_button_name`, for config-driven button lookups.
@@ -775,16 +1161,109 @@ mod wheel_tests {
 
     #[test]
     fn wheel_slices_map_clockwise_from_top() {
-        // 8 slices: up = 0, right = 2, down = 4, left = 6.
-        assert_eq!(wheel_slice_at(0.0, 1.0, 8), Some(0));
-        assert_eq!(wheel_slice_at(1.0, 0.0, 8), Some(2));
-        assert_eq!(wheel_slice_at(0.0, -1.0, 8), Some(4));
-        assert_eq!(wheel_slice_at(-1.0, 0.0, 8), Some(6));
+        // 8 slices: up = 0, right = 2, down = 4, left = 6. Default 0.5 dz.
+        assert_eq!(wheel_slice_at(0.0, 1.0, 8, 0.5), Some(0));
+        assert_eq!(wheel_slice_at(1.0, 0.0, 8, 0.5), Some(2));
+        assert_eq!(wheel_slice_at(0.0, -1.0, 8, 0.5), Some(4));
+        assert_eq!(wheel_slice_at(-1.0, 0.0, 8, 0.5), Some(6));
         // Dead zone and empty wheel.
-        assert_eq!(wheel_slice_at(0.2, 0.2, 8), None);
-        assert_eq!(wheel_slice_at(0.0, 1.0, 0), None);
+        assert_eq!(wheel_slice_at(0.2, 0.2, 8, 0.5), None);
+        assert_eq!(wheel_slice_at(0.0, 1.0, 0, 0.5), None);
         // Odd slice counts still cover the full circle.
-        assert_eq!(wheel_slice_at(0.0, 1.0, 3), Some(0));
+        assert_eq!(wheel_slice_at(0.0, 1.0, 3, 0.5), Some(0));
+    }
+
+    #[test]
+    fn deadzone_is_configurable() {
+        // A deflection of 0.4 registers with a low dead zone, not a high one.
+        assert_eq!(wheel_slice_at(0.0, 0.4, 8, 0.25), Some(0));
+        assert_eq!(wheel_slice_at(0.0, 0.4, 8, 0.5), None);
+        // Zero dead zone registers any nonzero deflection.
+        assert_eq!(wheel_slice_at(0.0, 0.05, 8, 0.0), Some(0));
+    }
+
+    fn leaf(label: &str) -> WheelSlice {
+        WheelSlice {
+            label: label.to_string(),
+            command: label.to_string(),
+            color: None,
+            slices: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn top_level_view_has_no_back_slice() {
+        let real = vec![leaf("a"), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, false, "down");
+        assert_eq!(view.len(), 3);
+        // Every display index maps to a real slice.
+        for i in 0..3 {
+            assert_eq!(view.real(i), Some(Some(i)));
+        }
+    }
+
+    #[test]
+    fn folder_view_injects_back_at_anchor() {
+        let real = vec![leaf("a"), leaf("b"), leaf("c")];
+        // 4 seats once Back is added; "down" anchor => display index 2.
+        let view = WheelView::build(&real, true, "down");
+        assert_eq!(view.len(), 4);
+        let back_at = anchor_display_index("down", 4);
+        assert_eq!(view.real(back_at), Some(None), "Back sits at its anchor");
+        assert_eq!(view.slices[back_at].command, BACK_COMMAND);
+        // The three real slices are all present exactly once.
+        let mut reals: Vec<usize> = (0..4).filter_map(|i| view.real(i).flatten()).collect();
+        reals.sort();
+        assert_eq!(reals, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn back_anchor_lands_on_the_named_side() {
+        // With 4 seats: up=0, right=1, down=2, left=3.
+        assert_eq!(anchor_display_index("up", 4), 0);
+        assert_eq!(anchor_display_index("right", 4), 1);
+        assert_eq!(anchor_display_index("down", 4), 2);
+        assert_eq!(anchor_display_index("left", 4), 3);
+    }
+
+    #[test]
+    fn aim_stick_resolution_honors_override_then_default() {
+        // No override: aim stick is the one that isn't the movement stick.
+        assert_eq!(resolve_aim_stick(false, None), true); // move left -> aim right
+        assert_eq!(resolve_aim_stick(true, None), false); // move right -> aim left
+        // Per-wheel override wins regardless of movement stick — including
+        // Niffy's combat-on-the-movement-stick case (move left, aim left).
+        assert_eq!(resolve_aim_stick(false, Some(false)), false); // aim left
+        assert_eq!(resolve_aim_stick(false, Some(true)), true); // aim right
+        assert_eq!(resolve_aim_stick(true, Some(true)), true);
+    }
+
+    #[test]
+    fn aim_recenter_latch_clears_only_near_center() {
+        // Fully deflected: still latched (function stays suppressed).
+        assert!(!aim_stick_centered(0.0, 1.0));
+        assert!(!aim_stick_centered(0.8, 0.0));
+        // Just above the release threshold: still latched.
+        assert!(!aim_stick_centered(0.0, STICK_RELEASE + 0.01));
+        // Back inside the release threshold: latch clears.
+        assert!(aim_stick_centered(0.0, 0.0));
+        assert!(aim_stick_centered(0.1, 0.1));
+    }
+
+    #[test]
+    fn rearm_latch_only_clears_on_recenter_and_blocks_chaining() {
+        // Latched + stick still deflected (has a candidate): stays latched,
+        // no dwell — this is the anti-chaining guard. Crucially it does NOT
+        // depend on any display index, so a level change (different seat
+        // count) can't clear it.
+        assert_eq!(dwell_rearm_step(true, false), (true, false));
+        // Latched + stick recentered (neutral): latch clears, but no dwell
+        // this frame (nothing under the stick yet).
+        assert_eq!(dwell_rearm_step(true, true), (false, false));
+        // Unlatched + deflected: normal dwell may accrue.
+        assert_eq!(dwell_rearm_step(false, false), (false, true));
+        // Unlatched + neutral: nothing to dwell.
+        assert_eq!(dwell_rearm_step(false, true), (false, false));
     }
 }
 

@@ -109,6 +109,15 @@ async fn main() {
             "spells".into(),
             vec![slice("prep 101", "prep 101", None), slice("cast", "cast", None)],
         );
+        // Give the spells wheel a per-wheel aim-stick override so the
+        // wheel_stick payload is exercised end-to-end.
+        config.controller_wheels_meta.insert(
+            "spells".into(),
+            vellum_fe::config::WheelMeta {
+                button: Some("l3".into()),
+                stick: Some("right".into()),
+            },
+        );
         config
     };
     sink.set_wheels(&wheel_config);

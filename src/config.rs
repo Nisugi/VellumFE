@@ -40,7 +40,7 @@ pub use hotbars::{
 };
 pub use keybinds::{
     parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
-    RumbleConfig, WheelSlice,
+    RumbleConfig, TuningConfig, WheelMeta, WheelSlice,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
@@ -235,10 +235,14 @@ pub struct Config {
     pub controller_wheel: Vec<WheelSlice>,
     #[serde(skip)] // Loaded from [controller_wheels.<name>] (named radial wheels)
     pub controller_wheels: HashMap<String, Vec<WheelSlice>>,
+    #[serde(skip)] // Loaded from [controller_wheels_meta.<name>] (per-wheel button/stick)
+    pub controller_wheels_meta: HashMap<String, WheelMeta>,
     #[serde(skip)] // Loaded from [controller_overlay] (curated HUD legend entries)
     pub controller_overlay: Vec<String>,
     #[serde(skip)] // Loaded from [controller_rumble] (haptic event map)
     pub controller_rumble: RumbleConfig,
+    #[serde(skip)] // Loaded from [controller_tuning] (input-feel tuning)
+    pub controller_tuning: TuningConfig,
     #[serde(skip)] // Loaded from separate hotbars.toml file
     pub hotbars: HotbarsConfig,
     #[serde(skip)] // Loaded from [app] section of keybinds.toml

@@ -196,6 +196,21 @@ roundtime_end = "short"   # hands free again
 stunned = "long"
 death = "double"
 
+# Controller input feel. Every field is optional — an absent table or
+# field uses the value shown here. Edit in the .controller editor's
+# Tuning tab. Dwell gates when a wheel slice commits: rest on your target,
+# then release to fire; return the stick to center before releasing to
+# cancel. Folders auto-descend on dwell, and each folder reserves a Back
+# slice (dwell it to go up a level).
+[controller_tuning]
+movement_stick = "left"    # "left" | "right" — which stick walks
+back_slice = "down"        # up|down|left|right|up-left|up-right|down-left|down-right
+deadzone = 50              # % stick deflection before a wheel slice registers
+aim_dwell_ms = 150         # hold a leaf this long before it arms to fire
+nav_dwell_ms = 150         # hold a folder / Back slice this long before it navigates
+fire_debounce_ms = 300     # suppress repeat fires
+release_grace_ms = 40      # hush movement briefly after release so firing doesn't walk
+
 # Bindings while the shift button (l2 above) is held — a second bank for
 # every button. Same format as [controller].
 [controller_shift]
@@ -203,8 +218,19 @@ dpad_up = "scroll_current_window_up_page"
 dpad_down = "scroll_current_window_down_page"
 south = { macro_text = "stand\r" }
 
-# Radial command wheel (hold r2, aim the left stick, release to fire).
-# Edit in the .controller editor's Wheel tab.
+# Radial command wheel (hold r2, aim with the wheel/aim stick, dwell to
+# commit, release to fire). Folders auto-open on dwell and reserve a Back
+# slice. Feel is tuned in [controller_tuning]; edit slices in the
+# .controller editor's Wheel tab.
+#
+# Per-wheel button/stick live in [controller_wheels_meta.<name>] (set them
+# in the Wheels tab). `button` is written alongside the matching
+# [controller] entry, which stays the binding authority; `stick`
+# ("left"/"right") overrides movement_stick while that wheel is open. The
+# default wheel uses the name "default". Example (edited via the GUI):
+#   [controller_wheels_meta.default]
+#   button = "r2"
+#   stick  = "left"
 [[controller_wheel]]
 label = "look"
 command = "look"

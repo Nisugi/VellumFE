@@ -1080,6 +1080,16 @@ mod tests {
                 },
             ],
             named: Default::default(),
+            tuning: crate::core::remote::RemoteWheelTuning {
+                movement_stick: "left".to_string(),
+                back_slice: "down".to_string(),
+                deadzone: 50,
+                aim_dwell_ms: 150,
+                nav_dwell_ms: 150,
+                fire_debounce_ms: 300,
+                release_grace_ms: 40,
+            },
+            wheel_stick: std::iter::once(("exits".to_string(), "right".to_string())).collect(),
         };
         let json: serde_json::Value =
             serde_json::from_str(&delta(&RemoteDelta::Wheels(Arc::new(w)), 5)).unwrap();
@@ -1089,6 +1099,10 @@ mod tests {
         assert_eq!(json["d"]["default"][1]["slices"][0]["label"], "defensive");
         // Commands are resolved server-side on pick; they never ship.
         assert!(json["d"]["default"][0].get("command").is_none());
+        // Tuning + per-wheel stick ride along so the phone matches feel.
+        assert_eq!(json["d"]["tuning"]["aim_dwell_ms"], 150);
+        assert_eq!(json["d"]["tuning"]["back_slice"], "down");
+        assert_eq!(json["d"]["wheel_stick"]["exits"], "right");
     }
 
     #[test]
