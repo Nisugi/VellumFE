@@ -35,13 +35,10 @@ pub(super) fn visuals_from_theme(theme: &AppTheme) -> egui::Visuals {
 
     visuals.widgets.noninteractive.bg_stroke.color = color32(theme.window_border);
     visuals.widgets.noninteractive.fg_stroke.color = color32(theme.text_primary);
-    visuals.widgets.inactive.bg_fill = color32(theme.button_normal);
-    visuals.widgets.inactive.weak_bg_fill = color32(theme.button_normal);
+    // Button fills deliberately keep egui's neutral dark defaults: the
+    // theme's button_* colors are TUI accent colors, and using them as
+    // fills turns every button into a bright solid chip.
     visuals.widgets.inactive.fg_stroke.color = color32(theme.text_primary);
-    visuals.widgets.hovered.bg_fill = color32(theme.button_hover);
-    visuals.widgets.hovered.weak_bg_fill = color32(theme.button_hover);
-    visuals.widgets.active.bg_fill = color32(theme.button_active);
-    visuals.widgets.active.weak_bg_fill = color32(theme.button_active);
     visuals.widgets.open.bg_fill = color32(theme.menu_background);
     visuals.widgets.open.weak_bg_fill = color32(theme.menu_background);
 
@@ -412,6 +409,24 @@ mod tests {
         assert_eq!(
             visuals.override_text_color,
             Some(color32(theme.text_primary))
+        );
+        // Button fills must stay at egui's neutral defaults, not theme accents.
+        let defaults = egui::Visuals::dark();
+        assert_eq!(
+            visuals.widgets.inactive.bg_fill,
+            defaults.widgets.inactive.bg_fill
+        );
+        assert_eq!(
+            visuals.widgets.inactive.weak_bg_fill,
+            defaults.widgets.inactive.weak_bg_fill
+        );
+        assert_eq!(
+            visuals.widgets.hovered.bg_fill,
+            defaults.widgets.hovered.bg_fill
+        );
+        assert_eq!(
+            visuals.widgets.active.bg_fill,
+            defaults.widgets.active.bg_fill
         );
     }
 }

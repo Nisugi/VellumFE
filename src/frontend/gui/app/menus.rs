@@ -517,17 +517,24 @@ impl VellumGuiApp {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_min_width(220.0);
                     let selected_index = menu.get_selected_index();
-                    for (index, item) in menu.get_items().iter().enumerate() {
-                        let mut button = egui::Button::new(item.text.as_str());
-                        if keyboard_active && index == selected_index {
-                            button = button.fill(ui.visuals().selection.bg_fill);
-                        }
-                        let response = ui.add_enabled(!item.disabled, button);
-                        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if response.clicked() {
-                            clicked_command = Some(item.command.clone());
-                        }
-                    }
+                    // Flat full-width rows like the settings window, not
+                    // framed buttons; the keyboard cursor uses the same
+                    // selection highlight as everywhere else.
+                    ui.with_layout(
+                        egui::Layout::top_down_justified(egui::Align::Min),
+                        |ui| {
+                            for (index, item) in menu.get_items().iter().enumerate() {
+                                let selected = keyboard_active && index == selected_index;
+                                let row = egui::Button::selectable(selected, item.text.as_str());
+                                let response = ui
+                                    .add_enabled(!item.disabled, row)
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                if response.clicked() {
+                                    clicked_command = Some(item.command.clone());
+                                }
+                            }
+                        },
+                    );
                 });
             });
         let layer_rect = area_response.response.rect;
@@ -845,34 +852,39 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         view: &WindowMenuView<'_>,
     ) -> Option<GuiWindowMenuCommand> {
-        if ui.button("Edit Window…").clicked() {
+        // Action rows are flat selectable labels (hover highlight only), like
+        // the Move to list below; framed buttons read as noisy chips here.
+        if ui.selectable_label(false, "Edit Window…").clicked() {
             return Some(GuiWindowMenuCommand::Edit);
         }
-        if ui.button("Hide").clicked() {
+        if ui.selectable_label(false, "Hide").clicked() {
             return Some(GuiWindowMenuCommand::Hide);
         }
-        if ui.button("Detach").clicked() {
+        if ui.selectable_label(false, "Detach").clicked() {
             return Some(GuiWindowMenuCommand::Detach);
         }
-        if ui.button("Move Window").clicked() {
+        if ui.selectable_label(false, "Move Window").clicked() {
             return Some(GuiWindowMenuCommand::StartMove);
         }
         if ui
-            .button(if view.title_bar_hidden {
-                "Show Title Bar"
-            } else {
-                "Hide Title Bar"
-            })
+            .selectable_label(
+                false,
+                if view.title_bar_hidden {
+                    "Show Title Bar"
+                } else {
+                    "Hide Title Bar"
+                },
+            )
             .clicked()
         {
             return Some(GuiWindowMenuCommand::ToggleTitleBar);
         }
         if view.allow_reorder {
             ui.separator();
-            if ui.button("Move Up").clicked() {
+            if ui.selectable_label(false, "Move Up").clicked() {
                 return Some(GuiWindowMenuCommand::MoveUp);
             }
-            if ui.button("Move Down").clicked() {
+            if ui.selectable_label(false, "Move Down").clicked() {
                 return Some(GuiWindowMenuCommand::MoveDown);
             }
         }
@@ -899,7 +911,7 @@ impl VellumGuiApp {
             }
         }
         if view.is_map {
-            if ui.button("Open Map Explorer").clicked() {
+            if ui.selectable_label(false, "Open Map Explorer").clicked() {
                 return Some(GuiWindowMenuCommand::OpenMapExplorer);
             }
             let mut has_override = view.map_zoom.is_some();
@@ -1024,7 +1036,7 @@ impl VellumGuiApp {
                 }
             }
             if ui
-                .button("Dissolve group")
+                .selectable_label(false, "Dissolve group")
                 .on_hover_text("Ungroup all members; every window stands alone again")
                 .clicked()
             {
@@ -1039,7 +1051,7 @@ impl VellumGuiApp {
                     .max_height(180.0)
                     .show(ui, |ui| {
                         for (key, title) in view.group_candidates {
-                            if ui.button(title).clicked() {
+                            if ui.selectable_label(false, title).clicked() {
                                 group_command =
                                     Some(GuiWindowMenuCommand::GroupWith(key.clone()));
                             }
