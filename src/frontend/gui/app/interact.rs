@@ -96,7 +96,10 @@ impl VellumGuiApp {
                         ui.separator();
                         ui.label(line);
                         ui.separator();
-                        ui.weak("↑↓ cycle · ←→ category · Enter menu · Esc exit");
+                        // Plain words only: the arrow glyphs (U+2190..)
+                        // tofu in the shipped fonts. Covers both inputs —
+                        // keyboard arrows and the pad's right stick.
+                        ui.weak("arrows / right stick cycle · Enter or A select · Esc exit");
                     });
                 });
             });
