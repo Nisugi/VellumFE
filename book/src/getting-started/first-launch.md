@@ -18,6 +18,20 @@ vellum-fe --port 8000 --character YourCharacter
 VellumFE identifies itself to Lich as a Stormfront frontend, so scripts that
 check `$frontend` get full feature parity.
 
+## Choosing a Frontend
+
+Every command line accepts `--frontend` (`-f`) to pick the interface:
+
+```bash
+vellum-fe --frontend gui --port 8000 --character YourCharacter   # desktop GUI
+vellum-fe --frontend tui --port 8000 --character YourCharacter   # terminal UI
+```
+
+The **terminal UI is the default** on a hand-typed command line; [the
+Launcher](./launcher.md)'s profiles default to the **GUI** instead. The
+flag combines with everything below — add `--frontend gui` to a Lich
+launcher entry or a direct-connection command all the same.
+
 ## Lich Launcher Integration
 
 Configure Lich launcher to spawn VellumFE automatically:

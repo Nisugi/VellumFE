@@ -15,7 +15,8 @@ Click **Add profile** and fill in:
   host/port)
 - **Account / game / character** for direct mode, or **host / port** for
   Lich mode
-- **Frontend** — GUI (default) or Terminal
+- **Frontend** — GUI (default) or Terminal (the hand-typed equivalent
+  is `--frontend gui|tui`; note the bare CLI defaults to the terminal)
 - **Advanced options** — everything the CLI offers: web/phone port,
   sound off, settings profile, data directory, color mode, palette setup
 
