@@ -204,14 +204,37 @@ async fn run_bridge(
                     err
                 );
                 // Immediate feedback on the very first failure: without it,
-                // .webui looks dead for the whole retry window.
+                // .webui looks dead for the whole retry window. A bare TCP
+                // preflight splits the two server-side failures the opaque
+                // connect() error can't: a refused/unreachable socket (WebUI
+                // bound to loopback on the Lich box, unpublished port, or a
+                // firewall) vs. a socket that accepts but rejects the upgrade
+                // (Host/Origin not in the server's allowed-hosts list). They
+                // need different fixes, so name which one.
                 if attempts == 1 && !ever_connected {
+                    let text = match preflight(&host, port).await {
+                        PreflightVerdict::Refused => format!(
+                            "can't reach the Lich WebUI at {host}:{port}: connection refused. \
+                             The server-side listener isn't reachable - on the Lich box the WebUI \
+                             is likely bound to localhost (set LICH_WEBUI_BIND=0.0.0.0 in a \
+                             container), the port isn't published, or a firewall blocks it. \
+                             Check with a browser: http://{host}:{port}/ - if that's also refused, \
+                             it's the Lich box, not VellumFE. Retrying up to {MAX_RECONNECT_ATTEMPTS} times..."
+                        ),
+                        PreflightVerdict::Connected => format!(
+                            "reached {host}:{port} but the WebUI refused the connection - the dialed \
+                             address is probably not in the server's allowed-hosts list \
+                             (LICH_WEBUI_ALLOWED_HOSTS on the Lich box must include {host}). \
+                             Retrying up to {MAX_RECONNECT_ATTEMPTS} times..."
+                        ),
+                        PreflightVerdict::Inconclusive => format!(
+                            "can't reach the Lich WebUI at {host}:{port} ({err}); \
+                             retrying up to {MAX_RECONNECT_ATTEMPTS} times..."
+                        ),
+                    };
                     let _ = event_tx.send(WebUiEvent::Notice {
                         level: "warn".to_string(),
-                        text: format!(
-                            "can't reach the Lich WebUI at {}:{} ({}); retrying up to {} times...",
-                            host, port, err, MAX_RECONNECT_ATTEMPTS
-                        ),
+                        text,
                     });
                 }
                 if attempts >= MAX_RECONNECT_ATTEMPTS {
@@ -297,6 +320,39 @@ async fn http_get_files(host: &str, port: u16, token: &str, path: &str) -> anyho
     Ok(response[header_end + 4..].to_vec())
 }
 
+/// Which layer refused, per a bare TCP connect that carries no auth and does
+/// no upgrade — so it isolates reachability from the Host/Origin check.
+enum PreflightVerdict {
+    /// TCP connect failed (refused/unreachable/timed out): bind, publish, or
+    /// firewall on the Lich box — below the HTTP layer.
+    Refused,
+    /// TCP connect succeeded, so the real `connect()` failure is at or above
+    /// the HTTP upgrade (most likely the allowed-hosts rejection).
+    Connected,
+    /// Couldn't decide (e.g. host didn't resolve); fall back to the raw error.
+    Inconclusive,
+}
+
+/// Bare TCP probe of the advertised endpoint, bounded so a black-holed host
+/// can't stall the notice. Deliberately no cookie, no Origin, no upgrade: a
+/// success here with a failing `connect()` pins the fault to the upgrade, not
+/// reachability.
+async fn preflight(host: &str, port: u16) -> PreflightVerdict {
+    let connect = tokio::net::TcpStream::connect((host, port));
+    match tokio::time::timeout(std::time::Duration::from_secs(3), connect).await {
+        Ok(Ok(_stream)) => PreflightVerdict::Connected,
+        // Name resolution failed: nothing was dialed, so we learned nothing
+        // about the two layers - fall back to the raw connect() error.
+        Ok(Err(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+            PreflightVerdict::Inconclusive
+        }
+        // Refused, timed out, unreachable, reset: a reachability failure,
+        // whose remedy set (bind/publish/firewall) is the Refused message,
+        // not the upgrade.
+        Ok(Err(_)) | Err(_) => PreflightVerdict::Refused,
+    }
+}
+
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -360,4 +416,36 @@ fn handle_server_text(raw: &str, event_tx: &mpsc::UnboundedSender<WebUiEvent>) {
         WebUiServerMessage::Unknown => return,
     };
     let _ = event_tx.send(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A bound listener that never calls accept still completes the TCP
+    // handshake, so the preflight must read that as Connected - which is what
+    // pins a subsequent connect() failure to the upgrade (allowed-hosts),
+    // not to reachability.
+    #[tokio::test]
+    async fn preflight_reports_connected_when_socket_accepts() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(matches!(
+            preflight("127.0.0.1", port).await,
+            PreflightVerdict::Connected
+        ));
+    }
+
+    // Binding then dropping the listener frees the port, so a connect is
+    // refused - the reachability failure whose remedy is bind/publish/firewall.
+    #[tokio::test]
+    async fn preflight_reports_refused_when_nothing_listens() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert!(matches!(
+            preflight("127.0.0.1", port).await,
+            PreflightVerdict::Refused
+        ));
+    }
 }
