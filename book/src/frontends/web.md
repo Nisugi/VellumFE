@@ -130,7 +130,7 @@ The gear button (also reachable from the login screen) opens Settings:
   in the host's `keybinds.toml`: aim a slice with the left stick,
   release to fire it; South opens a folder slice, East backs up a
   level. `wheel:<name>` opens a named wheel — and `wheel:portals`
-  (L3 by default) is always available, its slices built live from the
+  (R3 by default) is always available, its slices built live from the
   current room's noun exits (go gate, climb ladder). Buttons can also run
   client-side **UI actions** instead of game commands: `left_panel` /
   `right_panel` toggle the drawers, `map` the map overlay, `interact`

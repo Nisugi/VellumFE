@@ -1302,7 +1302,10 @@ const GP_BUTTON_ORDER = [
 const GP_SHIFT = "shift";
 const GP_DEFAULT_BINDS = {
   dpad_up: "up", dpad_down: "down", dpad_right: "out", dpad_left: ".portal",
-  south: "look", l2: GP_SHIFT, r2: "wheel", l3: "wheel:portals",
+  south: "look", l2: GP_SHIFT, r2: "wheel",
+  // r3, not l3: wheels aim with the LEFT stick, and clicking that same
+  // stick deflects it into a stray compass move before the hold lands.
+  r3: "wheel:portals",
   start: "interact",
 };
 const GP_DEFAULT_SHIFT_BINDS = { south: "stand" };

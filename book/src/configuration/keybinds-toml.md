@@ -93,9 +93,11 @@ wheel — default ring in `[[controller_wheel]]`, named rings in
 `[controller_wheels.<name>]`; slices take `label`, `command`, optional
 `color`, and nested `slices` for folders — the phone client renders
 these same wheels for its `wheel` binds; the name **`portals` is
-reserved**: `controller_wheel:portals` (l3 by default) builds its
-slices from the current room's noun exits at open time — the same
-list `.portal` resolves — shadowing any static wheel of that name),
+reserved**: `controller_wheel:portals` (r3 by default — the wheel aims
+with the left stick, so its own click would jostle out stray moves)
+builds its slices from the current room's noun exits at open time —
+the same list `.portal` resolves — shadowing any static wheel of that
+name),
 and `controller_overlay`
 (toggle the binding legend — curated by `[controller_overlay]
 buttons`, with `shift/<button>` entries for the shift bank). Rumble

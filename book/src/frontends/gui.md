@@ -185,7 +185,7 @@ Beyond plain bindings:
   while aimed, so wheels can be color-coded by function. Multiple named
   wheels via `controller_wheel:<name>` bindings; build it all on the
   editor's Wheels tab. One name is dynamic: **`controller_wheel:portals`**
-  (l3 by default) fills its slices from the current room's noun exits —
+  (r3 by default) fills its slices from the current room's noun exits —
   the same list [`.portal`](../reference/commands.md) resolves — so
   `go gate` / `climb ladder` are always one hold-and-flick away.
 - **Binding legend** — Select toggles a compact overlay of your
