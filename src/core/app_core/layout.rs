@@ -1189,184 +1189,15 @@ impl AppCore {
         }
     }
 
-    /// Resize layout using delta-based proportional distribution
-    /// This method is called by the .resize command and requires manual invocation
-    pub fn resize_to_terminal(&mut self, terminal_width: u16, terminal_height: u16) {
-        // Need a baseline layout to calculate delta from
-        let baseline = match &self.baseline_layout {
-            Some(baseline) => baseline,
-            None => {
-                self.add_system_message(
-                    "No baseline layout - save current layout first with .savelayout",
-                );
-                return;
-            }
-        };
-
-        // Get baseline terminal size
-        let baseline_width = baseline.terminal_width.unwrap_or(80);
-        let baseline_height = baseline.terminal_height.unwrap_or(24);
-
-        // Calculate delta
-        let width_delta = terminal_width as i32 - baseline_width as i32;
-        let height_delta = terminal_height as i32 - baseline_height as i32;
-
-        if width_delta == 0 && height_delta == 0 {
-            self.add_system_message(&format!(
-                "Terminal size unchanged ({}x{})",
-                terminal_width, terminal_height
-            ));
-            return;
-        }
-
-        tracing::info!(
-            "Resizing layout: baseline {}x{} -> current {}x{} (delta: {}x{})",
-            baseline_width,
-            baseline_height,
-            terminal_width,
-            terminal_height,
-            width_delta,
-            height_delta
-        );
-
-        // Simple delta-based proportional distribution
-        // For each window: calculate its proportion of total size, then distribute delta proportionally
-
-        // Calculate total scalable width and height from baseline
-        let total_baseline_width: u16 = baseline.windows.iter().map(|w| w.base().cols).sum();
-        let total_baseline_height: u16 = baseline.windows.iter().map(|w| w.base().rows).sum();
-
-        let mut width_remainder = width_delta;
-        let mut height_remainder = height_delta;
-
-        // Apply proportional resize to each window in the layout
-        for window_def in &mut self.layout.windows {
-            let window_name = window_def.name().to_string();
-            let baseline_window = baseline.windows.iter().find(|w| w.name() == window_name);
-
-            if let Some(baseline_win) = baseline_window {
-                let baseline_base = baseline_win.base();
-                let base = window_def.base_mut();
-
-                // Calculate width adjustment
-                if total_baseline_width > 0 && width_delta != 0 {
-                    let proportion = baseline_base.cols as f64 / total_baseline_width as f64;
-                    let width_share = (proportion * width_delta as f64).floor() as i32;
-                    let new_width = (baseline_base.cols as i32 + width_share).max(1) as u16;
-                    base.cols = new_width;
-                    width_remainder -= width_share;
-                }
-
-                // Calculate height adjustment
-                if total_baseline_height > 0 && height_delta != 0 {
-                    let proportion = baseline_base.rows as f64 / total_baseline_height as f64;
-                    let height_share = (proportion * height_delta as f64).floor() as i32;
-                    let new_height = (baseline_base.rows as i32 + height_share).max(1) as u16;
-                    base.rows = new_height;
-                    height_remainder -= height_share;
-                }
-            }
-        }
-
-        // Distribute remainders to first windows (simple round-robin)
-        if width_remainder != 0 {
-            for window_def in &mut self.layout.windows {
-                if width_remainder == 0 {
-                    break;
-                }
-                let base = window_def.base_mut();
-                if width_remainder > 0 {
-                    base.cols += 1;
-                    width_remainder -= 1;
-                } else if base.cols > 1 {
-                    base.cols -= 1;
-                    width_remainder += 1;
-                }
-            }
-        }
-
-        if height_remainder != 0 {
-            for window_def in &mut self.layout.windows {
-                if height_remainder == 0 {
-                    break;
-                }
-                let base = window_def.base_mut();
-                if height_remainder > 0 {
-                    base.rows += 1;
-                    height_remainder -= 1;
-                } else if base.rows > 1 {
-                    base.rows -= 1;
-                    height_remainder += 1;
-                }
-            }
-        }
-
-        // Recalculate positions for vertically stacked windows
-        // Sort windows by baseline Y position to maintain stacking order
-        let mut window_positions: Vec<(String, u16, u16, u16, u16)> = baseline
-            .windows
-            .iter()
-            .map(|w| {
-                (
-                    w.name().to_string(),
-                    w.base().col,
-                    w.base().row,
-                    w.base().cols,
-                    w.base().rows,
-                )
-            })
-            .collect();
-        window_positions.sort_by_key(|(_, _, row, _, _)| *row);
-
-        // Track both baseline bottoms and current bottoms per column
-        // This fixes the bug where size changes caused position cascade to fail
-        let mut col_baseline_bottom: std::collections::HashMap<u16, u16> =
-            std::collections::HashMap::new();
-        let mut col_current_bottom: std::collections::HashMap<u16, u16> =
-            std::collections::HashMap::new();
-
-        // Recalculate Y positions for stacked windows
-        for (name, baseline_col, baseline_row, _baseline_cols, baseline_rows) in window_positions {
-            if let Some(window_def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
-                let base = window_def.base_mut();
-
-                // Check if this window was stacked with the previous one in baseline
-                if let Some(&prev_baseline_bottom) = col_baseline_bottom.get(&baseline_col) {
-                    if baseline_row == prev_baseline_bottom {
-                        // Windows were adjacent in baseline - cascade position using current bottom
-                        base.row = *col_current_bottom.get(&baseline_col).unwrap_or(&0);
-                    }
-                }
-
-                // Update tracking for both baseline and current bottoms
-                col_baseline_bottom.insert(baseline_col, baseline_row + baseline_rows);
-                col_current_bottom.insert(baseline_col, base.row + base.rows);
-            }
-        }
-
-        // Update layout terminal size
-        self.layout.terminal_width = Some(terminal_width);
-        self.layout.terminal_height = Some(terminal_height);
-
-        // Mark as modified and trigger re-init
-        self.layout_modified_since_save = true;
-        self.init_windows(terminal_width, terminal_height);
-        self.needs_render = true;
-
-        // Signal frontend to reset widget caches
-        self.ui_state.needs_widget_reset = true;
-
-        self.add_system_message(&format!(
-            "Layout resized to {}x{} (delta: {:+}x{:+})",
-            terminal_width, terminal_height, width_delta, height_delta
-        ));
-    }
-
-    /// Wrapper for resize command - gets terminal size from layout
+    /// Fallback for the `.resize` dot-command in frontends without a cell grid
+    /// (GUI, headless). Resizes the layout to its own stored terminal size —
+    /// a zero delta in practice — routed through the single resize algorithm.
+    /// The TUI's real `.resize` handler calls `resize_windows` directly with
+    /// the actual terminal size (see frontend/tui/input_handlers.rs).
     pub(super) fn resize_to_current_terminal(&mut self) {
         let width = self.layout.terminal_width.unwrap_or(80);
         let height = self.layout.terminal_height.unwrap_or(24);
-        self.resize_to_terminal(width, height);
+        self.resize_windows(width, height);
     }
 }
 
@@ -2288,14 +2119,13 @@ mod tests {
         assert_eq!(row_rows(&core, "c"), (6, 3));
     }
 
-    /// `resize_to_terminal` is a SECOND, independent resize algorithm (reached
-    /// from the `.resize` dot-command via commands.rs, vs `resize_windows` from
-    /// the TUI command line). It uses a global-proportion distribution rather
-    /// than the per-column cascade. This test pins its behavior so the fact
-    /// that two algorithms exist is documented, not surprising. On a simple
-    /// stacked layout the two happen to agree; they diverge on complex layouts.
+    /// The `.resize` dot-command fallback (GUI/headless frontends without a
+    /// cell grid) goes through `resize_to_current_terminal`, which resizes the
+    /// layout to its OWN already-stored terminal size — a zero delta — so it
+    /// must leave geometry unchanged. This pins the behavior after collapsing
+    /// the former second algorithm (`resize_to_terminal`) into `resize_windows`.
     #[test]
-    fn resize_to_terminal_second_algorithm_behavior() {
+    fn resize_to_current_terminal_is_a_noop_at_stored_size() {
         let mut core = core_with_baseline(
             vec![
                 text_def("top", 0, 0, 80, 10),
@@ -2304,10 +2134,11 @@ mod tests {
             80,
             24,
         );
-        core.resize_to_terminal(80, 34); // +10
+        core.resize_to_current_terminal();
 
-        assert_eq!(row_rows(&core, "top"), (0, 15));
-        assert_eq!(row_rows(&core, "bottom"), (15, 19));
+        // Stored size == baseline size == 80x24, so nothing moves or resizes.
+        assert_eq!(row_rows(&core, "top"), (0, 10));
+        assert_eq!(row_rows(&core, "bottom"), (10, 14));
     }
 
     /// Regression guard for the remainder-recoupling conservation bug: the
