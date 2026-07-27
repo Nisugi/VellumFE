@@ -3853,6 +3853,37 @@ impl VellumGuiApp {
             }
         });
 
+        // Re-arm stick-to-bottom when a user scroll settles just shy of the
+        // end. egui only re-sticks on EXACT offset equality, and scrollbar
+        // drags / kinetic flicks routinely stop a fraction of a row short —
+        // visually "at the bottom" but unstuck, so incoming text left the
+        // view trailing slightly. When the scroll is at rest (no button
+        // held, not moving up, no programmatic hold) within one row of the
+        // end, snap to it; egui's equality check then re-sticks next frame.
+        let prev_offset_key = egui::Id::new(("text_scroll_prev_offset", scroll_id));
+        let prev_offset = outer_ctx.data_mut(|data| {
+            let prev = data.get_temp::<f32>(prev_offset_key);
+            data.insert_temp(prev_offset_key, output.state.offset.y);
+            prev
+        });
+        let snap_tolerance =
+            outer_ctx.fonts_mut(|fonts| fonts.row_height(font_id)) + outer_spacing_y;
+        let shy_of_bottom = max_offset - output.state.offset.y;
+        let moving_up = prev_offset.is_some_and(|prev| output.state.offset.y < prev - 0.1);
+        let pointer_down = outer_ctx.input(|i| i.pointer.any_down());
+        if settled.is_none()
+            && shy_of_bottom > 0.0
+            && shy_of_bottom <= snap_tolerance
+            && !moving_up
+            && !pointer_down
+        {
+            if let Some(mut state) = egui::scroll_area::State::load(&outer_ctx, output.id) {
+                state.offset.y = max_offset;
+                state.store(&outer_ctx, output.id);
+                outer_ctx.request_repaint();
+            }
+        }
+
         clicked_link
     }
 
