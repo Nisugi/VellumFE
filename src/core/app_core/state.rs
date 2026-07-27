@@ -452,6 +452,55 @@ impl AppCore {
         self.tts_manager.set_filters(&tts.gags, &substitutions);
     }
 
+    /// Reconcile the live `SoundPlayer` with `config.sound`.
+    ///
+    /// Without this the sound config was write-only: the keybind toggle and the
+    /// settings editor mutated `config.sound` and saved to disk, but the running
+    /// player kept its construction-time fields, so changes did nothing until a
+    /// restart. Because `SoundPlayer::new(enabled = false, ..)` returns `Err`
+    /// (audio device init is skipped when disabled), a player that started
+    /// disabled is `None` and cannot be re-enabled by a setter — it must be
+    /// reconstructed. Call this after any change to `config.sound`.
+    pub fn apply_sound_settings(&mut self) {
+        let sound = self.config.sound.clone();
+        match self.sound_player.as_mut() {
+            Some(player) => {
+                if sound.enabled {
+                    // Live player exists and stays enabled: push the new knobs.
+                    player.set_enabled(true);
+                    player.set_volume(sound.volume);
+                    player.set_cooldown_ms(sound.cooldown_ms);
+                } else {
+                    // Drop the player so the audio device is released; a later
+                    // enable reconstructs it.
+                    self.sound_player = None;
+                    tracing::debug!("Sound player disabled and released");
+                }
+            }
+            None if sound.enabled => {
+                // Enabling from a disabled/None state: build a fresh player.
+                match crate::sound::SoundPlayer::new(true, sound.volume, sound.cooldown_ms) {
+                    Ok(player) => {
+                        self.sound_player = Some(player);
+                        tracing::debug!("Sound player initialized on enable");
+                        if let Err(e) = crate::sound::ensure_sounds_directory() {
+                            tracing::warn!("Failed to create sounds directory: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to initialize sound player on enable: {}", e);
+                        self.add_system_message(
+                            "Could not enable sound: no audio device available",
+                        );
+                    }
+                }
+            }
+            None => {
+                // Already disabled and no player — nothing to do.
+            }
+        }
+    }
+
     /// Resolve the mapdb source from config and (re)start the load when it
     /// changes. Called at startup, after the settings editor saves, and when
     /// the updater installs a fresh download.

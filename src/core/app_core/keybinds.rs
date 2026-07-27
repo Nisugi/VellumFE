@@ -244,6 +244,9 @@ impl AppCore {
             }
             KeyAction::ToggleSounds => {
                 self.config.sound.enabled = !self.config.sound.enabled;
+                // Reconcile the live player with the flipped flag, otherwise the
+                // toggle only edits config and the running player is unchanged.
+                self.apply_sound_settings();
                 let status = if self.config.sound.enabled {
                     "enabled"
                 } else {

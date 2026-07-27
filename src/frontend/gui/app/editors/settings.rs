@@ -952,6 +952,9 @@ impl VellumGuiApp {
             if applied.iter().any(|key| key.starts_with("tts.")) || subs_changed {
                 self.app_core.apply_tts_settings();
             }
+            if applied.iter().any(|key| key.starts_with("sound.")) {
+                self.app_core.apply_sound_settings();
+            }
 
             // GUI sizing lives in the per-character layout file; force the
             // zoom/title-bar values to re-apply on the next frame. Vitals
