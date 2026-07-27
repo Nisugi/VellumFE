@@ -1879,6 +1879,59 @@ impl VellumGuiApp {
                 self.list_layout_checkpoints();
                 true
             }
+            // UI packs: the GUI rides along on the core commands to add
+            // (export) / install (import) its live layout.
+            "uiexport" => {
+                let args: Vec<String> = parts.map(str::to_string).collect();
+                let mut args = {
+                    let mut all = vec![arg.unwrap_or_default().to_string()];
+                    all.extend(args);
+                    all
+                };
+                args.retain(|a| !a.is_empty());
+                let extra = self
+                    .build_layout_snapshot()
+                    .and_then(|layout| serde_json::to_vec_pretty(&layout).ok())
+                    .map(|bytes| {
+                        vec![(
+                            crate::core::uipack::GUI_LAYOUT_ENTRY.to_string(),
+                            bytes,
+                        )]
+                    })
+                    .unwrap_or_default();
+                self.app_core.uiexport_with(&args, extra);
+                true
+            }
+            "uiimport" => {
+                let args: Vec<String> = parts.map(str::to_string).collect();
+                let mut args = {
+                    let mut all = vec![arg.unwrap_or_default().to_string()];
+                    all.extend(args);
+                    all
+                };
+                args.retain(|a| !a.is_empty());
+                if let Some((pack_name, bytes)) = self.app_core.uiimport(&args) {
+                    match serde_json::from_slice(&bytes) {
+                        Ok(layout) => match save_named_layout(
+                            &layout,
+                            &self.layout_profile,
+                            &self.layout_character,
+                            &pack_name,
+                        ) {
+                            Ok(()) => self.app_core.add_system_message(&format!(
+                                "GUI layout installed — load it with .loadlayout {pack_name}"
+                            )),
+                            Err(err) => self.app_core.add_system_message(&format!(
+                                "Pack's GUI layout could not be saved: {err}"
+                            )),
+                        },
+                        Err(err) => self.app_core.add_system_message(&format!(
+                            "Pack's GUI layout did not parse: {err}"
+                        )),
+                    }
+                }
+                true
+            }
             _ => false,
         }
     }
@@ -2457,12 +2510,35 @@ impl VellumGuiApp {
                     self.app_core
                         .add_system_message(&format!("[WebUI {}] {}", level, text));
                 }
-                crate::webui::WebUiEvent::Disconnected { gave_up } => {
+                crate::webui::WebUiEvent::Disconnected {
+                    gave_up,
+                    never_connected,
+                } => {
                     self.set_webui_windows_connected(false);
                     if gave_up {
-                        self.app_core.add_system_message(
-                            "Lich WebUI connection lost (Lich restarted?). Run .webui to reconnect.",
-                        );
+                        if never_connected {
+                            // The endpoint refused every attempt: almost
+                            // always the advertised host isn't reachable
+                            // from this machine (WebUI bound to localhost
+                            // on the Lich box, firewall, stale address).
+                            let endpoint = self
+                                .webui_endpoint
+                                .as_ref()
+                                .map(|(host, port, _)| format!("{}:{}", host, port))
+                                .unwrap_or_else(|| "the advertised address".to_string());
+                            self.app_core.add_system_message(&format!(
+                                "Lich WebUI unreachable at {} (every attempt refused). \
+                                 If ';ui' says it is running, the WebUI is likely only \
+                                 listening on the Lich machine's localhost or its \
+                                 firewall blocks the port - check that http://{}/ opens \
+                                 in a browser on THIS machine, then run .webui again.",
+                                endpoint, endpoint
+                            ));
+                        } else {
+                            self.app_core.add_system_message(
+                                "Lich WebUI connection lost (Lich restarted?). Run .webui to reconnect.",
+                            );
+                        }
                         self.webui_bridge = None;
                         self.webui_rx = None;
                         self.webui_endpoint = None;

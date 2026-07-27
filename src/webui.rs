@@ -51,7 +51,9 @@ pub enum WebUiEvent {
     /// User-facing notice from the server ("info" | "warn" | "error").
     Notice { level: String, text: String },
     /// Socket dropped; the task keeps retrying until `gave_up`.
-    Disconnected { gave_up: bool },
+    /// `never_connected` distinguishes "endpoint was never reachable"
+    /// (wrong/loopback-bound host, firewall) from a lost session.
+    Disconnected { gave_up: bool, never_connected: bool },
     /// Result of a `fetch_image` request (raw encoded bytes on success).
     ImageFetched {
         src: String,
@@ -123,11 +125,13 @@ async fn run_bridge(
     // Subscriptions observed on the outbound channel, replayed on reconnect.
     let mut subscriptions: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut attempts: u32 = 0;
+    let mut ever_connected = false;
 
     loop {
         match connect(&host, port, &token).await {
             Ok(mut socket) => {
                 attempts = 0;
+                ever_connected = true;
                 tracing::info!("WebUI bridge connected to {}:{}", host, port);
 
                 // Replay subscriptions lost with the previous socket.
@@ -199,15 +203,32 @@ async fn run_bridge(
                     MAX_RECONNECT_ATTEMPTS,
                     err
                 );
+                // Immediate feedback on the very first failure: without it,
+                // .webui looks dead for the whole retry window.
+                if attempts == 1 && !ever_connected {
+                    let _ = event_tx.send(WebUiEvent::Notice {
+                        level: "warn".to_string(),
+                        text: format!(
+                            "can't reach the Lich WebUI at {}:{} ({}); retrying up to {} times...",
+                            host, port, err, MAX_RECONNECT_ATTEMPTS
+                        ),
+                    });
+                }
                 if attempts >= MAX_RECONNECT_ATTEMPTS {
-                    let _ = event_tx.send(WebUiEvent::Disconnected { gave_up: true });
+                    let _ = event_tx.send(WebUiEvent::Disconnected {
+                        gave_up: true,
+                        never_connected: !ever_connected,
+                    });
                     return;
                 }
             }
         }
 
         if event_tx
-            .send(WebUiEvent::Disconnected { gave_up: false })
+            .send(WebUiEvent::Disconnected {
+                gave_up: false,
+                never_connected: !ever_connected,
+            })
             .is_err()
         {
             return; // frontend gone

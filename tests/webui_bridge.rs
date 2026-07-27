@@ -299,7 +299,12 @@ async fn bridge_reconnects_and_replays_subscriptions() {
 
     assert!(matches!(
         recv_event(&mut event_rx).await,
-        WebUiEvent::Disconnected { gave_up: false }
+        WebUiEvent::Disconnected {
+            gave_up: false,
+            // The socket had connected before dropping, so this reports a
+            // lost session, not an unreachable endpoint.
+            never_connected: false,
+        }
     ));
 
     // Second connection: the bridge reconnects on its own and replays the
