@@ -49,6 +49,9 @@ pub struct ColorForm {
     // UI state
     focused_field: usize, // 0=name, 1=category, 2=color, 3=scope, 4=favorite
     mode: FormMode,
+    /// Validation feedback shown in the status bar. Set when a save is rejected
+    /// (e.g. bad hex, empty name) so the user learns why nothing happened.
+    status_message: Option<String>,
 
     // Popup position (for dragging)
     pub popup_x: u16,
@@ -79,6 +82,7 @@ impl ColorForm {
             original_slot: None, // New colors have no slot assignment
             focused_field: 0,
             mode: FormMode::Create,
+            status_message: None,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -121,6 +125,7 @@ impl ColorForm {
                 original_name,
                 original_len,
             },
+            status_message: None,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -227,34 +232,41 @@ impl ColorForm {
         };
     }
 
-    fn save_internal(&self) -> Option<FormAction> {
+    /// Record a validation failure so the status bar shows it, and surface it
+    /// to the caller as before. Previously the caller discarded FormAction::Error
+    /// and the form had no status field, so an invalid save just did nothing.
+    fn reject(&mut self, message: &str) -> Option<FormAction> {
+        self.status_message = Some(message.to_string());
+        Some(FormAction::Error(message.to_string()))
+    }
+
+    fn save_internal(&mut self) -> Option<FormAction> {
         let name_val = self.name.lines()[0].to_string();
         let color_val = self.color.lines()[0].to_string();
         let category_val = self.category.lines()[0].to_string();
 
         // Validate name
         if name_val.trim().is_empty() {
-            return Some(FormAction::Error("Name cannot be empty".to_string()));
+            return self.reject("Name cannot be empty");
         }
 
         // Validate color (must be hex format)
         if !color_val.starts_with('#') || color_val.len() != 7 {
-            return Some(FormAction::Error(
-                "Color must be in format #RRGGBB".to_string(),
-            ));
+            return self.reject("Color must be in format #RRGGBB");
         }
 
         // Validate hex digits
         if !color_val[1..].chars().all(|c| c.is_ascii_hexdigit()) {
-            return Some(FormAction::Error(
-                "Color must contain valid hex digits (0-9, A-F)".to_string(),
-            ));
+            return self.reject("Color must contain valid hex digits (0-9, A-F)");
         }
 
         // Validate category
         if category_val.trim().is_empty() {
-            return Some(FormAction::Error("Category cannot be empty".to_string()));
+            return self.reject("Category cannot be empty");
         }
+
+        // Valid input: clear any stale validation message.
+        self.status_message = None;
 
         let original_name = if let FormMode::Edit {
             original_name,
@@ -572,14 +584,16 @@ impl ColorForm {
         );
         y += 2;
 
-        // Status bar
-        let status = "Tab:Next  Shift+Tab:Prev  Enter:Save  Esc:Close";
-        buf.set_string(
-            self.popup_x + 2,
-            y,
-            status,
-            Style::default().fg(Color::Gray),
-        );
+        // Status bar: show a validation error if the last save was rejected,
+        // otherwise the key hints.
+        let (status, style) = match &self.status_message {
+            Some(msg) => (msg.as_str(), Style::default().fg(Color::Red)),
+            None => (
+                "Tab:Next  Shift+Tab:Prev  Enter:Save  Esc:Close",
+                Style::default().fg(Color::Gray),
+            ),
+        };
+        buf.set_string(self.popup_x + 2, y, status, style);
     }
 
     fn render_text_field(
