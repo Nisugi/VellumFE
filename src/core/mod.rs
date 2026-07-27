@@ -22,6 +22,7 @@ pub mod pathing;
 pub mod remote;
 pub mod travel;
 pub mod state;
+pub mod uipack;
 pub mod window_style;
 
 pub use app_core::AppCore;

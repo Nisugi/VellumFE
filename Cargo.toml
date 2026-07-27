@@ -70,6 +70,10 @@ tokio-tungstenite = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }  # .webinfo pairing QR
 
+# Shareable UI packs (.uiexport / .uiimport): zip with the config files
+# + skin assets that make a UI. Deflate only — no extra codecs.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 # Sound (optional)
 rodio = { version = "0.19", optional = true }
 

@@ -2586,6 +2586,9 @@ impl AppCore {
             ".loadlayout".to_string(),
             ".layouts".to_string(),
             ".resize".to_string(),
+            // UI pack sharing
+            ".uiexport".to_string(),
+            ".uiimport".to_string(),
             // Window management
             ".windows".to_string(),
             ".deletewindow".to_string(),
@@ -2890,6 +2893,12 @@ impl AppCore {
         self.add_system_message("  .skin <name>            - Alias for .setskin");
         self.add_system_message("  .makeskin <name>        - Create a starter skin to edit");
         self.add_system_message("  .reloadskin             - Reload the active skin's images");
+        self.add_system_message("");
+
+        // Sharing
+        self.add_system_message("SHARING:");
+        self.add_system_message("  .uiexport <name> [parts]- Export layout/highlights/keybinds/hotbars/colors/macros/skin as a shareable pack");
+        self.add_system_message("  .uiimport <name|file>   - Preview a shared UI pack; add 'apply' to install (with backups)");
         self.add_system_message("");
 
         // Tab navigation

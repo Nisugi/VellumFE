@@ -454,6 +454,13 @@ impl Layout {
         }
     }
 
+    /// The layout as shareable TOML, normalized exactly like a
+    /// .savelayout write — used by the .uiexport pack.
+    pub fn to_share_toml(&mut self) -> Result<String> {
+        self.normalize_windows_for_save();
+        self.to_toml_string_preserving()
+    }
+
     pub fn save(
         &mut self,
         name: &str,

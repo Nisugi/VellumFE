@@ -45,6 +45,17 @@ command `quit` also saves your settings on the way out.)
 | `.gonew` | `.nextunread` | Jump to the next tab with unread messages |
 | `.streams` | | Open the stream routing editor: every known stream and where it goes (a window, `main`, or discard) |
 
+## Sharing Your UI
+
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `.uiexport <name> [parts...]` | | Bundle the files that make your UI into `~/.vellum-fe/exports/<name>.vellumpack` — a single shareable file. Parts: `layout` (TUI grid + the GUI's live arrangement when exported from the GUI), `highlights`, `keybinds`, `hotbars`, `colors`, `macros`, `skin` (the active skin's whole folder). Default: all. Connection settings and passwords are never included. |
+| `.uiimport <name\|file>` | | Preview a pack: its parts, skin, and file count |
+| `.uiimport <name\|file> apply` | | Install a pack: replaced files are backed up to `~/.vellum-fe/backups/`, everything hot-reloads, and layouts land as named checkpoints (`.loadlayout <packname>`). Skins extract and activate. Unknown or unsafe entries in a pack are skipped, never written. |
+
+Post packs in the community Discord — favorites can become shipped
+default layouts.
+
 ## Highlights
 
 | Command | Aliases | Description |

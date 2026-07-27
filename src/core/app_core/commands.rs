@@ -484,6 +484,163 @@ impl AppCore {
         }
     }
 
+    /// `.uiexport <name> [parts...]` — build a shareable `.vellumpack`
+    /// of the UI's config files. The GUI passes its live layout via
+    /// `extra_files`; other frontends export the TUI layout only.
+    pub fn uiexport_with(&mut self, args: &[String], extra_files: Vec<(String, Vec<u8>)>) {
+        let Some(name) = args.first().cloned() else {
+            self.add_system_message(&format!(
+                "Usage: .uiexport <name> [parts...] — parts: {} (default: all)",
+                crate::core::uipack::PARTS.join(", ")
+            ));
+            return;
+        };
+        let parts: Vec<String> = if args.len() > 1 {
+            args[1..].iter().map(|s| s.to_lowercase()).collect()
+        } else {
+            crate::core::uipack::PARTS.iter().map(|s| s.to_string()).collect()
+        };
+        let layout_toml = self.layout.clone().to_share_toml().ok();
+        let base = match crate::config::Config::base_dir() {
+            Ok(base) => base,
+            Err(e) => {
+                self.add_system_message(&format!("Export failed: {e:#}"));
+                return;
+            }
+        };
+        match crate::core::uipack::export(
+            &base,
+            &name,
+            &parts,
+            self.config.character.as_deref(),
+            layout_toml,
+            self.config.active_skin.as_deref(),
+            &extra_files,
+        ) {
+            Ok((path, included)) => {
+                self.add_system_message(&format!(
+                    "Exported UI pack '{}' ({}) to {}",
+                    name,
+                    included.join(", "),
+                    path.display()
+                ));
+                self.add_system_message(
+                    "Share the file anywhere — it carries no account or connection settings.",
+                );
+            }
+            Err(e) => self.add_system_message(&format!("Export failed: {e:#}")),
+        }
+    }
+
+    /// `.uiimport <name|file> [apply]` — preview a pack, or apply it
+    /// (with backups) and hot-reload what can be. Returns the pack's
+    /// GUI-layout bytes with the pack name so the GUI frontend can
+    /// install them as a named checkpoint.
+    pub fn uiimport(&mut self, args: &[String]) -> Option<(String, Vec<u8>)> {
+        let Some(target) = args.first() else {
+            self.add_system_message(
+                "Usage: .uiimport <name|file> — preview; add 'apply' to install",
+            );
+            return None;
+        };
+        let base = match crate::config::Config::base_dir() {
+            Ok(base) => base,
+            Err(e) => {
+                self.add_system_message(&format!("Import failed: {e:#}"));
+                return None;
+            }
+        };
+        let Some(path) = crate::core::uipack::resolve_pack_path(&base, target) else {
+            self.add_system_message(&format!(
+                "No pack '{}' — pass a name from {}/exports or a file path",
+                target,
+                base.display()
+            ));
+            return None;
+        };
+
+        if args.get(1).map(String::as_str) != Some("apply") {
+            match crate::core::uipack::preview(&path) {
+                Ok(preview) => {
+                    self.add_system_message(&format!(
+                        "Pack {} (VellumFE {}): {}{}",
+                        path.display(),
+                        preview.manifest.version,
+                        preview.manifest.parts.join(", "),
+                        preview
+                            .manifest
+                            .skin
+                            .as_deref()
+                            .map(|s| format!(" — skin '{s}'"))
+                            .unwrap_or_default()
+                    ));
+                    self.add_system_message(&format!(
+                        "{} file(s). Run `.uiimport {} apply` to install — replaced files are backed up.",
+                        preview.entries.len(),
+                        target
+                    ));
+                }
+                Err(e) => self.add_system_message(&format!("Could not read pack: {e:#}")),
+            }
+            return None;
+        }
+
+        match crate::core::uipack::apply(&base, &path, self.config.character.as_deref()) {
+            Ok(outcome) => {
+                for note in &outcome.notes {
+                    self.add_system_message(&format!("uiimport: {note}"));
+                }
+                if let Some(dir) = &outcome.backup_dir {
+                    self.add_system_message(&format!(
+                        "Replaced files backed up to {}",
+                        dir.display()
+                    ));
+                }
+                // Hot-reload everything the pack can touch.
+                self.reload_keybinds();
+                self.reload_highlights();
+                self.reload_hotbars();
+                self.reload_colors();
+                match crate::config::MacrosConfig::load(self.config.character.as_deref()) {
+                    Ok(macros) => {
+                        self.config.macros = macros;
+                        self.config.macros_local = crate::config::MacrosConfig::load_local(
+                            self.config.character.as_deref(),
+                        )
+                        .unwrap_or_default();
+                        if let Some(remote) = self.message_processor.remote.as_mut() {
+                            remote.set_macros(&self.config.macros);
+                        }
+                    }
+                    Err(e) => {
+                        self.add_system_message(&format!("Macros did not reload: {e:#}"))
+                    }
+                }
+                if let Some(skin) = &outcome.skin {
+                    self.config.active_skin = Some(skin.clone());
+                    let _ = self.save_config();
+                    self.add_system_message(&format!(
+                        "Active skin set to '{skin}' (the GUI applies it on next load or via Settings > Appearance)"
+                    ));
+                }
+                if let Some(layout) = &outcome.layout_name {
+                    self.add_system_message(&format!(
+                        "TUI layout installed — load it with .loadlayout {layout}"
+                    ));
+                }
+                let pack_name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "imported".to_string());
+                outcome.gui_layout.map(|bytes| (pack_name, bytes))
+            }
+            Err(e) => {
+                self.add_system_message(&format!("Import failed: {e:#}"));
+                None
+            }
+        }
+    }
+
     /// `.tts` — text-to-speech control from any frontend. Subcommands:
     /// `status` (default), `on`, `off`, `mute`, `rate <0.5-3.0>`,
     /// `volume <0.0-1.0>`, `voice <name|default>`, `voices`, `test`, `clear`.
@@ -867,6 +1024,22 @@ impl AppCore {
             // Web frontend: show the pairing URL + QR for phone onboarding
             "webinfo" => {
                 self.show_webinfo();
+            }
+
+            // Shareable UI packs: export the files that make this UI /
+            // preview + apply a shared one. The GUI intercepts both to
+            // add / install its live layout alongside.
+            "uiexport" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                self.uiexport_with(&args, Vec::new());
+            }
+            "uiimport" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                if self.uiimport(&args).is_some() {
+                    self.add_system_message(
+                        "This pack also carries a GUI layout — run the import in the GUI to install it.",
+                    );
+                }
             }
 
             // Text-to-speech control from any frontend (the GUI also has
