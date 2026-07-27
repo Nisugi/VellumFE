@@ -1895,7 +1895,142 @@ function interactActivate() {
 const interactBar = document.getElementById("interact-bar");
 let interactNoteTimer = 0;
 
+// Interact-bar placement (persisted per device in uiPrefs.interactPos):
+//   { mode: "dock", edge: "top"|"bottom" }        full-width along an edge
+//   { mode: "float", x: 0..1, y: 0..1, w: px }    free-floating, dropped
+// Default is a bottom dock (the historical position). Long-pressing the
+// bar drags it; dropping near the top/bottom edge snaps to a dock, else
+// it free-floats where dropped. Taps on the buttons still change target.
+function defaultInteractPos() {
+  return { mode: "dock", edge: "bottom" };
+}
+
+function applyInteractPos() {
+  const p = (uiPrefs.interactPos && uiPrefs.interactPos.mode)
+    ? uiPrefs.interactPos
+    : defaultInteractPos();
+  const s = interactBar.style;
+  if (p.mode === "float") {
+    interactBar.classList.add("floating");
+    // Width was captured at drop time so the bar keeps its size while
+    // floating; clamp the anchor so it can't leave the viewport.
+    const w = p.w || interactBar.offsetWidth || 240;
+    s.width = `${w}px`;
+    s.right = "auto";
+    s.bottom = "auto";
+    s.left = `${Math.min(0.98, Math.max(0.02, p.x || 0.5)) * 100}%`;
+    s.top = `${Math.min(0.95, Math.max(0.02, p.y || 0.85)) * 100}%`;
+  } else {
+    interactBar.classList.remove("floating");
+    s.width = "";
+    s.left = "8px";
+    s.right = "8px";
+    if (p.edge === "top") {
+      s.top = "8px";
+      s.bottom = "auto";
+    } else {
+      s.bottom = "8px";
+      s.top = "auto";
+    }
+  }
+}
+
+// Long-press to drag; a plain tap falls through to the buttons. Mirrors
+// the floating-button gesture (hold timer + movement threshold + capture),
+// then snaps to an edge dock or free-floats on drop.
+(function attachInteractDrag() {
+  const HOLD_MS = 300;
+  const MOVE_EPS = 6; // px before a hold becomes a real drag
+  let holdTimer = 0;
+  let armed = false; // long-press elapsed, waiting to see movement
+  let dragging = false;
+  let startX = 0, startY = 0;
+
+  const parentRect = () => interactBar.offsetParent
+    ? interactBar.offsetParent.getBoundingClientRect()
+    : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+
+  interactBar.addEventListener("pointerdown", (ev) => {
+    // Ignore the drag gesture starting on nothing unusual; buttons still
+    // get their own tap via the click that follows if we never drag.
+    armed = false;
+    dragging = false;
+    startX = ev.clientX;
+    startY = ev.clientY;
+    clearTimeout(holdTimer);
+    holdTimer = setTimeout(() => { armed = true; }, HOLD_MS);
+  });
+
+  interactBar.addEventListener("pointermove", (ev) => {
+    if (!armed && !dragging) return;
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    if (!dragging) {
+      if (Math.hypot(dx, dy) < MOVE_EPS) return; // stationary hold = still a tap
+      dragging = true;
+      interactBar.classList.add("dragging", "floating");
+      try { interactBar.setPointerCapture(ev.pointerId); } catch { /* ok */ }
+      // Freeze current width so it doesn't reflow while floating.
+      interactBar.style.width = `${interactBar.offsetWidth}px`;
+      interactBar.style.right = "auto";
+    }
+    const r = parentRect();
+    const w = interactBar.offsetWidth;
+    const h = interactBar.offsetHeight;
+    // Anchor by the bar's top-left, keeping the grab point under the finger.
+    let x = (ev.clientX - r.left - w / 2) / r.width;
+    let y = (ev.clientY - r.top - h / 2) / r.height;
+    x = Math.min(0.98, Math.max(0.02, x));
+    y = Math.min(0.95, Math.max(0.02, y));
+    interactBar.style.left = `${x * 100}%`;
+    interactBar.style.top = `${y * 100}%`;
+    interactBar.dataset.dx = x;
+    interactBar.dataset.dy = y;
+  });
+
+  const endDrag = () => {
+    clearTimeout(holdTimer);
+    armed = false;
+    if (dragging) {
+      const r = parentRect();
+      const y = parseFloat(interactBar.dataset.dy || "0.85");
+      // Snap to an edge if dropped within the top/bottom 18% band, else
+      // keep it floating where dropped.
+      if (y <= 0.18) {
+        uiPrefs.interactPos = { mode: "dock", edge: "top" };
+      } else if (y >= 0.82) {
+        uiPrefs.interactPos = { mode: "dock", edge: "bottom" };
+      } else {
+        uiPrefs.interactPos = {
+          mode: "float",
+          x: parseFloat(interactBar.dataset.dx || "0.5"),
+          y,
+          w: interactBar.offsetWidth,
+        };
+      }
+      saveUiPrefs();
+      interactBar.classList.remove("dragging");
+      applyInteractPos();
+    }
+    // Clear on a timeout so the click that follows pointerup still sees
+    // dragging=true and the buttons skip activation on a drag-release.
+    setTimeout(() => { dragging = false; }, 0);
+  };
+  interactBar.addEventListener("pointerup", endDrag);
+  interactBar.addEventListener("pointercancel", endDrag);
+  interactBar.addEventListener("contextmenu", (ev) => ev.preventDefault());
+  // Swallow a button tap that concludes a drag.
+  interactBar.addEventListener("click", (ev) => {
+    if (dragging) { ev.stopPropagation(); ev.preventDefault(); }
+  }, true);
+
+  // Expose so drag-end/apply can be reused; also apply the saved position
+  // once at startup.
+  window.__applyInteractPos = applyInteractPos;
+})();
+
 function flashInteractNote(text) {
+  applyInteractPos();
   interactBar.hidden = false;
   document.getElementById("ia-cat").textContent = "";
   document.getElementById("ia-entity").textContent = text;
@@ -1920,6 +2055,7 @@ function renderInteract() {
     cat.textContent = INTERACT_LABELS[interact.category];
     entity.textContent = "nothing here";
   }
+  applyInteractPos();
   interactBar.hidden = false;
 }
 
@@ -2584,7 +2720,9 @@ let uiPrefs = { theme: "dark", hide: {} };
 try {
   const stored = JSON.parse(localStorage.getItem(UI_PREFS_KEY) || "{}");
   if (stored && typeof stored === "object") {
-    uiPrefs = { theme: stored.theme || "dark", hide: stored.hide || {} };
+    // Spread so per-device extras (opacity, interactPos, …) survive a
+    // reload; only theme/hide have hard defaults.
+    uiPrefs = { ...stored, theme: stored.theme || "dark", hide: stored.hide || {} };
   }
 } catch { /* defaults */ }
 // The bottom macro rail duplicates the tray + floating buttons on very
@@ -2623,6 +2761,7 @@ const OPACITY_SETTINGS = [
   ["float", "Floating buttons", "--float-alpha", 82],
   ["drawer", "Side drawers", "--drawer-alpha", 93],
   ["sheet", "Bottom menus", "--sheet-alpha", 100],
+  ["interact", "Interact bar", "--interact-alpha", 93],
 ];
 
 const CHROME_TOGGLES = [
@@ -2659,6 +2798,7 @@ function applyUiPrefs() {
     const pct = Number.isFinite(opacity[key]) ? opacity[key] : dflt;
     root.style.setProperty(cssVar, String(Math.min(100, Math.max(20, pct)) / 100));
   }
+  applyInteractPos();
 }
 applyUiPrefs();
 
