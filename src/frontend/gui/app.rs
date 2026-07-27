@@ -2097,9 +2097,9 @@ impl VellumGuiApp {
                     }
                 }
                 crate::core::remote::RemoteEvent::WheelPick { key, path } => {
-                    // Resolved against config like macros; same dispatch as
-                    // typed input.
-                    match self.app_core.config.wheel_pick_command(&key, &path) {
+                    // Resolved against config (or the dynamic portals
+                    // wheel) like macros; same dispatch as typed input.
+                    match self.app_core.wheel_pick_command(&key, &path) {
                         Some(command) => {
                             tracing::debug!(
                                 "remote wheel pick '{}' {:?}: '{}'",
@@ -4146,6 +4146,11 @@ impl eframe::App for VellumGuiApp {
             .exact_size(30.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    // Flat toolbar: no resting chip background on the zone
+                    // toggles / Windows menu, hover highlight only. Scoped to
+                    // this row; the dropdown menus keep normal visuals.
+                    ui.visuals_mut().widgets.inactive.weak_bg_fill =
+                        egui::Color32::TRANSPARENT;
                     ui.heading("VellumFE GUI");
                     let connection_text = if self.app_core.game_state.connected {
                         RichText::new("Connected")

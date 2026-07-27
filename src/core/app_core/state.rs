@@ -1171,6 +1171,51 @@ impl AppCore {
         }
     }
 
+    /// Reserved dynamic wheel name: slices are built from the current
+    /// room's portal list at open time instead of TOML.
+    pub const PORTAL_WHEEL_KEY: &str = "portals";
+
+    /// Slices for a wheel key: the dynamic portals wheel first
+    /// (shadowing any static wheel of that name), else the static
+    /// config lookup. Owned — dynamic slices have no home in config.
+    pub fn wheel_slices(&self, key: &str, path: &[usize]) -> Option<Vec<crate::config::WheelSlice>> {
+        if key == Self::PORTAL_WHEEL_KEY {
+            if !path.is_empty() {
+                return None; // flat wheel: portals have no folders
+            }
+            let slices: Vec<crate::config::WheelSlice> = self
+                .portal_commands()
+                .into_iter()
+                .map(|command| crate::config::WheelSlice {
+                    // "go gate" reads as "gate" on the wedge; the full
+                    // command still shows in the hub.
+                    label: command
+                        .split_once(' ')
+                        .map(|(_, rest)| rest.to_string())
+                        .unwrap_or_else(|| command.clone()),
+                    command,
+                    color: None,
+                    slices: vec![],
+                })
+                .collect();
+            return (!slices.is_empty()).then_some(slices);
+        }
+        self.config.wheel_level_slices(key, path).cloned()
+    }
+
+    /// Resolve a wheel pick (remote clients and the GUI release-fire):
+    /// the dynamic portals wheel by index, else static config.
+    pub fn wheel_pick_command(&self, key: &str, path: &[usize]) -> Option<String> {
+        if key == Self::PORTAL_WHEEL_KEY {
+            let (&leaf, folders) = path.split_last()?;
+            if !folders.is_empty() {
+                return None;
+            }
+            return self.portal_commands().into_iter().nth(leaf);
+        }
+        self.config.wheel_pick_command(key, path)
+    }
+
     /// Declare that this runtime accepts session control (Connect /
     /// Disconnect) from web clients. Only the headless runtime does.
     pub fn set_remote_session_control(&mut self, enabled: bool) {
@@ -1271,6 +1316,8 @@ impl AppCore {
                 .clone()
                 .or_else(|| self.lich_room_id.clone());
         }
+        // Portal resolution needs the map service, which lives here.
+        snap.portals = self.portal_commands();
         // Real sessions rarely set game_state.room_name/exits; fall back
         // the same way the room widget does (see gui sync_room_windows):
         // subtitle from <streamWindow> for the name, compass for exits.

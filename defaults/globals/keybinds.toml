@@ -175,6 +175,7 @@ dpad_left = { macro_text = ".portal\r" } # Walk the room's door/arch/gate
 south = { macro_text = "look\r" }      # A / cross
 l2 = "controller_shift"                # Hold: buttons use [controller_shift]
 r2 = "controller_wheel"                # Hold: radial command wheel (left stick picks)
+l3 = "controller_wheel:portals"        # Hold: the room's noun exits (go gate, ...)
 select = "controller_overlay"          # Toggle the binding-legend overlay
 
 # Which bindings the overlay legend shows (curate it - you don't need

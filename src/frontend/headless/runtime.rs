@@ -873,7 +873,7 @@ fn handle_remote_event(
             true
         }
         RemoteEvent::WheelPick { key, path } => {
-            match app_core.config.wheel_pick_command(&key, &path) {
+            match app_core.wheel_pick_command(&key, &path) {
                 Some(command) => {
                     tracing::debug!("remote wheel pick '{}' {:?}: '{}'", key, path, command);
                     if dispatch_command(app_core, connection, command) {

@@ -15,6 +15,11 @@ use vellum_fe::frontend::web::server;
 
 const TOKEN: &str = "abc123";
 
+/// The scripted room's portal commands (dynamic "portals" wheel).
+fn scripted_portals() -> Vec<String> {
+    vec!["go gate".into(), "climb ladder".into()]
+}
+
 #[tokio::main]
 async fn main() {
     let (mut sink, handles, mut event_rx) = RemoteSink::new(500);
@@ -200,6 +205,9 @@ async fn main() {
             snap.entities.objects = vec![entity("a silver ring", "333", "ring")];
             snap.entities.players = vec![entity("Testy", "444", "Testy")];
             snap.exits = vec!["n".into(), "sw".into(), "out".into()];
+            // Portal commands for the dynamic "portals" wheel (also used
+            // by the wheel_pick resolver below, like AppCore's).
+            snap.portals = scripted_portals();
         }
         snap.map_scene = RemoteMapSceneRef(Some(scene));
         snap.map_state = RemoteMapState {
@@ -634,7 +642,15 @@ async fn main() {
                 );
             }
             RemoteEvent::WheelPick { key, path } => {
-                let resolved = wheel_config.wheel_pick_command(&key, &path);
+                // Mirror AppCore::wheel_pick_command: the dynamic portals
+                // wheel resolves by index against the live portal list.
+                let resolved = if key == "portals" {
+                    path.first()
+                        .filter(|_| path.len() == 1)
+                        .and_then(|&i| scripted_portals().into_iter().nth(i))
+                } else {
+                    wheel_config.wheel_pick_command(&key, &path)
+                };
                 println!("EVENT wheel_pick: key={key:?} path={path:?} resolved={resolved:?}");
             }
             RemoteEvent::MacroSave {

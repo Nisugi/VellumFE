@@ -301,6 +301,8 @@ pub enum RemoteDelta {
     Targets(Vec<RemoteTarget>),
     /// The room entity lists (interact mode) changed.
     Entities(RemoteRoomEntities),
+    /// The room's portal list (dynamic portals wheel) changed.
+    Portals(Vec<String>),
     /// Character-sheet lines changed (experience/encumbrance/bounty/society).
     CharInfo(RemoteCharInfo),
     /// Game-session status changed (headless runtime only).
@@ -575,6 +577,10 @@ pub struct RemoteStateSnapshot {
     pub targets: Vec<RemoteTarget>,
     /// Room entity lists for interact mode (creatures/objects/players).
     pub entities: RemoteRoomEntities,
+    /// The room's portal commands ("go arch"), for the dynamic portals
+    /// wheel. Overlaid by AppCore::flush_remote_state (resolution needs
+    /// the map service, which lives on AppCore).
+    pub portals: Vec<String>,
     /// Character sheet: experience/encumbrance/bounty/society lines.
     pub char_info: RemoteCharInfo,
     /// Session status + session-control capability. Overlaid by the sink in
@@ -889,7 +895,9 @@ impl RemoteStateSnapshot {
                 info
             },
             session: RemoteSessionInfo::default(),
-            // Overlaid by AppCore::flush_remote_state (the map lives there).
+            // Overlaid by AppCore::flush_remote_state (the map — and the
+            // portal resolution that needs it — live there).
+            portals: Vec::new(),
             map_scene: RemoteMapSceneRef::default(),
             map_state: RemoteMapState::default(),
         }
@@ -1265,6 +1273,11 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Entities(snap.entities.clone()));
+        }
+        if snap.portals != self.last.portals {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Portals(snap.portals.clone()));
         }
         if snap.char_info != self.last.char_info {
             let _ = self

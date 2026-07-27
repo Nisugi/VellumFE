@@ -92,7 +92,11 @@ Controller-specific actions: `controller_shift` (hold: buttons use
 wheel — default ring in `[[controller_wheel]]`, named rings in
 `[controller_wheels.<name>]`; slices take `label`, `command`, optional
 `color`, and nested `slices` for folders — the phone client renders
-these same wheels for its `wheel` binds), and `controller_overlay`
+these same wheels for its `wheel` binds; the name **`portals` is
+reserved**: `controller_wheel:portals` (l3 by default) builds its
+slices from the current room's noun exits at open time — the same
+list `.portal` resolves — shadowing any static wheel of that name),
+and `controller_overlay`
 (toggle the binding legend — curated by `[controller_overlay]
 buttons`, with `shift/<button>` entries for the shift bank). Rumble
 lives in `[controller_rumble]` (patterns `off`/`short`/`long`/`double`

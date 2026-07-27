@@ -109,6 +109,8 @@ html, body {
 #wake-btn,
 #textsize-btn,
 #settings-btn,
+#interact-btn,
+#map-btn,
 #logout-btn {
   padding: 2px 8px;
   background: none;

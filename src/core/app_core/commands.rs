@@ -394,13 +394,11 @@ impl AppCore {
         self.add_system_message(&summary);
     }
 
-    /// `.portal [n|text]` — walk through the room's non-compass exit
-    /// ("go door", "climb stair", ...). One candidate: walk it. Several:
-    /// list them; `.portal 2` or `.portal arch` picks. Candidates come
-    /// from the mapdb room's wayto edges, falling back to portal-looking
+    /// The current room's portal commands ("go arch", "climb stair"):
+    /// the mapdb room's wayto edges, falling back to portal-looking
     /// nouns among the room objects when the map doesn't know the room.
-    /// Returns the movement command to send upstream, or None.
-    fn handle_portal_command(&mut self, args: &[String]) -> Option<String> {
+    /// Shared by `.portal` and the dynamic `portals` controller wheel.
+    pub fn portal_commands(&self) -> Vec<String> {
         let mut candidates: Vec<String> = Vec::new();
         if let (Some(room_id), Some(db)) = (self.map.current_room_id, self.map.mapdb()) {
             if let Some(room) = db.room(room_id) {
@@ -421,6 +419,16 @@ impl AppCore {
                 .collect();
             candidates.dedup();
         }
+        candidates
+    }
+
+    /// `.portal [n|text]` — walk through the room's non-compass exit
+    /// ("go door", "climb stair", ...). One candidate: walk it. Several:
+    /// list them; `.portal 2` or `.portal arch` picks. Candidates come
+    /// from `portal_commands`. Returns the movement command to send
+    /// upstream, or None.
+    fn handle_portal_command(&mut self, args: &[String]) -> Option<String> {
+        let mut candidates = self.portal_commands();
 
         match (candidates.len(), args.first()) {
             (0, _) => {
@@ -1349,6 +1357,62 @@ mod portal_tests {
     fn no_candidates_reports_and_returns_none() {
         let mut core = AppCore::new_for_test();
         assert_eq!(core.handle_portal_command(&[]), None);
+    }
+
+    #[test]
+    fn portals_wheel_builds_from_the_room_and_shadows_config() {
+        let mut core = AppCore::new_for_test();
+        // Empty room: no wheel, same as an empty static one.
+        assert_eq!(core.wheel_slices("portals", &[]), None);
+        assert_eq!(core.wheel_pick_command("portals", &[0]), None);
+
+        core.game_state.room_objects = vec![
+            RoomObject {
+                name: "a wooden door".into(),
+                noun: Some("door".into()),
+                id: "1".into(),
+            },
+            RoomObject {
+                name: "a stone arch".into(),
+                noun: Some("arch".into()),
+                id: "2".into(),
+            },
+        ];
+        // A static wheel named "portals" is shadowed by the dynamic one.
+        core.config.controller_wheels.insert(
+            "portals".into(),
+            vec![crate::config::WheelSlice {
+                label: "static".into(),
+                command: "static".into(),
+                color: None,
+                slices: vec![],
+            }],
+        );
+
+        let slices = core.wheel_slices("portals", &[]).unwrap();
+        assert_eq!(slices.len(), 2);
+        assert_eq!(slices[0].label, "door"); // "go door" minus the verb
+        assert_eq!(slices[0].command, "go door");
+        assert!(!slices[0].is_folder());
+
+        assert_eq!(core.wheel_pick_command("portals", &[1]), Some("go arch".into()));
+        // Flat wheel: folder paths and out-of-range indexes resolve to
+        // nothing.
+        assert_eq!(core.wheel_slices("portals", &[0]), None);
+        assert_eq!(core.wheel_pick_command("portals", &[0, 1]), None);
+        assert_eq!(core.wheel_pick_command("portals", &[7]), None);
+
+        // Other keys still hit static config.
+        core.config.controller_wheels.insert(
+            "spells".into(),
+            vec![crate::config::WheelSlice {
+                label: "prep".into(),
+                command: "prep 101".into(),
+                color: None,
+                slices: vec![],
+            }],
+        );
+        assert_eq!(core.wheel_pick_command("spells", &[0]), Some("prep 101".into()));
     }
 
     #[test]

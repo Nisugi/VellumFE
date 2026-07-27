@@ -116,6 +116,7 @@ struct SnapshotPayload {
     injuries: std::collections::HashMap<String, u8>,
     targets: Vec<RemoteTarget>,
     entities: RemoteRoomEntities,
+    portals: Vec<String>,
     char_info: RemoteCharInfo,
     session: RemoteSessionInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,6 +174,7 @@ pub fn snapshot(
         injuries: state.injuries.clone(),
         targets: state.targets.clone(),
         entities: state.entities.clone(),
+        portals: state.portals.clone(),
         char_info: state.char_info.clone(),
         session: state.session.clone(),
         map_scene: state.map_scene.0.clone(),
@@ -255,6 +257,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
         RemoteDelta::Targets(targets) => encode("targets", last_seq, targets),
         RemoteDelta::Entities(entities) => encode("entities", last_seq, entities),
+        RemoteDelta::Portals(portals) => encode("portals", last_seq, portals),
         RemoteDelta::CharInfo(info) => encode("charinfo", last_seq, info),
         RemoteDelta::Sound { file, volume } => encode(
             "sound",

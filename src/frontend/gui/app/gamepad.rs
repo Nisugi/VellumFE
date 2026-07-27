@@ -165,7 +165,7 @@ impl VellumGuiApp {
                 if let Some(index) = ui.aimed {
                     if let Some(slice) = self
                         .wheel_level_slices(&ui.key, &ui.path)
-                        .and_then(|level| level.get(index).cloned())
+                        .and_then(|level| level.into_iter().nth(index))
                     {
                         if !slice.is_folder() && !slice.command.is_empty() {
                             self.dispatch_command(slice.command);
@@ -346,7 +346,7 @@ impl VellumGuiApp {
                     let Some(index) = aimed else { return };
                     let Some(slice) = self
                         .wheel_level_slices(&key, &path)
-                        .and_then(|level| level.get(index).cloned())
+                        .and_then(|level| level.into_iter().nth(index))
                     else {
                         return;
                     };
@@ -465,13 +465,14 @@ impl VellumGuiApp {
     }
 
     /// The slice list at a folder path within a named wheel; canonical
-    /// lookup lives on Config (shared with remote wheel picks).
+    /// lookup lives on AppCore (shared with remote wheel picks), which
+    /// also builds the dynamic `portals` wheel from the current room.
     fn wheel_level_slices(
         &self,
         key: &str,
         path: &[usize],
-    ) -> Option<&Vec<crate::config::WheelSlice>> {
-        self.app_core.config.wheel_level_slices(key, path)
+    ) -> Option<Vec<crate::config::WheelSlice>> {
+        self.app_core.wheel_slices(key, path)
     }
 
     /// True while any button base-bound to the named action is held. Read
@@ -518,7 +519,7 @@ impl VellumGuiApp {
         else {
             return;
         };
-        let Some(slices) = self.wheel_level_slices(&key, &path).cloned() else {
+        let Some(slices) = self.wheel_level_slices(&key, &path) else {
             return;
         };
         let slices = &slices;

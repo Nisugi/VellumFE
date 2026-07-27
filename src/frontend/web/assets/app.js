@@ -737,6 +737,7 @@ function handleSnapshot(d) {
   setInjuries(d.injuries || {});
   setTargets(d.targets || []);
   setRoomEntities(d.entities || {});
+  setPortals(d.portals || []);
   setCharInfo(d.char_info || {});
   setRt(d.rt);
   if (d.map_scene) setMapScene(d.map_scene);
@@ -789,6 +790,7 @@ function handleMessage(msg) {
     case "injuries": setInjuries(msg.d); break;
     case "targets": setTargets(msg.d); break;
     case "entities": setRoomEntities(msg.d); break;
+    case "portals": setPortals(msg.d); break;
     case "charinfo": setCharInfo(msg.d); break;
     case "map_scene": setMapScene(msg.d); break;
     case "map_state": setMapState(msg.d); break;
@@ -1300,7 +1302,8 @@ const GP_BUTTON_ORDER = [
 const GP_SHIFT = "shift";
 const GP_DEFAULT_BINDS = {
   dpad_up: "up", dpad_down: "down", dpad_right: "out", dpad_left: ".portal",
-  south: "look", l2: GP_SHIFT, r2: "wheel", start: "interact",
+  south: "look", l2: GP_SHIFT, r2: "wheel", l3: "wheel:portals",
+  start: "interact",
 };
 const GP_DEFAULT_SHIFT_BINDS = { south: "stand" };
 
@@ -1403,9 +1406,28 @@ function gpHeldWheelKey() {
   return null;
 }
 
+// The room's portal commands ("go arch"), pushed by the host for the
+// dynamic "portals" wheel; picks resolve server-side by index.
+let portalCommands = [];
+
+function setPortals(portals) {
+  portalCommands = portals || [];
+  if (gpWheel && gpWheel.key === "portals") renderWheel();
+}
+
 // The slice list at a folder path within a wheel; null when the key or
-// path no longer resolves (stale after a host-side wheel edit).
+// path no longer resolves (stale after a host-side wheel edit). The
+// reserved "portals" wheel is built from the live portal list — flat,
+// label = the command minus its verb ("go gate" reads as "gate").
 function wheelLevelSlices(key, path) {
+  if (key === "portals") {
+    if (path.length) return null;
+    return portalCommands.map((command) => ({
+      label: command.includes(" ")
+        ? command.slice(command.indexOf(" ") + 1)
+        : command,
+    }));
+  }
   let level = key ? (wheels.named || {})[key] : wheels.default;
   if (!Array.isArray(level)) return null;
   for (const index of path) {
@@ -2191,7 +2213,9 @@ function renderControllerSheet() {
   sheetNote(
     'Bind "wheel" to hold-open the radial command wheel (defined on the ' +
       "host in keybinds.toml): aim with the left stick, release to fire; " +
-      "A opens folders, B backs up." +
+      "A opens folders, B backs up. " +
+      '"wheel:portals" is always available — its slices are the current ' +
+      "room's noun exits (go gate, climb ladder)." +
       (named.length ? ` Named wheels: ${named.map((n) => `wheel:${n}`).join(", ")}.` : ""),
     false,
   );

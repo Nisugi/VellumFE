@@ -460,9 +460,11 @@ async fn entities_flow_in_snapshot_and_deltas() {
     };
     let mut snap = RemoteStateSnapshot::default();
     snap.entities.creatures = vec![entity("111", "a muddy hog (stunned)", "hog")];
+    snap.portals = vec!["go gate".to_string()];
     sink.flush_state(snap.clone());
 
     let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    assert_eq!(snapshot["d"]["portals"][0], "go gate");
     assert_eq!(snapshot["d"]["entities"]["creatures"][0]["id"], "111");
     assert_eq!(
         snapshot["d"]["entities"]["creatures"][0]["label"],
@@ -474,13 +476,17 @@ async fn entities_flow_in_snapshot_and_deltas() {
         0
     );
 
-    // A room change flows as a coalesced entities delta.
+    // A room change flows as coalesced entities + portals deltas.
     snap.entities.players = vec![entity("444", "Testy", "Testy")];
+    snap.portals = vec!["go gate".to_string(), "climb ladder".to_string()];
     sink.flush_state(snap);
     let delta = read_json_timeout(&mut client).await;
     assert_eq!(delta["t"], "entities");
     assert_eq!(delta["d"]["players"][0]["id"], "444");
     assert_eq!(delta["d"]["creatures"][0]["id"], "111");
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "portals");
+    assert_eq!(delta["d"][1], "climb ladder");
 }
 
 #[tokio::test]

@@ -662,7 +662,7 @@ async fn async_run(
                     crate::core::remote::RemoteEvent::WheelPick { key, path } => {
                         // Resolved against config like macros; same dispatch
                         // as typed input, skipping history.
-                        let Some(command) = app_core.config.wheel_pick_command(&key, &path)
+                        let Some(command) = app_core.wheel_pick_command(&key, &path)
                         else {
                             tracing::warn!(
                                 "remote wheel pick '{}' {:?} did not resolve (stale client?)",
