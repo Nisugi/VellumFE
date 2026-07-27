@@ -2161,4 +2161,112 @@ mod tests {
             "window heights must sum to the requested terminal height"
         );
     }
+
+    /// Three windows stacked in one column grow proportionally with the
+    /// leftover distributed round-robin, and conservation holds across 3.
+    #[test]
+    fn resize_three_stacked_windows_conserve_and_cascade() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("a", 0, 0, 80, 6),
+                text_def("b", 0, 6, 80, 6),
+                text_def("c", 0, 12, 80, 12),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 31); // +7
+
+        assert_eq!(row_rows(&core, "a"), (0, 8));
+        assert_eq!(row_rows(&core, "b"), (8, 8));
+        assert_eq!(row_rows(&core, "c"), (16, 15));
+        // Cascade + conservation: contiguous, summing to 31.
+        assert_eq!(8 + 8 + 15, 31);
+    }
+
+    /// A column with both a min-clamped window AND a max-clamped window still
+    /// conserves total height: the fully-recoupled remainder lands on the
+    /// unconstrained sibling.
+    #[test]
+    fn resize_mixed_min_and_max_clamps_conserve() {
+        let mut top = text_def("top", 0, 0, 80, 8);
+        top.base_mut().min_rows = Some(7);
+        let mut mid = text_def("mid", 0, 8, 80, 8);
+        mid.base_mut().max_rows = Some(8);
+        let mut core = core_with_baseline(vec![top, mid, text_def("bot", 0, 16, 80, 8)], 80, 24);
+        core.resize_windows(80, 18); // -6
+
+        assert_eq!(row_rows(&core, "top"), (0, 7)); // stopped at min_rows
+        assert_eq!(row_rows(&core, "mid"), (7, 7)); // shrank (max only caps growth)
+        assert_eq!(row_rows(&core, "bot"), (14, 4)); // absorbed the remainder
+        assert_eq!(7 + 7 + 4, 18);
+    }
+
+    /// A simultaneous width + height resize applies both passes correctly to a
+    /// 2x2 grid (no interference between the axes).
+    #[test]
+    fn resize_asymmetric_width_and_height_together() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("tl", 0, 0, 40, 12),
+                text_def("tr", 40, 0, 40, 12),
+                text_def("bl", 0, 12, 40, 12),
+                text_def("br", 40, 12, 40, 12),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(100, 34); // +20 width, +10 height
+
+        // Each cell: 40 -> 50 wide, 12 -> 17 tall; bottom row cascades to 17.
+        assert_eq!(col_cols(&core, "tl"), (0, 50));
+        assert_eq!(col_cols(&core, "tr"), (50, 50));
+        assert_eq!(row_rows(&core, "tl"), (0, 17));
+        assert_eq!(row_rows(&core, "bl"), (17, 17));
+        assert_eq!(col_cols(&core, "br"), (50, 50));
+        assert_eq!(row_rows(&core, "br"), (17, 17));
+    }
+
+    /// A single full-screen window absorbs the entire delta on both axes.
+    #[test]
+    fn resize_single_window_takes_whole_delta() {
+        let mut core = core_with_baseline(vec![text_def("only", 0, 0, 80, 24)], 80, 24);
+        core.resize_windows(90, 30); // +10 w, +6 h
+
+        assert_eq!(col_cols(&core, "only"), (0, 90));
+        assert_eq!(row_rows(&core, "only"), (0, 30));
+    }
+
+    /// Growing only the width leaves every window's height (and row) untouched.
+    #[test]
+    fn resize_width_only_leaves_height_untouched() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("l", 0, 0, 40, 24),
+                text_def("r", 40, 0, 40, 24),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(96, 24); // +16 w, 0 h
+
+        assert_eq!(col_cols(&core, "l"), (0, 48));
+        assert_eq!(col_cols(&core, "r"), (48, 48));
+        assert_eq!(row_rows(&core, "l"), (0, 24));
+        assert_eq!(row_rows(&core, "r"), (0, 24));
+    }
+
+    /// max_rows clamp on GROW (mirror of the min clamp on shrink): the capped
+    /// window stops at max and the remainder flows to its sibling; conserved.
+    #[test]
+    fn resize_max_clamp_on_grow_recouples_to_sibling() {
+        let mut cap = text_def("cap", 0, 0, 80, 10);
+        cap.base_mut().max_rows = Some(12);
+        let mut core = core_with_baseline(vec![cap, text_def("rest", 0, 10, 80, 14)], 80, 24);
+        core.resize_windows(80, 44); // +20
+
+        assert_eq!(row_rows(&core, "cap"), (0, 12)); // capped at max_rows
+        assert_eq!(row_rows(&core, "rest"), (12, 32)); // absorbed the rest
+        assert_eq!(12 + 32, 44);
+    }
 }
