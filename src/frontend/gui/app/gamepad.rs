@@ -194,9 +194,12 @@ impl VellumGuiApp {
                 }
                 // The aim stick is usually still deflected on release; if it
                 // is also the movement stick, seed the hysteresis so firing
-                // doesn't also walk.
+                // doesn't also walk. And require the aim stick to return to
+                // center before its scroll / interact-cycle function resumes,
+                // so the leftover deflection can't scroll or cycle.
                 self.gp_stick_sector =
                     stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
+                self.gp_aim_recenter_needed = true;
                 self.app_core.needs_render = true;
             }
             (true, Some(_)) => {
@@ -235,10 +238,16 @@ impl VellumGuiApp {
         // deflections creep and full tilt flies. Stick up scrolls up
         // (negative offset delta). Silenced while it is aiming an open
         // wheel so aiming never also scrolls or cycles.
-        let aim_owned_by_wheel = self.gp_wheel.is_some() || self.gp_wheel_fired;
+        // A wheel that just closed leaves the stick deflected; hold the
+        // aim stick's normal function until it returns to center once.
+        if self.gp_aim_recenter_needed && aim_stick_centered(aim_x, aim_y) {
+            self.gp_aim_recenter_needed = false;
+        }
+        let aim_owned_by_wheel =
+            self.gp_wheel.is_some() || self.gp_wheel_fired || self.gp_aim_recenter_needed;
         if aim_owned_by_wheel {
             // Keep the interact hysteresis in sync with the deflected stick
-            // so releasing the wheel doesn't fire a stale cycle step.
+            // so resuming doesn't fire a stale cycle step.
             self.gp_right_dir = four_way(aim_x, aim_y, self.gp_right_dir);
         } else if self.app_core.ui_state.input_mode == InputMode::Interact {
             let dir = four_way(aim_x, aim_y, self.gp_right_dir);
@@ -667,6 +676,7 @@ impl VellumGuiApp {
                 } else if !slice.command.is_empty() {
                     self.gp_wheel = None;
                     self.gp_wheel_fired = true;
+                    self.gp_aim_recenter_needed = true;
                     self.wheel_fire(slice.command);
                     self.app_core.needs_render = true;
                 }
@@ -945,6 +955,12 @@ fn dwell_rearm_step(latched: bool, centered: bool) -> (bool, bool) {
     (latch_after, may_dwell)
 }
 
+/// True when the aim stick has returned close enough to center to clear
+/// the post-wheel recenter latch (reuses the movement release threshold).
+fn aim_stick_centered(x: f32, y_up: f32) -> bool {
+    (x * x + y_up * y_up).sqrt() < STICK_RELEASE
+}
+
 /// The displayed ring for a wheel level: the real slices plus, inside a
 /// folder, a synthetic Back slice reserved at the configured screen
 /// anchor. `real_index` maps a displayed index back to the real slice
@@ -1159,6 +1175,18 @@ mod wheel_tests {
         assert_eq!(anchor_display_index("right", 4), 1);
         assert_eq!(anchor_display_index("down", 4), 2);
         assert_eq!(anchor_display_index("left", 4), 3);
+    }
+
+    #[test]
+    fn aim_recenter_latch_clears_only_near_center() {
+        // Fully deflected: still latched (function stays suppressed).
+        assert!(!aim_stick_centered(0.0, 1.0));
+        assert!(!aim_stick_centered(0.8, 0.0));
+        // Just above the release threshold: still latched.
+        assert!(!aim_stick_centered(0.0, STICK_RELEASE + 0.01));
+        // Back inside the release threshold: latch clears.
+        assert!(aim_stick_centered(0.0, 0.0));
+        assert!(aim_stick_centered(0.1, 0.1));
     }
 
     #[test]
