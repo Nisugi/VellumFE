@@ -221,6 +221,26 @@ fn main() -> Result<()> {
         .with_ansi(false) // No color codes in log file
         .init();
 
+    // Write panics to the log file synchronously: the non-blocking appender's
+    // flush thread may not survive the crash, and GUI/TUI builds have no
+    // visible stderr, so this is the only durable record of a panic.
+    let panic_log_path = log_dir.join("vellum-fe.log");
+    let default_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let message = format!("PANIC: {info}\nbacktrace:\n{backtrace}");
+        tracing::error!("{message}");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&panic_log_path)
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "{message}");
+        }
+        default_panic_hook(info);
+    }));
+
     // Parse CLI arguments
     let mut cli = Cli::parse();
 
