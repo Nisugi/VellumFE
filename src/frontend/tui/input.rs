@@ -2020,12 +2020,12 @@ impl TuiFrontend {
                             .find(|w| w.name() == drag_state.window_name)
                         {
                             let base = window_def.base_mut();
-                            base.col = window.position.x.get();
-                            base.row = window.position.y.get();
-                            base.cols = window.position.width.get();
-                            base.rows = window.position.height.get();
+                            base.col = window.position.x;
+                            base.row = window.position.y;
+                            base.cols = window.position.width;
+                            base.rows = window.position.height;
                             tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
-                                drag_state.window_name, base.col, base.row, base.cols, base.rows);
+                                drag_state.window_name, base.col.get(), base.row.get(), base.cols.get(), base.rows.get());
                             app_core.layout_modified_since_save = true;
                         }
 

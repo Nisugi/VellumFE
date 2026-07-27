@@ -265,16 +265,16 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
     // Override base fields
     if let Some(base) = window.base_mut_opt() {
         if let Some(v) = get_u16(table, "row")? {
-            base.row = v;
+            base.row = crate::data::geometry::Row::new(v);
         }
         if let Some(v) = get_u16(table, "col")? {
-            base.col = v;
+            base.col = crate::data::geometry::Col::new(v);
         }
         if let Some(v) = get_u16(table, "rows")? {
-            base.rows = v;
+            base.rows = crate::data::geometry::Height::new(v);
         }
         if let Some(v) = get_u16(table, "cols")? {
-            base.cols = v;
+            base.cols = crate::data::geometry::Width::new(v);
         }
         if let Some(v) = get_bool(table, "show_border")? {
             base.show_border = v;

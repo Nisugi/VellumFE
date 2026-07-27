@@ -1109,7 +1109,7 @@ impl TuiFrontend {
 
                     // Get widget width from window definition
                     let widget_width = window_def
-                        .map(|w| w.base().cols)
+                        .map(|w| w.base().cols.get())
                         .unwrap_or(20); // Fallback width if not found
 
                     // Get per-window status_position if configured

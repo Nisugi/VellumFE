@@ -5,6 +5,7 @@
 //! Serde default fns live next to the structs that reference them.
 
 use super::*;
+use crate::data::geometry::{Height, Width};
 
 /// Border sides configuration - which borders to show
 /// Serializes to/from array of strings in TOML: ["left", "right", "top", "bottom"]
@@ -106,12 +107,12 @@ impl WindowBase {
 
     /// Rows available for the widget's interior content
     pub fn content_rows(&self) -> u16 {
-        self.rows.saturating_sub(self.horizontal_border_units())
+        self.rows.get().saturating_sub(self.horizontal_border_units())
     }
 
     /// Columns available for the widget's interior content
     pub fn content_cols(&self) -> u16 {
-        self.cols.saturating_sub(self.vertical_border_units())
+        self.cols.get().saturating_sub(self.vertical_border_units())
     }
 
     /// Apply new border visibility/sides while keeping interior size the same.
@@ -121,8 +122,8 @@ impl WindowBase {
         let prev_vertical = self.vertical_border_units();
 
         // Calculate content dimensions (interior without borders)
-        let content_rows = self.rows.saturating_sub(prev_horizontal).max(1);
-        let content_cols = self.cols.saturating_sub(prev_vertical).max(1);
+        let content_rows = self.rows.get().saturating_sub(prev_horizontal).max(1);
+        let content_cols = self.cols.get().saturating_sub(prev_vertical).max(1);
 
         // Calculate content-based min/max (if set) - None stays None
         let content_min_rows = self
@@ -147,8 +148,8 @@ impl WindowBase {
         let new_vertical = Self::vertical_border_units_for(self.show_border, &self.border_sides);
 
         // Adjust rows/cols (minimum 1)
-        self.rows = (content_rows + new_horizontal).max(1);
-        self.cols = (content_cols + new_vertical).max(1);
+        self.rows = Height::new((content_rows + new_horizontal).max(1));
+        self.cols = Width::new((content_cols + new_vertical).max(1));
 
         // Adjust min/max if set (minimum 1, None stays None)
         self.min_rows = content_min_rows.map(|m| (m + new_horizontal).max(1));
@@ -158,23 +159,23 @@ impl WindowBase {
 
         // Enforce constraints on rows/cols
         if let Some(min_rows) = self.min_rows {
-            if self.rows < min_rows {
-                self.rows = min_rows;
+            if self.rows.get() < min_rows {
+                self.rows = Height::new(min_rows);
             }
         }
         if let Some(max_rows) = self.max_rows {
-            if self.rows > max_rows {
-                self.rows = max_rows;
+            if self.rows.get() > max_rows {
+                self.rows = Height::new(max_rows);
             }
         }
         if let Some(min_cols) = self.min_cols {
-            if self.cols < min_cols {
-                self.cols = min_cols;
+            if self.cols.get() < min_cols {
+                self.cols = Width::new(min_cols);
             }
         }
         if let Some(max_cols) = self.max_cols {
-            if self.cols > max_cols {
-                self.cols = max_cols;
+            if self.cols.get() > max_cols {
+                self.cols = Width::new(max_cols);
             }
         }
     }
@@ -190,7 +191,7 @@ impl WindowBase {
         let delta: i16 = if new_show { 1 } else { -1 };
 
         // Adjust rows (minimum 1)
-        self.rows = (self.rows as i16 + delta).max(1) as u16;
+        self.rows = Height::new((self.rows.get() as i16 + delta).max(1) as u16);
 
         // Adjust min/max if set (minimum 1, None stays None)
         self.min_rows = self.min_rows.map(|m| (m as i16 + delta).max(1) as u16);
@@ -198,13 +199,13 @@ impl WindowBase {
 
         // Enforce constraints
         if let Some(min_rows) = self.min_rows {
-            if self.rows < min_rows {
-                self.rows = min_rows;
+            if self.rows.get() < min_rows {
+                self.rows = Height::new(min_rows);
             }
         }
         if let Some(max_rows) = self.max_rows {
-            if self.rows > max_rows {
-                self.rows = max_rows;
+            if self.rows.get() > max_rows {
+                self.rows = Height::new(max_rows);
             }
         }
     }
@@ -215,13 +216,13 @@ impl WindowBase {
 pub struct WindowBase {
     pub name: String,
     #[serde(default)]
-    pub row: u16,
+    pub row: crate::data::geometry::Row,
     #[serde(default)]
-    pub col: u16,
+    pub col: crate::data::geometry::Col,
     #[serde(default = "default_rows")]
-    pub rows: u16,
+    pub rows: crate::data::geometry::Height,
     #[serde(default = "default_cols")]
-    pub cols: u16,
+    pub cols: crate::data::geometry::Width,
     #[serde(default = "default_show_border")]
     pub show_border: bool,
     #[serde(default = "default_border_style")]

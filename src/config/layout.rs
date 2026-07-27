@@ -242,38 +242,38 @@ impl Layout {
             let old_cols = base.cols;
             let old_rows = base.rows;
 
-            base.col = (base.col as f32 * scale_x).round() as u16;
-            base.row = (base.row as f32 * scale_y).round() as u16;
-            base.cols = (base.cols as f32 * scale_x).round() as u16;
-            base.rows = (base.rows as f32 * scale_y).round() as u16;
+            base.col = crate::data::geometry::Col::new((base.col.get() as f32 * scale_x).round() as u16);
+            base.row = crate::data::geometry::Row::new((base.row.get() as f32 * scale_y).round() as u16);
+            base.cols = crate::data::geometry::Width::new((base.cols.get() as f32 * scale_x).round() as u16);
+            base.rows = crate::data::geometry::Height::new((base.rows.get() as f32 * scale_y).round() as u16);
 
             // Ensure minimum sizes
-            if base.cols < 1 {
-                base.cols = 1;
+            if base.cols.get() < 1 {
+                base.cols = crate::data::geometry::Width::new(1);
             }
-            if base.rows < 1 {
-                base.rows = 1;
+            if base.rows.get() < 1 {
+                base.rows = crate::data::geometry::Height::new(1);
             }
 
             // Respect min/max constraints if set
             if let Some(min_cols) = base.min_cols {
-                if base.cols < min_cols {
-                    base.cols = min_cols;
+                if base.cols.get() < min_cols {
+                    base.cols = crate::data::geometry::Width::new(min_cols);
                 }
             }
             if let Some(max_cols) = base.max_cols {
-                if base.cols > max_cols {
-                    base.cols = max_cols;
+                if base.cols.get() > max_cols {
+                    base.cols = crate::data::geometry::Width::new(max_cols);
                 }
             }
             if let Some(min_rows) = base.min_rows {
-                if base.rows < min_rows {
-                    base.rows = min_rows;
+                if base.rows.get() < min_rows {
+                    base.rows = crate::data::geometry::Height::new(min_rows);
                 }
             }
             if let Some(max_rows) = base.max_rows {
-                if base.rows > max_rows {
-                    base.rows = max_rows;
+                if base.rows.get() > max_rows {
+                    base.rows = crate::data::geometry::Height::new(max_rows);
                 }
             }
 
@@ -281,14 +281,14 @@ impl Layout {
                 "  {} [{}]: pos {}x{} -> {}x{}, size {}x{} -> {}x{}",
                 window_name,
                 window_type,
-                old_col,
-                old_row,
-                base.col,
-                base.row,
-                old_cols,
-                old_rows,
-                base.cols,
-                base.rows
+                old_col.get(),
+                old_row.get(),
+                base.col.get(),
+                base.row.get(),
+                old_cols.get(),
+                old_rows.get(),
+                base.cols.get(),
+                base.rows.get()
             );
         }
 
@@ -381,11 +381,11 @@ impl Layout {
         {
             // Command input exists but might have invalid values (cols=0, rows=0, etc)
             let cmd_input_base = layout.windows[idx].base_mut();
-            if cmd_input_base.cols == 0 || cmd_input_base.rows == 0 {
+            if cmd_input_base.cols.get() == 0 || cmd_input_base.rows.get() == 0 {
                 tracing::warn!(
                     "Command input has invalid size ({}x{}), fixing with defaults",
-                    cmd_input_base.rows,
-                    cmd_input_base.cols
+                    cmd_input_base.rows.get(),
+                    cmd_input_base.cols.get()
                 );
                 // Get defaults from default_windows()
                 if let Some(default_cmd) = default_windows()
@@ -569,11 +569,11 @@ impl Layout {
             let base = window.base();
 
             // Check for zero dimensions
-            if base.rows == 0 {
+            if base.rows.get() == 0 {
                 eprintln!("✗ Error: Window '{}' has zero height", name);
                 errors += 1;
             }
-            if base.cols == 0 {
+            if base.cols.get() == 0 {
                 eprintln!("✗ Error: Window '{}' has zero width", name);
                 errors += 1;
             }
@@ -585,10 +585,10 @@ impl Layout {
             }
 
             // Warn about very small windows
-            if base.rows == 1 && base.cols < 10 {
+            if base.rows.get() == 1 && base.cols.get() < 10 {
                 eprintln!(
                     "⚠ Warning: Window '{}' is very small ({}x{})",
-                    name, base.cols, base.rows
+                    name, base.cols.get(), base.rows.get()
                 );
                 warnings += 1;
             }
@@ -952,10 +952,10 @@ zoom = 3
         WindowDef::Text {
             base: WindowBase {
                 name: name.to_string(),
-                row,
-                col,
-                rows,
-                cols,
+                row: crate::data::geometry::Row::new(row),
+                col: crate::data::geometry::Col::new(col),
+                rows: crate::data::geometry::Height::new(rows),
+                cols: crate::data::geometry::Width::new(cols),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
@@ -1013,7 +1013,7 @@ zoom = 3
         layout.scale_to_terminal_size(160, 48); // 2x both axes
 
         let b = layout.windows[1].base();
-        assert_eq!((b.col, b.row, b.cols, b.rows), (80, 24, 80, 24));
+        assert_eq!((b.col.get(), b.row.get(), b.cols.get(), b.rows.get()), (80, 24, 80, 24));
         assert_eq!(layout.terminal_width, Some(160));
         assert_eq!(layout.terminal_height, Some(48));
     }
@@ -1026,9 +1026,9 @@ zoom = 3
         layout.scale_to_terminal_size(100, 24);
 
         let b = layout.windows[0].base();
-        assert_eq!(b.cols, 13); // 10 * 1.25 = 12.5 -> 13
-        assert_eq!(b.col, 10); // 8 * 1.25 = 10.0 -> 10
-        assert_eq!(b.rows, 24); // height unchanged (1.0x)
+        assert_eq!(b.cols.get(), 13); // 10 * 1.25 = 12.5 -> 13
+        assert_eq!(b.col.get(), 10); // 8 * 1.25 = 10.0 -> 10
+        assert_eq!(b.rows.get(), 24); // height unchanged (1.0x)
     }
 
     /// Shrinking never produces a zero-size window: cols/rows floor at 1.
@@ -1039,8 +1039,8 @@ zoom = 3
         layout.scale_to_terminal_size(10, 10);
 
         let b = layout.windows[0].base();
-        assert!(b.cols >= 1, "cols floored at 1, got {}", b.cols);
-        assert!(b.rows >= 1, "rows floored at 1, got {}", b.rows);
+        assert!(b.cols.get() >= 1, "cols floored at 1, got {}", b.cols.get());
+        assert!(b.rows.get() >= 1, "rows floored at 1, got {}", b.rows.get());
     }
 
     /// min/max constraints override the scaled result.
@@ -1053,7 +1053,7 @@ zoom = 3
         layout.scale_to_terminal_size(160, 12); // 2x width, 0.5x height
 
         let b = layout.windows[0].base();
-        assert_eq!(b.cols, 50); // 40*2=80 capped at max_cols 50
-        assert_eq!(b.rows, 15); // 10*0.5=5 raised to min_rows 15
+        assert_eq!(b.cols.get(), 50); // 40*2=80 capped at max_cols 50
+        assert_eq!(b.rows.get(), 15); // 10*0.5=5 raised to min_rows 15
     }
 }

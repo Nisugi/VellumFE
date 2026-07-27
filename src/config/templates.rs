@@ -5,6 +5,7 @@
 //! groupings used by the add-window menus.
 
 use super::*;
+use crate::data::geometry::{Col, Height, Row, Width};
 
 /// Globally available indicator template definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -94,10 +95,10 @@ impl Config {
         // Create base defaults that all windows share
         let base_defaults = WindowBase {
             name: String::new(), // Will be overridden
-            row: 0,
-            col: 0,
-            rows: 10,
-            cols: 40,
+            row: Row::new(0),
+            col: Col::new(0),
+            rows: Height::new(10),
+            cols: Width::new(40),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -134,8 +135,8 @@ impl Config {
                 base: WindowBase {
                     name: "main".to_string(),
                     title: Some("Story".to_string()),
-                    rows: 37,
-                    cols: 120,
+                    rows: Height::new(37),
+                    cols: Width::new(120),
                     locked: true,
                     ..base_defaults
                 },
@@ -153,8 +154,8 @@ impl Config {
                 base: WindowBase {
                     name: "room".to_string(),
                     title: Some("Room".to_string()),
-                    rows: 10,
-                    cols: 80,
+                    rows: Height::new(10),
+                    cols: Width::new(80),
                     min_rows: Some(5),
                     ..base_defaults.clone()
                 },
@@ -172,8 +173,8 @@ impl Config {
                 base: WindowBase {
                     name: "inventory".to_string(),
                     title: Some("Inventory".to_string()),
-                    rows: 20,
-                    cols: 40,
+                    rows: Height::new(20),
+                    cols: Width::new(40),
                     min_rows: Some(4),
                     ..base_defaults.clone()
                 },
@@ -189,8 +190,8 @@ impl Config {
                 base: WindowBase {
                     name: "reserve".to_string(),
                     title: Some("Reserve".to_string()),
-                    rows: 20,
-                    cols: 40,
+                    rows: Height::new(20),
+                    cols: Width::new(40),
                     min_rows: Some(4),
                     ..base_defaults.clone()
                 },
@@ -206,8 +207,8 @@ impl Config {
                 base: WindowBase {
                     name: "command_input".to_string(),
                     title: Some("Command Input".to_string()),
-                    rows: 1,
-                    cols: 120,
+                    rows: Height::new(1),
+                    cols: Width::new(120),
                     min_rows: Some(1),
                     max_rows: Some(1),
                     locked: true,
@@ -220,8 +221,8 @@ impl Config {
                 base: WindowBase {
                     name: "quickbar".to_string(),
                     title: Some("Quickbar".to_string()),
-                    rows: 3,
-                    cols: 120,
+                    rows: Height::new(3),
+                    cols: Width::new(120),
                     min_rows: Some(3),
                     max_rows: Some(3),
                     show_border: true,
@@ -235,8 +236,8 @@ impl Config {
                 base: WindowBase {
                     name: "hotkeybar".to_string(),
                     title: Some("Actions".to_string()),
-                    rows: 3,
-                    cols: 60,
+                    rows: Height::new(3),
+                    cols: Width::new(60),
                     min_rows: Some(3),
                     max_rows: Some(3),
                     show_border: true,
@@ -253,10 +254,10 @@ impl Config {
                 base: WindowBase {
                     name: "health".to_string(),
                     title: Some("Health".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -274,10 +275,10 @@ impl Config {
                 base: WindowBase {
                     name: "performance".to_string(),
                     title: Some("Performance Stats".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 10,
-                    cols: 40,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     min_rows: Some(4),
                     min_cols: Some(20),
                     ..base_defaults.clone()
@@ -306,10 +307,10 @@ impl Config {
                 base: WindowBase {
                     name: "mana".to_string(),
                     title: Some("Mana".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -328,10 +329,10 @@ impl Config {
                 base: WindowBase {
                     name: "stamina".to_string(),
                     title: Some("Stamina".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -349,10 +350,10 @@ impl Config {
                 base: WindowBase {
                     name: "targets".to_string(),
                     title: Some("Targets".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 10,
-                    cols: 40,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     min_rows: Some(4),
                     min_cols: Some(20),
                     ..base_defaults.clone()
@@ -367,10 +368,10 @@ impl Config {
                 base: WindowBase {
                     name: "players".to_string(),
                     title: Some("Players".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 10,
-                    cols: 40,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     min_rows: Some(4),
                     min_cols: Some(20),
                     ..base_defaults.clone()
@@ -383,10 +384,10 @@ impl Config {
                 base: WindowBase {
                     name: "items".to_string(),
                     title: Some("Items".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 10,
-                    cols: 40,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     min_rows: Some(4),
                     min_cols: Some(20),
                     ..base_defaults.clone()
@@ -400,10 +401,10 @@ impl Config {
                 base: WindowBase {
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 10,
-                    cols: 40,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     min_rows: Some(4),
                     min_cols: Some(20),
                     ..base_defaults.clone()
@@ -419,10 +420,10 @@ impl Config {
                 base: WindowBase {
                     name: "dashboard".to_string(),
                     title: Some("Dashboard".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 10,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(10),
                     min_rows: Some(1),
                     min_cols: Some(1),
                     ..base_defaults.clone()
@@ -439,10 +440,10 @@ impl Config {
                 base: WindowBase {
                     name: "poisoned".to_string(),
                     title: Some("Poisoned".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 2,
-                    cols: 1,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
                     min_rows: Some(2),
                     max_rows: Some(2),
                     min_cols: Some(1),
@@ -464,10 +465,10 @@ impl Config {
                 base: WindowBase {
                     name: "bleeding".to_string(),
                     title: Some("Bleeding".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 2,
-                    cols: 1,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
                     min_rows: Some(2),
                     max_rows: Some(2),
                     min_cols: Some(1),
@@ -488,10 +489,10 @@ impl Config {
                 base: WindowBase {
                     name: "diseased".to_string(),
                     title: Some("Diseased".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 2,
-                    cols: 1,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
                     min_rows: Some(2),
                     max_rows: Some(2),
                     min_cols: Some(1),
@@ -512,10 +513,10 @@ impl Config {
                 base: WindowBase {
                     name: "stunned".to_string(),
                     title: Some("Stunned".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 2,
-                    cols: 1,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
                     min_rows: Some(2),
                     max_rows: Some(2),
                     min_cols: Some(1),
@@ -536,10 +537,10 @@ impl Config {
                 base: WindowBase {
                     name: "webbed".to_string(),
                     title: Some("Webbed".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 2,
-                    cols: 1,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
                     min_rows: Some(2),
                     max_rows: Some(2),
                     min_cols: Some(1),
@@ -561,10 +562,10 @@ impl Config {
                 base: WindowBase {
                     name: "spirit".to_string(),
                     title: Some("Spirit".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -584,10 +585,10 @@ impl Config {
                 base: WindowBase {
                     name: "concentration".to_string(),
                     title: Some("Concentration".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -606,10 +607,10 @@ impl Config {
                 base: WindowBase {
                     name: "stance".to_string(),
                     title: Some("Stance".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -628,10 +629,10 @@ impl Config {
                 base: WindowBase {
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -650,10 +651,10 @@ impl Config {
                 base: WindowBase {
                     name: "roundtime".to_string(),
                     title: Some("RT".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#FF0000".to_string()), // Red
                     ..base_defaults.clone()
@@ -671,10 +672,10 @@ impl Config {
                 base: WindowBase {
                     name: "casttime".to_string(),
                     title: Some("Cast".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#00BFFF".to_string()), // Deep sky blue
                     ..base_defaults.clone()
@@ -692,10 +693,10 @@ impl Config {
                 base: WindowBase {
                     name: "stuntime".to_string(),
                     title: Some("Stun".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     text_color: Some("#FFFF00".to_string()), // Yellow
                     ..base_defaults.clone()
@@ -713,10 +714,10 @@ impl Config {
                 base: WindowBase {
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -733,10 +734,10 @@ impl Config {
                 base: WindowBase {
                     name: "map".to_string(),
                     title: Some("Map".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 12,
-                    cols: 30,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(12),
+                    cols: Width::new(30),
                     show_border: true,
                     min_rows: Some(5),
                     min_cols: Some(10),
@@ -749,10 +750,10 @@ impl Config {
                 base: WindowBase {
                     name: "compass".to_string(),
                     title: Some("Compass".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 5, // 3 for compass grid + 2 for border
-                    cols: 9, // 7 for compass grid + 2 for border
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(5), // 3 for compass grid + 2 for border
+                    cols: Width::new(9), // 7 for compass grid + 2 for border
                     show_border: true,
                     min_rows: Some(3),
                     min_cols: Some(7),
@@ -769,10 +770,10 @@ impl Config {
                 base: WindowBase {
                     name: "injuries".to_string(),
                     title: Some("Injuries".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 8,  // 6 for injury doll + 2 for border
-                    cols: 10, // 8 for injury doll (5+3 for labels) + 2 for border
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(8),  // 6 for injury doll + 2 for border
+                    cols: Width::new(10), // 8 for injury doll (5+3 for labels) + 2 for border
                     show_border: true,
                     min_rows: Some(6),
                     min_cols: Some(8),
@@ -794,8 +795,8 @@ impl Config {
                 base: WindowBase {
                     name: "buffs".to_string(),
                     title: Some("Buffs".to_string()),
-                    rows: 10,
-                    cols: 30,
+                    rows: Height::new(10),
+                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -808,8 +809,8 @@ impl Config {
                 base: WindowBase {
                     name: "debuffs".to_string(),
                     title: Some("Debuffs".to_string()),
-                    rows: 10,
-                    cols: 30,
+                    rows: Height::new(10),
+                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -822,8 +823,8 @@ impl Config {
                 base: WindowBase {
                     name: "cooldowns".to_string(),
                     title: Some("Cooldowns".to_string()),
-                    rows: 10,
-                    cols: 30,
+                    rows: Height::new(10),
+                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -836,8 +837,8 @@ impl Config {
                 base: WindowBase {
                     name: "active_spells".to_string(),
                     title: Some("Active Spells".to_string()),
-                    rows: 10,
-                    cols: 30,
+                    rows: Height::new(10),
+                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -850,8 +851,8 @@ impl Config {
                 base: WindowBase {
                     name: String::new(), // Auto-generated by WindowEditor
                     title: Some("Custom".to_string()),
-                    rows: 10,
-                    cols: 30,
+                    rows: Height::new(10),
+                    cols: Width::new(30),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -864,10 +865,10 @@ impl Config {
                 base: WindowBase {
                     name: "left".to_string(),
                     title: Some("Left Hand".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -884,10 +885,10 @@ impl Config {
                 base: WindowBase {
                     name: "right".to_string(),
                     title: Some("Right Hand".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -904,10 +905,10 @@ impl Config {
                 base: WindowBase {
                     name: "spell".to_string(),
                     title: Some("Spell".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 3,
-                    cols: 20,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3),
+                    cols: Width::new(20),
                     show_border: true,
                     min_rows: Some(3),
                     max_rows: Some(3),
@@ -925,8 +926,8 @@ impl Config {
                 base: WindowBase {
                     name: "thoughts".to_string(),
                     title: Some("Thoughts".to_string()),
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -944,8 +945,8 @@ impl Config {
                 base: WindowBase {
                     name: "speech".to_string(),
                     title: Some("Speech".to_string()),
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -963,8 +964,8 @@ impl Config {
                 base: WindowBase {
                     name: "announcements".to_string(),
                     title: Some("Announcements".to_string()),
-                    rows: 10,
-                    cols: 50,
+                    rows: Height::new(10),
+                    cols: Width::new(50),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -982,8 +983,8 @@ impl Config {
                 base: WindowBase {
                     name: "loot".to_string(),
                     title: Some("Loot".to_string()),
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1001,8 +1002,8 @@ impl Config {
                 base: WindowBase {
                     name: "death".to_string(),
                     title: Some("Death".to_string()),
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1020,8 +1021,8 @@ impl Config {
                 base: WindowBase {
                     name: "logons".to_string(),
                     title: Some("Logons".to_string()),
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1039,8 +1040,8 @@ impl Config {
                 base: WindowBase {
                     name: "familiar".to_string(),
                     title: Some("Familiar".to_string()),
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1058,8 +1059,8 @@ impl Config {
                 base: WindowBase {
                     name: "ambients".to_string(),
                     title: Some("Ambients".to_string()),
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1077,8 +1078,8 @@ impl Config {
                 base: WindowBase {
                     name: "bounty".to_string(),
                     title: Some("Bounties".to_string()),
-                    rows: 15,
-                    cols: 50,
+                    rows: Height::new(15),
+                    cols: Width::new(50),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1096,8 +1097,8 @@ impl Config {
                 base: WindowBase {
                     name: "society".to_string(),
                     title: Some("Society Tasks".to_string()),
-                    rows: 15,
-                    cols: 50,
+                    rows: Height::new(15),
+                    cols: Width::new(50),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1115,8 +1116,8 @@ impl Config {
                 base: WindowBase {
                     name: String::new(),
                     title: None,
-                    rows: 10,
-                    cols: 40,
+                    rows: Height::new(10),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1134,8 +1135,8 @@ impl Config {
                 base: WindowBase {
                     name: "spells".to_string(),
                     title: Some("Spells".to_string()),
-                    rows: 20,
-                    cols: 40,
+                    rows: Height::new(20),
+                    cols: Width::new(40),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1146,8 +1147,8 @@ impl Config {
                 base: WindowBase {
                     name: "chat".to_string(),
                     title: Some("Chat".to_string()),
-                    rows: 10,
-                    cols: 60,
+                    rows: Height::new(10),
+                    cols: Width::new(60),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1207,8 +1208,8 @@ impl Config {
                 base: WindowBase {
                     name: String::new(),
                     title: None,
-                    rows: 10,
-                    cols: 60,
+                    rows: Height::new(10),
+                    cols: Width::new(60),
                     show_border: true,
                     ..base_defaults.clone()
                 },
@@ -1234,8 +1235,8 @@ impl Config {
             "spacer" => Some(WindowDef::Spacer {
                 base: WindowBase {
                     name: String::new(), // Will be set by caller with auto-generated name
-                    rows: 2,
-                    cols: 2,
+                    rows: Height::new(2),
+                    cols: Width::new(2),
                     show_border: false, // Spacers never show borders
                     show_title: false, // Spacers never show titles
                     transparent_background: false, // Respects theme background color
@@ -1248,10 +1249,10 @@ impl Config {
                 base: WindowBase {
                     name: "perception".to_string(),
                     title: Some("Perceptions".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 20,
-                    cols: 40,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(20),
+                    cols: Width::new(40),
                     min_rows: Some(5),
                     min_cols: Some(20),
                     ..base_defaults.clone()
@@ -1270,10 +1271,10 @@ impl Config {
                 base: WindowBase {
                     name: "experience".to_string(),
                     title: Some("Experience".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 20,
-                    cols: 35,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(20),
+                    cols: Width::new(35),
                     min_rows: Some(5),
                     min_cols: Some(20),
                     show_border: true,
@@ -1288,10 +1289,10 @@ impl Config {
                 base: WindowBase {
                     name: "gs4_experience".to_string(),
                     title: Some("Experience".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 5,           // 3 default content rows (level, mind, exp) + 2 borders
-                    cols: 30,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(5),           // 3 default content rows (level, mind, exp) + 2 borders
+                    cols: Width::new(30),
                     min_rows: Some(3), // 1 content row + borders (fields are toggleable)
                     max_rows: Some(7), // 5 content rows (level, mind, exp, total, ascension) + borders
                     min_cols: Some(20),
@@ -1314,10 +1315,10 @@ impl Config {
                 base: WindowBase {
                     name: "encum".to_string(),
                     title: Some("Encumbrance".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 4,           // 1 bar + 1 label + 2 borders = 4 total
-                    cols: 25,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(4),           // 1 bar + 1 label + 2 borders = 4 total
+                    cols: Width::new(25),
                     min_rows: Some(3), // 1 content row + borders (bar/label are toggleable)
                     max_rows: Some(4), // Maximum with borders + label
                     min_cols: Some(15),
@@ -1339,10 +1340,10 @@ impl Config {
                 base: WindowBase {
                     name: "minivitals".to_string(),
                     title: None, // No title shown (like Wrayth Stats)
-                    row: 0,
-                    col: 0,
-                    rows: 3, // 1 content row + 2 borders = 3 total
-                    cols: 80, // Wide to fit 4 bars
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(3), // 1 content row + 2 borders = 3 total
+                    cols: Width::new(80), // Wide to fit 4 bars
                     min_rows: Some(3),
                     max_rows: Some(3),
                     min_cols: Some(40),
@@ -1365,10 +1366,10 @@ impl Config {
                 base: WindowBase {
                     name: "betrayer".to_string(),
                     title: Some("Betrayer".to_string()),
-                    row: 0,
-                    col: 0,
-                    rows: 4, // 1 bar + 1 item + 2 borders
-                    cols: 30,
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(4), // 1 bar + 1 item + 2 borders
+                    cols: Width::new(30),
                     min_rows: Some(3), // bar + borders (when show_items=false)
                     max_rows: Some(12), // Allow growth for more items
                     min_cols: Some(20),
@@ -1396,8 +1397,8 @@ impl Config {
                 let mut base = base_defaults.clone();
                 base.name = tpl.key();
                 base.title = Some(tpl.title_or_id());
-                base.rows = 1;
-                base.cols = 1;
+                base.rows = Height::new(1);
+                base.cols = Width::new(1);
                 base.min_rows = Some(1);
                 base.max_rows = Some(1);
                 base.min_cols = Some(1);

@@ -1999,10 +1999,10 @@ impl AppCore {
         // Use exact position from window definition
         let base = window_def.base();
         let position = WindowPosition {
-            x: crate::data::geometry::Col::new(base.col),
-            y: crate::data::geometry::Row::new(base.row),
-            width: crate::data::geometry::Width::new(base.cols),
-            height: crate::data::geometry::Height::new(base.rows),
+            x: base.col,
+            y: base.row,
+            width: base.cols,
+            height: base.rows,
         };
 
         tracing::debug!(
@@ -2340,10 +2340,10 @@ impl AppCore {
     ) {
         let base = window_def.base();
         let position = WindowPosition {
-            x: crate::data::geometry::Col::new(base.col),
-            y: crate::data::geometry::Row::new(base.row),
-            width: crate::data::geometry::Width::new(base.cols),
-            height: crate::data::geometry::Height::new(base.rows),
+            x: base.col,
+            y: base.row,
+            width: base.cols,
+            height: base.rows,
         };
 
         if let Some(window_state) = self.ui_state.windows.get_mut(window_def.name()) {
@@ -3018,10 +3018,10 @@ impl AppCore {
             tracing::debug!(
                 "Window '{}' BEFORE capture: pos=({},{}) size={}x{}",
                 window_name,
-                base.col,
-                base.row,
-                base.cols,
-                base.rows
+                base.col.get(),
+                base.row.get(),
+                base.cols.get(),
+                base.rows.get()
             );
 
             if let Some(window_state) = self.ui_state.windows.get(&window_name) {
@@ -3073,18 +3073,18 @@ impl AppCore {
                 }
 
                 let base = window_def.base_mut();
-                base.row = clamped_y;
-                base.col = clamped_x;
-                base.rows = clamped_height;
-                base.cols = clamped_width;
+                base.row = crate::data::geometry::Row::new(clamped_y);
+                base.col = crate::data::geometry::Col::new(clamped_x);
+                base.rows = crate::data::geometry::Height::new(clamped_height);
+                base.cols = crate::data::geometry::Width::new(clamped_width);
 
                 tracing::debug!(
                     "Window '{}' AFTER capture: pos=({},{}) size={}x{}",
                     window_name,
-                    base.col,
-                    base.row,
-                    base.cols,
-                    base.rows
+                    base.col.get(),
+                    base.row.get(),
+                    base.cols.get(),
+                    base.rows.get()
                 );
             } else {
                 tracing::warn!(
@@ -3613,10 +3613,10 @@ impl AppCore {
 
         let base = WindowBase {
             name: name.to_string(),
-            row: y,
-            col: x,
-            rows: height,
-            cols: width,
+            row: crate::data::geometry::Row::new(y),
+            col: crate::data::geometry::Col::new(x),
+            rows: crate::data::geometry::Height::new(height),
+            cols: crate::data::geometry::Width::new(width),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -3765,10 +3765,10 @@ impl AppCore {
 
         let base = crate::config::WindowBase {
             name: name.clone(),
-            row: 0,
-            col: 0,
-            rows: height,
-            cols: width,
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(height),
+            cols: crate::data::geometry::Width::new(width),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: crate::config::BorderSides::default(),
@@ -3966,66 +3966,66 @@ impl AppCore {
 
             // Apply min/max constraints from window settings
             if let Some(min_cols) = window_def.base().min_cols {
-                if window_width < min_cols {
+                if window_width.get() < min_cols {
                     tracing::debug!(
                         "Window '{}': enforcing min_cols={} (was {})",
                         window_def.name(),
                         min_cols,
-                        window_width
+                        window_width.get()
                     );
-                    window_width = min_cols;
+                    window_width = crate::data::geometry::Width::new(min_cols);
                 }
             }
             if let Some(max_cols) = window_def.base().max_cols {
-                if window_width > max_cols {
+                if window_width.get() > max_cols {
                     tracing::debug!(
                         "Window '{}': enforcing max_cols={} (was {})",
                         window_def.name(),
                         max_cols,
-                        window_width
+                        window_width.get()
                     );
-                    window_width = max_cols;
+                    window_width = crate::data::geometry::Width::new(max_cols);
                 }
             }
             if let Some(min_rows) = window_def.base().min_rows {
-                if window_height < min_rows {
+                if window_height.get() < min_rows {
                     tracing::debug!(
                         "Window '{}': enforcing min_rows={} (was {})",
                         window_def.name(),
                         min_rows,
-                        window_height
+                        window_height.get()
                     );
-                    window_height = min_rows;
+                    window_height = crate::data::geometry::Height::new(min_rows);
                 }
             }
             if let Some(max_rows) = window_def.base().max_rows {
-                if window_height > max_rows {
+                if window_height.get() > max_rows {
                     tracing::debug!(
                         "Window '{}': enforcing max_rows={} (was {})",
                         window_def.name(),
                         max_rows,
-                        window_height
+                        window_height.get()
                     );
-                    window_height = max_rows;
+                    window_height = crate::data::geometry::Height::new(max_rows);
                 }
             }
 
             tracing::debug!(
                 "Window '{}': pos=({},{}) size={}x{}",
                 window_def.name(),
-                window_def.base().col,
-                window_def.base().row,
-                window_width,
-                window_height
+                window_def.base().col.get(),
+                window_def.base().row.get(),
+                window_width.get(),
+                window_height.get()
             );
 
             positions.insert(
                 window_def.name().to_string(),
                 WindowPosition {
-                    x: crate::data::geometry::Col::new(window_def.base().col),
-                    y: crate::data::geometry::Row::new(window_def.base().row),
-                    width: crate::data::geometry::Width::new(window_width),
-                    height: crate::data::geometry::Height::new(window_height),
+                    x: window_def.base().col,
+                    y: window_def.base().row,
+                    width: window_width,
+                    height: window_height,
                 },
             );
         }
@@ -4607,7 +4607,7 @@ impl AppCore {
                     .max(base.min_rows.unwrap_or(1))
                     .min(base.max_rows.unwrap_or(u16::MAX));
 
-                if base.rows != new_rows {
+                if base.rows.get() != new_rows {
                     changes.push((base.name.clone(), new_rows));
                 }
             }
@@ -4619,7 +4619,7 @@ impl AppCore {
             for window_def in &mut self.layout.windows {
                 if window_def.name() == name {
                     if let crate::config::WindowDef::Betrayer { base, .. } = window_def {
-                        base.rows = new_rows;
+                        base.rows = crate::data::geometry::Height::new(new_rows);
                     }
                     break;
                 }
@@ -5546,10 +5546,10 @@ mod tests {
     fn test_window_base(name: &str) -> WindowBase {
         WindowBase {
             name: name.to_string(),
-            row: 0,
-            col: 0,
-            rows: 2,
-            cols: 5,
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(2),
+            cols: crate::data::geometry::Width::new(5),
             show_border: false,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -5826,10 +5826,10 @@ mod tests {
         rows: u16,
     ) -> WindowDef {
         let mut base = test_window_base(name);
-        base.col = col;
-        base.row = row;
-        base.cols = cols;
-        base.rows = rows;
+        base.col = crate::data::geometry::Col::new(col);
+        base.row = crate::data::geometry::Row::new(row);
+        base.cols = crate::data::geometry::Width::new(cols);
+        base.rows = crate::data::geometry::Height::new(rows);
         WindowDef::Text {
             base,
             data: crate::config::TextWidgetData {

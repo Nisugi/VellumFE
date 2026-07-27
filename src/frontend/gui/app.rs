@@ -5360,10 +5360,10 @@ mod tests {
         use crate::config::{BorderSides, CompassWidgetData, TextWidgetData, WindowBase, WindowDef};
         let base = |name: &str| WindowBase {
             name: name.to_string(),
-            row: 0,
-            col: 0,
-            rows: 10,
-            cols: 40,
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(10),
+            cols: crate::data::geometry::Width::new(40),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),

@@ -1801,8 +1801,8 @@ impl WindowEditor {
 
     fn refresh_size_inputs(&mut self) {
         // Show total rows/cols (not content rows) - VellumFE style
-        self.rows_input = Self::textarea_with_value(self.window_def.base().rows.max(1));
-        self.cols_input = Self::textarea_with_value(self.window_def.base().cols.max(1));
+        self.rows_input = Self::textarea_with_value(self.window_def.base().rows.get().max(1));
+        self.cols_input = Self::textarea_with_value(self.window_def.base().cols.get().max(1));
 
         // Also refresh min/max inputs (they adjust with border changes)
         self.min_rows_input = Self::create_textarea();
@@ -1850,16 +1850,16 @@ impl WindowEditor {
         }
 
         let mut row_input = Self::create_textarea();
-        row_input.insert_str(window_def.base().row.to_string());
+        row_input.insert_str(window_def.base().row.get().to_string());
 
         let mut col_input = Self::create_textarea();
-        col_input.insert_str(window_def.base().col.to_string());
+        col_input.insert_str(window_def.base().col.get().to_string());
 
         // Show total rows/cols (not content rows) - VellumFE style
         // User sets actual widget size; content adjusts based on borders
-        let rows_input = Self::textarea_with_value(window_def.base().rows.max(1));
+        let rows_input = Self::textarea_with_value(window_def.base().rows.get().max(1));
 
-        let cols_input = Self::textarea_with_value(window_def.base().cols.max(1));
+        let cols_input = Self::textarea_with_value(window_def.base().cols.get().max(1));
 
         let mut min_rows_input = Self::create_textarea();
         if let Some(min_rows) = window_def.base().min_rows {
@@ -2430,10 +2430,10 @@ impl WindowEditor {
         // Create base configuration with defaults
         let base = WindowBase {
             name: String::new(),
-            row: 0,
-            col: 0,
-            rows: 10,
-            cols: 40,
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(10),
+            cols: crate::data::geometry::Width::new(40),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),
@@ -2532,9 +2532,9 @@ impl WindowEditor {
         col_input.insert_str("0");
 
         // Show total rows/cols (not content rows) - VellumFE style
-        let rows_input = Self::textarea_with_value(window_def.base().rows.max(1));
+        let rows_input = Self::textarea_with_value(window_def.base().rows.get().max(1));
 
-        let cols_input = Self::textarea_with_value(window_def.base().cols.max(1));
+        let cols_input = Self::textarea_with_value(window_def.base().cols.get().max(1));
 
         let min_rows_input = Self::create_textarea();
         let min_cols_input = Self::create_textarea();
@@ -3827,11 +3827,15 @@ impl WindowEditor {
                             if prev_show && !self.betrayer_show_items {
                                 // Toggling OFF - set rows to just bar + borders
                                 let ideal_rows_off = bar_rows + border_rows;
-                                base.rows = ideal_rows_off.max(min_rows).min(max_rows);
+                                base.rows = crate::data::geometry::Height::new(
+                                    ideal_rows_off.max(min_rows).min(max_rows),
+                                );
                             } else if !prev_show && self.betrayer_show_items {
                                 // Toggling ON - add 1 item row (minimum)
                                 let ideal_rows_on = bar_rows + 1 + border_rows;
-                                base.rows = ideal_rows_on.max(min_rows).min(max_rows);
+                                base.rows = crate::data::geometry::Height::new(
+                                    ideal_rows_on.max(min_rows).min(max_rows),
+                                );
                             }
                             self.refresh_size_inputs();
                         }
@@ -4455,8 +4459,10 @@ impl WindowEditor {
         self.window_def.base_mut().name = self.name_input.lines()[0].to_string();
         self.window_def.base_mut().title =
             Some(self.title_input.lines()[0].to_string()).filter(|s| !s.is_empty());
-        self.window_def.base_mut().row = self.row_input.lines()[0].parse().unwrap_or(0);
-        self.window_def.base_mut().col = self.col_input.lines()[0].parse().unwrap_or(0);
+        self.window_def.base_mut().row =
+            crate::data::geometry::Row::new(self.row_input.lines()[0].parse().unwrap_or(0));
+        self.window_def.base_mut().col =
+            crate::data::geometry::Col::new(self.col_input.lines()[0].parse().unwrap_or(0));
         // Rows/cols is now total size (VellumFE style), not content size
         // User specifies actual widget dimensions; content adjusts based on borders
         let total_rows = self.rows_input.lines().first()
@@ -4465,8 +4471,8 @@ impl WindowEditor {
         let total_cols = self.cols_input.lines().first()
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(40);
-        self.window_def.base_mut().rows = total_rows.max(1);
-        self.window_def.base_mut().cols = total_cols.max(1);
+        self.window_def.base_mut().rows = crate::data::geometry::Height::new(total_rows.max(1));
+        self.window_def.base_mut().cols = crate::data::geometry::Width::new(total_cols.max(1));
         self.window_def.base_mut().min_rows = self.min_rows_input.lines()[0].parse().ok();
         self.window_def.base_mut().min_cols = self.min_cols_input.lines()[0].parse().ok();
         self.window_def.base_mut().max_rows = self.max_rows_input.lines()[0].parse().ok();
@@ -7537,10 +7543,10 @@ mod tests {
         let spacer1 = WindowDef::Spacer {
             base: crate::config::WindowBase {
                 name: "spacer_1".to_string(),
-                row: 0,
-                col: 0,
-                rows: 2,
-                cols: 5,
+                row: crate::data::geometry::Row::new(0),
+                col: crate::data::geometry::Col::new(0),
+                rows: crate::data::geometry::Height::new(2),
+                cols: crate::data::geometry::Width::new(5),
                 show_border: false,
                 border_style: "single".to_string(),
                 border_sides: crate::config::BorderSides::default(),

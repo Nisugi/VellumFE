@@ -370,10 +370,12 @@ impl AppCore {
         // Build window def from template and override geometry from UI config
         let mut window_def = self.build_perf_overlay_def();
         window_def.base_mut().name = OVERLAY_NAME.to_string();
-        window_def.base_mut().row = self.config.ui.perf_stats_y;
-        window_def.base_mut().col = self.config.ui.perf_stats_x;
-        window_def.base_mut().rows = self.config.ui.perf_stats_height.max(1);
-        window_def.base_mut().cols = self.config.ui.perf_stats_width.max(1);
+        window_def.base_mut().row = crate::data::geometry::Row::new(self.config.ui.perf_stats_y);
+        window_def.base_mut().col = crate::data::geometry::Col::new(self.config.ui.perf_stats_x);
+        window_def.base_mut().rows =
+            crate::data::geometry::Height::new(self.config.ui.perf_stats_height.max(1));
+        window_def.base_mut().cols =
+            crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1));
 
         // Add to UI state only (does not touch layout)
         self.add_new_window(&window_def, 0, 0);
@@ -415,18 +417,18 @@ impl AppCore {
         {
             let mut base = base;
             // Override position/size with config.ui settings
-            base.row = self.config.ui.perf_stats_y;
-            base.col = self.config.ui.perf_stats_x;
-            base.rows = self.config.ui.perf_stats_height.max(1);
-            base.cols = self.config.ui.perf_stats_width.max(1);
+            base.row = crate::data::geometry::Row::new(self.config.ui.perf_stats_y);
+            base.col = crate::data::geometry::Col::new(self.config.ui.perf_stats_x);
+            base.rows = crate::data::geometry::Height::new(self.config.ui.perf_stats_height.max(1));
+            base.cols = crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1));
             base
         } else {
             WindowBase {
                 name: "performance".to_string(),
-                row: self.config.ui.perf_stats_y,
-                col: self.config.ui.perf_stats_x,
-                rows: self.config.ui.perf_stats_height.max(1),
-                cols: self.config.ui.perf_stats_width.max(1),
+                row: crate::data::geometry::Row::new(self.config.ui.perf_stats_y),
+                col: crate::data::geometry::Col::new(self.config.ui.perf_stats_x),
+                rows: crate::data::geometry::Height::new(self.config.ui.perf_stats_height.max(1)),
+                cols: crate::data::geometry::Width::new(self.config.ui.perf_stats_width.max(1)),
                 show_border: true,
                 border_style: "single".to_string(),
                 border_sides: BorderSides::default(),
