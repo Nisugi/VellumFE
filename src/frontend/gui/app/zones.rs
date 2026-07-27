@@ -419,13 +419,13 @@ impl VellumGuiApp {
                     .get(key)
                     .and_then(|rect| rect.get(1).copied())
                     .filter(|v| v.is_finite())
-                    .unwrap_or(window.position.y as f32);
+                    .unwrap_or(window.position.y.get() as f32);
                 let saved_x = self
                     .main_window_rects
                     .get(key)
                     .and_then(|rect| rect.get(0).copied())
                     .filter(|v| v.is_finite())
-                    .unwrap_or(window.position.x as f32);
+                    .unwrap_or(window.position.x.get() as f32);
                 Some((
                     saved_y.round() as i32,
                     saved_x.round() as i32,
@@ -446,8 +446,10 @@ impl VellumGuiApp {
             let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
                 continue;
             };
-            max_col = max_col.max((window.position.x + window.position.width).max(1) as f32);
-            max_row = max_row.max((window.position.y + window.position.height).max(1) as f32);
+            max_col = max_col
+                .max((window.position.x.get() + window.position.width.get()).max(1) as f32);
+            max_row = max_row
+                .max((window.position.y.get() + window.position.height.get()).max(1) as f32);
         }
         (max_col.max(1.0), max_row.max(1.0))
     }
@@ -465,10 +467,11 @@ impl VellumGuiApp {
             return None;
         }
 
-        let left = root_rect.left() + (window.position.x as f32 / max_col) * root_rect.width();
-        let top = root_rect.top() + (window.position.y as f32 / max_row) * root_rect.height();
-        let width = ((window.position.width as f32 / max_col) * root_rect.width()).max(120.0);
-        let height = ((window.position.height as f32 / max_row) * root_rect.height())
+        let left =
+            root_rect.left() + (window.position.x.get() as f32 / max_col) * root_rect.width();
+        let top = root_rect.top() + (window.position.y.get() as f32 / max_row) * root_rect.height();
+        let width = ((window.position.width.get() as f32 / max_col) * root_rect.width()).max(120.0);
+        let height = ((window.position.height.get() as f32 / max_row) * root_rect.height())
             .max(MIN_DOCKED_WINDOW_HEIGHT);
         if !left.is_finite() || !top.is_finite() || !width.is_finite() || !height.is_finite() {
             return None;

@@ -192,10 +192,16 @@ impl Frontend for TuiFrontend {
 
                 let pos = &window.position;
                 let area = Rect {
-                    x: pos.x,
-                    y: pos.y,
-                    width: pos.width.min(screen_area.width.saturating_sub(pos.x)),
-                    height: pos.height.min(screen_area.height.saturating_sub(pos.y)),
+                    x: pos.x.get(),
+                    y: pos.y.get(),
+                    width: pos
+                        .width
+                        .get()
+                        .min(screen_area.width.saturating_sub(pos.x.get())),
+                    height: pos
+                        .height
+                        .get()
+                        .min(screen_area.height.saturating_sub(pos.y.get())),
                 };
 
                 // Skip if area is too small

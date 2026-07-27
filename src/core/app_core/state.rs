@@ -1656,10 +1656,10 @@ impl AppCore {
                 .get(window_def.name())
                 .cloned()
                 .unwrap_or(WindowPosition {
-                    x: 0,
-                    y: 0,
-                    width: 80,
-                    height: 24,
+                    x: crate::data::geometry::Col::new(0),
+                    y: crate::data::geometry::Row::new(0),
+                    width: crate::data::geometry::Width::new(80),
+                    height: crate::data::geometry::Height::new(24),
                 });
 
             let widget_type = WidgetType::from_str(window_def.widget_type());
@@ -1999,19 +1999,19 @@ impl AppCore {
         // Use exact position from window definition
         let base = window_def.base();
         let position = WindowPosition {
-            x: base.col,
-            y: base.row,
-            width: base.cols,
-            height: base.rows,
+            x: crate::data::geometry::Col::new(base.col),
+            y: crate::data::geometry::Row::new(base.row),
+            width: crate::data::geometry::Width::new(base.cols),
+            height: crate::data::geometry::Height::new(base.rows),
         };
 
         tracing::debug!(
             "Window '{}' will be created at exact pos=({},{}) size={}x{}",
             window_def.name(),
-            position.x,
-            position.y,
-            position.width,
-            position.height
+            position.x.get(),
+            position.y.get(),
+            position.width.get(),
+            position.height.get()
         );
 
         let is_room_window = window_def.widget_type() == "room";
@@ -2316,10 +2316,10 @@ impl AppCore {
         tracing::info!(
             "Created new window '{}' at ({}, {}) size {}x{}",
             window_def.name(),
-            position.x,
-            position.y,
-            position.width,
-            position.height
+            position.x.get(),
+            position.y.get(),
+            position.width.get(),
+            position.height.get()
         );
 
         // Update text stream subscriber map (new window may have stream subscriptions)
@@ -2340,10 +2340,10 @@ impl AppCore {
     ) {
         let base = window_def.base();
         let position = WindowPosition {
-            x: base.col,
-            y: base.row,
-            width: base.cols,
-            height: base.rows,
+            x: crate::data::geometry::Col::new(base.col),
+            y: crate::data::geometry::Row::new(base.row),
+            width: crate::data::geometry::Width::new(base.cols),
+            height: crate::data::geometry::Height::new(base.rows),
         };
 
         if let Some(window_state) = self.ui_state.windows.get_mut(window_def.name()) {
@@ -2352,10 +2352,10 @@ impl AppCore {
             tracing::info!(
                 "Updated window '{}' to EXACT position ({}, {}) size {}x{}",
                 window_def.name(),
-                position.x,
-                position.y,
-                position.width,
-                position.height
+                position.x.get(),
+                position.y.get(),
+                position.width.get(),
+                position.height.get()
             );
         }
     }
@@ -3029,40 +3029,40 @@ impl AppCore {
                 tracing::info!(
                     "Window '{}' - Capturing from UI state: pos=({},{}) size={}x{}",
                     window_name,
-                    ui_pos.x,
-                    ui_pos.y,
-                    ui_pos.width,
-                    ui_pos.height
+                    ui_pos.x.get(),
+                    ui_pos.y.get(),
+                    ui_pos.width.get(),
+                    ui_pos.height.get()
                 );
 
                 // Clamp window position and size to terminal boundaries before saving
-                let clamped_x = ui_pos.x.min(terminal_width.saturating_sub(1));
-                let clamped_y = ui_pos.y.min(terminal_height.saturating_sub(1));
+                let clamped_x = ui_pos.x.get().min(terminal_width.saturating_sub(1));
+                let clamped_y = ui_pos.y.get().min(terminal_height.saturating_sub(1));
 
                 // Ensure width doesn't exceed available space
                 // Use window's min_cols constraint (default 1) instead of hardcoded 10
                 let max_width = terminal_width.saturating_sub(clamped_x);
                 let min_width = base.min_cols.unwrap_or(1);
-                let clamped_width = ui_pos.width.min(max_width).max(min_width);
+                let clamped_width = ui_pos.width.get().min(max_width).max(min_width);
 
                 // Ensure height doesn't exceed available space
                 // Use window's min_rows constraint (default 1)
                 let max_height = terminal_height.saturating_sub(clamped_y);
                 let min_height = base.min_rows.unwrap_or(1);
-                let clamped_height = ui_pos.height.min(max_height).max(min_height);
+                let clamped_height = ui_pos.height.get().min(max_height).max(min_height);
 
-                if clamped_x != ui_pos.x
-                    || clamped_y != ui_pos.y
-                    || clamped_width != ui_pos.width
-                    || clamped_height != ui_pos.height
+                if clamped_x != ui_pos.x.get()
+                    || clamped_y != ui_pos.y.get()
+                    || clamped_width != ui_pos.width.get()
+                    || clamped_height != ui_pos.height.get()
                 {
                     tracing::warn!(
                         "Window '{}' clamped: ({},{} {}x{}) -> ({},{} {}x{}) to fit terminal {}x{}",
                         window_name,
-                        ui_pos.x,
-                        ui_pos.y,
-                        ui_pos.width,
-                        ui_pos.height,
+                        ui_pos.x.get(),
+                        ui_pos.y.get(),
+                        ui_pos.width.get(),
+                        ui_pos.height.get(),
                         clamped_x,
                         clamped_y,
                         clamped_width,
@@ -3177,10 +3177,10 @@ impl AppCore {
             window_info.push(format!(
                 "  {} - {}x{} at ({},{}) - {} - {}",
                 name,
-                pos.width,
-                pos.height,
-                pos.x,
-                pos.y,
+                pos.width.get(),
+                pos.height.get(),
+                pos.x.get(),
+                pos.y.get(),
                 visible,
                 format!("{:?}", window.widget_type)
             ));
@@ -3367,10 +3367,10 @@ impl AppCore {
                 container_title: container_title.to_string(),
             },
             position: WindowPosition {
-                x,
-                y,
-                width: w,
-                height: h,
+                x: crate::data::geometry::Col::new(x),
+                y: crate::data::geometry::Row::new(y),
+                width: crate::data::geometry::Width::new(w),
+                height: crate::data::geometry::Height::new(h),
             },
             visible: true,
             focused: false,
@@ -3592,10 +3592,10 @@ impl AppCore {
             widget_type: widget_type.clone(),
             content,
             position: WindowPosition {
-                x,
-                y,
-                width,
-                height,
+                x: crate::data::geometry::Col::new(x),
+                y: crate::data::geometry::Row::new(y),
+                width: crate::data::geometry::Width::new(width),
+                height: crate::data::geometry::Height::new(height),
             },
             visible: true,
             content_align: None,
@@ -3751,10 +3751,10 @@ impl AppCore {
             widget_type: WidgetType::WebUi,
             content: WindowContent::WebUi(content),
             position: WindowPosition {
-                x: 0,
-                y: 0,
-                width,
-                height,
+                x: crate::data::geometry::Col::new(0),
+                y: crate::data::geometry::Row::new(0),
+                width: crate::data::geometry::Width::new(width),
+                height: crate::data::geometry::Height::new(height),
             },
             visible: true,
             content_align: None,
@@ -4022,10 +4022,10 @@ impl AppCore {
             positions.insert(
                 window_def.name().to_string(),
                 WindowPosition {
-                    x: window_def.base().col,
-                    y: window_def.base().row,
-                    width: window_width,
-                    height: window_height,
+                    x: crate::data::geometry::Col::new(window_def.base().col),
+                    y: crate::data::geometry::Row::new(window_def.base().row),
+                    width: crate::data::geometry::Width::new(window_width),
+                    height: crate::data::geometry::Height::new(window_height),
                 },
             );
         }
@@ -4627,7 +4627,7 @@ impl AppCore {
 
             // Update ui_state window position height
             if let Some(window) = self.ui_state.windows.get_mut(&name) {
-                window.position.height = new_rows;
+                window.position.height = crate::data::geometry::Height::new(new_rows);
             }
 
             // Mark modified but don't show the save reminder for auto-resizes
@@ -5867,10 +5867,16 @@ mod tests {
         let positions = core.calculate_window_positions(80, 24);
 
         let a = &positions["a"];
-        assert_eq!((a.x, a.y, a.width, a.height), (3, 5, 40, 10));
+        assert_eq!(
+            (a.x.get(), a.y.get(), a.width.get(), a.height.get()),
+            (3, 5, 40, 10)
+        );
         // Deliberately NOT clamped to the terminal — offscreen is allowed.
         let off = &positions["offscreen"];
-        assert_eq!((off.x, off.y, off.width, off.height), (100, 50, 20, 8));
+        assert_eq!(
+            (off.x.get(), off.y.get(), off.width.get(), off.height.get()),
+            (100, 50, 20, 8)
+        );
     }
 
     /// min/max constraints clamp the size (never the position).
@@ -5882,10 +5888,10 @@ mod tests {
         let core = core_with_layout(vec![narrow]);
 
         let p = &core.calculate_window_positions(80, 24)["narrow"];
-        assert_eq!(p.x, 0); // position untouched
-        assert_eq!(p.y, 0);
-        assert_eq!(p.width, 10); // 4 raised to min_cols
-        assert_eq!(p.height, 20); // 30 capped at max_rows
+        assert_eq!(p.x.get(), 0); // position untouched
+        assert_eq!(p.y.get(), 0);
+        assert_eq!(p.width.get(), 10); // 4 raised to min_cols
+        assert_eq!(p.height.get(), 20); // 30 capped at max_rows
     }
 }
 

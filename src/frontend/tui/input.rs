@@ -36,7 +36,11 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
                 continue;
             }
             let pos = &window.position;
-            if x >= pos.x && x < pos.x + pos.width && y >= pos.y && y < pos.y + pos.height {
+            if x >= pos.x.get()
+                && x < pos.x.get() + pos.width.get()
+                && y >= pos.y.get()
+                && y < pos.y.get() + pos.height.get()
+            {
                 return window_name.clone();
             }
         }
@@ -48,7 +52,11 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
             continue;
         }
         let pos = &window.position;
-        if x >= pos.x && x < pos.x + pos.width && y >= pos.y && y < pos.y + pos.height {
+        if x >= pos.x.get()
+            && x < pos.x.get() + pos.width.get()
+            && y >= pos.y.get()
+            && y < pos.y.get() + pos.height.get()
+        {
             return name.clone();
         }
     }
@@ -189,11 +197,11 @@ impl TuiFrontend {
         }
 
         let menu_height = items.len() as u16 + 2;
-        let menu_x = window_pos.x;
-        let menu_y = if window_pos.y >= menu_height {
-            window_pos.y - menu_height
+        let menu_x = window_pos.x.get();
+        let menu_y = if window_pos.y.get() >= menu_height {
+            window_pos.y.get() - menu_height
         } else {
-            window_pos.y.saturating_add(1)
+            window_pos.y.get().saturating_add(1)
         };
 
         let mut menu = PopupMenu::new(items, (menu_x, menu_y));
@@ -1448,16 +1456,16 @@ impl TuiFrontend {
                         self.widget_manager.quickbar_widgets.get_mut(&topmost_window)
                     {
                         let window_pos = window_pos.unwrap_or(crate::data::WindowPosition {
-                            x: 0,
-                            y: 0,
-                            width: 0,
-                            height: 0,
+                            x: crate::data::geometry::Col::new(0),
+                            y: crate::data::geometry::Row::new(0),
+                            width: crate::data::geometry::Width::new(0),
+                            height: crate::data::geometry::Height::new(0),
                         });
                         let rect = Rect {
-                            x: window_pos.x,
-                            y: window_pos.y,
-                            width: window_pos.width,
-                            height: window_pos.height,
+                            x: window_pos.x.get(),
+                            y: window_pos.y.get(),
+                            width: window_pos.width.get(),
+                            height: window_pos.height.get(),
                         };
                         if let Some(action) = quickbar_widget.handle_click(*x, *y, rect) {
                             app_core.needs_render = true;
@@ -1495,16 +1503,16 @@ impl TuiFrontend {
                             .get_window(&topmost_window)
                             .map(|w| w.position.clone())
                             .unwrap_or(crate::data::WindowPosition {
-                                x: 0,
-                                y: 0,
-                                width: 0,
-                                height: 0,
+                                x: crate::data::geometry::Col::new(0),
+                                y: crate::data::geometry::Row::new(0),
+                                width: crate::data::geometry::Width::new(0),
+                                height: crate::data::geometry::Height::new(0),
                             });
                         let rect = Rect {
-                            x: window_pos.x,
-                            y: window_pos.y,
-                            width: window_pos.width,
-                            height: window_pos.height,
+                            x: window_pos.x.get(),
+                            y: window_pos.y.get(),
+                            width: window_pos.width.get(),
+                            height: window_pos.height.get(),
                         };
                         if let Some(command) = bar_widget.handle_click(*x, *y, rect) {
                             app_core.needs_render = true;
@@ -1528,7 +1536,7 @@ impl TuiFrontend {
                 if let Some(window) = app_core.ui_state.get_window(&topmost_window) {
                     tracing::debug!(
                         "  Window pos: y={}, height={}, click_y={}, is_top_row={}",
-                        window.position.y, window.position.height, *y, *y == window.position.y
+                        window.position.y.get(), window.position.height.get(), *y, *y == window.position.y.get()
                     );
                     let pos = &window.position;
                     let name = &topmost_window;
@@ -1544,10 +1552,10 @@ impl TuiFrontend {
                     // Handle tabbed text tab switching on click
                     if window.widget_type == WidgetType::TabbedText {
                         let rect = Rect {
-                            x: pos.x,
-                            y: pos.y,
-                            width: pos.width,
-                            height: pos.height,
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
                         };
                         if let Some(new_index) =
                             self.handle_tabbed_click(name, rect, *x, *y)
@@ -1557,15 +1565,15 @@ impl TuiFrontend {
                     }
 
                     if handled_tab_click.is_none() {
-                        let right_col = pos.x + pos.width - 1;
-                        let bottom_row = pos.y + pos.height - 1;
-                        let has_horizontal_space = pos.width > 1;
+                        let right_col = pos.x.get() + pos.width.get() - 1;
+                        let bottom_row = pos.y.get() + pos.height.get() - 1;
+                        let has_horizontal_space = pos.width.get() > 1;
                         // Only use bottom row as resize handle if:
                         // 1. Window is NOT locked (locked windows can't be resized anyway)
                         // 2. Window has enough height (> 2) so there's content area between
                         //    top row (move) and bottom row (resize). For small widgets (height <= 2),
                         //    bottom row IS the content area.
-                        let can_resize_bottom = !is_window_locked && pos.height > 2;
+                        let can_resize_bottom = !is_window_locked && pos.height.get() > 2;
                         let can_resize_right = !is_window_locked;
 
                         if has_horizontal_space
@@ -1581,7 +1589,7 @@ impl TuiFrontend {
                         } else if can_resize_bottom && *y == bottom_row {
                             drag_op = Some(DragOperation::ResizeBottom);
                             found_window = Some(name.clone());
-                        } else if *y == pos.y {
+                        } else if *y == pos.y.get() {
                             drag_op = Some(DragOperation::Move);
                             found_window = Some(name.clone());
                         }
@@ -1627,10 +1635,10 @@ impl TuiFrontend {
                             if let Some(window) = app_core.ui_state.get_window(&window_name) {
                                 let pos = &window.position;
                                 let window_rect = ratatui::layout::Rect {
-                                    x: pos.x,
-                                    y: pos.y,
-                                    width: pos.width,
-                                    height: pos.height,
+                                    x: pos.x.get(),
+                                    y: pos.y.get(),
+                                    width: pos.width.get(),
+                                    height: pos.height.get(),
                                 };
 
                                 if let Some(link_data) =
@@ -1666,7 +1674,7 @@ impl TuiFrontend {
                                 operation,
                                 window_name,
                                 start_pos: (*x, *y),
-                                original_window_pos: (pos.x, pos.y, pos.width, pos.height),
+                                original_window_pos: (pos.x.get(), pos.y.get(), pos.width.get(), pos.height.get()),
                             });
                         }
                     }
@@ -1681,10 +1689,10 @@ impl TuiFrontend {
                     if let Some(window) = app_core.ui_state.get_window(&window_name) {
                         let pos = &window.position;
                         let window_rect = ratatui::layout::Rect {
-                            x: pos.x,
-                            y: pos.y,
-                            width: pos.width,
-                            height: pos.height,
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
                         };
 
                         tracing::debug!(
@@ -1782,10 +1790,10 @@ impl TuiFrontend {
                         window.position = crate::data::window::apply_window_drag(
                             drag_state.operation,
                             crate::data::WindowPosition {
-                                x: ox,
-                                y: oy,
-                                width: ow,
-                                height: oh,
+                                x: crate::data::geometry::Col::new(ox),
+                                y: crate::data::geometry::Row::new(oy),
+                                width: crate::data::geometry::Width::new(ow),
+                                height: crate::data::geometry::Height::new(oh),
                             },
                             dx,
                             dy,
@@ -1805,16 +1813,16 @@ impl TuiFrontend {
                         // Find which window we're dragging in
                         for (name, window) in &app_core.ui_state.windows {
                             let pos = &window.position;
-                            if *x >= pos.x
-                                && *x < pos.x + pos.width
-                                && *y >= pos.y
-                                && *y < pos.y + pos.height
+                            if *x >= pos.x.get()
+                                && *x < pos.x.get() + pos.width.get()
+                                && *y >= pos.y.get()
+                                && *y < pos.y.get() + pos.height.get()
                             {
                                 let window_rect = ratatui::layout::Rect {
-                                    x: pos.x,
-                                    y: pos.y,
-                                    width: pos.width,
-                                    height: pos.height,
+                                    x: pos.x.get(),
+                                    y: pos.y.get(),
+                                    width: pos.width.get(),
+                                    height: pos.height.get(),
                                 };
                                 if let Some((line, col)) = self
                                     .mouse_to_text_coords(name, *x, *y, window_rect)
@@ -1844,10 +1852,10 @@ impl TuiFrontend {
 
                         for (name, window) in &app_core.ui_state.windows {
                             let pos = &window.position;
-                            if *x >= pos.x
-                                && *x < pos.x + pos.width
-                                && *y >= pos.y
-                                && *y < pos.y + pos.height
+                            if *x >= pos.x.get()
+                                && *x < pos.x.get() + pos.width.get()
+                                && *y >= pos.y.get()
+                                && *y < pos.y.get() + pos.height.get()
                             {
                                 // First check if this is a hand widget (left or right only)
                                 if name == "left_hand" || name == "left" {
@@ -1859,10 +1867,10 @@ impl TuiFrontend {
                                 }
 
                                 let window_rect = ratatui::layout::Rect {
-                                    x: pos.x,
-                                    y: pos.y,
-                                    width: pos.width,
-                                    height: pos.height,
+                                    x: pos.x.get(),
+                                    y: pos.y.get(),
+                                    width: pos.width.get(),
+                                    height: pos.height.get(),
                                 };
 
                                 // Inventory window: check link first, fallback to wear
@@ -2012,10 +2020,10 @@ impl TuiFrontend {
                             .find(|w| w.name() == drag_state.window_name)
                         {
                             let base = window_def.base_mut();
-                            base.col = window.position.x;
-                            base.row = window.position.y;
-                            base.cols = window.position.width;
-                            base.rows = window.position.height;
+                            base.col = window.position.x.get();
+                            base.row = window.position.y.get();
+                            base.cols = window.position.width.get();
+                            base.rows = window.position.height.get();
                             tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
                                 drag_state.window_name, base.col, base.row, base.cols, base.rows);
                             app_core.layout_modified_since_save = true;
@@ -2025,10 +2033,10 @@ impl TuiFrontend {
                         if app_core.ui_state.ephemeral_windows.contains(&drag_state.window_name) {
                             use crate::config::{Config, DialogPosition};
                             let pos = DialogPosition {
-                                x: window.position.x,
-                                y: window.position.y,
-                                width: Some(window.position.width),
-                                height: Some(window.position.height),
+                                x: window.position.x.get(),
+                                y: window.position.y.get(),
+                                width: Some(window.position.width.get()),
+                                height: Some(window.position.height.get()),
                             };
                             app_core.saved_dialog_positions.containers.insert(
                                 drag_state.window_name.clone(),
@@ -2097,8 +2105,8 @@ impl TuiFrontend {
                 // Right-click on performance overlay: show metrics toggle menu
                 if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
                     let pos = &window.position;
-                    if *x >= pos.x && *x < pos.x + pos.width
-                       && *y >= pos.y && *y < pos.y + pos.height {
+                    if *x >= pos.x.get() && *x < pos.x.get() + pos.width.get()
+                       && *y >= pos.y.get() && *y < pos.y.get() + pos.height.get() {
                         // Build performance metrics context menu
                         let items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
                         app_core.ui_state.popup_menu =
@@ -2113,7 +2121,7 @@ impl TuiFrontend {
                 for (name, window) in &app_core.ui_state.windows {
                     let pos = &window.position;
                     // Check if click is on the title bar (top row of window)
-                    if *y == pos.y && *x >= pos.x && *x < pos.x + pos.width {
+                    if *y == pos.y.get() && *x >= pos.x.get() && *x < pos.x.get() + pos.width.get() {
                         // Build context menu items
                         let mut items = Vec::new();
 

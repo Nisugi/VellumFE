@@ -142,7 +142,7 @@ impl TuiFrontend {
                 }
 
                 // Update width for proper wrapping
-                text_window.set_width(window.position.width);
+                text_window.set_width(window.position.width.get());
 
                 // Get last synced generation
                 let last_synced_gen = self.widget_manager.last_synced_generation.get(name).copied().unwrap_or(0);
@@ -202,7 +202,7 @@ impl TuiFrontend {
                             text_window.add_text(styled_text);
                         }
                         // Finish the line with actual window width
-                        text_window.finish_line(window.position.width);
+                        text_window.finish_line(window.position.width.get());
                     }
 
                     // Update last synced generation
@@ -1663,7 +1663,7 @@ impl TuiFrontend {
                                         };
                                         text_window.add_text(styled_text);
                                     }
-                                    text_window.finish_line(window.position.width);
+                                    text_window.finish_line(window.position.width.get());
                                 }
                                 // Apply ignore flag before unread handling so unread is skipped when ignored
                                 widget.set_tab_ignore_activity(i, ignore_activity);

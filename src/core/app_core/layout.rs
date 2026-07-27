@@ -378,10 +378,10 @@ impl AppCore {
             if let Some(window_state) = self.ui_state.windows.get_mut(window_def.name()) {
                 let base = window_def.base();
                 window_state.position = WindowPosition {
-                    x: base.col,
-                    y: base.row,
-                    width: base.cols,
-                    height: base.rows,
+                    x: crate::data::geometry::Col::new(base.col),
+                    y: crate::data::geometry::Row::new(base.row),
+                    width: crate::data::geometry::Width::new(base.cols),
+                    height: crate::data::geometry::Height::new(base.rows),
                 };
                 match &mut window_state.content {
                     WindowContent::Text(text) => {
@@ -855,19 +855,19 @@ impl AppCore {
 
             // Use exact position from layout file
             let position = WindowPosition {
-                x: base.col,
-                y: base.row,
-                width: base.cols,
-                height: base.rows,
+                x: crate::data::geometry::Col::new(base.col),
+                y: crate::data::geometry::Row::new(base.row),
+                width: crate::data::geometry::Width::new(base.cols),
+                height: crate::data::geometry::Height::new(base.rows),
             };
 
             tracing::debug!(
                 "Processing window '{}': exact pos=({},{}) size={}x{}",
                 window_name,
-                position.x,
-                position.y,
-                position.width,
-                position.height
+                position.x.get(),
+                position.y.get(),
+                position.width.get(),
+                position.height.get()
             );
 
             if let Some(window_state) = self.ui_state.windows.get_mut(&window_name) {
@@ -878,14 +878,14 @@ impl AppCore {
                 tracing::info!(
                     "UPDATING window '{}': pos ({},{})ΓåÆ({},{}) size {}x{}ΓåÆ{}x{}",
                     window_name,
-                    old_pos.x,
-                    old_pos.y,
-                    position.x,
-                    position.y,
-                    old_pos.width,
-                    old_pos.height,
-                    position.width,
-                    position.height
+                    old_pos.x.get(),
+                    old_pos.y.get(),
+                    position.x.get(),
+                    position.y.get(),
+                    old_pos.width.get(),
+                    old_pos.height.get(),
+                    position.width.get(),
+                    position.height.get()
                 );
             } else {
                 // Window doesn't exist - queue for creation
@@ -1636,10 +1636,10 @@ mod tests {
     #[test]
     fn test_window_position_clone() {
         let pos = WindowPosition {
-            x: 10,
-            y: 20,
-            width: 80,
-            height: 24,
+            x: crate::data::geometry::Col::new(10),
+            y: crate::data::geometry::Row::new(20),
+            width: crate::data::geometry::Width::new(80),
+            height: crate::data::geometry::Height::new(24),
         };
         let cloned = pos.clone();
         assert_eq!(pos.x, cloned.x);
@@ -1652,15 +1652,15 @@ mod tests {
     fn test_window_position_from_base() {
         let base = test_window_base("test", 15, 5, 50, 18);
         let pos = WindowPosition {
-            x: base.col,
-            y: base.row,
-            width: base.cols,
-            height: base.rows,
+            x: crate::data::geometry::Col::new(base.col),
+            y: crate::data::geometry::Row::new(base.row),
+            width: crate::data::geometry::Width::new(base.cols),
+            height: crate::data::geometry::Height::new(base.rows),
         };
-        assert_eq!(pos.x, 15);
-        assert_eq!(pos.y, 5);
-        assert_eq!(pos.width, 50);
-        assert_eq!(pos.height, 18);
+        assert_eq!(pos.x.get(), 15);
+        assert_eq!(pos.y.get(), 5);
+        assert_eq!(pos.width.get(), 50);
+        assert_eq!(pos.height.get(), 18);
     }
 
     // ========== Remainder distribution tests ==========
