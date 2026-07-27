@@ -41,6 +41,7 @@ struct PaletteFormState {
     favorite: bool,
     slot: String,
     is_global: bool,
+    original_is_global: bool,
     error: Option<String>,
 }
 
@@ -54,11 +55,12 @@ impl PaletteFormState {
             favorite: false,
             slot: String::new(),
             is_global: true,
+            original_is_global: true,
             error: None,
         }
     }
 
-    fn from_color(color: &PaletteColor) -> Self {
+    fn from_color(color: &PaletteColor, is_global: bool) -> Self {
         Self {
             original_name: Some(color.name.clone()),
             name: color.name.clone(),
@@ -66,7 +68,8 @@ impl PaletteFormState {
             category: color.category.clone(),
             favorite: color.favorite,
             slot: color.slot.map(|slot| slot.to_string()).unwrap_or_default(),
-            is_global: true,
+            is_global,
+            original_is_global: is_global,
             error: None,
         }
     }
@@ -288,6 +291,16 @@ impl VellumGuiApp {
             }
         });
 
+        // Names that live in the character-scoped colors.toml. Editing one of
+        // these must stay character-scoped: hard-coding is_global=true wrote the
+        // edit to the global file, which config load then replaces with the
+        // (untouched) character list, so the change silently vanished.
+        let character = self.app_core.config.character.clone();
+        let character_scoped: std::collections::HashSet<String> =
+            ColorConfig::load_character_colors_only(character.as_deref())
+                .map(|c| c.color_palette.into_iter().map(|pc| pc.name).collect())
+                .unwrap_or_default();
+
         let filter = state.filter.to_lowercase();
         let mut entries: Vec<PaletteColor> = self
             .app_core
@@ -311,7 +324,9 @@ impl VellumGuiApp {
                 for color in &entries {
                     ui.horizontal(|ui| {
                         if ui.small_button("Edit").clicked() {
-                            state.palette_form = Some(PaletteFormState::from_color(color));
+                            let is_global = !character_scoped.contains(&color.name);
+                            state.palette_form =
+                                Some(PaletteFormState::from_color(color, is_global));
                         }
                         if ui.small_button("Delete").clicked() {
                             delete_request = Some(color.name.clone());
@@ -405,10 +420,13 @@ impl VellumGuiApp {
                 Ok(color) => {
                     let character = self.app_core.config.character.clone();
                     if let Some(original) = &form.original_name {
-                        if *original != color.name {
+                        // Renamed OR re-scoped: remove the old entry from its
+                        // ORIGINAL scope, otherwise a global↔character flip
+                        // leaves an orphaned duplicate behind.
+                        if *original != color.name || form.original_is_global != form.is_global {
                             let _ = ColorConfig::delete_single_palette_color(
                                 original,
-                                form.is_global,
+                                form.original_is_global,
                                 character.as_deref(),
                             );
                         }

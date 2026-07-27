@@ -83,6 +83,17 @@ impl SoundPlayer {
         debug!("Sound player volume set to: {}", self.volume);
     }
 
+    /// Whether this player is currently enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Set the per-sound cooldown window.
+    pub fn set_cooldown_ms(&mut self, cooldown_ms: u64) {
+        self.cooldown_duration = std::time::Duration::from_millis(cooldown_ms);
+        debug!("Sound player cooldown set to: {} ms", cooldown_ms);
+    }
+
     #[cfg_attr(not(feature = "sound"), allow(dead_code))]
     fn lock_cooldown_map(
         &self,

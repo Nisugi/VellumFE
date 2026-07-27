@@ -452,6 +452,55 @@ impl AppCore {
         self.tts_manager.set_filters(&tts.gags, &substitutions);
     }
 
+    /// Reconcile the live `SoundPlayer` with `config.sound`.
+    ///
+    /// Without this the sound config was write-only: the keybind toggle and the
+    /// settings editor mutated `config.sound` and saved to disk, but the running
+    /// player kept its construction-time fields, so changes did nothing until a
+    /// restart. Because `SoundPlayer::new(enabled = false, ..)` returns `Err`
+    /// (audio device init is skipped when disabled), a player that started
+    /// disabled is `None` and cannot be re-enabled by a setter — it must be
+    /// reconstructed. Call this after any change to `config.sound`.
+    pub fn apply_sound_settings(&mut self) {
+        let sound = self.config.sound.clone();
+        match self.sound_player.as_mut() {
+            Some(player) => {
+                if sound.enabled {
+                    // Live player exists and stays enabled: push the new knobs.
+                    player.set_enabled(true);
+                    player.set_volume(sound.volume);
+                    player.set_cooldown_ms(sound.cooldown_ms);
+                } else {
+                    // Drop the player so the audio device is released; a later
+                    // enable reconstructs it.
+                    self.sound_player = None;
+                    tracing::debug!("Sound player disabled and released");
+                }
+            }
+            None if sound.enabled => {
+                // Enabling from a disabled/None state: build a fresh player.
+                match crate::sound::SoundPlayer::new(true, sound.volume, sound.cooldown_ms) {
+                    Ok(player) => {
+                        self.sound_player = Some(player);
+                        tracing::debug!("Sound player initialized on enable");
+                        if let Err(e) = crate::sound::ensure_sounds_directory() {
+                            tracing::warn!("Failed to create sounds directory: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to initialize sound player on enable: {}", e);
+                        self.add_system_message(
+                            "Could not enable sound: no audio device available",
+                        );
+                    }
+                }
+            }
+            None => {
+                // Already disabled and no player — nothing to do.
+            }
+        }
+    }
+
     /// Resolve the mapdb source from config and (re)start the load when it
     /// changes. Called at startup, after the settings editor saves, and when
     /// the updater installs a fresh download.
@@ -3607,9 +3656,7 @@ impl AppCore {
         self.ui_state.set_window(name.to_string(), window);
 
         // Create window definition for layout
-        use crate::config::{
-            BorderSides, CommandInputWidgetData, RoomWidgetData, TextWidgetData, WindowBase,
-        };
+        use crate::config::{BorderSides, TextWidgetData, WindowBase};
 
         let base = WindowBase {
             name: name.to_string(),
@@ -3639,54 +3686,29 @@ impl AppCore {
             font_family: None,
         };
 
-        let window_def = match widget_type_str.to_lowercase().as_str() {
-            "text" => WindowDef::Text {
-                base,
+        // Persist the window with its REAL widget type. Previously only
+        // text/room/command_input/webui were handled and every other type fell
+        // back to WindowDef::Text, so progress/countdown/compass/indicator/hand
+        // windows reloaded as empty text boxes (and landed in the wrong resize
+        // bucket). WindowDef::blank builds the correct variant for each type.
+        //
+        // `widget_type_str` was already validated by WidgetType::try_from_str
+        // near the top of this function, so blank() cannot return None here;
+        // fall back to a plain text def defensively rather than panicking.
+        let fallback_base = base.clone();
+        let window_def = WindowDef::blank(widget_type_str, base).unwrap_or_else(|| {
+            WindowDef::Text {
+                base: fallback_base,
                 data: TextWidgetData {
                     streams: vec![],
-                    buffer_size: 1000,
+                    buffer_size: 10_000,
                     wordwrap: true,
                     show_timestamps: false,
                     timestamp_position: None,
                     compact: false,
                 },
-            },
-            "room" => WindowDef::Room {
-                base,
-                data: RoomWidgetData {
-                    buffer_size: 0,
-                    show_desc: true,
-                    show_objs: true,
-                    show_players: true,
-                    show_exits: true,
-                    show_name: false,
-                },
-            },
-            "command_input" | "commandinput" => WindowDef::CommandInput {
-                base,
-                data: CommandInputWidgetData::default(),
-            },
-            "webui" | "lichui" => WindowDef::WebUi {
-                base,
-                data: crate::config::WebUiWidgetData {
-                    page: name.to_string(),
-                },
-            },
-            _ => {
-                // Default to text window for unknown types
-                WindowDef::Text {
-                    base,
-                    data: TextWidgetData {
-                        streams: vec![],
-                        buffer_size: 1000,
-                        wordwrap: true,
-                        show_timestamps: false,
-                        timestamp_position: None,
-                    compact: false,
-                    },
-                }
             }
-        };
+        });
 
         // Add to layout at the front (so new windows appear on top)
         self.layout.windows.insert(0, window_def);

@@ -659,7 +659,15 @@ impl VellumGuiApp {
             }
             // A real slice.
             Some(Some(real)) => {
-                let is_folder = view.slices.get(real).map(|s| s.is_folder()).unwrap_or(false);
+                // Look the slice up by DISPLAY index (view.slices is the rotated
+                // ring); `real` is only for path.push on descend. Using `real`
+                // here read a different seat's is_folder() flag inside a rotated
+                // sub-folder, so dwell-to-open silently failed one level deep.
+                let is_folder = view
+                    .slices
+                    .get(display)
+                    .map(|s| s.is_folder())
+                    .unwrap_or(false);
                 if is_folder {
                     if dwelt >= nav_ms {
                         if let Some(ui) = self.gp_wheel.as_mut() {

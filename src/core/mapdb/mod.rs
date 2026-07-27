@@ -206,7 +206,12 @@ impl MapDb {
 pub fn find_latest_mapdb(game_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut best: Option<(u64, std::path::PathBuf)> = None;
     for entry in std::fs::read_dir(game_data_dir).ok()? {
-        let path = entry.ok()?.path();
+        // Skip an entry we can't read rather than aborting the whole scan — a
+        // single transient FS/permission error (files vanishing mid-scan is
+        // common on Windows) would otherwise discard every candidate already
+        // found and make the client think there is no mapdb at all.
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(name) => name.to_owned(),
             None => continue,
