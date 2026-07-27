@@ -2224,6 +2224,74 @@ mod tests {
         assert_eq!(row_rows(&core, "bottom"), (5, 8));
     }
 
+    /// A window spanning multiple columns has its height delta applied exactly
+    /// ONCE, even though the column-by-column pass visits it at every column it
+    /// spans. Pins invariant F (apply-once + advance-cursor at later columns).
+    #[test]
+    fn resize_applies_multi_column_window_delta_once() {
+        // 80 wide: `wide` spans the full width above two side-by-side columns.
+        let mut core = core_with_baseline(
+            vec![
+                text_def("wide", 0, 0, 80, 8),
+                text_def("leftcol", 0, 8, 40, 16),
+                text_def("rightcol", 40, 8, 40, 16),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 34); // +10 height
+
+        // wide grows by 4 exactly once (not 4 per spanned column); the two
+        // lower windows each grow to 22 and cascade below the resized `wide`.
+        assert_eq!(row_rows(&core, "wide"), (0, 12));
+        assert_eq!(row_rows(&core, "leftcol"), (12, 22));
+        assert_eq!(row_rows(&core, "rightcol"), (12, 22));
+    }
+
+    /// Shrinking far past every window's minimum must terminate (all windows
+    /// clamp to min) and never hang. Pins invariant G — the leftover loop's
+    /// termination when the scalable set empties.
+    #[test]
+    fn resize_terminates_when_all_windows_hit_min() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("a", 0, 0, 80, 6),
+                text_def("b", 0, 6, 80, 6),
+                text_def("c", 0, 12, 80, 12),
+            ],
+            80,
+            24,
+        );
+        core.resize_windows(80, 9); // -15; text min_rows is 3, 3 windows
+
+        // Every window bottoms out at min_rows (3) and cascades in order.
+        assert_eq!(row_rows(&core, "a"), (0, 3));
+        assert_eq!(row_rows(&core, "b"), (3, 3));
+        assert_eq!(row_rows(&core, "c"), (6, 3));
+    }
+
+    /// `resize_to_terminal` is a SECOND, independent resize algorithm (reached
+    /// from the `.resize` dot-command via commands.rs, vs `resize_windows` from
+    /// the TUI command line). It uses a global-proportion distribution rather
+    /// than the per-column cascade. This test pins its behavior so the fact
+    /// that two algorithms exist is documented, not surprising. On a simple
+    /// stacked layout the two happen to agree; they diverge on complex layouts.
+    #[test]
+    fn resize_to_terminal_second_algorithm_behavior() {
+        let mut core = core_with_baseline(
+            vec![
+                text_def("top", 0, 0, 80, 10),
+                text_def("bottom", 0, 10, 80, 14),
+            ],
+            80,
+            24,
+        );
+        core.resize_to_terminal(80, 34); // +10
+
+        assert_eq!(row_rows(&core, "top"), (0, 15));
+        assert_eq!(row_rows(&core, "bottom"), (15, 19));
+    }
+
     /// KNOWN BUG (documented, not yet fixed): the remainder-recoupling loop
     /// visits each later window at most ONCE (`for … skip(idx+1)`), so when
     /// |remainder| exceeds the number of eligible later windows, the excess
