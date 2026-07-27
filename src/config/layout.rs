@@ -938,4 +938,122 @@ zoom = 3
             assert_eq!(align.calculate_offset(40, 20, 40, 20), (0, 0));
         }
     }
+
+    // ========== scale_to_terminal_size characterization ==========
+    // scale_to_terminal_size is a THIRD, distinct scaling algorithm (used by
+    // the load path in load_with_terminal_size): multiplicative per-window
+    // scaling (col*scale_x, rounded), NOT the delta-based conserving cascade of
+    // resize_windows. It scales each window independently, so it neither
+    // conserves total size nor prevents overlap — pin that behavior so a future
+    // geometry newtype (or a well-meaning "unify the scalers" refactor) can't
+    // silently change it.
+
+    fn scale_text_def(name: &str, col: u16, row: u16, cols: u16, rows: u16) -> WindowDef {
+        WindowDef::Text {
+            base: WindowBase {
+                name: name.to_string(),
+                row,
+                col,
+                rows,
+                cols,
+                show_border: false,
+                border_style: "single".to_string(),
+                border_sides: BorderSides::default(),
+                border_color: None,
+                show_title: false,
+                title: None,
+                background_color: None,
+                text_color: None,
+                transparent_background: false,
+                locked: false,
+                min_rows: None,
+                max_rows: None,
+                min_cols: None,
+                max_cols: None,
+                visible: true,
+                content_align: None,
+                tts_speak: false,
+                text_size: None,
+                font_family: None,
+                title_position: "top-left".to_string(),
+            },
+            data: TextWidgetData {
+                streams: vec![],
+                buffer_size: 1000,
+                wordwrap: true,
+                show_timestamps: false,
+                timestamp_position: None,
+                compact: false,
+            },
+        }
+    }
+
+    fn scale_layout(windows: Vec<WindowDef>, tw: u16, th: u16) -> Layout {
+        Layout {
+            windows,
+            terminal_width: Some(tw),
+            terminal_height: Some(th),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        }
+    }
+
+    /// 2x scale doubles every coordinate and size.
+    #[test]
+    fn scale_to_terminal_size_doubles_geometry() {
+        let mut layout = scale_layout(
+            vec![
+                scale_text_def("a", 0, 0, 40, 12),
+                scale_text_def("b", 40, 12, 40, 12),
+            ],
+            80,
+            24,
+        );
+        layout.scale_to_terminal_size(160, 48); // 2x both axes
+
+        let b = layout.windows[1].base();
+        assert_eq!((b.col, b.row, b.cols, b.rows), (80, 24, 80, 24));
+        assert_eq!(layout.terminal_width, Some(160));
+        assert_eq!(layout.terminal_height, Some(48));
+    }
+
+    /// Scaling rounds to the nearest cell (0.5 rounds up via f32::round).
+    #[test]
+    fn scale_to_terminal_size_rounds_to_nearest() {
+        // 80 -> 100 is 1.25x. A window of cols=10 -> 12.5 -> 13 (round half up).
+        let mut layout = scale_layout(vec![scale_text_def("w", 8, 0, 10, 24)], 80, 24);
+        layout.scale_to_terminal_size(100, 24);
+
+        let b = layout.windows[0].base();
+        assert_eq!(b.cols, 13); // 10 * 1.25 = 12.5 -> 13
+        assert_eq!(b.col, 10); // 8 * 1.25 = 10.0 -> 10
+        assert_eq!(b.rows, 24); // height unchanged (1.0x)
+    }
+
+    /// Shrinking never produces a zero-size window: cols/rows floor at 1.
+    #[test]
+    fn scale_to_terminal_size_floors_size_at_one() {
+        // 0.1x scale would round a 2-wide window to 0; must floor to 1.
+        let mut layout = scale_layout(vec![scale_text_def("tiny", 0, 0, 2, 2)], 100, 100);
+        layout.scale_to_terminal_size(10, 10);
+
+        let b = layout.windows[0].base();
+        assert!(b.cols >= 1, "cols floored at 1, got {}", b.cols);
+        assert!(b.rows >= 1, "rows floored at 1, got {}", b.rows);
+    }
+
+    /// min/max constraints override the scaled result.
+    #[test]
+    fn scale_to_terminal_size_respects_min_max_constraints() {
+        let mut def = scale_text_def("clamped", 0, 0, 40, 10);
+        def.base_mut().max_cols = Some(50); // cap growth
+        def.base_mut().min_rows = Some(15); // floor shrink
+        let mut layout = scale_layout(vec![def], 80, 24);
+        layout.scale_to_terminal_size(160, 12); // 2x width, 0.5x height
+
+        let b = layout.windows[0].base();
+        assert_eq!(b.cols, 50); // 40*2=80 capped at max_cols 50
+        assert_eq!(b.rows, 15); // 10*0.5=5 raised to min_rows 15
+    }
 }
