@@ -105,6 +105,31 @@ lives in `[controller_rumble]` (patterns `off`/`short`/`long`/`double`
 per event). All of it is edited in the `.controller` editor's tabs —
 hand-editing is never required.
 
+Input feel lives in `[controller_tuning]` (Tuning tab). `movement_stick`
+(`"left"`/`"right"`) chooses which stick walks the compass; the other
+stick aims the wheel and scrolls the story. The radial wheel is
+**dwell-driven**: aim a slice, rest on it, and it *commits* — leaves
+after `aim_dwell_ms`, folders and the reserved Back slice after
+`nav_dwell_ms` (folders auto-descend, Back auto-ascends). Releasing the
+wheel button fires the committed leaf; returning the stick to center
+before releasing cancels. Sweeping across the ring never commits the
+slices you pass through, so a far slice is safe to reach. Inside a folder
+a Back slice is reserved at the `back_slice` screen anchor
+(`up`/`down`/`left`/`right` and the four diagonals). `deadzone` (percent)
+is how far the stick must deflect before a slice registers; a `0` dwell
+means instant commit. `fire_debounce_ms` suppresses double-fires and
+`release_grace_ms` keeps a still-deflected stick from walking as the
+wheel closes. `south`/`east` remain optional accelerators while the wheel
+is up (fire/descend now, back up now). Every field is optional and
+defaults to the shipped feel.
+
+Wheel slices resolve `<target_id>`/`<target_noun>` against the interact
+focus, exactly like bound interact macros — so a combat wheel slice such
+as `cast at <target_id>` fires at the creature currently selected in
+interact mode. Slices without a placeholder are sent as-is; a slice that
+needs a target with nothing focused is dropped (not sent literally) with
+a note.
+
 ## Macros
 
 Send text with a keypress using the inline-table form. `\r` presses Enter:

@@ -218,8 +218,10 @@ dpad_up = "scroll_current_window_up_page"
 dpad_down = "scroll_current_window_down_page"
 south = { macro_text = "stand\r" }
 
-# Radial command wheel (hold r2, aim the left stick, release to fire).
-# Edit in the .controller editor's Wheel tab.
+# Radial command wheel (hold r2, aim with the wheel/aim stick, dwell to
+# commit, release to fire). Folders auto-open on dwell and reserve a Back
+# slice. Feel is tuned in [controller_tuning]; edit slices in the
+# .controller editor's Wheel tab.
 [[controller_wheel]]
 label = "look"
 command = "look"

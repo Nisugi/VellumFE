@@ -228,11 +228,15 @@ pub struct VellumGuiApp {
     /// Firing happens on release.
     #[cfg(feature = "gamepad")]
     gp_wheel: Option<gamepad::WheelUi>,
-    /// South already fired a leaf during this hold of the wheel button;
-    /// the wheel stays closed (and release fires nothing) until a fresh
-    /// hold, so one hold never fires twice.
+    /// A leaf already fired during this hold of the wheel button; the
+    /// wheel stays closed (and release fires nothing) until a fresh hold,
+    /// so one hold never fires twice.
     #[cfg(feature = "gamepad")]
     gp_wheel_fired: bool,
+    /// When the wheel last dispatched a command; a repeat fire inside
+    /// [controller_tuning] fire_debounce_ms is suppressed.
+    #[cfg(feature = "gamepad")]
+    gp_wheel_last_fire: Option<std::time::Instant>,
     /// Binding-legend overlay visibility (controller_overlay toggles it).
     #[cfg(feature = "gamepad")]
     gp_overlay: bool,
@@ -546,6 +550,8 @@ impl VellumGuiApp {
             gp_wheel: None,
             #[cfg(feature = "gamepad")]
             gp_wheel_fired: false,
+            #[cfg(feature = "gamepad")]
+            gp_wheel_last_fire: None,
             #[cfg(feature = "gamepad")]
             gp_overlay: false,
             #[cfg(feature = "gamepad")]
