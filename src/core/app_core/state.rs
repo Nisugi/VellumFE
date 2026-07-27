@@ -3219,8 +3219,16 @@ impl AppCore {
                 continue;
             }
 
-            // Get the window definition and create UI state
-            if let Some(window_def) = self.layout.windows.iter().find(|w| w.name() == name) {
+            // Get the window definition and create UI state. Templates with
+            // auto-generated names (spacers, `*_custom` blanks) don't match
+            // the template name; the window just added is the last entry.
+            let window_def = self
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.name() == name)
+                .or_else(|| self.layout.windows.last());
+            if let Some(window_def) = window_def {
                 let window_def_clone = window_def.clone();
                 self.add_new_window(&window_def_clone, terminal_width, terminal_height);
                 tracing::info!("Auto-added window '{}' from openDialog", name);

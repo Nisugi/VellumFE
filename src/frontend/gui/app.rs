@@ -4565,20 +4565,12 @@ impl eframe::App for VellumGuiApp {
                 self.hide_tab(key);
             }
         }
-        if !window_additions.is_empty() {
-            for name in window_additions {
-                if !self
-                    .app_core
-                    .ui_state
-                    .pending_window_additions
-                    .contains(&name)
-                {
-                    self.app_core.ui_state.pending_window_additions.push(name);
-                }
-            }
-            let (layout_width, layout_height) = self.core_layout_size;
-            self.app_core
-                .process_pending_window_additions(layout_width, layout_height);
+        // Same path as the popup menu's add-window items: it resolves the
+        // auto-generated names custom templates get (the core pending-queue
+        // lookup misses those and silently adds nothing) and drops blank
+        // `*_custom` widgets straight into the window editor.
+        for name in window_additions {
+            self.add_window_from_template(&name);
         }
         for (key, zone) in zone_assignments {
             self.set_tab_zone(key, zone);
