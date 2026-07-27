@@ -4,6 +4,7 @@
 //! NO imports from frontend/ or any rendering code.
 //! Both TUI and GUI frontends read from these structures to render.
 
+pub mod geometry;
 pub mod input;
 pub mod remote_buffer;
 pub mod ui_state;
