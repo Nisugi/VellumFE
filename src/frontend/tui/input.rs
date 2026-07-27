@@ -1774,75 +1774,26 @@ impl TuiFrontend {
                     if let Some(window) =
                         app_core.ui_state.get_window_mut(&drag_state.window_name)
                     {
-                        let min_width_i32 = min_width_constraint as i32;
-                        let min_height_i32 = min_height_constraint as i32;
-
-                        match drag_state.operation {
-                            DragOperation::Move => {
-                                // Calculate new position
-                                let new_x = (drag_state.original_window_pos.0 as i32
-                                    + dx)
-                                    .max(0)
-                                    as u16;
-                                let new_y = (drag_state.original_window_pos.1 as i32
-                                    + dy)
-                                    .max(0)
-                                    as u16;
-
-                                // Clamp to prevent overflow beyond terminal boundaries
-                                let max_x =
-                                    term_width.saturating_sub(window.position.width);
-                                let max_y =
-                                    term_height.saturating_sub(window.position.height);
-
-                                window.position.x = new_x.min(max_x);
-                                window.position.y = new_y.min(max_y);
-                            }
-                            DragOperation::ResizeRight => {
-                                // Calculate new width
-                                let new_width =
-                                    (drag_state.original_window_pos.2 as i32 + dx)
-                                        .max(min_width_i32)
-                                        as u16;
-
-                                // Clamp to prevent overflow beyond terminal edge
-                                let max_width =
-                                    term_width.saturating_sub(window.position.x);
-                                window.position.width = new_width.min(max_width);
-                            }
-                            DragOperation::ResizeBottom => {
-                                // Calculate new height
-                                let new_height =
-                                    (drag_state.original_window_pos.3 as i32 + dy)
-                                        .max(min_height_i32)
-                                        as u16;
-
-                                // Clamp to prevent overflow beyond terminal edge
-                                let max_height =
-                                    term_height.saturating_sub(window.position.y);
-                                window.position.height = new_height.min(max_height);
-                            }
-                            DragOperation::ResizeBottomRight => {
-                                // Calculate new dimensions
-                                let new_width =
-                                    (drag_state.original_window_pos.2 as i32 + dx)
-                                        .max(min_width_i32)
-                                        as u16;
-                                let new_height =
-                                    (drag_state.original_window_pos.3 as i32 + dy)
-                                        .max(min_height_i32)
-                                        as u16;
-
-                                // Clamp to prevent overflow beyond terminal edges
-                                let max_width =
-                                    term_width.saturating_sub(window.position.x);
-                                let max_height =
-                                    term_height.saturating_sub(window.position.y);
-
-                                window.position.width = new_width.min(max_width);
-                                window.position.height = new_height.min(max_height);
-                            }
-                        }
+                        // Geometry lives in the pure, unit-tested
+                        // apply_window_drag (data/window.rs). The original
+                        // window position at drag-start is `original_window_pos`
+                        // (x, y, width, height).
+                        let (ox, oy, ow, oh) = drag_state.original_window_pos;
+                        window.position = crate::data::window::apply_window_drag(
+                            drag_state.operation,
+                            crate::data::WindowPosition {
+                                x: ox,
+                                y: oy,
+                                width: ow,
+                                height: oh,
+                            },
+                            dx,
+                            dy,
+                            min_width_constraint,
+                            min_height_constraint,
+                            term_width,
+                            term_height,
+                        );
                         app_core.needs_render = true;
                     }
                 } else if app_core.ui_state.pending_link_click.is_some() {

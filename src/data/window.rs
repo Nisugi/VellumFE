@@ -220,6 +220,65 @@ pub struct WindowPosition {
     pub height: u16,
 }
 
+/// Compute the new window position for a mouse drag, given the position at
+/// drag-start (`orig`), the accumulated pointer delta (`dx`, `dy`), the
+/// window's minimum size, and the terminal size.
+///
+/// Pure geometry extracted from the TUI mouse-drag handler so it can be unit
+/// tested (and so a future geometry newtype has one place to touch instead of
+/// four inline branches). Behavior mirrors the original exactly:
+/// - Move: shift the top-left by the delta, floored at (0,0), then clamp so the
+///   window stays fully on screen (its size is unchanged, so max origin =
+///   term - size, saturating).
+/// - Resize*: grow/shrink the dragged edge(s) by the delta, floored at the
+///   window's min size, then clamp to the terminal edge (max extent =
+///   term - origin, saturating). The origin never moves on a resize.
+pub fn apply_window_drag(
+    op: crate::data::ui_state::DragOperation,
+    orig: WindowPosition,
+    dx: i32,
+    dy: i32,
+    min_width: u16,
+    min_height: u16,
+    term_width: u16,
+    term_height: u16,
+) -> WindowPosition {
+    use crate::data::ui_state::DragOperation;
+
+    let mut pos = orig.clone();
+    match op {
+        DragOperation::Move => {
+            let new_x = (orig.x as i32 + dx).max(0) as u16;
+            let new_y = (orig.y as i32 + dy).max(0) as u16;
+            // Window size is unchanged on a move, so the max origin keeps the
+            // window fully on screen.
+            let max_x = term_width.saturating_sub(orig.width);
+            let max_y = term_height.saturating_sub(orig.height);
+            pos.x = new_x.min(max_x);
+            pos.y = new_y.min(max_y);
+        }
+        DragOperation::ResizeRight => {
+            let new_width = (orig.width as i32 + dx).max(min_width as i32) as u16;
+            let max_width = term_width.saturating_sub(orig.x);
+            pos.width = new_width.min(max_width);
+        }
+        DragOperation::ResizeBottom => {
+            let new_height = (orig.height as i32 + dy).max(min_height as i32) as u16;
+            let max_height = term_height.saturating_sub(orig.y);
+            pos.height = new_height.min(max_height);
+        }
+        DragOperation::ResizeBottomRight => {
+            let new_width = (orig.width as i32 + dx).max(min_width as i32) as u16;
+            let new_height = (orig.height as i32 + dy).max(min_height as i32) as u16;
+            let max_width = term_width.saturating_sub(orig.x);
+            let max_height = term_height.saturating_sub(orig.y);
+            pos.width = new_width.min(max_width);
+            pos.height = new_height.min(max_height);
+        }
+    }
+    pos
+}
+
 impl WindowState {
     pub fn new_text(name: impl Into<String>, max_lines: usize) -> Self {
         let name = name.into();
@@ -574,5 +633,109 @@ mod tests {
         let debug_str = format!("{:?}", window);
         assert!(debug_str.contains("WindowState"));
         assert!(debug_str.contains("test"));
+    }
+
+    // ========== apply_window_drag characterization ==========
+    use crate::data::ui_state::DragOperation;
+
+    fn pos(x: u16, y: u16, w: u16, h: u16) -> WindowPosition {
+        WindowPosition {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
+    }
+
+    /// Move shifts the origin by the delta; size is unchanged.
+    #[test]
+    fn apply_window_drag_move_shifts_origin() {
+        let out = apply_window_drag(DragOperation::Move, pos(10, 5, 20, 8), 3, -2, 5, 3, 100, 40);
+        assert_eq!((out.x, out.y, out.width, out.height), (13, 3, 20, 8));
+    }
+
+    /// Move floors the origin at (0,0) — dragging past the top-left edge.
+    #[test]
+    fn apply_window_drag_move_floors_at_origin() {
+        let out = apply_window_drag(DragOperation::Move, pos(2, 2, 20, 8), -10, -10, 5, 3, 100, 40);
+        assert_eq!((out.x, out.y), (0, 0));
+    }
+
+    /// Move clamps so the window stays fully on screen (max origin = term-size).
+    #[test]
+    fn apply_window_drag_move_clamps_to_stay_onscreen() {
+        // term 100x40, window 20x8 -> max origin (80, 32). Drag far right/down.
+        let out =
+            apply_window_drag(DragOperation::Move, pos(50, 20, 20, 8), 1000, 1000, 5, 3, 100, 40);
+        assert_eq!((out.x, out.y), (80, 32));
+    }
+
+    /// ResizeRight grows the width by dx; origin and height untouched.
+    #[test]
+    fn apply_window_drag_resize_right_grows_width() {
+        let out =
+            apply_window_drag(DragOperation::ResizeRight, pos(10, 5, 20, 8), 15, 0, 5, 3, 100, 40);
+        assert_eq!((out.x, out.y, out.width, out.height), (10, 5, 35, 8));
+    }
+
+    /// ResizeRight floors the width at the window minimum.
+    #[test]
+    fn apply_window_drag_resize_right_floors_at_min_width() {
+        let out = apply_window_drag(
+            DragOperation::ResizeRight,
+            pos(10, 5, 20, 8),
+            -100,
+            0,
+            5, // min_width
+            3,
+            100,
+            40,
+        );
+        assert_eq!(out.width, 5);
+    }
+
+    /// ResizeRight clamps the width to the terminal edge (max = term - x).
+    #[test]
+    fn apply_window_drag_resize_right_clamps_to_terminal_edge() {
+        // x=90 in a 100-wide terminal -> max width 10.
+        let out =
+            apply_window_drag(DragOperation::ResizeRight, pos(90, 5, 5, 8), 1000, 0, 3, 3, 100, 40);
+        assert_eq!(out.width, 10);
+    }
+
+    /// ResizeBottom grows height by dy, floored at min, clamped to term-y.
+    #[test]
+    fn apply_window_drag_resize_bottom() {
+        let grow =
+            apply_window_drag(DragOperation::ResizeBottom, pos(0, 10, 20, 8), 0, 12, 5, 3, 100, 40);
+        assert_eq!(grow.height, 20);
+        // Clamp: y=35 in 40-tall term -> max height 5.
+        let clamp = apply_window_drag(
+            DragOperation::ResizeBottom,
+            pos(0, 35, 20, 3),
+            0,
+            1000,
+            3,
+            3,
+            100,
+            40,
+        );
+        assert_eq!(clamp.height, 5);
+    }
+
+    /// ResizeBottomRight applies both width and height changes independently.
+    #[test]
+    fn apply_window_drag_resize_bottom_right() {
+        let out = apply_window_drag(
+            DragOperation::ResizeBottomRight,
+            pos(10, 5, 20, 8),
+            10,
+            6,
+            5,
+            3,
+            100,
+            40,
+        );
+        assert_eq!((out.x, out.y, out.width, out.height), (10, 5, 30, 14));
     }
 }
