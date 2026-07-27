@@ -1164,7 +1164,8 @@ impl VellumGuiApp {
                     ui.weak(match feed.kind {
                         FeedKind::Countdown => {
                             "Timer feed id this widget tracks: roundtime, casttime, \
-                             stuntime, or a custom id pushed by Lich."
+                             stuntime, a custom [event_patterns] event_type, or an id \
+                             a script pushes via <vellumTimer id='...' value='epoch'/>."
                         }
                         FeedKind::Progress => {
                             "Bar feed id this widget tracks: health, mana, stamina, \

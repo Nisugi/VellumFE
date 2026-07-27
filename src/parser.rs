@@ -102,6 +102,13 @@ pub enum ParsedElement {
     CastTime {
         value: u32,
     },
+    /// `<vellumTimer id='...' value='...'/>` - VellumFE extension for
+    /// script-driven countdowns. `id` names the countdown feed id, `value`
+    /// is the absolute epoch end time in seconds (0 or past clears).
+    VellumTimer {
+        id: String,
+        value: i64,
+    },
     ProgressBar {
         id: String,
         value: u32,
@@ -651,6 +658,8 @@ impl XmlParser {
             self.handle_roundtime(tag, elements);
         } else if tag.starts_with("<castTime ") {
             self.handle_casttime(tag, elements);
+        } else if tag.starts_with("<vellumTimer ") {
+            self.handle_vellum_timer(tag, elements);
         } else if tag.starts_with("<spell") {
             self.handle_spell(tag, text_buffer, elements);
         } else if tag.starts_with("<left") {
@@ -1933,6 +1942,24 @@ impl XmlParser {
         }
     }
 
+    fn handle_vellum_timer(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <vellumTimer id='dark-cataclyst' value='1764904999'/> - script-
+        // facing countdown feed (typically sent to the client by a Lich
+        // script). value is the absolute epoch end time, like roundTime;
+        // 0 clears. The tag never renders as text.
+        if let (Some(id), Some(value_str)) = (
+            Self::extract_attribute(tag, "id"),
+            Self::extract_attribute(tag, "value"),
+        ) {
+            if id.is_empty() {
+                return;
+            }
+            if let Ok(value) = value_str.parse::<i64>() {
+                elements.push(ParsedElement::VellumTimer { id, value });
+            }
+        }
+    }
+
     fn handle_nav(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <nav rm='7150105'/>
         // Extract room ID
@@ -2973,6 +3000,52 @@ mod tests {
             panic!("Expected RoundTime element, got {:?}", rt_elements[0]);
         };
         assert_eq!(*value, 1764904999);
+    }
+
+    // ==================== VellumTimer Parsing ====================
+
+    #[test]
+    fn test_vellum_timer_parsing() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line("<vellumTimer id='dark-cataclyst' value='1764904999'/>");
+
+        let timers: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::VellumTimer { .. }))
+            .collect();
+        assert_eq!(timers.len(), 1);
+        let ParsedElement::VellumTimer { id, value } = timers[0] else {
+            panic!("Expected VellumTimer element, got {:?}", timers[0]);
+        };
+        assert_eq!(id, "dark-cataclyst");
+        assert_eq!(*value, 1764904999);
+
+        // Clear form
+        let elements = parser.parse_line("<vellumTimer id='dark-cataclyst' value='0'/>");
+        assert!(elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::VellumTimer { value: 0, .. })));
+    }
+
+    #[test]
+    fn test_vellum_timer_malformed_ignored() {
+        let mut parser = test_parser();
+        // Missing value, missing id, empty id, junk value: no element, no text.
+        for line in [
+            "<vellumTimer id='x'/>",
+            "<vellumTimer value='123'/>",
+            "<vellumTimer id='' value='123'/>",
+            "<vellumTimer id='x' value='soon'/>",
+        ] {
+            let elements = parser.parse_line(line);
+            assert!(
+                !elements
+                    .iter()
+                    .any(|e| matches!(e, ParsedElement::VellumTimer { .. })),
+                "line {:?} should not produce a timer",
+                line
+            );
+        }
     }
 
     // ==================== Stream Parsing ====================

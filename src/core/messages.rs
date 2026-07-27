@@ -914,6 +914,12 @@ impl MessageProcessor {
                     crate::config::EventAction::Increment => {}
                 }
             }
+            ParsedElement::VellumTimer { id, value } => {
+                // Script-facing countdown feed (<vellumTimer id=.. value=..>):
+                // value is the absolute epoch end time in the server clock
+                // domain, like RoundTime/CastTime; 0 or a past time clears.
+                self.update_countdown_by_id(ui_state, id, (*value).max(0));
+            }
             ParsedElement::LeftHand { item, link } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
@@ -4757,6 +4763,62 @@ mod tests {
             &mut None,
             None,
         );
+        assert_eq!(end_time_of(&ui_state), 0);
+    }
+
+    #[test]
+    fn test_vellum_timer_feeds_countdown_by_id() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::new();
+        let mut ws = crate::data::window::WindowState::new_text("cataclysm", 10);
+        ws.content = WindowContent::Countdown(crate::data::CountdownData {
+            end_time: 0,
+            label: "Cataclysm".to_string(),
+            countdown_id: "dark-cataclyst".to_string(),
+            color: None,
+        });
+        ui_state.windows.insert("cataclysm".to_string(), ws);
+
+        let end_time_of = |ui_state: &UiState| match &ui_state
+            .windows
+            .get("cataclysm")
+            .expect("countdown window")
+            .content
+        {
+            WindowContent::Countdown(cd) => cd.end_time,
+            _ => panic!("not a countdown"),
+        };
+
+        let mut process = |processor: &mut MessageProcessor,
+                           game_state: &mut GameState,
+                           ui_state: &mut UiState,
+                           value: i64| {
+            let element = ParsedElement::VellumTimer {
+                id: "dark-cataclyst".to_string(),
+                value,
+            };
+            processor.process_element(
+                &element,
+                game_state,
+                ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        };
+
+        process(&mut processor, &mut game_state, &mut ui_state, 1_764_904_999);
+        assert_eq!(end_time_of(&ui_state), 1_764_904_999);
+
+        // 0 clears; negative values clamp to cleared instead of going weird.
+        process(&mut processor, &mut game_state, &mut ui_state, 0);
+        assert_eq!(end_time_of(&ui_state), 0);
+        process(&mut processor, &mut game_state, &mut ui_state, -5);
         assert_eq!(end_time_of(&ui_state), 0);
     }
 

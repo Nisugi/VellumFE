@@ -308,3 +308,23 @@ stun). If the message carries no number, drop `duration_capture` and set
 a fixed `duration` in seconds instead. Patterns match script output too,
 so a Lich script can drive a countdown by echoing a line the pattern
 recognizes.
+
+### Script-driven timers: `<vellumTimer>`
+
+Lich scripts can skip the regex entirely and feed a countdown directly by
+sending a tag to the client:
+
+```xml
+<vellumTimer id='dark-cataclyst' value='1764904999'/>
+```
+
+`id` is the countdown window's feed id (same matching as `event_type`
+above, case-sensitive) and `value` is the **absolute epoch end time in
+seconds** — compute it in the script as `Time.now.to_i + duration`, the
+same convention `<roundTime>` uses, so it stays correct under lag.
+`value='0'` clears the timer. The tag never renders as text. From a Lich
+script:
+
+```ruby
+puts "<vellumTimer id='dark-cataclyst' value='#{Time.now.to_i + 90}'/>"
+```
