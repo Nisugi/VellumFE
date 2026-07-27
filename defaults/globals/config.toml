@@ -314,11 +314,14 @@ room_in_main = true
 # EVENT PATTERNS
 # ------------------------------------------------------------
 # Regex patterns to detect game events for countdown timers.
-# Each pattern can trigger stun/RT/CT timer updates.
+# Each pattern can trigger stun/RT/CT timer updates - or feed a custom
+# countdown window: any other event_type drives the countdown whose id
+# matches it (case-sensitive), e.g. a "tremors" pattern feeds a custom
+# countdown with id "tremors".
 #
 # Fields:
 #   pattern           - Regex to match game text
-#   event_type        - Timer type: "stun", "rt", "ct"
+#   event_type        - Countdown to feed: "stun", "rt", "ct", or a custom id
 #   action            - "set" (start timer) or "clear" (cancel timer)
 #   duration          - Fixed duration in seconds (if not captured)
 #   duration_capture  - Regex capture group for dynamic duration

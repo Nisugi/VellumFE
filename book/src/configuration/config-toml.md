@@ -266,15 +266,45 @@ layout = "compact"
 
 ## Event Patterns
 
-Regex patterns that drive countdown timers (stun/RT/CT). The defaults
-cover standard stun messages; add your own:
+Regex patterns that drive countdown timers. The defaults cover standard
+stun messages; add your own:
 
 ```toml
 [event_patterns.stun_rounds]
 pattern = '^\s*You are stunned for ([0-9]+) rounds?'
-event_type = "stun"             # stun, rt, ct
+event_type = "stun"             # which countdown this feeds (see below)
 action = "set"                  # set or clear
 duration_capture = 1            # capture group holding the duration
 duration_multiplier = 5.0       # rounds -> seconds
 enabled = true
 ```
+
+The `event_type` names the countdown the pattern feeds: `stun` drives the
+stun window, `rt`/`ct` drive roundtime/casttime, and **any other string
+feeds the countdown window whose id matches it** (case-sensitive). To
+build a timer for a spell that lasts multiple rounds: add a custom
+countdown window (Windows > Add Window > Countdowns > Custom) and give it
+an id like `tremors`, then add a pair of patterns:
+
+```toml
+[event_patterns.tremors_start]
+pattern = 'The ground begins to shake violently for ([0-9]+) rounds'
+event_type = "tremors"
+action = "set"
+duration_capture = 1
+duration_multiplier = 5.0       # rounds -> seconds
+enabled = true
+
+[event_patterns.tremors_end]
+pattern = 'The ground grows still\.'
+event_type = "tremors"
+action = "clear"
+duration = 0
+enabled = true
+```
+
+Several patterns may share one `event_type` (the defaults ship four for
+stun). If the message carries no number, drop `duration_capture` and set
+a fixed `duration` in seconds instead. Patterns match script output too,
+so a Lich script can drive a countdown by echoing a line the pattern
+recognizes.
