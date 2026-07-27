@@ -881,6 +881,39 @@ impl MessageProcessor {
                 // Update countdowns that listen for "casttime"
                 self.update_countdown_by_id(ui_state, "casttime", end_time_server);
             }
+            ParsedElement::Event {
+                event_type,
+                action,
+                duration,
+            } => {
+                // Config [event_patterns] regexes matched on game text (stun
+                // rounds/recovery, raise dead, ...). The consumer was lost in
+                // the Beta 2 rewrite - the parser kept emitting these while
+                // nothing fed the stuntime countdown. end_time lives in the
+                // server clock domain, like RoundTime/CastTime above.
+                let countdown_id = match event_type.as_str() {
+                    "stun" => "stuntime",
+                    "rt" => "roundtime",
+                    "ct" => "casttime",
+                    other => other,
+                };
+                match action {
+                    crate::config::EventAction::Set => {
+                        if *duration > 0 {
+                            let end_time = chrono::Utc::now().timestamp()
+                                + self.server_time_offset
+                                + *duration as i64;
+                            self.update_countdown_by_id(ui_state, countdown_id, end_time);
+                        }
+                    }
+                    crate::config::EventAction::Clear => {
+                        self.update_countdown_by_id(ui_state, countdown_id, 0);
+                    }
+                    // Increment is reserved in the config schema; nothing
+                    // emits it yet.
+                    crate::config::EventAction::Increment => {}
+                }
+            }
             ParsedElement::LeftHand { item, link } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
@@ -4654,6 +4687,77 @@ mod tests {
         processor.update_text_stream_subscribers(&ui_state);
 
         assert_eq!(processor.get_stream_subscribers("combat").len(), 1);
+    }
+
+    #[test]
+    fn test_event_pattern_feeds_stun_countdown() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::new();
+        let mut ws = crate::data::window::WindowState::new_text("stuntime", 10);
+        ws.content = WindowContent::Countdown(crate::data::CountdownData {
+            end_time: 0,
+            label: "Stun".to_string(),
+            countdown_id: "stuntime".to_string(),
+            color: None,
+        });
+        ui_state.windows.insert("stuntime".to_string(), ws);
+
+        let end_time_of = |ui_state: &UiState| match &ui_state
+            .windows
+            .get("stuntime")
+            .expect("stuntime window")
+            .content
+        {
+            WindowContent::Countdown(cd) => cd.end_time,
+            _ => panic!("not a countdown"),
+        };
+
+        // Set: end_time lands ~duration seconds from now (server offset 0).
+        let set = ParsedElement::Event {
+            event_type: "stun".to_string(),
+            action: crate::config::EventAction::Set,
+            duration: 15,
+        };
+        processor.process_element(
+            &set,
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        let end = end_time_of(&ui_state);
+        let now = chrono::Utc::now().timestamp();
+        assert!(
+            (now + 13..=now + 17).contains(&end),
+            "end_time {} not ~now+15",
+            end
+        );
+
+        // Clear: recovery patterns zero the countdown.
+        let clear = ParsedElement::Event {
+            event_type: "stun".to_string(),
+            action: crate::config::EventAction::Clear,
+            duration: 0,
+        };
+        processor.process_element(
+            &clear,
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert_eq!(end_time_of(&ui_state), 0);
     }
 
     fn make_text_window(name: &str, streams: &[&str]) -> crate::data::window::WindowState {
