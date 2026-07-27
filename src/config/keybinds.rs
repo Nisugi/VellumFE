@@ -1254,6 +1254,43 @@ impl Config {
         Value::Array(arr)
     }
 
+    /// Set a top-level key to a value AND guarantee it renders above every
+    /// `[table]` in the document. A bare `key = ...` written after a
+    /// `[section]` header parses as a member of that section, not the
+    /// document root — so a wheel array appended to a doc ending in
+    /// `[controller_shift.south]` would silently nest there and the loader
+    /// would miss it (falling back to the shipped default wheel).
+    ///
+    /// `toml_edit`'s per-item render position is fiddly to reorder across a
+    /// mixed doc, so take the unambiguous route: drop any existing copy of
+    /// the key, render just `key = value` from a one-key document, and
+    /// prepend that line to the rest of the file. A root-level key at the
+    /// very top can never be captured by a later section header.
+    fn set_root_value_before_tables(
+        doc: &mut toml_edit::DocumentMut,
+        key: &str,
+        value: toml_edit::Value,
+    ) {
+        // Remove any stale copy (top-level or mis-nested) so we don't leave
+        // a duplicate behind.
+        doc.as_table_mut().remove(key);
+        let rest = doc.to_string();
+        let mut head = toml_edit::DocumentMut::new();
+        head.insert(key, toml_edit::Item::Value(value));
+        let head_str = head.to_string();
+        // Re-parse the concatenation so `doc` reflects the final layout.
+        let combined = format!("{head_str}\n{rest}");
+        *doc = combined
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap_or_else(|_| {
+                // Fallback: if concatenation somehow fails to parse, at
+                // least set the key (nesting risk) rather than lose data.
+                let mut d = toml_edit::DocumentMut::new();
+                d.insert(key, head[key].clone());
+                d
+            });
+    }
+
     /// Load the keybinds file as a comment-preserving `toml_edit` document
     /// (empty doc when absent), ensuring the parent dir exists. Shared by
     /// the wheel savers so they can splice wheel arrays with inline-table
@@ -1280,8 +1317,11 @@ impl Config {
         let (path, mut doc) = Self::load_keybinds_document()?;
         match name {
             None => {
-                doc["controller_wheel"] =
-                    toml_edit::Item::Value(Self::wheel_slices_to_inline(slices));
+                Self::set_root_value_before_tables(
+                    &mut doc,
+                    "controller_wheel",
+                    Self::wheel_slices_to_inline(slices),
+                );
             }
             Some(wheel) => {
                 if slices.is_empty() {
@@ -1314,7 +1354,11 @@ impl Config {
     /// can never re-bind to a later sibling on reload.
     pub fn save_controller_wheel(slices: &[WheelSlice]) -> Result<()> {
         let (path, mut doc) = Self::load_keybinds_document()?;
-        doc["controller_wheel"] = toml_edit::Item::Value(Self::wheel_slices_to_inline(slices));
+        Self::set_root_value_before_tables(
+            &mut doc,
+            "controller_wheel",
+            Self::wheel_slices_to_inline(slices),
+        );
         write_atomic(&path, doc.to_string())
             .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
         Ok(())
@@ -2088,6 +2132,57 @@ mod tests {
     }
 
     #[test]
+    fn wheel_written_at_root_survives_trailing_section() {
+        // A doc that ends in a nested section header ([controller_shift.
+        // south]) is exactly what bit the real config: a bare
+        // `controller_wheel = [...]` appended after it parses as a member
+        // of that section, so the loader finds no top-level wheel and falls
+        // back to defaults. set_root_value_before_tables must keep the key
+        // at document root.
+        let existing = "[controller_shift]\ndpad_up = \"x\"\n\n[controller_shift.south]\nmacro_text = \"stand\\r\"\n";
+        let mut doc: toml_edit::DocumentMut = existing.parse().unwrap();
+        let stance = WheelSlice {
+            label: "stance".into(), command: String::new(), color: None,
+            slices: vec![
+                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), color: None, slices: vec![] },
+                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), color: None, slices: vec![] },
+            ],
+        };
+        let wheel = vec![
+            WheelSlice { label: "look".into(), command: "look".into(), color: None, slices: vec![] },
+            stance,
+            WheelSlice { label: "exp".into(), command: "exp".into(), color: None, slices: vec![] },
+        ];
+        Config::set_root_value_before_tables(
+            &mut doc, "controller_wheel", Config::wheel_slices_to_inline(&wheel),
+        );
+        let out = doc.to_string();
+
+        // Parse like the loader does: top-level key must exist and be the
+        // full wheel (NOT nested under controller_shift.south).
+        let v: toml::Value = toml::from_str(&out).expect("valid TOML");
+        let arr = v.get("controller_wheel").expect("controller_wheel at ROOT");
+        assert!(
+            v.get("controller_shift")
+                .and_then(|s| s.get("south"))
+                .and_then(|s| s.get("controller_wheel"))
+                .is_none(),
+            "wheel must NOT nest under the trailing section"
+        );
+        let slices: Vec<WheelSlice> = arr.clone().try_into().expect("parse slices");
+        assert_eq!(slices.len(), 3);
+        assert_eq!(slices[1].label, "stance");
+        assert_eq!(slices[1].slices.len(), 2, "stance keeps its children");
+        assert_eq!(slices[2].label, "exp");
+        assert_eq!(slices[2].slices.len(), 0, "exp stays a leaf");
+        // The trailing section survived intact.
+        assert_eq!(
+            v.get("controller_shift").and_then(|s| s.get("south")).and_then(|s| s.get("macro_text")).and_then(|m| m.as_str()),
+            Some("stand\r")
+        );
+    }
+
+    #[test]
     fn wheel_meta_round_trips_and_prunes() {
         // A [controller_wheels_meta.NAME] table deserializes to WheelMeta.
         let toml_src = r#"
@@ -2775,3 +2870,5 @@ stick = "right"
         assert_eq!(action, cloned);
     }
 }
+
+
