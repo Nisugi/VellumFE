@@ -315,6 +315,26 @@ impl Default for TuningConfig {
     }
 }
 
+/// Per-wheel metadata (`[controller_wheels_meta.<name>]`): which button
+/// opens the wheel and which stick aims it. Stored separately from the
+/// wheel's slice array (`[[controller_wheels.<name>]]`) so old configs,
+/// which have only the slice array, load unchanged with both fields None.
+///
+/// `button` is editor metadata — the runtime binding authority stays
+/// `[controller]` (the wheel opens when its `controller_wheel:<name>`
+/// action's button is held). The editor writes both, and a load-time
+/// check warns when they disagree or two wheels claim one button.
+/// `stick` is authoritative (nothing else stores it): while the wheel is
+/// open that stick aims it, overriding the global movement-stick choice;
+/// None falls back to the non-movement stick.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WheelMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub button: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stick: Option<String>,
+}
+
 /// Keybinds for menu system (popups, browsers, forms, editors)
 /// These are separate from game keybinds and only active when menus have focus
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1118,6 +1138,59 @@ impl Config {
             }
         }
         Ok(wheels_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Load per-wheel metadata from `[controller_wheels_meta.<name>]`
+    /// (button/stick). Absent = empty map = today's behavior.
+    pub fn load_controller_wheels_meta() -> Result<HashMap<String, WheelMeta>> {
+        let meta_from = |contents: &str| -> Option<HashMap<String, WheelMeta>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            let table = toml_value.get("controller_wheels_meta")?;
+            table.clone().try_into().ok()
+        };
+        let path = Self::common_keybinds_path()?;
+        if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            if let Some(meta) = meta_from(&contents) {
+                return Ok(meta);
+            }
+        }
+        Ok(meta_from(DEFAULT_KEYBINDS).unwrap_or_default())
+    }
+
+    /// Replace the `[controller_wheels_meta]` section. Entries with both
+    /// fields None are dropped so the section stays tidy.
+    pub fn save_controller_wheels_meta(meta: &HashMap<String, WheelMeta>) -> Result<()> {
+        let path = Self::common_keybinds_path()?;
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        let pruned: HashMap<&String, &WheelMeta> = meta
+            .iter()
+            .filter(|(_, m)| m.button.is_some() || m.stick.is_some())
+            .collect();
+        if pruned.is_empty() {
+            toml_table.remove("controller_wheels_meta");
+        } else {
+            toml_table.insert(
+                "controller_wheels_meta".to_string(),
+                toml::Value::try_from(&pruned).context("Failed to serialize wheel meta")?,
+            );
+        }
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Ok(())
     }
 
     /// The slice list at a folder path within a wheel. Key "" is the
@@ -1941,6 +2014,39 @@ mod tests {
                 "'{name}' in CONTROLLER_ACTION_NAMES does not parse"
             );
         }
+    }
+
+    #[test]
+    fn wheel_meta_round_trips_and_prunes() {
+        // A [controller_wheels_meta.NAME] table deserializes to WheelMeta.
+        let toml_src = r#"
+[controller_wheels_meta.combat]
+button = "r2"
+stick = "left"
+
+[controller_wheels_meta.exits]
+stick = "right"
+"#;
+        let value: toml::Value = toml::from_str(toml_src).unwrap();
+        let map: HashMap<String, WheelMeta> = value
+            .get("controller_wheels_meta")
+            .unwrap()
+            .clone()
+            .try_into()
+            .unwrap();
+        assert_eq!(map["combat"].button.as_deref(), Some("r2"));
+        assert_eq!(map["combat"].stick.as_deref(), Some("left"));
+        assert_eq!(map["exits"].button, None);
+        assert_eq!(map["exits"].stick.as_deref(), Some("right"));
+
+        // Absent fields default to None (old configs with no meta).
+        let empty: HashMap<String, WheelMeta> = HashMap::new();
+        assert!(empty.get("combat").is_none());
+
+        // An all-None meta serializes to an empty table (both fields skip).
+        let bare = WheelMeta::default();
+        let serialized = toml::Value::try_from(&bare).unwrap();
+        assert_eq!(serialized.as_table().map(|t| t.len()), Some(0));
     }
 
     // ===========================================

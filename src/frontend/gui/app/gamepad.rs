@@ -127,9 +127,22 @@ impl VellumGuiApp {
             })
             .unwrap_or(((0.0, 0.0), (0.0, 0.0)));
         let move_on_right = self.app_core.config.controller_tuning.movement_stick == "right";
-        // `stick` is the movement stick; `aim_x/aim_y` the aiming stick.
+        // `stick` is the movement stick; `aim_x/aim_y` the default aiming
+        // stick (the non-movement one). A wheel whose meta names a `stick`
+        // overrides the aim stick for its duration (resolved below); when
+        // that override picks the movement stick, movement is silenced by
+        // the wheel-owns-move guard, so aiming never also walks.
         let stick = Some(if move_on_right { right_xy } else { left_xy });
-        let (aim_x, aim_y) = if move_on_right { left_xy } else { right_xy };
+        // Which stick aims: a held wheel's `stick` override wins (true =
+        // right), else the default aim stick (the non-movement one).
+        let wheel_override = self
+            .held_wheel_key()
+            .and_then(|key| self.wheel_aim_stick(&key));
+        let aim_on_right = resolve_aim_stick(move_on_right, wheel_override);
+        let (aim_x, aim_y) = if aim_on_right { right_xy } else { left_xy };
+        // True when the in-effect aim stick is also the movement stick, so
+        // movement must be silenced while that wheel is open.
+        let aim_is_move_stick = aim_on_right == move_on_right;
 
         for button in pressed {
             // The controller editor's "press a button" capture wins over
@@ -208,12 +221,14 @@ impl VellumGuiApp {
             (false, None) => {}
         }
 
-        // Compass movement. Suppressed while the wheel owns the aim stick
-        // *and* the aim stick is the movement stick, and during the fired-
-        // hold tail. When movement is on the other stick, walking stays
-        // live even with the wheel up — matching Niffy's "movement stays on
-        // the left" case.
-        let wheel_owns_move = self.gp_wheel.is_some() || self.gp_wheel_fired;
+        // Compass movement. Suppressed while a wheel owns the aim stick
+        // *and* that aim stick is the movement stick (aim_is_move_stick),
+        // plus the fired-hold tail. When the wheel aims with the other
+        // stick, walking stays live even with the wheel up — matching
+        // Niffy's "movement stays on the left" case (e.g. an exits wheel
+        // that aims with the right stick).
+        let wheel_up = self.gp_wheel.is_some() || self.gp_wheel_fired;
+        let wheel_owns_move = wheel_up && aim_is_move_stick;
         if let Some((x, y_up)) = stick.filter(|_| !wheel_owns_move) {
             let sector = stick_sector(x, y_up, self.gp_stick_sector);
             if sector != self.gp_stick_sector {
@@ -231,12 +246,13 @@ impl VellumGuiApp {
             }
         }
 
-        // Aim stick (the non-movement stick): in interact mode it cycles
-        // the focus — up/down switch categories, left/right step entities,
-        // one step per deflection with the movement hysteresis. Otherwise
-        // up/down scrolls the main story window; quadratic curve so small
-        // deflections creep and full tilt flies. Stick up scrolls up
-        // (negative offset delta). Silenced while it is aiming an open
+        // Aim stick (the in-effect aiming stick — the non-movement one by
+        // default, or a wheel's `stick` override): in interact mode it
+        // cycles the focus — up/down switch categories, left/right step
+        // entities, one step per deflection with the movement hysteresis.
+        // Otherwise up/down scrolls the main story window; quadratic curve
+        // so small deflections creep and full tilt flies. Stick up scrolls
+        // up (negative offset delta). Silenced while it is aiming an open
         // wheel so aiming never also scrolls or cycles.
         // A wheel that just closed leaves the stick deflected; hold the
         // aim stick's normal function until it returns to center once.
@@ -483,6 +499,26 @@ impl VellumGuiApp {
         path: &[usize],
     ) -> Option<Vec<crate::config::WheelSlice>> {
         self.app_core.wheel_slices(key, path)
+    }
+
+    /// Per-wheel aim-stick override for `key`: `Some(true)` = right stick,
+    /// `Some(false)` = left, `None` = no override (caller uses the default
+    /// non-movement stick). Reads `[controller_wheels_meta.<name>].stick`;
+    /// the default wheel uses the "default" key.
+    fn wheel_aim_stick(&self, key: &str) -> Option<bool> {
+        let name = if key.is_empty() { "default" } else { key };
+        let stick = self
+            .app_core
+            .config
+            .controller_wheels_meta
+            .get(name)?
+            .stick
+            .as_deref()?;
+        match stick {
+            "right" => Some(true),
+            "left" => Some(false),
+            _ => None,
+        }
     }
 
     /// The displayed ring at the wheel's current level: the real slices
@@ -961,6 +997,13 @@ fn aim_stick_centered(x: f32, y_up: f32) -> bool {
     (x * x + y_up * y_up).sqrt() < STICK_RELEASE
 }
 
+/// Which physical stick aims the wheel (true = right). A per-wheel
+/// override (`Some(true/false)`) wins; otherwise the default aim stick is
+/// the one that isn't the movement stick.
+fn resolve_aim_stick(move_on_right: bool, wheel_override: Option<bool>) -> bool {
+    wheel_override.unwrap_or(!move_on_right)
+}
+
 /// The displayed ring for a wheel level: the real slices plus, inside a
 /// folder, a synthetic Back slice reserved at the configured screen
 /// anchor. `real_index` maps a displayed index back to the real slice
@@ -1175,6 +1218,18 @@ mod wheel_tests {
         assert_eq!(anchor_display_index("right", 4), 1);
         assert_eq!(anchor_display_index("down", 4), 2);
         assert_eq!(anchor_display_index("left", 4), 3);
+    }
+
+    #[test]
+    fn aim_stick_resolution_honors_override_then_default() {
+        // No override: aim stick is the one that isn't the movement stick.
+        assert_eq!(resolve_aim_stick(false, None), true); // move left -> aim right
+        assert_eq!(resolve_aim_stick(true, None), false); // move right -> aim left
+        // Per-wheel override wins regardless of movement stick — including
+        // Niffy's combat-on-the-movement-stick case (move left, aim left).
+        assert_eq!(resolve_aim_stick(false, Some(false)), false); // aim left
+        assert_eq!(resolve_aim_stick(false, Some(true)), true); // aim right
+        assert_eq!(resolve_aim_stick(true, Some(true)), true);
     }
 
     #[test]

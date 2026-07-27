@@ -34,6 +34,8 @@ pub(in super::super) struct ControllerEditorState {
     wheel_buffer: Option<Vec<WheelSlice>>,
     wheel_new_name: String,
     wheel_status: Option<String>,
+    /// Unsaved working copy of the selected wheel's button/stick meta.
+    wheel_meta_buffer: Option<crate::config::WheelMeta>,
 }
 
 impl ControllerEditorState {
@@ -45,6 +47,7 @@ impl ControllerEditorState {
             wheel_buffer: None,
             wheel_new_name: String::new(),
             wheel_status: None,
+            wheel_meta_buffer: None,
         }
     }
 
@@ -253,6 +256,7 @@ impl VellumGuiApp {
         let mut overlay_toggle: Option<String> = None;
         let mut rumble_save: Option<crate::config::RumbleConfig> = None;
         let mut tuning_save: Option<crate::config::TuningConfig> = None;
+        let mut meta_save: Option<(String, crate::config::WheelMeta)> = None;
 
         let pad_connected = self
             .gamepad
@@ -289,7 +293,13 @@ impl VellumGuiApp {
                 ui.separator();
 
                 if state.tab == ControllerTab::Wheels {
-                    render_wheels_tab(ui, &mut state, &self.app_core.config, &mut wheel_save);
+                    render_wheels_tab(
+                        ui,
+                        &mut state,
+                        &self.app_core.config,
+                        &mut wheel_save,
+                        &mut meta_save,
+                    );
                     return;
                 }
                 if state.tab == ControllerTab::Rumble {
@@ -538,6 +548,43 @@ impl VellumGuiApp {
             }
         }
 
+        if let Some((name, meta)) = meta_save {
+            // Persist the wheel's button/stick meta.
+            let mut map = self.app_core.config.controller_wheels_meta.clone();
+            map.insert(name.clone(), meta.clone());
+            let mut ok = true;
+            if let Err(err) = Config::save_controller_wheels_meta(&map) {
+                self.app_core
+                    .add_system_message(&format!("Failed to save wheel meta: {}", err));
+                ok = false;
+            }
+            // Setting a button also writes the matching [controller] entry
+            // (the runtime authority) so the two never silently drift.
+            if ok {
+                if let Some(button) = meta.button.as_deref() {
+                    let action = if name == "default" {
+                        "controller_wheel".to_string()
+                    } else {
+                        format!("controller_wheel:{}", name)
+                    };
+                    if let Err(err) = Config::save_single_controller_bind(
+                        button,
+                        &KeyBindAction::Action(action),
+                        false,
+                    ) {
+                        self.app_core
+                            .add_system_message(&format!("Failed to bind wheel button: {}", err));
+                        ok = false;
+                    }
+                }
+            }
+            if ok {
+                self.app_core.config.controller_wheels_meta = map;
+                self.reload_controller_binds();
+                self.app_core.warn_wheel_binding_conflicts();
+            }
+        }
+
         if let Some(entry) = overlay_toggle {
             let mut list = self.app_core.config.controller_overlay.clone();
             match list.iter().position(|e| *e == entry) {
@@ -723,6 +770,7 @@ fn render_wheels_tab(
     state: &mut ControllerEditorState,
     config: &Config,
     save_clicked: &mut bool,
+    meta_save: &mut Option<(String, crate::config::WheelMeta)>,
 ) {
     ui.horizontal(|ui| {
         let mut names: Vec<String> = config.controller_wheels.keys().cloned().collect();
@@ -740,6 +788,7 @@ fn render_wheels_tab(
                 {
                     state.wheel_selected.clear();
                     state.wheel_buffer = None;
+                    state.wheel_meta_buffer = None;
                     state.wheel_status = None;
                 }
                 for name in &names {
@@ -749,6 +798,7 @@ fn render_wheels_tab(
                     {
                         state.wheel_selected = name.clone();
                         state.wheel_buffer = None;
+                        state.wheel_meta_buffer = None;
                         state.wheel_status = None;
                     }
                 }
@@ -764,14 +814,73 @@ fn render_wheels_tab(
                 state.wheel_selected = name;
                 state.wheel_new_name.clear();
                 state.wheel_buffer = Some(Vec::new());
+                state.wheel_meta_buffer = Some(crate::config::WheelMeta::default());
                 state.wheel_status = None;
             }
         }
     });
     ui.weak(
-        "Bind a button to controller_wheel (default) or controller_wheel:<name>. \
-         A slice with sub-slices is a folder; leave its command empty.",
+        "A slice with sub-slices is a folder; leave its command empty.",
     );
+    ui.separator();
+
+    // Per-wheel button + aim stick (WheelMeta). Setting the button writes
+    // the matching [controller] entry too; the stick overrides the global
+    // movement-stick choice while this wheel is open.
+    {
+        let selected = state.wheel_selected.clone();
+        let name_key = if selected.is_empty() { "default" } else { selected.as_str() };
+        let meta = state.wheel_meta_buffer.get_or_insert_with(|| {
+            config.controller_wheels_meta.get(name_key).cloned().unwrap_or_default()
+        });
+        let mut changed = false;
+        ui.horizontal(|ui| {
+            ui.label("Opens with").on_hover_text(
+                "Button that holds-open this wheel. Saving writes the matching \
+                 [controller] entry (the runtime binding authority).",
+            );
+            let cur_button = meta.button.clone().unwrap_or_default();
+            egui::ComboBox::from_id_salt("wheel_meta_button")
+                .selected_text(if cur_button.is_empty() { "(unset)" } else { cur_button.as_str() })
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(meta.button.is_none(), "(unset)").clicked() {
+                        meta.button = None;
+                        changed = true;
+                    }
+                    for b in super::super::gamepad::GAMEPAD_BUTTON_NAMES {
+                        if ui.selectable_label(meta.button.as_deref() == Some(b), b).clicked() {
+                            meta.button = Some(b.to_string());
+                            changed = true;
+                        }
+                    }
+                });
+
+            ui.separator();
+            ui.label("Aim stick").on_hover_text(
+                "Which stick aims this wheel. Overrides the global movement stick \
+                 while the wheel is open; if it names the movement stick, walking is \
+                 silenced for that wheel. (unset) = the non-movement stick.",
+            );
+            let cur_stick = meta.stick.clone().unwrap_or_default();
+            egui::ComboBox::from_id_salt("wheel_meta_stick")
+                .selected_text(if cur_stick.is_empty() { "(unset)" } else { cur_stick.as_str() })
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(meta.stick.is_none(), "(unset)").clicked() {
+                        meta.stick = None;
+                        changed = true;
+                    }
+                    for s in ["left", "right"] {
+                        if ui.selectable_label(meta.stick.as_deref() == Some(s), s).clicked() {
+                            meta.stick = Some(s.to_string());
+                            changed = true;
+                        }
+                    }
+                });
+        });
+        if changed {
+            *meta_save = Some((name_key.to_string(), meta.clone()));
+        }
+    }
     ui.separator();
 
     let selected = state.wheel_selected.clone();

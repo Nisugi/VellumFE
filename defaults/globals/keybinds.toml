@@ -222,6 +222,15 @@ south = { macro_text = "stand\r" }
 # commit, release to fire). Folders auto-open on dwell and reserve a Back
 # slice. Feel is tuned in [controller_tuning]; edit slices in the
 # .controller editor's Wheel tab.
+#
+# Per-wheel button/stick live in [controller_wheels_meta.<name>] (set them
+# in the Wheels tab). `button` is written alongside the matching
+# [controller] entry, which stays the binding authority; `stick`
+# ("left"/"right") overrides movement_stick while that wheel is open. The
+# default wheel uses the name "default". Example (edited via the GUI):
+#   [controller_wheels_meta.default]
+#   button = "r2"
+#   stick  = "left"
 [[controller_wheel]]
 label = "look"
 command = "look"

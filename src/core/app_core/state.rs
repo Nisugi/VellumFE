@@ -1171,6 +1171,68 @@ impl AppCore {
         }
     }
 
+    /// Surface per-wheel `button` conflicts against the `[controller]`
+    /// table (the runtime binding authority). Two classes are reported:
+    ///   - a wheel's `button` disagrees with the button actually bound to
+    ///     its `controller_wheel[:name]` action — `[controller]` wins, so
+    ///     the note tells the user which button really opens the wheel;
+    ///   - two wheels claim the same `button` — only one can win.
+    /// Called after controller config (re)loads. Silent when clean.
+    pub fn warn_wheel_binding_conflicts(&mut self) {
+        use crate::config::KeyBindAction;
+        // button -> wheel key ("" = default) from [controller].
+        let mut bound: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for (button, action) in &self.config.controller_binds {
+            if let KeyBindAction::Action(name) = action {
+                let key = if name == "controller_wheel" {
+                    Some(String::new())
+                } else {
+                    name.strip_prefix("controller_wheel:").map(str::to_string)
+                };
+                if let Some(key) = key {
+                    bound.insert(button.clone(), key);
+                }
+            }
+        }
+
+        let mut warnings: Vec<String> = Vec::new();
+        // Meta button vs [controller] authority.
+        let mut claimed: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for (name, meta) in &self.config.controller_wheels_meta {
+            let Some(button) = meta.button.as_deref() else {
+                continue;
+            };
+            // Wheel key as [controller] would encode it ("default" wheel
+            // binds the bare controller_wheel action = key "").
+            let wheel_key = if name == "default" { "" } else { name.as_str() };
+            match bound.get(button) {
+                Some(k) if k == wheel_key => {} // agrees
+                Some(other) => {
+                    let other_label = if other.is_empty() { "default" } else { other };
+                    warnings.push(format!(
+                        "Wheel '{}' lists button '{}', but [controller] binds '{}' to the '{}' wheel — [controller] wins.",
+                        name, button, button, other_label
+                    ));
+                }
+                None => warnings.push(format!(
+                    "Wheel '{}' lists button '{}', but nothing in [controller] opens it — bind '{}' to 'controller_wheel:{}'.",
+                    name, button, button, name
+                )),
+            }
+            if let Some(prev) = claimed.insert(button.to_string(), name.clone()) {
+                warnings.push(format!(
+                    "Wheels '{}' and '{}' both claim button '{}' — only one can open on it.",
+                    prev, name, button
+                ));
+            }
+        }
+
+        for w in warnings {
+            self.add_system_message(&w);
+        }
+    }
+
     /// Reserved dynamic wheel name: slices are built from the current
     /// room's portal list at open time instead of TOML.
     pub const PORTAL_WHEEL_KEY: &str = "portals";
@@ -4757,6 +4819,8 @@ impl AppCore {
                     crate::config::Config::load_controller_wheel().unwrap_or_default();
                 self.config.controller_wheels =
                     crate::config::Config::load_controller_wheels().unwrap_or_default();
+                self.config.controller_wheels_meta =
+                    crate::config::Config::load_controller_wheels_meta().unwrap_or_default();
                 self.config.controller_overlay =
                     crate::config::Config::load_controller_overlay().unwrap_or_default();
                 self.config.controller_rumble =
@@ -4767,6 +4831,7 @@ impl AppCore {
                 self.rebuild_keybind_map();
                 // Web clients render the wheel from a shipped copy.
                 self.push_remote_wheels();
+                self.warn_wheel_binding_conflicts();
                 self.add_system_message("Keybinds reloaded");
             }
             Err(e) => {

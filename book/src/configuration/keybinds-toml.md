@@ -130,6 +130,18 @@ interact mode. Slices without a placeholder are sent as-is; a slice that
 needs a target with nothing focused is dropped (not sent literally) with
 a note.
 
+Each wheel can also declare, in the Wheels tab, which **button** opens it
+and which **stick** aims it (stored in `[controller_wheels_meta.<name>]`).
+The button field is a convenience: saving it writes the matching
+`[controller]` entry, which remains the runtime authority — so if the two
+ever disagree, `[controller]` wins and a note says which button really
+opens the wheel, and two wheels claiming one button are flagged. The
+stick field overrides the global `movement_stick` while that wheel is
+open: name the movement stick and walking is silenced for the wheel's
+duration; name the other and movement stays live (e.g. an exits wheel
+aimed with the right stick while you keep walking on the left). Left
+unset, a wheel aims with the non-movement stick as before.
+
 ## Macros
 
 Send text with a keypress using the inline-table form. `\r` presses Enter:
