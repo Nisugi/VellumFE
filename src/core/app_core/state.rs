@@ -5811,6 +5811,82 @@ mod tests {
         let name = AppCore::generate_spacer_name(&layout);
         assert_eq!(name, "spacer_100");
     }
+
+    // ========== calculate_window_positions characterization ==========
+    // This is the load/init positioning pass: it copies each window's EXACT
+    // col/row (no scaling — deliberately, so windows may sit offscreen) and
+    // clamps width/height to any min/max constraints. Pin that contract before
+    // a geometry newtype touches it.
+
+    fn positioned_text_def(
+        name: &str,
+        col: u16,
+        row: u16,
+        cols: u16,
+        rows: u16,
+    ) -> WindowDef {
+        let mut base = test_window_base(name);
+        base.col = col;
+        base.row = row;
+        base.cols = cols;
+        base.rows = rows;
+        WindowDef::Text {
+            base,
+            data: crate::config::TextWidgetData {
+                streams: vec![],
+                buffer_size: 1000,
+                wordwrap: true,
+                show_timestamps: false,
+                timestamp_position: None,
+                compact: false,
+            },
+        }
+    }
+
+    fn core_with_layout(windows: Vec<WindowDef>) -> AppCore {
+        let mut core = AppCore::new_for_test();
+        core.layout = Layout {
+            windows,
+            terminal_width: Some(80),
+            terminal_height: Some(24),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        core
+    }
+
+    /// Positions and sizes pass through exactly (no scaling), even when the
+    /// window extends beyond the given terminal size.
+    #[test]
+    fn calculate_window_positions_uses_exact_values() {
+        let core = core_with_layout(vec![
+            positioned_text_def("a", 3, 5, 40, 10),
+            positioned_text_def("offscreen", 100, 50, 20, 8), // beyond 80x24
+        ]);
+        let positions = core.calculate_window_positions(80, 24);
+
+        let a = &positions["a"];
+        assert_eq!((a.x, a.y, a.width, a.height), (3, 5, 40, 10));
+        // Deliberately NOT clamped to the terminal — offscreen is allowed.
+        let off = &positions["offscreen"];
+        assert_eq!((off.x, off.y, off.width, off.height), (100, 50, 20, 8));
+    }
+
+    /// min/max constraints clamp the size (never the position).
+    #[test]
+    fn calculate_window_positions_applies_min_max_constraints() {
+        let mut narrow = positioned_text_def("narrow", 0, 0, 4, 30);
+        narrow.base_mut().min_cols = Some(10); // widen up to min
+        narrow.base_mut().max_rows = Some(20); // cap height
+        let core = core_with_layout(vec![narrow]);
+
+        let p = &core.calculate_window_positions(80, 24)["narrow"];
+        assert_eq!(p.x, 0); // position untouched
+        assert_eq!(p.y, 0);
+        assert_eq!(p.width, 10); // 4 raised to min_cols
+        assert_eq!(p.height, 20); // 30 capped at max_rows
+    }
 }
 
 
