@@ -1911,15 +1911,15 @@ function applyInteractPos() {
     : defaultInteractPos();
   const s = interactBar.style;
   if (p.mode === "float") {
+    // A floating bar is a compact, content-width puck (CSS .floating sets
+    // width:max-content) so it can move in both axes; docked stays full
+    // width for easy tapping. Clamp the anchor into the viewport.
     interactBar.classList.add("floating");
-    // Width was captured at drop time so the bar keeps its size while
-    // floating; clamp the anchor so it can't leave the viewport.
-    const w = p.w || interactBar.offsetWidth || 240;
-    s.width = `${w}px`;
+    s.width = "";
     s.right = "auto";
     s.bottom = "auto";
-    s.left = `${Math.min(0.98, Math.max(0.02, p.x || 0.5)) * 100}%`;
-    s.top = `${Math.min(0.95, Math.max(0.02, p.y || 0.85)) * 100}%`;
+    s.left = `${Math.min(0.98, Math.max(0.02, p.x != null ? p.x : 0.5)) * 100}%`;
+    s.top = `${Math.min(0.95, Math.max(0.02, p.y != null ? p.y : 0.85)) * 100}%`;
   } else {
     interactBar.classList.remove("floating");
     s.width = "";
@@ -1939,40 +1939,50 @@ function applyInteractPos() {
 // the floating-button gesture (hold timer + movement threshold + capture),
 // then snaps to an edge dock or free-floats on drop.
 (function attachInteractDrag() {
-  const HOLD_MS = 300;
-  const MOVE_EPS = 6; // px before a hold becomes a real drag
-  let holdTimer = 0;
-  let armed = false; // long-press elapsed, waiting to see movement
+  // Drag is MOVEMENT-driven, not hold-driven: a tap (down+up with no real
+  // movement) falls through to the buttons/target-select; moving the
+  // finger past MOVE_EPS starts a drag. (An earlier 300ms hold gate made
+  // a natural quick grab-and-drag register as a tap — the bar never moved,
+  // which read as "stuck".)
+  const MOVE_EPS = 8; // px of movement before a press becomes a drag
+  const EDGE_PX = 64; // finger within this of a container edge on release = dock
+  let tracking = false; // pointer is down on the bar, watching for movement
   let dragging = false;
+  let pointerId = null;
   let startX = 0, startY = 0;
+  let lastPointerY = 0; // live finger Y, for edge-distance snap on release
 
   const parentRect = () => interactBar.offsetParent
     ? interactBar.offsetParent.getBoundingClientRect()
     : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
 
   interactBar.addEventListener("pointerdown", (ev) => {
-    // Ignore the drag gesture starting on nothing unusual; buttons still
-    // get their own tap via the click that follows if we never drag.
-    armed = false;
+    tracking = true;
     dragging = false;
+    pointerId = ev.pointerId;
     startX = ev.clientX;
     startY = ev.clientY;
-    clearTimeout(holdTimer);
-    holdTimer = setTimeout(() => { armed = true; }, HOLD_MS);
+    lastPointerY = ev.clientY;
   });
 
   interactBar.addEventListener("pointermove", (ev) => {
-    if (!armed && !dragging) return;
+    if (!tracking && !dragging) return;
+    lastPointerY = ev.clientY;
     const dx = ev.clientX - startX;
     const dy = ev.clientY - startY;
     if (!dragging) {
-      if (Math.hypot(dx, dy) < MOVE_EPS) return; // stationary hold = still a tap
+      if (Math.hypot(dx, dy) < MOVE_EPS) return; // not enough movement = still a tap
       dragging = true;
+      // .floating shrinks the bar to content width (a movable puck) so it
+      // tracks the finger in both axes instead of staying full-width.
       interactBar.classList.add("dragging", "floating");
       try { interactBar.setPointerCapture(ev.pointerId); } catch { /* ok */ }
-      // Freeze current width so it doesn't reflow while floating.
-      interactBar.style.width = `${interactBar.offsetWidth}px`;
+      // Clear the docked anchors so only `top` drives vertical position.
+      // Leaving `bottom` (or `right`) set alongside `top`/`left` makes CSS
+      // stretch the bar to span between both anchors during the drag.
+      interactBar.style.width = "";
       interactBar.style.right = "auto";
+      interactBar.style.bottom = "auto";
     }
     const r = parentRect();
     const w = interactBar.offsetWidth;
@@ -1988,24 +1998,28 @@ function applyInteractPos() {
     interactBar.dataset.dy = y;
   });
 
-  const endDrag = () => {
-    clearTimeout(holdTimer);
-    armed = false;
+  const endDrag = (ev) => {
+    tracking = false;
+    pointerId = null;
     if (dragging) {
+      // Snap by the finger's distance from an edge of the bar's OWN
+      // positioning container (#pane-wrap), not the window — the bar sits
+      // below the header/chips, so window.innerHeight math was off and a
+      // bottom-docked bar kept re-docking. Measure release-Y inside the
+      // container; dock only within EDGE_PX of its top/bottom edge.
       const r = parentRect();
-      const y = parseFloat(interactBar.dataset.dy || "0.85");
-      // Snap to an edge if dropped within the top/bottom 18% band, else
-      // keep it floating where dropped.
-      if (y <= 0.18) {
+      // Prefer the release event's own Y; fall back to the last move.
+      const rawY = (ev && typeof ev.clientY === "number") ? ev.clientY : lastPointerY;
+      const relY = rawY - r.top; // finger Y within the container
+      if (relY <= EDGE_PX) {
         uiPrefs.interactPos = { mode: "dock", edge: "top" };
-      } else if (y >= 0.82) {
+      } else if (relY >= r.height - EDGE_PX) {
         uiPrefs.interactPos = { mode: "dock", edge: "bottom" };
       } else {
         uiPrefs.interactPos = {
           mode: "float",
           x: parseFloat(interactBar.dataset.dx || "0.5"),
-          y,
-          w: interactBar.offsetWidth,
+          y: parseFloat(interactBar.dataset.dy || "0.85"),
         };
       }
       saveUiPrefs();

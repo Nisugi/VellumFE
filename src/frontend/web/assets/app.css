@@ -855,9 +855,21 @@ html, body {
   touch-action: none; /* we own the gesture (tap vs long-press drag) */
 }
 
-/* Free-float mode: JS clears left/right/bottom and sets left/top + width. */
+/* Free-float mode: a compact, content-width puck the user can place
+   anywhere. JS sets left/top and clears right/bottom. max-width keeps a
+   crowded bar from spanning the whole screen. */
 #interact-bar.floating {
   right: auto;
+  width: max-content;
+  max-width: 90%;
+}
+
+/* In a content-width (floating) bar the label must size to its text — a
+   flex:1 child collapses to zero under max-content, which left only the
+   fixed icon buttons showing and spilled the label out of the bar. */
+#interact-bar.floating #ia-label {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 /* Engaged drag: lift it so it reads as grabbed, and let the drop show. */
