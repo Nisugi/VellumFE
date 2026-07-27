@@ -64,18 +64,24 @@ impl super::TuiFrontend {
                 }
             }
             KeyCode::Char(c) => {
+                // `search_cursor` is a CHAR index (the renderer in command_input.rs
+                // slices via `.chars()`), so translate it to a byte offset before
+                // touching the byte-indexed String. Inserting at a byte offset that
+                // lands mid-codepoint would panic.
                 let pos = app_core.ui_state.search_cursor;
-                app_core.ui_state.search_input.insert(pos, c);
+                let byte_pos = char_index_to_byte(&app_core.ui_state.search_input, pos);
+                app_core.ui_state.search_input.insert(byte_pos, c);
                 app_core.ui_state.search_cursor += 1;
                 app_core.needs_render = true;
             }
             KeyCode::Backspace => {
                 if app_core.ui_state.search_cursor > 0 {
                     app_core.ui_state.search_cursor -= 1;
-                    app_core
-                        .ui_state
-                        .search_input
-                        .remove(app_core.ui_state.search_cursor);
+                    let byte_pos = char_index_to_byte(
+                        &app_core.ui_state.search_input,
+                        app_core.ui_state.search_cursor,
+                    );
+                    app_core.ui_state.search_input.remove(byte_pos);
                     app_core.needs_render = true;
                 }
             }
@@ -86,7 +92,10 @@ impl super::TuiFrontend {
                 }
             }
             KeyCode::Right => {
-                if app_core.ui_state.search_cursor < app_core.ui_state.search_input.len() {
+                // Bound against CHAR count, not byte length (cursor is a char index).
+                if app_core.ui_state.search_cursor
+                    < app_core.ui_state.search_input.chars().count()
+                {
                     app_core.ui_state.search_cursor += 1;
                     app_core.needs_render = true;
                 }
@@ -96,7 +105,7 @@ impl super::TuiFrontend {
                 app_core.needs_render = true;
             }
             KeyCode::End => {
-                app_core.ui_state.search_cursor = app_core.ui_state.search_input.len();
+                app_core.ui_state.search_cursor = app_core.ui_state.search_input.chars().count();
                 app_core.needs_render = true;
             }
             KeyCode::Esc => {
@@ -503,4 +512,18 @@ impl super::TuiFrontend {
             }
         }
     }
+}
+
+/// Translate a char index into a byte offset within `s`.
+///
+/// The search input stores its cursor as a char count (the renderer slices via
+/// `.chars()`), so any mutation of the underlying byte-indexed `String` must go
+/// through this conversion. A char index at or past the end maps to `s.len()`,
+/// which is a valid insertion point. Mirrors `char_pos_to_byte_idx` in
+/// `frontend/common/command_input_model.rs`.
+fn char_index_to_byte(s: &str, char_index: usize) -> usize {
+    s.char_indices()
+        .nth(char_index)
+        .map(|(idx, _)| idx)
+        .unwrap_or(s.len())
 }
