@@ -1265,17 +1265,24 @@ impl AppCore {
         self.config.wheel_level_slices(key, path).cloned()
     }
 
-    /// Resolve a wheel pick (remote clients and the GUI release-fire):
-    /// the dynamic portals wheel by index, else static config.
+    /// Resolve a wheel pick (remote clients): the dynamic portals wheel by
+    /// index, else static config. `<target_id>`/`<target_noun>` resolve
+    /// against the host's interact focus so a phone combat wheel casts at
+    /// the selected creature; a placeholder with nothing focused yields
+    /// None (the pick is dropped, never sent literally) — mirroring the
+    /// GUI wheel and bound interact macros. The GUI's own release-fire
+    /// substitutes in wheel_fire, so it doesn't route through here.
     pub fn wheel_pick_command(&self, key: &str, path: &[usize]) -> Option<String> {
-        if key == Self::PORTAL_WHEEL_KEY {
+        let raw = if key == Self::PORTAL_WHEEL_KEY {
             let (&leaf, folders) = path.split_last()?;
             if !folders.is_empty() {
                 return None;
             }
-            return self.portal_commands().into_iter().nth(leaf);
-        }
-        self.config.wheel_pick_command(key, path)
+            self.portal_commands().into_iter().nth(leaf)?
+        } else {
+            self.config.wheel_pick_command(key, path)?
+        };
+        self.substitute_interact_placeholders(raw)
     }
 
     /// Declare that this runtime accepts session control (Connect /

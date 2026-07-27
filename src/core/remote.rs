@@ -118,6 +118,42 @@ pub struct RemoteWheels {
     pub default: Vec<RemoteWheelSlice>,
     /// Named wheels, shown for "wheel:<name>" binds.
     pub named: std::collections::HashMap<String, Vec<RemoteWheelSlice>>,
+    /// Input-feel tuning from `[controller_tuning]`, so the phone's dwell
+    /// wheel matches the desktop feel (one source of truth, keybinds.toml).
+    pub tuning: RemoteWheelTuning,
+    /// Per-wheel aim-stick overrides by wheel name ("default" for the
+    /// default wheel). Only the stick matters remotely — the button that
+    /// opens a wheel is the client's own bind. None/absent = the phone's
+    /// default (non-movement) stick.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub wheel_stick: std::collections::HashMap<String, String>,
+}
+
+/// Wheel input-feel values mirrored to remote clients (see TuningConfig).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RemoteWheelTuning {
+    pub movement_stick: String,
+    pub back_slice: String,
+    pub deadzone: u8,
+    pub aim_dwell_ms: u32,
+    pub nav_dwell_ms: u32,
+    pub fire_debounce_ms: u32,
+    pub release_grace_ms: u32,
+}
+
+impl Default for RemoteWheelTuning {
+    fn default() -> Self {
+        let t = crate::config::TuningConfig::default();
+        Self {
+            movement_stick: t.movement_stick,
+            back_slice: t.back_slice,
+            deadzone: t.deadzone,
+            aim_dwell_ms: t.aim_dwell_ms,
+            nav_dwell_ms: t.nav_dwell_ms,
+            fire_debounce_ms: t.fire_debounce_ms,
+            release_grace_ms: t.release_grace_ms,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -144,6 +180,7 @@ impl RemoteWheels {
                 })
                 .collect()
         }
+        let t = &config.controller_tuning;
         Self {
             default: config
                 .wheel_level_slices("", &[])
@@ -153,6 +190,22 @@ impl RemoteWheels {
                 .controller_wheels
                 .iter()
                 .map(|(name, slices)| (name.clone(), wire_slices(config, slices)))
+                .collect(),
+            tuning: RemoteWheelTuning {
+                movement_stick: t.movement_stick.clone(),
+                back_slice: t.back_slice.clone(),
+                deadzone: t.deadzone,
+                aim_dwell_ms: t.aim_dwell_ms,
+                nav_dwell_ms: t.nav_dwell_ms,
+                fire_debounce_ms: t.fire_debounce_ms,
+                release_grace_ms: t.release_grace_ms,
+            },
+            wheel_stick: config
+                .controller_wheels_meta
+                .iter()
+                .filter_map(|(name, meta)| {
+                    meta.stick.clone().map(|s| (name.clone(), s))
+                })
                 .collect(),
         }
     }
