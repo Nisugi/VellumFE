@@ -263,6 +263,20 @@ impl AppCore {
                 self.toggle_interact_mode();
             }
 
+            // interact_select / menu_* are contextual controller-nav
+            // actions resolved by the gamepad layer against the current
+            // mode (activate focus, confirm/cancel/move a menu). Outside
+            // that context they mean nothing, so dispatching them is a
+            // no-op rather than an error.
+            KeyAction::InteractSelect
+            | KeyAction::MenuUp
+            | KeyAction::MenuDown
+            | KeyAction::MenuLeft
+            | KeyAction::MenuRight
+            | KeyAction::MenuCancel => {
+                tracing::debug!("interact/menu nav action is gamepad-context-only; nothing to execute");
+            }
+
             // Controller shift modifier / wheel: state is read live by the
             // gamepad layer; the actions do nothing when dispatched.
             KeyAction::ControllerShift => {

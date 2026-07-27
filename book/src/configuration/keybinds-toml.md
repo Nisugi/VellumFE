@@ -105,6 +105,16 @@ lives in `[controller_rumble]` (patterns `off`/`short`/`long`/`double`
 per event). All of it is edited in the `.controller` editor's tabs —
 hand-editing is never required.
 
+Interact mode and popup-menu navigation are configurable too.
+`interact_select` activates the interact focus (walk an exit, open a
+creature/object menu) and confirms a menu item; `menu_up` / `menu_down` /
+`menu_left` / `menu_right` move a menu selection; `menu_cancel` closes a
+menu. By default these live on the d-pad (navigate), south (select), and
+east (cancel) — binding one to another button moves the role there and
+frees the physical default. Two escape hatches are always guaranteed no
+matter how you rebind: the `interact_mode` button always exits interact
+mode, and **east always cancels a menu**.
+
 Input feel lives in `[controller_tuning]` (Tuning tab). `movement_stick`
 (`"left"`/`"right"`) chooses which stick walks the compass; the other
 stick aims the wheel and scrolls the story. The radial wheel is
