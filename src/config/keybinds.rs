@@ -292,6 +292,23 @@ pub struct TuningConfig {
     /// seeded/hushed so firing the wheel doesn't also walk a direction.
     #[serde(default = "default_release_grace_ms")]
     pub release_grace_ms: u32,
+    /// How a committed leaf slice fires. `"release"` (default) fires when
+    /// the wheel button comes up; `"edge"` fires the instant deflection
+    /// crosses `edge_threshold` (no dwell wait); `"retract"` dwells to
+    /// commit, then fires as soon as deflection drops `retract_delta`
+    /// below its peak (a small inward flick). Folders always descend on
+    /// dwell and are never fired by edge/retract; cancel is unchanged.
+    #[serde(default = "default_fire_mode")]
+    pub fire_mode: String,
+    /// For `fire_mode = "edge"`: stick deflection (percent of full throw)
+    /// at which a leaf fires. Also the floor beneath which `retract` won't
+    /// consider a leaf "held out" for peak tracking.
+    #[serde(default = "default_edge_threshold")]
+    pub edge_threshold: u8,
+    /// For `fire_mode = "retract"`: how far (percent points) deflection
+    /// must fall below its tracked peak to fire the committed leaf.
+    #[serde(default = "default_retract_delta")]
+    pub retract_delta: u8,
 }
 
 fn default_movement_stick() -> String {
@@ -315,6 +332,15 @@ fn default_fire_debounce_ms() -> u32 {
 fn default_release_grace_ms() -> u32 {
     40
 }
+fn default_fire_mode() -> String {
+    "release".to_string()
+}
+fn default_edge_threshold() -> u8 {
+    90
+}
+fn default_retract_delta() -> u8 {
+    10
+}
 
 impl Default for TuningConfig {
     fn default() -> Self {
@@ -326,6 +352,9 @@ impl Default for TuningConfig {
             nav_dwell_ms: default_nav_dwell_ms(),
             fire_debounce_ms: default_fire_debounce_ms(),
             release_grace_ms: default_release_grace_ms(),
+            fire_mode: default_fire_mode(),
+            edge_threshold: default_edge_threshold(),
+            retract_delta: default_retract_delta(),
         }
     }
 }

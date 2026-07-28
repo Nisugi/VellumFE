@@ -25,6 +25,8 @@ const PORTAL_WHEEL_KEY: &str = crate::core::AppCore::PORTAL_WHEEL_KEY;
 
 /// Movement-stick choices for the Tuning tab.
 const MOVEMENT_STICKS: [&str; 2] = ["left", "right"];
+/// Leaf fire-mode choices for the Tuning tab (see `[controller_tuning]`).
+const FIRE_MODES: [&str; 3] = ["release", "edge", "retract"];
 /// Screen-anchor choices for the reserved Back slice.
 const BACK_ANCHORS: [&str; 8] = [
     "up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right",
@@ -495,6 +497,48 @@ impl VellumGuiApp {
                     );
 
                     ui.separator();
+                    combo_row(
+                        ui,
+                        "Fire mode",
+                        "How a committed leaf slice fires. release: on wheel-button release \
+                         (dwell to commit first). edge: the instant the stick crosses the \
+                         edge threshold, no dwell — fastest on sparse wheels. retract: dwell \
+                         to commit, then fire on a small inward flick (deflection dropping \
+                         below its peak) without recentering. Folders always descend on dwell.",
+                        &mut tuning.fire_mode,
+                        &FIRE_MODES,
+                        &mut changed,
+                    );
+                    // Only the active mode's threshold is worth showing.
+                    if tuning.fire_mode == "edge" {
+                        ui.horizontal(|ui| {
+                            ui.label("Edge threshold").on_hover_text(
+                                "Deflection at which a leaf fires in edge mode. Higher means \
+                                 you must push the stick nearer the rim before it fires.",
+                            );
+                            if ui
+                                .add(egui::Slider::new(&mut tuning.edge_threshold, 10..=100).suffix("%"))
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        });
+                    } else if tuning.fire_mode == "retract" {
+                        ui.horizontal(|ui| {
+                            ui.label("Retract delta").on_hover_text(
+                                "How far the stick must pull back from its peak deflection to \
+                                 fire in retract mode. Smaller means a lighter inward flick fires.",
+                            );
+                            if ui
+                                .add(egui::Slider::new(&mut tuning.retract_delta, 1..=50).suffix("%"))
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        });
+                    }
+
+                    ui.separator();
                     ui.weak(
                         "Dwell gates when a slice commits: rest on your target, then release \
                          to fire. Return the stick to center before releasing to cancel.",
@@ -813,7 +857,7 @@ fn render_wheels_tab(
             .cloned()
             .collect();
         names.sort();
-        let mut select_wheel = |state: &mut ControllerEditorState, name: &str| {
+        let select_wheel = |state: &mut ControllerEditorState, name: &str| {
             state.wheel_selected = name.to_string();
             state.wheel_buffer = None;
             state.wheel_meta_buffer = None;

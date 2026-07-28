@@ -130,8 +130,25 @@ is how far the stick must deflect before a slice registers; a `0` dwell
 means instant commit. `fire_debounce_ms` suppresses double-fires and
 `release_grace_ms` keeps a still-deflected stick from walking as the
 wheel closes. `south`/`east` remain optional accelerators while the wheel
-is up (fire/descend now, back up now). Every field is optional and
-defaults to the shipped feel.
+is up (fire/descend now, back up now).
+
+`fire_mode` chooses how a *committed leaf* fires (folders always descend
+on dwell and are never fired by these modes; cancel is unchanged):
+
+- `"release"` (default) — the behavior above: dwell to commit, fire when
+  the wheel button comes up.
+- `"edge"` — fire the instant deflection crosses `edge_threshold` (percent),
+  no dwell. Fastest on sparse wheels. The re-arm-until-center guard means
+  it fires once per hold, not repeatedly as you sweep the ring.
+- `"retract"` — dwell to commit, then fire as soon as deflection drops
+  `retract_delta` (percent) below its peak — a small inward flick, without
+  waiting for a full return to center. Best when recenter-based firing
+  feels sluggish.
+
+Both thresholds are exposed so you can tune the feel. Every field is
+optional and defaults to the shipped feel. Fire modes apply to the
+native controller (they read the analog stick); the phone client's touch
+wheel is dwell/release only.
 
 Wheel slices resolve `<target_id>`/`<target_noun>` against the interact
 focus, exactly like bound interact macros — so a combat wheel slice such

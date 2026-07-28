@@ -216,6 +216,9 @@ aim_dwell_ms = 150         # hold a leaf this long before it arms to fire
 nav_dwell_ms = 150         # hold a folder / Back slice this long before it navigates
 fire_debounce_ms = 300     # suppress repeat fires
 release_grace_ms = 40      # hush movement briefly after release so firing doesn't walk
+fire_mode = "release"      # "release" | "edge" | "retract" — how a committed leaf fires
+edge_threshold = 90        # % deflection that fires in "edge" mode (no dwell)
+retract_delta = 10         # % inward from peak that fires in "retract" mode
 
 # Bindings while the shift button (l2 above) is held — a second bank for
 # every button. Same format as [controller].
