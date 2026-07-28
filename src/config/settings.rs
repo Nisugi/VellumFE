@@ -97,6 +97,10 @@ pub struct UiConfig {
     /// Draw emoji in color in the GUI (monochrome when off)
     #[serde(default = "default_true")]
     pub color_emoji: bool,
+    /// Categorize "look in container" output by item type (`.sorter`,
+    /// the native sorter.lic)
+    #[serde(default)]
+    pub sorter_enabled: bool,
     // Performance stats settings
     #[serde(default = "default_performance_stats_enabled")]
     pub performance_stats_enabled: bool, // Global toggle for performance overlay
@@ -172,6 +176,7 @@ impl Default for UiConfig {
             command_echo: default_command_echo(),
             emoji_shortcodes: true,
             color_emoji: true,
+            sorter_enabled: false,
             performance_stats_enabled: default_performance_stats_enabled(),
             perf_stats_x: default_perf_stats_x(),
             perf_stats_y: default_perf_stats_y(),

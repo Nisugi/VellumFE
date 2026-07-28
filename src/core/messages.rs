@@ -85,6 +85,12 @@ pub struct MessageProcessor {
 
     /// Accumulated styled text for current stream
     current_segments: Vec<TextSegment>,
+    /// Extra lines a transform (sorter) generated from the current line;
+    /// the flush wrapper re-feeds them through the normal pipeline.
+    injected_lines: std::collections::VecDeque<Vec<TextSegment>>,
+    /// Item classifier for the sorter transform, lazily resolved through
+    /// the data pack. Cleared by `.data reload`.
+    sorter_gameobj: Option<std::sync::Arc<crate::core::gameobj_data::GameObjData>>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -253,6 +259,8 @@ impl MessageProcessor {
             highlight_engine,
             current_stream: String::from("main"),
             current_segments: Vec::new(),
+            injected_lines: std::collections::VecDeque::new(),
+            sorter_gameobj: None,
             remote: None,
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
@@ -1890,11 +1898,16 @@ impl MessageProcessor {
                     target_ids.len()
                 );
             }
-            ParsedElement::Container { id, title, .. } => {
+            ParsedElement::Container { id, title, target } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Register container in cache
-                game_state.container_cache.register_container(id.clone(), title.clone());
+                // Register container in cache (target is the game-command
+                // id, which differs from the stream id for stow).
+                game_state.container_cache.register_container(
+                    id.clone(),
+                    title.clone(),
+                    target.clone(),
+                );
 
                 // Signal container for discovery mode (every LOOK IN triggers this)
                 // The runtime will check if a window already exists before creating
@@ -2549,8 +2562,50 @@ impl MessageProcessor {
         self.flush_current_stream_with_tts(ui_state, None);
     }
 
-    /// Flush current stream with optional TTS enqueuing
+    /// Item classifier for the sorter transform, resolved lazily through
+    /// the data pack (Lich folder > local store > bundled).
+    fn sorter_gameobj(&mut self) -> std::sync::Arc<crate::core::gameobj_data::GameObjData> {
+        if self.sorter_gameobj.is_none() {
+            let resolved = crate::core::data_pack::resolve(
+                &crate::core::data_pack::GAMEOBJ_DATA,
+                self.config.map.lich_dir.as_deref(),
+            );
+            self.sorter_gameobj = Some(std::sync::Arc::new(
+                crate::core::gameobj_data::GameObjData::parse(&resolved.content),
+            ));
+        }
+        self.sorter_gameobj.clone().expect("initialized above")
+    }
+
+    /// Drop the cached classifier so the next use re-resolves sources
+    /// (`.data reload`).
+    pub fn reset_gameobj_cache(&mut self) {
+        self.sorter_gameobj = None;
+    }
+
+    /// Mirror the `.sorter` toggle into the processor's live config
+    /// (AppCore owns the persisted copy).
+    pub fn set_sorter_enabled(&mut self, enabled: bool) {
+        self.config.ui.sorter_enabled = enabled;
+    }
+
+    /// Flush current stream with optional TTS enqueuing. Wrapper drains
+    /// any lines a transform injected (sorter categories) through the
+    /// same pipeline, so each gets highlights/squelch/TTS individually.
     pub fn flush_current_stream_with_tts(
+        &mut self,
+        ui_state: &mut UiState,
+        mut tts_manager: Option<&mut crate::tts::TtsManager>,
+    ) {
+        self.flush_one_line(ui_state, tts_manager.as_deref_mut());
+        while let Some(next) = self.injected_lines.pop_front() {
+            self.current_segments = next;
+            self.flush_one_line(ui_state, tts_manager.as_deref_mut());
+        }
+    }
+
+    /// Flush exactly the pending line (no injected-line draining).
+    fn flush_one_line(
         &mut self,
         ui_state: &mut UiState,
         mut tts_manager: Option<&mut crate::tts::TtsManager>,
@@ -2599,6 +2654,22 @@ impl MessageProcessor {
                 crate::core::travel::mazes::parse_pathcode_line(&full_text)
             {
                 self.pending_pathcode = Some(route);
+            }
+        }
+
+        // Sorter: replace a container-look line with categorized lines.
+        // The flush wrapper drains the extras; generated lines can't
+        // re-trigger (no " you see ").
+        if self.config.ui.sorter_enabled
+            && self.current_stream == "main"
+            && crate::core::sorter::is_container_look(&full_text)
+        {
+            let data = self.sorter_gameobj();
+            if let Some(mut lines) =
+                crate::core::sorter::transform(&self.current_segments, &full_text, &data)
+            {
+                self.current_segments = lines.remove(0);
+                self.injected_lines.extend(lines);
             }
         }
 

@@ -24,6 +24,10 @@ command `quit` also saves your settings on the way out.)
 | `.go2 stop` / `.go2 status` | | Cancel / show the active trip |
 | `.go2 save <name> [id]` | | Save a travel target (`.go2 targets` lists them, `.go2 back` returns to the trip start) |
 | `.portal [n\|word]` | | Walk the room's non-compass exit (`go door`, `climb stair`, ...) from the map data (room objects as fallback). One candidate walks it; several open a picker menu (keyboard/pad navigable) — or pick by number or word. Controller d-pad left by default |
+| `.foreach ... in <bag>; cmd; cmd` | | Run commands over matching container items (native `;foreach`). No commands = dry-run list. See [Inventory Tools](../features/inventory-tools.md) |
+| `.sorter [on\|off]` | | Categorize "look in container" output by item type (native `;sorter`). No arg toggles |
+| `.stop` | | Stop whatever automation is driving — a `.go2` trip or a `.foreach` run |
+| `.data [status\|reload]` | | Inspect / refresh the shared item database used by `.foreach` and `.sorter` (Lich folder → local → bundled) |
 
 ## Windows & Layout
 

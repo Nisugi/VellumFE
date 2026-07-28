@@ -6,8 +6,11 @@
 
 pub mod app_core;
 pub mod bounty_parser;
+pub mod data_pack;
 pub mod emoji;
 pub mod evidence;
+pub mod foreach;
+pub mod gameobj_data;
 pub mod ghost_rooms;
 pub mod highlight_engine;
 pub mod hotbar;
@@ -20,6 +23,7 @@ pub mod menu_actions;
 pub mod messages;
 pub mod pathing;
 pub mod remote;
+pub mod sorter;
 pub mod spell_table;
 pub mod travel;
 pub mod state;

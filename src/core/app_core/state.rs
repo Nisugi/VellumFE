@@ -178,6 +178,13 @@ pub struct AppCore {
     /// (keybinds.toml or an earlier hotbar button). Editors surface these.
     pub hotbar_key_conflicts: Vec<crate::core::app_core::keybinds::HotbarKeyConflict>,
 
+    /// Item classifier from the data pack, built on first use.
+    /// `.data reload` drops it so the next use re-resolves sources.
+    pub gameobj_data: Option<std::sync::Arc<crate::core::gameobj_data::GameObjData>>,
+
+    /// `.foreach` batch runner (automation lease root when active).
+    pub foreach: crate::core::foreach::ForeachService,
+
     // === Dialog Position Persistence ===
     /// Saved dialog positions loaded from widget_state.toml
     /// Updated when dialogs with save='t' are dragged/resized
@@ -185,6 +192,38 @@ pub struct AppCore {
 }
 
 impl AppCore {
+    /// Item classifier (gameobj-data.xml), built on first use from the
+    /// data pack: Lich folder > local store > bundled snapshot.
+    pub fn gameobj_data(&mut self) -> std::sync::Arc<crate::core::gameobj_data::GameObjData> {
+        if self.gameobj_data.is_none() {
+            let resolved = crate::core::data_pack::resolve(
+                &crate::core::data_pack::GAMEOBJ_DATA,
+                self.config.map.lich_dir.as_deref(),
+            );
+            let data = crate::core::gameobj_data::GameObjData::parse(&resolved.content);
+            tracing::info!(
+                "gameobj-data loaded from {}: {} types, {} sellable, {} skipped regexes",
+                resolved.source.label(),
+                data.type_count(),
+                data.sellable_count(),
+                data.skipped.len()
+            );
+            self.gameobj_data = Some(std::sync::Arc::new(data));
+        }
+        self.gameobj_data
+            .clone()
+            .expect("gameobj_data initialized above")
+    }
+
+    /// Drop and rebuild the item classifier from the data pack, in both
+    /// AppCore and the message processor (the sorter's copy). Returns the
+    /// reloaded type count. Shared by `.data reload` and Settings > Data.
+    pub fn reload_data_pack(&mut self) -> usize {
+        self.gameobj_data = None;
+        self.message_processor.reset_gameobj_cache();
+        self.gameobj_data().type_count()
+    }
+
     /// Create a new AppCore instance
     /// Disk-free constructor for unit tests: default config, empty layout,
     /// no cmdlist/sound, TTS disabled. Never touches VELLUM_FE_DIR.
@@ -257,6 +296,8 @@ impl AppCore {
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts: Vec::new(),
+            gameobj_data: None,
+            foreach: Default::default(),
             saved_dialog_positions,
         }
     }
@@ -383,6 +424,8 @@ impl AppCore {
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts,
+            gameobj_data: None,
+            foreach: Default::default(),
             saved_dialog_positions,
         };
 
@@ -539,6 +582,7 @@ impl AppCore {
             self.add_system_message(&format!("[map] {text}"));
         }
         self.tick_travel();
+        self.tick_foreach();
         // Browse replies waiting on the layout worker.
         self.service_pending_map_views();
         // A layout that finished generating between game lines still needs
@@ -611,11 +655,45 @@ impl AppCore {
         }
     }
 
+    /// Advance the `.foreach` runner. Called from the same two places as
+    /// `tick_travel` (per network line + per frontend frame).
+    pub fn tick_foreach(&mut self) {
+        if !self.foreach.is_running() {
+            return;
+        }
+        let ctx = crate::core::foreach::ForeachContext {
+            rt_remaining: self.game_state.roundtime_remaining() as f64,
+            now_ms: self.foreach.now_ms(),
+            dead: self.game_state.status.dead,
+        };
+        let events = self.foreach.tick(&ctx);
+        for event in events {
+            match event {
+                crate::core::foreach::ForeachEvent::Status(text) => {
+                    self.add_system_message(&format!("[foreach] {text}"));
+                }
+                crate::core::foreach::ForeachEvent::Done { items } => {
+                    self.add_system_message(&format!(
+                        "[foreach] done - {items} item{} processed.",
+                        if items == 1 { "" } else { "s" }
+                    ));
+                }
+                crate::core::foreach::ForeachEvent::Failed(reason) => {
+                    self.add_system_message(&format!("[foreach] {reason}"));
+                }
+                crate::core::foreach::ForeachEvent::Send(_) => {
+                    unreachable!("queued by the service")
+                }
+            }
+        }
+    }
+
     /// Commands automation wants sent to the game; frontends drain this
     /// through the same path as typed commands. Includes macro sleep
     /// segments whose pause has elapsed.
     pub fn take_outbound(&mut self) -> Vec<String> {
         let mut commands = self.travel.take_outbound();
+        commands.extend(self.foreach.take_outbound());
         let now = std::time::Instant::now();
         let mut i = 0;
         while i < self.timed_commands.len() {
@@ -636,6 +714,15 @@ impl AppCore {
 
     /// Plan and begin a trip to a mapdb room id.
     pub fn start_travel(&mut self, destination: u32) {
+        // Lease gate: a different automation root (e.g. a running foreach)
+        // must be stopped first; a go2-owned chain retargets as always.
+        if let Some(owner) = self.automation_blocked_by("go2") {
+            self.add_system_message(&format!(
+                "[go2] {} is driving - .stop to cancel it first.",
+                owner.desc
+            ));
+            return;
+        }
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",
@@ -2644,9 +2731,10 @@ impl AppCore {
         }
 
         self.sync_map_room();
-        // Walk executor reacts to whatever this line changed (room, RT,
+        // Automation reacts to whatever this line changed (room, RT,
         // status); the per-frame tick covers pure time-based waits.
         self.tick_travel();
+        self.tick_foreach();
 
         Ok(())
     }
@@ -2959,9 +3047,13 @@ impl AppCore {
         self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
         self.add_system_message("  .room                   - Show how the current room resolved against the mapdb");
         self.add_system_message("  .mapdb [download|remove|repo <r>] - Manage downloaded map data (status by default)");
+        self.add_system_message("  .data [status|reload]   - Shared game-data assets: source + age (Lich folder > local > bundled)");
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
+        self.add_system_message("  .sorter [on|off]        - Categorize 'look in container' output by item type");
+        self.add_system_message("  .foreach ... in <bag>; cmd; cmd - Batch commands over matching container items (.foreach for usage)");
+        self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, foreach run)");
         self.add_system_message("");
 
         // Layout commands

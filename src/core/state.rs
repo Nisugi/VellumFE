@@ -520,6 +520,104 @@ pub struct ContainerData {
     pub items: Vec<String>,
     /// Generation counter for change detection
     pub generation: u64,
+    /// The container's game-command target (`#<exist-id>`), from the
+    /// `<container>` tag's `target` attribute. Equals `#id` for normal
+    /// containers; for `stow` the id is the string "stow" but the target
+    /// is the real object id. `None` until a `<container>` tag is seen.
+    pub target: Option<String>,
+}
+
+impl ContainerData {
+    /// The id to use in game commands (`put X in #<here>`): the `target`
+    /// object id when known, falling back to `#<id>` for normal numeric
+    /// containers. Strips a leading `#` since callers add their own.
+    pub fn command_target(&self) -> String {
+        match &self.target {
+            Some(t) => t.trim_start_matches('#').to_string(),
+            None => self.id.clone(),
+        }
+    }
+}
+
+/// One item parsed from a container's raw `<inv>` lines. The protocol
+/// keeps the article outside the anchor (`a <a ...>slim short sword</a>`),
+/// so `name` is article-free — the exact string gameobj-data regexes and
+/// Lich's `GameObj#name` see. `#<id>` targets the item unambiguously in
+/// game commands (works on direct connections too).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContainerItem {
+    pub id: String,
+    pub noun: String,
+    pub name: String,
+}
+
+impl ContainerData {
+    /// Items as (id, noun, name), skipping the container's header line.
+    ///
+    /// Headers are recognized two independent ways (either is enough):
+    /// the "In the / On the / Peering into ... you see" prose forms, and
+    /// the anchor's exist id matching the container's `target` object id.
+    /// Both are needed: the prose check alone misses reworded headers, and
+    /// the anchor-id check alone is dead for `stow` (whose stream id is a
+    /// string, not the object's exist id — hence comparing against
+    /// `command_target()`, not `self.id`).
+    ///
+    /// The anchor regex tolerates any attribute order and extra
+    /// attributes; the name capture allows nested tags (styled item
+    /// names) and decodes the common `&amp;`/`&lt;`/`&gt;` entities.
+    pub fn parsed_items(&self) -> Vec<ContainerItem> {
+        static ANCHOR: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let anchor = ANCHOR.get_or_init(|| {
+            // Attribute-order-independent: find exist= and noun= anywhere
+            // in the tag; capture inner content up to </a> (may hold tags).
+            regex::Regex::new(
+                r#"<a\b[^>]*?\bexist=["'](-?\d+)["'][^>]*?\bnoun=["']([^"']*)["'][^>]*>(.*?)</a>"#,
+            )
+            .expect("static anchor regex")
+        });
+        // Fallback for noun-before-exist ordering.
+        static ANCHOR_REV: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let anchor_rev = ANCHOR_REV.get_or_init(|| {
+            regex::Regex::new(
+                r#"<a\b[^>]*?\bnoun=["']([^"']*)["'][^>]*?\bexist=["'](-?\d+)["'][^>]*>(.*?)</a>"#,
+            )
+            .expect("static anchor regex")
+        });
+
+        let own_target = self.command_target();
+        self.items
+            .iter()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                let lower = trimmed.to_lowercase();
+                if lower == "nothing" || trimmed.is_empty() {
+                    return None;
+                }
+                if lower.starts_with("in the ")
+                    || lower.starts_with("on the ")
+                    || lower.starts_with("peering into ")
+                {
+                    return None;
+                }
+                let (id, noun, inner) = if let Some(caps) = anchor.captures(line) {
+                    (caps[1].to_string(), caps[2].to_string(), caps[3].to_string())
+                } else if let Some(caps) = anchor_rev.captures(line) {
+                    (caps[2].to_string(), caps[1].to_string(), caps[3].to_string())
+                } else {
+                    return None;
+                };
+                // Header anchor = the container itself (its object id).
+                if id == own_target {
+                    return None;
+                }
+                Some(ContainerItem {
+                    id,
+                    noun: decode_entities(&noun),
+                    name: decode_entities(&strip_inner_tags(&inner)).trim().to_string(),
+                })
+            })
+            .collect()
+    }
 }
 
 impl TargetListState {
@@ -884,12 +982,17 @@ const MAX_CONTAINERS: usize = 1000;
 
 impl ContainerCache {
     /// Register a new container or update its metadata
-    pub fn register_container(&mut self, id: String, title: String) {
+    pub fn register_container(&mut self, id: String, title: String, target: Option<String>) {
         if let Some(entry) = self.containers.get_mut(&id) {
             // Update title if it changed
             if entry.title != title {
                 entry.title_lower = title.to_lowercase();
                 entry.title = title;
+                entry.generation += 1;
+            }
+            // Target can arrive/refresh independently of the title.
+            if target.is_some() && entry.target != target {
+                entry.target = target;
                 entry.generation += 1;
             }
         } else {
@@ -903,6 +1006,7 @@ impl ContainerCache {
                     title,
                     items: Vec::new(),
                     generation: 0,
+                    target,
                 },
             );
         }
@@ -943,6 +1047,7 @@ impl ContainerCache {
                 title_lower: String::new(),
                 items: vec![content],
                 generation: 1,
+                target: None,
             };
             self.containers.insert(container_id.to_string(), container);
         }
@@ -977,12 +1082,123 @@ impl ContainerCache {
         None
     }
 
+    /// Resolve a user's container reference the way `.foreach` needs it:
+    /// tolerant of leading articles (`my bando`, `the sack`) and
+    /// abbreviations, matching how players actually name containers. The
+    /// stored title is the container window's noun-phrase (e.g. "iron boar
+    /// hide bandolier"); a query matches when, after stripping articles,
+    /// every query word is a prefix of some title word in order — so
+    /// "bando" hits "bandolier" and "boar hide" hits the full title.
+    /// Exact-title and plain-substring matches (existing behavior) win
+    /// first. Returns the single best match, or None.
+    pub fn find_container_for_query(&self, query: &str) -> Option<&ContainerData> {
+        if let Some(found) = self.find_by_title(query) {
+            return Some(found);
+        }
+        let words = strip_container_articles(query);
+        if words.is_empty() {
+            return None;
+        }
+        // Also retry the article-stripped phrase as a plain substring
+        // (handles "my iron boar hide bandolier" -> stored full title).
+        let stripped = words.join(" ");
+        for container in self.containers.values() {
+            if container.title_lower.contains(&stripped) {
+                return Some(container);
+            }
+        }
+        // Word-prefix match: every query word is a prefix of a title word,
+        // consumed in order (subsequence), so abbreviations resolve.
+        self.containers
+            .values()
+            .find(|container| title_matches_words(&container.title_lower, &words))
+    }
+
+    /// (helpers `strip_container_articles` / `title_matches_words` live
+    /// below the impl.)
+
     /// Get all known containers sorted by title
     pub fn list_containers(&self) -> Vec<&ContainerData> {
         let mut containers: Vec<_> = self.containers.values().collect();
         containers.sort_by(|a, b| a.title_lower.cmp(&b.title_lower));
         containers
     }
+}
+
+/// Remove any nested tags from an anchor's inner content, keeping the
+/// visible text (styled item names render as `<preset ...>name</preset>`).
+fn strip_inner_tags(inner: &str) -> String {
+    if !inner.contains('<') {
+        return inner.to_string();
+    }
+    let mut out = String::with_capacity(inner.len());
+    let mut in_tag = false;
+    for ch in inner.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Decode the handful of XML entities the game uses in item text.
+fn decode_entities(text: &str) -> String {
+    if !text.contains('&') {
+        return text.to_string();
+    }
+    text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+}
+
+/// Lowercase a container query and drop a single leading article
+/// (`my`/`the`/`a`/`an`), returning the remaining words. Only the *first*
+/// word is treated as an article, so "my black sack" -> ["black","sack"].
+fn strip_container_articles(query: &str) -> Vec<String> {
+    let mut words: Vec<String> = query
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    if words
+        .first()
+        .is_some_and(|w| matches!(w.as_str(), "my" | "the" | "a" | "an"))
+    {
+        words.remove(0);
+    }
+    words
+}
+
+/// True when every `query` word is a prefix of some word in `title`
+/// (lowercased), consumed left to right as a subsequence. Lets "bando"
+/// match "bandolier" and "boar hide" match "iron boar hide bandolier".
+fn title_matches_words(title_lower: &str, query_words: &[String]) -> bool {
+    if query_words.is_empty() {
+        return false;
+    }
+    let title_words: Vec<&str> = title_lower.split_whitespace().collect();
+    let mut ti = 0;
+    for qw in query_words {
+        let mut matched = false;
+        while ti < title_words.len() {
+            let tw = title_words[ti];
+            ti += 1;
+            if tw.starts_with(qw.as_str()) {
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return false;
+        }
+    }
+    true
 }
 
 impl GameState {
@@ -1171,7 +1387,7 @@ mod tests {
     fn test_container_cache_evicts_oldest_at_cap() {
         let mut cache = ContainerCache::default();
         for i in 0..(MAX_CONTAINERS + 10) {
-            cache.register_container(format!("id{}", i), format!("title{}", i));
+            cache.register_container(format!("id{}", i), format!("title{}", i), None);
         }
         assert_eq!(cache.containers.len(), MAX_CONTAINERS);
         // Oldest entries were evicted, newest survive
@@ -1185,7 +1401,7 @@ mod tests {
     fn test_container_cache_add_item_evicts_at_cap() {
         let mut cache = ContainerCache::default();
         for i in 0..MAX_CONTAINERS {
-            cache.register_container(format!("id{}", i), String::new());
+            cache.register_container(format!("id{}", i), String::new(), None);
         }
         // add_item to an unregistered container also creates an entry
         cache.add_item("overflow", "a coin".to_string());
@@ -1195,15 +1411,122 @@ mod tests {
     }
 
     #[test]
+    fn parsed_items_extracts_links_and_skips_header() {
+        let container = ContainerData {
+            id: "225766824".to_string(),
+            title: "Bandolier".to_string(),
+            title_lower: "bandolier".to_string(),
+            items: vec![
+                // Header: the anchor is the container itself.
+                r#"In the <a exist="225766824" noun="bandolier">bandolier</a>:"#.to_string(),
+                // Article outside the anchor; name comes out clean.
+                r#" a <a exist="225766858" noun="sword">slim short sword</a>"#.to_string(),
+                // Single-quoted attributes and a "some" quantifier.
+                r#" some <a exist='225766999' noun='plate'>ornate silver plate</a>"#
+                    .to_string(),
+                // Extra attribute after noun (must still match, #6).
+                r#" a <a exist="225767000" noun="rod" class="fluff">iridian rod</a>"#
+                    .to_string(),
+                // Styled name with nested tags (#6).
+                r#" a <a exist="225767001" noun="orb"><b>glowing orb</b></a>"#.to_string(),
+                // Entity in the name (#6).
+                r#" a <a exist="225767002" noun="knife">knife &amp; sheath</a>"#.to_string(),
+                // noun-before-exist attribute order (#6).
+                r#" a <a noun="cube" exist="225767003">black cube</a>"#.to_string(),
+                "Nothing".to_string(),
+            ],
+            generation: 0,
+            target: Some("#225766824".to_string()),
+        };
+        let items = container.parsed_items();
+        assert_eq!(items.len(), 6, "header skipped, 6 items kept");
+        assert_eq!(
+            items[0],
+            ContainerItem {
+                id: "225766858".to_string(),
+                noun: "sword".to_string(),
+                name: "slim short sword".to_string(),
+            }
+        );
+        assert_eq!(items[1].name, "ornate silver plate");
+        assert_eq!(items[2].name, "iridian rod", "extra attr tolerated");
+        assert_eq!(items[3].name, "glowing orb", "nested tags stripped");
+        assert_eq!(items[4].name, "knife & sheath", "entity decoded");
+        assert_eq!(items[5].name, "black cube", "attr order tolerated");
+        assert_eq!(items[5].noun, "cube");
+    }
+
+    #[test]
+    fn parsed_items_stow_container_skips_header_and_targets_object() {
+        // stow: stream id is "stow", the header anchor is the shroud
+        // object, and target is #<object id>. The header must still be
+        // skipped even though its anchor id != the stream id.
+        let container = ContainerData {
+            id: "stow".to_string(),
+            title: "My Shroud".to_string(),
+            title_lower: "my shroud".to_string(),
+            items: vec![
+                r#"In the <a exist="225766691" noun="shroud">shroud</a>:"#.to_string(),
+                r#" a <a exist="225766734" noun="feather">nacreous disir feather</a>"#
+                    .to_string(),
+            ],
+            generation: 0,
+            target: Some("#225766691".to_string()),
+        };
+        let items = container.parsed_items();
+        // The shroud header is skipped (id == command_target), leaving the
+        // one real item.
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "225766734");
+        assert_eq!(items[0].name, "nacreous disir feather");
+        // The game-command target is the object id, not "#stow".
+        assert_eq!(container.command_target(), "225766691");
+    }
+
+    #[test]
+    fn find_container_for_query_handles_articles_and_abbreviations() {
+        let mut cache = ContainerCache::default();
+        cache.register_container("77".to_string(), "iron boar hide bandolier".to_string(), None);
+        cache.register_container("88".to_string(), "coal black purse".to_string(), None);
+
+        // The exact case from live testing: "my bando" -> the bandolier.
+        assert_eq!(
+            cache.find_container_for_query("my bando").map(|c| &c.id),
+            Some(&"77".to_string())
+        );
+        // Article stripping + full noun.
+        assert_eq!(
+            cache
+                .find_container_for_query("the bandolier")
+                .map(|c| &c.id),
+            Some(&"77".to_string())
+        );
+        // Multi-word abbreviation, in order.
+        assert_eq!(
+            cache.find_container_for_query("boar hide").map(|c| &c.id),
+            Some(&"77".to_string())
+        );
+        // A different container by a distinguishing word.
+        assert_eq!(
+            cache.find_container_for_query("my purse").map(|c| &c.id),
+            Some(&"88".to_string())
+        );
+        // Out-of-order words don't subsequence-match.
+        assert!(cache.find_container_for_query("hide iron").is_none());
+        // No spurious match.
+        assert!(cache.find_container_for_query("my locker").is_none());
+    }
+
+    #[test]
     fn test_container_cache_find_by_title_mixed_case() {
         let mut cache = ContainerCache::default();
-        cache.register_container("c1".to_string(), "Sturdy Bandolier".to_string());
+        cache.register_container("c1".to_string(), "Sturdy Bandolier".to_string(), None);
         // Exact match, different case
         assert_eq!(cache.find_by_title("sturdy bandolier").unwrap().id, "c1");
         // Partial match, different case
         assert_eq!(cache.find_by_title("BANDO").unwrap().id, "c1");
         // Title update keeps the lowercase copy in sync
-        cache.register_container("c1".to_string(), "Leather Satchel".to_string());
+        cache.register_container("c1".to_string(), "Leather Satchel".to_string(), None);
         assert!(cache.find_by_title("bandolier").is_none());
         assert_eq!(cache.find_by_title("SATCHEL").unwrap().id, "c1");
     }
@@ -1212,10 +1535,10 @@ mod tests {
     fn test_container_cache_reregister_does_not_evict() {
         let mut cache = ContainerCache::default();
         for i in 0..MAX_CONTAINERS {
-            cache.register_container(format!("id{}", i), String::new());
+            cache.register_container(format!("id{}", i), String::new(), None);
         }
         // Re-registering an existing ID (title update) must not evict anything
-        cache.register_container("id0".to_string(), "new title".to_string());
+        cache.register_container("id0".to_string(), "new title".to_string(), None);
         assert_eq!(cache.containers.len(), MAX_CONTAINERS);
         assert_eq!(cache.get("id0").unwrap().title, "new title");
     }
