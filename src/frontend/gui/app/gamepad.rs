@@ -1130,9 +1130,17 @@ fn wheel_aim_step(
                 render = true;
             }
         }
-        // A real slice.
+        // A real slice. Folder-ness is read from the DISPLAY seat —
+        // view.slices is the rotated ring, so indexing it by `real`
+        // classified the wrong slice inside a rotated folder (the same
+        // display-vs-real trap 0fb3431 fixed for firing); `real` is only
+        // for path.push on descend.
         Some(Some(real)) => {
-            let is_folder = view.slices.get(real).map(|s| s.is_folder()).unwrap_or(false);
+            let is_folder = view
+                .slices
+                .get(display)
+                .map(|s| s.is_folder())
+                .unwrap_or(false);
             if is_folder {
                 // Folders always descend on dwell — never fired by edge
                 // or retract (Niffy's invariant).
@@ -1782,6 +1790,39 @@ mod wheel_tests {
         let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.2, steps(t0, 250));
         assert_eq!((out.fire, ui.aimed), (None, None));
         assert_eq!(wheel_release_command(&ui, &view), None);
+    }
+
+    #[test]
+    fn scenario_rotated_folder_ring_classifies_seats_by_display_index() {
+        // Inside a folder whose ring is rotated by the Back anchor, the
+        // folder/leaf decision must read the DISPLAY seat, not the real
+        // index — the same display-vs-real trap 0fb3431 fixed for firing.
+        // Ring here: children [a, inner(folder), c] + Back anchored down
+        // rotates to [inner, c, Back, a].
+        let children = vec![leaf("a"), folder("inner", vec![leaf("b")]), leaf("c")];
+        let view = WheelView::build(&children, true, "down");
+        assert_eq!(view.real(0), Some(Some(1)), "display 0 is the inner folder");
+        assert_eq!(view.real(3), Some(Some(0)), "display 3 is leaf a");
+
+        let t = feel(FireMode::Release);
+        let t0 = Instant::now();
+
+        // Dwelling the folder seat (up = display 0) must DESCEND into it.
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 160));
+        assert_eq!(ui.path, vec![0, 1], "folder seat descends (real index 1)");
+        assert_eq!(ui.aimed, None);
+
+        // Dwelling the leaf seat (left = display 3) must COMMIT, not
+        // wander into a phantom folder.
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        wheel_aim_step(&mut ui, &view, &t, -1.0, 0.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, -1.0, 0.0, steps(t0, 160));
+        assert_eq!(ui.path, vec![0], "leaf seat must not descend");
+        assert_eq!(ui.aimed, Some(3), "leaf seat commits");
     }
 
     #[test]
