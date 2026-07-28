@@ -569,6 +569,14 @@ impl MessageProcessor {
 
                 // Flush inventory buffer if we're leaving inv stream
                 if self.current_stream == "inv" {
+                    // Worn items into the registry from the same buffer the
+                    // window uses (each line's first <a> link = one worn
+                    // item; the "Your worn items are:" header and blank
+                    // lines carry no link and are skipped). Runs regardless
+                    // of whether an inventory window exists.
+                    game_state
+                        .objects
+                        .set_worn_from_lines(&self.inventory_buffer);
                     self.flush_inventory_buffer(ui_state);
                 }
 

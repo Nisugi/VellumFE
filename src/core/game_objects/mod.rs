@@ -235,6 +235,30 @@ impl GameObjects {
         }
     }
 
+    /// Replace worn items from the buffered "Your worn items are:" block.
+    /// Each buffered line is one worn item; we take the first link-bearing
+    /// segment per line (the item's `<a>`), reusing the canonical parse
+    /// (the main parser already resolved exist id + noun into `link_data`)
+    /// rather than re-parsing raw XML. Anchor-less lines (the header, blank
+    /// lines) contribute nothing. Verified against a real feed 2026-01-02:
+    /// worn items carry `<a exist>` ids; the article/quantifier sits
+    /// outside the anchor so `name` is clean.
+    pub fn set_worn_from_lines(&mut self, lines: &[Vec<crate::data::widget::TextSegment>]) {
+        let items: Vec<GameItem> = lines
+            .iter()
+            .filter_map(|segments| {
+                let seg = segments.iter().find(|s| s.link_data.is_some())?;
+                let link = seg.link_data.as_ref()?;
+                Some(GameItem {
+                    id: link.exist_id.clone(),
+                    noun: link.noun.clone(),
+                    name: seg.text.trim().to_string(),
+                })
+            })
+            .collect();
+        self.set_worn(items);
+    }
+
     pub fn set_worn(&mut self, items: Vec<GameItem>) {
         if self.worn != items {
             self.worn = items;
@@ -396,6 +420,48 @@ mod tests {
         assert_eq!(reg.find_container("boar hide").map(|c| &c.id), Some(&"77".into()));
         assert_eq!(reg.find_container("my purse").map(|c| &c.id), Some(&"88".into()));
         assert!(reg.find_container("my locker").is_none());
+    }
+
+    #[test]
+    fn set_worn_from_lines_skips_header_and_takes_links() {
+        use crate::data::widget::{LinkData, TextSegment};
+        let link = |id: &str, noun: &str, name: &str| TextSegment {
+            text: name.to_string(),
+            link_data: Some(LinkData {
+                exist_id: id.to_string(),
+                noun: noun.to_string(),
+                text: name.to_string(),
+                coord: None,
+            }),
+            ..Default::default()
+        };
+        // Mirrors the real 2026-01-02 feed: header line (no link), then
+        // item lines where the article sits OUTSIDE the anchor as its own
+        // plain segment.
+        let lines = vec![
+            vec![TextSegment::plain("Your worn items are:")],
+            vec![
+                TextSegment::plain("  a "),
+                link("417774141", "ring", "smooth bone ring"),
+                TextSegment::plain(" pierced by tiny crystal shards"),
+            ],
+            vec![
+                TextSegment::plain("  some viridian "),
+                link("417774188", "pants", "elesine pants"),
+                TextSegment::plain(" patterned with vivid metallic-hued briars"),
+            ],
+            // Blank line — no link, skipped.
+            vec![TextSegment::plain("")],
+        ];
+        let mut reg = GameObjects::default();
+        reg.set_worn_from_lines(&lines);
+        let worn = reg.worn();
+        assert_eq!(worn.len(), 2, "header + blank skipped, 2 items kept");
+        assert_eq!(worn[0].id, "417774141");
+        assert_eq!(worn[0].name, "smooth bone ring");
+        assert_eq!(worn[1].id, "417774188");
+        assert_eq!(worn[1].noun, "pants");
+        assert_eq!(worn[1].name, "elesine pants");
     }
 
     #[test]
