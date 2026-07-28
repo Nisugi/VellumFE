@@ -40,6 +40,7 @@ category = "Players"
 | `fast_parse` | bool | Literal matching via Aho-Corasick (much faster) |
 | `sound` | string | Sound file to play (in `global/sounds/`) |
 | `sound_volume` | float | Per-sound volume override (0.0–1.0) |
+| `rumble` | string | Controller rumble pattern to play (`short`/`long`/`double` or a custom pattern from the Controller editor's Rumble tab) |
 | `category` | string | Grouping in the highlights browser (e.g. `"Combat"`) |
 | `squelch` | bool | **Hide matching lines entirely** |
 | `silent_prompt` | bool | Suppress the prompt after squelched lines |
@@ -66,7 +67,7 @@ squelch = true
 category = "Squelch"
 ```
 
-## Sounds
+## Sounds and Rumble
 
 ```toml
 [death_alert]
@@ -74,9 +75,16 @@ pattern = "appears dead"
 fg = "#00ff00"
 sound = "kill.wav"        # in ~/.vellum-fe/global/sounds/
 sound_volume = 0.8
+rumble = "double"         # buzz the controller too
 ```
 
-See [Sound Alerts](../customization/sounds.md).
+See [Sound Alerts](../customization/sounds.md). `rumble` names a
+controller vibration pattern — a built-in (`short`/`long`/`double`) or
+a custom one defined on the Controller editor's Rumble tab
+([keybinds.toml](keybinds-toml.md#controller-bindings)). Highlight rumbles are
+rate-limited (one per 1.5s) so a pattern matching every line can't
+vibrate the pad continuously, and the Rumble tab's master switch
+silences them along with everything else.
 
 ## Redirects
 

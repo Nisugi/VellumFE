@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e125f080.js"></script>
@@ -303,7 +303,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.10</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.14</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>
@@ -323,7 +323,8 @@ profiles to play multiple characters at once.</p>
 host/port)</li>
 <li><strong>Account / game / character</strong> for direct mode, or <strong>host / port</strong> for
 Lich mode</li>
-<li><strong>Frontend</strong> — GUI (default) or Terminal</li>
+<li><strong>Frontend</strong> — GUI (default) or Terminal (the hand-typed equivalent
+is <code>--frontend gui|tui</code>; note the bare CLI defaults to the terminal)</li>
 <li><strong>Advanced options</strong> — everything the CLI offers: web/phone port,
 sound off, settings profile, data directory, color mode, palette setup</li>
 </ul>
@@ -367,6 +368,15 @@ command-line paths.</p>
 </ul>
 <p>VellumFE identifies itself to Lich as a Stormfront frontend, so scripts that
 check <code>$frontend</code> get full feature parity.</p>
+<h2 id="choosing-a-frontend"><a class="header" href="#choosing-a-frontend">Choosing a Frontend</a></h2>
+<p>Every command line accepts <code>--frontend</code> (<code>-f</code>) to pick the interface:</p>
+<pre><code class="language-bash">vellum-fe --frontend gui --port 8000 --character YourCharacter   # desktop GUI
+vellum-fe --frontend tui --port 8000 --character YourCharacter   # terminal UI
+</code></pre>
+<p>The <strong>terminal UI is the default</strong> on a hand-typed command line; <a href="#the-launcher">the
+Launcher</a>’s profiles default to the <strong>GUI</strong> instead. The
+flag combines with everything below — add <code>--frontend gui</code> to a Lich
+launcher entry or a direct-connection command all the same.</p>
 <h2 id="lich-launcher-integration"><a class="header" href="#lich-launcher-integration">Lich Launcher Integration</a></h2>
 <p>Configure Lich launcher to spawn VellumFE automatically:</p>
 <ol>
@@ -559,7 +569,9 @@ center, and right sidebar. Toggle zones from the top toolbar.</p>
 categorized templates, toggle visibility, or reassign a window’s zone.</li>
 <li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
 Window…</strong>, which opens the window editor; title bars can be hidden
-per-window.</li>
+per-window. Overlapping windows in the center area offer <strong>Send to
+Back</strong>, dropping the window behind any it covers so a buried one can be
+reached (clicking a window still raises it to the front).</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
 sessions), or locked together into tab groups that move as a unit. The
 context menu reorders group members (<strong>Move Up / Move Down</strong>) and can
@@ -660,9 +672,17 @@ northeast to head <code>ne</code>; one step per deflection.</li>
 <code>down</code>, right goes <code>out</code>, and left runs <a href="#command-reference"><code>.portal</code></a>
 — walk the room’s door/arch/gate, with a pick list when there are
 several.</li>
-<li>While <a href="#interact-mode">interact mode</a> or a context menu is open, the
-<strong>d-pad navigates, South (A/cross) confirms, East (B/circle)
-cancels</strong> — that part is fixed.</li>
+<li>While a <strong>context menu</strong> is open, the d-pad navigates, South
+(A/cross) confirms, East (B/circle) cancels — that part is fixed.</li>
+<li>In <strong><a href="#interact-mode">interact mode</a></strong> the <strong>right stick</strong> does the
+cycling — up/down switch categories, left/right step entities — and
+<strong>South selects</strong> (menu, or walk the exit). Everything else keeps
+its binds: the left stick still walks, the d-pad still runs its
+commands, and the other face buttons (plus the shift bank) fire
+their macros. Macros may use <code>&lt;target_id&gt;</code> / <code>&lt;target_noun&gt;</code>,
+filled from the focused entity at press time — bind
+<code>target #&lt;target_id&gt;\rincant 611\r</code> to West and cast at whatever
+the ring is on. Toggle the mode off from its Start bind.</li>
 </ul>
 <p>Everything else is yours to bind with <strong><code>.controller</code></strong>: each button
 maps to a keybind action or macro, with a “press a button” capture in
@@ -676,19 +696,40 @@ default) and every button switches to a second bank, edited on the
 editor’s Shift tab. Defaults: shift+d-pad pages the story window,
 shift+South stands up.</li>
 <li><strong>Radial command wheels</strong> — hold the button bound to
-<code>controller_wheel</code> (r2 by default), aim with the left stick, release
+<code>controller_wheel</code> (r2 by default), aim with the free stick (the one
+that isn’t walking — right, unless you move <code>movement_stick</code>), release
 to fire. Slices can be <strong>folders</strong> (South opens, East backs up) and
-carry <strong>colors</strong> — the whole pie wedge tints, dim at rest and bright
-while aimed, so wheels can be color-coded by function. Multiple named
+carry <strong>colors</strong> — the wedge tints from its aim floor out to the rim
+(dim at rest, bright while aimed), so the colored band is exactly
+the zone where the slice activates and wheels can be color-coded by
+function. Wedges don’t
+have to be even: give a slice a fixed <strong>span</strong> in degrees, rotate the
+ring with <strong>Start</strong>, and set a per-slice <strong>inner</strong> floor that demands
+a deeper stick throw before that slice will aim. Multiple named
 wheels via <code>controller_wheel:&lt;name&gt;</code> bindings; build it all on the
-editor’s Wheels tab.</li>
+editor’s Wheels tab. Its <strong>Visual</strong> view is a drag-and-drop designer:
+drag a divider to trade width between wedges (it snaps to the compass
+points — hold Shift to go free), drag a wedge’s floor arc to set its
+inner, click a wedge to edit its fields, double-click a folder to
+step inside (and the ghost Back wedge to step back out), plus
+lock / even-out / mirror / rotate tools. <strong>Numeric</strong>
+shows the same wheel as exact rows. One name is dynamic:
+<strong><code>controller_wheel:portals</code></strong>
+(r3 by default) fills its slices from the current room’s noun exits —
+the same list <a href="#command-reference"><code>.portal</code></a> resolves — so
+<code>go gate</code> / <code>climb ladder</code> are always one hold-and-flick away.</li>
 <li><strong>Binding legend</strong> — Select toggles a compact overlay of your
 bindings (<code>controller_overlay</code> action). It’s curated: check <strong>HUD</strong>
 on the rows you want shown. While shift is held the shift entries
 read strong — the legend always shows what the pad does right now.</li>
 <li><strong>Rumble</strong> — the pad buzzes when roundtime ends, you’re stunned, or
-you die; pattern per event (off/short/long/double) on the editor’s
-Rumble tab.</li>
+you die; pattern per event on the editor’s Rumble tab. Beyond the
+built-ins (off/short/long/double) you can define <strong>custom patterns</strong>
+there — strength, buzz length, buzz count, gap, with a <strong>Test</strong>
+button that plays the row on the pad — and any
+<a href="#highlight-patterns">highlight rule</a> can name a pattern
+to buzz when its text matches (rate-limited so a chatty pattern
+can’t vibrate continuously).</li>
 <li><strong>Right stick</strong> scrolls the story window with an analog speed curve;
 the same page-scroll actions work from any bound key or button.</li>
 <li>With several portals in a room, <code>.portal</code> (d-pad left) opens a
@@ -821,17 +862,22 @@ output” marker for long gaps. Multiple devices can connect at once.</li>
 <h2 id="settings-on-the-phone"><a class="header" href="#settings-on-the-phone">Settings on the Phone</a></h2>
 <p>The gear button (also reachable from the login screen) opens Settings:</p>
 <ul>
-<li><strong>Appearance</strong> — four theme presets (Vellum dark, OLED black, high
+<li>
+<p><strong>Appearance</strong> — four theme presets (Vellum dark, OLED black, high
 contrast, parchment), show/hide toggles for every piece of chrome
 (macro bar, compass, vitals, hands, RT label, effect pills, chips),
 and opacity sliders for floating buttons, drawers, and bottom sheets.
 The <strong>Aa</strong> button sets story text from 6 to 24 px. Theme, text size,
 and chip order <strong>roam with your character</strong> (the profile value wins on
-connect); the chrome toggles and opacities stay per-device.</li>
-<li><strong>Speech</strong> — read incoming lines aloud with the browser’s speech
+connect); the chrome toggles and opacities stay per-device.</p>
+</li>
+<li>
+<p><strong>Speech</strong> — read incoming lines aloud with the browser’s speech
 synthesis, with per-stream toggles (thoughts on by default). Voice
-availability depends on the phone; the first utterance may need a tap.</li>
-<li><strong>Controller</strong> — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
+availability depends on the phone; the first utterance may need a tap.</p>
+</li>
+<li>
+<p><strong>Controller</strong> — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
 PlayStation, MFi): the left stick walks the 8 compass directions,
 the right stick scrolls the story, and the d-pad defaults to
 <code>up</code>/<code>down</code>/<code>out</code> with left running <code>.portal</code>; <code>look</code> sits on South.
@@ -840,19 +886,60 @@ rebindable here — tap a row, or press the button on the pad to jump
 to it. The pad also <strong>rumbles</strong> on chosen streams (whispers and
 deaths by default; toggles in this sheet). Whenever a bottom sheet
 is open — context menus, tap-to-target — the d-pad navigates it:
-up/down move, South taps, East closes. Per-device.</li>
-<li><strong>Sound alerts / login music</strong> — browser playback toggles.</li>
-<li><strong>Client settings (saved on host)</strong> — the full desktop settings
+up/down move, South taps, East closes. Per-device.</p>
+<p>Hold a button bound to <code>wheel</code> (R2 by default) for the <strong>radial
+command wheel</strong> — the same wheel the desktop GUI shows, defined once
+in the host’s <code>keybinds.toml</code>, wedge widths, ring rotation and
+per-slice aim floors included: aim a slice with the free stick (the
+one that isn’t walking), release to fire it; South opens a folder
+slice, East backs up a level. <code>wheel:&lt;name&gt;</code> opens a named wheel — and <code>wheel:portals</code>
+(R3 by default) is always available, its slices built live from the
+current room’s noun exits (go gate, climb ladder). Buttons can also run
+client-side <strong>UI actions</strong> instead of game commands: <code>left_panel</code> /
+<code>right_panel</code> toggle the drawers, <code>map</code> the map overlay, <code>interact</code>
+toggles interact mode, and <code>effects</code>, <code>settings</code>, <code>appearance</code>,
+<code>speech</code>, <code>controller</code> open those sheets (which the d-pad then
+navigates).</p>
+</li>
+<li>
+<p><strong>Interact mode</strong> — the desktop focus cycle, phone-sized: the ◎
+button (or a pad button bound to <code>interact</code>; Start by default)
+opens a bar that walks the room’s <strong>Creatures / Objects / Players /
+Exits</strong>. On a pad the <strong>right stick</strong> does the cycling — up/down
+switch categories, left/right step entities — and <strong>South</strong> selects:
+the entity’s server context menu (the usual bottom sheet, which the
+d-pad navigates) or walking the exit. Everything else keeps its
+binds: the left stick still walks, the d-pad still runs its
+commands, and West/North/East (plus the whole shift bank) fire
+their macros — with <code>&lt;target_id&gt;</code> / <code>&lt;target_noun&gt;</code> filled from the
+focused entity at press time, so <code>target #&lt;target_id&gt;\rincant 611</code>
+on a face button casts at whatever the ring is on. Close the mode
+with its toggle or the ✕ (walking an exit closes it too). On
+screen, the bar has category/entity arrows plus <strong>Go</strong>. Focus
+follows the entity by id, so room churn doesn’t steal it.</p>
+</li>
+<li>
+<p><strong>Sound alerts / login music</strong> — browser playback toggles.</p>
+</li>
+<li>
+<p><strong>Client settings (saved on host)</strong> — the full desktop settings
 registry over the wire: every setting, editable at character or global
-scope, saved on the hosting machine exactly as if edited there.</li>
-<li><strong>Highlight editor</strong> — add/edit highlight rules with color pickers, a
+scope, saved on the hosting machine exactly as if edited there.</p>
+</li>
+<li>
+<p><strong>Highlight editor</strong> — add/edit highlight rules with color pickers, a
 sound dropdown, and a live preview; fields the form doesn’t cover
-(redirects, squelch, …) are preserved for desktop editing.</li>
-<li><strong>Colors editor</strong> — stream preset and prompt colors with native
-pickers.</li>
-<li><strong>Advanced</strong> — raw TOML editors for highlights and colors (profile or
+(redirects, squelch, …) are preserved for desktop editing.</p>
+</li>
+<li>
+<p><strong>Colors editor</strong> — stream preset and prompt colors with native
+pickers.</p>
+</li>
+<li>
+<p><strong>Advanced</strong> — raw TOML editors for highlights and colors (profile or
 global) with <strong>import file / export</strong> — the practical way to move a
-desktop config onto the phone.</li>
+desktop config onto the phone.</p>
+</li>
 </ul>
 <p>Edits save to the same config files the desktop uses and apply live.</p>
 <h2 id="headless-mode"><a class="header" href="#headless-mode">Headless Mode</a></h2>
@@ -1327,15 +1414,54 @@ max_height = 40
 layout = "compact"
 </code></pre>
 <h2 id="event-patterns"><a class="header" href="#event-patterns">Event Patterns</a></h2>
-<p>Regex patterns that drive countdown timers (stun/RT/CT). The defaults
-cover standard stun messages; add your own:</p>
+<p>Regex patterns that drive countdown timers. The defaults cover standard
+stun messages; add your own:</p>
 <pre><code class="language-toml">[event_patterns.stun_rounds]
 pattern = '^\s*You are stunned for ([0-9]+) rounds?'
-event_type = "stun"             # stun, rt, ct
+event_type = "stun"             # which countdown this feeds (see below)
 action = "set"                  # set or clear
 duration_capture = 1            # capture group holding the duration
 duration_multiplier = 5.0       # rounds -&gt; seconds
 enabled = true
+</code></pre>
+<p>The <code>event_type</code> names the countdown the pattern feeds: <code>stun</code> drives the
+stun window, <code>rt</code>/<code>ct</code> drive roundtime/casttime, and <strong>any other string
+feeds the countdown window whose id matches it</strong> (case-sensitive). To
+build a timer for a spell that lasts multiple rounds: add a custom
+countdown window (Windows &gt; Add Window &gt; Countdowns &gt; Custom) and give it
+an id like <code>tremors</code>, then add a pair of patterns:</p>
+<pre><code class="language-toml">[event_patterns.tremors_start]
+pattern = 'The ground begins to shake violently for ([0-9]+) rounds'
+event_type = "tremors"
+action = "set"
+duration_capture = 1
+duration_multiplier = 5.0       # rounds -&gt; seconds
+enabled = true
+
+[event_patterns.tremors_end]
+pattern = 'The ground grows still\.'
+event_type = "tremors"
+action = "clear"
+duration = 0
+enabled = true
+</code></pre>
+<p>Several patterns may share one <code>event_type</code> (the defaults ship four for
+stun). If the message carries no number, drop <code>duration_capture</code> and set
+a fixed <code>duration</code> in seconds instead. Patterns match script output too,
+so a Lich script can drive a countdown by echoing a line the pattern
+recognizes.</p>
+<h3 id="script-driven-timers-vellumtimer"><a class="header" href="#script-driven-timers-vellumtimer">Script-driven timers: <code>&lt;vellumTimer&gt;</code></a></h3>
+<p>Lich scripts can skip the regex entirely and feed a countdown directly by
+sending a tag to the client:</p>
+<pre><code class="language-xml">&lt;vellumTimer id='dark-cataclyst' value='1764904999'/&gt;
+</code></pre>
+<p><code>id</code> is the countdown window’s feed id (same matching as <code>event_type</code>
+above, case-sensitive) and <code>value</code> is the <strong>absolute epoch end time in
+seconds</strong> — compute it in the script as <code>Time.now.to_i + duration</code>, the
+same convention <code>&lt;roundTime&gt;</code> uses, so it stays correct under lag.
+<code>value='0'</code> clears the timer. The tag never renders as text. From a Lich
+script:</p>
+<pre><code class="language-ruby">puts "&lt;vellumTimer id='dark-cataclyst' value='#{Time.now.to_i + 90}'/&gt;"
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="layouttoml"><a class="header" href="#layouttoml">layout.toml</a></h1>
@@ -1610,11 +1736,121 @@ fixed navigation keys; bindings apply outside those modes.</p>
 <code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> (hold: radial command
 wheel — default ring in <code>[[controller_wheel]]</code>, named rings in
 <code>[controller_wheels.&lt;name&gt;]</code>; slices take <code>label</code>, <code>command</code>, optional
-<code>color</code>, and nested <code>slices</code> for folders), and <code>controller_overlay</code>
+<code>color</code>, optional <code>span</code> and <code>inner</code> (<a href="#wheel-geometry">geometry</a>), and
+nested <code>slices</code> for folders — the phone client renders these same
+wheels for its <code>wheel</code> binds; the name <strong><code>portals</code> is reserved</strong>:
+<code>controller_wheel:portals</code> (r3 by default — clicking l3 would nudge the
+movement stick into stray steps, while the aim stick’s click settles
+harmlessly) builds its slices from the current room’s noun exits at
+open time — the same list <code>.portal</code> resolves — shadowing any static
+wheel of that name),
+and <code>controller_overlay</code>
 (toggle the binding legend — curated by <code>[controller_overlay]  buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
-lives in <code>[controller_rumble]</code> (patterns <code>off</code>/<code>short</code>/<code>long</code>/<code>double</code>
-per event). All of it is edited in the <code>.controller</code> editor’s tabs —
-hand-editing is never required.</p>
+lives in <code>[controller_rumble]</code>: a pattern per event (<code>off</code>, the
+built-ins <code>short</code>/<code>long</code>/<code>double</code>, or the name of one of your own),
+plus custom patterns under <code>[[controller_rumble.patterns]]</code> — each has
+a <code>name</code>, <code>strength</code> (0–1), <code>pulse_ms</code> (length of each buzz), <code>pulses</code>
+(how many), and <code>gap_ms</code> (silence between them). The editor’s Rumble
+tab has a row per pattern with a <strong>Test</strong> button that plays it on the
+pad immediately, unsaved edits included. Custom patterns are also
+selectable on any highlight rule, so any text match can buzz the pad —
+see <a href="#highlightstoml">highlights.toml</a>. Built-in names win if a
+custom pattern reuses one. All of it is edited in the <code>.controller</code>
+editor’s tabs — hand-editing is never required.</p>
+<p>Interact mode and popup-menu navigation are configurable too.
+<code>interact_select</code> activates the interact focus (walk an exit, open a
+creature/object menu) and confirms a menu item; <code>menu_up</code> / <code>menu_down</code> /
+<code>menu_left</code> / <code>menu_right</code> move a menu selection; <code>menu_cancel</code> closes a
+menu. By default these live on the d-pad (navigate), south (select), and
+east (cancel) — binding one to another button moves the role there and
+frees the physical default. Two escape hatches are always guaranteed no
+matter how you rebind: the <code>interact_mode</code> button always exits interact
+mode, and <strong>east always cancels a menu</strong>.</p>
+<p>Input feel lives in <code>[controller_tuning]</code> (Tuning tab). <code>movement_stick</code>
+(<code>"left"</code>/<code>"right"</code>) chooses which stick walks the compass; the other
+stick aims the wheel and scrolls the story. The radial wheel is
+<strong>dwell-driven</strong>: aim a slice, rest on it, and it <em>commits</em> — leaves
+after <code>aim_dwell_ms</code>, folders and the reserved Back slice after
+<code>nav_dwell_ms</code> (folders auto-descend, Back auto-ascends). Releasing the
+wheel button fires the committed leaf; returning the stick to center
+before releasing cancels. Sweeping across the ring never commits the
+slices you pass through, so a far slice is safe to reach. Inside a folder
+a Back slice is reserved at the <code>back_slice</code> screen anchor
+(<code>up</code>/<code>down</code>/<code>left</code>/<code>right</code> and the four diagonals) — or <code>back_slice =  "none"</code> drops the reserved seat entirely and you back out with East.
+<code>deadzone</code> (percent)
+is how far the stick must deflect before a slice registers; a <code>0</code> dwell
+means instant commit. <code>fire_debounce_ms</code> suppresses double-fires and
+<code>release_grace_ms</code> keeps a still-deflected stick from walking as the
+wheel closes. <code>south</code>/<code>east</code> remain optional accelerators while the wheel
+is up (fire/descend now, back up now).</p>
+<p><code>fire_mode</code> chooses how a <em>committed leaf</em> fires (folders always descend
+on dwell and are never fired by these modes; cancel is unchanged):</p>
+<ul>
+<li><code>"release"</code> (default) — the behavior above: dwell to commit, fire when
+the wheel button comes up.</li>
+<li><code>"edge"</code> — fire the instant deflection crosses <code>edge_threshold</code> (percent),
+no dwell. Fastest on sparse wheels. The re-arm-until-center guard means
+it fires once per hold, not repeatedly as you sweep the ring.</li>
+<li><code>"retract"</code> — dwell to commit, then fire as soon as deflection drops
+<code>retract_delta</code> (percent) below its peak — a small inward flick, without
+waiting for a full return to center. Best when recenter-based firing
+feels sluggish.</li>
+</ul>
+<p>Both thresholds are exposed so you can tune the feel. Every field is
+optional and defaults to the shipped feel. Fire modes apply to the
+native controller (they read the analog stick); the phone client’s touch
+wheel is dwell/release only.</p>
+<p>Wheel slices resolve <code>&lt;target_id&gt;</code>/<code>&lt;target_noun&gt;</code> against the interact
+focus, exactly like bound interact macros — so a combat wheel slice such
+as <code>cast at &lt;target_id&gt;</code> fires at the creature currently selected in
+interact mode. Slices without a placeholder are sent as-is; a slice that
+needs a target with nothing focused is dropped (not sent literally) with
+a note.</p>
+<p>Each wheel declares, in the Wheels tab, which <strong>button</strong> opens it
+and which <strong>stick</strong> aims it (stored in <code>[controller_wheels_meta.&lt;name&gt;]</code>).
+The Wheels tab is the single place to set a wheel’s button — the
+<code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> actions are no longer in
+the Base tab’s action dropdown to avoid two sources of truth. The reserved
+<strong><code>portals</code></strong> wheel has its own permanent, non-deletable Wheels-tab entry
+(<code>portals (dynamic)</code>): it exposes the same <strong>Opens with</strong> and <strong>Aim
+stick</strong> fields, but no slice list, because its slices are generated from
+the room every time it opens.
+The button field is a convenience: saving it writes the matching
+<code>[controller]</code> entry, which remains the runtime authority — so if the two
+ever disagree, <code>[controller]</code> wins and a note says which button really
+opens the wheel, and two wheels claiming one button are flagged. When a
+wheel’s meta doesn’t record a button (e.g. it was bound before the Wheels
+tab existed), the editor back-fills <strong>Opens with</strong> from <code>[controller]</code> so
+you always see the real key. The
+stick field overrides the global <code>movement_stick</code> while that wheel is
+open: name the movement stick and walking is silenced for the wheel’s
+duration; name the other and movement stays live (e.g. an exits wheel
+aimed with the right stick while you keep walking on the left). Left
+unset, a wheel aims with the non-movement stick as before.</p>
+<h3 id="wheel-geometry"><a class="header" href="#wheel-geometry">Wheel geometry</a></h3>
+<p>Wedges don’t have to be even. Per-slice <strong><code>span</code></strong> fixes a wedge’s width
+in degrees; whatever remains of the 360° splits evenly among the
+span-less slices, so a wheel with no spans keeps the classic even ring.
+Bad numbers are never rejected — spans below 30° clamp up and a ring
+that doesn’t close rescales to fit, with a warning at load and in the
+editor telling you what was adjusted. Per-slice <strong><code>inner</code></strong> sets that
+slice’s aim floor as a percent of full stick deflection: below it the
+slice can’t be aimed or committed, so a destructive command can demand a
+deliberately deep throw. Unset slices use the global <code>deadzone</code>, and the
+editor caps the value below the fire thresholds so a slice always has
+travel left to fire. A per-wheel <strong><code>start</code></strong> in
+<code>[controller_wheels_meta.&lt;name&gt;]</code> rotates the whole ring (degrees, 0 =
+up, clockwise). Folder rings anchor to their Back seat instead and
+ignore <code>start</code> — unless <code>back_slice = "none"</code>, in which case they rotate
+with it too. The portals wheel always keeps an even ring, since its
+slices are rebuilt per room.</p>
+<p>All of this is drawn and edited live in the Wheels tab’s <strong>Visual</strong>
+designer — see <a href="#controllers">the GUI chapter</a> — or
+typed exactly in its <strong>Numeric</strong> view; both edit the same wheel. On
+the wheel itself (designer and live alike), a slice’s colored fill
+covers only its <strong>activation zone</strong> — from its aim floor out to the
+rim — so the empty ring inside the fill is exactly the stick travel
+that does nothing.</p>
 <h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
 <p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
 <pre><code class="language-toml">[user]
@@ -1625,6 +1861,25 @@ f6 = { macro_text = "hide\r" }              # omit \r to just type it
 </code></pre>
 <p>The default file ships numpad movement macros (<code>num_1</code>–<code>num_9</code> for
 directions, <code>num_0</code> down, <code>"num_."</code> up, <code>"num_+"</code> look, and so on).</p>
+<p>A macro can chain several commands with <code>\r</code> between them, and pause
+between commands with a <strong>sleep segment</strong>: a segment that is just <code>s</code>
+followed by seconds (<code>s0.5</code>, <code>s2</code>, <code>s90</code> — decimals fine, no upper
+bound). Everything after the sleep goes out when the pause elapses;
+consecutive sleeps add up. Spaces around segments are ignored, and a
+bare <code>s</code> is still south.</p>
+<pre><code class="language-toml">f7 = { macro_text = "stand\rs1.5\rout\r" }   # stand, wait 1.5s, leave
+f8 = { macro_text = "prep 101\r s3.2 \rcast\r" }
+</code></pre>
+<p>Sleep segments work anywhere command text is dispatched — keyboard
+macros, controller binds, hotbar buttons, macro buttons (including taps
+from the phone client), and wheel slices.</p>
+<p>While <strong>interact mode</strong> is focused on an entity, macros may reference it
+with <code>&lt;target_id&gt;</code> (exist id) and <code>&lt;target_noun&gt;</code>:</p>
+<pre><code class="language-toml">[controller]
+west = { macro_text = "target #&lt;target_id&gt;\rincant 611\r" }
+</code></pre>
+<p>A placeholder macro pressed with nothing focused is dropped (with a
+message) rather than sent literally. Exits have no exist id.</p>
 <h2 id="keybind-profiles"><a class="header" href="#keybind-profiles">Keybind Profiles</a></h2>
 <p>Save and swap whole keybind sets:</p>
 <pre><code>.savekeybinds hunting
@@ -1668,6 +1923,7 @@ category = "Players"
 <tr><td><code>fast_parse</code></td><td>bool</td><td>Literal matching via Aho-Corasick (much faster)</td></tr>
 <tr><td><code>sound</code></td><td>string</td><td>Sound file to play (in <code>global/sounds/</code>)</td></tr>
 <tr><td><code>sound_volume</code></td><td>float</td><td>Per-sound volume override (0.0–1.0)</td></tr>
+<tr><td><code>rumble</code></td><td>string</td><td>Controller rumble pattern to play (<code>short</code>/<code>long</code>/<code>double</code> or a custom pattern from the Controller editor’s Rumble tab)</td></tr>
 <tr><td><code>category</code></td><td>string</td><td>Grouping in the highlights browser (e.g. <code>"Combat"</code>)</td></tr>
 <tr><td><code>squelch</code></td><td>bool</td><td><strong>Hide matching lines entirely</strong></td></tr>
 <tr><td><code>silent_prompt</code></td><td>bool</td><td>Suppress the prompt after squelched lines</td></tr>
@@ -1692,14 +1948,21 @@ pattern = "^[A-Z][a-z]+ (arrives|departs)"
 squelch = true
 category = "Squelch"
 </code></pre>
-<h2 id="sounds"><a class="header" href="#sounds">Sounds</a></h2>
+<h2 id="sounds-and-rumble"><a class="header" href="#sounds-and-rumble">Sounds and Rumble</a></h2>
 <pre><code class="language-toml">[death_alert]
 pattern = "appears dead"
 fg = "#00ff00"
 sound = "kill.wav"        # in ~/.vellum-fe/global/sounds/
 sound_volume = 0.8
+rumble = "double"         # buzz the controller too
 </code></pre>
-<p>See <a href="#sound-alerts">Sound Alerts</a>.</p>
+<p>See <a href="#sound-alerts">Sound Alerts</a>. <code>rumble</code> names a
+controller vibration pattern — a built-in (<code>short</code>/<code>long</code>/<code>double</code>) or
+a custom one defined on the Controller editor’s Rumble tab
+(<a href="#controller-bindings">keybinds.toml</a>). Highlight rumbles are
+rate-limited (one per 1.5s) so a pattern matching every line can’t
+vibrate the pad continuously, and the Rumble tab’s master switch
+silences them along with everything else.</p>
 <h2 id="redirects"><a class="header" href="#redirects">Redirects</a></h2>
 <p>Route matching lines to another window:</p>
 <pre><code class="language-toml">[loot_lines]
@@ -3749,6 +4012,7 @@ pattern = "You are stunned"
 fg = "#ff4500"
 bold = true
 sound = "alert.wav"
+rumble = "long"           # buzz the controller too (optional)
 category = "Warnings"
 </code></pre>
 <h2 id="highlight-names-friends-and-enemies"><a class="header" href="#highlight-names-friends-and-enemies">Highlight Names (Friends and Enemies)</a></h2>
@@ -4194,6 +4458,21 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 </tbody>
 </table>
 </div>
+<h2 id="sharing-your-ui"><a class="header" href="#sharing-your-ui">Sharing Your UI</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.uiexport &lt;name&gt; [parts...]</code></td><td></td><td>Bundle the files that make your UI into <code>~/.vellum-fe/exports/&lt;name&gt;.vellumpack</code> — a single shareable file. Parts: <code>layout</code> (TUI grid + the GUI’s live arrangement when exported from the GUI), <code>highlights</code>, <code>keybinds</code>, <code>hotbars</code>, <code>colors</code>, <code>macros</code>, <code>skin</code> (the active skin’s whole folder). Default: all. Connection settings and passwords are never included.</td></tr>
+<tr><td><code>.uiimport &lt;name|file&gt;</code></td><td></td><td>Preview a pack: its parts, skin, and file count</td></tr>
+<tr><td><code>.uiimport &lt;name|file&gt; apply</code></td><td></td><td>Install a pack: replaced files are backed up to <code>~/.vellum-fe/backups/</code>, everything hot-reloads, and layouts land as named checkpoints (<code>.loadlayout &lt;packname&gt;</code>). Skins extract and activate. Unknown or unsafe entries in a pack are skipped, never written.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Post packs in the community Discord — favorites can become shipped
+default layouts.</p>
 <h2 id="highlights-1"><a class="header" href="#highlights-1">Highlights</a></h2>
 <div class="table-wrapper">
 <table>

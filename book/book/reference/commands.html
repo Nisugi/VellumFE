@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -231,6 +231,21 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 </tbody>
 </table>
 </div>
+<h2 id="sharing-your-ui"><a class="header" href="#sharing-your-ui">Sharing Your UI</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>.uiexport &lt;name&gt; [parts...]</code></td><td></td><td>Bundle the files that make your UI into <code>~/.vellum-fe/exports/&lt;name&gt;.vellumpack</code> — a single shareable file. Parts: <code>layout</code> (TUI grid + the GUI’s live arrangement when exported from the GUI), <code>highlights</code>, <code>keybinds</code>, <code>hotbars</code>, <code>colors</code>, <code>macros</code>, <code>skin</code> (the active skin’s whole folder). Default: all. Connection settings and passwords are never included.</td></tr>
+<tr><td><code>.uiimport &lt;name|file&gt;</code></td><td></td><td>Preview a pack: its parts, skin, and file count</td></tr>
+<tr><td><code>.uiimport &lt;name|file&gt; apply</code></td><td></td><td>Install a pack: replaced files are backed up to <code>~/.vellum-fe/backups/</code>, everything hot-reloads, and layouts land as named checkpoints (<code>.loadlayout &lt;packname&gt;</code>). Skins extract and activate. Unknown or unsafe entries in a pack are skipped, never written.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Post packs in the community Discord — favorites can become shipped
+default layouts.</p>
 <h2 id="highlights"><a class="header" href="#highlights">Highlights</a></h2>
 <div class="table-wrapper">
 <table>

@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -267,11 +267,121 @@ fixed navigation keys; bindings apply outside those modes.</p>
 <code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> (hold: radial command
 wheel — default ring in <code>[[controller_wheel]]</code>, named rings in
 <code>[controller_wheels.&lt;name&gt;]</code>; slices take <code>label</code>, <code>command</code>, optional
-<code>color</code>, and nested <code>slices</code> for folders), and <code>controller_overlay</code>
+<code>color</code>, optional <code>span</code> and <code>inner</code> (<a href="#wheel-geometry">geometry</a>), and
+nested <code>slices</code> for folders — the phone client renders these same
+wheels for its <code>wheel</code> binds; the name <strong><code>portals</code> is reserved</strong>:
+<code>controller_wheel:portals</code> (r3 by default — clicking l3 would nudge the
+movement stick into stray steps, while the aim stick’s click settles
+harmlessly) builds its slices from the current room’s noun exits at
+open time — the same list <code>.portal</code> resolves — shadowing any static
+wheel of that name),
+and <code>controller_overlay</code>
 (toggle the binding legend — curated by <code>[controller_overlay]  buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
-lives in <code>[controller_rumble]</code> (patterns <code>off</code>/<code>short</code>/<code>long</code>/<code>double</code>
-per event). All of it is edited in the <code>.controller</code> editor’s tabs —
-hand-editing is never required.</p>
+lives in <code>[controller_rumble]</code>: a pattern per event (<code>off</code>, the
+built-ins <code>short</code>/<code>long</code>/<code>double</code>, or the name of one of your own),
+plus custom patterns under <code>[[controller_rumble.patterns]]</code> — each has
+a <code>name</code>, <code>strength</code> (0–1), <code>pulse_ms</code> (length of each buzz), <code>pulses</code>
+(how many), and <code>gap_ms</code> (silence between them). The editor’s Rumble
+tab has a row per pattern with a <strong>Test</strong> button that plays it on the
+pad immediately, unsaved edits included. Custom patterns are also
+selectable on any highlight rule, so any text match can buzz the pad —
+see <a href="highlights-toml.html">highlights.toml</a>. Built-in names win if a
+custom pattern reuses one. All of it is edited in the <code>.controller</code>
+editor’s tabs — hand-editing is never required.</p>
+<p>Interact mode and popup-menu navigation are configurable too.
+<code>interact_select</code> activates the interact focus (walk an exit, open a
+creature/object menu) and confirms a menu item; <code>menu_up</code> / <code>menu_down</code> /
+<code>menu_left</code> / <code>menu_right</code> move a menu selection; <code>menu_cancel</code> closes a
+menu. By default these live on the d-pad (navigate), south (select), and
+east (cancel) — binding one to another button moves the role there and
+frees the physical default. Two escape hatches are always guaranteed no
+matter how you rebind: the <code>interact_mode</code> button always exits interact
+mode, and <strong>east always cancels a menu</strong>.</p>
+<p>Input feel lives in <code>[controller_tuning]</code> (Tuning tab). <code>movement_stick</code>
+(<code>"left"</code>/<code>"right"</code>) chooses which stick walks the compass; the other
+stick aims the wheel and scrolls the story. The radial wheel is
+<strong>dwell-driven</strong>: aim a slice, rest on it, and it <em>commits</em> — leaves
+after <code>aim_dwell_ms</code>, folders and the reserved Back slice after
+<code>nav_dwell_ms</code> (folders auto-descend, Back auto-ascends). Releasing the
+wheel button fires the committed leaf; returning the stick to center
+before releasing cancels. Sweeping across the ring never commits the
+slices you pass through, so a far slice is safe to reach. Inside a folder
+a Back slice is reserved at the <code>back_slice</code> screen anchor
+(<code>up</code>/<code>down</code>/<code>left</code>/<code>right</code> and the four diagonals) — or <code>back_slice =  "none"</code> drops the reserved seat entirely and you back out with East.
+<code>deadzone</code> (percent)
+is how far the stick must deflect before a slice registers; a <code>0</code> dwell
+means instant commit. <code>fire_debounce_ms</code> suppresses double-fires and
+<code>release_grace_ms</code> keeps a still-deflected stick from walking as the
+wheel closes. <code>south</code>/<code>east</code> remain optional accelerators while the wheel
+is up (fire/descend now, back up now).</p>
+<p><code>fire_mode</code> chooses how a <em>committed leaf</em> fires (folders always descend
+on dwell and are never fired by these modes; cancel is unchanged):</p>
+<ul>
+<li><code>"release"</code> (default) — the behavior above: dwell to commit, fire when
+the wheel button comes up.</li>
+<li><code>"edge"</code> — fire the instant deflection crosses <code>edge_threshold</code> (percent),
+no dwell. Fastest on sparse wheels. The re-arm-until-center guard means
+it fires once per hold, not repeatedly as you sweep the ring.</li>
+<li><code>"retract"</code> — dwell to commit, then fire as soon as deflection drops
+<code>retract_delta</code> (percent) below its peak — a small inward flick, without
+waiting for a full return to center. Best when recenter-based firing
+feels sluggish.</li>
+</ul>
+<p>Both thresholds are exposed so you can tune the feel. Every field is
+optional and defaults to the shipped feel. Fire modes apply to the
+native controller (they read the analog stick); the phone client’s touch
+wheel is dwell/release only.</p>
+<p>Wheel slices resolve <code>&lt;target_id&gt;</code>/<code>&lt;target_noun&gt;</code> against the interact
+focus, exactly like bound interact macros — so a combat wheel slice such
+as <code>cast at &lt;target_id&gt;</code> fires at the creature currently selected in
+interact mode. Slices without a placeholder are sent as-is; a slice that
+needs a target with nothing focused is dropped (not sent literally) with
+a note.</p>
+<p>Each wheel declares, in the Wheels tab, which <strong>button</strong> opens it
+and which <strong>stick</strong> aims it (stored in <code>[controller_wheels_meta.&lt;name&gt;]</code>).
+The Wheels tab is the single place to set a wheel’s button — the
+<code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> actions are no longer in
+the Base tab’s action dropdown to avoid two sources of truth. The reserved
+<strong><code>portals</code></strong> wheel has its own permanent, non-deletable Wheels-tab entry
+(<code>portals (dynamic)</code>): it exposes the same <strong>Opens with</strong> and <strong>Aim
+stick</strong> fields, but no slice list, because its slices are generated from
+the room every time it opens.
+The button field is a convenience: saving it writes the matching
+<code>[controller]</code> entry, which remains the runtime authority — so if the two
+ever disagree, <code>[controller]</code> wins and a note says which button really
+opens the wheel, and two wheels claiming one button are flagged. When a
+wheel’s meta doesn’t record a button (e.g. it was bound before the Wheels
+tab existed), the editor back-fills <strong>Opens with</strong> from <code>[controller]</code> so
+you always see the real key. The
+stick field overrides the global <code>movement_stick</code> while that wheel is
+open: name the movement stick and walking is silenced for the wheel’s
+duration; name the other and movement stays live (e.g. an exits wheel
+aimed with the right stick while you keep walking on the left). Left
+unset, a wheel aims with the non-movement stick as before.</p>
+<h3 id="wheel-geometry"><a class="header" href="#wheel-geometry">Wheel geometry</a></h3>
+<p>Wedges don’t have to be even. Per-slice <strong><code>span</code></strong> fixes a wedge’s width
+in degrees; whatever remains of the 360° splits evenly among the
+span-less slices, so a wheel with no spans keeps the classic even ring.
+Bad numbers are never rejected — spans below 30° clamp up and a ring
+that doesn’t close rescales to fit, with a warning at load and in the
+editor telling you what was adjusted. Per-slice <strong><code>inner</code></strong> sets that
+slice’s aim floor as a percent of full stick deflection: below it the
+slice can’t be aimed or committed, so a destructive command can demand a
+deliberately deep throw. Unset slices use the global <code>deadzone</code>, and the
+editor caps the value below the fire thresholds so a slice always has
+travel left to fire. A per-wheel <strong><code>start</code></strong> in
+<code>[controller_wheels_meta.&lt;name&gt;]</code> rotates the whole ring (degrees, 0 =
+up, clockwise). Folder rings anchor to their Back seat instead and
+ignore <code>start</code> — unless <code>back_slice = "none"</code>, in which case they rotate
+with it too. The portals wheel always keeps an even ring, since its
+slices are rebuilt per room.</p>
+<p>All of this is drawn and edited live in the Wheels tab’s <strong>Visual</strong>
+designer — see <a href="../frontends/gui.html#controllers">the GUI chapter</a> — or
+typed exactly in its <strong>Numeric</strong> view; both edit the same wheel. On
+the wheel itself (designer and live alike), a slice’s colored fill
+covers only its <strong>activation zone</strong> — from its aim floor out to the
+rim — so the empty ring inside the fill is exactly the stick travel
+that does nothing.</p>
 <h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
 <p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
 <pre><code class="language-toml">[user]
@@ -282,6 +392,25 @@ f6 = { macro_text = "hide\r" }              # omit \r to just type it
 </code></pre>
 <p>The default file ships numpad movement macros (<code>num_1</code>–<code>num_9</code> for
 directions, <code>num_0</code> down, <code>"num_."</code> up, <code>"num_+"</code> look, and so on).</p>
+<p>A macro can chain several commands with <code>\r</code> between them, and pause
+between commands with a <strong>sleep segment</strong>: a segment that is just <code>s</code>
+followed by seconds (<code>s0.5</code>, <code>s2</code>, <code>s90</code> — decimals fine, no upper
+bound). Everything after the sleep goes out when the pause elapses;
+consecutive sleeps add up. Spaces around segments are ignored, and a
+bare <code>s</code> is still south.</p>
+<pre><code class="language-toml">f7 = { macro_text = "stand\rs1.5\rout\r" }   # stand, wait 1.5s, leave
+f8 = { macro_text = "prep 101\r s3.2 \rcast\r" }
+</code></pre>
+<p>Sleep segments work anywhere command text is dispatched — keyboard
+macros, controller binds, hotbar buttons, macro buttons (including taps
+from the phone client), and wheel slices.</p>
+<p>While <strong>interact mode</strong> is focused on an entity, macros may reference it
+with <code>&lt;target_id&gt;</code> (exist id) and <code>&lt;target_noun&gt;</code>:</p>
+<pre><code class="language-toml">[controller]
+west = { macro_text = "target #&lt;target_id&gt;\rincant 611\r" }
+</code></pre>
+<p>A placeholder macro pressed with nothing focused is dropped (with a
+message) rather than sent literally. Exits have no exist id.</p>
 <h2 id="keybind-profiles"><a class="header" href="#keybind-profiles">Keybind Profiles</a></h2>
 <p>Save and swap whole keybind sets:</p>
 <pre><code>.savekeybinds hunting

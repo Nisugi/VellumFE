@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -193,6 +193,15 @@ command-line paths.</p>
 </ul>
 <p>VellumFE identifies itself to Lich as a Stormfront frontend, so scripts that
 check <code>$frontend</code> get full feature parity.</p>
+<h2 id="choosing-a-frontend"><a class="header" href="#choosing-a-frontend">Choosing a Frontend</a></h2>
+<p>Every command line accepts <code>--frontend</code> (<code>-f</code>) to pick the interface:</p>
+<pre><code class="language-bash">vellum-fe --frontend gui --port 8000 --character YourCharacter   # desktop GUI
+vellum-fe --frontend tui --port 8000 --character YourCharacter   # terminal UI
+</code></pre>
+<p>The <strong>terminal UI is the default</strong> on a hand-typed command line; <a href="./launcher.html">the
+Launcher</a>’s profiles default to the <strong>GUI</strong> instead. The
+flag combines with everything below — add <code>--frontend gui</code> to a Lich
+launcher entry or a direct-connection command all the same.</p>
 <h2 id="lich-launcher-integration"><a class="header" href="#lich-launcher-integration">Lich Launcher Integration</a></h2>
 <p>Configure Lich launcher to spawn VellumFE automatically:</p>
 <ol>

@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -213,6 +213,7 @@ category = "Players"
 <tr><td><code>fast_parse</code></td><td>bool</td><td>Literal matching via Aho-Corasick (much faster)</td></tr>
 <tr><td><code>sound</code></td><td>string</td><td>Sound file to play (in <code>global/sounds/</code>)</td></tr>
 <tr><td><code>sound_volume</code></td><td>float</td><td>Per-sound volume override (0.0–1.0)</td></tr>
+<tr><td><code>rumble</code></td><td>string</td><td>Controller rumble pattern to play (<code>short</code>/<code>long</code>/<code>double</code> or a custom pattern from the Controller editor’s Rumble tab)</td></tr>
 <tr><td><code>category</code></td><td>string</td><td>Grouping in the highlights browser (e.g. <code>"Combat"</code>)</td></tr>
 <tr><td><code>squelch</code></td><td>bool</td><td><strong>Hide matching lines entirely</strong></td></tr>
 <tr><td><code>silent_prompt</code></td><td>bool</td><td>Suppress the prompt after squelched lines</td></tr>
@@ -237,14 +238,21 @@ pattern = "^[A-Z][a-z]+ (arrives|departs)"
 squelch = true
 category = "Squelch"
 </code></pre>
-<h2 id="sounds"><a class="header" href="#sounds">Sounds</a></h2>
+<h2 id="sounds-and-rumble"><a class="header" href="#sounds-and-rumble">Sounds and Rumble</a></h2>
 <pre><code class="language-toml">[death_alert]
 pattern = "appears dead"
 fg = "#00ff00"
 sound = "kill.wav"        # in ~/.vellum-fe/global/sounds/
 sound_volume = 0.8
+rumble = "double"         # buzz the controller too
 </code></pre>
-<p>See <a href="../customization/sounds.html">Sound Alerts</a>.</p>
+<p>See <a href="../customization/sounds.html">Sound Alerts</a>. <code>rumble</code> names a
+controller vibration pattern — a built-in (<code>short</code>/<code>long</code>/<code>double</code>) or
+a custom one defined on the Controller editor’s Rumble tab
+(<a href="keybinds-toml.html#controller-bindings">keybinds.toml</a>). Highlight rumbles are
+rate-limited (one per 1.5s) so a pattern matching every line can’t
+vibrate the pad continuously, and the Rumble tab’s master switch
+silences them along with everything else.</p>
 <h2 id="redirects"><a class="header" href="#redirects">Redirects</a></h2>
 <p>Route matching lines to another window:</p>
 <pre><code class="language-toml">[loot_lines]

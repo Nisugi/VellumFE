@@ -102,9 +102,17 @@ wheel of that name),
 and `controller_overlay`
 (toggle the binding legend — curated by `[controller_overlay]
 buttons`, with `shift/<button>` entries for the shift bank). Rumble
-lives in `[controller_rumble]` (patterns `off`/`short`/`long`/`double`
-per event). All of it is edited in the `.controller` editor's tabs —
-hand-editing is never required.
+lives in `[controller_rumble]`: a pattern per event (`off`, the
+built-ins `short`/`long`/`double`, or the name of one of your own),
+plus custom patterns under `[[controller_rumble.patterns]]` — each has
+a `name`, `strength` (0–1), `pulse_ms` (length of each buzz), `pulses`
+(how many), and `gap_ms` (silence between them). The editor's Rumble
+tab has a row per pattern with a **Test** button that plays it on the
+pad immediately, unsaved edits included. Custom patterns are also
+selectable on any highlight rule, so any text match can buzz the pad —
+see [highlights.toml](highlights-toml.md). Built-in names win if a
+custom pattern reuses one. All of it is edited in the `.controller`
+editor's tabs — hand-editing is never required.
 
 Interact mode and popup-menu navigation are configurable too.
 `interact_select` activates the interact focus (walk an exit, open a
@@ -203,7 +211,11 @@ slices are rebuilt per room.
 
 All of this is drawn and edited live in the Wheels tab's **Visual**
 designer — see [the GUI chapter](../frontends/gui.md#controllers) — or
-typed exactly in its **Numeric** view; both edit the same wheel.
+typed exactly in its **Numeric** view; both edit the same wheel. On
+the wheel itself (designer and live alike), a slice's colored fill
+covers only its **activation zone** — from its aim floor out to the
+rim — so the empty ring inside the fill is exactly the stick travel
+that does nothing.
 
 ## Macros
 

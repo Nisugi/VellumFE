@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -209,7 +209,9 @@ center, and right sidebar. Toggle zones from the top toolbar.</p>
 categorized templates, toggle visibility, or reassign a window’s zone.</li>
 <li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
 Window…</strong>, which opens the window editor; title bars can be hidden
-per-window.</li>
+per-window. Overlapping windows in the center area offer <strong>Send to
+Back</strong>, dropping the window behind any it covers so a buried one can be
+reached (clicking a window still raises it to the front).</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
 sessions), or locked together into tab groups that move as a unit. The
 context menu reorders group members (<strong>Move Up / Move Down</strong>) and can
@@ -310,9 +312,17 @@ northeast to head <code>ne</code>; one step per deflection.</li>
 <code>down</code>, right goes <code>out</code>, and left runs <a href="../reference/commands.html"><code>.portal</code></a>
 — walk the room’s door/arch/gate, with a pick list when there are
 several.</li>
-<li>While <a href="#interact-mode">interact mode</a> or a context menu is open, the
-<strong>d-pad navigates, South (A/cross) confirms, East (B/circle)
-cancels</strong> — that part is fixed.</li>
+<li>While a <strong>context menu</strong> is open, the d-pad navigates, South
+(A/cross) confirms, East (B/circle) cancels — that part is fixed.</li>
+<li>In <strong><a href="#interact-mode">interact mode</a></strong> the <strong>right stick</strong> does the
+cycling — up/down switch categories, left/right step entities — and
+<strong>South selects</strong> (menu, or walk the exit). Everything else keeps
+its binds: the left stick still walks, the d-pad still runs its
+commands, and the other face buttons (plus the shift bank) fire
+their macros. Macros may use <code>&lt;target_id&gt;</code> / <code>&lt;target_noun&gt;</code>,
+filled from the focused entity at press time — bind
+<code>target #&lt;target_id&gt;\rincant 611\r</code> to West and cast at whatever
+the ring is on. Toggle the mode off from its Start bind.</li>
 </ul>
 <p>Everything else is yours to bind with <strong><code>.controller</code></strong>: each button
 maps to a keybind action or macro, with a “press a button” capture in
@@ -326,19 +336,40 @@ default) and every button switches to a second bank, edited on the
 editor’s Shift tab. Defaults: shift+d-pad pages the story window,
 shift+South stands up.</li>
 <li><strong>Radial command wheels</strong> — hold the button bound to
-<code>controller_wheel</code> (r2 by default), aim with the left stick, release
+<code>controller_wheel</code> (r2 by default), aim with the free stick (the one
+that isn’t walking — right, unless you move <code>movement_stick</code>), release
 to fire. Slices can be <strong>folders</strong> (South opens, East backs up) and
-carry <strong>colors</strong> — the whole pie wedge tints, dim at rest and bright
-while aimed, so wheels can be color-coded by function. Multiple named
+carry <strong>colors</strong> — the wedge tints from its aim floor out to the rim
+(dim at rest, bright while aimed), so the colored band is exactly
+the zone where the slice activates and wheels can be color-coded by
+function. Wedges don’t
+have to be even: give a slice a fixed <strong>span</strong> in degrees, rotate the
+ring with <strong>Start</strong>, and set a per-slice <strong>inner</strong> floor that demands
+a deeper stick throw before that slice will aim. Multiple named
 wheels via <code>controller_wheel:&lt;name&gt;</code> bindings; build it all on the
-editor’s Wheels tab.</li>
+editor’s Wheels tab. Its <strong>Visual</strong> view is a drag-and-drop designer:
+drag a divider to trade width between wedges (it snaps to the compass
+points — hold Shift to go free), drag a wedge’s floor arc to set its
+inner, click a wedge to edit its fields, double-click a folder to
+step inside (and the ghost Back wedge to step back out), plus
+lock / even-out / mirror / rotate tools. <strong>Numeric</strong>
+shows the same wheel as exact rows. One name is dynamic:
+<strong><code>controller_wheel:portals</code></strong>
+(r3 by default) fills its slices from the current room’s noun exits —
+the same list <a href="../reference/commands.html"><code>.portal</code></a> resolves — so
+<code>go gate</code> / <code>climb ladder</code> are always one hold-and-flick away.</li>
 <li><strong>Binding legend</strong> — Select toggles a compact overlay of your
 bindings (<code>controller_overlay</code> action). It’s curated: check <strong>HUD</strong>
 on the rows you want shown. While shift is held the shift entries
 read strong — the legend always shows what the pad does right now.</li>
 <li><strong>Rumble</strong> — the pad buzzes when roundtime ends, you’re stunned, or
-you die; pattern per event (off/short/long/double) on the editor’s
-Rumble tab.</li>
+you die; pattern per event on the editor’s Rumble tab. Beyond the
+built-ins (off/short/long/double) you can define <strong>custom patterns</strong>
+there — strength, buzz length, buzz count, gap, with a <strong>Test</strong>
+button that plays the row on the pad — and any
+<a href="../customization/highlights.html">highlight rule</a> can name a pattern
+to buzz when its text matches (rate-limited so a chatty pattern
+can’t vibrate continuously).</li>
 <li><strong>Right stick</strong> scrolls the story window with an analog speed curve;
 the same page-scroll actions work from any bound key or button.</li>
 <li>With several portals in a room, <code>.portal</code> (d-pad left) opens a

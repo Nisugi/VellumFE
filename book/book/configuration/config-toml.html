@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -390,15 +390,54 @@ max_height = 40
 layout = "compact"
 </code></pre>
 <h2 id="event-patterns"><a class="header" href="#event-patterns">Event Patterns</a></h2>
-<p>Regex patterns that drive countdown timers (stun/RT/CT). The defaults
-cover standard stun messages; add your own:</p>
+<p>Regex patterns that drive countdown timers. The defaults cover standard
+stun messages; add your own:</p>
 <pre><code class="language-toml">[event_patterns.stun_rounds]
 pattern = '^\s*You are stunned for ([0-9]+) rounds?'
-event_type = "stun"             # stun, rt, ct
+event_type = "stun"             # which countdown this feeds (see below)
 action = "set"                  # set or clear
 duration_capture = 1            # capture group holding the duration
 duration_multiplier = 5.0       # rounds -&gt; seconds
 enabled = true
+</code></pre>
+<p>The <code>event_type</code> names the countdown the pattern feeds: <code>stun</code> drives the
+stun window, <code>rt</code>/<code>ct</code> drive roundtime/casttime, and <strong>any other string
+feeds the countdown window whose id matches it</strong> (case-sensitive). To
+build a timer for a spell that lasts multiple rounds: add a custom
+countdown window (Windows &gt; Add Window &gt; Countdowns &gt; Custom) and give it
+an id like <code>tremors</code>, then add a pair of patterns:</p>
+<pre><code class="language-toml">[event_patterns.tremors_start]
+pattern = 'The ground begins to shake violently for ([0-9]+) rounds'
+event_type = "tremors"
+action = "set"
+duration_capture = 1
+duration_multiplier = 5.0       # rounds -&gt; seconds
+enabled = true
+
+[event_patterns.tremors_end]
+pattern = 'The ground grows still\.'
+event_type = "tremors"
+action = "clear"
+duration = 0
+enabled = true
+</code></pre>
+<p>Several patterns may share one <code>event_type</code> (the defaults ship four for
+stun). If the message carries no number, drop <code>duration_capture</code> and set
+a fixed <code>duration</code> in seconds instead. Patterns match script output too,
+so a Lich script can drive a countdown by echoing a line the pattern
+recognizes.</p>
+<h3 id="script-driven-timers-vellumtimer"><a class="header" href="#script-driven-timers-vellumtimer">Script-driven timers: <code>&lt;vellumTimer&gt;</code></a></h3>
+<p>Lich scripts can skip the regex entirely and feed a countdown directly by
+sending a tag to the client:</p>
+<pre><code class="language-xml">&lt;vellumTimer id='dark-cataclyst' value='1764904999'/&gt;
+</code></pre>
+<p><code>id</code> is the countdown window’s feed id (same matching as <code>event_type</code>
+above, case-sensitive) and <code>value</code> is the <strong>absolute epoch end time in
+seconds</strong> — compute it in the script as <code>Time.now.to_i + duration</code>, the
+same convention <code>&lt;roundTime&gt;</code> uses, so it stays correct under lag.
+<code>value='0'</code> clears the timer. The tag never renders as text. From a Lich
+script:</p>
+<pre><code class="language-ruby">puts "&lt;vellumTimer id='dark-cataclyst' value='#{Time.now.to_i + 90}'/&gt;"
 </code></pre>
 
                     </main>

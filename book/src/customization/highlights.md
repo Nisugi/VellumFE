@@ -18,6 +18,7 @@ pattern = "You are stunned"
 fg = "#ff4500"
 bold = true
 sound = "alert.wav"
+rumble = "long"           # buzz the controller too (optional)
 category = "Warnings"
 ```
 

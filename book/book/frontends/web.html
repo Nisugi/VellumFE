@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-13ea9d77.js";
+            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -270,17 +270,22 @@ output” marker for long gaps. Multiple devices can connect at once.</li>
 <h2 id="settings-on-the-phone"><a class="header" href="#settings-on-the-phone">Settings on the Phone</a></h2>
 <p>The gear button (also reachable from the login screen) opens Settings:</p>
 <ul>
-<li><strong>Appearance</strong> — four theme presets (Vellum dark, OLED black, high
+<li>
+<p><strong>Appearance</strong> — four theme presets (Vellum dark, OLED black, high
 contrast, parchment), show/hide toggles for every piece of chrome
 (macro bar, compass, vitals, hands, RT label, effect pills, chips),
 and opacity sliders for floating buttons, drawers, and bottom sheets.
 The <strong>Aa</strong> button sets story text from 6 to 24 px. Theme, text size,
 and chip order <strong>roam with your character</strong> (the profile value wins on
-connect); the chrome toggles and opacities stay per-device.</li>
-<li><strong>Speech</strong> — read incoming lines aloud with the browser’s speech
+connect); the chrome toggles and opacities stay per-device.</p>
+</li>
+<li>
+<p><strong>Speech</strong> — read incoming lines aloud with the browser’s speech
 synthesis, with per-stream toggles (thoughts on by default). Voice
-availability depends on the phone; the first utterance may need a tap.</li>
-<li><strong>Controller</strong> — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
+availability depends on the phone; the first utterance may need a tap.</p>
+</li>
+<li>
+<p><strong>Controller</strong> — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
 PlayStation, MFi): the left stick walks the 8 compass directions,
 the right stick scrolls the story, and the d-pad defaults to
 <code>up</code>/<code>down</code>/<code>out</code> with left running <code>.portal</code>; <code>look</code> sits on South.
@@ -289,19 +294,60 @@ rebindable here — tap a row, or press the button on the pad to jump
 to it. The pad also <strong>rumbles</strong> on chosen streams (whispers and
 deaths by default; toggles in this sheet). Whenever a bottom sheet
 is open — context menus, tap-to-target — the d-pad navigates it:
-up/down move, South taps, East closes. Per-device.</li>
-<li><strong>Sound alerts / login music</strong> — browser playback toggles.</li>
-<li><strong>Client settings (saved on host)</strong> — the full desktop settings
+up/down move, South taps, East closes. Per-device.</p>
+<p>Hold a button bound to <code>wheel</code> (R2 by default) for the <strong>radial
+command wheel</strong> — the same wheel the desktop GUI shows, defined once
+in the host’s <code>keybinds.toml</code>, wedge widths, ring rotation and
+per-slice aim floors included: aim a slice with the free stick (the
+one that isn’t walking), release to fire it; South opens a folder
+slice, East backs up a level. <code>wheel:&lt;name&gt;</code> opens a named wheel — and <code>wheel:portals</code>
+(R3 by default) is always available, its slices built live from the
+current room’s noun exits (go gate, climb ladder). Buttons can also run
+client-side <strong>UI actions</strong> instead of game commands: <code>left_panel</code> /
+<code>right_panel</code> toggle the drawers, <code>map</code> the map overlay, <code>interact</code>
+toggles interact mode, and <code>effects</code>, <code>settings</code>, <code>appearance</code>,
+<code>speech</code>, <code>controller</code> open those sheets (which the d-pad then
+navigates).</p>
+</li>
+<li>
+<p><strong>Interact mode</strong> — the desktop focus cycle, phone-sized: the ◎
+button (or a pad button bound to <code>interact</code>; Start by default)
+opens a bar that walks the room’s <strong>Creatures / Objects / Players /
+Exits</strong>. On a pad the <strong>right stick</strong> does the cycling — up/down
+switch categories, left/right step entities — and <strong>South</strong> selects:
+the entity’s server context menu (the usual bottom sheet, which the
+d-pad navigates) or walking the exit. Everything else keeps its
+binds: the left stick still walks, the d-pad still runs its
+commands, and West/North/East (plus the whole shift bank) fire
+their macros — with <code>&lt;target_id&gt;</code> / <code>&lt;target_noun&gt;</code> filled from the
+focused entity at press time, so <code>target #&lt;target_id&gt;\rincant 611</code>
+on a face button casts at whatever the ring is on. Close the mode
+with its toggle or the ✕ (walking an exit closes it too). On
+screen, the bar has category/entity arrows plus <strong>Go</strong>. Focus
+follows the entity by id, so room churn doesn’t steal it.</p>
+</li>
+<li>
+<p><strong>Sound alerts / login music</strong> — browser playback toggles.</p>
+</li>
+<li>
+<p><strong>Client settings (saved on host)</strong> — the full desktop settings
 registry over the wire: every setting, editable at character or global
-scope, saved on the hosting machine exactly as if edited there.</li>
-<li><strong>Highlight editor</strong> — add/edit highlight rules with color pickers, a
+scope, saved on the hosting machine exactly as if edited there.</p>
+</li>
+<li>
+<p><strong>Highlight editor</strong> — add/edit highlight rules with color pickers, a
 sound dropdown, and a live preview; fields the form doesn’t cover
-(redirects, squelch, …) are preserved for desktop editing.</li>
-<li><strong>Colors editor</strong> — stream preset and prompt colors with native
-pickers.</li>
-<li><strong>Advanced</strong> — raw TOML editors for highlights and colors (profile or
+(redirects, squelch, …) are preserved for desktop editing.</p>
+</li>
+<li>
+<p><strong>Colors editor</strong> — stream preset and prompt colors with native
+pickers.</p>
+</li>
+<li>
+<p><strong>Advanced</strong> — raw TOML editors for highlights and colors (profile or
 global) with <strong>import file / export</strong> — the practical way to move a
-desktop config onto the phone.</li>
+desktop config onto the phone.</p>
+</li>
 </ul>
 <p>Edits save to the same config files the desktop uses and apply live.</p>
 <h2 id="headless-mode"><a class="header" href="#headless-mode">Headless Mode</a></h2>

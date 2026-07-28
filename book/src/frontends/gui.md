@@ -184,8 +184,10 @@ Beyond plain bindings:
   `controller_wheel` (r2 by default), aim with the free stick (the one
   that isn't walking — right, unless you move `movement_stick`), release
   to fire. Slices can be **folders** (South opens, East backs up) and
-  carry **colors** — the whole pie wedge tints, dim at rest and bright
-  while aimed, so wheels can be color-coded by function. Wedges don't
+  carry **colors** — the wedge tints from its aim floor out to the rim
+  (dim at rest, bright while aimed), so the colored band is exactly
+  the zone where the slice activates and wheels can be color-coded by
+  function. Wedges don't
   have to be even: give a slice a fixed **span** in degrees, rotate the
   ring with **Start**, and set a per-slice **inner** floor that demands
   a deeper stick throw before that slice will aim. Multiple named
@@ -206,8 +208,13 @@ Beyond plain bindings:
   on the rows you want shown. While shift is held the shift entries
   read strong — the legend always shows what the pad does right now.
 - **Rumble** — the pad buzzes when roundtime ends, you're stunned, or
-  you die; pattern per event (off/short/long/double) on the editor's
-  Rumble tab.
+  you die; pattern per event on the editor's Rumble tab. Beyond the
+  built-ins (off/short/long/double) you can define **custom patterns**
+  there — strength, buzz length, buzz count, gap, with a **Test**
+  button that plays the row on the pad — and any
+  [highlight rule](../customization/highlights.md) can name a pattern
+  to buzz when its text matches (rate-limited so a chatty pattern
+  can't vibrate continuously).
 - **Right stick** scrolls the story window with an analog speed curve;
   the same page-scroll actions work from any bound key or button.
 - With several portals in a room, `.portal` (d-pad left) opens a
