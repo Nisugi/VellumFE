@@ -1011,11 +1011,9 @@ impl AppCore {
         let mut candidates: Vec<foreach::Candidate> = Vec::new();
         let mut missing: Vec<String> = Vec::new();
         for (query, optional) in &spec.targets {
-            let Some(container) = self
-                .game_state
-                .container_cache
-                .find_container_for_query(query)
-            else {
+            // Registry is the source of truth (dual-written from the same
+            // feed the old cache read; consumers migrated here in step 3).
+            let Some(container) = self.game_state.objects.find_container(query) else {
                 if *optional {
                     missing.push(query.clone());
                     continue;
@@ -1025,44 +1023,45 @@ impl AppCore {
                      once so VellumFE sees its contents, or suffix '?' to skip it."
                 ));
                 // Show what IS tracked so the mismatch is diagnosable
-                // (and reveals an empty cache, e.g. Lich's ;sorter eating
-                // the inv stream).
-                let known = self.game_state.container_cache.list_containers();
-                if known.is_empty() {
+                // (an empty list reveals e.g. Lich's ;sorter having eaten
+                // the inv stream before it reached us).
+                let titles = self.game_state.objects.container_titles();
+                if titles.is_empty() {
                     self.add_system_message(
                         "[foreach] (no containers tracked yet - look in one to start)",
                     );
                 } else {
-                    let titles: Vec<&str> = known
-                        .iter()
-                        .filter(|c| !c.title.is_empty())
-                        .map(|c| c.title.as_str())
-                        .take(12)
-                        .collect();
                     self.add_system_message(&format!(
                         "[foreach] tracked: {}",
-                        titles.join(", ")
+                        titles.iter().take(12).cloned().collect::<Vec<_>>().join(", ")
                     ));
                 }
                 return;
             };
-            for item in container.parsed_items() {
+            // Registry items are already parsed GameItems (no re-parse).
+            let container_target = container.command_target();
+            let items: Vec<(String, String, String)> = container
+                .items
+                .iter()
+                .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone()))
+                .collect();
+            for (id, noun, name) in items {
                 let types = data
-                    .types_of(&item.name, &item.noun)
+                    .types_of(&name, &noun)
                     .iter()
                     .map(|t| t.to_string())
                     .collect();
                 let sellable = data
-                    .sellable(&item.name, &item.noun)
+                    .sellable(&name, &noun)
                     .map(|joined| joined.split(',').map(str::to_string).collect())
                     .unwrap_or_default();
                 candidates.push(foreach::Candidate {
-                    id: item.id,
-                    noun: item.noun,
-                    name: item.name,
+                    id,
+                    noun,
+                    name,
                     // The game-command id, not the stream id (differs for
                     // stow), so `put item in container` -> a real target.
-                    container_id: container.command_target(),
+                    container_id: container_target.clone(),
                     types,
                     sellable,
                 });
@@ -1107,11 +1106,9 @@ impl AppCore {
         let mut items = Vec::new();
         for candidate in &picked {
             let steps = {
-                let cache = &self.game_state.container_cache;
+                let objects = &self.game_state.objects;
                 foreach::build_steps(&spec.commands, candidate, |query| {
-                    cache
-                        .find_container_for_query(query)
-                        .map(|c| c.command_target())
+                    objects.find_container(query).map(|c| c.command_target())
                 })
             };
             match steps {
@@ -2586,21 +2583,12 @@ mod foreach_tests {
     use crate::core::AppCore;
 
     fn core_with_bandolier() -> AppCore {
+        use crate::core::game_objects::GameItem;
         let mut core = AppCore::new_for_test();
-        let cache = &mut core.game_state.container_cache;
-        cache.register_container("77".to_string(), "Bandolier".to_string(), None);
-        cache.add_item(
-            "77",
-            r#"In the <a exist="77" noun="bandolier">bandolier</a>:"#.to_string(),
-        );
-        cache.add_item(
-            "77",
-            r#" a <a exist="101" noun="crystal">quartz crystal</a>"#.to_string(),
-        );
-        cache.add_item(
-            "77",
-            r#" a <a exist="102" noun="sword">slim short sword</a>"#.to_string(),
-        );
+        let objects = &mut core.game_state.objects;
+        objects.register_container("77".to_string(), "Bandolier".to_string(), Some("#77".to_string()));
+        objects.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
+        objects.add_container_item("77", GameItem::new("102", "sword", "slim short sword"));
         core
     }
 
@@ -2626,22 +2614,17 @@ mod foreach_tests {
     fn foreach_stow_uses_object_target_not_stream_id() {
         // Regression: stow's stream id is "stow" but game commands need
         // the shroud's object id (from the <container> target attribute).
+        use crate::core::game_objects::GameItem;
         let mut core = AppCore::new_for_test();
         {
-            let cache = &mut core.game_state.container_cache;
-            cache.register_container(
+            let objects = &mut core.game_state.objects;
+            objects.register_container(
                 "stow".to_string(),
                 "My Shroud".to_string(),
                 Some("#225766691".to_string()),
             );
-            cache.add_item(
-                "stow",
-                r#"In the <a exist="225766691" noun="shroud">shroud</a>:"#.to_string(),
-            );
-            cache.add_item(
-                "stow",
-                r#" a <a exist="333" noun="crystal">quartz crystal</a>"#.to_string(),
-            );
+            objects
+                .add_container_item("stow", GameItem::new("333", "crystal", "quartz crystal"));
         }
         // 'container' must substitute to the object id, never "#stow".
         let _ = core.handle_dot_command(".foreach gem in shroud; put item in container");

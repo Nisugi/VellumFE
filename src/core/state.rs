@@ -556,6 +556,10 @@ pub struct ContainerItem {
     pub name: String,
 }
 
+// `parsed_items` is now a cross-check against the registry in tests; the
+// registry (game_objects::parse) is the live path. Kept until the container
+// widgets migrate off ContainerData (step 6).
+#[allow(dead_code)]
 impl ContainerData {
     /// Items as (id, noun, name), skipping the container's header line.
     ///
@@ -985,6 +989,12 @@ impl BetrayerState {
 /// entry per unique container ID, so cap growth and evict oldest-first.
 const MAX_CONTAINERS: usize = 1000;
 
+// Migration: `.foreach` moved to the GameObjects registry in step 3, so
+// some query methods here are now test/cross-check only. The cache still
+// backs the container *widgets* until they migrate too (step 6), after
+// which this whole type is removed. Allow the transient dead code rather
+// than delete methods a widget swap will need to reference.
+#[allow(dead_code)]
 impl ContainerCache {
     /// Register a new container or update its metadata
     pub fn register_container(&mut self, id: String, title: String, target: Option<String>) {

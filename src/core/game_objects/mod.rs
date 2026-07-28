@@ -360,6 +360,18 @@ impl GameObjects {
         self.containers.values()
     }
 
+    /// Non-empty container titles, sorted — for diagnostics ("tracked: ...").
+    pub fn container_titles(&self) -> Vec<&str> {
+        let mut titles: Vec<&str> = self
+            .containers
+            .values()
+            .filter(|c| !c.title.is_empty())
+            .map(|c| c.title.as_str())
+            .collect();
+        titles.sort_unstable();
+        titles
+    }
+
     /// Items inside a tracked container.
     pub fn items_in(&self, container_id: &str) -> &[GameItem] {
         self.containers
