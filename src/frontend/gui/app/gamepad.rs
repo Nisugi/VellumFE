@@ -58,7 +58,7 @@ const STICK_RELEASE: f32 = 0.35;
 
 /// How a committed leaf slice fires. See `[controller_tuning] fire_mode`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum FireMode {
+pub(super) enum FireMode {
     /// Fire when the wheel button is released (the default, and the only
     /// mode before this existed).
     Release,
@@ -234,22 +234,13 @@ impl VellumGuiApp {
             }
             (true, None) => {
                 // Release: fire the committed leaf, if any and if the
-                // debounce window has elapsed.
+                // debounce window has elapsed. `wheel_release_command` is
+                // the machine-side decision (display-indexed, Back/folder/
+                // empty-guarded via `leaf_command_at`).
                 let ui = self.gp_wheel.take().expect("just matched Some");
-                if let Some(display) = ui.aimed {
-                    let view = self.wheel_view(&ui.key, &ui.path);
-                    // `view.slices` is the DISPLAY-ordered (Back-injected,
-                    // rotated) ring, so index it by `display`, not the real
-                    // index — indexing by `real` double-applied the rotation
-                    // and fired the wrong slice inside a rotated folder.
-                    if let Some(Some(_real)) = view.as_ref().and_then(|v| v.real(display)) {
-                        if let Some(slice) =
-                            view.as_ref().and_then(|v| v.slices.get(display)).cloned()
-                        {
-                            if !slice.is_folder() && !slice.command.is_empty() {
-                                self.wheel_fire(slice.command);
-                            }
-                        }
+                if let Some(view) = self.wheel_view(&ui.key, &ui.path) {
+                    if let Some(command) = wheel_release_command(&ui, &view) {
+                        self.wheel_fire(command);
                     }
                 }
                 // The aim stick is usually still deflected on release; if it
@@ -625,11 +616,10 @@ impl VellumGuiApp {
     }
 
     /// Advance the dwell state machine for one frame while the wheel is
-    /// up and the aim stick is at `(x, y_up)`. Tracks the candidate slice
-    /// and its dwell time; commits a leaf (arming release-fire), auto-
-    /// descends a folder, or auto-ascends via the Back slice once the
-    /// relevant dwell elapses. The re-arm block prevents a still-deflected
-    /// stick from chaining through nested levels.
+    /// up and the aim stick is at `(x, y_up)`. Thin adapter over the
+    /// app-independent `wheel_aim_step` machine: builds the view and the
+    /// tuning snapshot, injects the clock, then applies the outcome
+    /// (repaint and/or a mid-hold edge/retract fire).
     fn wheel_aim(&mut self, x: f32, y_up: f32) {
         let (key, path) = {
             let ui = self.gp_wheel.as_ref().expect("wheel active");
@@ -638,153 +628,31 @@ impl VellumGuiApp {
         let Some(view) = self.wheel_view(&key, &path) else {
             return;
         };
-        let deadzone = self.wheel_deadzone();
-        let aim_ms = self.app_core.config.controller_tuning.aim_dwell_ms as u128;
-        let nav_ms = self.app_core.config.controller_tuning.nav_dwell_ms as u128;
-        let fire_mode = self.wheel_fire_mode();
-        let magnitude = (x * x + y_up * y_up).sqrt();
-        let candidate = wheel_slice_at(x, y_up, view.len(), deadzone);
-        // The stick is "neutral" when it has fallen back inside the dead
-        // zone (candidate None). Re-neutralizing is the ONLY thing that
-        // clears the re-arm latch — keyed on physical stick state, not a
-        // display index (indices are meaningless across a level change,
-        // since seat counts differ).
-        let centered = candidate.is_none();
-        let latched = self
-            .gp_wheel
-            .as_ref()
-            .map(|ui| ui.rearm_until_center)
-            .unwrap_or(true);
-        let (latch_after, may_dwell) = dwell_rearm_step(latched, centered);
-
-        if let Some(ui) = self.gp_wheel.as_mut() {
-            ui.rearm_until_center = latch_after;
-            // Track the candidate and restart its dwell clock whenever it
-            // changes. Any change also drops a prior commit — release only
-            // fires a leaf the stick is *currently* dwelling, never a stale
-            // one it has already moved off (whether to center or to another
-            // slice).
-            if ui.candidate != candidate {
-                ui.candidate = candidate;
-                ui.candidate_since = Some(std::time::Instant::now());
-                ui.aimed = None;
-                ui.peak_magnitude = 0.0;
-                self.app_core.needs_render = true;
-            }
+        let timing = self.wheel_timing();
+        let outcome = {
+            let ui = self.gp_wheel.as_mut().expect("wheel active");
+            wheel_aim_step(ui, &view, &timing, x, y_up, std::time::Instant::now())
+        };
+        if outcome.render {
+            self.app_core.needs_render = true;
         }
-
-        // While the latch is up (stick hasn't re-neutralized since the last
-        // auto descend/ascend), no dwell may accrue — this is what stops a
-        // still-deflected stick from chaining through nested folders.
-        if !may_dwell {
-            return;
+        if let Some(display) = outcome.fire {
+            self.wheel_close_and_fire(&view, display);
         }
+    }
 
-        // Nothing under the stick: nothing to dwell.
-        let Some(display) = candidate else { return };
-        let dwelt = self
-            .gp_wheel
-            .as_ref()
-            .and_then(|ui| ui.candidate_since)
-            .map(|t| t.elapsed().as_millis())
-            .unwrap_or(0);
-
-        match view.real(display) {
-            // Back slice: auto-ascend once the nav dwell elapses.
-            Some(None) => {
-                if dwelt >= nav_ms {
-                    if let Some(ui) = self.gp_wheel.as_mut() {
-                        ui.path.pop();
-                        ui.aimed = None;
-                        ui.candidate = None;
-                        ui.candidate_since = None;
-                        ui.rearm_until_center = true;
-                        self.app_core.needs_render = true;
-                    }
-                }
-            }
-            // A real slice.
-            Some(Some(real)) => {
-                // Look the slice up by DISPLAY index (view.slices is the rotated
-                // ring); `real` is only for path.push on descend. Using `real`
-                // here read a different seat's is_folder() flag inside a rotated
-                // sub-folder, so dwell-to-open silently failed one level deep.
-                let is_folder = view
-                    .slices
-                    .get(display)
-                    .map(|s| s.is_folder())
-                    .unwrap_or(false);
-                if is_folder {
-                    // Folders always descend on dwell — never fired by edge
-                    // or retract (Niffy's invariant).
-                    if dwelt >= nav_ms {
-                        if let Some(ui) = self.gp_wheel.as_mut() {
-                            ui.path.push(real);
-                            ui.aimed = None;
-                            ui.candidate = None;
-                            ui.candidate_since = None;
-                            ui.rearm_until_center = true;
-                            ui.peak_magnitude = 0.0;
-                            self.app_core.needs_render = true;
-                        }
-                    }
-                    return;
-                }
-
-                // Leaf, by fire mode.
-                match fire_mode {
-                    FireMode::Edge => {
-                        // Fire the moment deflection crosses the threshold —
-                        // no dwell. `may_dwell` gated us here, so the rearm
-                        // latch already blocks a still-deflected stick from
-                        // refiring across slices until it recenters.
-                        if edge_should_fire(magnitude, self.wheel_edge_threshold()) {
-                            self.wheel_fire_committed_leaf(&key, &path, display);
-                        }
-                    }
-                    FireMode::Retract => {
-                        // Dwell to commit, then track the deflection peak and
-                        // fire once it falls retract_delta below that peak.
-                        if dwelt >= aim_ms {
-                            if let Some(ui) = self.gp_wheel.as_mut() {
-                                if ui.aimed != Some(display) {
-                                    ui.aimed = Some(display);
-                                    ui.peak_magnitude = magnitude;
-                                    self.app_core.needs_render = true;
-                                }
-                                ui.peak_magnitude = ui.peak_magnitude.max(magnitude);
-                            }
-                            let committed = self
-                                .gp_wheel
-                                .as_ref()
-                                .map(|ui| (ui.aimed == Some(display), ui.peak_magnitude))
-                                .unwrap_or((false, 0.0));
-                            if committed.0
-                                && retract_should_fire(
-                                    magnitude,
-                                    committed.1,
-                                    self.wheel_retract_delta(),
-                                )
-                            {
-                                self.wheel_fire_committed_leaf(&key, &path, display);
-                            }
-                        }
-                    }
-                    FireMode::Release => {
-                        // Commit (arm release-fire); the release arm in
-                        // poll_gamepad does the firing.
-                        if dwelt >= aim_ms {
-                            if let Some(ui) = self.gp_wheel.as_mut() {
-                                if ui.aimed != Some(display) {
-                                    ui.aimed = Some(display);
-                                    self.app_core.needs_render = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            None => {}
+    /// Snapshot of `[controller_tuning]` in the units the wheel state
+    /// machine consumes. A plain struct so tests can drive the machine
+    /// with arbitrary feels and no app.
+    fn wheel_timing(&self) -> WheelTiming {
+        let t = &self.app_core.config.controller_tuning;
+        WheelTiming {
+            deadzone: self.wheel_deadzone(),
+            aim_ms: t.aim_dwell_ms as u128,
+            nav_ms: t.nav_dwell_ms as u128,
+            fire_mode: self.wheel_fire_mode(),
+            edge_threshold: self.wheel_edge_threshold(),
+            retract_delta: self.wheel_retract_delta(),
         }
     }
 
@@ -831,24 +699,19 @@ impl VellumGuiApp {
         (self.app_core.config.controller_tuning.retract_delta as f32 / 100.0).clamp(0.0, 1.0)
     }
 
-    /// Fire the committed leaf at display index `display` and close the
-    /// wheel, exactly as the South accelerator does. Used by the `edge` and
-    /// `retract` fire modes, which fire a leaf mid-hold instead of waiting
-    /// for the wheel button to come up. Folders are never passed here.
-    fn wheel_fire_committed_leaf(&mut self, key: &str, path: &[usize], display: usize) {
-        let Some(view) = self.wheel_view(key, path) else {
+    /// Close the wheel and fire the leaf at display seat `display`, if it
+    /// is a real, non-folder, non-empty seat (`leaf_command_at` is the one
+    /// shared guard). Used by the edge/retract mid-hold fires and the South
+    /// accelerator; release goes through `wheel_release_command` instead
+    /// (same guard, no close needed — the wheel is already down).
+    fn wheel_close_and_fire(&mut self, view: &WheelView, display: usize) {
+        let Some(command) = leaf_command_at(view, display) else {
             return;
         };
-        let Some(slice) = view.slices.get(display).cloned() else {
-            return;
-        };
-        if slice.is_folder() || slice.command.is_empty() {
-            return;
-        }
         self.gp_wheel = None;
         self.gp_wheel_fired = true;
         self.gp_aim_recenter_needed = true;
-        self.wheel_fire(slice.command);
+        self.wheel_fire(command);
         self.app_core.needs_render = true;
     }
 
@@ -859,58 +722,26 @@ impl VellumGuiApp {
 
     /// South accelerator while the wheel is up: act on whatever the stick
     /// is over right now (the committed slice, or the live candidate if a
-    /// dwell hasn't landed yet), skipping the dwell wait. Fires a leaf,
-    /// descends a folder, or ascends via the Back slice.
+    /// dwell hasn't landed yet), skipping the dwell wait. Thin adapter over
+    /// `wheel_south_step`: fires a leaf, descends a folder, or ascends via
+    /// the Back slice.
     fn wheel_accelerator_south(&mut self) {
-        // Act on the slice the stick is over *right now* — the live
-        // candidate wins over any earlier commit, so South never fires a
-        // slice the stick has already moved off.
-        let (key, path, target) = {
+        let (key, path) = {
             let ui = self.gp_wheel.as_ref().expect("wheel active");
-            (ui.key.clone(), ui.path.clone(), ui.candidate.or(ui.aimed))
+            (ui.key.clone(), ui.path.clone())
         };
-        let Some(display) = target else { return };
         let Some(view) = self.wheel_view(&key, &path) else {
             return;
         };
-        match view.real(display) {
-            Some(None) => {
-                // Back slice.
-                if let Some(ui) = self.gp_wheel.as_mut() {
-                    if ui.path.pop().is_some() {
-                        ui.aimed = None;
-                        ui.candidate = None;
-                        ui.candidate_since = None;
-                        ui.rearm_until_center = true;
-                        self.app_core.needs_render = true;
-                    }
-                }
-            }
-            Some(Some(real)) => {
-                // Look the slice up by DISPLAY index (view.slices is the
-                // rotated ring); `real` is only for path.push on descend.
-                let slice = match view.slices.get(display) {
-                    Some(s) => s.clone(),
-                    None => return,
-                };
-                if slice.is_folder() {
-                    if let Some(ui) = self.gp_wheel.as_mut() {
-                        ui.path.push(real);
-                        ui.aimed = None;
-                        ui.candidate = None;
-                        ui.candidate_since = None;
-                        ui.rearm_until_center = true;
-                        self.app_core.needs_render = true;
-                    }
-                } else if !slice.command.is_empty() {
-                    self.gp_wheel = None;
-                    self.gp_wheel_fired = true;
-                    self.gp_aim_recenter_needed = true;
-                    self.wheel_fire(slice.command);
-                    self.app_core.needs_render = true;
-                }
-            }
-            None => {}
+        let outcome = {
+            let ui = self.gp_wheel.as_mut().expect("wheel active");
+            wheel_south_step(ui, &view)
+        };
+        if outcome.render {
+            self.app_core.needs_render = true;
+        }
+        if let Some(display) = outcome.fire {
+            self.wheel_close_and_fire(&view, display);
         }
     }
 
@@ -1187,6 +1018,234 @@ fn dwell_rearm_step(latched: bool, centered: bool) -> (bool, bool) {
     let latch_after = latched && !centered;
     let may_dwell = !latch_after && !centered;
     (latch_after, may_dwell)
+}
+
+/// Snapshot of `[controller_tuning]` in machine units: deadzone and
+/// thresholds as 0.0–1.0 magnitudes, dwells in ms. App-independent so
+/// scenario tests can drive the machine with arbitrary feels.
+pub(super) struct WheelTiming {
+    pub(super) deadzone: f32,
+    pub(super) aim_ms: u128,
+    pub(super) nav_ms: u128,
+    pub(super) fire_mode: FireMode,
+    pub(super) edge_threshold: f32,
+    pub(super) retract_delta: f32,
+}
+
+/// One frame's outcome from the wheel state machine: the display seat of a
+/// leaf that must fire NOW (edge/retract fire mid-hold; South fires on
+/// press), and whether the frame changed anything visible.
+#[derive(Debug, Default, PartialEq)]
+pub(super) struct WheelStepOutcome {
+    pub(super) fire: Option<usize>,
+    pub(super) render: bool,
+}
+
+/// The command of the real, non-folder, non-empty leaf at a DISPLAY seat,
+/// if that seat holds one. The single guard shared by every fire path
+/// (release, edge, retract, South) so they can't drift: Back seats
+/// (`real == None`), folders, and empty commands all return None.
+fn leaf_command_at(view: &WheelView, display: usize) -> Option<String> {
+    match view.real(display) {
+        Some(Some(_)) => {}
+        _ => return None,
+    }
+    let slice = view.slices.get(display)?;
+    if slice.is_folder() || slice.command.is_empty() {
+        return None;
+    }
+    Some(slice.command.clone())
+}
+
+/// Release-fire decision: the committed leaf's command, if the stick is
+/// still dwelling one when the wheel button comes up.
+fn wheel_release_command(ui: &WheelUi, view: &WheelView) -> Option<String> {
+    leaf_command_at(view, ui.aimed?)
+}
+
+/// Advance the dwell/commit/fire state machine one frame. App-independent:
+/// takes the current display ring, a tuning snapshot, the aim-stick sample,
+/// and an injected clock, and mutates only `ui`. Descend/ascend happen
+/// in place (path push/pop + rearm latch); a leaf that must fire NOW
+/// (edge/retract modes) is returned for the app layer to dispatch.
+/// Release-mode firing stays with the caller via `wheel_release_command`.
+///
+/// The re-arm latch semantics: the stick is "neutral" when it has fallen
+/// back inside the dead zone (candidate None), and re-neutralizing is the
+/// ONLY thing that clears the latch — keyed on physical stick state, not a
+/// display index (indices are meaningless across a level change, since
+/// seat counts differ).
+fn wheel_aim_step(
+    ui: &mut WheelUi,
+    view: &WheelView,
+    timing: &WheelTiming,
+    x: f32,
+    y_up: f32,
+    now: std::time::Instant,
+) -> WheelStepOutcome {
+    let mut render = false;
+    let magnitude = (x * x + y_up * y_up).sqrt();
+    let candidate = wheel_slice_at(x, y_up, view.len(), timing.deadzone);
+    let centered = candidate.is_none();
+    let (latch_after, may_dwell) = dwell_rearm_step(ui.rearm_until_center, centered);
+    ui.rearm_until_center = latch_after;
+
+    // Track the candidate and restart its dwell clock whenever it changes.
+    // Any change also drops a prior commit — release only fires a leaf the
+    // stick is *currently* dwelling, never a stale one it has already moved
+    // off (whether to center or to another slice).
+    if ui.candidate != candidate {
+        ui.candidate = candidate;
+        ui.candidate_since = Some(now);
+        ui.aimed = None;
+        ui.peak_magnitude = 0.0;
+        render = true;
+    }
+
+    // While the latch is up (stick hasn't re-neutralized since the last
+    // auto descend/ascend), no dwell may accrue — this is what stops a
+    // still-deflected stick from chaining through nested folders.
+    if !may_dwell {
+        return WheelStepOutcome { fire: None, render };
+    }
+
+    // Nothing under the stick: nothing to dwell.
+    let Some(display) = candidate else {
+        return WheelStepOutcome { fire: None, render };
+    };
+    let dwelt = ui
+        .candidate_since
+        .map(|since| now.saturating_duration_since(since).as_millis())
+        .unwrap_or(0);
+
+    match view.real(display) {
+        // Back slice: auto-ascend once the nav dwell elapses.
+        Some(None) => {
+            if dwelt >= timing.nav_ms {
+                ui.path.pop();
+                ui.aimed = None;
+                ui.candidate = None;
+                ui.candidate_since = None;
+                ui.rearm_until_center = true;
+                render = true;
+            }
+        }
+        // A real slice.
+        Some(Some(real)) => {
+            let is_folder = view.slices.get(real).map(|s| s.is_folder()).unwrap_or(false);
+            if is_folder {
+                // Folders always descend on dwell — never fired by edge
+                // or retract (Niffy's invariant).
+                if dwelt >= timing.nav_ms {
+                    ui.path.push(real);
+                    ui.aimed = None;
+                    ui.candidate = None;
+                    ui.candidate_since = None;
+                    ui.rearm_until_center = true;
+                    ui.peak_magnitude = 0.0;
+                    render = true;
+                }
+                return WheelStepOutcome { fire: None, render };
+            }
+
+            // Leaf, by fire mode.
+            match timing.fire_mode {
+                FireMode::Edge => {
+                    // Fire the moment deflection crosses the threshold —
+                    // no dwell. `may_dwell` gated us here, so the rearm
+                    // latch already blocks a still-deflected stick from
+                    // refiring across slices until it recenters.
+                    if edge_should_fire(magnitude, timing.edge_threshold) {
+                        return WheelStepOutcome {
+                            fire: Some(display),
+                            render,
+                        };
+                    }
+                }
+                FireMode::Retract => {
+                    // Dwell to commit, then track the deflection peak and
+                    // fire once it falls retract_delta below that peak.
+                    if dwelt >= timing.aim_ms {
+                        if ui.aimed != Some(display) {
+                            ui.aimed = Some(display);
+                            ui.peak_magnitude = magnitude;
+                            render = true;
+                        }
+                        ui.peak_magnitude = ui.peak_magnitude.max(magnitude);
+                        if retract_should_fire(magnitude, ui.peak_magnitude, timing.retract_delta)
+                        {
+                            return WheelStepOutcome {
+                                fire: Some(display),
+                                render,
+                            };
+                        }
+                    }
+                }
+                FireMode::Release => {
+                    // Commit (arm release-fire); the release arm in
+                    // poll_gamepad does the firing.
+                    if dwelt >= timing.aim_ms && ui.aimed != Some(display) {
+                        ui.aimed = Some(display);
+                        render = true;
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+    WheelStepOutcome { fire: None, render }
+}
+
+/// South accelerator step: act on the seat the stick is over *right now*
+/// (the live candidate wins over an earlier commit, so South never fires a
+/// slice the stick has already moved off), skipping the dwell wait.
+/// Descends/ascends by mutating `ui`; a leaf to fire is returned as its
+/// display seat. Slices are looked up by DISPLAY index (view.slices is the
+/// rotated ring); `real` is only for `path.push` on descend.
+fn wheel_south_step(ui: &mut WheelUi, view: &WheelView) -> WheelStepOutcome {
+    let Some(display) = ui.candidate.or(ui.aimed) else {
+        return WheelStepOutcome::default();
+    };
+    match view.real(display) {
+        Some(None) => {
+            // Back slice.
+            if ui.path.pop().is_some() {
+                ui.aimed = None;
+                ui.candidate = None;
+                ui.candidate_since = None;
+                ui.rearm_until_center = true;
+                return WheelStepOutcome {
+                    fire: None,
+                    render: true,
+                };
+            }
+            WheelStepOutcome::default()
+        }
+        Some(Some(real)) => {
+            let Some(slice) = view.slices.get(display) else {
+                return WheelStepOutcome::default();
+            };
+            if slice.is_folder() {
+                ui.path.push(real);
+                ui.aimed = None;
+                ui.candidate = None;
+                ui.candidate_since = None;
+                ui.rearm_until_center = true;
+                WheelStepOutcome {
+                    fire: None,
+                    render: true,
+                }
+            } else if !slice.command.is_empty() {
+                WheelStepOutcome {
+                    fire: Some(display),
+                    render: false,
+                }
+            } else {
+                WheelStepOutcome::default()
+            }
+        }
+        None => WheelStepOutcome::default(),
+    }
 }
 
 /// True when the aim stick has returned close enough to center to clear
