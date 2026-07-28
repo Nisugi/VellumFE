@@ -239,7 +239,7 @@ async fn ws_client_gets_hello_snapshot_then_live_deltas() {
     // State changes flow as coalesced deltas.
     let mut gs = GameState::new();
     gs.vitals.health = 42;
-    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs));
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
     let vitals = read_json_timeout(&mut client).await;
     assert_eq!(vitals["t"], "vitals");
     assert_eq!(vitals["d"]["health"], 42);
@@ -712,7 +712,7 @@ async fn effects_flow_in_snapshot_and_deltas() {
             generation: 1,
         },
     );
-    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs));
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
 
     // Snapshot carries the effects.
     let (mut client, snapshot) = connect_and_sync(addr, 0).await;
@@ -725,7 +725,7 @@ async fn effects_flow_in_snapshot_and_deltas() {
     // A change broadcasts an effects delta.
     gs.effects.get_mut("Buffs").unwrap().effects[0].time = "0:20:00".to_string();
     gs.effects.get_mut("Buffs").unwrap().generation += 1;
-    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs));
+    sink.flush_state(vellum_fe::core::remote::RemoteStateSnapshot::from_game_state(&gs, &[]));
     let delta = read_json_timeout(&mut client).await;
     assert_eq!(delta["t"], "effects");
     assert_eq!(delta["d"][0]["effects"][0]["time"], "0:20:00");

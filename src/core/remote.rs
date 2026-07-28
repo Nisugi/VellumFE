@@ -878,7 +878,7 @@ impl RemoteStateSnapshot {
     /// fields that need context GameState doesn't have (room name from
     /// the streamWindow subtitle, exits from the compass, character from
     /// config).
-    pub fn from_game_state(game_state: &GameState) -> Self {
+    pub fn from_game_state(game_state: &GameState, excluded_nouns: &[String]) -> Self {
         Self {
             character: game_state.character_name.clone(),
             vitals: game_state.vitals.clone(),
@@ -900,17 +900,15 @@ impl RemoteStateSnapshot {
             targets: {
                 // Lich Creature.targets, matching the TUI/GUI widgets: a room
                 // creature with <crtrStatus> hostile==1 that also passes the
-                // valid_target? filter (dead/animated/appendage). The stale
-                // dDBTarget dropdown no longer gates membership.
-                // NOTE: excluded_nouns is passed empty here — from_game_state
-                // has no config handle. Web never applied it before, so this
-                // is no regression; thread config in to honor it fully.
+                // valid_target? filter (dead/animated/appendage + the
+                // configured excluded_nouns threaded from AppCore).
+                // The stale dDBTarget dropdown no longer gates membership.
                 game_state
                     .room_creatures
                     .iter()
                     .filter(|c| {
                         c.flags.as_ref().is_some_and(|f| f.hostile)
-                            && c.is_valid_target(&[])
+                            && c.is_valid_target(excluded_nouns)
                     })
                     .map(|c| RemoteTarget {
                         id: c.id.clone(),
@@ -1455,7 +1453,7 @@ mod tests {
 
         let mut gs = GameState::new();
         gs.vitals.health = 50;
-        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
 
         // Vitals changed relative to the default snapshot; room/hands/rt
         // did not (all None/empty in both).
@@ -1464,11 +1462,39 @@ mod tests {
         assert!(rx.try_recv().is_err(), "no further deltas expected");
 
         // No change => no deltas at all.
-        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
         assert!(rx.try_recv().is_err());
 
         // Watch holds the latest state for snapshots.
         assert_eq!(handles.state_rx.borrow().vitals.health, 50);
+    }
+
+    #[test]
+    fn from_game_state_targets_apply_hostile_and_excluded_nouns() {
+        use crate::core::state::{Creature, CreatureFlags};
+
+        let hostile = |id: &str, name: &str, noun: &str| Creature {
+            id: id.to_string(),
+            name: name.to_string(),
+            noun: Some(noun.to_string()),
+            status: None,
+            flags: Some(CreatureFlags { hostile: true, ..Default::default() }),
+        };
+
+        let mut gs = GameState::new();
+        gs.room_creatures = vec![
+            hostile("#1", "sea nymph", "nymph"),
+            // Hostile but its noun is configured as excluded.
+            hostile("#2", "practice dummy", "dummy"),
+            // Not hostile (no flags) — must be excluded regardless.
+            Creature { flags: None, ..hostile("#3", "town crier", "crier") },
+        ];
+
+        let excluded = vec!["dummy".to_string()];
+        let snap = RemoteStateSnapshot::from_game_state(&gs, &excluded);
+
+        let ids: Vec<&str> = snap.targets.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["#1"], "only the non-excluded hostile survives");
     }
 
     #[test]
@@ -1516,7 +1542,7 @@ mod tests {
 
         let mut gs = GameState::new();
         gs.game_time = 1000;
-        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
         while rx.try_recv().is_ok() {}
 
         // A prompt tick alone (no RT/CT change) must still emit an Rt
@@ -1524,7 +1550,7 @@ mod tests {
         // what corrects a roundtime that was flushed before its paired
         // prompt was parsed.
         gs.game_time = 1002;
-        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
         let mut saw_resync = false;
         while let Ok(delta) = rx.try_recv() {
             if matches!(
@@ -1547,12 +1573,12 @@ mod tests {
 
         let mut gs = GameState::new();
         gs.vitals = Vitals::default();
-        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
         while rx.try_recv().is_ok() {}
 
         gs.roundtime_end = Some(1_700_000_010);
         gs.game_time = 1_700_000_000;
-        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs));
+        sink.flush_state(RemoteStateSnapshot::from_game_state(&gs, &[]));
 
         let mut saw_rt = false;
         while let Ok(delta) = rx.try_recv() {
