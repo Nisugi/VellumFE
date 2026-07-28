@@ -56,6 +56,48 @@ const STICK_DIRS: [&str; 8] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
 const STICK_DEFLECT: f32 = 0.6;
 const STICK_RELEASE: f32 = 0.35;
 
+/// How a committed leaf slice fires. See `[controller_tuning] fire_mode`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FireMode {
+    /// Fire when the wheel button is released (the default, and the only
+    /// mode before this existed).
+    Release,
+    /// Fire the instant deflection crosses `edge_threshold`, no dwell.
+    Edge,
+    /// Dwell to commit, then fire when deflection drops `retract_delta`
+    /// below its tracked peak — an inward flick without recentering.
+    Retract,
+}
+
+impl FireMode {
+    /// Parse the config string; anything unrecognized falls back to the
+    /// safe default (`Release`) so a typo never leaves the wheel unable to
+    /// fire.
+    fn from_str(s: &str) -> Self {
+        match s {
+            "edge" => Self::Edge,
+            "retract" => Self::Retract,
+            _ => Self::Release,
+        }
+    }
+}
+
+/// Edge mode: a leaf under the stick fires the instant deflection reaches
+/// `threshold` (both 0.0–1.0). No dwell.
+fn edge_should_fire(magnitude: f32, threshold: f32) -> bool {
+    magnitude >= threshold
+}
+
+/// Retract mode: a committed leaf fires once deflection falls `delta`
+/// below its tracked `peak` (all 0.0–1.0). On the commit frame peak equals
+/// magnitude, so a positive delta means it never fires without a genuine
+/// inward pull; delta 0 fires on any retraction. A tiny epsilon keeps the
+/// exact-boundary case from being lost to f32 rounding (e.g. 0.7 - 0.1
+/// lands just under 0.6).
+fn retract_should_fire(magnitude: f32, peak: f32, delta: f32) -> bool {
+    magnitude <= peak - delta + 1e-4
+}
+
 /// Map a stick position (y positive = up, gilrs convention) to a compass
 /// sector, honoring hysteresis against the previously held sector.
 #[allow(clippy::manual_range_contains)]
@@ -185,6 +227,7 @@ impl VellumGuiApp {
                         candidate: None,
                         candidate_since: None,
                         rearm_until_center: false,
+                        peak_magnitude: 0.0,
                     });
                     self.app_core.needs_render = true;
                 }
@@ -598,6 +641,8 @@ impl VellumGuiApp {
         let deadzone = self.wheel_deadzone();
         let aim_ms = self.app_core.config.controller_tuning.aim_dwell_ms as u128;
         let nav_ms = self.app_core.config.controller_tuning.nav_dwell_ms as u128;
+        let fire_mode = self.wheel_fire_mode();
+        let magnitude = (x * x + y_up * y_up).sqrt();
         let candidate = wheel_slice_at(x, y_up, view.len(), deadzone);
         // The stick is "neutral" when it has fallen back inside the dead
         // zone (candidate None). Re-neutralizing is the ONLY thing that
@@ -623,6 +668,7 @@ impl VellumGuiApp {
                 ui.candidate = candidate;
                 ui.candidate_since = Some(std::time::Instant::now());
                 ui.aimed = None;
+                ui.peak_magnitude = 0.0;
                 self.app_core.needs_render = true;
             }
         }
@@ -669,6 +715,8 @@ impl VellumGuiApp {
                     .map(|s| s.is_folder())
                     .unwrap_or(false);
                 if is_folder {
+                    // Folders always descend on dwell — never fired by edge
+                    // or retract (Niffy's invariant).
                     if dwelt >= nav_ms {
                         if let Some(ui) = self.gp_wheel.as_mut() {
                             ui.path.push(real);
@@ -676,15 +724,62 @@ impl VellumGuiApp {
                             ui.candidate = None;
                             ui.candidate_since = None;
                             ui.rearm_until_center = true;
+                            ui.peak_magnitude = 0.0;
                             self.app_core.needs_render = true;
                         }
                     }
-                } else if dwelt >= aim_ms {
-                    // Leaf: commit (arm release-fire).
-                    if let Some(ui) = self.gp_wheel.as_mut() {
-                        if ui.aimed != Some(display) {
-                            ui.aimed = Some(display);
-                            self.app_core.needs_render = true;
+                    return;
+                }
+
+                // Leaf, by fire mode.
+                match fire_mode {
+                    FireMode::Edge => {
+                        // Fire the moment deflection crosses the threshold —
+                        // no dwell. `may_dwell` gated us here, so the rearm
+                        // latch already blocks a still-deflected stick from
+                        // refiring across slices until it recenters.
+                        if edge_should_fire(magnitude, self.wheel_edge_threshold()) {
+                            self.wheel_fire_committed_leaf(&key, &path, display);
+                        }
+                    }
+                    FireMode::Retract => {
+                        // Dwell to commit, then track the deflection peak and
+                        // fire once it falls retract_delta below that peak.
+                        if dwelt >= aim_ms {
+                            if let Some(ui) = self.gp_wheel.as_mut() {
+                                if ui.aimed != Some(display) {
+                                    ui.aimed = Some(display);
+                                    ui.peak_magnitude = magnitude;
+                                    self.app_core.needs_render = true;
+                                }
+                                ui.peak_magnitude = ui.peak_magnitude.max(magnitude);
+                            }
+                            let committed = self
+                                .gp_wheel
+                                .as_ref()
+                                .map(|ui| (ui.aimed == Some(display), ui.peak_magnitude))
+                                .unwrap_or((false, 0.0));
+                            if committed.0
+                                && retract_should_fire(
+                                    magnitude,
+                                    committed.1,
+                                    self.wheel_retract_delta(),
+                                )
+                            {
+                                self.wheel_fire_committed_leaf(&key, &path, display);
+                            }
+                        }
+                    }
+                    FireMode::Release => {
+                        // Commit (arm release-fire); the release arm in
+                        // poll_gamepad does the firing.
+                        if dwelt >= aim_ms {
+                            if let Some(ui) = self.gp_wheel.as_mut() {
+                                if ui.aimed != Some(display) {
+                                    ui.aimed = Some(display);
+                                    self.app_core.needs_render = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -719,6 +814,42 @@ impl VellumGuiApp {
         };
         self.gp_wheel_last_fire = Some(std::time::Instant::now());
         self.dispatch_command(command);
+    }
+
+    /// The configured leaf fire mode.
+    fn wheel_fire_mode(&self) -> FireMode {
+        FireMode::from_str(&self.app_core.config.controller_tuning.fire_mode)
+    }
+
+    /// `edge_threshold` as a 0.0–1.0 stick magnitude.
+    fn wheel_edge_threshold(&self) -> f32 {
+        (self.app_core.config.controller_tuning.edge_threshold as f32 / 100.0).clamp(0.0, 1.0)
+    }
+
+    /// `retract_delta` as a 0.0–1.0 magnitude drop.
+    fn wheel_retract_delta(&self) -> f32 {
+        (self.app_core.config.controller_tuning.retract_delta as f32 / 100.0).clamp(0.0, 1.0)
+    }
+
+    /// Fire the committed leaf at display index `display` and close the
+    /// wheel, exactly as the South accelerator does. Used by the `edge` and
+    /// `retract` fire modes, which fire a leaf mid-hold instead of waiting
+    /// for the wheel button to come up. Folders are never passed here.
+    fn wheel_fire_committed_leaf(&mut self, key: &str, path: &[usize], display: usize) {
+        let Some(view) = self.wheel_view(key, path) else {
+            return;
+        };
+        let Some(slice) = view.slices.get(display).cloned() else {
+            return;
+        };
+        if slice.is_folder() || slice.command.is_empty() {
+            return;
+        }
+        self.gp_wheel = None;
+        self.gp_wheel_fired = true;
+        self.gp_aim_recenter_needed = true;
+        self.wheel_fire(slice.command);
+        self.app_core.needs_render = true;
     }
 
     /// Wheel dead zone as a 0.0–1.0 stick magnitude (percent in config).
@@ -831,6 +962,11 @@ pub(super) struct WheelUi {
     pub(super) candidate: Option<usize>,
     pub(super) candidate_since: Option<std::time::Instant>,
     pub(super) rearm_until_center: bool,
+    /// Peak aim-stick magnitude (0.0–1.0) seen since the current leaf
+    /// committed, for `fire_mode = "retract"`: the leaf fires once
+    /// deflection falls `retract_delta` below this peak. Reset whenever the
+    /// committed slice changes; only meaningful while `aimed` is Some.
+    pub(super) peak_magnitude: f32,
 }
 
 impl VellumGuiApp {
@@ -1320,6 +1456,41 @@ mod wheel_tests {
         assert_eq!(dwell_rearm_step(false, false), (false, true));
         // Unlatched + neutral: nothing to dwell.
         assert_eq!(dwell_rearm_step(false, true), (false, false));
+    }
+
+    #[test]
+    fn fire_mode_parses_with_release_fallback() {
+        assert_eq!(FireMode::from_str("release"), FireMode::Release);
+        assert_eq!(FireMode::from_str("edge"), FireMode::Edge);
+        assert_eq!(FireMode::from_str("retract"), FireMode::Retract);
+        // Unknown / empty / legacy configs fall back to the safe default so
+        // the wheel can always still fire.
+        assert_eq!(FireMode::from_str(""), FireMode::Release);
+        assert_eq!(FireMode::from_str("nonsense"), FireMode::Release);
+    }
+
+    #[test]
+    fn edge_fires_at_or_above_threshold() {
+        // 90% threshold: below doesn't fire, at/above does.
+        assert!(!edge_should_fire(0.89, 0.90));
+        assert!(edge_should_fire(0.90, 0.90));
+        assert!(edge_should_fire(1.00, 0.90));
+    }
+
+    #[test]
+    fn retract_fires_only_after_pulling_back_from_peak() {
+        // peak 1.0, delta 0.10: fires once magnitude drops to <= 0.90.
+        assert!(!retract_should_fire(1.00, 1.00, 0.10)); // still at peak
+        assert!(!retract_should_fire(0.95, 1.00, 0.10)); // not far enough in
+        assert!(retract_should_fire(0.90, 1.00, 0.10)); // exactly delta in
+        assert!(retract_should_fire(0.50, 1.00, 0.10)); // well past
+        // A shallower peak needs a correspondingly shallow retraction. The
+        // exact boundary (0.70 - 0.10 = 0.60) must fire despite f32 rounding.
+        assert!(!retract_should_fire(0.65, 0.70, 0.10));
+        assert!(retract_should_fire(0.60, 0.70, 0.10));
+        // A hair above the boundary still holds (the epsilon is far smaller
+        // than the 1% config granularity, so it won't fire early).
+        assert!(!retract_should_fire(0.605, 0.70, 0.10));
     }
 }
 

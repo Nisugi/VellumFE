@@ -164,7 +164,13 @@ impl HighlightFormState {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_highlight_editor(&mut self, edit_name: Option<&str>) {
-        let mut state = HighlightEditorState::new();
+        // Reuse the open editor rather than rebuilding it (which would wipe
+        // an unsaved form). A specific `edit_name` still repopulates the
+        // form on the existing state; a bare open just raises the window.
+        let mut state = self
+            .highlight_editor
+            .take()
+            .unwrap_or_else(HighlightEditorState::new);
         match edit_name {
             Some("") | None => {}
             Some(name) => {
@@ -178,6 +184,7 @@ impl VellumGuiApp {
             }
         }
         self.highlight_editor = Some(state);
+        self.raise_editor(egui::Id::new("gui_highlight_browser"));
     }
 
     pub(in super::super) fn open_highlight_form_new(&mut self) {

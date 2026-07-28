@@ -78,6 +78,10 @@ impl EntryBuffer {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_indicator_templates_editor(&mut self) {
+        if self.indicator_templates_editor.is_some() {
+            self.raise_editor(egui::Id::new("gui_indicator_templates"));
+            return;
+        }
         let entries = Config::list_indicator_templates()
             .iter()
             .map(EntryBuffer::from_entry)

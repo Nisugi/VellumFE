@@ -25,10 +25,20 @@ fn swatch(ui: &mut egui::Ui, color: crate::frontend::common::Color) {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_theme_browser(&mut self) {
+        if self.theme_browser.is_some() {
+            self.raise_editor(egui::Id::new("gui_theme_browser"));
+            return;
+        }
         self.theme_browser = Some(ThemeBrowserState);
     }
 
     pub(in super::super) fn open_theme_editor(&mut self, base: &AppTheme) {
+        // Already editing: raise rather than reload from `base`, so unsaved
+        // hex edits survive a re-issued command or a second Edit click.
+        if self.theme_editor.is_some() {
+            self.raise_editor(egui::Id::new("gui_theme_editor"));
+            return;
+        }
         self.theme_editor = Some(ThemeEditorState {
             data: ThemeData::from_theme(base),
             error: None,

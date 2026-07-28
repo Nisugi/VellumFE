@@ -139,6 +139,9 @@ pub struct RemoteWheelTuning {
     pub nav_dwell_ms: u32,
     pub fire_debounce_ms: u32,
     pub release_grace_ms: u32,
+    pub fire_mode: String,
+    pub edge_threshold: u8,
+    pub retract_delta: u8,
 }
 
 impl Default for RemoteWheelTuning {
@@ -152,6 +155,9 @@ impl Default for RemoteWheelTuning {
             nav_dwell_ms: t.nav_dwell_ms,
             fire_debounce_ms: t.fire_debounce_ms,
             release_grace_ms: t.release_grace_ms,
+            fire_mode: t.fire_mode,
+            edge_threshold: t.edge_threshold,
+            retract_delta: t.retract_delta,
         }
     }
 }
@@ -199,6 +205,9 @@ impl RemoteWheels {
                 nav_dwell_ms: t.nav_dwell_ms,
                 fire_debounce_ms: t.fire_debounce_ms,
                 release_grace_ms: t.release_grace_ms,
+                fire_mode: t.fire_mode.clone(),
+                edge_threshold: t.edge_threshold,
+                retract_delta: t.retract_delta,
             },
             wheel_stick: config
                 .controller_wheels_meta

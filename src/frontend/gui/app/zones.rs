@@ -60,6 +60,24 @@ pub(super) struct TabZoneSnapshot {
 /// (bottom-most tabs starve first) before any window height is
 /// compromised, and windows can never overlap or spill past the zone.
 /// `items` are ordered `(desired_gap_above, occupied_height)` pairs.
+/// The order in which to raise other Center windows so `target` ends up at
+/// the bottom. `ordered_middle` is every middle-order layer back-to-front
+/// (egui's `layer_ids()` order); `center` is the set of layer ids that are
+/// actual Center windows. We keep only the Center windows that aren't the
+/// target, in their existing bottom-to-top order — raising them in that
+/// order preserves their relative stacking and leaves the target lowest.
+fn send_to_back_raise_order(
+    ordered_middle: &[egui::Id],
+    target: egui::Id,
+    center: &std::collections::HashSet<egui::Id>,
+) -> Vec<egui::Id> {
+    ordered_middle
+        .iter()
+        .copied()
+        .filter(|id| *id != target && center.contains(id))
+        .collect()
+}
+
 pub(super) fn effective_sidebar_gaps(zone_height: f32, items: &[(f32, f32)]) -> Vec<f32> {
     let occupied: f32 = items.iter().map(|(_, height)| height.max(0.0)).sum();
     let mut free = (zone_height - occupied).max(0.0);
@@ -398,6 +416,42 @@ impl VellumGuiApp {
             ordered.swap(current_idx, target_idx);
             self.persist_zone_order(&ordered);
         }
+    }
+
+    /// The egui `Id` of the window drawn for `tab_key` in `zone`. This is the
+    /// single source of the formula — the render pass and the send-to-back
+    /// logic both go through here so they can never drift apart.
+    pub(super) fn zone_window_id(zone: GuiShellZone, tab_key: &TabKey) -> egui::Id {
+        egui::Id::new(("gui_zone_window", zone.id_fragment(), tab_key))
+    }
+
+    /// Send the Center-zone window for `tab_key` behind the windows it
+    /// overlaps. egui has no move-to-bottom, so instead we raise every *other*
+    /// Center window above it, preserving their existing relative order —
+    /// which leaves this one at the bottom of the stack. Live-session only.
+    pub(super) fn send_window_to_back(&mut self, ctx: &egui::Context, tab_key: &TabKey) {
+        let target = Self::zone_window_id(GuiShellZone::Center, tab_key);
+        // Every Center window's layer id, keyed for a quick membership test;
+        // header/footer/sidebar windows are docked and never overlap, so they
+        // stay out of it.
+        let center_layers: std::collections::HashSet<egui::Id> = self
+            .available_tabs
+            .keys()
+            .map(|key| Self::zone_window_id(GuiShellZone::Center, key))
+            .collect();
+        // layer_ids() is back-to-front (top is last).
+        let ordered_middle: Vec<egui::Id> = ctx.memory(|mem| {
+            mem.layer_ids()
+                .filter(|layer| layer.order == egui::Order::Middle)
+                .map(|layer| layer.id)
+                .collect()
+        });
+        // Raising each other Center window in bottom-to-top order preserves
+        // their relative stacking while pushing them all above the target.
+        for id in send_to_back_raise_order(&ordered_middle, target, &center_layers) {
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, id));
+        }
+        ctx.request_repaint();
     }
 
     fn zone_surface_tabs(&self, detached_tabs: &HashSet<TabKey>, zone: GuiShellZone) -> Vec<GuiTab> {
@@ -1268,8 +1322,7 @@ impl VellumGuiApp {
                     .hand_resize_tab
                     .as_ref()
                     .is_some_and(|key| key == &tab.id.key);
-            let window_id =
-                egui::Id::new(("gui_zone_window", zone.id_fragment(), &tab.id.key));
+            let window_id = Self::zone_window_id(zone, &tab.id.key);
             let mut docked_window_frame = egui::Frame::window(ctx.global_style().as_ref())
                 .outer_margin(egui::Margin::ZERO)
                 .shadow(egui::epaint::Shadow::NONE);
@@ -1441,6 +1494,30 @@ mod tests {
         assert_eq!(
             VellumGuiApp::default_zone_for_tab_key(&TabKey::TextMain),
             super::GuiShellZone::Center
+        );
+    }
+
+    #[test]
+    fn send_to_back_raises_other_center_windows_in_order() {
+        let a = egui::Id::new("a");
+        let b = egui::Id::new("b");
+        let c = egui::Id::new("c");
+        let popup = egui::Id::new("some_popup"); // a middle layer that isn't a window
+        // Stack back-to-front: a (bottom), b, c (top), plus an unrelated popup.
+        let ordered = vec![a, b, c, popup];
+        let center: std::collections::HashSet<egui::Id> = [a, b, c].into_iter().collect();
+
+        // Send the top window (c) to back: a and b are raised, in that order,
+        // so their a-below-b relationship survives and c lands beneath both.
+        assert_eq!(super::send_to_back_raise_order(&ordered, c, &center), vec![a, b]);
+        // Send the bottom window (a) to back: b then c raised; the popup is
+        // not a Center window, so it is never raised.
+        assert_eq!(super::send_to_back_raise_order(&ordered, a, &center), vec![b, c]);
+        // A target that isn't in the set (e.g. no overlap) still just raises
+        // the others; nothing panics.
+        assert_eq!(
+            super::send_to_back_raise_order(&ordered, egui::Id::new("missing"), &center),
+            vec![a, b, c]
         );
     }
 

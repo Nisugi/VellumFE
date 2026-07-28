@@ -284,6 +284,11 @@ pub struct VellumGuiApp {
     window_editor: Option<editors::WindowEditorState>,
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
+    /// Editor window Id to raise to the top on the next frame. Set when a
+    /// settings command (`.controller`, `.settings`, …) is re-issued while
+    /// its editor is already open, so the command surfaces the buried
+    /// window instead of silently rebuilding (and wiping) its state.
+    pending_editor_raise: Option<egui::Id>,
     search_bar_needs_focus: bool,
     /// Cached search-bar match count: (lowercased query, content fingerprint, count).
     search_match_cache: Option<(String, u64, usize)>,
@@ -585,6 +590,7 @@ impl VellumGuiApp {
             window_editor: None,
             custom_windows_editor: None,
             doll_calibration: None,
+            pending_editor_raise: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
             available_tabs_fingerprint: None,

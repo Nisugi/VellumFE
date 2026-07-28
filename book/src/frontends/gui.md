@@ -40,7 +40,9 @@ center, and right sidebar. Toggle zones from the top toolbar.
   categorized templates, toggle visibility, or reassign a window's zone.
 - **Right-click** a window body for its context menu — including **Edit
   Window…**, which opens the window editor; title bars can be hidden
-  per-window.
+  per-window. Overlapping windows in the center area offer **Send to
+  Back**, dropping the window behind any it covers so a buried one can be
+  reached (clicking a window still raises it to the front).
 - Windows can be **detached** into separate OS windows (restored across
   sessions), or locked together into tab groups that move as a unit. The
   context menu reorders group members (**Move Up / Move Down**) and can

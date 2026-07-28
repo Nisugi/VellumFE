@@ -478,6 +478,10 @@ fn render_gui_section(
 
 impl VellumGuiApp {
     pub(in super::super) fn open_settings_editor(&mut self) {
+        if self.settings_editor.is_some() {
+            self.raise_editor(egui::Id::new("gui_settings_editor"));
+            return;
+        }
         let mut theme_names: Vec<String> = crate::theme::ThemePresets::all_with_custom(
             self.app_core.config.character.as_deref(),
         )

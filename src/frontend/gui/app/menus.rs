@@ -38,6 +38,10 @@ enum GuiWindowMenuCommand {
     Edit,
     Hide,
     Detach,
+    /// Send this floating (Center-zone) window behind any windows it
+    /// overlaps, so a covered window can be reached. Live-session only,
+    /// like egui's built-in click-to-raise.
+    SendToBack,
     /// Start Move mode: the window follows the cursor (title bar stays as-is)
     /// until a click places it or Esc cancels.
     StartMove,
@@ -204,6 +208,7 @@ impl VellumGuiApp {
 
     fn apply_window_menu_command(
         &mut self,
+        ctx: &egui::Context,
         request: &GuiWindowMenuRequest,
         command: GuiWindowMenuCommand,
     ) {
@@ -233,6 +238,9 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),
+            GuiWindowMenuCommand::SendToBack => {
+                self.send_window_to_back(ctx, &request.tab_key);
+            }
             GuiWindowMenuCommand::StartMove => {
                 // Windows that were never repositioned have no stored rect;
                 // seed it from where the window actually rendered.
@@ -468,7 +476,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::MoveGroupMember { .. }
                     | GuiWindowMenuCommand::UngroupMember(_)
             );
-            self.apply_window_menu_command(&request, command);
+            self.apply_window_menu_command(ctx, &request, command);
             if !keep_open {
                 self.window_context_menu = None;
                 return;
@@ -865,6 +873,16 @@ impl VellumGuiApp {
         }
         if ui.selectable_label(false, "Move Window").clicked() {
             return Some(GuiWindowMenuCommand::StartMove);
+        }
+        // Stacking only matters where windows float and overlap — the Center
+        // zone. Docked strips (header/footer/sidebars) never overlap.
+        if view.zone == GuiShellZone::Center
+            && ui
+                .selectable_label(false, "Send to Back")
+                .on_hover_text("Drop this window behind any it overlaps")
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::SendToBack);
         }
         if ui
             .selectable_label(

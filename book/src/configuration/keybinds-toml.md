@@ -130,8 +130,25 @@ is how far the stick must deflect before a slice registers; a `0` dwell
 means instant commit. `fire_debounce_ms` suppresses double-fires and
 `release_grace_ms` keeps a still-deflected stick from walking as the
 wheel closes. `south`/`east` remain optional accelerators while the wheel
-is up (fire/descend now, back up now). Every field is optional and
-defaults to the shipped feel.
+is up (fire/descend now, back up now).
+
+`fire_mode` chooses how a *committed leaf* fires (folders always descend
+on dwell and are never fired by these modes; cancel is unchanged):
+
+- `"release"` (default) — the behavior above: dwell to commit, fire when
+  the wheel button comes up.
+- `"edge"` — fire the instant deflection crosses `edge_threshold` (percent),
+  no dwell. Fastest on sparse wheels. The re-arm-until-center guard means
+  it fires once per hold, not repeatedly as you sweep the ring.
+- `"retract"` — dwell to commit, then fire as soon as deflection drops
+  `retract_delta` (percent) below its peak — a small inward flick, without
+  waiting for a full return to center. Best when recenter-based firing
+  feels sluggish.
+
+Both thresholds are exposed so you can tune the feel. Every field is
+optional and defaults to the shipped feel. Fire modes apply to the
+native controller (they read the analog stick); the phone client's touch
+wheel is dwell/release only.
 
 Wheel slices resolve `<target_id>`/`<target_noun>` against the interact
 focus, exactly like bound interact macros — so a combat wheel slice such
@@ -140,12 +157,22 @@ interact mode. Slices without a placeholder are sent as-is; a slice that
 needs a target with nothing focused is dropped (not sent literally) with
 a note.
 
-Each wheel can also declare, in the Wheels tab, which **button** opens it
+Each wheel declares, in the Wheels tab, which **button** opens it
 and which **stick** aims it (stored in `[controller_wheels_meta.<name>]`).
+The Wheels tab is the single place to set a wheel's button — the
+`controller_wheel` / `controller_wheel:<name>` actions are no longer in
+the Base tab's action dropdown to avoid two sources of truth. The reserved
+**`portals`** wheel has its own permanent, non-deletable Wheels-tab entry
+(`portals (dynamic)`): it exposes the same **Opens with** and **Aim
+stick** fields, but no slice list, because its slices are generated from
+the room every time it opens.
 The button field is a convenience: saving it writes the matching
 `[controller]` entry, which remains the runtime authority — so if the two
 ever disagree, `[controller]` wins and a note says which button really
-opens the wheel, and two wheels claiming one button are flagged. The
+opens the wheel, and two wheels claiming one button are flagged. When a
+wheel's meta doesn't record a button (e.g. it was bound before the Wheels
+tab existed), the editor back-fills **Opens with** from `[controller]` so
+you always see the real key. The
 stick field overrides the global `movement_stick` while that wheel is
 open: name the movement stick and walking is silenced for the wheel's
 duration; name the other and movement stays live (e.g. an exits wheel

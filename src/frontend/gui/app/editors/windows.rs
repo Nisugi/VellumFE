@@ -238,6 +238,20 @@ fn text_content_mut(content: &mut WindowContent) -> Option<&mut crate::data::Tex
 
 impl VellumGuiApp {
     pub(in super::super) fn open_window_editor(&mut self, window_name: Option<&str>) {
+        // Already open: if a specific window is named, load it into the live
+        // editor; otherwise just raise the existing picker. Rebuilding would
+        // discard any in-progress edits.
+        if let Some(mut state) = self.window_editor.take() {
+            if let Some(name) = window_name {
+                if !self.load_window_into_editor(&mut state, name) {
+                    self.app_core
+                        .add_system_message(&format!("Window '{}' not found.", name));
+                }
+            }
+            self.window_editor = Some(state);
+            self.raise_editor(egui::Id::new("gui_window_editor"));
+            return;
+        }
         let mut state = WindowEditorState::picker();
         if let Some(name) = window_name {
             if self.load_window_into_editor(&mut state, name) {
