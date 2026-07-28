@@ -737,6 +737,104 @@ pub fn save_calibration(
     Ok(())
 }
 
+/// Insert (or replace) one `[sheets.<name>]` entry in skin.toml, preserving
+/// comments and the author's formatting elsewhere (toml_edit, same approach
+/// as `calibration_toml`).
+pub fn sheet_registration_toml(
+    contents: &str,
+    name: &str,
+    path: &str,
+    cell: u32,
+) -> anyhow::Result<String> {
+    use toml_edit::{value, DocumentMut, Item, Table};
+
+    let mut doc: DocumentMut = contents
+        .parse()
+        .map_err(|err| anyhow::anyhow!("skin.toml is not valid TOML: {}", err))?;
+
+    let existed = doc.contains_key("sheets");
+    let sheets = doc.entry("sheets").or_insert(Item::Table(Table::new()));
+    let sheets = sheets
+        .as_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("[sheets] is not a table"))?;
+    if !existed {
+        // Don't emit a bare [sheets] header for a freshly created parent.
+        sheets.set_implicit(true);
+    }
+
+    let mut entry = Table::new();
+    entry.insert("path", value(path));
+    entry.insert("cell", value(cell as i64));
+    sheets.insert(name, Item::Table(entry));
+
+    Ok(doc.to_string())
+}
+
+/// Register a hotbar icon sprite sheet into `skins/<skin>/`: copies the
+/// source image under `icons/` and records `[sheets.<name>]` in skin.toml.
+/// The skin hot-reload poll picks the change up within a second.
+pub fn register_sheet(
+    skin: &str,
+    sheet_name: &str,
+    source: &Path,
+    cell: u32,
+) -> anyhow::Result<()> {
+    let name = sheet_name.trim();
+    anyhow::ensure!(!name.is_empty(), "sheet name is required");
+    anyhow::ensure!(
+        name.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'),
+        "sheet name may only use letters, digits, '_' and '-'"
+    );
+    anyhow::ensure!(cell > 0, "cell size must be > 0");
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    anyhow::ensure!(
+        matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "bmp"),
+        "source must be a png/jpg/webp/bmp image"
+    );
+    anyhow::ensure!(
+        source.is_file(),
+        "source image not found: {}",
+        source.display()
+    );
+
+    let root = crate::config::Config::skins_dir()?.join(skin);
+    let manifest_path = root.join("skin.toml");
+    let contents = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
+
+    let file_name = source
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("source has no file name"))?;
+    let rel = format!("icons/{}", file_name.to_string_lossy());
+    let dest = root.join(&rel);
+    // Refuse to clobber different existing art; re-registering the exact
+    // same file path is fine (the copy is skipped).
+    if dest.exists() && dest.canonicalize().ok() != source.canonicalize().ok() {
+        anyhow::bail!(
+            "{} already exists in the skin - rename the source file",
+            rel
+        );
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| anyhow::anyhow!("cannot create {}: {}", parent.display(), err))?;
+    }
+    if !dest.exists() {
+        std::fs::copy(source, &dest)
+            .map_err(|err| anyhow::anyhow!("cannot copy into the skin: {}", err))?;
+    }
+
+    let updated = sheet_registration_toml(&contents, name, &rel, cell)?;
+    crate::config::write_atomic(&manifest_path, updated)
+        .map_err(|err| anyhow::anyhow!("cannot write {}: {}", manifest_path.display(), err))?;
+    Ok(())
+}
+
 /// Paint a nine-slice border into `rect`: corners at fixed size, edges
 /// stretched along their axis, center left empty so the window fill or
 /// background image shows through.
@@ -1012,6 +1110,46 @@ injury1 = "doll/nerves.png"
         assert_eq!(manifest.injury_doll.anchors["neck"], [0.5, 0.2]);
         assert_eq!(manifest.injury_doll.dots.wound_color, "#aa0000");
         assert_eq!(manifest.injury_doll.parts["nsys"]["injury1"], "doll/nerves.png");
+    }
+
+    #[test]
+    fn sheet_registration_toml_preserves_comments_and_upserts() {
+        let original = r##"# My hand-written skin.
+[meta]
+name = "Test" # keep me
+
+[sheets.old]
+path = "icons/old.png"
+cell = 32
+"##;
+        // New sheet appends; existing content survives byte-for-byte.
+        let updated =
+            sheet_registration_toml(original, "rogue", "icons/rogue.png", 64).unwrap();
+        assert!(updated.contains("# My hand-written skin."));
+        assert!(updated.contains(r#"name = "Test" # keep me"#));
+        assert!(updated.contains(r#"path = "icons/old.png""#));
+        let manifest: SkinManifest = toml::from_str(&updated).unwrap();
+        assert_eq!(manifest.sheets["rogue"].path, "icons/rogue.png");
+        assert_eq!(manifest.sheets["rogue"].cell, 64);
+        assert_eq!(manifest.sheets["old"].cell, 32);
+
+        // Re-registering the same name replaces its entry.
+        let updated =
+            sheet_registration_toml(&updated, "rogue", "icons/rogue2.png", 48).unwrap();
+        let manifest: SkinManifest = toml::from_str(&updated).unwrap();
+        assert_eq!(manifest.sheets["rogue"].path, "icons/rogue2.png");
+        assert_eq!(manifest.sheets["rogue"].cell, 48);
+    }
+
+    #[test]
+    fn sheet_registration_toml_creates_section_when_absent() {
+        let original = "[meta]\nname = \"Bare\"\n";
+        let updated =
+            sheet_registration_toml(original, "combat", "icons/combat.png", 64).unwrap();
+        let manifest: SkinManifest = toml::from_str(&updated).unwrap();
+        assert_eq!(manifest.sheets["combat"].path, "icons/combat.png");
+        // No stray bare [sheets] header for the implicit parent.
+        assert!(!updated.contains("[sheets]\n[sheets."));
     }
 
     #[test]

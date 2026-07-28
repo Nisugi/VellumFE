@@ -8,9 +8,11 @@ use super::super::VellumGuiApp;
 use super::color_field;
 use crate::config::{
     Config, EffectCategory, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
-    HotbarCountdownSource, HotbarDef, HotbarStyle, NameMatch, VitalKind, VitalUnit,
+    HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, IconMode, NameMatch, VitalKind,
+    VitalUnit,
 };
 use crate::data::InputMode;
+use crate::frontend::gui::skin::SkinWidgetArt;
 use eframe::egui;
 
 const INDICATOR_IDS: &[&str] = &[
@@ -129,6 +131,10 @@ pub(in super::super) struct HotbarEditorState {
     new_bar_name: String,
     hotkey_capture_armed: bool,
     error: Option<String>,
+    /// Sheet-registration form ("Icon sheets" section).
+    new_sheet_name: String,
+    new_sheet_path: String,
+    new_sheet_cell: u32,
 }
 
 impl HotbarEditorState {
@@ -142,6 +148,9 @@ impl HotbarEditorState {
             new_bar_name: String::new(),
             hotkey_capture_armed: false,
             error: None,
+            new_sheet_name: String::new(),
+            new_sheet_path: String::new(),
+            new_sheet_cell: 64,
         }
     }
 }
@@ -219,6 +228,11 @@ impl VellumGuiApp {
         let mut load_bar: Option<(HotbarDef, bool)> = None;
         let mut delete_bar: Option<String> = None;
         let mut save_requested = false;
+        // (name, source path, cell) for the sheet-registration form.
+        let mut register_sheet_request: Option<(String, String, u32)> = None;
+        // Sprite lookups for icon pickers/previews; None without a skin.
+        let skin_art_arc = self.skin_state.widget_art();
+        let active_skin = self.skin_state.loaded_skin().map(str::to_owned);
 
         egui::Window::new("Hotbars")
             .id(egui::Id::new("gui_hotbar_editor"))
@@ -340,6 +354,24 @@ impl VellumGuiApp {
                         ui.horizontal_wrapped(|ui| {
                             ui.weak("Preview:");
                             for b in &preview {
+                                // Icon faces preview exactly like the widget.
+                                let sprite = if b.icon_mode != IconMode::Text {
+                                    b.icon.as_ref().and_then(|icon| {
+                                        skin_art_arc.as_deref().and_then(|art| {
+                                            art.sheet_cell(
+                                                &icon.sheet,
+                                                icon.cell,
+                                                icon.grayscale || b.dim,
+                                            )
+                                        })
+                                    })
+                                } else {
+                                    None
+                                };
+                                if let Some((texture, uv)) = sprite {
+                                    let _ = Self::draw_icon_button(ui, b, texture, uv);
+                                    continue;
+                                }
                                 let text = match b.countdown_secs {
                                     Some(s) if s > 0 => format!("{}  {}s", b.label, s),
                                     _ => b.label.clone(),
@@ -596,7 +628,40 @@ impl VellumGuiApp {
                                         }
                                     });
                                     ui.end_row();
+
+                                    ui.label("Face");
+                                    ui.horizontal(|ui| {
+                                        for (mode, text) in [
+                                            (IconMode::Text, "Text"),
+                                            (IconMode::Icon, "Icon"),
+                                            (IconMode::IconAndLabel, "Icon + label"),
+                                        ] {
+                                            if ui
+                                                .selectable_label(
+                                                    button.icon_mode == mode,
+                                                    text,
+                                                )
+                                                .clicked()
+                                                && button.icon_mode != mode
+                                            {
+                                                button.icon_mode = mode;
+                                                changed = true;
+                                            }
+                                        }
+                                    });
+                                    ui.end_row();
                                 });
+
+                            if button.icon_mode != IconMode::Text
+                                || button.icon.is_some()
+                            {
+                                changed |= render_icon_editor(
+                                    ui,
+                                    "button_icon",
+                                    &mut button.icon,
+                                    skin_art_arc.as_deref(),
+                                );
+                            }
 
                             if let Some(owner) = &conflict_owner {
                                 ui.colored_label(
@@ -609,9 +674,20 @@ impl VellumGuiApp {
                             }
 
                             ui.separator();
-                            changed |= render_countdown_editor(ui, button, &suggestions);
+                            changed |= render_countdown_editor(
+                                ui,
+                                "hotbar_countdown",
+                                "Countdown overlay",
+                                &mut button.countdown,
+                                &suggestions,
+                            );
                             ui.separator();
-                            changed |= render_states_editor(ui, button, &suggestions);
+                            changed |= render_states_editor(
+                                ui,
+                                button,
+                                &suggestions,
+                                skin_art_arc.as_deref(),
+                            );
 
                             if changed {
                                 state.dirty = true;
@@ -619,6 +695,64 @@ impl VellumGuiApp {
                         });
                     });
                 });
+
+                // ---- Icon sheets: registry + no-TOML registration --------
+                ui.separator();
+                egui::CollapsingHeader::new("Icon sheets (active skin)")
+                    .id_salt("hotbar_sheets_section")
+                    .show(ui, |ui| {
+                        let Some(skin) = active_skin.as_deref() else {
+                            ui.weak(
+                                "No skin active - icons need one. Enable a skin \
+                                 under Settings > Skins, then register sheets here.",
+                            );
+                            return;
+                        };
+                        ui.weak(format!(
+                            "Sheets are tiled into square cells (barbar-style), \
+                             indexed 1-based left to right. Stored in skin '{}'.",
+                            skin
+                        ));
+                        if let Some(art) = skin_art_arc.as_deref() {
+                            for name in art.sheet_names() {
+                                let cells = art
+                                    .sheet_cell_count(&name)
+                                    .map(|n| format!("{} cells", n))
+                                    .unwrap_or_default();
+                                ui.label(format!("• {}  ({})", name, cells));
+                            }
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label("Name:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.new_sheet_name)
+                                    .hint_text("rogue")
+                                    .desired_width(80.0),
+                            );
+                            ui.label("Image:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.new_sheet_path)
+                                    .hint_text(r"path\to\sheet.png")
+                                    .desired_width(220.0),
+                            );
+                            ui.label("cell px:");
+                            ui.add(
+                                egui::DragValue::new(&mut state.new_sheet_cell)
+                                    .range(8..=512),
+                            );
+                            if ui.button("Register").clicked() {
+                                register_sheet_request = Some((
+                                    state.new_sheet_name.trim().to_string(),
+                                    state.new_sheet_path.trim().to_string(),
+                                    state.new_sheet_cell,
+                                ));
+                            }
+                        });
+                        ui.weak(
+                            "Copies the image into the skin and records it in \
+                             skin.toml - no hand-editing needed.",
+                        );
+                    });
             });
 
         if let Some(name) = delete_bar {
@@ -660,6 +794,39 @@ impl VellumGuiApp {
             state.hotkey_capture_armed = false;
         }
 
+        if let Some((name, path, cell)) = register_sheet_request {
+            match active_skin.as_deref() {
+                Some(skin) => {
+                    match crate::frontend::gui::skin::register_sheet(
+                        skin,
+                        &name,
+                        std::path::Path::new(&path),
+                        cell,
+                    ) {
+                        Ok(()) => {
+                            // Rebuild textures/art now so the new sheet shows
+                            // up in pickers this frame, not a second later.
+                            self.skin_state.force_reload();
+                            self.app_core.add_system_message(&format!(
+                                "Icon sheet '{}' registered into skin '{}'.",
+                                name, skin
+                            ));
+                            state.new_sheet_name.clear();
+                            state.new_sheet_path.clear();
+                            state.error = None;
+                        }
+                        Err(err) => {
+                            state.error = Some(format!("Sheet registration: {}", err))
+                        }
+                    }
+                }
+                None => {
+                    state.error =
+                        Some("No active skin to register the sheet into.".to_string())
+                }
+            }
+        }
+
         if save_requested {
             if let Some(working) = &state.working {
                 let character = self.app_core.config.character.clone();
@@ -688,44 +855,48 @@ impl VellumGuiApp {
     }
 }
 
-/// Countdown source section of the button form. Returns true when edited.
+/// Countdown source editor, shared by the button form and per-state cards
+/// (a state's source replaces the button's while active). Returns true
+/// when edited.
 fn render_countdown_editor(
     ui: &mut egui::Ui,
-    button: &mut HotbarButton,
+    id: &str,
+    heading: &str,
+    countdown: &mut Option<HotbarCountdownSource>,
     suggestions: &std::collections::HashMap<&'static str, Vec<String>>,
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.strong("Countdown overlay");
-        let current = match &button.countdown {
+        ui.strong(heading);
+        let current = match countdown {
             None => "None",
             Some(HotbarCountdownSource::Roundtime) => "Roundtime",
             Some(HotbarCountdownSource::Casttime) => "Casttime",
             Some(HotbarCountdownSource::Effect { .. }) => "Effect",
         };
-        egui::ComboBox::from_id_salt("hotbar_countdown_source")
+        egui::ComboBox::from_id_salt(format!("{id}_source"))
             .selected_text(current)
             .show_ui(ui, |ui| {
                 if ui.selectable_label(current == "None", "None").clicked() {
-                    button.countdown = None;
+                    *countdown = None;
                     changed = true;
                 }
                 if ui
                     .selectable_label(current == "Roundtime", "Roundtime")
                     .clicked()
                 {
-                    button.countdown = Some(HotbarCountdownSource::Roundtime);
+                    *countdown = Some(HotbarCountdownSource::Roundtime);
                     changed = true;
                 }
                 if ui
                     .selectable_label(current == "Casttime", "Casttime")
                     .clicked()
                 {
-                    button.countdown = Some(HotbarCountdownSource::Casttime);
+                    *countdown = Some(HotbarCountdownSource::Casttime);
                     changed = true;
                 }
                 if ui.selectable_label(current == "Effect", "Effect").clicked() {
-                    button.countdown = Some(HotbarCountdownSource::Effect {
+                    *countdown = Some(HotbarCountdownSource::Effect {
                         category: EffectCategory::Cooldowns,
                         name: String::new(),
                         name_match: NameMatch::Exact,
@@ -739,12 +910,13 @@ fn render_countdown_editor(
         category,
         name,
         name_match,
-    }) = &mut button.countdown
+    }) = countdown
     {
         ui.horizontal(|ui| {
-            changed |= category_combo(ui, "hotbar_countdown_cat", category);
-            changed |= effect_name_field(ui, "hotbar_countdown_name", name, category, suggestions);
-            changed |= match_combo(ui, "hotbar_countdown_match", name_match);
+            changed |= category_combo(ui, &format!("{id}_cat"), category);
+            changed |=
+                effect_name_field(ui, &format!("{id}_name"), name, category, suggestions);
+            changed |= match_combo(ui, &format!("{id}_match"), name_match);
         });
     }
     changed
@@ -755,6 +927,7 @@ fn render_states_editor(
     ui: &mut egui::Ui,
     button: &mut HotbarButton,
     suggestions: &std::collections::HashMap<&'static str, Vec<String>>,
+    skin_art: Option<&SkinWidgetArt>,
 ) -> bool {
     let mut changed = false;
 
@@ -803,7 +976,19 @@ fn render_states_editor(
                 suggestions,
             );
             ui.label("Style while active:");
-            changed |= render_style_editor(ui, &format!("state{}_style", idx), &mut hb_state.style);
+            changed |= render_style_editor(
+                ui,
+                &format!("state{}_style", idx),
+                &mut hb_state.style,
+                skin_art,
+            );
+            changed |= render_countdown_editor(
+                ui,
+                &format!("state{}_countdown", idx),
+                "Countdown while active",
+                &mut hb_state.countdown,
+                suggestions,
+            );
         });
     }
 
@@ -835,7 +1020,7 @@ fn render_states_editor(
         changed = true;
     }
     if let Some(style) = &mut button.default_style {
-        changed |= render_style_editor(ui, "default_style", style);
+        changed |= render_style_editor(ui, "default_style", style, skin_art);
     }
 
     changed
@@ -1175,8 +1360,185 @@ fn cmp_combo(ui: &mut egui::Ui, id: &str, cmp: &mut HotbarCmp) -> bool {
     changed
 }
 
+/// Icon reference editor: enable checkbox, sheet picker, cell spinner with
+/// a clickable cell-grid, grayscale, and border controls. Shared by the
+/// button form and state style cards. Returns true when edited.
+fn render_icon_editor(
+    ui: &mut egui::Ui,
+    id: &str,
+    icon: &mut Option<HotbarIcon>,
+    skin_art: Option<&SkinWidgetArt>,
+) -> bool {
+    let mut changed = false;
+    let sheet_names = skin_art.map(|art| art.sheet_names()).unwrap_or_default();
+
+    let mut enabled = icon.is_some();
+    ui.horizontal(|ui| {
+        if ui.checkbox(&mut enabled, "Icon").changed() {
+            *icon = enabled.then(|| HotbarIcon {
+                sheet: sheet_names.first().cloned().unwrap_or_default(),
+                cell: 1,
+                ..Default::default()
+            });
+            changed = true;
+        }
+        let Some(icon) = icon.as_mut() else {
+            if sheet_names.is_empty() {
+                ui.weak("(no icon sheets in the active skin - register one below)");
+            }
+            return;
+        };
+
+        egui::ComboBox::from_id_salt(format!("{id}_sheet"))
+            .selected_text(if icon.sheet.is_empty() {
+                "sheet...".to_string()
+            } else {
+                icon.sheet.clone()
+            })
+            .show_ui(ui, |ui| {
+                for name in &sheet_names {
+                    if ui
+                        .selectable_label(&icon.sheet == name, name)
+                        .clicked()
+                    {
+                        icon.sheet = name.clone();
+                        changed = true;
+                    }
+                }
+                if sheet_names.is_empty() {
+                    ui.weak("no sheets registered");
+                }
+            });
+
+        ui.label("cell:");
+        let max_cell = skin_art
+            .and_then(|art| art.sheet_cell_count(&icon.sheet))
+            .unwrap_or(u32::MAX)
+            .max(1);
+        let mut cell = icon.cell.max(1);
+        if ui
+            .add(egui::DragValue::new(&mut cell).range(1..=max_cell))
+            .changed()
+        {
+            icon.cell = cell;
+            changed = true;
+        }
+
+        changed |= ui
+            .checkbox(&mut icon.grayscale, "grayscale")
+            .on_hover_text("Desaturate the icon (e.g. a \"not ready\" look).")
+            .changed();
+
+        ui.label("border:");
+        let mut border = icon.border.clone().unwrap_or_default();
+        let before = border.clone();
+        color_field(ui, &mut border);
+        if border != before {
+            icon.border = (!border.trim().is_empty()).then(|| border.clone());
+            changed = true;
+        }
+        if icon.border.is_some() {
+            let mut width = icon.border_width.unwrap_or(2);
+            if ui
+                .add(egui::DragValue::new(&mut width).range(1..=10).suffix("px"))
+                .changed()
+            {
+                icon.border_width = Some(width);
+                changed = true;
+            }
+        }
+    });
+
+    // Clickable cell grid: barbar's "Browse Icons", inline. Collapsed by
+    // default so long sheets don't dominate the form.
+    if let (Some(icon), Some(art)) = (icon.as_mut(), skin_art) {
+        if let Some(count) = art.sheet_cell_count(&icon.sheet) {
+            egui::CollapsingHeader::new("Pick cell from sheet")
+                .id_salt(format!("{id}_grid"))
+                .show(ui, |ui| {
+                    changed |= cell_grid(ui, icon, art, count);
+                });
+        }
+    }
+    changed
+}
+
+/// The clickable cell grid for one sheet. Returns true when a cell is picked.
+fn cell_grid(
+    ui: &mut egui::Ui,
+    icon: &mut HotbarIcon,
+    art: &SkinWidgetArt,
+    count: u32,
+) -> bool {
+    const THUMB: f32 = 36.0;
+    const PER_ROW: u32 = 8;
+    let mut changed = false;
+    egui::ScrollArea::vertical()
+        .id_salt("hotbar_cell_grid_scroll")
+        .max_height(3.5 * (THUMB + 6.0))
+        .show(ui, |ui| {
+            let rows = count.div_ceil(PER_ROW);
+            for row in 0..rows {
+                ui.horizontal(|ui| {
+                    for col in 0..PER_ROW {
+                        let cell = row * PER_ROW + col + 1;
+                        if cell > count {
+                            break;
+                        }
+                        let Some((texture, uv)) =
+                            art.sheet_cell(&icon.sheet, cell, icon.grayscale)
+                        else {
+                            continue;
+                        };
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(THUMB, THUMB),
+                            egui::Sense::click(),
+                        );
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().image(
+                                texture.texture,
+                                rect,
+                                uv,
+                                egui::Color32::WHITE,
+                            );
+                            let selected = icon.cell == cell;
+                            if selected || response.hovered() {
+                                let stroke = if selected {
+                                    egui::Stroke::new(
+                                        2.0,
+                                        ui.visuals().selection.stroke.color,
+                                    )
+                                } else {
+                                    ui.visuals().widgets.hovered.bg_stroke
+                                };
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    2.0,
+                                    stroke,
+                                    egui::StrokeKind::Inside,
+                                );
+                            }
+                        }
+                        let response =
+                            response.on_hover_text(format!("cell {}", cell));
+                        if response.clicked() && icon.cell != cell {
+                            icon.cell = cell;
+                            changed = true;
+                        }
+                    }
+                });
+            }
+        });
+    changed
+}
+
 /// Style fields: label override, fg/bg colors, dim. Returns true when edited.
-fn render_style_editor(ui: &mut egui::Ui, id: &str, style: &mut HotbarStyle) -> bool {
+fn render_style_editor(
+    ui: &mut egui::Ui,
+    id: &str,
+    style: &mut HotbarStyle,
+    skin_art: Option<&SkinWidgetArt>,
+) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label("Label:");
@@ -1213,6 +1575,7 @@ fn render_style_editor(ui: &mut egui::Ui, id: &str, style: &mut HotbarStyle) -> 
 
         changed |= ui.checkbox(&mut style.dim, "dim").changed();
     });
-    let _ = id;
+    // Icon override while this state is active (GUI only).
+    changed |= render_icon_editor(ui, &format!("{id}_icon"), &mut style.icon, skin_art);
     changed
 }

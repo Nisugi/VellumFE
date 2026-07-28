@@ -106,6 +106,15 @@ top→bottom — the barbar convention. The TUI always renders the text
 label; icons are ignored there, and the GUI falls back to text when no
 skin supplies the sheet.
 
+**The `.hotbars` editor does all of this without TOML:** the button form
+has a Face selector (Text / Icon / Icon + label), a sheet dropdown, a
+clickable "Pick cell from sheet" grid, grayscale/border controls, and the
+same icon controls on every state card. The editor's "Icon sheets"
+section registers a new sheet — give it a name and an image path and it
+copies the PNG into the skin and records it in skin.toml for you. Each
+state card also carries its own countdown source ("Countdown while
+active") that replaces the button-level one while the state matches.
+
 ```toml
 [[bars.buttons]]
 id = "hide"

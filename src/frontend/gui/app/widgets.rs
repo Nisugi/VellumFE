@@ -2644,7 +2644,8 @@ impl VellumGuiApp {
     /// Paint one icon-faced hotbar button: allocated click rect + painter
     /// image (the codebase's sprite idiom — no egui Image widget), with
     /// optional label, solid border, dim tint, and countdown overlay.
-    fn draw_icon_button(
+    /// Also used by the hotbar editor's live preview.
+    pub(super) fn draw_icon_button(
         ui: &mut egui::Ui,
         button: &crate::core::hotbar::ResolvedHotbarButton,
         texture: crate::frontend::gui::skin::SkinTexture,
