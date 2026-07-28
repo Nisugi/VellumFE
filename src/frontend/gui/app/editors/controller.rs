@@ -34,6 +34,15 @@ const BACK_ANCHORS: [&str; 9] = [
     "none",
 ];
 
+/// How the Wheels tab presents the slice buffer: the drag-and-drop canvas
+/// (default) or the classic numeric row list (power/fallback path). Both
+/// edit the same buffer, so switching modes never loses work.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WheelViewMode {
+    Visual,
+    Numeric,
+}
+
 pub(in super::super) struct ControllerEditorState {
     form: Option<ControllerFormState>,
     tab: ControllerTab,
@@ -45,6 +54,8 @@ pub(in super::super) struct ControllerEditorState {
     wheel_status: Option<String>,
     /// Unsaved working copy of the selected wheel's button/stick meta.
     wheel_meta_buffer: Option<crate::config::WheelMeta>,
+    /// Visual designer canvas vs numeric row list.
+    wheel_view_mode: WheelViewMode,
 }
 
 impl ControllerEditorState {
@@ -57,6 +68,7 @@ impl ControllerEditorState {
             wheel_new_name: String::new(),
             wheel_status: None,
             wheel_meta_buffer: None,
+            wheel_view_mode: WheelViewMode::Visual,
         }
     }
 
@@ -1056,17 +1068,33 @@ fn render_wheels_tab(
         .saturating_sub(5)
         .max(5);
 
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut state.wheel_view_mode, WheelViewMode::Visual, "Visual")
+            .on_hover_text("Drag-and-drop wheel canvas.");
+        ui.selectable_value(&mut state.wheel_view_mode, WheelViewMode::Numeric, "Numeric")
+            .on_hover_text("Every slice as an editable row; exact numbers.");
+    });
+
     let mut ops: Vec<WheelOp> = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("controller_wheel_slices")
-        .auto_shrink([false, false])
-        .max_height((ui.available_height() - 60.0).max(60.0))
-        .show(ui, |ui| {
-            render_slice_rows(ui, buffer, &mut Vec::new(), &mut ops, inner_ceiling);
-            if ui.button("+ Add slice").clicked() {
-                ops.push(WheelOp::AddChild(Vec::new()));
-            }
-        });
+    match state.wheel_view_mode {
+        WheelViewMode::Numeric => {
+            egui::ScrollArea::vertical()
+                .id_salt("controller_wheel_slices")
+                .auto_shrink([false, false])
+                .max_height((ui.available_height() - 60.0).max(60.0))
+                .show(ui, |ui| {
+                    render_slice_rows(ui, buffer, &mut Vec::new(), &mut ops, inner_ceiling);
+                    if ui.button("+ Add slice").clicked() {
+                        ops.push(WheelOp::AddChild(Vec::new()));
+                    }
+                });
+        }
+        WheelViewMode::Visual => {
+            // Canvas lands in the next phase; until then the numeric list is
+            // one click away and edits the same buffer.
+            ui.weak("Visual designer under construction — use Numeric for now.");
+        }
+    }
     for op in ops {
         apply_wheel_op(buffer, op);
     }
