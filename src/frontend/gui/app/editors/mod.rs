@@ -67,22 +67,23 @@ impl VellumGuiApp {
     }
 }
 
-/// Hex/name text field with a live swatch and an egui color picker.
+/// Click-to-pick color swatch plus a hex/name text field. The swatch is
+/// always shown — even when the field is empty — so picking a color never
+/// requires typing a code; the picker writes hex back into the field.
 fn color_field(ui: &mut egui::Ui, value: &mut String) {
     ui.horizontal(|ui| {
+        theme::color_picker_swatch(ui, value);
         ui.add(
             egui::TextEdit::singleline(value)
                 .desired_width(110.0)
                 .hint_text("color"),
         )
-        .on_hover_text("Color: a hex value like #b0503a or a palette name.");
-        if let Some(color) = theme::resolve_color(value) {
-            let mut rgb = [color.r(), color.g(), color.b()];
-            if ui.color_edit_button_srgb(&mut rgb).changed() {
-                *value = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
-            }
-        } else if !value.trim().is_empty() {
-            ui.weak("?");
+        .on_hover_text(
+            "Optional: type a hex value like #b0503a or a palette name \
+             instead of using the picker.",
+        );
+        if theme::resolve_color(value).is_none() && !value.trim().is_empty() {
+            ui.weak("?").on_hover_text("Unknown color name.");
         }
     });
 }

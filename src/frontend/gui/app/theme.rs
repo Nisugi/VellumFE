@@ -17,6 +17,25 @@ pub(super) fn resolve_color(input: &str) -> Option<Color32> {
     parse_color_flexible(input).and_then(|hex| super::widgets::parse_hex_color(&hex))
 }
 
+/// Click-to-pick swatch for a config color string: shows the current color
+/// (name or hex) and opens egui's color picker on click, writing `#rrggbb`
+/// back into `value`. Pair with a text field for those who want to type a
+/// name; nobody is required to know color codes. Returns true when the
+/// picker changed the value.
+pub(super) fn color_picker_swatch(ui: &mut egui::Ui, value: &mut String) -> bool {
+    let current = resolve_color(value).unwrap_or(Color32::GRAY);
+    let mut rgb = [current.r(), current.g(), current.b()];
+    let response = ui
+        .color_edit_button_srgb(&mut rgb)
+        .on_hover_text("Pick a color");
+    if response.changed() {
+        *value = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
+        true
+    } else {
+        false
+    }
+}
+
 /// Build egui visuals from the shared application theme.
 pub(super) fn visuals_from_theme(theme: &AppTheme) -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();

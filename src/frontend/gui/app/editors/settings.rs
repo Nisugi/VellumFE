@@ -695,7 +695,9 @@ impl VellumGuiApp {
                                                         .hint_text("Wehnimer's")
                                                         .desired_width(140.0),
                                                 );
-                                                ui.label("→");
+                                                // ▸ not →: U+2192 is tofu in
+                                                // the bundled fallback fonts.
+                                                ui.label("▸");
                                                 ui.add(
                                                     egui::TextEdit::singleline(replacement)
                                                         .hint_text("Wenimers")
