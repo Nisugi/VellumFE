@@ -408,12 +408,7 @@ impl HotbarEditor {
                     id,
                     label: "New".to_string(),
                     command: String::new(),
-                    hotkey: None,
-                    tooltip: None,
-                    category: None,
-                    countdown: None,
-                    states: Vec::new(),
-                    default_style: None,
+                    ..Default::default()
                 });
                 self.selected_button = working.buttons.len() - 1;
                 self.form = Some(ButtonForm::from_button(

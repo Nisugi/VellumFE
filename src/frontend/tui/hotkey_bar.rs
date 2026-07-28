@@ -309,6 +309,8 @@ mod tests {
             bg: None,
             dim: false,
             countdown_secs: None,
+            icon: None,
+            icon_mode: crate::config::IconMode::Text,
         }
     }
 

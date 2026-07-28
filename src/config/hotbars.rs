@@ -63,6 +63,66 @@ pub struct HotbarButton {
     /// Appearance when no state matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_style: Option<HotbarStyle>,
+    /// Base icon (GUI only; TUI always renders the text label). States may
+    /// override via their style's `icon`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HotbarIcon>,
+    /// How the GUI draws the button: text (default), icon only, or both.
+    #[serde(default)]
+    pub icon_mode: IconMode,
+}
+
+/// A sprite-sheet cell reference plus optional visual effects, barbar-style.
+/// Sheets are registered in the active skin's `[sheets]` table and sliced
+/// into fixed-size cells indexed 1-based, left→right then top→bottom.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HotbarIcon {
+    /// Sheet name from the active skin's `[sheets]` table.
+    pub sheet: String,
+    /// 1-based cell index into the sheet.
+    pub cell: u32,
+    /// Render the cell desaturated (barbar's `gs` variant).
+    #[serde(default)]
+    pub grayscale: bool,
+    /// Solid border color drawn over the icon (hex or palette name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+    /// Border width in pixels (1-10); defaults to 2 when `border` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_width: Option<u8>,
+    /// Gradient end color; when set the border blends border→border_end
+    /// along `border_dir` (barbar's cg variant, drawn not baked).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_end: Option<String>,
+    /// Gradient direction; only meaningful with `border_end`.
+    #[serde(default)]
+    pub border_dir: GradientDir,
+}
+
+/// Gradient direction for two-color icon borders (barbar's cg dirs:
+/// h/v/d/b/r/s).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientDir {
+    #[default]
+    Horizontal,
+    Vertical,
+    /// Top-left toward bottom-right (barbar `d`).
+    DiagonalDown,
+    /// Bottom-left toward top-right (barbar `b`).
+    DiagonalUp,
+    Radial,
+    Square,
+}
+
+/// How the GUI renders a button's face. TUI ignores this (text only).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IconMode {
+    #[default]
+    Text,
+    Icon,
+    IconAndLabel,
 }
 
 /// Where a button's countdown overlay gets its remaining seconds.
@@ -85,6 +145,16 @@ pub struct HotbarButtonState {
     pub when: HotbarCondition,
     #[serde(default)]
     pub style: HotbarStyle,
+    /// Per-state countdown override (barbar-style state timers). When the
+    /// state is active this replaces the button-level `countdown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub countdown: Option<HotbarCountdownSource>,
+    /// Per-state command override (barbar-style): sent instead of the
+    /// button's command while this state is active. Plain literal text —
+    /// dynamic behavior belongs in the command itself (e.g. `;eq ...`,
+    /// which Lich intercepts and evaluates).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// Appearance overrides; unset fields fall through to the button's
@@ -99,6 +169,10 @@ pub struct HotbarStyle {
     pub bg: Option<String>,
     #[serde(default)]
     pub dim: bool,
+    /// Icon override for this state (GUI only); falls through to the
+    /// button-level icon when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HotbarIcon>,
 }
 
 /// Structured condition vocabulary. Editors build these from dropdowns and
@@ -151,6 +225,11 @@ pub enum HotbarCondition {
         #[serde(default)]
         unit: VitalUnit,
     },
+    /// The bundled spell table (effect-list.xml) lists static costs for
+    /// this spell number and current absolute vitals cover them. Fails
+    /// closed: unknown numbers, formula costs, and missing vitals data
+    /// all evaluate false. No Lich required.
+    SpellAffordable { number: u16 },
 }
 
 fn default_true() -> bool {
@@ -493,6 +572,69 @@ dim = true
         let serialized = toml::to_string_pretty(&config).expect("serialize");
         let reparsed: HotbarsConfig = toml::from_str(&serialized).expect("reparse");
         assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn icon_fields_parse_and_roundtrip() {
+        let toml_src = r##"
+            [[bars]]
+            name = "iconbar"
+            [[bars.buttons]]
+            id = "hide"
+            label = "Hide"
+            command = "hide"
+            icon_mode = "icon_and_label"
+            [bars.buttons.icon]
+            sheet = "rogue"
+            cell = 5
+            border = "#00ff00"
+            border_width = 3
+            border_end = "#004400"
+            border_dir = "radial"
+            [[bars.buttons.states]]
+            command = ";eq Spell[906].force_incant"
+            [bars.buttons.states.when]
+            type = "rt_active"
+            [bars.buttons.states.style]
+            dim = true
+            [bars.buttons.states.style.icon]
+            sheet = "rogue"
+            cell = 6
+            grayscale = true
+            [bars.buttons.states.countdown]
+            source = "roundtime"
+        "##;
+        let config: HotbarsConfig = toml::from_str(toml_src).expect("parse");
+        let button = &config.bars[0].buttons[0];
+        assert_eq!(button.icon_mode, IconMode::IconAndLabel);
+        let icon = button.icon.as_ref().expect("button icon");
+        assert_eq!((icon.sheet.as_str(), icon.cell), ("rogue", 5));
+        assert!(!icon.grayscale);
+        assert_eq!(icon.border.as_deref(), Some("#00ff00"));
+        assert_eq!(icon.border_width, Some(3));
+        assert_eq!(icon.border_end.as_deref(), Some("#004400"));
+        assert_eq!(icon.border_dir, GradientDir::Radial);
+        let state = &button.states[0];
+        let state_icon = state.style.icon.as_ref().expect("state icon");
+        assert_eq!((state_icon.cell, state_icon.grayscale), (6, true));
+        assert_eq!(state_icon.border_dir, GradientDir::Horizontal); // default
+        assert!(matches!(
+            state.countdown,
+            Some(HotbarCountdownSource::Roundtime)
+        ));
+        assert_eq!(
+            state.command.as_deref(),
+            Some(";eq Spell[906].force_incant")
+        );
+
+        // Round-trips losslessly like the rest of the schema.
+        let serialized = toml::to_string_pretty(&config).expect("serialize");
+        let reparsed: HotbarsConfig = toml::from_str(&serialized).expect("reparse");
+        assert_eq!(config, reparsed);
+
+        // Old configs without icon fields default to text mode (back-compat
+        // also covered by FULL_EXAMPLE above).
+        assert_eq!(IconMode::default(), IconMode::Text);
     }
 
     #[test]

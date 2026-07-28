@@ -52,12 +52,32 @@ pub struct SkinManifest {
     /// the dashboard and indicator widgets.
     #[serde(default)]
     pub icons: HashMap<String, String>,
+    /// Icon sprite sheets for hotbar buttons, keyed by sheet name. Each is
+    /// an image tiled into fixed-size cells (barbar-style: no padding,
+    /// indexed 1-based left→right then top→bottom).
+    #[serde(default)]
+    pub sheets: HashMap<String, SheetSpec>,
     /// Sprite compass replacing the vector rose.
     #[serde(default)]
     pub compass: CompassSkin,
     /// Sprite paperdoll replacing the vector injury doll.
     #[serde(default)]
     pub injury_doll: InjuryDollSkin,
+}
+
+/// One hotbar icon sprite sheet: an image path (relative to the skin dir)
+/// tiled into square cells with no padding.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SheetSpec {
+    /// Image path, relative to the skin directory (absolute allowed).
+    pub path: String,
+    /// Cell edge in pixels; barbar's convention is 64.
+    #[serde(default = "default_sheet_cell")]
+    pub cell: u32,
+}
+
+fn default_sheet_cell() -> u32 {
+    64
 }
 
 /// Sprite compass: a full-square rose image plus one full-square overlay
@@ -367,6 +387,16 @@ description = ""
 # diseased = "icons/diseased.png"
 # joined = "icons/joined.png"
 
+# Hotbar icon sprite sheets: images tiled into fixed-size square cells with
+# no padding, indexed 1-based left-to-right then top-to-bottom (the barbar
+# convention). Hotbar buttons reference them as
+#   [bars.buttons.icon] sheet = "<name>", cell = <n>
+# in hotbars.toml. "cell" below is the cell edge in pixels (default 64).
+#
+# [sheets.rogue]
+# path = "icons/rogue.png"
+# cell = 64
+
 # ---- Compass ----------------------------------------------------------------
 # Author the rose and every overlay on the same canvas size; each overlay
 # draws on top of the rose only while that exit is available. The hub is
@@ -451,6 +481,32 @@ pub fn load_manifest(name: &str) -> anyhow::Result<(SkinManifest, PathBuf)> {
     let manifest: SkinManifest = toml::from_str(&contents)
         .map_err(|err| anyhow::anyhow!("invalid {}: {}", manifest_path.display(), err))?;
     Ok((manifest, root))
+}
+
+/// Load the shared hotbar icon sheets: `global/icons/icons.toml`, a bare
+/// `[sheets]` table in the same format as skin.toml. Available to every
+/// skin and with no skin active. Returns the sheets plus the shared
+/// directory (manifest paths are relative to it); a missing manifest is
+/// just "no shared sheets".
+pub fn load_global_sheets() -> anyhow::Result<(HashMap<String, SheetSpec>, PathBuf)> {
+    let root = crate::config::Config::global_icons_dir()?;
+    let manifest_path = root.join("icons.toml");
+    let contents = match std::fs::read_to_string(&manifest_path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((HashMap::new(), root));
+        }
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "cannot read {}: {}",
+                manifest_path.display(),
+                err
+            ));
+        }
+    };
+    let manifest: SkinManifest = toml::from_str(&contents)
+        .map_err(|err| anyhow::anyhow!("invalid {}: {}", manifest_path.display(), err))?;
+    Ok((manifest.sheets, root))
 }
 
 /// Skin directory names that contain a skin.toml, sorted.

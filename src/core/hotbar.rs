@@ -30,6 +30,11 @@ pub struct ResolvedHotbarButton {
     /// Seconds remaining for the countdown overlay; None or <= 0 means
     /// no overlay.
     pub countdown_secs: Option<i64>,
+    /// Icon to draw (GUI only; TUI ignores): the active state's override,
+    /// else the button's base icon.
+    pub icon: Option<crate::config::HotbarIcon>,
+    /// How the GUI draws the face (text / icon / icon+label).
+    pub icon_mode: crate::config::IconMode,
 }
 
 /// Resolve every button on a bar against the current game state.
@@ -53,17 +58,29 @@ pub fn resolve_bar(bar: &HotbarDef, gs: &GameState, now_server: i64) -> Vec<Reso
             ResolvedHotbarButton {
                 id: button.id.clone(),
                 label: pick(|s| s.label.clone()).unwrap_or_else(|| button.label.clone()),
-                command: button.command.clone(),
+                // Active state's command override wins (literal text; Lich
+                // evaluates `;eq ...` commands itself).
+                command: matched
+                    .and_then(|s| s.command.clone())
+                    .unwrap_or_else(|| button.command.clone()),
                 tooltip: button.tooltip.clone(),
                 hotkey: button.hotkey.clone(),
                 fg: pick(|s| s.fg.clone()),
                 bg: pick(|s| s.bg.clone()),
                 dim: style.map(|s| s.dim).unwrap_or(false)
                     || (style.is_none() && default_style.map(|s| s.dim).unwrap_or(false)),
-                countdown_secs: button
-                    .countdown
-                    .as_ref()
+                // Active state's countdown wins (barbar-style per-state
+                // timers); fall back to the button-level source.
+                countdown_secs: matched
+                    .and_then(|s| s.countdown.as_ref())
+                    .or(button.countdown.as_ref())
                     .and_then(|src| countdown_secs(src, gs, now_server)),
+                // State icon override, else default_style's, else the button's.
+                icon: style
+                    .and_then(|s| s.icon.clone())
+                    .or_else(|| default_style.and_then(|s| s.icon.clone()))
+                    .or_else(|| button.icon.clone()),
+                icon_mode: button.icon_mode,
             }
         })
         .collect()
@@ -113,7 +130,30 @@ pub fn eval_condition(cond: &HotbarCondition, gs: &GameState, now_server: i64) -
         } => vital_value(gs, *vital, *unit)
             .map(|v| cmp.eval(v, *value as i64))
             .unwrap_or(false),
+        HotbarCondition::SpellAffordable { number } => spell_affordable(gs, *number),
     }
+}
+
+/// True when the bundled spell table knows this spell's static costs and
+/// the character's current absolute vitals (minivitals feed) cover them.
+/// Fails closed on unknown spells, formula costs, and vitals not yet seen
+/// (max == 0) — this is deliberately an approximation of Lich's
+/// `Spell[n].affordable?` without its feat/debuff adjustments.
+fn spell_affordable(gs: &GameState, number: u16) -> bool {
+    let Some(spell) = crate::core::spell_table::spell(number) else {
+        return false;
+    };
+    if spell.dynamic_cost {
+        return false;
+    }
+    let covers = |cost: Option<u16>, entry: &crate::core::state::VitalEntry| match cost {
+        None => true,
+        Some(c) => entry.max > 0 && entry.value >= c as u32,
+    };
+    let mv = &gs.minivitals;
+    covers(spell.mana, &mv.mana)
+        && covers(spell.stamina, &mv.stamina)
+        && covers(spell.spirit, &mv.spirit)
 }
 
 /// Seconds remaining for a countdown source; None when idle/absent.
@@ -402,17 +442,12 @@ mod tests {
             id: "b1".to_string(),
             label: "Base".to_string(),
             command: "look".to_string(),
-            hotkey: None,
-            tooltip: None,
-            category: None,
-            countdown: None,
             states,
             default_style: Some(HotbarStyle {
-                label: None,
                 fg: Some("#default".to_string()),
-                bg: None,
-                dim: false,
+                ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -430,10 +465,12 @@ mod tests {
                     when: HotbarCondition::RtActive,
                     style: HotbarStyle {
                         label: Some("InRT".to_string()),
-                        fg: None, // falls through to default_style fg
-                        bg: None,
+                        // fg unset: falls through to default_style fg
                         dim: true,
+                        ..Default::default()
                     },
+                    countdown: None,
+                    command: None,
                 },
                 HotbarButtonState {
                     when: HotbarCondition::Indicator {
@@ -444,6 +481,8 @@ mod tests {
                         label: Some("Hidden".to_string()),
                         ..Default::default()
                     },
+                    countdown: None,
+                    command: None,
                 },
             ])],
         };
@@ -465,6 +504,126 @@ mod tests {
     }
 
     #[test]
+    fn state_icon_overrides_button_icon_and_falls_back() {
+        use crate::config::{HotbarIcon, IconMode};
+
+        let icon = |cell: u32| HotbarIcon {
+            sheet: "sheet".to_string(),
+            cell,
+            ..Default::default()
+        };
+        let mut button = button_with_states(vec![HotbarButtonState {
+            when: HotbarCondition::RtActive,
+            style: HotbarStyle {
+                icon: Some(icon(9)),
+                ..Default::default()
+            },
+            countdown: None,
+            command: None,
+        }]);
+        button.icon = Some(icon(1));
+        button.icon_mode = IconMode::Icon;
+        let bar = HotbarDef {
+            name: "t".to_string(),
+            title: None,
+            buttons: vec![button],
+        };
+
+        // State active: its icon wins.
+        let mut gs = GameState::new();
+        gs.roundtime_end = Some(NOW + 5);
+        let resolved = resolve_bar(&bar, &gs, NOW);
+        assert_eq!(resolved[0].icon.as_ref().unwrap().cell, 9);
+        assert_eq!(resolved[0].icon_mode, IconMode::Icon);
+
+        // Idle: falls back to the button's base icon.
+        let idle = GameState::new();
+        let resolved = resolve_bar(&bar, &idle, NOW);
+        assert_eq!(resolved[0].icon.as_ref().unwrap().cell, 1);
+    }
+
+    #[test]
+    fn state_countdown_overrides_button_countdown() {
+        let mut button = button_with_states(vec![HotbarButtonState {
+            when: HotbarCondition::RtActive,
+            style: HotbarStyle::default(),
+            countdown: Some(HotbarCountdownSource::Roundtime),
+            command: None,
+        }]);
+        button.countdown = Some(HotbarCountdownSource::Casttime);
+        let bar = HotbarDef {
+            name: "t".to_string(),
+            title: None,
+            buttons: vec![button],
+        };
+
+        let mut gs = GameState::new();
+        gs.roundtime_end = Some(NOW + 7);
+        gs.casttime_end = Some(NOW + 30);
+
+        // State active: per-state roundtime source wins over casttime.
+        let resolved = resolve_bar(&bar, &gs, NOW);
+        assert_eq!(resolved[0].countdown_secs, Some(7));
+
+        // State inactive: button-level casttime source applies.
+        let mut idle = GameState::new();
+        idle.casttime_end = Some(NOW + 30);
+        let resolved = resolve_bar(&bar, &idle, NOW);
+        assert_eq!(resolved[0].countdown_secs, Some(30));
+    }
+
+    #[test]
+    fn spell_affordable_checks_static_costs_and_fails_closed() {
+        let cond = HotbarCondition::SpellAffordable { number: 101 }; // 1 mana
+
+        // No vitals data yet (max == 0): fail closed.
+        let mut gs = GameState::new();
+        assert!(!eval_condition(&cond, &gs, NOW));
+
+        // Enough mana: affordable.
+        gs.minivitals.update_vital("mana", 8, 54, "mana 8/54".to_string());
+        assert!(eval_condition(&cond, &gs, NOW));
+
+        // Not enough mana.
+        gs.minivitals.update_vital("mana", 0, 54, "mana 0/54".to_string());
+        assert!(!eval_condition(&cond, &gs, NOW));
+
+        // Unknown spell number: fail closed.
+        let unknown = HotbarCondition::SpellAffordable { number: 9999 };
+        assert!(!eval_condition(&unknown, &gs, NOW));
+
+        // Formula-cost spell (Song of Luck): fail closed even with mana.
+        gs.minivitals.update_vital("mana", 999, 999, String::new());
+        let dynamic = HotbarCondition::SpellAffordable { number: 1006 };
+        assert!(!eval_condition(&dynamic, &gs, NOW));
+    }
+
+    #[test]
+    fn state_command_overrides_button_command() {
+        let button = button_with_states(vec![HotbarButtonState {
+            when: HotbarCondition::RtActive,
+            style: HotbarStyle::default(),
+            countdown: None,
+            command: Some(";eq Spell[906].force_incant".to_string()),
+        }]);
+        let bar = HotbarDef {
+            name: "t".to_string(),
+            title: None,
+            buttons: vec![button],
+        };
+
+        // State active: its command replaces the button's.
+        let mut gs = GameState::new();
+        gs.roundtime_end = Some(NOW + 5);
+        let resolved = resolve_bar(&bar, &gs, NOW);
+        assert_eq!(resolved[0].command, ";eq Spell[906].force_incant");
+
+        // Idle: button command.
+        let resolved = resolve_bar(&bar, &GameState::new(), NOW);
+        assert_eq!(resolved[0].command, "look");
+    }
+
+    #[test]
     fn countdown_from_each_source() {
         let mut gs = gs_with_effect("Cooldowns", "Shadow Mastery", Some(NOW + 42));
         gs.roundtime_end = Some(NOW + 7);
@@ -477,12 +636,8 @@ mod tests {
                 id: "x".to_string(),
                 label: "X".to_string(),
                 command: "x".to_string(),
-                hotkey: None,
-                tooltip: None,
-                category: None,
                 countdown: Some(countdown),
-                states: vec![],
-                default_style: None,
+                ..Default::default()
             }],
         };
 

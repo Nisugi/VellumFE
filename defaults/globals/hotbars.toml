@@ -34,6 +34,21 @@
 #                                      cmp = "<"|"<="|">"|">=", value = N,
 #                                      unit = "percent"|"absolute" }
 #   all / any                        { conditions = [ ... ] }
+#
+# A state's style may set icon = { sheet, cell, ... } to swap the icon; a
+# state may carry its own [bars.buttons.states.countdown] that replaces the
+# button-level source while active, and a command = "..." that replaces the
+# button's command while active (literal text; `;eq ...` is evaluated by Lich).
+#
+# Optional icons (GUI only; the TUI always shows the text label):
+#   icon_mode = "text" (default) | "icon" | "icon_and_label"
+#   [bars.buttons.icon]
+#     sheet = "<name>"   - sprite sheet from the active skin's [sheets] table
+#     cell = N           - 1-based cell, left-to-right then top-to-bottom
+#     grayscale = false  - desaturate the cell
+#     border = "#rrggbb" - optional solid border, border_width = 1-10 px
+#     border_end = "#.." - gradient border toward this color; border_dir =
+#                          horizontal|vertical|diagonal_down|diagonal_up|radial|square
 
 [[bars]]
 name = "default"
