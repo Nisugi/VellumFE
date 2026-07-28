@@ -38,11 +38,18 @@ use crate::core::gameobj_data::GameObjData;
 /// silo already keys on. `id` is the exist id used in `#<id>` game
 /// commands (works on direct connections). `name` is article-free — the
 /// exact string `gameobj-data.xml` regexes and Lich's `GameObj#name` see.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `weight` is `None` on the today (Wrayth) text feeds, which don't carry
+/// it; the Saga `<inventoryManager>` feed fills it. Kept optional so the
+/// same struct serves both sources — see the two-feeds section of the
+/// registry plan.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GameItem {
     pub id: String,
     pub noun: String,
     pub name: String,
+    /// Item weight (Saga feed only; None on the text feeds).
+    pub weight: Option<u32>,
 }
 
 impl GameItem {
@@ -55,6 +62,7 @@ impl GameItem {
             id: id.into(),
             noun: noun.into(),
             name: name.into(),
+            weight: None,
         }
     }
 }
@@ -98,7 +106,20 @@ pub struct ItemStatus {
     pub registered: Option<bool>,
 }
 
+/// Open/locked state of a container. All-false is the default and the
+/// only thing the text feeds can report (via prose); the Saga feed sets
+/// them from `flags='closed,locked'`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContainerFlags {
+    pub closed: bool,
+    pub locked: bool,
+}
+
 /// A tracked container: identity, its game-command target, and contents.
+///
+/// `flags`/`capacity_in`/`capacity_on` are populated only by the Saga
+/// `<inventoryManager>` feed; the today (Wrayth) feeds leave them at
+/// default/None. See the two-feeds section of the registry plan.
 #[derive(Clone, Debug, Default)]
 pub struct Container {
     pub id: String,
@@ -109,6 +130,12 @@ pub struct Container {
     /// until a `<container>` tag is seen.
     pub target: Option<String>,
     pub items: Vec<GameItem>,
+    /// Open/locked state (Saga feed; default on text feeds).
+    pub flags: ContainerFlags,
+    /// Interior capacity (`in_max`) and surface capacity (`on_max`) from
+    /// the Saga feed; None on text feeds.
+    pub capacity_in: Option<u32>,
+    pub capacity_on: Option<u32>,
     /// Bumped on every contents change (widgets diff on this).
     pub generation: u64,
 }
@@ -175,6 +202,7 @@ impl GameObjects {
                     id,
                     items: Vec::new(),
                     generation: 0,
+                    ..Default::default()
                 },
             );
         }
@@ -253,6 +281,7 @@ impl GameObjects {
                     id: link.exist_id.clone(),
                     noun: link.noun.clone(),
                     name: seg.text.trim().to_string(),
+                    weight: None,
                 })
             })
             .collect();
@@ -491,6 +520,20 @@ mod tests {
         reg.set_ground(vec![]);
         assert!(reg.ground().is_empty());
         assert_eq!(reg.room_desc().len(), 1, "room_desc untouched");
+    }
+
+    #[test]
+    fn saga_metadata_fields_default_on_text_feeds() {
+        // The today (Wrayth) ingest leaves weight/flags/capacity at their
+        // defaults; the Saga feed will fill them. This pins that contract
+        // so the fields exist and default cleanly for both sources.
+        let mut reg = GameObjects::default();
+        reg.register_container("77".into(), "Bandolier".into(), Some("#77".into()));
+        reg.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
+        let c = reg.container("77").unwrap();
+        assert_eq!(c.flags, ContainerFlags::default());
+        assert!(c.capacity_in.is_none() && c.capacity_on.is_none());
+        assert!(c.items[0].weight.is_none());
     }
 
     #[test]

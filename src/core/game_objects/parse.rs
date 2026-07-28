@@ -46,6 +46,7 @@ pub fn parse_anchor(line: &str) -> Option<GameItem> {
         id,
         noun: decode_entities(&noun),
         name: decode_entities(&strip_inner_tags(&inner)).trim().to_string(),
+        weight: None,
     })
 }
 
