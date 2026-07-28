@@ -522,6 +522,55 @@ pub struct ContainerData {
     pub generation: u64,
 }
 
+/// One item parsed from a container's raw `<inv>` lines. The protocol
+/// keeps the article outside the anchor (`a <a ...>slim short sword</a>`),
+/// so `name` is article-free — the exact string gameobj-data regexes and
+/// Lich's `GameObj#name` see. `#<id>` targets the item unambiguously in
+/// game commands (works on direct connections too).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContainerItem {
+    pub id: String,
+    pub noun: String,
+    pub name: String,
+}
+
+impl ContainerData {
+    /// Items as (id, noun, name), skipping the "In the X:" header line
+    /// (recognized precisely: its anchor is the container itself) plus
+    /// the text-prefix forms the widget renderers already skip.
+    pub fn parsed_items(&self) -> Vec<ContainerItem> {
+        static ANCHOR: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let anchor = ANCHOR.get_or_init(|| {
+            regex::Regex::new(
+                r#"<a exist=["'](-?\d+)["'] noun=["']([^"']*)["']>([^<]*)</a>"#,
+            )
+            .expect("static anchor regex")
+        });
+
+        self.items
+            .iter()
+            .filter_map(|line| {
+                let lower = line.trim().to_lowercase();
+                if lower.starts_with("in the ")
+                    || lower == "nothing"
+                    || lower.is_empty()
+                {
+                    return None;
+                }
+                let caps = anchor.captures(line)?;
+                if &caps[1] == self.id.as_str() {
+                    return None; // header anchor = the container itself
+                }
+                Some(ContainerItem {
+                    id: caps[1].to_string(),
+                    noun: caps[2].to_string(),
+                    name: caps[3].trim().to_string(),
+                })
+            })
+            .collect()
+    }
+}
+
 impl TargetListState {
     /// Clear the current target
     pub fn clear(&mut self) {
@@ -1192,6 +1241,38 @@ mod tests {
         assert_eq!(cache.containers.len(), MAX_CONTAINERS);
         assert!(cache.get("id0").is_none());
         assert!(cache.get("overflow").is_some());
+    }
+
+    #[test]
+    fn parsed_items_extracts_links_and_skips_header() {
+        let container = ContainerData {
+            id: "225766824".to_string(),
+            title: "Bandolier".to_string(),
+            title_lower: "bandolier".to_string(),
+            items: vec![
+                // Header: the anchor is the container itself.
+                r#"In the <a exist="225766824" noun="bandolier">bandolier</a>:"#.to_string(),
+                // Article outside the anchor; name comes out clean.
+                r#" a <a exist="225766858" noun="sword">slim short sword</a>"#.to_string(),
+                // Single-quoted attributes and a "some" quantifier.
+                r#" some <a exist='225766999' noun='plate'>ornate silver plate</a>"#
+                    .to_string(),
+                "Nothing".to_string(),
+            ],
+            generation: 0,
+        };
+        let items = container.parsed_items();
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0],
+            ContainerItem {
+                id: "225766858".to_string(),
+                noun: "sword".to_string(),
+                name: "slim short sword".to_string(),
+            }
+        );
+        assert_eq!(items[1].id, "225766999");
+        assert_eq!(items[1].name, "ornate silver plate");
     }
 
     #[test]
