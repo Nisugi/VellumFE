@@ -1541,7 +1541,7 @@ impl WheelView {
     /// with uneven seats too. `back_anchor == "none"` skips Back entirely —
     /// the folder ring is just the real slices (rotated by `start`), and
     /// you ascend with the East/B accelerator.
-    fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str, start: f32) -> Self {
+    pub(super) fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str, start: f32) -> Self {
         let real_spans = || -> Vec<Option<f32>> { real.iter().map(|s| s.span).collect() };
 
         if !in_folder || back_anchor == "none" {

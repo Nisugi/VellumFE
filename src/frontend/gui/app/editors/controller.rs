@@ -1128,6 +1128,7 @@ fn render_wheels_tab(
                 &mut state.wheel_drag,
                 meta,
                 meta_save,
+                &config.controller_tuning.back_slice,
                 global_dz,
                 inner_ceiling,
                 &mut ops,
@@ -1285,6 +1286,7 @@ fn render_wheel_designer(
     drag: &mut WheelDesignerDrag,
     meta: &mut crate::config::WheelMeta,
     meta_save: &mut Option<(String, crate::config::WheelMeta)>,
+    back_anchor: &str,
     global_deadzone: f32,
     inner_ceiling: u8,
     ops: &mut Vec<WheelOp>,
@@ -1308,22 +1310,39 @@ fn render_wheel_designer(
         crumbs
     };
     ui.horizontal(|ui| {
+        let mut jump: Option<usize> = None;
         for (i, crumb) in crumbs.iter().enumerate() {
             if i > 0 {
                 ui.weak("▸");
             }
-            ui.strong(crumb);
+            if i + 1 == crumbs.len() {
+                ui.strong(crumb);
+            } else if ui.link(crumb).on_hover_text("Go back to this level").clicked() {
+                jump = Some(i);
+            }
+        }
+        if let Some(i) = jump {
+            designer_path.truncate(i);
+            *selected_slice = None;
         }
     });
 
+    let at_top = designer_path.is_empty();
     let level = wheel_slices_at(buffer, designer_path)
         .expect("designer path resolves after the fallback above");
-    let at_top = designer_path.is_empty();
-    // Folder levels lay out at start 0 (the runtime rotates them for the
-    // Back anchor, which the designer doesn't draw); only the top level
-    // takes the wheel's `start`.
-    let level_start =
-        |meta: &crate::config::WheelMeta| if at_top { meta.start.unwrap_or(0.0) } else { 0.0 };
+    // The display ring, built exactly as the runtime builds it: inside a
+    // folder the reserved Back seat is appended as a read-only ghost and
+    // the whole ring rotates to land it on its anchor, so the designer
+    // shows the geometry the wheel will actually have (`back_slice =
+    // "none"` folders have no ghost, also like the runtime).
+    let build_view = |level: &[WheelSlice], meta: &crate::config::WheelMeta| {
+        super::super::gamepad::WheelView::build(
+            level,
+            !at_top,
+            back_anchor,
+            meta.start.unwrap_or(0.0),
+        )
+    };
 
     // Canvas: full available width, wheel centered; leave room below for
     // the selected-slice panel and the Save row.
@@ -1359,43 +1378,50 @@ fn render_wheel_designer(
             let v = pos - center;
             let r = v.length();
             if r >= hub * 0.6 && r <= outer + 12.0 {
-                let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
-                let layout =
-                    super::super::gamepad::resolve_spans(&spans, level_start(meta));
+                let view = build_view(level, meta);
+                let real_len = level.len();
+                let has_ghost = view.layout.len() > real_len;
                 let aim = aim_of(pos);
-                // Nearest divider (the shared edge after each seat) within
-                // grab range.
-                let nearest = (level.len() >= 2)
-                    .then(|| {
-                        layout
-                            .seats
-                            .iter()
-                            .enumerate()
-                            .map(|(b, seat)| {
-                                let angle =
-                                    (seat.start_deg + seat.span_deg).rem_euclid(360.0);
-                                (b, super::super::gamepad::angular_gap(aim, angle))
-                            })
-                            .min_by(|a, b| a.1.total_cmp(&b.1))
+                // Nearest draggable divider (the shared edge after each
+                // seat) within grab range. The ghost Back seat's width is
+                // the runtime's to decide, so neither of its edges is
+                // draggable.
+                let draggable = |b: usize| {
+                    if has_ghost { b + 1 < real_len } else { real_len >= 2 }
+                };
+                let nearest = view
+                    .layout
+                    .seats
+                    .iter()
+                    .enumerate()
+                    .filter(|(b, _)| draggable(*b))
+                    .map(|(b, seat)| {
+                        let angle = (seat.start_deg + seat.span_deg).rem_euclid(360.0);
+                        (b, super::super::gamepad::angular_gap(aim, angle))
                     })
-                    .flatten()
+                    .min_by(|a, b| a.1.total_cmp(&b.1))
                     .filter(|(_, gap)| *gap <= 8.0);
                 if let Some((boundary, _)) = nearest {
-                    // Freeze the whole ring to concrete widths so the
+                    // Freeze the real slices to concrete widths so the
                     // drag edits predictable numbers (auto seats would
-                    // otherwise re-split under the pointer).
-                    materialize_spans(level, level_start(meta));
+                    // otherwise re-split under the pointer). A ghost Back
+                    // stays auto — its width is the remainder, exactly as
+                    // at runtime.
+                    materialize_spans(level, &view.layout);
                     *drag = WheelDesignerDrag::Divider { boundary, start_dirty: false };
                 } else if let Some(seat) =
-                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &layout)
+                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
                 {
-                    let floor = level[seat]
-                        .inner
-                        .map(|p| p as f32 / 100.0)
-                        .unwrap_or(global_deadzone);
-                    let floor_r = hub + (outer - hub) * floor;
-                    if (r - floor_r).abs() <= 10.0 {
-                        *drag = WheelDesignerDrag::InnerArc { slice: seat };
+                    // Aim floors belong to real slices only.
+                    if seat < real_len {
+                        let floor = level[seat]
+                            .inner
+                            .map(|p| p as f32 / 100.0)
+                            .unwrap_or(global_deadzone);
+                        let floor_r = hub + (outer - hub) * floor;
+                        if (r - floor_r).abs() <= 10.0 {
+                            *drag = WheelDesignerDrag::InnerArc { slice: seat };
+                        }
                     }
                 }
             }
@@ -1404,24 +1430,33 @@ fn render_wheel_designer(
     if let WheelDesignerDrag::Divider { boundary, start_dirty } = drag {
         if response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let old_start = level_start(meta);
-                let mut widths: Vec<f32> =
-                    level.iter().map(|s| s.span.unwrap_or(0.0)).collect();
-                let new_start =
-                    apply_divider_drag(&mut widths, old_start, *boundary, aim_of(pos));
-                for (slice, w) in level.iter_mut().zip(&widths) {
-                    slice.span = Some(*w);
-                }
-                // A trade touching seat 0 rotated the ring to keep the
-                // other dividers pinned. At the top level that rotation is
-                // real state (the wheel's `start`); in a folder the runtime
-                // pins seat 0's center at 0, so the rotation is discarded
-                // and those two dividers track the pointer at half speed —
-                // an honest preview beats a lying one.
-                if at_top && (new_start - old_start).abs() > 1e-4 {
-                    let norm = new_start.rem_euclid(360.0);
-                    meta.start = if norm.abs() < 1e-4 { None } else { Some(norm) };
-                    *start_dirty = true;
+                let view = build_view(level, meta);
+                if let Some(seat0) = view.layout.seats.first() {
+                    // The ring's effective rotation: seat 0's center — the
+                    // wheel's `start` at the top level, the Back-anchor
+                    // rotation inside a folder.
+                    let old_start = seat0.center_deg();
+                    let mut widths: Vec<f32> =
+                        view.layout.seats.iter().map(|s| s.span_deg).collect();
+                    let new_start =
+                        apply_divider_drag(&mut widths, old_start, *boundary, aim_of(pos));
+                    for (slice, w) in level.iter_mut().zip(&widths) {
+                        slice.span = Some(*w);
+                    }
+                    // A trade touching seat 0 rotates the ring to keep the
+                    // other dividers pinned. At the top level that rotation
+                    // is real state (the wheel's `start`). In folders it is
+                    // discarded: an anchored folder re-derives its rotation
+                    // from the Back anchor on rebuild, which cancels the
+                    // shift exactly; a `back_slice = "none"` folder shares
+                    // `start` with every other level, so its two seat-0
+                    // dividers track at half speed rather than rotating the
+                    // whole wheel from inside one folder.
+                    if at_top && (new_start - old_start).abs() > 1e-4 {
+                        let norm = new_start.rem_euclid(360.0);
+                        meta.start = if norm.abs() < 1e-4 { None } else { Some(norm) };
+                        *start_dirty = true;
+                    }
                 }
             }
         }
@@ -1463,8 +1498,7 @@ fn render_wheel_designer(
             ui.visuals().weak_text_color(),
         );
     } else {
-        let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
-        let layout = super::super::gamepad::resolve_spans(&spans, level_start(meta));
+        let view = build_view(level, meta);
         super::super::gamepad::paint_wheel_ring(
             &painter,
             ui.visuals(),
@@ -1472,8 +1506,8 @@ fn render_wheel_designer(
             outer,
             hub,
             label_radius,
-            level,
-            &layout,
+            &view.slices,
+            &view.layout,
             *selected_slice,
             global_deadzone,
         );
@@ -1486,17 +1520,40 @@ fn render_wheel_designer(
             ui.visuals().weak_text_color(),
         );
 
-        // Click on a wedge selects it; the hub or outside the rim clears
-        // the selection.
+        // Click on a wedge selects it; the hub, the rim's outside, and the
+        // ghost Back seat clear the selection.
         if response.clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let v = pos - center;
                 let r = v.length();
                 *selected_slice = if r >= hub && r <= outer {
-                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &layout)
+                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
+                        .filter(|&s| s < level.len())
                 } else {
                     None
                 };
+            }
+        }
+        // Double-click descends into a folder wedge; on the Back ghost it
+        // ascends — the wheel's own navigation, mirrored.
+        if response.double_clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let v = pos - center;
+                let r = v.length();
+                if r >= hub && r <= outer {
+                    match super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
+                    {
+                        Some(s) if s < level.len() && level[s].is_folder() => {
+                            designer_path.push(s);
+                            *selected_slice = None;
+                        }
+                        Some(s) if s >= level.len() => {
+                            designer_path.pop();
+                            *selected_slice = None;
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }
@@ -1540,13 +1597,18 @@ fn render_wheel_designer(
     }
 }
 
-/// Freeze every slice at this level to its resolved width (auto seats
-/// become explicit spans). Run once when a divider drag starts, so the
-/// drag trades concrete numbers across the whole ring instead of fighting
-/// the auto re-split; the numeric list shows the same frozen values live.
-fn materialize_spans(level: &mut [WheelSlice], start_deg: f32) {
-    let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
-    let layout = super::super::gamepad::resolve_spans(&spans, start_deg);
+/// Freeze every real slice at this level to its resolved width in the
+/// display layout (auto seats become explicit spans). Run once when a
+/// divider drag starts, so the drag trades concrete numbers across the
+/// whole ring instead of fighting the auto re-split; the numeric list
+/// shows the same frozen values live. The zip stops at the real slices,
+/// so a ghost Back seat stays auto — its width remains the remainder,
+/// exactly as at runtime — and the ring's geometry is unchanged by the
+/// freeze itself.
+fn materialize_spans(
+    level: &mut [WheelSlice],
+    layout: &super::super::gamepad::ResolvedLayout,
+) {
     for (slice, seat) in level.iter_mut().zip(&layout.seats) {
         slice.span = Some(seat.span_deg);
     }
@@ -1626,6 +1688,7 @@ fn apply_divider_drag(
 
 #[cfg(test)]
 mod designer_tests {
+    use super::super::super::gamepad;
     use super::*;
 
     /// Absolute divider angles implied by widths + start (aim convention,
@@ -1649,10 +1712,27 @@ mod designer_tests {
     #[test]
     fn materialize_freezes_autos_at_resolved_widths() {
         let mut level = vec![slice(None), slice(None), slice(Some(120.0)), slice(None)];
-        materialize_spans(&mut level, 0.0);
+        let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
+        let layout = gamepad::resolve_spans(&spans, 0.0);
+        materialize_spans(&mut level, &layout);
         let spans: Vec<f32> = level.iter().map(|s| s.span.unwrap()).collect();
         assert_eq!(spans, vec![80.0, 80.0, 120.0, 80.0]);
         assert!((spans.iter().sum::<f32>() - 360.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn folder_materialize_leaves_the_ghost_back_auto() {
+        // A 3-slice folder ring displays 4 seats (ghost Back appended).
+        let mut level = vec![slice(None), slice(None), slice(None)];
+        let view = gamepad::WheelView::build(&level, true, "down", 0.0);
+        assert_eq!(view.layout.len(), 4);
+        materialize_spans(&mut level, &view.layout);
+        let spans: Vec<f32> = level.iter().map(|s| s.span.unwrap()).collect();
+        assert_eq!(spans, vec![90.0, 90.0, 90.0]);
+        // The freeze must not move anything: rebuilding reproduces the
+        // identical ring, Back still owning the remainder at its anchor.
+        let after = gamepad::WheelView::build(&level, true, "down", 0.0);
+        assert_eq!(after.layout.seats, view.layout.seats);
     }
 
     #[test]
