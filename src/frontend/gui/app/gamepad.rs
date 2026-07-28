@@ -1442,6 +1442,41 @@ mod wheel_tests {
         }
     }
 
+    fn folder(label: &str, children: Vec<WheelSlice>) -> WheelSlice {
+        WheelSlice {
+            label: label.to_string(),
+            command: String::new(),
+            color: None,
+            slices: children,
+        }
+    }
+
+    /// A fresh wheel state as poll_gamepad opens it.
+    fn fresh_ui() -> WheelUi {
+        WheelUi {
+            key: String::new(),
+            path: Vec::new(),
+            aimed: None,
+            candidate: None,
+            candidate_since: None,
+            rearm_until_center: false,
+            peak_magnitude: 0.0,
+        }
+    }
+
+    /// The shipped default feel with a chosen fire mode: 50% dead zone,
+    /// 150 ms dwells, 90% edge threshold, 10% retract delta.
+    fn feel(fire_mode: FireMode) -> WheelTiming {
+        WheelTiming {
+            deadzone: 0.5,
+            aim_ms: 150,
+            nav_ms: 150,
+            fire_mode,
+            edge_threshold: 0.9,
+            retract_delta: 0.10,
+        }
+    }
+
     #[test]
     fn top_level_view_has_no_back_slice() {
         let real = vec![leaf("a"), leaf("b"), leaf("c")];
@@ -1550,6 +1585,233 @@ mod wheel_tests {
         // A hair above the boundary still holds (the epsilon is far smaller
         // than the 1% config granularity, so it won't fire early).
         assert!(!retract_should_fire(0.605, 0.70, 0.10));
+    }
+
+    // ---- whole-interaction scenarios against the extracted machine ----
+    //
+    // These drive wheel_aim_step / wheel_release_command / wheel_south_step
+    // across frames with a synthetic clock — the wheel's behavior without a
+    // controller in hand. Directions: (0,1)=up, (1,0)=right, (0,-1)=down.
+
+    use std::time::{Duration, Instant};
+
+    fn steps(t0: Instant, ms: u64) -> Instant {
+        t0 + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn scenario_release_dwell_commits_then_release_fires() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Frame 1: stick lands on seat 0 — candidate, no commit yet.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        assert_eq!((ui.candidate, ui.aimed, out.fire), (Some(0), None, None));
+        // Releasing mid-sweep (before the dwell) fires nothing.
+        assert_eq!(wheel_release_command(&ui, &view), None);
+
+        // Frame 2, 160 ms later: dwell elapsed — committed, still no fire.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 160));
+        assert_eq!((ui.aimed, out.fire), (Some(0), None));
+        // Release now fires the committed leaf.
+        assert_eq!(wheel_release_command(&ui, &view), Some("a".to_string()));
+    }
+
+    #[test]
+    fn scenario_sweeping_across_slices_never_commits() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Sweep seat 0 -> 1 -> 2, each hop under the 150 ms dwell: every
+        // hop restarts the clock, so nothing ever commits.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 1.0, 0.0, steps(t0, 100));
+        assert_eq!(ui.aimed, None);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, steps(t0, 200));
+        assert_eq!((ui.candidate, ui.aimed), (Some(2), None));
+        assert_eq!(wheel_release_command(&ui, &view), None);
+    }
+
+    #[test]
+    fn scenario_center_then_release_cancels() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Commit seat 0, then return to center: the commit is dropped, so
+        // releasing fires nothing (the cancel gesture).
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!(ui.aimed, Some(0));
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.0, steps(t0, 300));
+        assert_eq!(ui.aimed, None);
+        assert_eq!(wheel_release_command(&ui, &view), None);
+    }
+
+    #[test]
+    fn scenario_folder_descends_and_rearm_blocks_chaining() {
+        // Top level: [folder, leaf] — two seats, folder at the top.
+        let top = WheelView::build(
+            &[folder("f", vec![leaf("a"), leaf("b")]), leaf("x")],
+            false,
+            "down",
+        );
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Dwell the folder: path descends and the rearm latch goes up.
+        wheel_aim_step(&mut ui, &top, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &top, &t, 0.0, 1.0, steps(t0, 160));
+        assert_eq!(ui.path, vec![0]);
+        assert!(ui.rearm_until_center);
+
+        // Still fully deflected inside the folder ring: the latch blocks
+        // all dwell — no chained descend, no commit — for as long as the
+        // stick stays out.
+        let inner = WheelView::build(&[leaf("a"), leaf("b")], true, "down");
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 170));
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 600));
+        assert_eq!(ui.path, vec![0], "latched stick must not chain");
+        assert_eq!(ui.aimed, None);
+        assert!(ui.rearm_until_center);
+
+        // Re-center once: latch clears. Re-aim and dwell: now it commits.
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 0.0, steps(t0, 700));
+        assert!(!ui.rearm_until_center);
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 800));
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 1000));
+        assert!(ui.aimed.is_some());
+    }
+
+    #[test]
+    fn scenario_back_dwell_ascends() {
+        // Inside a folder: 3 real slices + Back anchored down (display 2).
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down");
+        let back_at = anchor_display_index("down", 4);
+        assert_eq!(view.real(back_at), Some(None));
+
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        let t0 = Instant::now();
+
+        wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, t0);
+        assert_eq!(ui.candidate, Some(back_at));
+        wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, steps(t0, 160));
+        assert_eq!(ui.path, Vec::<usize>::new(), "Back dwell ascends");
+        assert!(ui.rearm_until_center);
+    }
+
+    #[test]
+    fn scenario_edge_fires_at_threshold_without_dwell() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let t = feel(FireMode::Edge);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Below the 90% threshold: aimable but never fires, no matter how
+        // long it dwells (edge mode doesn't commit).
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.7, t0);
+        assert_eq!(out.fire, None);
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.7, steps(t0, 500));
+        assert_eq!((out.fire, ui.aimed), (None, None));
+
+        // Cross the threshold: fires the same frame — zero dwell.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, steps(t0, 510));
+        assert_eq!(out.fire, Some(0));
+    }
+
+    #[test]
+    fn scenario_edge_respects_rearm_latch() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let t = feel(FireMode::Edge);
+        let mut ui = fresh_ui();
+        // As after an auto descend: stick still out, latch up.
+        ui.rearm_until_center = true;
+        let t0 = Instant::now();
+
+        // Full deflection cannot fire through the latch.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        assert_eq!(out.fire, None);
+        // Re-center clears it; the next full deflection fires.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.0, steps(t0, 100));
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!(out.fire, Some(0));
+    }
+
+    #[test]
+    fn scenario_retract_tracks_peak_and_fires_on_inward_flick() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let t = feel(FireMode::Retract);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Dwell at full throw: commits, peak = 1.0, no fire yet.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!((ui.aimed, out.fire), (Some(0), None));
+        assert!((ui.peak_magnitude - 1.0).abs() < 1e-6);
+
+        // Easing to 0.95 is inside the 10% delta: still holding.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, steps(t0, 250));
+        assert_eq!(out.fire, None);
+        // Flick inward past peak - delta (0.90): fires.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.88, steps(t0, 300));
+        assert_eq!(out.fire, Some(0));
+    }
+
+    #[test]
+    fn scenario_retract_snap_to_center_cancels() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let t = feel(FireMode::Retract);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Commit at full throw, then snap inside the dead zone in one
+        // frame: the candidate drops before the retract check can run, so
+        // it cancels instead of firing.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!(ui.aimed, Some(0));
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.2, steps(t0, 250));
+        assert_eq!((out.fire, ui.aimed), (None, None));
+        assert_eq!(wheel_release_command(&ui, &view), None);
+    }
+
+    #[test]
+    fn scenario_south_fires_leaf_descends_folder_pops_back() {
+        let t0_view = WheelView::build(
+            &[folder("f", vec![leaf("a")]), leaf("x")],
+            false,
+            "down",
+        );
+        // Leaf under the stick: South returns it to fire.
+        let mut ui = fresh_ui();
+        ui.candidate = Some(1);
+        let out = wheel_south_step(&mut ui, &t0_view);
+        assert_eq!(out.fire, Some(1));
+
+        // Folder under the stick: South descends and re-arms.
+        let mut ui = fresh_ui();
+        ui.candidate = Some(0);
+        let out = wheel_south_step(&mut ui, &t0_view);
+        assert_eq!((out.fire, ui.path.as_slice()), (None, &[0][..]));
+        assert!(ui.rearm_until_center);
+
+        // Back under the stick inside a folder: South ascends.
+        let inner = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down");
+        let back_at = anchor_display_index("down", 4);
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        ui.candidate = Some(back_at);
+        let out = wheel_south_step(&mut ui, &inner);
+        assert_eq!((out.fire, ui.path.len()), (None, 0));
     }
 }
 
