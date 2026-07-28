@@ -18,6 +18,11 @@ enum ControllerTab {
 
 const RUMBLE_PATTERNS: [&str; 4] = ["off", "short", "long", "double"];
 
+/// Reserved name of the dynamic portals wheel (mirrors
+/// `AppCore::PORTAL_WHEEL_KEY`). It gets a permanent Wheels-tab entry that
+/// edits only its button/stick meta; its slices are generated per room.
+const PORTAL_WHEEL_KEY: &str = crate::core::AppCore::PORTAL_WHEEL_KEY;
+
 /// Movement-stick choices for the Tuning tab.
 const MOVEMENT_STICKS: [&str; 2] = ["left", "right"];
 /// Screen-anchor choices for the reserved Back slice.
@@ -182,6 +187,23 @@ impl ControllerFormState {
         };
         Ok((button, action))
     }
+}
+
+/// The `[controller]` button that opens the wheel `name_key` ("default" =>
+/// the bare `controller_wheel` action; any other name => the matching
+/// `controller_wheel:<name>`). `[controller]` is the runtime authority, so
+/// this is the truth the editor's "Opens with" field should reflect when a
+/// wheel's WheelMeta doesn't record its own button.
+fn wheel_button_from_binds(config: &Config, name_key: &str) -> Option<String> {
+    let wanted = if name_key == "default" {
+        "controller_wheel".to_string()
+    } else {
+        format!("controller_wheel:{}", name_key)
+    };
+    config.controller_binds.iter().find_map(|(button, action)| match action {
+        KeyBindAction::Action(name) if *name == wanted => Some(button.clone()),
+        _ => None,
+    })
 }
 
 fn display_action(action: &KeyBindAction) -> String {
@@ -780,8 +802,23 @@ fn render_wheels_tab(
     meta_save: &mut Option<(String, crate::config::WheelMeta)>,
 ) {
     ui.horizontal(|ui| {
-        let mut names: Vec<String> = config.controller_wheels.keys().cloned().collect();
+        // User-defined wheels, minus "portals": the portals wheel is dynamic
+        // (slices built from the room), so it never lives in controller_wheels
+        // as an editable slice array — but it still gets a permanent,
+        // non-deletable entry below so its button/stick meta is reachable.
+        let mut names: Vec<String> = config
+            .controller_wheels
+            .keys()
+            .filter(|name| name.as_str() != PORTAL_WHEEL_KEY)
+            .cloned()
+            .collect();
         names.sort();
+        let mut select_wheel = |state: &mut ControllerEditorState, name: &str| {
+            state.wheel_selected = name.to_string();
+            state.wheel_buffer = None;
+            state.wheel_meta_buffer = None;
+            state.wheel_status = None;
+        };
         egui::ComboBox::from_id_salt("controller_wheel_pick")
             .selected_text(if state.wheel_selected.is_empty() {
                 "default"
@@ -798,15 +835,19 @@ fn render_wheels_tab(
                     state.wheel_meta_buffer = None;
                     state.wheel_status = None;
                 }
+                // Permanent portals entry: button/stick only, no slice list.
+                if ui
+                    .selectable_label(state.wheel_selected == PORTAL_WHEEL_KEY, "portals (dynamic)")
+                    .clicked()
+                {
+                    select_wheel(state, PORTAL_WHEEL_KEY);
+                }
                 for name in &names {
                     if ui
                         .selectable_label(state.wheel_selected == *name, name)
                         .clicked()
                     {
-                        state.wheel_selected = name.clone();
-                        state.wheel_buffer = None;
-                        state.wheel_meta_buffer = None;
-                        state.wheel_status = None;
+                        select_wheel(state, name);
                     }
                 }
             });
@@ -817,7 +858,12 @@ fn render_wheels_tab(
         );
         if ui.button("New wheel").clicked() {
             let name = state.wheel_new_name.trim().to_string();
-            if !name.is_empty() {
+            if name == PORTAL_WHEEL_KEY {
+                // "portals" is reserved for the dynamic wheel; a static wheel
+                // of that name would be shadowed and never open.
+                state.wheel_status =
+                    Some("'portals' is reserved for the dynamic room wheel.".to_string());
+            } else if !name.is_empty() {
                 state.wheel_selected = name;
                 state.wheel_new_name.clear();
                 state.wheel_buffer = Some(Vec::new());
@@ -838,7 +884,18 @@ fn render_wheels_tab(
         let selected = state.wheel_selected.clone();
         let name_key = if selected.is_empty() { "default" } else { selected.as_str() };
         let meta = state.wheel_meta_buffer.get_or_insert_with(|| {
-            config.controller_wheels_meta.get(name_key).cloned().unwrap_or_default()
+            let mut meta = config
+                .controller_wheels_meta
+                .get(name_key)
+                .cloned()
+                .unwrap_or_default();
+            // Back-fill the button from [controller] (the runtime authority)
+            // when the meta doesn't record one — e.g. a wheel bound via the
+            // old Base-tab action. Keeps "Opens with" showing the real key.
+            if meta.button.is_none() {
+                meta.button = wheel_button_from_binds(config, name_key);
+            }
+            meta
         });
         let mut changed = false;
         ui.horizontal(|ui| {
@@ -889,6 +946,21 @@ fn render_wheels_tab(
         }
     }
     ui.separator();
+
+    // The portals wheel has no editable slice list — they are built from the
+    // current room each time it opens. Only its button/stick meta (above) is
+    // configurable, and that saves on change, so there's no "Save wheel".
+    if state.wheel_selected == PORTAL_WHEEL_KEY {
+        ui.weak(
+            "Slices are generated from the room's portals each time the wheel \
+             opens, so there is no slice list to edit here. Set the button and \
+             aim stick above; they save automatically.",
+        );
+        if let Some(status) = &state.wheel_status {
+            ui.weak(status);
+        }
+        return;
+    }
 
     let selected = state.wheel_selected.clone();
     let buffer = state.wheel_buffer.get_or_insert_with(|| {

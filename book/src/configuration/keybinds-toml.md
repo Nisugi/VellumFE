@@ -140,12 +140,22 @@ interact mode. Slices without a placeholder are sent as-is; a slice that
 needs a target with nothing focused is dropped (not sent literally) with
 a note.
 
-Each wheel can also declare, in the Wheels tab, which **button** opens it
+Each wheel declares, in the Wheels tab, which **button** opens it
 and which **stick** aims it (stored in `[controller_wheels_meta.<name>]`).
+The Wheels tab is the single place to set a wheel's button — the
+`controller_wheel` / `controller_wheel:<name>` actions are no longer in
+the Base tab's action dropdown to avoid two sources of truth. The reserved
+**`portals`** wheel has its own permanent, non-deletable Wheels-tab entry
+(`portals (dynamic)`): it exposes the same **Opens with** and **Aim
+stick** fields, but no slice list, because its slices are generated from
+the room every time it opens.
 The button field is a convenience: saving it writes the matching
 `[controller]` entry, which remains the runtime authority — so if the two
 ever disagree, `[controller]` wins and a note says which button really
-opens the wheel, and two wheels claiming one button are flagged. The
+opens the wheel, and two wheels claiming one button are flagged. When a
+wheel's meta doesn't record a button (e.g. it was bound before the Wheels
+tab existed), the editor back-fills **Opens with** from `[controller]` so
+you always see the real key. The
 stick field overrides the global `movement_stick` while that wheel is
 open: name the movement stick and walking is silenced for the wheel's
 duration; name the other and movement stays live (e.g. an exits wheel

@@ -692,7 +692,10 @@ impl KeyAction {
         "menu_right",
         "menu_cancel",
         "controller_shift",
-        "controller_wheel",
+        // controller_wheel / controller_wheel:<name> are configured in the
+        // Wheels tab (each wheel's "Opens with" button writes the matching
+        // [controller] entry), so they are intentionally NOT offered here —
+        // that keeps a single source of truth for wheel buttons.
         "controller_overlay",
         "stop_travel",
         "scroll_current_window_up_page",
