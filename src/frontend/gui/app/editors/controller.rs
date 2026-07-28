@@ -1564,6 +1564,91 @@ fn render_wheel_designer(
             ui.visuals().weak_text_color(),
         );
 
+        // ----- Designer-only overlays (the live wheel draws none of
+        // these): affordances for what the invisible hit zones grab. -----
+        let real_len = level.len();
+        let has_ghost = view.layout.len() > real_len;
+        let weak = ui.visuals().weak_text_color();
+        let handle_fill = ui.visuals().extreme_bg_color;
+
+        // Dashed guide ring at the global dead zone — the default aim
+        // floor every slice without its own `inner` sits on.
+        let dz_r = hub + (outer - hub) * global_deadzone;
+        let guide: Vec<egui::Pos2> = (0..=72)
+            .map(|k| {
+                let a = k as f32 / 72.0 * std::f32::consts::TAU;
+                center + egui::vec2(a.cos(), a.sin()) * dz_r
+            })
+            .collect();
+        painter.extend(egui::Shape::dashed_line(
+            &guide,
+            egui::Stroke::new(1.0, weak.gamma_multiply(0.5)),
+            4.0,
+            6.0,
+        ));
+
+        // A dot on the rim end of every draggable divider (the ghost
+        // Back's edges are the runtime's, so they get none)...
+        let draggable =
+            |b: usize| if has_ghost { b + 1 < real_len } else { real_len >= 2 };
+        for (b, seat) in view.layout.seats.iter().enumerate() {
+            if !draggable(b) {
+                continue;
+            }
+            let a = (seat.start_deg + seat.span_deg).to_radians()
+                - std::f32::consts::FRAC_PI_2;
+            let pos = center + egui::vec2(a.cos(), a.sin()) * outer;
+            painter.circle(
+                pos,
+                4.0,
+                handle_fill,
+                egui::Stroke::new(1.5, ui.visuals().window_stroke.color),
+            );
+        }
+        // ...and one on each real slice's floor arc — its own `inner`
+        // (warn-colored, like the arc), or the default floor, where
+        // dragging creates an override.
+        for (i, slice) in level.iter().enumerate() {
+            let seat = &view.layout.seats[i];
+            let floor = slice
+                .inner
+                .map(|p| p as f32 / 100.0)
+                .unwrap_or(global_deadzone);
+            let r_f = hub + (outer - hub) * floor;
+            let a = seat.center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
+            let pos = center + egui::vec2(a.cos(), a.sin()) * r_f;
+            let ring = if slice.inner.is_some() {
+                ui.visuals().warn_fg_color
+            } else {
+                ui.visuals().window_stroke.color
+            };
+            painter.circle(pos, 3.0, handle_fill, egui::Stroke::new(1.5, ring));
+        }
+
+        // Width (and floor) annotation under each label, room permitting —
+        // the ghost Back gets its width too, so the whole ring reads.
+        if side >= 300.0 {
+            for (i, seat) in view.layout.seats.iter().enumerate() {
+                let a = seat.center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
+                let pos = center + egui::vec2(a.cos(), a.sin()) * label_radius
+                    + egui::vec2(0.0, 13.0);
+                let mut text = format!("{:.0}°", seat.span_deg);
+                if let Some(p) = view.slices.get(i).and_then(|s| s.inner) {
+                    text.push_str(&format!(" · in {p}%"));
+                }
+                if level.get(i).is_some_and(|s| s.locked) {
+                    text.push_str(" · lock");
+                }
+                painter.text(
+                    pos,
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    egui::FontId::proportional(10.0),
+                    weak,
+                );
+            }
+        }
+
         // Click on a wedge selects it; the hub, the rim's outside, and the
         // ghost Back seat clear the selection.
         if response.clicked() {
