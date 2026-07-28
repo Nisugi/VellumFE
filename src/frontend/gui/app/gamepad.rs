@@ -884,7 +884,7 @@ impl VellumGuiApp {
                     "right stick"
                 };
                 let hint = match selected.and_then(|i| slices.get(i)) {
-                    Some(slice) if slice.command == BACK_COMMAND => "dwell to go back".to_string(),
+                    Some(slice) if is_back_slice(slice) => "dwell to go back".to_string(),
                     Some(slice) if slice.is_folder() => format!("{}: dwell to open", slice.label),
                     Some(slice) => format!("release to fire: {}", slice.command),
                     None if in_folder => "dwell a slice · release fires · center to cancel".to_string(),
@@ -1316,7 +1316,7 @@ fn leaf_command_at(view: &WheelView, display: usize) -> Option<String> {
         _ => return None,
     }
     let slice = view.slices.get(display)?;
-    if slice.is_folder() || slice.command.is_empty() {
+    if slice.is_folder() || is_back_slice(slice) || slice.command.is_empty() {
         return None;
     }
     Some(slice.command.clone())
@@ -1385,18 +1385,25 @@ fn wheel_aim_step(
         .map(|since| now.saturating_duration_since(since).as_millis())
         .unwrap_or(0);
 
-    match view.real(display) {
-        // Back slice: auto-ascend once the nav dwell elapses.
-        Some(None) => {
-            if dwelt >= timing.nav_ms {
-                ui.path.pop();
-                ui.aimed = None;
-                ui.candidate = None;
-                ui.candidate_since = None;
-                ui.rearm_until_center = true;
-                render = true;
-            }
+    // Back seat — synthesized (real == None) or an explicit back slice:
+    // auto-ascend once the nav dwell elapses, never fire.
+    let back_seat = matches!(view.real(display), Some(None))
+        || view.slices.get(display).is_some_and(is_back_slice);
+    if back_seat {
+        if dwelt >= timing.nav_ms {
+            ui.path.pop();
+            ui.aimed = None;
+            ui.candidate = None;
+            ui.candidate_since = None;
+            ui.rearm_until_center = true;
+            render = true;
         }
+        return WheelStepOutcome { fire: None, render };
+    }
+
+    match view.real(display) {
+        // Synthesized Back was already handled by the back_seat branch.
+        Some(None) => {}
         // A real slice. Folder-ness is read from the DISPLAY seat —
         // view.slices is the rotated ring, so indexing it by `real`
         // classified the wrong slice inside a rotated folder (the same
@@ -1481,21 +1488,24 @@ fn wheel_south_step(ui: &mut WheelUi, view: &WheelView) -> WheelStepOutcome {
     let Some(display) = ui.candidate.or(ui.aimed) else {
         return WheelStepOutcome::default();
     };
-    match view.real(display) {
-        Some(None) => {
-            // Back slice.
-            if ui.path.pop().is_some() {
-                ui.aimed = None;
-                ui.candidate = None;
-                ui.candidate_since = None;
-                ui.rearm_until_center = true;
-                return WheelStepOutcome {
-                    fire: None,
-                    render: true,
-                };
-            }
-            WheelStepOutcome::default()
+    // Back seat — synthesized or an explicit back slice: ascend now.
+    let back_seat = matches!(view.real(display), Some(None))
+        || view.slices.get(display).is_some_and(is_back_slice);
+    if back_seat {
+        if ui.path.pop().is_some() {
+            ui.aimed = None;
+            ui.candidate = None;
+            ui.candidate_since = None;
+            ui.rearm_until_center = true;
+            return WheelStepOutcome {
+                fire: None,
+                render: true,
+            };
         }
+        return WheelStepOutcome::default();
+    }
+    match view.real(display) {
+        Some(None) => WheelStepOutcome::default(),
         Some(Some(real)) => {
             let Some(slice) = view.slices.get(display) else {
                 return WheelStepOutcome::default();
@@ -1552,6 +1562,14 @@ pub(super) struct WheelView {
 /// Sentinel command marking the injected Back slice.
 const BACK_COMMAND: &str = "\u{0}__wheel_back__";
 
+/// A Back seat by the slice itself: an explicit `back = true` slice from
+/// config, or the synthesized seat carrying the sentinel. The machine
+/// keys ascend/never-fire on this — never on the display index — so an
+/// explicit Back works anywhere in the ring.
+fn is_back_slice(slice: &WheelSlice) -> bool {
+    slice.back || slice.command == BACK_COMMAND
+}
+
 impl WheelView {
     /// Build the display ring.
     ///
@@ -1569,7 +1587,11 @@ impl WheelView {
     pub(super) fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str, start: f32) -> Self {
         let real_spans = || -> Vec<Option<f32>> { real.iter().map(|s| s.span).collect() };
 
-        if !in_folder || back_anchor == "none" {
+        // An explicit `back = true` slice replaces the synthesized seat:
+        // the ring is used verbatim (the user owns order, width, and
+        // rotation), so the anchor rotation doesn't apply either.
+        let explicit_back = real.iter().any(|s| s.back);
+        if !in_folder || back_anchor == "none" || explicit_back {
             let slices = real.to_vec();
             let layout = resolve_spans(&real_spans(), start);
             return Self {
@@ -1887,6 +1909,72 @@ mod wheel_tests {
                 back.center_deg()
             );
         }
+    }
+
+    fn explicit_back() -> WheelSlice {
+        WheelSlice {
+            label: "◂ Back".to_string(),
+            back: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn explicit_back_replaces_the_synthesized_seat() {
+        // A folder ring containing a `back = true` slice is used verbatim:
+        // no appended sentinel seat, no anchor rotation — the user owns
+        // order and geometry, exactly like back_slice = "none".
+        let real = vec![leaf("a"), explicit_back(), leaf("b")];
+        let view = WheelView::build(&real, true, "down", 0.0);
+        assert_eq!(view.len(), 3, "no extra synthesized seat");
+        for i in 0..3 {
+            assert_eq!(view.real(i), Some(Some(i)), "all seats are real config slices");
+        }
+        // Verbatim layout at start 0: seat 0 centered up, not rotated so
+        // Back hits the "down" anchor.
+        assert!(angular_gap(view.layout.seats[0].center_deg(), 0.0) < 1e-3);
+    }
+
+    #[test]
+    fn scenario_dwelling_an_explicit_back_ascends() {
+        // Even 3-ring: seat 1's center is at 120° (aim convention). The
+        // explicit Back sits mid-list — position doesn't matter to the
+        // machine, only the flag does.
+        let real = vec![leaf("a"), explicit_back(), leaf("b")];
+        let view = WheelView::build(&real, true, "down", 0.0);
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        let t0 = Instant::now();
+
+        let (x, y_up) = (120f32.to_radians().sin(), 120f32.to_radians().cos());
+        let out = wheel_aim_step(&mut ui, &view, &t, x, y_up, t0);
+        assert_eq!((ui.candidate, out.fire), (Some(1), None));
+        assert_eq!(ui.path, vec![0], "no ascend before the nav dwell");
+
+        let out = wheel_aim_step(&mut ui, &view, &t, x, y_up, steps(t0, 200));
+        assert_eq!(out.fire, None, "Back never fires");
+        assert!(ui.path.is_empty(), "nav dwell on explicit Back ascends");
+        assert!(ui.rearm_until_center, "ascend arms the recenter latch");
+    }
+
+    #[test]
+    fn explicit_back_never_fires_even_with_a_command() {
+        // A hand-edited config could put a command on a back slice; the
+        // flag still wins on every fire path.
+        let mut b = explicit_back();
+        b.command = "should never send".to_string();
+        let real = vec![leaf("a"), b, leaf("c")];
+        let view = WheelView::build(&real, true, "down", 0.0);
+        assert_eq!(leaf_command_at(&view, 1), None, "fire guard skips Back");
+
+        // South on the Back seat ascends instead of firing.
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        ui.candidate = Some(1);
+        let out = wheel_south_step(&mut ui, &view);
+        assert_eq!(out.fire, None);
+        assert!(ui.path.is_empty(), "South on explicit Back ascends");
     }
 
     #[test]

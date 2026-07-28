@@ -217,6 +217,13 @@ pub struct WheelSlice {
     pub inner: Option<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slices: Vec<WheelSlice>,
+    /// An explicit "go up one level" seat: placed, sized, colored, and
+    /// floored like any other slice, but dwelling it ascends instead of
+    /// firing. When a folder ring contains one, the runtime uses the ring
+    /// verbatim and skips the synthesized Back seat and its anchor
+    /// rotation entirely — the user owns the geometry.
+    #[serde(default, skip_serializing_if = "wheel_flag_is_false")]
+    pub back: bool,
     /// Designer-session lock: while set, whole-ring operations (even out)
     /// leave this slice's width alone. Never persisted — locks are an
     /// editing aid, not wheel config — but kept on the slice so structural
@@ -229,6 +236,10 @@ impl WheelSlice {
     pub fn is_folder(&self) -> bool {
         !self.slices.is_empty()
     }
+}
+
+fn wheel_flag_is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// The minimum sensible wedge width in degrees. Explicit spans below this
