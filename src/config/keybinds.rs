@@ -337,7 +337,8 @@ impl WheelSpanIssue {
 }
 
 /// Rumble (haptics) event map: pattern per game event. Patterns:
-/// "off", "short", "long", "double".
+/// "off", the built-ins ("short", "long", "double"), or the name of a
+/// user-defined entry in `patterns`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RumbleConfig {
     #[serde(default = "default_rumble_enabled")]
@@ -348,6 +349,73 @@ pub struct RumbleConfig {
     pub stunned: String,
     #[serde(default = "default_rumble_double")]
     pub death: String,
+    /// User-defined patterns, selectable anywhere a pattern name is
+    /// (event rows, highlight rules). Built-in names win on collision.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patterns: Vec<RumblePattern>,
+}
+
+/// A user-defined vibration pattern: `pulses` buzzes of `strength`
+/// lasting `pulse_ms` each, separated by `gap_ms` of silence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RumblePattern {
+    pub name: String,
+    #[serde(default = "default_pattern_strength")]
+    pub strength: f32,
+    #[serde(default = "default_pattern_pulse_ms")]
+    pub pulse_ms: u32,
+    #[serde(default = "default_pattern_pulses")]
+    pub pulses: u32,
+    #[serde(default = "default_pattern_gap_ms")]
+    pub gap_ms: u32,
+}
+
+fn default_pattern_strength() -> f32 {
+    0.7
+}
+fn default_pattern_pulse_ms() -> u32 {
+    200
+}
+fn default_pattern_pulses() -> u32 {
+    1
+}
+fn default_pattern_gap_ms() -> u32 {
+    120
+}
+
+impl Default for RumblePattern {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            strength: default_pattern_strength(),
+            pulse_ms: default_pattern_pulse_ms(),
+            pulses: default_pattern_pulses(),
+            gap_ms: default_pattern_gap_ms(),
+        }
+    }
+}
+
+impl RumbleConfig {
+    /// Resolve a pattern name to `(strength 0..=1, pulse_ms, pulses,
+    /// gap_ms)`. Built-ins take precedence over user patterns of the
+    /// same name; "off" and unknown names resolve to `None`. Custom
+    /// values are clamped to hardware-sane ranges here so every
+    /// frontend inherits the same limits.
+    pub fn resolve_pattern(&self, name: &str) -> Option<(f32, u32, u32, u32)> {
+        match name {
+            "short" => Some((0.5, 160, 1, 120)),
+            "long" => Some((0.9, 450, 1, 120)),
+            "double" => Some((0.8, 180, 2, 120)),
+            _ => self.patterns.iter().find(|p| p.name == name).map(|p| {
+                (
+                    p.strength.clamp(0.05, 1.0),
+                    p.pulse_ms.clamp(20, 2000),
+                    p.pulses.clamp(1, 8),
+                    p.gap_ms.min(2000),
+                )
+            }),
+        }
+    }
 }
 
 fn default_rumble_enabled() -> bool {
@@ -370,6 +438,7 @@ impl Default for RumbleConfig {
             roundtime_end: default_rumble_short(),
             stunned: default_rumble_long(),
             death: default_rumble_double(),
+            patterns: Vec::new(),
         }
     }
 }
@@ -2191,6 +2260,45 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rumble_resolve_builtins_and_off() {
+        let config = RumbleConfig::default();
+        assert_eq!(config.resolve_pattern("short"), Some((0.5, 160, 1, 120)));
+        assert_eq!(config.resolve_pattern("long"), Some((0.9, 450, 1, 120)));
+        assert_eq!(config.resolve_pattern("double"), Some((0.8, 180, 2, 120)));
+        assert_eq!(config.resolve_pattern("off"), None);
+        assert_eq!(config.resolve_pattern("no-such-pattern"), None);
+    }
+
+    #[test]
+    fn rumble_resolve_custom_clamps_to_sane_ranges() {
+        let mut config = RumbleConfig::default();
+        config.patterns.push(RumblePattern {
+            name: "heartbeat".to_string(),
+            strength: 2.0,  // clamps to 1.0
+            pulse_ms: 5,    // clamps to 20
+            pulses: 99,     // clamps to 8
+            gap_ms: 10_000, // clamps to 2000
+        });
+        assert_eq!(
+            config.resolve_pattern("heartbeat"),
+            Some((1.0, 20, 8, 2000))
+        );
+    }
+
+    #[test]
+    fn rumble_builtin_names_shadow_custom_patterns() {
+        let mut config = RumbleConfig::default();
+        config.patterns.push(RumblePattern {
+            name: "short".to_string(),
+            strength: 1.0,
+            pulse_ms: 999,
+            pulses: 8,
+            gap_ms: 0,
+        });
+        assert_eq!(config.resolve_pattern("short"), Some((0.5, 160, 1, 120)));
+    }
 
     fn wheel_config() -> crate::config::Config {
         let mut config = crate::config::Config::default();

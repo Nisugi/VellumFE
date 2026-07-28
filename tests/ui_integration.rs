@@ -2511,6 +2511,7 @@ fn make_highlight_pattern(
         fast_parse,
         sound: None,
         sound_volume: None,
+        rumble: None,
         category: None,
         squelch: false,
         silent_prompt: false,

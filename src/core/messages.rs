@@ -167,6 +167,9 @@ pub struct MessageProcessor {
 
     /// Pending sounds from highlight processing (to be transferred to GameState)
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
+    /// Rumble pattern names from highlight matches, drained by AppCore
+    /// into the haptic queue.
+    pub pending_rumbles: Vec<String>,
 
     /// Mapping observations parsed off the main stream (forage sense, ranger
     /// sense). AppCore drains these and attributes them to the current room
@@ -277,6 +280,7 @@ impl MessageProcessor {
             newly_registered_container: None,
             pending_webui_handshake: None,
             pending_sounds: Vec::new(),
+            pending_rumbles: Vec::new(),
             pending_evidence: Vec::new(),
             pending_pathcode: None,
             saved_dialog_positions,
@@ -2636,6 +2640,7 @@ impl MessageProcessor {
 
         // Queue sounds from highlight processing
         self.pending_sounds.extend(highlight_result.sounds);
+        self.pending_rumbles.extend(highlight_result.rumbles);
 
         let mut line = StyledLine {
             segments: std::mem::take(&mut self.current_segments),
@@ -4222,6 +4227,7 @@ mod tests {
             fast_parse: true,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,

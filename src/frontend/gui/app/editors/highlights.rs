@@ -35,6 +35,7 @@ struct HighlightFormState {
     fast_parse: bool,
     sound: String,
     sound_volume: String,
+    rumble: String,
     category: String,
     squelch: bool,
     silent_prompt: bool,
@@ -61,6 +62,7 @@ impl HighlightFormState {
             fast_parse: false,
             sound: String::new(),
             sound_volume: String::new(),
+            rumble: String::new(),
             category: String::new(),
             squelch: false,
             silent_prompt: false,
@@ -90,6 +92,7 @@ impl HighlightFormState {
                 .sound_volume
                 .map(|volume| volume.to_string())
                 .unwrap_or_default(),
+            rumble: pattern.rumble.clone().unwrap_or_default(),
             category: pattern.category.clone().unwrap_or_default(),
             squelch: pattern.squelch,
             silent_prompt: pattern.silent_prompt,
@@ -144,6 +147,7 @@ impl HighlightFormState {
                 fast_parse: self.fast_parse,
                 sound: opt(&self.sound),
                 sound_volume,
+                rumble: opt(&self.rumble),
                 category: opt(&self.category),
                 squelch: self.squelch,
                 silent_prompt: self.silent_prompt,
@@ -326,6 +330,18 @@ impl VellumGuiApp {
 
         // Render the form on top of the browser when active.
         if let Some(mut form) = state.form.take() {
+            // "(none)" + built-ins + user-defined patterns from the
+            // controller editor's Rumble tab.
+            let mut rumble_options: Vec<String> =
+                vec!["short".to_string(), "long".to_string(), "double".to_string()];
+            rumble_options.extend(
+                self.app_core
+                    .config
+                    .controller_rumble
+                    .patterns
+                    .iter()
+                    .map(|p| p.name.clone()),
+            );
             let mut form_open = true;
             let mut submitted = false;
             let mut cancelled = false;
@@ -353,26 +369,22 @@ impl VellumGuiApp {
                                     ui.end_row();
                                     ui.label("Foreground");
                                     ui.horizontal(|ui| {
-                                        ui.text_edit_singleline(&mut form.fg);
-                                        if let Some(color) = theme::resolve_color(&form.fg) {
-                                            let (rect, _) = ui.allocate_exact_size(
-                                                egui::vec2(18.0, 14.0),
-                                                egui::Sense::hover(),
+                                        theme::color_picker_swatch(ui, &mut form.fg);
+                                        ui.text_edit_singleline(&mut form.fg)
+                                            .on_hover_text(
+                                                "Optional: type a color name or hex \
+                                                 instead of using the picker.",
                                             );
-                                            ui.painter().rect_filled(rect, 2.0, color);
-                                        }
                                     });
                                     ui.end_row();
                                     ui.label("Background");
                                     ui.horizontal(|ui| {
-                                        ui.text_edit_singleline(&mut form.bg);
-                                        if let Some(color) = theme::resolve_color(&form.bg) {
-                                            let (rect, _) = ui.allocate_exact_size(
-                                                egui::vec2(18.0, 14.0),
-                                                egui::Sense::hover(),
+                                        theme::color_picker_swatch(ui, &mut form.bg);
+                                        ui.text_edit_singleline(&mut form.bg)
+                                            .on_hover_text(
+                                                "Optional: type a color name or hex \
+                                                 instead of using the picker.",
                                             );
-                                            ui.painter().rect_filled(rect, 2.0, color);
-                                        }
                                     });
                                     ui.end_row();
                                     ui.label("Category");
@@ -383,6 +395,32 @@ impl VellumGuiApp {
                                     ui.end_row();
                                     ui.label("Sound volume");
                                     ui.text_edit_singleline(&mut form.sound_volume);
+                                    ui.end_row();
+                                    ui.label("Rumble").on_hover_text(
+                                        "Buzz the controller when this pattern \
+                                         matches. Patterns are defined in the \
+                                         Controller window's Rumble tab.",
+                                    );
+                                    egui::ComboBox::from_id_salt("highlight_form_rumble")
+                                        .selected_text(if form.rumble.is_empty() {
+                                            "(none)"
+                                        } else {
+                                            form.rumble.as_str()
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut form.rumble,
+                                                String::new(),
+                                                "(none)",
+                                            );
+                                            for option in &rumble_options {
+                                                ui.selectable_value(
+                                                    &mut form.rumble,
+                                                    option.clone(),
+                                                    option,
+                                                );
+                                            }
+                                        });
                                     ui.end_row();
                                     ui.label("Redirect to");
                                     ui.text_edit_singleline(&mut form.redirect_to);

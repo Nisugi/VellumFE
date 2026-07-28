@@ -91,6 +91,10 @@ pub struct HighlightFormWidget {
     // Scope (Global vs Character)
     is_global: bool, // true = save to global/, false = save to character profile
 
+    // Rumble pattern name: carried through untouched so a TUI edit never
+    // strips a value set in the GUI editor (rumble editing is GUI-only).
+    rumble: Option<String>,
+
     // Popup position (for dragging)
     pub popup_x: u16,
     pub popup_y: u16,
@@ -202,6 +206,7 @@ impl HighlightFormWidget {
             stream_filter,
             window_filter,
             is_global: true,        // Default to global scope
+            rumble: None,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -251,6 +256,8 @@ impl HighlightFormWidget {
             form.sound_volume = TextArea::from([volume.to_string()]);
             form.sound_volume.set_cursor_line_style(Style::default());
         }
+
+        form.rumble = pattern.rumble.clone();
 
         if let Some(ref replace) = pattern.replace {
             form.replace = TextArea::from([replace.clone()]);
@@ -604,6 +611,7 @@ impl HighlightFormWidget {
             silent_prompt: self.silent_prompt,
             sound,
             sound_volume,
+            rumble: self.rumble.clone(),
             redirect_to,
             redirect_mode,
             replace,
@@ -1883,6 +1891,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,

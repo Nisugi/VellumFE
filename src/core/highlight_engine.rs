@@ -38,6 +38,8 @@ pub struct HighlightResult {
     pub segments: Vec<TextSegment>,
     /// Any sounds that should be triggered
     pub sounds: Vec<SoundTrigger>,
+    /// Rumble pattern names to trigger (controller haptics)
+    pub rumbles: Vec<String>,
     /// Replacements that target specific windows (applied during routing)
     pub deferred_replacements: Vec<DeferredReplacement>,
     /// True if the ENTIRE line was covered by silent_prompt patterns (suppress prompt)
@@ -99,6 +101,15 @@ impl CoreHighlightEngine {
             h.fast_parse.hash(&mut hasher);
             h.color_entire_line.hash(&mut hasher);
             h.replace.hash(&mut hasher);
+            // Every field apply_highlights reads must be hashed, or an edit
+            // touching only that field never rebuilds the engine and keeps
+            // serving the stale value.
+            h.sound.hash(&mut hasher);
+            h.sound_volume.map(f32::to_bits).hash(&mut hasher);
+            h.rumble.hash(&mut hasher);
+            h.stream.hash(&mut hasher);
+            h.window.hash(&mut hasher);
+            h.silent_prompt.hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -207,6 +218,7 @@ impl CoreHighlightEngine {
             .unwrap_or_else(|| HighlightResult {
                 segments: segments.to_vec(),
                 sounds: Vec::new(),
+                rumbles: Vec::new(),
                 deferred_replacements: Vec::new(),
                 line_is_silent: false,
             })
@@ -256,6 +268,7 @@ impl CoreHighlightEngine {
         // STEP 3: Find all highlight matches
         let mut matches: Vec<MatchInfo> = Vec::new();
         let mut sounds: Vec<SoundTrigger> = Vec::new();
+        let mut rumbles: Vec<String> = Vec::new();
 
         // Try Aho-Corasick fast patterns (with word boundary checking)
         if let Some(ref matcher) = self.fast_matcher {
@@ -295,6 +308,9 @@ impl CoreHighlightEngine {
                                     file: sound_file.clone(),
                                     volume: highlight.sound_volume,
                                 });
+                            }
+                            if let Some(ref rumble) = highlight.rumble {
+                                rumbles.push(rumble.clone());
                             }
 
                             matches.push(MatchInfo {
@@ -341,6 +357,9 @@ impl CoreHighlightEngine {
                                         volume: highlight.sound_volume,
                                     });
                                 }
+                                if let Some(ref rumble) = highlight.rumble {
+                                    rumbles.push(rumble.clone());
+                                }
 
                                 // Expand capture groups
                                 let mut expanded = String::new();
@@ -368,6 +387,9 @@ impl CoreHighlightEngine {
                                 volume: highlight.sound_volume,
                             });
                         }
+                        if let Some(ref rumble) = highlight.rumble {
+                            rumbles.push(rumble.clone());
+                        }
 
                         matches.push(MatchInfo {
                             start_byte: m.start(),
@@ -389,7 +411,7 @@ impl CoreHighlightEngine {
         // style/link explode below. Sounds are only pushed alongside a match,
         // so they cannot be lost here.
         if matches.is_empty() {
-            debug_assert!(sounds.is_empty());
+            debug_assert!(sounds.is_empty() && rumbles.is_empty());
             return None;
         }
 
@@ -616,6 +638,7 @@ impl CoreHighlightEngine {
         Some(HighlightResult {
             segments: result_segments,
             sounds,
+            rumbles,
             deferred_replacements,
             line_is_silent,
         })
@@ -774,6 +797,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,
@@ -1483,6 +1507,54 @@ mod tests {
         let result = engine.apply_highlights(&segments, "main");
 
         assert!(result.sounds.is_empty(), "No match means no sound");
+    }
+
+    #[test]
+    fn test_rumble_collected_on_match() {
+        let patterns = vec![{
+            let mut p = make_pattern("alarm");
+            p.rumble = Some("double".to_string());
+            p
+        }];
+        let engine = CoreHighlightEngine::new(patterns);
+        let segments = vec![make_segment("The alarm rings")];
+        let result = engine.apply_highlights(&segments, "main");
+
+        assert_eq!(result.rumbles, vec!["double".to_string()]);
+    }
+
+    #[test]
+    fn test_no_rumble_when_no_match() {
+        let patterns = vec![{
+            let mut p = make_pattern("alarm");
+            p.rumble = Some("double".to_string());
+            p
+        }];
+        let engine = CoreHighlightEngine::new(patterns);
+        let segments = vec![make_segment("No match here")];
+        let result = engine.apply_highlights(&segments, "main");
+
+        assert!(result.rumbles.is_empty(), "No match means no rumble");
+    }
+
+    #[test]
+    fn test_hash_tracks_every_consumed_field() {
+        // update_if_changed skips rebuilds on equal hashes, so any field
+        // apply_highlights reads must move the hash or edits go stale.
+        let base = vec![make_pattern("alarm")];
+        let base_hash = CoreHighlightEngine::compute_hash(&base);
+
+        let mut with_rumble = vec![make_pattern("alarm")];
+        with_rumble[0].rumble = Some("short".to_string());
+        assert_ne!(base_hash, CoreHighlightEngine::compute_hash(&with_rumble));
+
+        let mut with_sound = vec![make_pattern("alarm")];
+        with_sound[0].sound = Some("alert.wav".to_string());
+        assert_ne!(base_hash, CoreHighlightEngine::compute_hash(&with_sound));
+
+        let mut with_stream = vec![make_pattern("alarm")];
+        with_stream[0].stream = Some("combat".to_string());
+        assert_ne!(base_hash, CoreHighlightEngine::compute_hash(&with_stream));
     }
 
     // ===========================================

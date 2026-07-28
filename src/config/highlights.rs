@@ -35,6 +35,8 @@ pub struct HighlightPattern {
     pub sound: Option<String>, // Sound file to play when pattern matches
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sound_volume: Option<f32>, // Volume override for this sound (0.0 to 1.0)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rumble: Option<String>, // Controller rumble pattern name to play when pattern matches
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>, // Category for grouping highlights (e.g., "Combat", "Healing", "Death")
     #[serde(default, skip_serializing_if = "is_false")]
@@ -427,6 +429,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,
@@ -455,6 +458,7 @@ mod tests {
             fast_parse: false,
             sound: Some("damage.wav".to_string()),
             sound_volume: Some(0.8),
+            rumble: None,
             category: Some("Combat".to_string()),
             squelch: false,
             silent_prompt: false,
@@ -486,6 +490,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: Some("Ignore".to_string()),
             squelch: true,
             silent_prompt: false,
@@ -511,6 +516,7 @@ mod tests {
             fast_parse: true, // Uses Aho-Corasick
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,
@@ -536,6 +542,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: Some("Test".to_string()),
             squelch: false,
             silent_prompt: false,
@@ -700,6 +707,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,
@@ -746,6 +754,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,
@@ -799,6 +808,7 @@ mod tests {
             fast_parse: false,
             sound: None,
             sound_volume: None,
+            rumble: None,
             category: None,
             squelch: false,
             silent_prompt: false,

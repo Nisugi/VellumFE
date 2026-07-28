@@ -341,6 +341,7 @@ impl VellumGuiApp {
                     }
                     crate::core::app_core::HapticEvent::Stunned => rumble.stunned.clone(),
                     crate::core::app_core::HapticEvent::Death => rumble.death.clone(),
+                    crate::core::app_core::HapticEvent::Highlight(name) => name,
                 };
                 self.play_rumble(&pattern);
             }
@@ -356,14 +357,23 @@ impl VellumGuiApp {
     /// Play a rumble pattern on every connected pad. Effects are kept
     /// alive until expiry (gilrs stops them on drop).
     fn play_rumble(&mut self, pattern: &str) {
-        use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
-
-        let (magnitude, ms, pulses) = match pattern {
-            "short" => (0.5_f32, 160_u32, 1_u32),
-            "long" => (0.9, 450, 1),
-            "double" => (0.8, 180, 2),
-            _ => return, // "off" and anything unknown
+        // Built-ins and user-defined patterns both resolve in config, so
+        // event rows and highlight rules share one name space.
+        let Some(resolved) = self
+            .app_core
+            .config
+            .controller_rumble
+            .resolve_pattern(pattern)
+        else {
+            return; // "off" and anything unknown
         };
+        self.play_rumble_resolved(resolved);
+    }
+
+    /// Play already-resolved rumble parameters. Split from `play_rumble`
+    /// so the editor's Test button can preview unsaved pattern edits.
+    pub(super) fn play_rumble_resolved(&mut self, (magnitude, ms, pulses, gap): (f32, u32, u32, u32)) {
+        use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder, Replay, Ticks};
         let Some(gilrs) = self.gamepad.as_mut() else {
             return;
         };
@@ -376,7 +386,6 @@ impl VellumGuiApp {
             return;
         }
         let strength = (magnitude.clamp(0.0, 1.0) * u16::MAX as f32) as u16;
-        let gap = 120_u32;
         let mut builder = EffectBuilder::new();
         for pulse in 0..pulses {
             builder.add_effect(BaseEffect {

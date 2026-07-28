@@ -319,6 +319,7 @@ impl VellumGuiApp {
         let mut wheel_save = false;
         let mut overlay_toggle: Option<String> = None;
         let mut rumble_save: Option<crate::config::RumbleConfig> = None;
+        let mut rumble_test: Option<(f32, u32, u32, u32)> = None;
         let mut tuning_save: Option<crate::config::TuningConfig> = None;
         let mut meta_save: Option<(String, crate::config::WheelMeta)> = None;
 
@@ -370,21 +371,31 @@ impl VellumGuiApp {
                     let mut rumble = self.app_core.config.controller_rumble.clone();
                     let mut changed = ui
                         .checkbox(&mut rumble.enabled, "Rumble on game events")
+                        .on_hover_text(
+                            "Master switch for all controller vibration, \
+                             including rumbles fired by highlight rules.",
+                        )
                         .changed();
+                    // Dropdown options: off + built-ins + user patterns.
+                    let mut options: Vec<String> =
+                        RUMBLE_PATTERNS.iter().map(|s| s.to_string()).collect();
+                    options.extend(rumble.patterns.iter().map(|p| p.name.clone()));
                     let pattern_row = |ui: &mut egui::Ui,
                                        label: &str,
+                                       hover: &str,
+                                       options: &[String],
                                        value: &mut String,
                                        changed: &mut bool| {
                         ui.horizontal(|ui| {
-                            ui.label(label);
+                            ui.label(label).on_hover_text(hover);
                             egui::ComboBox::from_id_salt(format!("rumble_{label}"))
                                 .selected_text(value.as_str())
                                 .show_ui(ui, |ui| {
-                                    for pattern in RUMBLE_PATTERNS {
+                                    for pattern in options {
                                         if ui
                                             .selectable_value(
                                                 value,
-                                                pattern.to_string(),
+                                                pattern.clone(),
                                                 pattern,
                                             )
                                             .changed()
@@ -392,13 +403,127 @@ impl VellumGuiApp {
                                             *changed = true;
                                         }
                                     }
-                                });
+                                })
+                                .response
+                                .on_hover_text(hover);
                         });
                     };
-                    pattern_row(ui, "Roundtime ends", &mut rumble.roundtime_end, &mut changed);
-                    pattern_row(ui, "Stunned", &mut rumble.stunned, &mut changed);
-                    pattern_row(ui, "Death", &mut rumble.death, &mut changed);
+                    pattern_row(
+                        ui,
+                        "Roundtime ends",
+                        "Buzz when roundtime or casttime finishes — hands \
+                         are free again.",
+                        &options,
+                        &mut rumble.roundtime_end,
+                        &mut changed,
+                    );
+                    pattern_row(
+                        ui,
+                        "Stunned",
+                        "Buzz the moment the character becomes stunned.",
+                        &options,
+                        &mut rumble.stunned,
+                        &mut changed,
+                    );
+                    pattern_row(
+                        ui,
+                        "Death",
+                        "Buzz when the character dies.",
+                        &options,
+                        &mut rumble.death,
+                        &mut changed,
+                    );
                     ui.weak("short = light tap · long = strong buzz · double = two pulses");
+
+                    ui.separator();
+                    ui.label("Custom patterns").on_hover_text(
+                        "Your own vibration patterns. They appear in the \
+                         dropdowns above and in the Highlights editor, so \
+                         any highlight rule can buzz the pad. Built-in \
+                         names (short/long/double) win on collision.",
+                    );
+                    let mut remove: Option<usize> = None;
+                    for (i, pattern) in rumble.patterns.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            changed |= ui
+                                .add(
+                                    egui::TextEdit::singleline(&mut pattern.name)
+                                        .hint_text("name")
+                                        .desired_width(90.0),
+                                )
+                                .on_hover_text(
+                                    "Name to select this pattern by \
+                                     (event rows, highlight rules).",
+                                )
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::Slider::new(&mut pattern.strength, 0.05..=1.0)
+                                        .show_value(false),
+                                )
+                                .on_hover_text("Vibration strength.")
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut pattern.pulse_ms)
+                                        .range(20..=2000)
+                                        .suffix(" ms"),
+                                )
+                                .on_hover_text("Length of each buzz.")
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut pattern.pulses)
+                                        .range(1..=8)
+                                        .prefix("x"),
+                                )
+                                .on_hover_text("Number of buzzes.")
+                                .changed();
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(&mut pattern.gap_ms)
+                                        .range(0..=2000)
+                                        .suffix(" ms gap"),
+                                )
+                                .on_hover_text("Silence between buzzes.")
+                                .changed();
+                            if ui
+                                .button("Test")
+                                .on_hover_text("Play this pattern on the pad now.")
+                                .clicked()
+                            {
+                                rumble_test = Some((
+                                    pattern.strength.clamp(0.05, 1.0),
+                                    pattern.pulse_ms.clamp(20, 2000),
+                                    pattern.pulses.clamp(1, 8),
+                                    pattern.gap_ms.min(2000),
+                                ));
+                            }
+                            if ui
+                                .button("X")
+                                .on_hover_text("Delete this pattern.")
+                                .clicked()
+                            {
+                                remove = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = remove {
+                        rumble.patterns.remove(i);
+                        changed = true;
+                    }
+                    if ui
+                        .button("+ Add pattern")
+                        .on_hover_text("Add a new custom vibration pattern.")
+                        .clicked()
+                    {
+                        let name = format!("custom-{}", rumble.patterns.len() + 1);
+                        rumble.patterns.push(crate::config::RumblePattern {
+                            name,
+                            ..Default::default()
+                        });
+                        changed = true;
+                    }
                     if changed {
                         rumble_save = Some(rumble);
                     }
@@ -417,6 +542,8 @@ impl VellumGuiApp {
                                      changed: &mut bool| {
                         ui.horizontal(|ui| {
                             ui.label(label).on_hover_text(hover);
+                            // Hover help on the widget too — most people
+                            // point at the control, not its label.
                             egui::ComboBox::from_id_salt(format!("tuning_{label}"))
                                 .selected_text(value.as_str())
                                 .show_ui(ui, |ui| {
@@ -428,7 +555,9 @@ impl VellumGuiApp {
                                             *changed = true;
                                         }
                                     }
-                                });
+                                })
+                                .response
+                                .on_hover_text(hover);
                         });
                     };
 
@@ -467,6 +596,7 @@ impl VellumGuiApp {
                             ui.label(label).on_hover_text(hover);
                             if ui
                                 .add(egui::Slider::new(value, range).suffix(suffix))
+                                .on_hover_text(hover)
                                 .changed()
                             {
                                 *changed = true;
@@ -483,6 +613,11 @@ impl VellumGuiApp {
                         let mut dz = tuning.deadzone as u32;
                         if ui
                             .add(egui::Slider::new(&mut dz, 0..=95).suffix("%"))
+                            .on_hover_text(
+                                "Stick deflection needed before a wheel slice \
+                                 registers. Higher values stop a drifting stick \
+                                 from picking a slice the instant the wheel opens.",
+                            )
                             .changed()
                         {
                             tuning.deadzone = dz as u8;
@@ -645,6 +780,10 @@ impl VellumGuiApp {
                     .app_core
                     .add_system_message(&format!("Failed to save rumble config: {}", err)),
             }
+        }
+        if let Some(resolved) = rumble_test {
+            // Uses the row's live values, so Test previews unsaved edits.
+            self.play_rumble_resolved(resolved);
         }
 
         if let Some(tuning) = tuning_save {
@@ -1765,10 +1904,12 @@ fn render_wheel_designer(
     if at_top && !level.is_empty() {
         ui.horizontal(|ui| {
             let mirrors = [
-                ("Left → right", MirrorKeep::Left),
-                ("Right → left", MirrorKeep::Right),
-                ("Top → bottom", MirrorKeep::Top),
-                ("Bottom → top", MirrorKeep::Bottom),
+                // ▸ not →: the basic Arrows block (U+2190..) is missing from
+                // the bundled fallback fonts and renders as tofu.
+                ("Left ▸ right", MirrorKeep::Left),
+                ("Right ▸ left", MirrorKeep::Right),
+                ("Top ▸ bottom", MirrorKeep::Top),
+                ("Bottom ▸ top", MirrorKeep::Bottom),
             ];
             for (label, keep) in mirrors {
                 if ui

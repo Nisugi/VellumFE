@@ -95,6 +95,8 @@ pub struct AppCore {
     pub pending_haptics: Vec<super::HapticEvent>,
     /// Last-seen state for haptic transition detection
     pub(crate) haptic_prev: super::HapticSnapshot,
+    /// Cooldown clock for highlight-driven rumble (haptics.rs)
+    pub(crate) last_highlight_rumble: Option<std::time::Instant>,
 
     // === Navigation State ===
     /// Navigation room ID from <nav rm='...'/>
@@ -238,6 +240,7 @@ impl AppCore {
             tts_manager,
             pending_haptics: Vec::new(),
             haptic_prev: Default::default(),
+            last_highlight_rumble: None,
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
@@ -363,6 +366,7 @@ impl AppCore {
             tts_manager,
             pending_haptics: Vec::new(),
             haptic_prev: Default::default(),
+            last_highlight_rumble: None,
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
@@ -2503,6 +2507,8 @@ impl AppCore {
             for sound in self.message_processor.pending_sounds.drain(..) {
                 self.game_state.queue_sound(sound);
             }
+            // Highlight-driven rumble joins the haptic queue (cooldown inside).
+            self.queue_highlight_rumbles();
 
             // Attribute mapping observations to the current room uid
             if !self.message_processor.pending_evidence.is_empty() {
@@ -2581,6 +2587,8 @@ impl AppCore {
             for sound in self.message_processor.pending_sounds.drain(..) {
                 self.game_state.queue_sound(sound);
             }
+            // Highlight-driven rumble joins the haptic queue (cooldown inside).
+            self.queue_highlight_rumbles();
 
             // Attribute mapping observations to the current room uid
             if !self.message_processor.pending_evidence.is_empty() {

@@ -6,7 +6,7 @@
 
 use super::AppCore;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HapticEvent {
     /// Roundtime or casttime just finished — hands free again.
     RoundtimeEnd,
@@ -14,6 +14,9 @@ pub enum HapticEvent {
     Stunned,
     /// The character just died.
     Death,
+    /// A highlight rule with a rumble pattern matched; carries the
+    /// pattern name (resolved via `RumbleConfig::resolve_pattern`).
+    Highlight(String),
 }
 
 /// Last-seen values for transition detection.
@@ -63,6 +66,27 @@ impl AppCore {
     pub fn drain_haptics(&mut self) -> Vec<HapticEvent> {
         std::mem::take(&mut self.pending_haptics)
     }
+
+    /// Move highlight-matched rumble patterns from the message pipeline
+    /// into the haptic queue. A chatty rule can match many lines per
+    /// second, so at most one highlight rumble passes per cooldown
+    /// window; the rest are dropped, not queued.
+    pub fn queue_highlight_rumbles(&mut self) {
+        const COOLDOWN: std::time::Duration = std::time::Duration::from_millis(1500);
+        if self.message_processor.pending_rumbles.is_empty() {
+            return;
+        }
+        let mut names = std::mem::take(&mut self.message_processor.pending_rumbles);
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_highlight_rumble {
+            if now.duration_since(last) < COOLDOWN {
+                return;
+            }
+        }
+        self.last_highlight_rumble = Some(now);
+        self.pending_haptics
+            .push(HapticEvent::Highlight(names.swap_remove(0)));
+    }
 }
 
 #[cfg(test)]
@@ -84,6 +108,32 @@ mod tests {
         core.game_state.status.stunned = false;
         core.poll_haptics();
         assert!(core.drain_haptics().is_empty(), "recovery is silent");
+    }
+
+    #[test]
+    fn highlight_rumbles_rate_limited_by_cooldown() {
+        let mut core = AppCore::new_for_test();
+        core.queue_highlight_rumbles();
+        assert!(core.drain_haptics().is_empty(), "empty queue is a no-op");
+
+        // A burst of matches in one line: only the first pattern fires.
+        core.message_processor
+            .pending_rumbles
+            .extend(["short".to_string(), "long".to_string()]);
+        core.queue_highlight_rumbles();
+        assert_eq!(
+            core.drain_haptics(),
+            vec![HapticEvent::Highlight("short".to_string())]
+        );
+
+        // Within the cooldown window: dropped entirely, not queued for later.
+        core.message_processor.pending_rumbles.push("short".to_string());
+        core.queue_highlight_rumbles();
+        assert!(core.drain_haptics().is_empty(), "cooldown drops repeats");
+        assert!(
+            core.message_processor.pending_rumbles.is_empty(),
+            "dropped rumbles must not pile up"
+        );
     }
 
     #[test]
