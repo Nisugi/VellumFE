@@ -90,6 +90,47 @@ dim = true
 | `label` | Replace the button text |
 | `fg` / `bg` | Text / background color (`#rrggbb`) |
 | `dim` | Render the button dimmed |
+| `icon` | Icon override for this state (see Icons below) |
+
+A state may also carry its own `[bars.buttons.states.countdown]` (same
+schema as the button-level countdown); while the state is active it
+replaces the button-level source — e.g. show the cooldown timer only in
+the "on cooldown" state.
+
+## Icons (GUI)
+
+Buttons can show an image face from a sprite sheet registered in the
+active skin's `[sheets]` table (see the skin docs). Sheets are tiled into
+fixed-size cells with no padding, numbered 1-based left→right then
+top→bottom — the barbar convention. The TUI always renders the text
+label; icons are ignored there, and the GUI falls back to text when no
+skin supplies the sheet.
+
+```toml
+[[bars.buttons]]
+id = "hide"
+label = "Hide"
+command = "hide"
+icon_mode = "icon"            # "text" (default) | "icon" | "icon_and_label"
+
+[bars.buttons.icon]
+sheet = "rogue"               # sheet name from the skin's [sheets] table
+cell = 5                      # 1-based cell index
+grayscale = false             # desaturate (e.g. for a "not ready" look)
+border = "#00ff00"            # optional solid border over the icon
+border_width = 3              # pixels, 1-10 (default 2)
+```
+
+With `icon_mode = "icon"` the label moves into the hover tooltip. States
+can swap the icon (a different cell, or the same cell grayscaled) via
+`[bars.buttons.states.style.icon]` — dimmed states automatically use the
+grayscale variant. In the skin's `skin.toml`:
+
+```toml
+[sheets.rogue]
+path = "icons/rogue.png"      # relative to the skin directory
+cell = 64                     # cell edge in pixels (default 64)
+```
 
 ## Reloading
 

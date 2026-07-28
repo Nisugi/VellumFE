@@ -30,6 +30,11 @@ pub struct ResolvedHotbarButton {
     /// Seconds remaining for the countdown overlay; None or <= 0 means
     /// no overlay.
     pub countdown_secs: Option<i64>,
+    /// Icon to draw (GUI only; TUI ignores): the active state's override,
+    /// else the button's base icon.
+    pub icon: Option<crate::config::HotbarIcon>,
+    /// How the GUI draws the face (text / icon / icon+label).
+    pub icon_mode: crate::config::IconMode,
 }
 
 /// Resolve every button on a bar against the current game state.
@@ -60,10 +65,18 @@ pub fn resolve_bar(bar: &HotbarDef, gs: &GameState, now_server: i64) -> Vec<Reso
                 bg: pick(|s| s.bg.clone()),
                 dim: style.map(|s| s.dim).unwrap_or(false)
                     || (style.is_none() && default_style.map(|s| s.dim).unwrap_or(false)),
-                countdown_secs: button
-                    .countdown
-                    .as_ref()
+                // Active state's countdown wins (barbar-style per-state
+                // timers); fall back to the button-level source.
+                countdown_secs: matched
+                    .and_then(|s| s.countdown.as_ref())
+                    .or(button.countdown.as_ref())
                     .and_then(|src| countdown_secs(src, gs, now_server)),
+                // State icon override, else default_style's, else the button's.
+                icon: style
+                    .and_then(|s| s.icon.clone())
+                    .or_else(|| default_style.and_then(|s| s.icon.clone()))
+                    .or_else(|| button.icon.clone()),
+                icon_mode: button.icon_mode,
             }
         })
         .collect()
@@ -402,17 +415,12 @@ mod tests {
             id: "b1".to_string(),
             label: "Base".to_string(),
             command: "look".to_string(),
-            hotkey: None,
-            tooltip: None,
-            category: None,
-            countdown: None,
             states,
             default_style: Some(HotbarStyle {
-                label: None,
                 fg: Some("#default".to_string()),
-                bg: None,
-                dim: false,
+                ..Default::default()
             }),
+            ..Default::default()
         }
     }
 
@@ -430,10 +438,11 @@ mod tests {
                     when: HotbarCondition::RtActive,
                     style: HotbarStyle {
                         label: Some("InRT".to_string()),
-                        fg: None, // falls through to default_style fg
-                        bg: None,
+                        // fg unset: falls through to default_style fg
                         dim: true,
+                        ..Default::default()
                     },
+                    countdown: None,
                 },
                 HotbarButtonState {
                     when: HotbarCondition::Indicator {
@@ -444,6 +453,7 @@ mod tests {
                         label: Some("Hidden".to_string()),
                         ..Default::default()
                     },
+                    countdown: None,
                 },
             ])],
         };
@@ -465,6 +475,73 @@ mod tests {
     }
 
     #[test]
+    fn state_icon_overrides_button_icon_and_falls_back() {
+        use crate::config::{HotbarIcon, IconMode};
+
+        let icon = |cell: u32| HotbarIcon {
+            sheet: "sheet".to_string(),
+            cell,
+            ..Default::default()
+        };
+        let mut button = button_with_states(vec![HotbarButtonState {
+            when: HotbarCondition::RtActive,
+            style: HotbarStyle {
+                icon: Some(icon(9)),
+                ..Default::default()
+            },
+            countdown: None,
+        }]);
+        button.icon = Some(icon(1));
+        button.icon_mode = IconMode::Icon;
+        let bar = HotbarDef {
+            name: "t".to_string(),
+            title: None,
+            buttons: vec![button],
+        };
+
+        // State active: its icon wins.
+        let mut gs = GameState::new();
+        gs.roundtime_end = Some(NOW + 5);
+        let resolved = resolve_bar(&bar, &gs, NOW);
+        assert_eq!(resolved[0].icon.as_ref().unwrap().cell, 9);
+        assert_eq!(resolved[0].icon_mode, IconMode::Icon);
+
+        // Idle: falls back to the button's base icon.
+        let idle = GameState::new();
+        let resolved = resolve_bar(&bar, &idle, NOW);
+        assert_eq!(resolved[0].icon.as_ref().unwrap().cell, 1);
+    }
+
+    #[test]
+    fn state_countdown_overrides_button_countdown() {
+        let mut button = button_with_states(vec![HotbarButtonState {
+            when: HotbarCondition::RtActive,
+            style: HotbarStyle::default(),
+            countdown: Some(HotbarCountdownSource::Roundtime),
+        }]);
+        button.countdown = Some(HotbarCountdownSource::Casttime);
+        let bar = HotbarDef {
+            name: "t".to_string(),
+            title: None,
+            buttons: vec![button],
+        };
+
+        let mut gs = GameState::new();
+        gs.roundtime_end = Some(NOW + 7);
+        gs.casttime_end = Some(NOW + 30);
+
+        // State active: per-state roundtime source wins over casttime.
+        let resolved = resolve_bar(&bar, &gs, NOW);
+        assert_eq!(resolved[0].countdown_secs, Some(7));
+
+        // State inactive: button-level casttime source applies.
+        let mut idle = GameState::new();
+        idle.casttime_end = Some(NOW + 30);
+        let resolved = resolve_bar(&bar, &idle, NOW);
+        assert_eq!(resolved[0].countdown_secs, Some(30));
+    }
+
+    #[test]
     fn countdown_from_each_source() {
         let mut gs = gs_with_effect("Cooldowns", "Shadow Mastery", Some(NOW + 42));
         gs.roundtime_end = Some(NOW + 7);
@@ -477,12 +554,8 @@ mod tests {
                 id: "x".to_string(),
                 label: "X".to_string(),
                 command: "x".to_string(),
-                hotkey: None,
-                tooltip: None,
-                category: None,
                 countdown: Some(countdown),
-                states: vec![],
-                default_style: None,
+                ..Default::default()
             }],
         };
 

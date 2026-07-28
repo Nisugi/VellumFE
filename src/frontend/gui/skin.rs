@@ -52,6 +52,17 @@ pub struct SkinWidgetArt {
     doll_anchors: HashMap<String, egui::Vec2>,
     /// Generated-dot styling resolved from the manifest.
     pub doll_dots: ResolvedDotStyle,
+    /// Hotbar icon sprite sheets keyed by lowercased sheet name.
+    sheets: HashMap<String, SheetArt>,
+}
+
+/// One loaded hotbar sprite sheet: the texture, its lazy-built grayscale
+/// twin, and the cell edge for UV slicing.
+#[derive(Debug, Clone, Copy)]
+struct SheetArt {
+    texture: SkinTexture,
+    gray: Option<SkinTexture>,
+    cell: u32,
 }
 
 /// Dot styling with colors parsed, ready for the painter.
@@ -118,6 +129,62 @@ impl SkinWidgetArt {
             && self.compass_dirs.is_empty()
             && self.doll_base.is_none()
             && self.doll_parts.is_empty()
+            && self.sheets.is_empty()
+    }
+
+    /// Registered hotbar sheet names (lowercased), sorted for editor lists.
+    pub fn sheet_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.sheets.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Number of cells a sheet holds (full rows × columns), for pickers.
+    pub fn sheet_cell_count(&self, sheet: &str) -> Option<u32> {
+        let art = self.sheets.get(&sheet.to_ascii_lowercase())?;
+        let cols = (art.texture.size.x as u32) / art.cell;
+        let rows = (art.texture.size.y as u32) / art.cell;
+        Some(cols * rows)
+    }
+
+    /// Texture + UV rect for a sheet cell (1-based, left→right then
+    /// top→bottom, barbar-style). `grayscale` picks the desaturated twin
+    /// when available. None for unknown sheets or out-of-bounds cells.
+    pub fn sheet_cell(
+        &self,
+        sheet: &str,
+        cell: u32,
+        grayscale: bool,
+    ) -> Option<(SkinTexture, egui::Rect)> {
+        let art = self.sheets.get(&sheet.to_ascii_lowercase())?;
+        if cell == 0 {
+            return None;
+        }
+        let size = art.texture.size;
+        let cell_px = art.cell as f32;
+        let cols = (size.x / cell_px).floor() as u32;
+        let rows = (size.y / cell_px).floor() as u32;
+        if cols == 0 || cell > cols * rows {
+            return None;
+        }
+        let idx = cell - 1;
+        let (col, row) = (idx % cols, idx / cols);
+        let uv = egui::Rect::from_min_max(
+            egui::pos2(
+                col as f32 * cell_px / size.x,
+                row as f32 * cell_px / size.y,
+            ),
+            egui::pos2(
+                (col + 1) as f32 * cell_px / size.x,
+                (row + 1) as f32 * cell_px / size.y,
+            ),
+        );
+        let texture = if grayscale {
+            art.gray.unwrap_or(art.texture)
+        } else {
+            art.texture
+        };
+        Some((texture, uv))
     }
 }
 
@@ -250,6 +317,22 @@ impl SkinState {
                 art.icons.insert(id.to_ascii_uppercase(), texture);
             }
         }
+        for (name, spec) in &self.manifest.sheets {
+            if spec.cell == 0 {
+                tracing::warn!("Skin sheet '{}': cell size must be > 0", name);
+                continue;
+            }
+            if let Some(texture) = tex(&spec.path) {
+                art.sheets.insert(
+                    name.to_ascii_lowercase(),
+                    SheetArt {
+                        texture,
+                        gray: tex(&format!("{}#gray", spec.path)),
+                        cell: spec.cell,
+                    },
+                );
+            }
+        }
         art.compass_rose = self.manifest.compass.rose.as_ref().and_then(tex);
         for (direction, path) in &self.manifest.compass.directions {
             if let Some(texture) = tex(path) {
@@ -306,6 +389,7 @@ impl SkinState {
             })
             .collect();
         images.extend(self.manifest.icons.values().cloned());
+        images.extend(self.manifest.sheets.values().map(|s| s.path.clone()));
         images.extend(self.manifest.compass.rose.iter().cloned());
         images.extend(self.manifest.compass.directions.values().cloned());
         images.extend(self.manifest.injury_doll.base.iter().cloned());
@@ -322,6 +406,22 @@ impl SkinState {
             }
             let handle = load_texture(ctx, &self.root, &image, skin_name);
             self.textures.insert(image, handle);
+        }
+        // Grayscale twins for hotbar sheets (barbar's gs variant), cached
+        // under a synthetic "<path>#gray" key.
+        for spec in self.manifest.sheets.values() {
+            let key = format!("{}#gray", spec.path);
+            if self.textures.contains_key(&key) {
+                continue;
+            }
+            // Skip the twin when the base image itself failed (one warning
+            // is enough).
+            let handle = if matches!(self.textures.get(&spec.path), Some(Some(_))) {
+                load_texture_desaturated(ctx, &self.root, &spec.path, skin_name)
+            } else {
+                None
+            };
+            self.textures.insert(key, handle);
         }
     }
 
@@ -369,6 +469,27 @@ fn load_texture(
     image_path: &str,
     skin_name: &str,
 ) -> Option<egui::TextureHandle> {
+    load_texture_impl(ctx, root, image_path, skin_name, false)
+}
+
+/// Desaturated twin of a texture (hotbar sheet grayscale variants);
+/// registered under a distinct texture name so both coexist.
+fn load_texture_desaturated(
+    ctx: &egui::Context,
+    root: &Path,
+    image_path: &str,
+    skin_name: &str,
+) -> Option<egui::TextureHandle> {
+    load_texture_impl(ctx, root, image_path, skin_name, true)
+}
+
+fn load_texture_impl(
+    ctx: &egui::Context,
+    root: &Path,
+    image_path: &str,
+    skin_name: &str,
+    desaturate: bool,
+) -> Option<egui::TextureHandle> {
     let path = {
         let raw = Path::new(image_path);
         if raw.is_absolute() {
@@ -391,11 +512,21 @@ fn load_texture(
             return None;
         }
     };
-    let rgba = decoded.to_rgba8();
+    let mut rgba = decoded.to_rgba8();
+    if desaturate {
+        // barbar's gs variant: luminance recolor, alpha preserved.
+        for px in rgba.pixels_mut() {
+            let [r, g, b, a] = px.0;
+            let luma =
+                (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round() as u8;
+            px.0 = [luma, luma, luma, a];
+        }
+    }
     let size = [rgba.width() as usize, rgba.height() as usize];
     let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+    let suffix = if desaturate { "#gray" } else { "" };
     Some(ctx.load_texture(
-        format!("skin:{}:{}", skin_name, image_path),
+        format!("skin:{}:{}{}", skin_name, image_path, suffix),
         color_image,
         egui::TextureOptions::LINEAR,
     ))
@@ -715,6 +846,56 @@ fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Art with one 4x2-cell sheet (256x128 @ 64px cells) named "rogue".
+    fn art_with_sheet() -> SkinWidgetArt {
+        let texture = SkinTexture {
+            texture: egui::TextureId::default(),
+            size: egui::vec2(256.0, 128.0),
+        };
+        let mut art = SkinWidgetArt::default();
+        art.sheets.insert(
+            "rogue".to_string(),
+            SheetArt {
+                texture,
+                gray: None,
+                cell: 64,
+            },
+        );
+        art
+    }
+
+    #[test]
+    fn sheet_cell_uv_is_one_based_row_major() {
+        let art = art_with_sheet();
+        // Cell 1: top-left quarter-cell of a 4-wide sheet.
+        let (_, uv) = art.sheet_cell("rogue", 1, false).unwrap();
+        assert_eq!((uv.min.x, uv.min.y), (0.0, 0.0));
+        assert!((uv.max.x - 0.25).abs() < 1e-5);
+        assert!((uv.max.y - 0.5).abs() < 1e-5);
+        // Cell 6: second row, second column (idx 5 -> col 1, row 1).
+        let (_, uv) = art.sheet_cell("rogue", 6, false).unwrap();
+        assert!((uv.min.x - 0.25).abs() < 1e-5);
+        assert!((uv.min.y - 0.5).abs() < 1e-5);
+        // Lookup is case-insensitive like the icon table.
+        assert!(art.sheet_cell("ROGUE", 1, false).is_some());
+    }
+
+    #[test]
+    fn sheet_cell_rejects_zero_out_of_bounds_and_unknown() {
+        let art = art_with_sheet();
+        assert!(art.sheet_cell("rogue", 0, false).is_none());
+        assert!(art.sheet_cell("rogue", 9, false).is_none()); // 4x2 = 8 cells
+        assert!(art.sheet_cell("mage", 1, false).is_none());
+        assert_eq!(art.sheet_cell_count("rogue"), Some(8));
+    }
+
+    #[test]
+    fn sheet_cell_grayscale_falls_back_to_base_texture() {
+        // gray: None -> grayscale request still returns the base texture.
+        let art = art_with_sheet();
+        assert!(art.sheet_cell("rogue", 1, true).is_some());
+    }
 
     #[test]
     fn cover_uv_crops_the_longer_axis() {

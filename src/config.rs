@@ -36,7 +36,8 @@ pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle, Ui
 pub use highlights::{EventAction, EventPattern, HighlightPattern, RedirectMode};
 pub use hotbars::{
     EffectCategory, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
-    HotbarCountdownSource, HotbarDef, HotbarStyle, HotbarsConfig, NameMatch, VitalKind, VitalUnit,
+    HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, HotbarsConfig, IconMode, NameMatch,
+    VitalKind, VitalUnit,
 };
 pub use keybinds::{
     parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,

@@ -383,12 +383,7 @@ impl VellumGuiApp {
                                 id,
                                 label: "New".to_string(),
                                 command: String::new(),
-                                hotkey: None,
-                                tooltip: None,
-                                category: None,
-                                countdown: None,
-                                states: Vec::new(),
-                                default_style: None,
+                                ..Default::default()
                             });
                             state.selected_button = Some(working.buttons.len() - 1);
                             state.dirty = true;
@@ -775,6 +770,7 @@ fn render_states_editor(
                     dim: true,
                     ..Default::default()
                 },
+                countdown: None,
             });
             changed = true;
         }

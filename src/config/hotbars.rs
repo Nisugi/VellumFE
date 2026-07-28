@@ -63,6 +63,43 @@ pub struct HotbarButton {
     /// Appearance when no state matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_style: Option<HotbarStyle>,
+    /// Base icon (GUI only; TUI always renders the text label). States may
+    /// override via their style's `icon`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HotbarIcon>,
+    /// How the GUI draws the button: text (default), icon only, or both.
+    #[serde(default)]
+    pub icon_mode: IconMode,
+}
+
+/// A sprite-sheet cell reference plus optional visual effects, barbar-style.
+/// Sheets are registered in the active skin's `[sheets]` table and sliced
+/// into fixed-size cells indexed 1-based, left→right then top→bottom.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HotbarIcon {
+    /// Sheet name from the active skin's `[sheets]` table.
+    pub sheet: String,
+    /// 1-based cell index into the sheet.
+    pub cell: u32,
+    /// Render the cell desaturated (barbar's `gs` variant).
+    #[serde(default)]
+    pub grayscale: bool,
+    /// Solid border color drawn over the icon (hex or palette name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+    /// Border width in pixels (1-10); defaults to 2 when `border` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_width: Option<u8>,
+}
+
+/// How the GUI renders a button's face. TUI ignores this (text only).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IconMode {
+    #[default]
+    Text,
+    Icon,
+    IconAndLabel,
 }
 
 /// Where a button's countdown overlay gets its remaining seconds.
@@ -85,6 +122,10 @@ pub struct HotbarButtonState {
     pub when: HotbarCondition,
     #[serde(default)]
     pub style: HotbarStyle,
+    /// Per-state countdown override (barbar-style state timers). When the
+    /// state is active this replaces the button-level `countdown`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub countdown: Option<HotbarCountdownSource>,
 }
 
 /// Appearance overrides; unset fields fall through to the button's
@@ -99,6 +140,10 @@ pub struct HotbarStyle {
     pub bg: Option<String>,
     #[serde(default)]
     pub dim: bool,
+    /// Icon override for this state (GUI only); falls through to the
+    /// button-level icon when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<HotbarIcon>,
 }
 
 /// Structured condition vocabulary. Editors build these from dropdowns and
@@ -493,6 +538,59 @@ dim = true
         let serialized = toml::to_string_pretty(&config).expect("serialize");
         let reparsed: HotbarsConfig = toml::from_str(&serialized).expect("reparse");
         assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn icon_fields_parse_and_roundtrip() {
+        let toml_src = r##"
+            [[bars]]
+            name = "iconbar"
+            [[bars.buttons]]
+            id = "hide"
+            label = "Hide"
+            command = "hide"
+            icon_mode = "icon_and_label"
+            [bars.buttons.icon]
+            sheet = "rogue"
+            cell = 5
+            border = "#00ff00"
+            border_width = 3
+            [[bars.buttons.states]]
+            [bars.buttons.states.when]
+            type = "rt_active"
+            [bars.buttons.states.style]
+            dim = true
+            [bars.buttons.states.style.icon]
+            sheet = "rogue"
+            cell = 6
+            grayscale = true
+            [bars.buttons.states.countdown]
+            source = "roundtime"
+        "##;
+        let config: HotbarsConfig = toml::from_str(toml_src).expect("parse");
+        let button = &config.bars[0].buttons[0];
+        assert_eq!(button.icon_mode, IconMode::IconAndLabel);
+        let icon = button.icon.as_ref().expect("button icon");
+        assert_eq!((icon.sheet.as_str(), icon.cell), ("rogue", 5));
+        assert!(!icon.grayscale);
+        assert_eq!(icon.border.as_deref(), Some("#00ff00"));
+        assert_eq!(icon.border_width, Some(3));
+        let state = &button.states[0];
+        let state_icon = state.style.icon.as_ref().expect("state icon");
+        assert_eq!((state_icon.cell, state_icon.grayscale), (6, true));
+        assert!(matches!(
+            state.countdown,
+            Some(HotbarCountdownSource::Roundtime)
+        ));
+
+        // Round-trips losslessly like the rest of the schema.
+        let serialized = toml::to_string_pretty(&config).expect("serialize");
+        let reparsed: HotbarsConfig = toml::from_str(&serialized).expect("reparse");
+        assert_eq!(config, reparsed);
+
+        // Old configs without icon fields default to text mode (back-compat
+        // also covered by FULL_EXAMPLE above).
+        assert_eq!(IconMode::default(), IconMode::Text);
     }
 
     #[test]

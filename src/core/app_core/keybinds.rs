@@ -519,11 +519,7 @@ mod tests {
                         label: id.to_string(),
                         command: command.to_string(),
                         hotkey: hotkey.map(|s| s.to_string()),
-                        tooltip: None,
-                        category: None,
-                        countdown: None,
-                        states: vec![],
-                        default_style: None,
+                        ..Default::default()
                     })
                     .collect(),
             }],

@@ -2515,6 +2515,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         window_name: &str,
         bar_name: &str,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
         let Some(bar_def) = app_core.config.hotbars.find_bar(bar_name) else {
             ui.weak(format!(
@@ -2551,26 +2552,67 @@ impl VellumGuiApp {
         let mut clicked = None;
         let mut render_buttons = |ui: &mut egui::Ui| {
             for button in &buttons {
-                let text = match button.countdown_secs {
-                    Some(secs) if secs > 0 => format!("{}  {}s", button.label, secs),
-                    _ => button.label.clone(),
-                };
-                let mut rich = RichText::new(text);
-                if button.dim {
-                    rich = rich.color(ui.visuals().weak_text_color());
-                } else if let Some(fg) = button.fg.as_deref().and_then(parse_hex_color) {
-                    rich = rich.color(fg);
-                }
+                use crate::config::IconMode;
 
-                let mut widget = egui::Button::new(rich);
-                if !button.dim {
-                    if let Some(bg) = button.bg.as_deref().and_then(parse_hex_color) {
-                        widget = widget.fill(bg);
+                // Icon face: only when the mode asks for one AND the active
+                // skin resolves the sheet cell. Otherwise fall back to text
+                // (also the no-skin and TUI-authored-config behavior).
+                let sprite = match button.icon_mode {
+                    IconMode::Text => None,
+                    IconMode::Icon | IconMode::IconAndLabel => {
+                        button.icon.as_ref().and_then(|icon| {
+                            skin_art.and_then(|art| {
+                                // Dim states reuse the grayscale twin, barbar-style.
+                                art.sheet_cell(
+                                    &icon.sheet,
+                                    icon.cell,
+                                    icon.grayscale || button.dim,
+                                )
+                            })
+                        })
                     }
-                }
+                };
 
-                let mut response = ui.add(widget);
+                let mut response = if let Some((texture, uv)) = sprite {
+                    Self::draw_icon_button(ui, button, texture, uv)
+                } else {
+                    let text = match button.countdown_secs {
+                        Some(secs) if secs > 0 => {
+                            format!("{}  {}s", button.label, secs)
+                        }
+                        _ => button.label.clone(),
+                    };
+                    let mut rich = RichText::new(text);
+                    if button.dim {
+                        rich = rich.color(ui.visuals().weak_text_color());
+                    } else if let Some(fg) =
+                        button.fg.as_deref().and_then(parse_hex_color)
+                    {
+                        rich = rich.color(fg);
+                    }
+
+                    let mut widget = egui::Button::new(rich);
+                    if !button.dim {
+                        if let Some(bg) = button.bg.as_deref().and_then(parse_hex_color)
+                        {
+                            widget = widget.fill(bg);
+                        }
+                    }
+                    ui.add(widget)
+                };
+
                 let mut hover = button.tooltip.clone().unwrap_or_default();
+                // Icon-only faces lose their text; surface the label on hover.
+                if matches!(button.icon_mode, IconMode::Icon)
+                    && sprite.is_some()
+                    && !button.label.is_empty()
+                {
+                    hover = if hover.is_empty() {
+                        button.label.clone()
+                    } else {
+                        format!("{}\n{}", button.label, hover)
+                    };
+                }
                 if let Some(hotkey) = &button.hotkey {
                     if !hover.is_empty() {
                         hover.push('\n');
@@ -2597,6 +2639,125 @@ impl VellumGuiApp {
             ui.horizontal_wrapped(render_buttons);
         }
         clicked
+    }
+
+    /// Paint one icon-faced hotbar button: allocated click rect + painter
+    /// image (the codebase's sprite idiom — no egui Image widget), with
+    /// optional label, solid border, dim tint, and countdown overlay.
+    fn draw_icon_button(
+        ui: &mut egui::Ui,
+        button: &crate::core::hotbar::ResolvedHotbarButton,
+        texture: crate::frontend::gui::skin::SkinTexture,
+        uv: egui::Rect,
+    ) -> egui::Response {
+        use crate::config::IconMode;
+
+        let edge = ui.spacing().interact_size.y.max(24.0);
+        let with_label = matches!(button.icon_mode, IconMode::IconAndLabel);
+
+        // Label galley first so the allocation can fit icon + text.
+        let label_galley = with_label.then(|| {
+            let color = if button.dim {
+                ui.visuals().weak_text_color()
+            } else {
+                button
+                    .fg
+                    .as_deref()
+                    .and_then(parse_hex_color)
+                    .unwrap_or_else(|| ui.visuals().text_color())
+            };
+            ui.painter().layout_no_wrap(
+                button.label.clone(),
+                egui::TextStyle::Button.resolve(ui.style()),
+                color,
+            )
+        });
+        let gap = 4.0;
+        let width = edge
+            + label_galley
+                .as_ref()
+                .map(|g| gap + g.size().x + gap)
+                .unwrap_or(0.0);
+
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, edge), egui::Sense::click());
+        if !ui.is_rect_visible(rect) {
+            return response;
+        }
+        let painter = ui.painter();
+
+        // Button chrome: fill + hover highlight, matching egui's button feel.
+        let visuals = ui.style().interact(&response);
+        let fill = if button.dim {
+            visuals.bg_fill
+        } else {
+            button
+                .bg
+                .as_deref()
+                .and_then(parse_hex_color)
+                .unwrap_or(visuals.bg_fill)
+        };
+        painter.rect_filled(rect, visuals.corner_radius, fill);
+
+        // The icon cell, letterboxed square at the left edge.
+        let icon_rect = egui::Rect::from_min_size(rect.min, egui::vec2(edge, edge));
+        let tint = if button.dim {
+            // Grayscale twin already applied; also fade it.
+            egui::Color32::from_white_alpha(140)
+        } else {
+            egui::Color32::WHITE
+        };
+        painter.image(texture.texture, icon_rect.shrink(1.0), uv, tint);
+
+        if let Some(galley) = label_galley {
+            let pos = egui::pos2(
+                rect.min.x + edge + gap,
+                rect.center().y - galley.size().y / 2.0,
+            );
+            painter.galley(pos, galley, ui.visuals().text_color());
+        }
+
+        // Solid border variant (barbar's c_HEX / bw_N, drawn not baked).
+        if let Some(color) = button
+            .icon
+            .as_ref()
+            .and_then(|icon| icon.border.as_deref())
+            .and_then(parse_hex_color)
+        {
+            let bw = button
+                .icon
+                .as_ref()
+                .and_then(|icon| icon.border_width)
+                .unwrap_or(2)
+                .clamp(1, 10) as f32;
+            painter.rect_stroke(
+                icon_rect.shrink(bw / 2.0),
+                visuals.corner_radius,
+                egui::Stroke::new(bw, color),
+                egui::StrokeKind::Inside,
+            );
+        }
+
+        // Countdown overlay: bottom-center of the icon, barbar-style.
+        if let Some(secs) = button.countdown_secs.filter(|s| *s > 0) {
+            let text = format!("{}s", secs);
+            let font = egui::TextStyle::Small.resolve(ui.style());
+            let galley =
+                painter.layout_no_wrap(text, font, egui::Color32::WHITE);
+            let pos = egui::pos2(
+                icon_rect.center().x - galley.size().x / 2.0,
+                icon_rect.max.y - galley.size().y - 1.0,
+            );
+            // Scrim behind the digits so they read over any art.
+            painter.rect_filled(
+                egui::Rect::from_min_size(pos, galley.size()).expand(1.0),
+                2.0,
+                egui::Color32::from_black_alpha(160),
+            );
+            painter.galley(pos, galley, egui::Color32::WHITE);
+        }
+
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 
     pub(super) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
@@ -4084,9 +4245,13 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),
-            WindowContent::Hotkeybar { bar } => {
-                Self::render_hotkeybar_content(app_core, ui, &window.name, bar)
-            }
+            WindowContent::Hotkeybar { bar } => Self::render_hotkeybar_content(
+                app_core,
+                ui,
+                &window.name,
+                bar,
+                settings.skin_art.as_deref(),
+            ),
             WindowContent::Performance => {
                 Self::render_performance_content(app_core, ui);
                 None
