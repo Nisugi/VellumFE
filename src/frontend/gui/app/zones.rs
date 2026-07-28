@@ -1294,6 +1294,10 @@ impl VellumGuiApp {
             // normal resizable window sized for all members.
             let is_hand_widget =
                 matches!(window.content, WindowContent::Hand { .. }) && group_shape.is_none();
+            // WebUI windows get a title-bar close button: unlike layout
+            // widgets (hidden/restored via the Windows menu), script pages
+            // are transient - closing one removes it and unsubscribes.
+            let is_webui_window = matches!(window.content, WindowContent::WebUi(_));
             let hand_resize_handle_width = 10.0f32;
             let pointer_over_hand_resize_handle = if is_hand_widget && primary_down {
                 let handle_rect = Rect::from_min_max(
@@ -1332,6 +1336,9 @@ impl VellumGuiApp {
             self.apply_skin_border_to_frame(&tab.window_name, &mut docked_window_frame);
             // `default_size` (like `fixed_size`) is the whole window rect in
             // this egui fork, so every zone passes the outer size directly.
+            // Declared before the builder so the close-button borrow
+            // (`Window::open`) outlives it.
+            let mut webui_open = true;
             let mut window_builder = egui::Window::new(self.window_display_title(&tab))
                 .id(window_id)
                 .default_size(initial_rect.size())
@@ -1369,6 +1376,9 @@ impl VellumGuiApp {
             } else {
                 window_builder.default_pos(initial_rect.min)
             };
+            if is_webui_window && !title_bar_hidden {
+                window_builder = window_builder.open(&mut webui_open);
+            }
             if let Some(inner) = window_builder.show(ctx, |ui| {
                     ui.push_id(&tab.id.key, |ui| {
                         self.render_window_or_group_content(ui, &tab)
@@ -1467,6 +1477,9 @@ impl VellumGuiApp {
                         });
                     }
                 }
+            }
+            if is_webui_window && !webui_open {
+                actions.webui_closes.push(tab.window_name.clone());
             }
             if let Some(click) = clicked_link {
                 actions.link_clicks.push(click);

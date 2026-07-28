@@ -108,6 +108,9 @@ impl WidgetRenderSettings {
 struct GuiWindowActions {
     link_clicks: Vec<GuiLinkClick>,
     window_menu_request: Option<GuiWindowMenuRequest>,
+    /// WebUI windows whose title-bar close button was clicked this frame
+    /// (window names); the app removes them and unsubscribes their pages.
+    webui_closes: Vec<String>,
 }
 
 impl GuiWindowActions {
@@ -116,6 +119,7 @@ impl GuiWindowActions {
         if let Some(request) = other.window_menu_request {
             self.window_menu_request = Some(request);
         }
+        self.webui_closes.extend(other.webui_closes);
     }
 }
 
@@ -2470,11 +2474,15 @@ impl VellumGuiApp {
                     // completing the dialog lifecycle). Declared panels stay
                     // opt-in - dock once via .webui, the layout brings them
                     // back - so a script restart never resurrects a panel
-                    // window the user closed on purpose. The hello baseline
-                    // never auto-opens (connecting must not spawn windows).
+                    // window the user closed on purpose. Dialogs (a settings
+                    // popup, e.g. map/settings) are on-demand supplemental
+                    // pages: they open via the image_map right-click popup,
+                    // never just because the script registered them. The
+                    // hello baseline never auto-opens (connecting must not
+                    // spawn windows).
                     let fresh: Vec<String> = pages
                         .iter()
-                        .filter(|p| p.kind.as_deref() != Some("panel"))
+                        .filter(|p| !matches!(p.kind.as_deref(), Some("panel") | Some("dialog")))
                         .filter(|p| !self.webui_pages.iter().any(|k| k.id == p.id))
                         .map(|p| p.id.clone())
                         .collect();
@@ -2717,6 +2725,41 @@ impl VellumGuiApp {
         }
         self.layout_dirty = true;
         tracing::info!("WebUI panel '{}' opened for page '{}'", name, page_id);
+    }
+
+    /// Closes one WebUI window from its title-bar close button: removes the
+    /// window and its layout entry, and unsubscribes the page so the server
+    /// sees the viewer leave (scripts with a window watchdog - ;map - treat
+    /// that as the window closing, matching the GTK/browser lifecycle).
+    fn close_webui_window(&mut self, name: &str) {
+        let page_id = self.app_core.ui_state.windows.get(name).and_then(|w| {
+            match &w.content {
+                WindowContent::WebUi(content) => Some(content.page_id.clone()),
+                _ => None,
+            }
+        });
+        let Some(page_id) = page_id else { return };
+        self.app_core.remove_window(name);
+        self.app_core.layout.windows.retain(|w| w.name() != name);
+        self.app_core.layout_modified_since_save = true;
+        self.layout_dirty = true;
+        // Only unsubscribe when no other window still shows the page.
+        let still_hosted = self.app_core.ui_state.windows.values().any(|w| {
+            matches!(&w.content, WindowContent::WebUi(c) if c.page_id == page_id)
+        });
+        if !still_hosted {
+            if let Some(bridge) = &self.webui_bridge {
+                bridge.send(crate::data::webui::WebUiClientMessage::Unsubscribe {
+                    page: page_id.clone(),
+                });
+            }
+        }
+        tracing::info!(
+            "WebUI panel '{}' closed by user (page '{}', unsubscribed: {})",
+            name,
+            page_id,
+            !still_hosted
+        );
     }
 
     /// `.webui` action entry points (returns true when handled).
@@ -4681,6 +4724,9 @@ impl eframe::App for VellumGuiApp {
                 self.window_context_menu = Some(request);
                 self.window_context_menu_just_opened = true;
             }
+        }
+        for name in std::mem::take(&mut zone_actions.webui_closes) {
+            self.close_webui_window(&name);
         }
         for click in zone_actions.link_clicks {
             self.handle_link_click(click, None);
