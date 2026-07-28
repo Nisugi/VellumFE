@@ -56,6 +56,11 @@ pub(in super::super) struct ControllerEditorState {
     wheel_meta_buffer: Option<crate::config::WheelMeta>,
     /// Visual designer canvas vs numeric row list.
     wheel_view_mode: WheelViewMode,
+    /// Designer: folder level being edited, as indices into the buffer
+    /// tree (empty = top level). The canvas draws this level's ring.
+    wheel_designer_path: Vec<usize>,
+    /// Designer: index of the selected slice within the current level.
+    wheel_selected_slice: Option<usize>,
 }
 
 impl ControllerEditorState {
@@ -69,6 +74,8 @@ impl ControllerEditorState {
             wheel_status: None,
             wheel_meta_buffer: None,
             wheel_view_mode: WheelViewMode::Visual,
+            wheel_designer_path: Vec::new(),
+            wheel_selected_slice: None,
         }
     }
 
@@ -880,6 +887,8 @@ fn render_wheels_tab(
             state.wheel_buffer = None;
             state.wheel_meta_buffer = None;
             state.wheel_status = None;
+            state.wheel_designer_path.clear();
+            state.wheel_selected_slice = None;
         };
         egui::ComboBox::from_id_salt("controller_wheel_pick")
             .selected_text(if state.wheel_selected.is_empty() {
@@ -892,10 +901,7 @@ fn render_wheels_tab(
                     .selectable_label(state.wheel_selected.is_empty(), "default")
                     .clicked()
                 {
-                    state.wheel_selected.clear();
-                    state.wheel_buffer = None;
-                    state.wheel_meta_buffer = None;
-                    state.wheel_status = None;
+                    select_wheel(state, "");
                 }
                 // Permanent portals entry: button/stick only, no slice list.
                 if ui
@@ -931,6 +937,8 @@ fn render_wheels_tab(
                 state.wheel_buffer = Some(Vec::new());
                 state.wheel_meta_buffer = Some(crate::config::WheelMeta::default());
                 state.wheel_status = None;
+                state.wheel_designer_path.clear();
+                state.wheel_selected_slice = None;
             }
         }
     });
@@ -1046,6 +1054,7 @@ fn render_wheels_tab(
     }
 
     let selected = state.wheel_selected.clone();
+    let wheel_name = if selected.is_empty() { "default" } else { selected.as_str() };
     let buffer = state.wheel_buffer.get_or_insert_with(|| {
         if selected.is_empty() {
             config.controller_wheel.clone()
@@ -1090,9 +1099,24 @@ fn render_wheels_tab(
                 });
         }
         WheelViewMode::Visual => {
-            // Canvas lands in the next phase; until then the numeric list is
-            // one click away and edits the same buffer.
-            ui.weak("Visual designer under construction — use Numeric for now.");
+            let start_deg = state
+                .wheel_meta_buffer
+                .as_ref()
+                .and_then(|m| m.start)
+                .unwrap_or(0.0);
+            let global_dz =
+                (config.controller_tuning.deadzone as f32 / 100.0).clamp(0.0, 0.99);
+            render_wheel_designer(
+                ui,
+                wheel_name,
+                buffer,
+                &mut state.wheel_designer_path,
+                &mut state.wheel_selected_slice,
+                start_deg,
+                global_dz,
+                inner_ceiling,
+                &mut ops,
+            );
         }
     }
     for op in ops {
@@ -1101,11 +1125,6 @@ fn render_wheels_tab(
 
     // Inline advisory: warn (without blocking) when the current buffer's
     // spans don't fit — same check the load/save-time warner runs.
-    let wheel_name = if state.wheel_selected.is_empty() {
-        "default"
-    } else {
-        state.wheel_selected.as_str()
-    };
     let span_issues = crate::config::validate_wheel_spans(wheel_name, buffer);
 
     ui.separator();
@@ -1227,5 +1246,169 @@ fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling:
         .changed()
     {
         slice.inner = if inner <= 0.0 { None } else { Some(inner as u8) };
+    }
+}
+
+/// The Visual designer: the current folder level drawn as a wheel with the
+/// live renderer's own painter (`paint_wheel_ring` — the preview can't
+/// drift from the real thing), a breadcrumb naming the level, click on a
+/// wedge to select it, and the selected slice's fields underneath. Edits
+/// go to the same buffer the numeric rows use.
+#[allow(clippy::too_many_arguments)]
+fn render_wheel_designer(
+    ui: &mut egui::Ui,
+    wheel_name: &str,
+    buffer: &mut Vec<WheelSlice>,
+    designer_path: &mut Vec<usize>,
+    selected_slice: &mut Option<usize>,
+    start_deg: f32,
+    global_deadzone: f32,
+    inner_ceiling: u8,
+    ops: &mut Vec<WheelOp>,
+) {
+    // A structural edit (delete, move) can strand the path; fall back to
+    // the top level rather than a blank canvas.
+    if wheel_slices_at(buffer, designer_path).is_none() {
+        designer_path.clear();
+        *selected_slice = None;
+    }
+
+    // Breadcrumb: wheel name, then each folder down to the shown level.
+    let crumbs: Vec<String> = {
+        let mut crumbs = vec![wheel_name.to_string()];
+        let mut level: &[WheelSlice] = buffer;
+        for &i in designer_path.iter() {
+            let Some(slice) = level.get(i) else { break };
+            crumbs.push(slice.label.clone());
+            level = &slice.slices;
+        }
+        crumbs
+    };
+    ui.horizontal(|ui| {
+        for (i, crumb) in crumbs.iter().enumerate() {
+            if i > 0 {
+                ui.weak("▸");
+            }
+            ui.strong(crumb);
+        }
+    });
+
+    let level = wheel_slices_at(buffer, designer_path)
+        .expect("designer path resolves after the fallback above");
+    // Folder levels lay out at start 0 (the runtime rotates them for the
+    // Back anchor, which the designer doesn't draw); only the top level
+    // takes the wheel's `start`.
+    let level_start = if designer_path.is_empty() { start_deg } else { 0.0 };
+
+    // Canvas: full available width, wheel centered; leave room below for
+    // the selected-slice panel and the Save row.
+    const PANEL_RESERVE: f32 = 150.0;
+    let avail = ui.available_size();
+    let side = avail
+        .x
+        .min((avail.y - PANEL_RESERVE).max(200.0))
+        .clamp(200.0, 440.0);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::Vec2::new(avail.x.max(side), side),
+        egui::Sense::click(),
+    );
+    let painter = ui.painter().with_clip_rect(rect);
+    let center = rect.center();
+    let outer = side / 2.0 - 8.0;
+    let hub = (outer * 0.22).clamp(28.0, 46.0);
+    // Same label placement as the live wheel: 34px inside the rim.
+    let label_radius = outer - 34.0;
+
+    let bg = ui.visuals().window_fill.gamma_multiply(0.92);
+    painter.circle_filled(center, outer, bg);
+    painter.circle_stroke(
+        center,
+        outer,
+        egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
+    );
+
+    if level.is_empty() {
+        painter.text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            "no slices yet — + Add slice below",
+            egui::FontId::proportional(13.0),
+            ui.visuals().weak_text_color(),
+        );
+    } else {
+        let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
+        let layout = super::super::gamepad::resolve_spans(&spans, level_start);
+        super::super::gamepad::paint_wheel_ring(
+            &painter,
+            ui.visuals(),
+            center,
+            outer,
+            hub,
+            label_radius,
+            level,
+            &layout,
+            *selected_slice,
+            global_deadzone,
+        );
+        painter.circle_filled(center, hub, bg);
+        painter.text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            format!("{} slices", level.len()),
+            egui::FontId::proportional(12.0),
+            ui.visuals().weak_text_color(),
+        );
+
+        // Click on a wedge selects it; the hub or outside the rim clears
+        // the selection.
+        if response.clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let v = pos - center;
+                let r = v.length();
+                *selected_slice = if r >= hub && r <= outer {
+                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &layout)
+                } else {
+                    None
+                };
+            }
+        }
+    }
+
+    // Selected-slice panel: the shared field widgets plus the structural
+    // buttons the numeric rows offer.
+    if selected_slice.is_some_and(|i| i >= level.len()) {
+        *selected_slice = None;
+    }
+    match *selected_slice {
+        Some(i) => {
+            let mut slice_path = designer_path.clone();
+            slice_path.push(i);
+            ui.horizontal(|ui| {
+                render_slice_fields(ui, &mut level[i], inner_ceiling);
+                if ui.small_button("^").on_hover_text("Move up").clicked() {
+                    ops.push(WheelOp::MoveUp(slice_path.clone()));
+                }
+                if ui
+                    .small_button("+sub")
+                    .on_hover_text("Add a child slice (makes this a folder)")
+                    .clicked()
+                {
+                    ops.push(WheelOp::AddChild(slice_path.clone()));
+                }
+                if ui.small_button("X").on_hover_text("Delete").clicked() {
+                    ops.push(WheelOp::Delete(slice_path.clone()));
+                    *selected_slice = None;
+                }
+            });
+        }
+        None => {
+            ui.weak("Click a wedge to edit it.");
+        }
+    }
+    if ui.button("+ Add slice").clicked() {
+        // The new slice lands at the end of this level; select it so its
+        // fields open immediately.
+        *selected_slice = Some(level.len());
+        ops.push(WheelOp::AddChild(designer_path.clone()));
     }
 }
