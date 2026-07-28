@@ -1097,7 +1097,17 @@ fn resolve_spans(spans: &[Option<f32>], start_deg: f32) -> ResolvedLayout {
 /// seats. Angle uses the aim convention (0 = up, clockwise), normalized
 /// relative to seat 0's start so wrap is automatic.
 fn seat_at(x: f32, y_up: f32, layout: &ResolvedLayout, deadzone: f32) -> Option<usize> {
-    if layout.len() == 0 || (x * x + y_up * y_up).sqrt() < deadzone {
+    if (x * x + y_up * y_up).sqrt() < deadzone {
+        return None;
+    }
+    seat_index_at_angle(x, y_up, layout)
+}
+
+/// Pure angular resolution: which seat's arc the stick points at, ignoring
+/// magnitude. None only when there are no seats. The radial floor (global
+/// dead zone or a per-slice `inner`) is applied by the caller.
+fn seat_index_at_angle(x: f32, y_up: f32, layout: &ResolvedLayout) -> Option<usize> {
+    if layout.len() == 0 {
         return None;
     }
     let start = layout.seats[0].start_deg;
@@ -1111,6 +1121,30 @@ fn seat_at(x: f32, y_up: f32, layout: &ResolvedLayout, deadzone: f32) -> Option<
     }
     // Float slop at the wrap: the last seat owns the boundary.
     Some(layout.len() - 1)
+}
+
+/// The seat under the stick honoring per-slice `inner`: resolve the angle,
+/// then apply that seat's radial floor — its own `inner` (percent of full
+/// deflection) if set, else the global `deadzone`. Below the floor the seat
+/// isn't aimable, so this returns None (the stick reads as centered). This
+/// gates aiming/commit only; firing stays with the active fire mode.
+fn seat_at_with_inner(
+    x: f32,
+    y_up: f32,
+    view: &WheelView,
+    deadzone: f32,
+) -> Option<usize> {
+    let seat = seat_index_at_angle(x, y_up, &view.layout)?;
+    let floor = view
+        .slices
+        .get(seat)
+        .and_then(|s| s.inner)
+        .map(|pct| pct as f32 / 100.0)
+        .unwrap_or(deadzone);
+    if (x * x + y_up * y_up).sqrt() < floor {
+        return None;
+    }
+    Some(seat)
 }
 
 /// Even-ring seat lookup by count — the backward-compatible shim used by
@@ -1143,26 +1177,6 @@ fn anchor_angle_deg(anchor: &str) -> f32 {
 fn angular_gap(a: f32, b: f32) -> f32 {
     let d = (a - b).rem_euclid(360.0);
     d.min(360.0 - d)
-}
-
-/// Display index (0 = top, clockwise) whose seat center lies nearest a
-/// screen-anchor word, given `count` evenly-spaced seats. Retained for the
-/// even-ring Back-placement tests; the runtime positions Back by angle
-/// (see `WheelView::build`).
-#[cfg(test)]
-fn anchor_display_index(anchor: &str, count: usize) -> usize {
-    if count == 0 {
-        return 0;
-    }
-    let layout = resolve_spans(&vec![None; count], 0.0);
-    let target = anchor_angle_deg(anchor);
-    (0..count)
-        .min_by(|&a, &b| {
-            angular_gap(layout.seats[a].center_deg(), target)
-                .partial_cmp(&angular_gap(layout.seats[b].center_deg(), target))
-                .unwrap()
-        })
-        .unwrap_or(0)
 }
 
 /// One step of the wheel re-arm gate. Given whether the latch is up and
@@ -1244,7 +1258,9 @@ fn wheel_aim_step(
 ) -> WheelStepOutcome {
     let mut render = false;
     let magnitude = (x * x + y_up * y_up).sqrt();
-    let candidate = seat_at(x, y_up, &view.layout, timing.deadzone);
+    // Per-slice `inner` gates aiming: a seat below its own floor reads as
+    // no candidate (and thus as "centered", clearing the rearm latch).
+    let candidate = seat_at_with_inner(x, y_up, view, timing.deadzone);
     let centered = candidate.is_none();
     let (latch_after, may_dwell) = dwell_rearm_step(ui.rearm_until_center, centered);
     ui.rearm_until_center = latch_after;
@@ -1791,6 +1807,72 @@ mod wheel_tests {
         for i in 0..3 {
             assert_eq!(view.real(i), Some(Some(i)));
         }
+    }
+
+    fn leaf_inner(label: &str, inner: u8) -> WheelSlice {
+        WheelSlice {
+            label: label.to_string(),
+            command: label.to_string(),
+            inner: Some(inner),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn per_slice_inner_gates_aiming_above_and_below_its_floor() {
+        // Seat 0 (up) demands a 65% throw; seat 1 (right) an easy 20%.
+        // Global dead zone 50%.
+        let mut a = leaf_inner("hard", 65);
+        a.span = Some(120.0);
+        let real = vec![a, leaf_inner("easy", 20), leaf("plain")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        let dz = 0.5;
+
+        // Aiming up at 0.55: past the global dead zone but under seat 0's
+        // 65% floor, so it does NOT register.
+        assert_eq!(seat_at_with_inner(0.0, 0.55, &view, dz), None, "under hard floor");
+        // At 0.70 it clears the floor.
+        assert_eq!(seat_at_with_inner(0.0, 0.70, &view, dz), Some(0), "over hard floor");
+
+        // Seat 1 (right) registers at just 0.25 — below the global dead
+        // zone — because its own inner (20%) is lower.
+        assert_eq!(seat_at_with_inner(1.0, 0.0, &view, dz), Some(1));
+        assert_eq!(
+            seat_at_with_inner(0.25, 0.0, &view, dz).map(|s| s),
+            Some(1),
+            "easy slice reachable below the global dead zone"
+        );
+
+        // The plain slice (no inner) still uses the global dead zone: seat 2
+        // is down (180). At 0.4 it's under 0.5 -> None; at 0.6 -> Some(2).
+        assert_eq!(seat_at_with_inner(0.0, -0.4, &view, dz), None, "plain under global dz");
+        assert_eq!(seat_at_with_inner(0.0, -0.6, &view, dz), Some(2), "plain over global dz");
+    }
+
+    #[test]
+    fn inner_gates_commit_but_not_the_fire_mode() {
+        // A high-inner leaf under a moderate throw never commits (the dwell
+        // machine sees no candidate); pushing past the floor commits and
+        // release then fires it — inner gates aiming, not the fire path.
+        let real = vec![leaf_inner("drop", 65), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Dwell up at 0.55 (under the 65% floor): no candidate ever, no
+        // commit, so release fires nothing.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.55, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.55, steps(t0, 300));
+        assert_eq!(ui.candidate, None, "sub-floor seat is not a candidate");
+        assert_eq!(ui.aimed, None);
+        assert_eq!(wheel_release_command(&ui, &view), None);
+
+        // Push past the floor and dwell: now it commits and release fires.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.9, steps(t0, 400));
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.9, steps(t0, 600));
+        assert_eq!(ui.aimed, Some(0), "clears the floor -> commits");
+        assert_eq!(wheel_release_command(&ui, &view), Some("drop".to_string()));
     }
 
     #[test]
