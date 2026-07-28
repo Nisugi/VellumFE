@@ -14,57 +14,120 @@
 // Sentinel command marking the injected Back slice.
 const WHEEL_BACK = "__wheel_back__";
 
-// Which slice the stick aims at: slice 0 centered at the top, clockwise.
-// Null inside the dead zone (`deadzone`, 0..1).
-function wheelSliceAt(x, yUp, count, deadzone) {
-  const dz = deadzone == null ? 0.5 : deadzone;
-  if (!count || Math.hypot(x, yUp) < dz) return null;
-  const step = 360 / count;
-  const angle = (Math.atan2(x, yUp) * 180) / Math.PI;
-  return Math.floor((angle + 360 + step / 2) / step) % count;
-}
+// Minimum wedge width; mirrors WHEEL_MIN_SPAN_DEG (Rust). Explicit spans
+// below this are clamped up and the ring scaled to close.
+const MIN_SPAN_DEG = 30;
 
-// Display index (0 = top, cw) whose seat is nearest a screen-anchor word,
-// for `count` even seats. Places the reserved Back slice at its side.
-function anchorDisplayIndex(anchor, count) {
-  if (!count) return 0;
-  const map = {
-    up: [0, 1], down: [0, -1], left: [-1, 0], right: [1, 0],
-    "up-left": [-1, 1], "up-right": [1, 1],
-    "down-left": [-1, -1], "down-right": [1, -1],
-  };
-  const [ax, ay] = map[anchor] || [0, -1];
-  return wheelSliceAt(ax, ay, count, 0) || 0;
-}
+// Turn a per-slice span list (null = take an even share of the leftover)
+// into concrete abutting seats [{ startDeg, spanDeg }], seat 0 CENTERED at
+// `startDeg` (0 = up, clockwise). Mirrors resolve_spans (Rust): explicit
+// spans floored at the minimum, remainder split evenly among the free
+// slices, everything scaled to close at 360 on over/underfill. All-null +
+// start 0 reproduces the old even ring.
+function resolveSpans(spans, startDeg) {
+  const n = spans.length;
+  if (n === 0) return { seats: [] };
 
-function rotateRight(arr, n) {
-  const len = arr.length;
-  if (!len) return;
-  n = ((n % len) + len) % len;
-  const tail = arr.splice(len - n, n);
-  arr.unshift(...tail);
-}
+  const explicit = spans.map((s) => (s == null ? null : Math.max(s, MIN_SPAN_DEG)));
+  const explicitSum = explicit.reduce((a, s) => a + (s || 0), 0);
+  const freeCount = explicit.filter((s) => s == null).length;
+  const freeEach = freeCount > 0 ? Math.max((360 - explicitSum) / freeCount, 0) : 0;
 
-// The displayed ring for a wheel level: the real slices plus, inside a
-// folder, a synthetic Back slice at the configured anchor. Returns
-// { slices, realIndex } where realIndex[d] is the real slice index for
-// display index d, or null for the Back slice.
-function buildWheelView(real, inFolder, backAnchor) {
-  if (!inFolder) {
-    return { slices: real.slice(), realIndex: real.map((_, i) => i) };
+  let widths = explicit.map((s) => (s == null ? freeEach : s));
+  const total = widths.reduce((a, w) => a + w, 0);
+  if (total <= 1e-6) {
+    widths = new Array(n).fill(360 / n);
+  } else if (Math.abs(total - 360) > 1e-3) {
+    const scale = 360 / total;
+    widths = widths.map((w) => w * scale);
   }
-  const count = real.length + 1;
-  const back = { label: "◂ Back", command: WHEEL_BACK };
+
+  // Seat 0 centered at startDeg: its leading edge is half its width earlier.
+  const seats = [];
+  let edge = startDeg - widths[0] / 2;
+  for (const w of widths) {
+    seats.push({ startDeg: edge, spanDeg: w });
+    edge += w;
+  }
+  return { seats };
+}
+
+// Pure angular resolution: which seat's arc the stick points at, ignoring
+// magnitude. Null only when there are no seats.
+function seatIndexAtAngle(x, yUp, layout) {
+  if (!layout.seats.length) return null;
+  const start = layout.seats[0].startDeg;
+  const rel = mod360((Math.atan2(x, yUp) * 180) / Math.PI - start);
+  let cum = 0;
+  for (let i = 0; i < layout.seats.length; i++) {
+    cum += layout.seats[i].spanDeg;
+    if (rel < cum) return i;
+  }
+  return layout.seats.length - 1; // float slop at the wrap
+}
+
+function mod360(d) {
+  return ((d % 360) + 360) % 360;
+}
+
+// The aim-convention angle (deg, 0 = up, cw) of an anchor word.
+function anchorAngleDeg(anchor) {
+  switch (anchor) {
+    case "up": return 0;
+    case "up-right": return 45;
+    case "right": return 90;
+    case "down-right": return 135;
+    case "down": return 180;
+    case "down-left": return 225;
+    case "left": return 270;
+    case "up-left": return 315;
+    default: return 180;
+  }
+}
+
+// The displayed ring for a wheel level. Top level: the real slices laid
+// out by their spans and rotated by `start`. Inside a folder: Back is
+// appended as the LAST seat (reals keep order 0..n-1), and the ring is
+// rotated by ANGLE so Back's center lands on the anchor. backAnchor
+// "none" skips Back. Mirrors WheelView::build (Rust). Returns
+// { slices, realIndex, layout }.
+function buildWheelView(real, inFolder, backAnchor, start) {
+  const startDeg = start || 0;
+  const realSpans = () => real.map((s) => (s.span == null ? null : s.span));
+
+  if (!inFolder || backAnchor === "none") {
+    return {
+      slices: real.slice(),
+      realIndex: real.map((_, i) => i),
+      layout: resolveSpans(realSpans(), startDeg),
+    };
+  }
+
   const slices = real.slice();
-  slices.push(back);
+  slices.push({ label: "◂ Back", command: WHEEL_BACK });
   const realIndex = real.map((_, i) => i);
   realIndex.push(null);
-  // Back is last; rotate right so it lands at the anchor seat.
-  const target = anchorDisplayIndex(backAnchor, count);
-  const shift = (target + 1) % count;
-  rotateRight(slices, shift);
-  rotateRight(realIndex, shift);
-  return { slices, realIndex };
+
+  const spans = realSpans();
+  spans.push(null); // Back is span-less: an even share keeps today's look
+  const backIdx = slices.length - 1;
+  const atZero = resolveSpans(spans, 0);
+  const backCenter = atZero.seats[backIdx].startDeg + atZero.seats[backIdx].spanDeg / 2;
+  const rotation = anchorAngleDeg(backAnchor) - backCenter;
+  return { slices, realIndex, layout: resolveSpans(spans, rotation) };
+}
+
+// The seat under the stick honoring per-slice `inner`: resolve by angle,
+// then apply that seat's floor — its own `inner` (percent) if set, else the
+// global deadzone. Below the floor the seat isn't aimable (null). Gates
+// aiming/commit only. Mirrors seat_at_with_inner (Rust).
+function seatAtWithInner(x, yUp, view, deadzone) {
+  const seat = seatIndexAtAngle(x, yUp, view.layout);
+  if (seat == null) return null;
+  const slice = view.slices[seat];
+  const floor = slice && slice.inner != null ? slice.inner / 100 : deadzone;
+  if (Math.hypot(x, yUp) < floor) return null;
+  return seat;
 }
 
 // Retract fires once deflection falls delta below its peak. A small epsilon
@@ -105,7 +168,9 @@ function leafRealAt(view, display) {
 function wheelAimStep(ui, view, timing, x, yUp, now) {
   let render = false;
   const magnitude = Math.hypot(x, yUp);
-  const candidate = wheelSliceAt(x, yUp, view.slices.length, timing.deadzone);
+  // Per-slice `inner` gates aiming: a seat below its own floor reads as no
+  // candidate (and thus "centered", clearing the rearm latch).
+  const candidate = seatAtWithInner(x, yUp, view, timing.deadzone);
   const centered = candidate === null;
   const latchAfter = ui.rearmUntilCenter && !centered;
   const mayDwell = !latchAfter && !centered;
@@ -191,9 +256,11 @@ function wheelAimStep(ui, view, timing, x, yUp, now) {
 
 const WheelCore = {
   WHEEL_BACK,
-  wheelSliceAt,
-  anchorDisplayIndex,
-  rotateRight,
+  MIN_SPAN_DEG,
+  resolveSpans,
+  seatIndexAtAngle,
+  seatAtWithInner,
+  anchorAngleDeg,
   buildWheelView,
   retractShouldFire,
   leafRealAt,

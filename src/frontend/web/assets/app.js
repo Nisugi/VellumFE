@@ -781,6 +781,7 @@ function handleMessage(msg) {
       // the desktop wheel (one source of truth: host keybinds.toml).
       wheelTuning = { ...WHEEL_TUNING_DEFAULTS, ...(wheels.tuning || {}) };
       wheelStick = wheels.wheel_stick || {};
+      wheelStart = wheels.wheel_start || {};
       if (gpWheel) renderWheel();
       break;
     case "session": setSession(msg.d); break;
@@ -1403,6 +1404,7 @@ const WHEEL_TUNING_DEFAULTS = {
 };
 let wheelTuning = { ...WHEEL_TUNING_DEFAULTS };
 let wheelStick = {}; // wheel name ("default" = default wheel) -> "left"|"right"
+let wheelStart = {}; // wheel name -> ring rotation in degrees (0 = up)
 // Dwell wheel state. `aimed` is the committed display slice (release
 // fires it); `candidate`/`candidateSince` track the slice the stick is
 // over but hasn't dwelt on yet; `rearmUntilCenter` blocks a new dwell
@@ -1484,7 +1486,8 @@ function wheelDeadzone() {
 function wheelView(key, path) {
   const real = wheelLevelSlices(key, path);
   if (!Array.isArray(real)) return null;
-  return WheelCore.buildWheelView(real, path.length > 0, wheelTuning.back_slice);
+  const start = wheelStart[key === "" ? "default" : key] || 0;
+  return WheelCore.buildWheelView(real, path.length > 0, wheelTuning.back_slice, start);
 }
 
 function sendWheelPick(key, path) {
@@ -1523,8 +1526,12 @@ function renderWheel() {
   const outer = 104;
   const hub = 34;
   const labelR = 70;
-  const step = (2 * Math.PI) / slices.length;
-  const top = -Math.PI / 2; // slice 0 centered at the top
+  // Per-seat angles from the resolved layout (aim degrees, 0 = up cw);
+  // screen radians = deg*pi/180 - pi/2 (up is -90 in screen space).
+  const seats = view.layout.seats;
+  const seatCenter = (i) => (seats[i].startDeg + seats[i].spanDeg / 2) * (Math.PI / 180) - Math.PI / 2;
+  const seatSpan = (i) => seats[i].spanDeg * (Math.PI / 180);
+  const globalDz = wheelDeadzone();
 
   const svg = wheelSvgEl("svg", { viewBox: "-110 -110 220 220" });
   svg.appendChild(
@@ -1538,7 +1545,8 @@ function renderWheel() {
     `${(Math.cos(angle) * radius).toFixed(2)} ${(Math.sin(angle) * radius).toFixed(2)}`;
 
   slices.forEach((slice, i) => {
-    const centerAngle = top + i * step;
+    const centerAngle = seatCenter(i);
+    const step = seatSpan(i);
     const isAimed = aimed === i;
     // Wedge fill: the slice's tint (dim at rest, bright while aimed);
     // colorless slices highlight with the accent color.
@@ -1592,6 +1600,28 @@ function renderWheel() {
     );
     text.textContent = label;
     svg.appendChild(text);
+
+    // Per-slice inner floor: a slice whose own `inner` sits above the
+    // global dead zone needs a deeper throw — draw a faint arc across its
+    // wedge at that floor radius (mirrors the desktop cue).
+    if (slice.inner != null) {
+      const frac = Math.min(1, Math.max(0, slice.inner / 100));
+      if (frac > globalDz + 1e-3) {
+        const r = hub + (outer - hub) * frac;
+        const a0 = centerAngle - step / 2;
+        const a1 = centerAngle + step / 2;
+        svg.appendChild(
+          wheelSvgEl(
+            "path",
+            {
+              d: `M ${point(a0, r)} A ${r} ${r} 0 0 1 ${point(a1, r)}`,
+              fill: "none",
+            },
+            { stroke: "var(--warn, #d0a020)", "stroke-width": 1.5, opacity: 0.8 },
+          ),
+        );
+      }
+    }
   });
 
   // Center hub hosts the hint text.

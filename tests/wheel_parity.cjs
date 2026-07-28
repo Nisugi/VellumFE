@@ -25,30 +25,53 @@ function check(actual, expected, label) {
   }
 }
 
+// Even-ring seat lookup by count + dead zone, via the new API (resolve an
+// all-even layout, then gate by magnitude) — the old wheelSliceAt.
+function evenSeatAt(x, yUp, count, deadzone) {
+  if (!count || Math.hypot(x, yUp) < deadzone) return null;
+  const layout = wc.resolveSpans(new Array(count).fill(null), 0);
+  return wc.seatIndexAtAngle(x, yUp, layout);
+}
+
 // ---- geometry -------------------------------------------------------------
 for (const c of data.geometry) {
   check(
-    wc.wheelSliceAt(c.x, c.yUp, c.count, c.deadzone),
+    evenSeatAt(c.x, c.yUp, c.count, c.deadzone),
     c.expect,
     `geometry x=${c.x} yUp=${c.yUp} count=${c.count} dz=${c.deadzone}`,
   );
 }
 
-// Back placement (back_placement_angle) and the in-folder rust_only_
-// scenarios are checked ONLY on the Rust side until B7: the desktop now
-// places Back by angle, while this shipped wheel-core.js still uses the
-// pre-span display-index rotation and exposes no seat angles. B7 ports the
-// angle scheme here and folds those groups back into the shared contract.
+// ---- Back placement by angle ----------------------------------------------
+function angularGap(a, b) {
+  const d = ((a - b) % 360 + 360) % 360;
+  return Math.min(d, 360 - d);
+}
+for (const c of data.back_placement) {
+  const real = Array.from({ length: c.realCount }, (_, i) => ({ label: `s${i}` }));
+  const view = wc.buildWheelView(real, true, c.anchor, 0);
+  const backIdx = view.realIndex.indexOf(null);
+  check(backIdx, view.slices.length - 1, `back anchor=${c.anchor} n=${c.realCount}: last seat`);
+  const seat = view.layout.seats[backIdx];
+  const center = seat.startDeg + seat.spanDeg / 2;
+  const gap = angularGap(center, c.expectBackCenterDeg);
+  check(gap < 0.01, true, `back anchor=${c.anchor} n=${c.realCount}: center ${center.toFixed(1)}`);
+}
 
-// ---- scenarios (shared: geometry + fire-mode state machine) ---------------
+// ---- scenarios (geometry + fire-mode machine + Back + spans + inner) ------
 const TIMING_BASE = { deadzone: 0.5, aimMs: 150, navMs: 150, edgeThreshold: 0.9, retractDelta: 0.1 };
 
 for (const sc of data.scenarios) {
   const folders = sc.ring.folders || [];
-  const real = sc.ring.labels.map((label, i) =>
-    folders.includes(i) ? { label, slices: [{ label: "child" }] } : { label },
-  );
-  const view = wc.buildWheelView(real, !!sc.ring.inFolder, sc.ring.anchor || "down");
+  const spans = sc.ring.spans || {};
+  const inners = sc.ring.inner || {};
+  const real = sc.ring.labels.map((label, i) => {
+    const slice = folders.includes(i) ? { label, slices: [{ label: "child" }] } : { label };
+    if (spans[i] != null) slice.span = spans[i];
+    if (inners[i] != null) slice.inner = inners[i];
+    return slice;
+  });
+  const view = wc.buildWheelView(real, !!sc.ring.inFolder, sc.ring.anchor || "down", 0);
   const timing = { ...TIMING_BASE, fireMode: sc.fireMode || "release" };
   const ui = {
     path: (sc.initialPath || []).slice(),
@@ -78,7 +101,7 @@ for (const sc of data.scenarios) {
   }
 }
 
-const total = data.geometry.length + data.scenarios.length;
+const total = data.geometry.length + data.back_placement.length + data.scenarios.length;
 if (failures) {
   console.error(`wheel parity: ${failures} failure(s) across ${total} vector groups`);
   process.exit(1);

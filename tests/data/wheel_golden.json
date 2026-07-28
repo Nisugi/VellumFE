@@ -8,9 +8,10 @@
     "lands on one side only, the other side's run goes red instead of the",
     "phone firing a different slice than the desktop.",
     "Conventions: x/yUp stick axes with yUp positive = up; seat 0 centered",
-    "at the top, clockwise; scenario timing is the shipped default feel",
-    "(deadzone 0.5, dwells 150 ms, edge 0.9, retract delta 0.1); a scenario",
-    "stops at the first mid-hold fire (the wheel closes)."
+    "at the top (start 0), clockwise; a ring.spans / ring.inner map keys a",
+    "slice index to its degrees / percent; scenario timing is the shipped",
+    "default feel (deadzone 0.5, dwells 150 ms, edge 0.9, retract delta",
+    "0.1); a scenario stops at the first mid-hold fire (the wheel closes)."
   ],
   "geometry": [
     { "x": 0.0, "yUp": 1.0, "count": 8, "deadzone": 0.5, "expect": 0 },
@@ -33,15 +34,12 @@
     { "x": 0.0, "yUp": 0.05, "count": 8, "deadzone": 0.0, "expect": 0 }
   ],
   "_back_placement_note": [
-    "back_placement_angle is RUST-ONLY until B7. The desktop places Back by",
-    "angle (append as the last seat, rotate the ring so Back's center hits",
-    "the anchor); the phone's wheel-core.js still uses the pre-span display-",
-    "index rotation and exposes no seat angles, so the node harness skips",
-    "this group. B7 ports the angle scheme to JS and folds these back into",
-    "the shared contract. expectBackCenterDeg is the aim-convention angle",
-    "(0 = up, clockwise) of Back's seat center."
+    "Back is appended as the LAST display seat, and the ring is rotated so",
+    "its center lands on the anchor direction. expectBackCenterDeg is the",
+    "aim-convention angle (0 = up, clockwise) of Back's seat center — a",
+    "shared contract both implementations honor."
   ],
-  "back_placement_angle": [
+  "back_placement": [
     { "realCount": 3, "anchor": "up", "expectBackCenterDeg": 0 },
     { "realCount": 3, "anchor": "right", "expectBackCenterDeg": 90 },
     { "realCount": 3, "anchor": "down", "expectBackCenterDeg": 180 },
@@ -160,16 +158,7 @@
         { "t": 250, "x": 0.0, "y": 0.2 }
       ],
       "expect": { "aimed": null, "fired": null, "releaseReal": null }
-    }
-  ],
-  "_rust_only_scenarios_note": [
-    "In-folder scenarios whose expected seats depend on Back placement.",
-    "RUST-ONLY until B7 for the same reason as back_placement_angle: the",
-    "phone still uses the old display-index rotation, so the seats differ.",
-    "Under the desktop append-Back-and-rotate-by-angle scheme, a 3-real +",
-    "Back ring anchored down rotates so up->seat1, left->seat0, right->seat2."
-  ],
-  "rust_only_scenarios": [
+    },
     {
       "name": "folder_up_descends_the_inner_folder_seat",
       "fireMode": "release",
@@ -191,6 +180,38 @@
         { "t": 160, "x": -1.0, "y": 0.0 }
       ],
       "expect": { "aimed": 0, "path": [0], "fired": null, "releaseReal": 0 }
+    },
+    {
+      "name": "inner_gates_a_high_floor_slice",
+      "fireMode": "release",
+      "ring": {
+        "labels": ["hard", "b", "c"],
+        "folders": [],
+        "inFolder": false,
+        "anchor": "down",
+        "inner": { "0": 65 }
+      },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 0.55 },
+        { "t": 300, "x": 0.0, "y": 0.55 }
+      ],
+      "expect": { "aimed": null, "fired": null, "releaseReal": null }
+    },
+    {
+      "name": "inner_commits_once_past_the_floor",
+      "fireMode": "release",
+      "ring": {
+        "labels": ["hard", "b", "c"],
+        "folders": [],
+        "inFolder": false,
+        "anchor": "down",
+        "inner": { "0": 65 }
+      },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 0.9 },
+        { "t": 200, "x": 0.0, "y": 0.9 }
+      ],
+      "expect": { "aimed": 0, "fired": null, "releaseReal": 0 }
     }
   ]
 }

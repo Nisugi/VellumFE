@@ -2248,7 +2248,7 @@ mod wheel_tests {
 
         // Back placement is checked by ANGLE (Rust-only until B7): Back is
         // the last seat, and its center sits at the anchor direction.
-        for case in data["back_placement_angle"].as_array().unwrap() {
+        for case in data["back_placement"].as_array().unwrap() {
             let n = case["realCount"].as_u64().unwrap() as usize;
             let real: Vec<WheelSlice> = (0..n).map(|i| leaf(&format!("s{i}"))).collect();
             let view = WheelView::build(&real, true, case["anchor"].as_str().unwrap(), 0.0);
@@ -2262,9 +2262,8 @@ mod wheel_tests {
             );
         }
 
-        // Shared scenarios run here AND in node; rust_only_scenarios run
-        // only here (in-folder seats that depend on the Back scheme, which
-        // the phone hasn't adopted until B7). Both use the same runner.
+        // Every scenario runs here AND in node/wheel-core.js — one shared
+        // contract now that the phone has the same geometry.
         let run_scenario = |sc: &serde_json::Value| {
             let name = sc["name"].as_str().unwrap();
             let ring = &sc["ring"];
@@ -2272,6 +2271,8 @@ mod wheel_tests {
                 .as_array()
                 .map(|a| a.iter().map(|v| v.as_u64().unwrap() as usize).collect())
                 .unwrap_or_default();
+            let spans = ring["spans"].as_object();
+            let inners = ring["inner"].as_object();
             let real: Vec<WheelSlice> = ring["labels"]
                 .as_array()
                 .unwrap()
@@ -2279,11 +2280,19 @@ mod wheel_tests {
                 .enumerate()
                 .map(|(i, l)| {
                     let label = l.as_str().unwrap();
-                    if folders.contains(&i) {
+                    let mut slice = if folders.contains(&i) {
                         folder(label, vec![leaf("child")])
                     } else {
                         leaf(label)
+                    };
+                    let key = i.to_string();
+                    if let Some(span) = spans.and_then(|m| m.get(&key)).and_then(|v| v.as_f64()) {
+                        slice.span = Some(span as f32);
                     }
+                    if let Some(inner) = inners.and_then(|m| m.get(&key)).and_then(|v| v.as_u64()) {
+                        slice.inner = Some(inner as u8);
+                    }
+                    slice
                 })
                 .collect();
             let view = WheelView::build(
@@ -2354,9 +2363,6 @@ mod wheel_tests {
         };
 
         for sc in data["scenarios"].as_array().unwrap() {
-            run_scenario(sc);
-        }
-        for sc in data["rust_only_scenarios"].as_array().unwrap() {
             run_scenario(sc);
         }
     }
