@@ -351,6 +351,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Render :grin:-style shortcodes in incoming text as emoji", ui.emoji_shortcodes),
         bool_entry!("ui.color_emoji", "Color Emoji", "UI",
             "Draw emoji in color in the GUI (monochrome when off)", ui.color_emoji),
+        bool_entry!("ui.sorter_enabled", "Sort Container Looks", "UI",
+            "Categorize 'look in container' output by item type (.sorter)", ui.sorter_enabled),
         text_entry!("ui.terminal_title", "Terminal Title", "UI",
             "Terminal title template ({character}, {room}, {health}, ...); empty leaves the title alone",
             ui.terminal_title),

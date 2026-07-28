@@ -1144,6 +1144,34 @@ impl AppCore {
                 self.handle_go2(&args);
             }
 
+            // Toggle categorized container-look display (sorter.lic's
+            // native cousin). Persisted like any UI setting.
+            "sorter" => {
+                let sub = parts.get(1).map(|s| s.to_lowercase());
+                let target = match sub.as_deref() {
+                    Some("on") => true,
+                    Some("off") => false,
+                    None => !self.config.ui.sorter_enabled,
+                    Some(other) => {
+                        self.add_system_message(&format!(
+                            "Usage: .sorter [on|off] (currently {}), got '{}'",
+                            if self.config.ui.sorter_enabled { "on" } else { "off" },
+                            other
+                        ));
+                        return Ok(String::new());
+                    }
+                };
+                self.config.ui.sorter_enabled = target;
+                self.message_processor.set_sorter_enabled(target);
+                match self.save_config() {
+                    Ok(()) => self.add_system_message(&format!(
+                        "Container-look sorting {}.",
+                        if target { "on" } else { "off" }
+                    )),
+                    Err(e) => self.add_system_message(&format!("Sorter toggle saved to session only: {e}")),
+                }
+            }
+
             // Batch item commands over tracked containers (foreach.lic's
             // native cousin). Needs raw text - ';' separates commands.
             "foreach" => {
@@ -1204,6 +1232,9 @@ impl AppCore {
                     }
                     "reload" => {
                         self.gameobj_data = None;
+                        // The sorter keeps its own copy in the message
+                        // processor; drop it too so both re-resolve.
+                        self.message_processor.reset_gameobj_cache();
                         let data = self.gameobj_data();
                         self.add_system_message(&format!(
                             "Data pack re-resolved: gameobj classifier reloaded \

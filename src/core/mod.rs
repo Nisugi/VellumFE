@@ -23,6 +23,7 @@ pub mod menu_actions;
 pub mod messages;
 pub mod pathing;
 pub mod remote;
+pub mod sorter;
 pub mod spell_table;
 pub mod travel;
 pub mod state;

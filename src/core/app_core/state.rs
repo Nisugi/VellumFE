@@ -3042,6 +3042,7 @@ impl AppCore {
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
+        self.add_system_message("  .sorter [on|off]        - Categorize 'look in container' output by item type");
         self.add_system_message("  .foreach ... in <bag>; cmd; cmd - Batch commands over matching container items (.foreach for usage)");
         self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, foreach run)");
         self.add_system_message("");
