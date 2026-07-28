@@ -50,6 +50,8 @@ enum WheelViewMode {
 enum WheelDesignerDrag {
     None,
     Divider { boundary: usize, start_dirty: bool },
+    /// Radial drag of one slice's aim floor (its `inner`).
+    InnerArc { slice: usize },
 }
 
 pub(in super::super) struct ControllerEditorState {
@@ -1347,9 +1349,12 @@ fn render_wheel_designer(
         v.x.atan2(-v.y).to_degrees().rem_euclid(360.0)
     };
 
-    // ----- Divider drag lifecycle (before painting, so the ring drawn
-    // this frame already reflects the pointer). -----
-    if response.drag_started() && level.len() >= 2 {
+    // ----- Drag lifecycle (before painting, so the ring drawn this frame
+    // already reflects the pointer). Dividers get grab priority; missing
+    // one, a grab lands on the wedge's aim-floor arc — the slice's own
+    // `inner`, or the global dead-zone radius when it has none (that's the
+    // affordance for creating one). -----
+    if response.drag_started() && !level.is_empty() {
         if let Some(pos) = response.interact_pointer_pos() {
             let v = pos - center;
             let r = v.length();
@@ -1360,22 +1365,37 @@ fn render_wheel_designer(
                 let aim = aim_of(pos);
                 // Nearest divider (the shared edge after each seat) within
                 // grab range.
-                let nearest = layout
-                    .seats
-                    .iter()
-                    .enumerate()
-                    .map(|(b, seat)| {
-                        let angle = (seat.start_deg + seat.span_deg).rem_euclid(360.0);
-                        (b, super::super::gamepad::angular_gap(aim, angle))
+                let nearest = (level.len() >= 2)
+                    .then(|| {
+                        layout
+                            .seats
+                            .iter()
+                            .enumerate()
+                            .map(|(b, seat)| {
+                                let angle =
+                                    (seat.start_deg + seat.span_deg).rem_euclid(360.0);
+                                (b, super::super::gamepad::angular_gap(aim, angle))
+                            })
+                            .min_by(|a, b| a.1.total_cmp(&b.1))
                     })
-                    .min_by(|a, b| a.1.total_cmp(&b.1));
-                if let Some((boundary, gap)) = nearest {
-                    if gap <= 8.0 {
-                        // Freeze the whole ring to concrete widths so the
-                        // drag edits predictable numbers (auto seats would
-                        // otherwise re-split under the pointer).
-                        materialize_spans(level, level_start(meta));
-                        *drag = WheelDesignerDrag::Divider { boundary, start_dirty: false };
+                    .flatten()
+                    .filter(|(_, gap)| *gap <= 8.0);
+                if let Some((boundary, _)) = nearest {
+                    // Freeze the whole ring to concrete widths so the
+                    // drag edits predictable numbers (auto seats would
+                    // otherwise re-split under the pointer).
+                    materialize_spans(level, level_start(meta));
+                    *drag = WheelDesignerDrag::Divider { boundary, start_dirty: false };
+                } else if let Some(seat) =
+                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &layout)
+                {
+                    let floor = level[seat]
+                        .inner
+                        .map(|p| p as f32 / 100.0)
+                        .unwrap_or(global_deadzone);
+                    let floor_r = hub + (outer - hub) * floor;
+                    if (r - floor_r).abs() <= 10.0 {
+                        *drag = WheelDesignerDrag::InnerArc { slice: seat };
                     }
                 }
             }
@@ -1402,6 +1422,17 @@ fn render_wheel_designer(
                     let norm = new_start.rem_euclid(360.0);
                     meta.start = if norm.abs() < 1e-4 { None } else { Some(norm) };
                     *start_dirty = true;
+                }
+            }
+        }
+    }
+    if let WheelDesignerDrag::InnerArc { slice } = drag {
+        if response.dragged() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let r = (pos - center).length();
+                if let Some(s) = level.get_mut(*slice) {
+                    s.inner =
+                        inner_from_radius(r, hub, outer, inner_ceiling, global_deadzone);
                 }
             }
         }
@@ -1518,6 +1549,30 @@ fn materialize_spans(level: &mut [WheelSlice], start_deg: f32) {
     let layout = super::super::gamepad::resolve_spans(&spans, start_deg);
     for (slice, seat) in level.iter_mut().zip(&layout.seats) {
         slice.span = Some(seat.span_deg);
+    }
+}
+
+/// A dragged floor radius → the slice's `inner` value: percent of full
+/// deflection from hub to rim, clamped to 5..=`ceiling` (the same ceiling
+/// the numeric field enforces). `None` — use the global dead zone — when
+/// the floor isn't deeper than the default, so dragging the arc back down
+/// erases the override instead of freezing it at the dead-zone value.
+fn inner_from_radius(
+    r: f32,
+    hub: f32,
+    outer: f32,
+    ceiling: u8,
+    global_deadzone: f32,
+) -> Option<u8> {
+    if outer <= hub {
+        return None;
+    }
+    let frac = ((r - hub) / (outer - hub)).clamp(0.0, 1.0);
+    let pct = (frac * 100.0).round().clamp(5.0, ceiling as f32);
+    if pct <= global_deadzone * 100.0 + 1e-3 {
+        None
+    } else {
+        Some(pct as u8)
     }
 }
 
@@ -1658,6 +1713,20 @@ mod designer_tests {
         let start = apply_divider_drag(&mut w, 35.0, 3, 5.0);
         assert_eq!(w, vec![70.0, 90.0, 90.0, 110.0]);
         assert!((start - 40.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn inner_radius_maps_hub_to_rim_onto_percent() {
+        // Ring from r=40 to r=240: 60% of the way out with dead zone 35%.
+        assert_eq!(inner_from_radius(160.0, 40.0, 240.0, 70, 0.35), Some(60));
+        // Not deeper than the default floor → clears the override.
+        assert_eq!(inner_from_radius(100.0, 40.0, 240.0, 70, 0.35), None);
+        // Clamped to the same ceiling the numeric field enforces.
+        assert_eq!(inner_from_radius(239.0, 40.0, 240.0, 70, 0.35), Some(70));
+        // Tiny throws floor at 5% (kept when the dead zone is lower).
+        assert_eq!(inner_from_radius(41.0, 40.0, 240.0, 70, 0.03), Some(5));
+        // Degenerate geometry never produces a floor.
+        assert_eq!(inner_from_radius(50.0, 40.0, 40.0, 70, 0.35), None);
     }
 
     #[test]
