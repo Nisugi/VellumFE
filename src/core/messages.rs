@@ -1908,6 +1908,11 @@ impl MessageProcessor {
                     title.clone(),
                     target.clone(),
                 );
+                // Dual-write to the registry (migration: consumers still
+                // read container_cache until step 3).
+                game_state
+                    .objects
+                    .register_container(id.clone(), title.clone(), target.clone());
 
                 // Signal container for discovery mode (every LOOK IN triggers this)
                 // The runtime will check if a window already exists before creating
@@ -1927,6 +1932,7 @@ impl MessageProcessor {
 
                 // Clear container contents
                 game_state.container_cache.clear_container(id);
+                game_state.objects.clear_container(id); // dual-write
 
                 tracing::debug!("Cleared container: id='{}'", id);
             }
@@ -1935,6 +1941,29 @@ impl MessageProcessor {
 
                 // Add item to container
                 game_state.container_cache.add_item(container_id, content.clone());
+                // Dual-write to the registry: parse the raw line into a
+                // GameItem, skipping the container's own header line. The
+                // registry stores structured items, not raw text.
+                if let Some(container) = game_state.objects.container(container_id) {
+                    let target = container.command_target();
+                    if !crate::core::game_objects::parse::is_header_line(content, &target) {
+                        if let Some(item) =
+                            crate::core::game_objects::parse_anchor(content)
+                        {
+                            game_state.objects.add_container_item(container_id, item);
+                        }
+                    }
+                } else if let Some(item) =
+                    crate::core::game_objects::parse_anchor(content)
+                {
+                    // Item arrived before the <container> tag; register it
+                    // (auto-creates a title-less entry, same as the cache).
+                    // Header lines have their own anchor id == container id,
+                    // but with no container known yet we can't dedup that;
+                    // the header's noun is the container itself, harmless to
+                    // include and corrected on the next clear+refill.
+                    game_state.objects.add_container_item(container_id, item);
+                }
 
                 tracing::trace!("Added item to container '{}': {}", container_id,
                     if content.len() > 50 { format!("{}...", &content[..50]) } else { content.clone() });
@@ -2836,17 +2865,12 @@ impl MessageProcessor {
         // Inventory stream is always a silent update (shouldn't trigger prompts in main window)
         if self.current_stream == "inv" {
             self.chunk_has_silent_updates = true;
-            // Check if ANY window has Inventory content type
-            if !ui_state
-                .windows
-                .values()
-                .any(|w| matches!(w.content, WindowContent::Inventory(_)))
-            {
-                tracing::trace!("Discarding inv stream content - no inventory window exists");
-                self.current_stream = original_stream;
-                return;
-            }
-            // Add line to inventory buffer instead of window
+            // Buffer unconditionally: the buffer is the source of truth for
+            // both the inventory window (if any) AND the GameObjects
+            // registry, which owns worn/carried items regardless of whether
+            // a window happens to be open. (Previously this discarded the
+            // whole feed when no inventory window existed — a latent bug
+            // that left the registry blind to worn items.)
             let num_segments = line.segments.len();
             self.inventory_buffer.push(line.segments);
             tracing::trace!("Buffered inventory line ({} segments)", num_segments);
@@ -3315,7 +3339,9 @@ impl MessageProcessor {
             }
 
             if updated_count == 0 {
-                tracing::warn!("No inventory windows found to update!");
+                // Not an error: the feed is still buffered for the registry
+                // even with no inventory window open.
+                tracing::trace!("Inventory changed; no window open (buffer kept for registry)");
             } else {
                 tracing::debug!("Updated {} inventory window(s)", updated_count);
             }
@@ -4309,6 +4335,117 @@ mod tests {
             window: None,
             compiled_regex: None,
         }
+    }
+
+    // ===========================================
+    // GameObjects registry dual-write (migration step 2)
+    // ===========================================
+
+    #[test]
+    fn container_feed_populates_registry_in_parallel() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        // Real look-in-container sequence: <container> then
+        // <clearContainer> then header + item <inv> lines.
+        let feed = [
+            ParsedElement::Container {
+                id: "77".to_string(),
+                title: "Bandolier".to_string(),
+                target: Some("#77".to_string()),
+            },
+            ParsedElement::ClearContainer { id: "77".to_string() },
+            ParsedElement::ContainerItem {
+                container_id: "77".to_string(),
+                content: r#"In the <a exist="77" noun="bandolier">bandolier</a>:"#
+                    .to_string(),
+            },
+            ParsedElement::ContainerItem {
+                container_id: "77".to_string(),
+                content: r#" a <a exist="101" noun="crystal">quartz crystal</a>"#
+                    .to_string(),
+            },
+            ParsedElement::ContainerItem {
+                container_id: "77".to_string(),
+                content: r#" a <a exist="102" noun="sword">short sword</a>"#.to_string(),
+            },
+        ];
+        for element in &feed {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        // Registry holds the two items, header skipped, ids intact.
+        let items = game_state.objects.items_in("77");
+        assert_eq!(items.len(), 2, "header excluded, both items kept");
+        assert_eq!(items[0].id, "101");
+        assert_eq!(items[0].name, "quartz crystal");
+        assert_eq!(items[1].id, "102");
+        // And it agrees with the legacy cache the consumers still read.
+        assert_eq!(
+            game_state.container_cache.get("77").unwrap().parsed_items().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn stow_container_feed_targets_object_in_registry() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        let feed = [
+            ParsedElement::Container {
+                id: "stow".to_string(),
+                title: "My Shroud".to_string(),
+                target: Some("#691".to_string()),
+            },
+            ParsedElement::ClearContainer { id: "stow".to_string() },
+            ParsedElement::ContainerItem {
+                container_id: "stow".to_string(),
+                content: r#"In the <a exist="691" noun="shroud">shroud</a>:"#.to_string(),
+            },
+            ParsedElement::ContainerItem {
+                container_id: "stow".to_string(),
+                content: r#" a <a exist="742" noun="feather">disir feather</a>"#
+                    .to_string(),
+            },
+        ];
+        for element in &feed {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        // Header (the shroud object) skipped via command_target, feather
+        // kept; the command target is the object id, not "#stow".
+        let items = game_state.objects.items_in("stow");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "742");
+        assert_eq!(
+            game_state.objects.container("stow").unwrap().command_target(),
+            "691"
+        );
     }
 
     // ===========================================

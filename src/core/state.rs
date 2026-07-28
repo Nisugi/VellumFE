@@ -129,6 +129,11 @@ pub struct GameState {
     /// Container cache for bag/container contents
     pub container_cache: ContainerCache,
 
+    /// Unified game-object registry (items/creatures/players). Populated
+    /// in parallel with the legacy silos during migration; consumers move
+    /// onto it one at a time. See `core::game_objects`.
+    pub objects: crate::core::game_objects::GameObjects,
+
     /// DragonRealms experience/skill component state
     pub dr_experience: DRExperienceState,
 
@@ -1233,6 +1238,7 @@ impl GameState {
             room_players_generation: 0,
             room_meta: RoomMetaState::default(),
             container_cache: ContainerCache::default(),
+            objects: crate::core::game_objects::GameObjects::default(),
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),

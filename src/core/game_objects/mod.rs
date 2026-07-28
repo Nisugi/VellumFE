@@ -26,7 +26,7 @@
 // widgets + foreach read from the registry (plan steps 3-6).
 #![allow(dead_code)]
 
-mod parse;
+pub mod parse;
 
 pub use parse::parse_anchor;
 
