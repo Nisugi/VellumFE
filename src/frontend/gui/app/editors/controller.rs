@@ -1590,6 +1590,41 @@ fn render_wheel_designer(
         }
     }
 
+    // Ring tools: whole-level operations.
+    ui.horizontal(|ui| {
+        if ui
+            .button("Even out")
+            .on_hover_text("Return every slice at this level to an even, automatic split.")
+            .clicked()
+        {
+            for s in level.iter_mut() {
+                s.span = None;
+            }
+        }
+        if ui
+            .button("Mirror")
+            .on_hover_text("Flip this level left↔right; every slice keeps its width.")
+            .clicked()
+        {
+            mirror_slices(level);
+            if at_top {
+                // Seat 0's center mirrors too: start → −start.
+                let flipped = (-meta.start.unwrap_or(0.0)).rem_euclid(360.0);
+                let new = if flipped.abs() < 1e-4 { None } else { Some(flipped) };
+                if new != meta.start {
+                    meta.start = new;
+                    *meta_save = Some((wheel_name.to_string(), meta.clone()));
+                }
+            }
+            // Indices moved: slice 0 kept its seat, the tail reversed.
+            if let Some(sel) = *selected_slice {
+                if sel != 0 && sel < level.len() {
+                    *selected_slice = Some(level.len() - sel);
+                }
+            }
+        }
+    });
+
     // Selected-slice panel: the shared field widgets plus the structural
     // buttons the numeric rows offer.
     if selected_slice.is_some_and(|i| i >= level.len()) {
@@ -1597,10 +1632,22 @@ fn render_wheel_designer(
     }
     match *selected_slice {
         Some(i) => {
+            let resolved_width = build_view(level, meta).layout.seats[i].span_deg;
             let mut slice_path = designer_path.clone();
             slice_path.push(i);
             ui.horizontal(|ui| {
                 render_slice_fields(ui, &mut level[i], inner_ceiling);
+                let mut locked = level[i].span.is_some();
+                if ui
+                    .checkbox(&mut locked, "lock")
+                    .on_hover_text(
+                        "Fix this slice's width at its current degrees. Unlocked \
+                         slices share the ring's leftover automatically.",
+                    )
+                    .changed()
+                {
+                    level[i].span = if locked { Some(resolved_width) } else { None };
+                }
                 if ui.small_button("^").on_hover_text("Move up").clicked() {
                     ops.push(WheelOp::MoveUp(slice_path.clone()));
                 }
@@ -1643,6 +1690,18 @@ fn materialize_spans(
 ) {
     for (slice, seat) in level.iter_mut().zip(&layout.seats) {
         slice.span = Some(seat.span_deg);
+    }
+}
+
+/// Mirror a ring left↔right (angle → −angle). Slice 0 keeps its seat —
+/// its center sits on the start axis, which the caller flips separately
+/// at the top level — and the clockwise tail becomes the
+/// counter-clockwise tail, so everything after slice 0 reverses in place.
+/// Widths and floors travel with their slices; applying twice is the
+/// identity.
+fn mirror_slices(level: &mut [WheelSlice]) {
+    if level.len() > 1 {
+        level[1..].reverse();
     }
 }
 
@@ -1825,6 +1884,30 @@ mod designer_tests {
         let start = apply_divider_drag(&mut w, 35.0, 3, 5.0);
         assert_eq!(w, vec![70.0, 90.0, 90.0, 110.0]);
         assert!((start - 40.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn mirror_keeps_slice_zero_and_reverses_the_tail() {
+        let mk = |label: &str, span| WheelSlice {
+            label: label.to_string(),
+            span,
+            ..Default::default()
+        };
+        let mut level = vec![
+            mk("a", Some(100.0)),
+            mk("b", None),
+            mk("c", Some(50.0)),
+            mk("d", None),
+        ];
+        mirror_slices(&mut level);
+        let labels: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "d", "c", "b"]);
+        // Widths travel with their slices.
+        assert_eq!(level[2].span, Some(50.0));
+        // Mirroring twice is the identity.
+        mirror_slices(&mut level);
+        let labels: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "b", "c", "d"]);
     }
 
     #[test]
