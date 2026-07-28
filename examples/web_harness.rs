@@ -118,6 +118,10 @@ async fn main() {
                 stick: Some("right".into()),
             },
         );
+        // Non-default fire mode so the tuning payload carries fire_mode /
+        // edge_threshold / retract_delta for the client to parse.
+        config.controller_tuning.fire_mode = "retract".into();
+        config.controller_tuning.retract_delta = 12;
         config
     };
     sink.set_wheels(&wheel_config);

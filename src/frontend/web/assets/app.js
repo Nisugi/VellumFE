@@ -1397,6 +1397,9 @@ const WHEEL_TUNING_DEFAULTS = {
   nav_dwell_ms: 150,
   fire_debounce_ms: 300,
   release_grace_ms: 40,
+  fire_mode: "release",
+  edge_threshold: 90,
+  retract_delta: 10,
 };
 let wheelTuning = { ...WHEEL_TUNING_DEFAULTS };
 let wheelStick = {}; // wheel name ("default" = default wheel) -> "left"|"right"
@@ -1415,7 +1418,7 @@ let gpWheelFired = false;
 // function (scroll / interact cycle) stays suppressed until it recenters.
 let gpAimRecenterNeeded = false;
 // Sentinel command/marker for the injected Back slice.
-const WHEEL_BACK = " __wheel_back__";
+const WHEEL_BACK = "__wheel_back__";
 
 // The wheel key of a bind value: "" for "wheel", the name for
 // "wheel:<name>", null for anything that is not a wheel bind.
@@ -2152,6 +2155,7 @@ function pollGamepads() {
     gpWheel = {
       key: heldWheelKey, path: [], aimed: null,
       candidate: null, candidateSince: 0, rearmUntilCenter: false,
+      peakMagnitude: 0,
     };
     renderWheel();
   } else if (gpWheel && heldWheelKey === null) {
@@ -2236,6 +2240,7 @@ function wheelAim(x, yUp) {
     gpWheel.candidate = candidate;
     gpWheel.candidateSince = performance.now();
     gpWheel.aimed = null; // drop a stale commit the moment the stick moves
+    gpWheel.peakMagnitude = 0;
     renderWheel();
   }
   if (gpWheel.rearmUntilCenter || candidate === null) return;
@@ -2255,17 +2260,75 @@ function wheelAim(x, yUp) {
   }
   const slice = view.slices[candidate];
   if ((slice.slices || []).length) {
+    // Folders always descend on dwell -- never fired by edge/retract.
     if (dwelt >= navMs) {
       gpWheel.path.push(real);
       gpWheel.aimed = null;
       gpWheel.candidate = null;
       gpWheel.rearmUntilCenter = true;
+      gpWheel.peakMagnitude = 0;
       renderWheel();
     }
-  } else if (dwelt >= aimMs && gpWheel.aimed !== candidate) {
-    gpWheel.aimed = candidate; // commit; release fires
+    return;
+  }
+
+  // Leaf, by fire mode (mirrors the desktop wheel_aim).
+  const mode = wheelTuning.fire_mode || "release";
+  const magnitude = Math.hypot(x, yUp);
+  if (mode === "edge") {
+    // Fire the instant deflection crosses the threshold, no dwell. The
+    // rearm-until-center latch above already blocks refiring across slices.
+    if (magnitude >= wheelEdgeThreshold()) {
+      wheelFireCommittedLeaf(view, candidate, real);
+    }
+    return;
+  }
+  if (mode === "retract") {
+    // Dwell to commit, track the deflection peak, then fire once it drops
+    // retract_delta below that peak (a small inward flick).
+    if (dwelt >= aimMs) {
+      if (gpWheel.aimed !== candidate) {
+        gpWheel.aimed = candidate;
+        gpWheel.peakMagnitude = magnitude;
+        renderWheel();
+      }
+      gpWheel.peakMagnitude = Math.max(gpWheel.peakMagnitude, magnitude);
+      if (gpWheel.aimed === candidate && retractShouldFire(magnitude, gpWheel.peakMagnitude, wheelRetractDelta())) {
+        wheelFireCommittedLeaf(view, candidate, real);
+      }
+    }
+    return;
+  }
+  // release: commit; the release branch fires on button-up.
+  if (dwelt >= aimMs && gpWheel.aimed !== candidate) {
+    gpWheel.aimed = candidate;
     renderWheel();
   }
+}
+
+// edge_threshold / retract_delta as 0..1 magnitudes.
+function wheelEdgeThreshold() {
+  return Math.min(1, Math.max(0, (wheelTuning.edge_threshold || 0) / 100));
+}
+function wheelRetractDelta() {
+  return Math.min(1, Math.max(0, (wheelTuning.retract_delta || 0) / 100));
+}
+// Retract fires once deflection falls delta below its peak. A small epsilon
+// keeps the exact boundary from being lost to float rounding.
+function retractShouldFire(magnitude, peak, delta) {
+  return magnitude <= peak - delta + 1e-4;
+}
+// Fire a committed leaf mid-hold (edge/retract) and close the wheel, the
+// way release does. Folders are never passed here.
+function wheelFireCommittedLeaf(view, display, real) {
+  const slice = view.slices[display];
+  if (!slice || slice.command === WHEEL_BACK || (slice.slices || []).length) return;
+  const { key, path } = gpWheel;
+  gpWheel = null;
+  hideWheel();
+  gpWheelFired = true;
+  gpAimRecenterNeeded = true;
+  wheelFire(key, [...path, real]);
 }
 
 // Send a wheel pick to the host (commands + <target_id> resolve there),

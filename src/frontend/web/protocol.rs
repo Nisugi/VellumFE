@@ -1088,6 +1088,9 @@ mod tests {
                 nav_dwell_ms: 150,
                 fire_debounce_ms: 300,
                 release_grace_ms: 40,
+                fire_mode: "retract".to_string(),
+                edge_threshold: 90,
+                retract_delta: 10,
             },
             wheel_stick: std::iter::once(("exits".to_string(), "right".to_string())).collect(),
         };
@@ -1102,6 +1105,10 @@ mod tests {
         // Tuning + per-wheel stick ride along so the phone matches feel.
         assert_eq!(json["d"]["tuning"]["aim_dwell_ms"], 150);
         assert_eq!(json["d"]["tuning"]["back_slice"], "down");
+        // Fire mode + thresholds ship so the phone controller honors them.
+        assert_eq!(json["d"]["tuning"]["fire_mode"], "retract");
+        assert_eq!(json["d"]["tuning"]["edge_threshold"], 90);
+        assert_eq!(json["d"]["tuning"]["retract_delta"], 10);
         assert_eq!(json["d"]["wheel_stick"]["exits"], "right");
     }
 
