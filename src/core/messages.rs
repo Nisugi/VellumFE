@@ -1898,11 +1898,16 @@ impl MessageProcessor {
                     target_ids.len()
                 );
             }
-            ParsedElement::Container { id, title, .. } => {
+            ParsedElement::Container { id, title, target } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Register container in cache
-                game_state.container_cache.register_container(id.clone(), title.clone());
+                // Register container in cache (target is the game-command
+                // id, which differs from the stream id for stow).
+                game_state.container_cache.register_container(
+                    id.clone(),
+                    title.clone(),
+                    target.clone(),
+                );
 
                 // Signal container for discovery mode (every LOOK IN triggers this)
                 // The runtime will check if a window already exists before creating

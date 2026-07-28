@@ -481,6 +481,7 @@ mod tests {
             title_lower: "bag".to_string(),
             items: vec![],
             generation: 0,
+            target: None,
         };
 
         // First call with generation 0 should return false (matches default)
@@ -497,6 +498,7 @@ mod tests {
             title_lower: "my bag".to_string(),
             items: vec!["an item".to_string()],
             generation: 1,
+            target: None,
         };
 
         let changed = cw.update_from_cache(&container);
@@ -513,6 +515,7 @@ mod tests {
             title_lower: "container title".to_string(),
             items: vec![],
             generation: 1,
+            target: None,
         };
 
         cw.update_from_cache(&container);

@@ -1060,7 +1060,9 @@ impl AppCore {
                     id: item.id,
                     noun: item.noun,
                     name: item.name,
-                    container_id: container.id.clone(),
+                    // The game-command id, not the stream id (differs for
+                    // stow), so `put item in container` -> a real target.
+                    container_id: container.command_target(),
                     types,
                     sellable,
                 });
@@ -1107,7 +1109,9 @@ impl AppCore {
             let steps = {
                 let cache = &self.game_state.container_cache;
                 foreach::build_steps(&spec.commands, candidate, |query| {
-                    cache.find_container_for_query(query).map(|c| c.id.clone())
+                    cache
+                        .find_container_for_query(query)
+                        .map(|c| c.command_target())
                 })
             };
             match steps {
@@ -2584,7 +2588,7 @@ mod foreach_tests {
     fn core_with_bandolier() -> AppCore {
         let mut core = AppCore::new_for_test();
         let cache = &mut core.game_state.container_cache;
-        cache.register_container("77".to_string(), "Bandolier".to_string());
+        cache.register_container("77".to_string(), "Bandolier".to_string(), None);
         cache.add_item(
             "77",
             r#"In the <a exist="77" noun="bandolier">bandolier</a>:"#.to_string(),
@@ -2616,6 +2620,36 @@ mod foreach_tests {
         let _ = core.handle_dot_command(".stop");
         assert!(!core.foreach.is_running());
         assert!(core.automation_owner().is_none());
+    }
+
+    #[test]
+    fn foreach_stow_uses_object_target_not_stream_id() {
+        // Regression: stow's stream id is "stow" but game commands need
+        // the shroud's object id (from the <container> target attribute).
+        let mut core = AppCore::new_for_test();
+        {
+            let cache = &mut core.game_state.container_cache;
+            cache.register_container(
+                "stow".to_string(),
+                "My Shroud".to_string(),
+                Some("#225766691".to_string()),
+            );
+            cache.add_item(
+                "stow",
+                r#"In the <a exist="225766691" noun="shroud">shroud</a>:"#.to_string(),
+            );
+            cache.add_item(
+                "stow",
+                r#" a <a exist="333" noun="crystal">quartz crystal</a>"#.to_string(),
+            );
+        }
+        // 'container' must substitute to the object id, never "#stow".
+        let _ = core.handle_dot_command(".foreach gem in shroud; put item in container");
+        assert!(core.foreach.is_running());
+        assert_eq!(
+            core.take_outbound(),
+            vec!["put #333 in #225766691".to_string()]
+        );
     }
 
     #[test]

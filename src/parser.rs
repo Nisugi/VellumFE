@@ -269,6 +269,10 @@ pub enum ParsedElement {
     Container {
         id: String,
         title: String,
+        /// The `target` attribute (`#<exist-id>`), the id game commands
+        /// use. Equals `#id` for normal containers, but differs for
+        /// `stow` (id is the string "stow", target is the real object).
+        target: Option<String>,
     },
     /// Clear container contents
     ClearContainer {
@@ -2605,7 +2609,8 @@ impl XmlParser {
         // <container id='225766824' title='Bandolier' target='#225766824' location='right'/>
         if let Some(id) = Self::extract_attribute(tag, "id") {
             let title = Self::extract_attribute(tag, "title").unwrap_or_default();
-            elements.push(ParsedElement::Container { id, title });
+            let target = Self::extract_attribute(tag, "target");
+            elements.push(ParsedElement::Container { id, title, target });
         }
     }
 
