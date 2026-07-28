@@ -838,6 +838,7 @@ impl VellumGuiApp {
         let seat_center_screen = |i: usize| seats[i].center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
         let seat_span_rad = |i: usize| seats[i].span_deg.to_radians();
         let in_folder = !path.is_empty();
+        let global_dz = self.wheel_deadzone();
         let center = ctx.content_rect().center();
         let radius = (ctx.content_rect().height() * 0.28).clamp(90.0, 220.0);
 
@@ -924,6 +925,36 @@ impl VellumGuiApp {
                         egui::FontId::proportional(size),
                         color,
                     );
+                }
+
+                // Per-slice inner floor: a slice with its own `inner` above
+                // the global dead zone needs a deeper throw, so draw a faint
+                // arc across its wedge at that floor radius — the deflection
+                // you must cross before it registers. Slices on the default
+                // floor get no extra line (keeps the common case clean).
+                let floor_stroke = egui::Stroke::new(
+                    1.5,
+                    ui.visuals().warn_fg_color.gamma_multiply(0.8),
+                );
+                for (i, slice) in slices.iter().enumerate() {
+                    let Some(inner_pct) = slice.inner else { continue };
+                    let frac = (inner_pct as f32 / 100.0).clamp(0.0, 1.0);
+                    if frac <= global_dz + 1e-3 {
+                        continue; // not harder than the default reach
+                    }
+                    let r = hub + (outer - hub) * frac;
+                    let center_angle = seat_center_screen(i);
+                    let half = seat_span_rad(i) / 2.0;
+                    let a0 = center_angle - half;
+                    let a1 = center_angle + half;
+                    const ARC_STEPS: usize = 12;
+                    let pts: Vec<egui::Pos2> = (0..=ARC_STEPS)
+                        .map(|k| {
+                            let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
+                            center + egui::vec2(a.cos(), a.sin()) * r
+                        })
+                        .collect();
+                    painter.add(egui::Shape::line(pts, floor_stroke));
                 }
 
                 // Center hub hosts the hint text. `selected` is the
