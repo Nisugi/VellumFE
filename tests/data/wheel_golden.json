@@ -1,0 +1,178 @@
+{
+  "_readme": [
+    "Golden vectors for the controller wheel: ONE truth table driven against",
+    "BOTH implementations — the Rust machine (gamepad.rs wheel_tests::",
+    "golden_vectors_match_both_machines, runs in `cargo test`) and the",
+    "shipped JS core (src/frontend/web/assets/wheel-core.js, run with",
+    "`node tests/wheel_parity.cjs`). If a geometry or state-machine change",
+    "lands on one side only, the other side's run goes red instead of the",
+    "phone firing a different slice than the desktop.",
+    "Conventions: x/yUp stick axes with yUp positive = up; seat 0 centered",
+    "at the top, clockwise; scenario timing is the shipped default feel",
+    "(deadzone 0.5, dwells 150 ms, edge 0.9, retract delta 0.1); a scenario",
+    "stops at the first mid-hold fire (the wheel closes)."
+  ],
+  "geometry": [
+    { "x": 0.0, "yUp": 1.0, "count": 8, "deadzone": 0.5, "expect": 0 },
+    { "x": 1.0, "yUp": 0.0, "count": 8, "deadzone": 0.5, "expect": 2 },
+    { "x": 0.0, "yUp": -1.0, "count": 8, "deadzone": 0.5, "expect": 4 },
+    { "x": -1.0, "yUp": 0.0, "count": 8, "deadzone": 0.5, "expect": 6 },
+    { "x": 0.7, "yUp": 0.7, "count": 8, "deadzone": 0.5, "expect": 1 },
+    { "x": 0.7, "yUp": -0.7, "count": 8, "deadzone": 0.5, "expect": 3 },
+    { "x": -0.7, "yUp": -0.7, "count": 8, "deadzone": 0.5, "expect": 5 },
+    { "x": -0.7, "yUp": 0.7, "count": 8, "deadzone": 0.5, "expect": 7 },
+    { "x": 0.342, "yUp": 0.94, "count": 8, "deadzone": 0.5, "expect": 0 },
+    { "x": 0.4226, "yUp": 0.9063, "count": 8, "deadzone": 0.5, "expect": 1 },
+    { "x": 0.3, "yUp": 0.3, "count": 8, "deadzone": 0.5, "expect": null },
+    { "x": 0.3, "yUp": 0.3, "count": 8, "deadzone": 0.25, "expect": 1 },
+    { "x": 0.0, "yUp": 1.0, "count": 3, "deadzone": 0.5, "expect": 0 },
+    { "x": 1.0, "yUp": 0.0, "count": 3, "deadzone": 0.5, "expect": 1 },
+    { "x": 0.0, "yUp": -1.0, "count": 3, "deadzone": 0.5, "expect": 2 },
+    { "x": 0.0, "yUp": 1.0, "count": 0, "deadzone": 0.5, "expect": null },
+    { "x": 0.0, "yUp": 1.0, "count": 1, "deadzone": 0.5, "expect": 0 },
+    { "x": 0.0, "yUp": 0.05, "count": 8, "deadzone": 0.0, "expect": 0 }
+  ],
+  "back_placement": [
+    { "realCount": 3, "anchor": "up", "expectBackDisplay": 0 },
+    { "realCount": 3, "anchor": "right", "expectBackDisplay": 1 },
+    { "realCount": 3, "anchor": "down", "expectBackDisplay": 2 },
+    { "realCount": 3, "anchor": "left", "expectBackDisplay": 3 },
+    { "realCount": 7, "anchor": "up", "expectBackDisplay": 0 },
+    { "realCount": 7, "anchor": "up-right", "expectBackDisplay": 1 },
+    { "realCount": 7, "anchor": "right", "expectBackDisplay": 2 },
+    { "realCount": 7, "anchor": "down-right", "expectBackDisplay": 3 },
+    { "realCount": 7, "anchor": "down", "expectBackDisplay": 4 },
+    { "realCount": 7, "anchor": "down-left", "expectBackDisplay": 5 },
+    { "realCount": 7, "anchor": "left", "expectBackDisplay": 6 },
+    { "realCount": 7, "anchor": "up-left", "expectBackDisplay": 7 }
+  ],
+  "scenarios": [
+    {
+      "name": "release_dwell_commits_then_release_fires",
+      "fireMode": "release",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 200, "x": 0.0, "y": 1.0 }
+      ],
+      "expect": { "aimed": 0, "path": [], "fired": null, "releaseReal": 0 }
+    },
+    {
+      "name": "sweep_never_commits",
+      "fireMode": "release",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 100, "x": 1.0, "y": 0.0 },
+        { "t": 200, "x": 0.0, "y": -1.0 }
+      ],
+      "expect": { "aimed": null, "path": [], "fired": null, "releaseReal": null }
+    },
+    {
+      "name": "center_then_release_cancels",
+      "fireMode": "release",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 200, "x": 0.0, "y": 1.0 },
+        { "t": 300, "x": 0.0, "y": 0.0 }
+      ],
+      "expect": { "aimed": null, "path": [], "fired": null, "releaseReal": null }
+    },
+    {
+      "name": "folder_dwell_descends",
+      "fireMode": "release",
+      "ring": { "labels": ["f", "x"], "folders": [0], "inFolder": false, "anchor": "down" },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 160, "x": 0.0, "y": 1.0 }
+      ],
+      "expect": { "aimed": null, "path": [0], "fired": null }
+    },
+    {
+      "name": "back_dwell_ascends",
+      "fireMode": "release",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": true, "anchor": "down" },
+      "initialPath": [0],
+      "frames": [
+        { "t": 0, "x": 0.0, "y": -1.0 },
+        { "t": 160, "x": 0.0, "y": -1.0 }
+      ],
+      "expect": { "path": [], "fired": null }
+    },
+    {
+      "name": "edge_below_threshold_never_fires",
+      "fireMode": "edge",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 0.7 },
+        { "t": 500, "x": 0.0, "y": 0.7 }
+      ],
+      "expect": { "aimed": null, "fired": null }
+    },
+    {
+      "name": "edge_fires_at_threshold_no_dwell",
+      "fireMode": "edge",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "frames": [{ "t": 0, "x": 0.0, "y": 0.95 }],
+      "expect": { "fired": 0 }
+    },
+    {
+      "name": "edge_latch_blocks_until_recenter",
+      "fireMode": "edge",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "initialRearm": true,
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 100, "x": 0.0, "y": 0.0 },
+        { "t": 200, "x": 0.0, "y": 1.0 }
+      ],
+      "expect": { "fired": 0 }
+    },
+    {
+      "name": "retract_peak_then_inward_flick_fires",
+      "fireMode": "retract",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 200, "x": 0.0, "y": 1.0 },
+        { "t": 250, "x": 0.0, "y": 0.95 },
+        { "t": 300, "x": 0.0, "y": 0.88 }
+      ],
+      "expect": { "fired": 0 }
+    },
+    {
+      "name": "retract_snap_to_center_cancels",
+      "fireMode": "retract",
+      "ring": { "labels": ["a", "b", "c"], "folders": [], "inFolder": false, "anchor": "down" },
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 200, "x": 0.0, "y": 1.0 },
+        { "t": 250, "x": 0.0, "y": 0.2 }
+      ],
+      "expect": { "aimed": null, "fired": null, "releaseReal": null }
+    },
+    {
+      "name": "rotated_folder_seat_descends_by_display_index",
+      "fireMode": "release",
+      "ring": { "labels": ["a", "inner", "c"], "folders": [1], "inFolder": true, "anchor": "down" },
+      "initialPath": [0],
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 160, "x": 0.0, "y": 1.0 }
+      ],
+      "expect": { "aimed": null, "path": [0, 1], "fired": null }
+    },
+    {
+      "name": "rotated_folder_leaf_commits_by_display_index",
+      "fireMode": "release",
+      "ring": { "labels": ["a", "inner", "c"], "folders": [1], "inFolder": true, "anchor": "down" },
+      "initialPath": [0],
+      "frames": [
+        { "t": 0, "x": -1.0, "y": 0.0 },
+        { "t": 160, "x": -1.0, "y": 0.0 }
+      ],
+      "expect": { "aimed": 3, "path": [0], "fired": null, "releaseReal": 0 }
+    }
+  ]
+}

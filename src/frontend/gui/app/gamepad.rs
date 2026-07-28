@@ -1825,6 +1825,134 @@ mod wheel_tests {
         assert_eq!(ui.aimed, Some(3), "leaf seat commits");
     }
 
+    /// The golden-vector parity harness: one truth table
+    /// (tests/data/wheel_golden.json) driven against this machine here and
+    /// against the shipped JS core via `node tests/wheel_parity.cjs`. A
+    /// geometry or state-machine change on one side only turns the other
+    /// side's run red instead of the phone firing a different slice than
+    /// the desktop. Keep the two runners semantically identical.
+    #[test]
+    fn golden_vectors_match_the_rust_machine() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../tests/data/wheel_golden.json"))
+                .expect("wheel_golden.json parses");
+
+        for case in data["geometry"].as_array().unwrap() {
+            let got = wheel_slice_at(
+                case["x"].as_f64().unwrap() as f32,
+                case["yUp"].as_f64().unwrap() as f32,
+                case["count"].as_u64().unwrap() as usize,
+                case["deadzone"].as_f64().unwrap() as f32,
+            );
+            assert_eq!(
+                got.map(|v| v as u64),
+                case["expect"].as_u64(),
+                "geometry {case}"
+            );
+        }
+
+        for case in data["back_placement"].as_array().unwrap() {
+            let n = case["realCount"].as_u64().unwrap() as usize;
+            let real: Vec<WheelSlice> = (0..n).map(|i| leaf(&format!("s{i}"))).collect();
+            let view = WheelView::build(&real, true, case["anchor"].as_str().unwrap());
+            let back_at = (0..view.len())
+                .find(|&i| view.real(i) == Some(None))
+                .expect("Back seat exists");
+            assert_eq!(
+                back_at as u64,
+                case["expectBackDisplay"].as_u64().unwrap(),
+                "back placement {case}"
+            );
+        }
+
+        for sc in data["scenarios"].as_array().unwrap() {
+            let name = sc["name"].as_str().unwrap();
+            let ring = &sc["ring"];
+            let folders: Vec<usize> = ring["folders"]
+                .as_array()
+                .map(|a| a.iter().map(|v| v.as_u64().unwrap() as usize).collect())
+                .unwrap_or_default();
+            let real: Vec<WheelSlice> = ring["labels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let label = l.as_str().unwrap();
+                    if folders.contains(&i) {
+                        folder(label, vec![leaf("child")])
+                    } else {
+                        leaf(label)
+                    }
+                })
+                .collect();
+            let view = WheelView::build(
+                &real,
+                ring["inFolder"].as_bool().unwrap_or(false),
+                ring["anchor"].as_str().unwrap_or("down"),
+            );
+            let timing = WheelTiming {
+                deadzone: 0.5,
+                aim_ms: 150,
+                nav_ms: 150,
+                fire_mode: FireMode::from_str(sc["fireMode"].as_str().unwrap_or("release")),
+                edge_threshold: 0.9,
+                retract_delta: 0.10,
+            };
+            let mut ui = fresh_ui();
+            if let Some(p) = sc["initialPath"].as_array() {
+                ui.path = p.iter().map(|v| v.as_u64().unwrap() as usize).collect();
+            }
+            if sc["initialRearm"].as_bool() == Some(true) {
+                ui.rearm_until_center = true;
+            }
+
+            let t0 = Instant::now();
+            let mut fired: Option<usize> = None;
+            for frame in sc["frames"].as_array().unwrap() {
+                let out = wheel_aim_step(
+                    &mut ui,
+                    &view,
+                    &timing,
+                    frame["x"].as_f64().unwrap() as f32,
+                    frame["y"].as_f64().unwrap() as f32,
+                    steps(t0, frame["t"].as_u64().unwrap()),
+                );
+                if let Some(display) = out.fire {
+                    fired = Some(display);
+                    break; // the wheel closes on a mid-hold fire
+                }
+            }
+
+            let expect = sc["expect"].as_object().unwrap();
+            if let Some(want) = expect.get("fired") {
+                assert_eq!(fired.map(|v| v as u64), want.as_u64(), "{name}: fired");
+            }
+            if let Some(want) = expect.get("aimed") {
+                assert_eq!(ui.aimed.map(|v| v as u64), want.as_u64(), "{name}: aimed");
+            }
+            if let Some(want) = expect.get("path") {
+                let want: Vec<usize> = want
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_u64().unwrap() as usize)
+                    .collect();
+                assert_eq!(ui.path, want, "{name}: path");
+            }
+            if let Some(want) = expect.get("releaseReal") {
+                // The real index release would fire, or None — matches the
+                // JS side's leafRealAt(view, aimed) (phone picks are
+                // real-index paths; commands resolve host-side).
+                let got = ui.aimed.and_then(|display| {
+                    leaf_command_at(&view, display)
+                        .and_then(|_| view.real(display).flatten())
+                });
+                assert_eq!(got.map(|v| v as u64), want.as_u64(), "{name}: releaseReal");
+            }
+        }
+    }
+
     #[test]
     fn scenario_south_fires_leaf_descends_folder_pops_back() {
         let t0_view = WheelView::build(
