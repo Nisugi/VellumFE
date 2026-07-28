@@ -483,6 +483,32 @@ pub fn load_manifest(name: &str) -> anyhow::Result<(SkinManifest, PathBuf)> {
     Ok((manifest, root))
 }
 
+/// Load the shared hotbar icon sheets: `global/icons/icons.toml`, a bare
+/// `[sheets]` table in the same format as skin.toml. Available to every
+/// skin and with no skin active. Returns the sheets plus the shared
+/// directory (manifest paths are relative to it); a missing manifest is
+/// just "no shared sheets".
+pub fn load_global_sheets() -> anyhow::Result<(HashMap<String, SheetSpec>, PathBuf)> {
+    let root = crate::config::Config::global_icons_dir()?;
+    let manifest_path = root.join("icons.toml");
+    let contents = match std::fs::read_to_string(&manifest_path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((HashMap::new(), root));
+        }
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "cannot read {}: {}",
+                manifest_path.display(),
+                err
+            ));
+        }
+    };
+    let manifest: SkinManifest = toml::from_str(&contents)
+        .map_err(|err| anyhow::anyhow!("invalid {}: {}", manifest_path.display(), err))?;
+    Ok((manifest.sheets, root))
+}
+
 /// Skin directory names that contain a skin.toml, sorted.
 pub fn list_skins() -> Vec<String> {
     let Ok(dir) = crate::config::Config::skins_dir() else {

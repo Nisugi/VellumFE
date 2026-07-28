@@ -138,6 +138,8 @@ pub(in super::super) struct HotbarEditorState {
     new_sheet_name: String,
     new_sheet_path: String,
     new_sheet_cell: u32,
+    /// Register into the shared store (all skins) vs the active skin.
+    new_sheet_shared: bool,
 }
 
 impl HotbarEditorState {
@@ -154,6 +156,7 @@ impl HotbarEditorState {
             new_sheet_name: String::new(),
             new_sheet_path: String::new(),
             new_sheet_cell: 64,
+            new_sheet_shared: true,
         }
     }
 }
@@ -231,8 +234,9 @@ impl VellumGuiApp {
         let mut load_bar: Option<(HotbarDef, bool)> = None;
         let mut delete_bar: Option<String> = None;
         let mut save_requested = false;
-        // (name, source path, cell) for the sheet-registration form.
-        let mut register_sheet_request: Option<(String, String, u32)> = None;
+        // (name, source path, cell, into shared store) for the
+        // sheet-registration form.
+        let mut register_sheet_request: Option<(String, String, u32, bool)> = None;
         // Sprite lookups for icon pickers/previews; None without a skin.
         let skin_art_arc = self.skin_state.widget_art();
         let active_skin = self.skin_state.loaded_skin().map(str::to_owned);
@@ -246,6 +250,79 @@ impl VellumGuiApp {
                 if let Some(error) = &state.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
+
+                // ---- Icon sheets: registry + no-TOML registration --------
+                // Fixed-height content stays above the columns; the columns'
+                // fill-remaining scroll areas must be the last thing in the
+                // window or its auto-size grows a little every frame.
+                egui::CollapsingHeader::new("Icon sheets")
+                    .id_salt("hotbar_sheets_section")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        ui.weak(
+                            "Sheets are tiled into square cells (barbar-style), \
+                             indexed 1-based left to right. Shared sheets work \
+                             with every skin (and without one); a skin sheet \
+                             with the same name wins.",
+                        );
+                        if let Some(art) = skin_art_arc.as_deref() {
+                            for name in art.sheet_names() {
+                                let cells = art
+                                    .sheet_cell_count(&name)
+                                    .map(|n| format!("{} cells", n))
+                                    .unwrap_or_default();
+                                let scope = if self.skin_state.sheet_is_shared(&name) {
+                                    "shared"
+                                } else {
+                                    "skin"
+                                };
+                                ui.label(format!("• {}  ({}, {})", name, cells, scope));
+                            }
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label("Name:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.new_sheet_name)
+                                    .hint_text("rogue")
+                                    .desired_width(80.0),
+                            );
+                            ui.label("Image:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.new_sheet_path)
+                                    .hint_text(r"path\to\sheet.png")
+                                    .desired_width(220.0),
+                            );
+                            ui.label("cell px:");
+                            ui.add(
+                                egui::DragValue::new(&mut state.new_sheet_cell)
+                                    .range(8..=512),
+                            );
+                            if active_skin.is_some() {
+                                ui.checkbox(&mut state.new_sheet_shared, "All skins")
+                                    .on_hover_text(
+                                        "Store in the shared icon folder instead of \
+                                         the active skin",
+                                    );
+                            } else {
+                                // Without a skin there is nowhere else to put it.
+                                state.new_sheet_shared = true;
+                            }
+                            if ui.button("Register").clicked() {
+                                register_sheet_request = Some((
+                                    state.new_sheet_name.trim().to_string(),
+                                    state.new_sheet_path.trim().to_string(),
+                                    state.new_sheet_cell,
+                                    state.new_sheet_shared,
+                                ));
+                            }
+                        });
+                        ui.weak(
+                            "Copies the image into the chosen store and records \
+                             it there - no hand-editing needed.",
+                        );
+                    });
+                ui.separator();
+
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(190.0);
@@ -254,31 +331,6 @@ impl VellumGuiApp {
                         let character = self.app_core.config.character.clone();
                         let bars: Vec<HotbarDef> =
                             self.app_core.config.hotbars.bars.clone();
-                        egui::ScrollArea::vertical()
-                            .id_salt("hotbar_bars_scroll")
-                            .auto_shrink([false, false])
-                            .max_height(ui.available_height() - 70.0)
-                            .show(ui, |ui| {
-                                for bar in &bars {
-                                    let (in_global, in_character) =
-                                        Config::hotbar_scope(&bar.name, character.as_deref());
-                                    let scope = match (in_global, in_character) {
-                                        (_, true) => "[C]",
-                                        (true, false) => "[G]",
-                                        _ => "[?]", // embedded default, not yet on disk
-                                    };
-                                    let selected = state.working.is_some()
-                                        && state.original_name.as_deref() == Some(&bar.name);
-                                    let label = format!("{} {}", scope, bar.name);
-                                    if ui.selectable_label(selected, label).clicked() {
-                                        load_bar = Some((bar.clone(), !in_character));
-                                    }
-                                }
-                                if bars.is_empty() {
-                                    ui.weak("No bars defined.");
-                                }
-                            });
-                        ui.separator();
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut state.new_bar_name)
@@ -311,6 +363,30 @@ impl VellumGuiApp {
                                 delete_bar = Some(name);
                             }
                         }
+                        ui.separator();
+                        egui::ScrollArea::vertical()
+                            .id_salt("hotbar_bars_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                for bar in &bars {
+                                    let (in_global, in_character) =
+                                        Config::hotbar_scope(&bar.name, character.as_deref());
+                                    let scope = match (in_global, in_character) {
+                                        (_, true) => "[C]",
+                                        (true, false) => "[G]",
+                                        _ => "[?]", // embedded default, not yet on disk
+                                    };
+                                    let selected = state.working.is_some()
+                                        && state.original_name.as_deref() == Some(&bar.name);
+                                    let label = format!("{} {}", scope, bar.name);
+                                    if ui.selectable_label(selected, label).clicked() {
+                                        load_bar = Some((bar.clone(), !in_character));
+                                    }
+                                }
+                                if bars.is_empty() {
+                                    ui.weak("No bars defined.");
+                                }
+                            });
                     });
 
                     ui.separator();
@@ -698,64 +774,6 @@ impl VellumGuiApp {
                         });
                     });
                 });
-
-                // ---- Icon sheets: registry + no-TOML registration --------
-                ui.separator();
-                egui::CollapsingHeader::new("Icon sheets (active skin)")
-                    .id_salt("hotbar_sheets_section")
-                    .show(ui, |ui| {
-                        let Some(skin) = active_skin.as_deref() else {
-                            ui.weak(
-                                "No skin active - icons need one. Enable a skin \
-                                 under Settings > Skins, then register sheets here.",
-                            );
-                            return;
-                        };
-                        ui.weak(format!(
-                            "Sheets are tiled into square cells (barbar-style), \
-                             indexed 1-based left to right. Stored in skin '{}'.",
-                            skin
-                        ));
-                        if let Some(art) = skin_art_arc.as_deref() {
-                            for name in art.sheet_names() {
-                                let cells = art
-                                    .sheet_cell_count(&name)
-                                    .map(|n| format!("{} cells", n))
-                                    .unwrap_or_default();
-                                ui.label(format!("• {}  ({})", name, cells));
-                            }
-                        }
-                        ui.horizontal(|ui| {
-                            ui.label("Name:");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.new_sheet_name)
-                                    .hint_text("rogue")
-                                    .desired_width(80.0),
-                            );
-                            ui.label("Image:");
-                            ui.add(
-                                egui::TextEdit::singleline(&mut state.new_sheet_path)
-                                    .hint_text(r"path\to\sheet.png")
-                                    .desired_width(220.0),
-                            );
-                            ui.label("cell px:");
-                            ui.add(
-                                egui::DragValue::new(&mut state.new_sheet_cell)
-                                    .range(8..=512),
-                            );
-                            if ui.button("Register").clicked() {
-                                register_sheet_request = Some((
-                                    state.new_sheet_name.trim().to_string(),
-                                    state.new_sheet_path.trim().to_string(),
-                                    state.new_sheet_cell,
-                                ));
-                            }
-                        });
-                        ui.weak(
-                            "Copies the image into the skin and records it in \
-                             skin.toml - no hand-editing needed.",
-                        );
-                    });
             });
 
         if let Some(name) = delete_bar {
@@ -797,36 +815,34 @@ impl VellumGuiApp {
             state.hotkey_capture_armed = false;
         }
 
-        if let Some((name, path, cell)) = register_sheet_request {
-            match active_skin.as_deref() {
-                Some(skin) => {
-                    match crate::frontend::gui::skin::register_sheet(
-                        skin,
-                        &name,
-                        std::path::Path::new(&path),
-                        cell,
-                    ) {
-                        Ok(()) => {
-                            // Rebuild textures/art now so the new sheet shows
-                            // up in pickers this frame, not a second later.
-                            self.skin_state.force_reload();
-                            self.app_core.add_system_message(&format!(
-                                "Icon sheet '{}' registered into skin '{}'.",
-                                name, skin
-                            ));
-                            state.new_sheet_name.clear();
-                            state.new_sheet_path.clear();
-                            state.error = None;
-                        }
-                        Err(err) => {
-                            state.error = Some(format!("Sheet registration: {}", err))
-                        }
+        if let Some((name, path, cell, shared)) = register_sheet_request {
+            let source = std::path::Path::new(&path);
+            let result = if shared {
+                crate::frontend::gui::skin::register_sheet_shared(&name, source, cell)
+                    .map(|()| "the shared icon store".to_string())
+            } else {
+                match active_skin.as_deref() {
+                    Some(skin) => {
+                        crate::frontend::gui::skin::register_sheet(skin, &name, source, cell)
+                            .map(|()| format!("skin '{}'", skin))
                     }
+                    None => Err(anyhow::anyhow!("no active skin to register the sheet into")),
                 }
-                None => {
-                    state.error =
-                        Some("No active skin to register the sheet into.".to_string())
+            };
+            match result {
+                Ok(destination) => {
+                    // Rebuild textures/art now so the new sheet shows
+                    // up in pickers this frame, not a second later.
+                    self.skin_state.force_reload();
+                    self.app_core.add_system_message(&format!(
+                        "Icon sheet '{}' registered into {}.",
+                        name, destination
+                    ));
+                    state.new_sheet_name.clear();
+                    state.new_sheet_path.clear();
+                    state.error = None;
                 }
+                Err(err) => state.error = Some(format!("Sheet registration: {}", err)),
             }
         }
 
@@ -1441,7 +1457,10 @@ fn render_icon_editor(
         }
         let Some(icon) = icon.as_mut() else {
             if sheet_names.is_empty() {
-                ui.weak("(no icon sheets in the active skin - register one below)");
+                ui.weak(
+                    "(no icon sheets registered - add one under 'Icon sheets' \
+                     at the top of this window)",
+                );
             }
             return;
         };

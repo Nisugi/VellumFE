@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::config::skins::{
-    self, BackgroundFit, DollDotSpec, InjuryDollSkin, SkinManifest,
+    self, BackgroundFit, DollDotSpec, InjuryDollSkin, SheetSpec, SkinManifest,
 };
 
 /// Everything a renderer needs to paint one window background. Resolved
@@ -214,6 +214,11 @@ pub struct SkinState {
     applied: bool,
     /// skin.toml mtime at load, for hot-reload detection.
     manifest_mtime: Option<std::time::SystemTime>,
+    /// Lowercased names of sheets that came from the shared icon store
+    /// (global/icons) rather than the skin itself.
+    shared_sheet_names: std::collections::HashSet<String>,
+    /// Shared icons.toml mtime at load, for hot-reload detection.
+    shared_manifest_mtime: Option<std::time::SystemTime>,
     /// Last hot-reload poll, so the mtime stat runs at most once a second.
     last_mtime_check: Option<std::time::Instant>,
 }
@@ -235,27 +240,51 @@ impl SkinState {
         self.textures.clear();
         self.widget_art = None;
         self.manifest_mtime = None;
+        self.shared_sheet_names.clear();
+        self.shared_manifest_mtime = None;
 
-        let Some(name) = active else {
-            return;
-        };
-        match skins::load_manifest(name) {
-            Ok((manifest, root)) => {
-                self.manifest = manifest;
-                self.root = root;
-                self.manifest_mtime = skins::manifest_mtime(&self.root);
-                self.load_textures(ctx, name);
-                self.widget_art = self.build_widget_art();
-            }
-            Err(err) => {
-                // Remember the root so a skin.toml appearing later (e.g. a
-                // scaffold being written) still hot-loads.
-                if let Ok(dir) = crate::config::Config::skins_dir() {
-                    self.root = dir.join(name);
+        if let Some(name) = active {
+            match skins::load_manifest(name) {
+                Ok((manifest, root)) => {
+                    self.manifest = manifest;
+                    self.root = root;
+                    self.manifest_mtime = skins::manifest_mtime(&self.root);
                 }
-                tracing::warn!("Failed to load skin '{}': {:#}", name, err);
+                Err(err) => {
+                    // Remember the root so a skin.toml appearing later (e.g. a
+                    // scaffold being written) still hot-loads.
+                    if let Ok(dir) = crate::config::Config::skins_dir() {
+                        self.root = dir.join(name);
+                    }
+                    tracing::warn!("Failed to load skin '{}': {:#}", name, err);
+                }
             }
         }
+
+        // Shared sheets load with or without a skin, so hotbar icons don't
+        // require one.
+        self.merge_shared_sheets();
+
+        self.load_textures(ctx, active.unwrap_or("shared-icons"));
+        self.widget_art = self.build_widget_art();
+    }
+
+    /// Fold the shared icon store's sheets into the loaded manifest.
+    /// Skin-local sheets win name collisions; shared paths are absolutized
+    /// against the shared directory so they resolve from any skin root.
+    fn merge_shared_sheets(&mut self) {
+        // Record the mtime before parsing so a broken icons.toml warns once
+        // instead of re-loading (and re-warning) every poll.
+        self.shared_manifest_mtime = shared_icons_mtime();
+        let (shared, shared_root) = match skins::load_global_sheets() {
+            Ok(loaded) => loaded,
+            Err(err) => {
+                tracing::warn!("Failed to load shared icon sheets: {:#}", err);
+                return;
+            }
+        };
+        self.shared_sheet_names =
+            merge_shared_sheets_into(&mut self.manifest.sheets, shared, &shared_root);
     }
 
     /// Force a full reload on the next frame (`.reloadskin`). Unlike the
@@ -265,12 +294,9 @@ impl SkinState {
         self.applied = false;
     }
 
-    /// True when the active skin's manifest mtime differs from what was
-    /// loaded. Rate-limited to one stat per second.
+    /// True when the active skin's manifest or the shared icons.toml mtime
+    /// differs from what was loaded. Rate-limited to one stat per second.
     fn manifest_changed_on_disk(&mut self) -> bool {
-        if self.loaded_id.is_none() {
-            return false;
-        }
         let now = std::time::Instant::now();
         if self
             .last_mtime_check
@@ -279,8 +305,12 @@ impl SkinState {
             return false;
         }
         self.last_mtime_check = Some(now);
-        let current = skins::manifest_mtime(&self.root);
-        current.is_some() && current != self.manifest_mtime
+        let skin_changed = self.loaded_id.is_some() && {
+            let current = skins::manifest_mtime(&self.root);
+            current.is_some() && current != self.manifest_mtime
+        };
+        // != (not is_some &&) so deleting icons.toml also unloads its sheets.
+        skin_changed || shared_icons_mtime() != self.shared_manifest_mtime
     }
 
     /// Sprite lookups for widget renderers; None when the skin defines no
@@ -292,6 +322,13 @@ impl SkinState {
     /// Directory name of the loaded skin, if one is active.
     pub fn loaded_skin(&self) -> Option<&str> {
         self.loaded_id.as_deref()
+    }
+
+    /// True when `sheet` (any case) came from the shared icon store rather
+    /// than the active skin.
+    pub fn sheet_is_shared(&self, sheet: &str) -> bool {
+        self.shared_sheet_names
+            .contains(&sheet.to_ascii_lowercase())
     }
 
     /// The loaded manifest's injury doll section (for seeding the
@@ -461,6 +498,37 @@ impl SkinState {
             scale: spec.scale.max(0.05),
         })
     }
+}
+
+/// mtime of the shared icon store's manifest, if it exists.
+fn shared_icons_mtime() -> Option<std::time::SystemTime> {
+    let root = crate::config::Config::global_icons_dir().ok()?;
+    std::fs::metadata(root.join("icons.toml"))
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
+/// Fold shared sheets into a manifest's sheet table: skin entries win name
+/// collisions (case-insensitive), and relative shared paths become absolute
+/// against the shared directory so they load regardless of the skin root.
+/// Returns the lowercased names of the sheets actually added.
+fn merge_shared_sheets_into(
+    sheets: &mut HashMap<String, SheetSpec>,
+    shared: HashMap<String, SheetSpec>,
+    shared_root: &Path,
+) -> std::collections::HashSet<String> {
+    let mut added = std::collections::HashSet::new();
+    for (name, mut spec) in shared {
+        if sheets.keys().any(|k| k.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        if Path::new(&spec.path).is_relative() {
+            spec.path = shared_root.join(&spec.path).to_string_lossy().into_owned();
+        }
+        added.insert(name.to_ascii_lowercase());
+        sheets.insert(name, spec);
+    }
+    added
 }
 
 fn load_texture(
@@ -750,7 +818,7 @@ pub fn sheet_registration_toml(
 
     let mut doc: DocumentMut = contents
         .parse()
-        .map_err(|err| anyhow::anyhow!("skin.toml is not valid TOML: {}", err))?;
+        .map_err(|err| anyhow::anyhow!("sheet manifest is not valid TOML: {}", err))?;
 
     let existed = doc.contains_key("sheets");
     let sheets = doc.entry("sheets").or_insert(Item::Table(Table::new()));
@@ -779,6 +847,55 @@ pub fn register_sheet(
     source: &Path,
     cell: u32,
 ) -> anyhow::Result<()> {
+    let root = crate::config::Config::skins_dir()?.join(skin);
+    let manifest_path = root.join("skin.toml");
+    let contents = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
+    register_sheet_impl(&root, &manifest_path, &contents, "icons", sheet_name, source, cell)
+}
+
+/// Register a hotbar icon sprite sheet into the shared store
+/// (`global\icons\`), where every skin — and a skinless setup — can use it.
+/// Creates the store and its icons.toml on first use.
+pub fn register_sheet_shared(
+    sheet_name: &str,
+    source: &Path,
+    cell: u32,
+) -> anyhow::Result<()> {
+    let root = crate::config::Config::global_icons_dir()?;
+    std::fs::create_dir_all(&root)
+        .map_err(|err| anyhow::anyhow!("cannot create {}: {}", root.display(), err))?;
+    let manifest_path = root.join("icons.toml");
+    let contents = match std::fs::read_to_string(&manifest_path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            "# VellumFE shared hotbar icon sheets - available to every skin (and\n\
+             # with no skin active). Skin sheets with the same name win.\n\
+             # Managed by the .hotbars editor; image paths are relative to\n\
+             # this folder.\n"
+                .to_string()
+        }
+        Err(err) => {
+            return Err(anyhow::anyhow!(
+                "cannot read {}: {}",
+                manifest_path.display(),
+                err
+            ));
+        }
+    };
+    // Images sit beside icons.toml, so no subdirectory prefix.
+    register_sheet_impl(&root, &manifest_path, &contents, "", sheet_name, source, cell)
+}
+
+fn register_sheet_impl(
+    root: &Path,
+    manifest_path: &Path,
+    manifest_contents: &str,
+    image_dir: &str,
+    sheet_name: &str,
+    source: &Path,
+    cell: u32,
+) -> anyhow::Result<()> {
     let name = sheet_name.trim();
     anyhow::ensure!(!name.is_empty(), "sheet name is required");
     anyhow::ensure!(
@@ -802,21 +919,20 @@ pub fn register_sheet(
         source.display()
     );
 
-    let root = crate::config::Config::skins_dir()?.join(skin);
-    let manifest_path = root.join("skin.toml");
-    let contents = std::fs::read_to_string(&manifest_path)
-        .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
-
     let file_name = source
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("source has no file name"))?;
-    let rel = format!("icons/{}", file_name.to_string_lossy());
+    let rel = if image_dir.is_empty() {
+        file_name.to_string_lossy().into_owned()
+    } else {
+        format!("{}/{}", image_dir, file_name.to_string_lossy())
+    };
     let dest = root.join(&rel);
     // Refuse to clobber different existing art; re-registering the exact
     // same file path is fine (the copy is skipped).
     if dest.exists() && dest.canonicalize().ok() != source.canonicalize().ok() {
         anyhow::bail!(
-            "{} already exists in the skin - rename the source file",
+            "{} already exists in the store - rename the source file",
             rel
         );
     }
@@ -826,11 +942,11 @@ pub fn register_sheet(
     }
     if !dest.exists() {
         std::fs::copy(source, &dest)
-            .map_err(|err| anyhow::anyhow!("cannot copy into the skin: {}", err))?;
+            .map_err(|err| anyhow::anyhow!("cannot copy the image in: {}", err))?;
     }
 
-    let updated = sheet_registration_toml(&contents, name, &rel, cell)?;
-    crate::config::write_atomic(&manifest_path, updated)
+    let updated = sheet_registration_toml(manifest_contents, name, &rel, cell)?;
+    crate::config::write_atomic(manifest_path, updated)
         .map_err(|err| anyhow::anyhow!("cannot write {}: {}", manifest_path.display(), err))?;
     Ok(())
 }
@@ -1139,6 +1255,56 @@ cell = 32
         let manifest: SkinManifest = toml::from_str(&updated).unwrap();
         assert_eq!(manifest.sheets["rogue"].path, "icons/rogue2.png");
         assert_eq!(manifest.sheets["rogue"].cell, 48);
+    }
+
+    #[test]
+    fn shared_sheets_merge_respects_skin_precedence_and_absolutizes() {
+        let mut sheets = HashMap::new();
+        sheets.insert(
+            "combat".to_string(),
+            SheetSpec {
+                path: "icons/combat.png".to_string(),
+                cell: 64,
+            },
+        );
+
+        let mut shared = HashMap::new();
+        // Same name (different case): the skin's entry must win.
+        shared.insert(
+            "Combat".to_string(),
+            SheetSpec {
+                path: "combat.png".to_string(),
+                cell: 32,
+            },
+        );
+        // New name: merged in, with its relative path absolutized.
+        shared.insert(
+            "spells".to_string(),
+            SheetSpec {
+                path: "spells.png".to_string(),
+                cell: 48,
+            },
+        );
+
+        let shared_root = if cfg!(windows) {
+            Path::new(r"C:\vellum\global\icons")
+        } else {
+            Path::new("/vellum/global/icons")
+        };
+        let added = merge_shared_sheets_into(&mut sheets, shared, shared_root);
+
+        assert_eq!(added.len(), 1);
+        assert!(added.contains("spells"));
+        assert_eq!(sheets["combat"].path, "icons/combat.png");
+        assert_eq!(sheets["combat"].cell, 64);
+        assert!(!sheets.contains_key("Combat"));
+        let spells = &sheets["spells"];
+        assert_eq!(spells.cell, 48);
+        assert_eq!(
+            Path::new(&spells.path),
+            shared_root.join("spells.png").as_path()
+        );
+        assert!(Path::new(&spells.path).is_absolute());
     }
 
     #[test]

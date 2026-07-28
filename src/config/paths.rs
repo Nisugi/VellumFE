@@ -127,6 +127,13 @@ impl Config {
         Ok(Self::config_dir()?.join("skins"))
     }
 
+    /// Get the shared hotbar icon-sheet store: sheet images plus an
+    /// icons.toml manifest, available to every skin (and with no skin active)
+    /// Returns: ~/.vellum-fe/global/icons/
+    pub fn global_icons_dir() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("icons"))
+    }
+
     /// Get path to common (global) highlights file
     /// Returns: ~/.vellum-fe/global/highlights.toml
     pub fn common_highlights_path() -> Result<PathBuf> {

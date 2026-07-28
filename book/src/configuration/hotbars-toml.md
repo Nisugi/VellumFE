@@ -102,20 +102,29 @@ evaluated by Lich, so dynamic behavior belongs in the command itself).
 
 ## Icons (GUI)
 
-Buttons can show an image face from a sprite sheet registered in the
-active skin's `[sheets]` table (see the skin docs). Sheets are tiled into
-fixed-size cells with no padding, numbered 1-based left→right then
-top→bottom — the barbar convention. The TUI always renders the text
+Buttons can show an image face from a registered sprite sheet. Sheets are
+tiled into fixed-size cells with no padding, numbered 1-based left→right
+then top→bottom — the barbar convention. The TUI always renders the text
 label; icons are ignored there, and the GUI falls back to text when no
-skin supplies the sheet.
+registered sheet matches.
+
+Sheets live in one of two places:
+
+- **Shared store** (`~/.vellum-fe/global/icons/` with an `icons.toml`
+  manifest) — available to every skin, and with no skin active at all.
+  This is the default and the right choice for personal icon sets.
+- **Active skin** (the skin's `[sheets]` table in `skin.toml`, see the
+  skin docs) — travels with the skin; a skin sheet overrides a shared
+  sheet with the same name.
 
 **The `.hotbars` editor does all of this without TOML:** the button form
 has a Face selector (Text / Icon / Icon + label), a sheet dropdown, a
 clickable "Pick cell from sheet" grid, grayscale/border controls, and the
 same icon controls on every state card. The editor's "Icon sheets"
 section registers a new sheet — give it a name and an image path and it
-copies the PNG into the skin and records it in skin.toml for you. Each
-state card also carries its own countdown source ("Countdown while
+copies the image into the shared store (or, with "All skins" unticked,
+into the active skin) and records it in the matching manifest for you.
+Each state card also carries its own countdown source ("Countdown while
 active") that replaces the button-level one while the state matches.
 
 ```toml
@@ -139,11 +148,13 @@ border_dir = "radial"         # horizontal (default) | vertical |
 With `icon_mode = "icon"` the label moves into the hover tooltip. States
 can swap the icon (a different cell, or the same cell grayscaled) via
 `[bars.buttons.states.style.icon]` — dimmed states automatically use the
-grayscale variant. In the skin's `skin.toml`:
+grayscale variant. The sheet entry itself — in the shared store's
+`icons.toml` (paths relative to `global/icons/`) or a skin's `skin.toml`
+(paths relative to the skin directory) — looks the same either way:
 
 ```toml
 [sheets.rogue]
-path = "icons/rogue.png"      # relative to the skin directory
+path = "icons/rogue.png"      # image path; absolute paths allowed
 cell = 64                     # cell edge in pixels (default 64)
 ```
 
