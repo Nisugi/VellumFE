@@ -1556,13 +1556,22 @@ fn render_wheel_designer(
             global_deadzone,
         );
         painter.circle_filled(center, hub, bg);
-        painter.text(
-            center,
-            egui::Align2::CENTER_CENTER,
-            format!("{} slices", level.len()),
-            egui::FontId::proportional(12.0),
-            ui.visuals().weak_text_color(),
-        );
+        // Hub count only when the ring has room — on a cramped canvas it
+        // collides with the labels.
+        if side >= 300.0 {
+            let count = if level.len() == 1 {
+                "1 slice".to_string()
+            } else {
+                format!("{} slices", level.len())
+            };
+            painter.text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                count,
+                egui::FontId::proportional(12.0),
+                ui.visuals().weak_text_color(),
+            );
+        }
 
         // ----- Designer-only overlays (the live wheel draws none of
         // these): affordances for what the invisible hit zones grab. -----

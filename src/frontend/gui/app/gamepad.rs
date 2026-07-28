@@ -918,6 +918,10 @@ pub(super) fn paint_wheel_ring(
     let seat_center_screen =
         |i: usize| seats[i].center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
     let seat_span_rad = |i: usize| seats[i].span_deg.to_radians();
+    // Small rings (the designer in a cramped editor; the live wheel never
+    // drops below ~124) shrink the labels so an enlarged selected label
+    // can't collide with its neighbors or the hub.
+    let (selected_size, normal_size) = if outer < 120.0 { (15.0, 12.0) } else { (18.0, 14.0) };
 
     // Wedge fills: the whole pie piece carries the slice's
     // color (dim at rest, bright while aimed); colorless
@@ -971,9 +975,9 @@ pub(super) fn paint_wheel_ring(
         let pos = center + egui::vec2(center_angle.cos(), center_angle.sin()) * label_radius;
         let is_selected = selected == Some(i);
         let (color, size) = if is_selected {
-            (visuals.strong_text_color(), 18.0)
+            (visuals.strong_text_color(), selected_size)
         } else {
-            (visuals.text_color(), 14.0)
+            (visuals.text_color(), normal_size)
         };
         let label = if slice.is_folder() {
             format!("{} ▸", slice.label)
