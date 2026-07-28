@@ -1,0 +1,405 @@
+//! The GameObjects registry: one queryable model of the items, creatures,
+//! and players the game feed has told us are present.
+//!
+//! This is Lich's `GameObj` reimplemented from the same stream Lich reads
+//! (verified: `lich-5/lib/common/xmlparser.rb` builds its inv from the
+//! `<inv>` push feed, exactly what VellumFE parses). It replaces a set of
+//! per-feature silos that each re-derive items with their own parsing:
+//! `container_cache`, `room_objects`, `room_creatures`, `room_players`,
+//! and the bare-string hands/worn fields — plus a second, drifted `<a>`
+//! parser in the TUI container window.
+//!
+//! **It is a pure data model, not a scripting engine.** It exposes queries
+//! (`items_in`, `carried`, `hostile_creatures`, `classify`), never
+//! behavior. The automation lease remains the only thing that acts;
+//! features read from here and act through the lease.
+//!
+//! Migration is incremental (see the plan): this skeleton stands up the
+//! model + the single anchor parser + classification queries. Consumers
+//! move onto it one at a time; nothing is wired to it yet.
+//!
+//! Owned by `GameState` so it serializes to remote/phone clients, the way
+//! `room_creatures` already flows.
+
+// Skeleton step: the query/ingest surface is defined ahead of its
+// consumers, which migrate onto it one at a time. Remove this once the
+// widgets + foreach read from the registry (plan steps 3-6).
+#![allow(dead_code)]
+
+mod parse;
+
+pub use parse::parse_anchor;
+
+use std::collections::HashMap;
+
+use crate::core::gameobj_data::GameObjData;
+
+/// One object from the game feed: the `(id, noun, name)` triple every
+/// silo already keys on. `id` is the exist id used in `#<id>` game
+/// commands (works on direct connections). `name` is article-free — the
+/// exact string `gameobj-data.xml` regexes and Lich's `GameObj#name` see.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameItem {
+    pub id: String,
+    pub noun: String,
+    pub name: String,
+}
+
+impl GameItem {
+    pub fn new(
+        id: impl Into<String>,
+        noun: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
+        GameItem {
+            id: id.into(),
+            noun: noun.into(),
+            name: name.into(),
+        }
+    }
+}
+
+/// Where an item currently lives. Mirrors Lich's per-item container id,
+/// including its pseudo-locations for non-container sources.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Location {
+    /// Inside a tracked container (bag, sack, ...), by container id.
+    Container(String),
+    /// Worn on the body.
+    Worn,
+    /// On the ground in the current room.
+    Ground,
+    /// In a hand.
+    Hand(Hand),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hand {
+    Left,
+    Right,
+}
+
+/// Mark/registration status for an item, populated only by an active
+/// `INVENTORY FULL` scan (the passive feed doesn't carry it). `None`
+/// fields mean "not yet scanned", distinct from a known false.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ItemStatus {
+    pub marked: Option<bool>,
+    pub registered: Option<bool>,
+}
+
+/// A tracked container: identity, its game-command target, and contents.
+#[derive(Clone, Debug, Default)]
+pub struct Container {
+    pub id: String,
+    pub title: String,
+    pub title_lower: String,
+    /// The `target` attribute (`#<exist-id>`) from the `<container>` tag —
+    /// the id game commands use. Differs from `id` for `stow`. `None`
+    /// until a `<container>` tag is seen.
+    pub target: Option<String>,
+    pub items: Vec<GameItem>,
+    /// Bumped on every contents change (widgets diff on this).
+    pub generation: u64,
+}
+
+impl Container {
+    /// The id to use in game commands (`put X in #<here>`): the `target`
+    /// object id when known, else `#<id>` for normal numeric containers.
+    /// Strips a leading `#` since callers add their own.
+    pub fn command_target(&self) -> String {
+        match &self.target {
+            Some(t) => t.trim_start_matches('#').to_string(),
+            None => self.id.clone(),
+        }
+    }
+}
+
+/// The unified registry. Every collection carries a generation counter so
+/// widgets keep their existing diff-on-generation sync.
+#[derive(Clone, Debug, Default)]
+pub struct GameObjects {
+    containers: HashMap<String, Container>,
+    /// Container insertion order for oldest-first eviction (cap growth).
+    container_order: Vec<String>,
+    ground: Vec<GameItem>,
+    worn: Vec<GameItem>,
+    left_hand: Option<GameItem>,
+    right_hand: Option<GameItem>,
+    /// exist id -> status, from the last INVENTORY FULL scan.
+    statuses: HashMap<String, ItemStatus>,
+    pub generation: u64,
+}
+
+/// Cap on tracked containers; the feed creates one per unique id.
+const MAX_CONTAINERS: usize = 1000;
+
+impl GameObjects {
+    // ---- container ingest (fed by the parser; see migration step 2) ----
+
+    /// Register or update a container's identity (from `<container>`).
+    pub fn register_container(&mut self, id: String, title: String, target: Option<String>) {
+        if let Some(c) = self.containers.get_mut(&id) {
+            if c.title != title {
+                c.title_lower = title.to_lowercase();
+                c.title = title;
+                c.generation += 1;
+            }
+            if target.is_some() && c.target != target {
+                c.target = target;
+                c.generation += 1;
+            }
+        } else {
+            self.evict_if_full();
+            self.container_order.push(id.clone());
+            self.containers.insert(
+                id.clone(),
+                Container {
+                    title_lower: title.to_lowercase(),
+                    title,
+                    target,
+                    id,
+                    items: Vec::new(),
+                    generation: 0,
+                },
+            );
+        }
+    }
+
+    /// Clear a container's contents (from `<clearContainer>`).
+    pub fn clear_container(&mut self, id: &str) {
+        if let Some(c) = self.containers.get_mut(id) {
+            c.items.clear();
+            c.generation += 1;
+        }
+    }
+
+    /// Add a parsed item to a container (from an `<inv>` item line).
+    /// Auto-creates a title-less container if items precede its
+    /// `<container>` tag (the feed can do that).
+    pub fn add_container_item(&mut self, container_id: &str, item: GameItem) {
+        if let Some(c) = self.containers.get_mut(container_id) {
+            c.items.push(item);
+            c.generation += 1;
+        } else {
+            self.evict_if_full();
+            self.container_order.push(container_id.to_string());
+            self.containers.insert(
+                container_id.to_string(),
+                Container {
+                    id: container_id.to_string(),
+                    items: vec![item],
+                    generation: 1,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    fn evict_if_full(&mut self) {
+        while self.containers.len() >= MAX_CONTAINERS && !self.container_order.is_empty() {
+            let oldest = self.container_order.remove(0);
+            self.containers.remove(&oldest);
+        }
+    }
+
+    // ---- other-source ingest ----
+
+    pub fn set_ground(&mut self, items: Vec<GameItem>) {
+        if self.ground != items {
+            self.ground = items;
+            self.generation += 1;
+        }
+    }
+
+    pub fn set_worn(&mut self, items: Vec<GameItem>) {
+        if self.worn != items {
+            self.worn = items;
+            self.generation += 1;
+        }
+    }
+
+    pub fn set_hands(&mut self, left: Option<GameItem>, right: Option<GameItem>) {
+        if self.left_hand != left || self.right_hand != right {
+            self.left_hand = left;
+            self.right_hand = right;
+            self.generation += 1;
+        }
+    }
+
+    /// Record mark/registration status for an item (from an INV FULL scan).
+    pub fn set_status(&mut self, item_id: String, status: ItemStatus) {
+        self.statuses.insert(item_id, status);
+    }
+
+    // ---- queries (the consumer surface) ----
+
+    pub fn container(&self, id: &str) -> Option<&Container> {
+        self.containers.get(id)
+    }
+
+    pub fn containers(&self) -> impl Iterator<Item = &Container> {
+        self.containers.values()
+    }
+
+    /// Items inside a tracked container.
+    pub fn items_in(&self, container_id: &str) -> &[GameItem] {
+        self.containers
+            .get(container_id)
+            .map(|c| c.items.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn ground(&self) -> &[GameItem] {
+        &self.ground
+    }
+
+    pub fn worn(&self) -> &[GameItem] {
+        &self.worn
+    }
+
+    pub fn hand(&self, hand: Hand) -> Option<&GameItem> {
+        match hand {
+            Hand::Left => self.left_hand.as_ref(),
+            Hand::Right => self.right_hand.as_ref(),
+        }
+    }
+
+    /// Everything on the body: worn + both hands (the `inv` target's
+    /// enumeration, sans container contents).
+    pub fn carried(&self) -> Vec<&GameItem> {
+        self.worn
+            .iter()
+            .chain(self.left_hand.iter())
+            .chain(self.right_hand.iter())
+            .collect()
+    }
+
+    pub fn status_of(&self, item_id: &str) -> Option<&ItemStatus> {
+        self.statuses.get(item_id)
+    }
+
+    /// Resolve a user's container reference tolerantly (`my bando`,
+    /// `the sack`, `boar hide`) — the logic that lets `.foreach` and
+    /// `move to` name containers the way players do. Exact/substring
+    /// matches win; then article-stripped substring; then per-word prefix
+    /// subsequence.
+    pub fn find_container(&self, query: &str) -> Option<&Container> {
+        let q = query.to_lowercase();
+        // exact
+        if let Some(c) = self.containers.values().find(|c| c.title_lower == q) {
+            return Some(c);
+        }
+        // substring on the raw query
+        if let Some(c) = self.containers.values().find(|c| c.title_lower.contains(&q)) {
+            return Some(c);
+        }
+        let words = parse::strip_articles(&q);
+        if words.is_empty() {
+            return None;
+        }
+        let stripped = words.join(" ");
+        if let Some(c) = self
+            .containers
+            .values()
+            .find(|c| c.title_lower.contains(&stripped))
+        {
+            return Some(c);
+        }
+        self.containers
+            .values()
+            .find(|c| parse::title_matches_words(&c.title_lower, &words))
+    }
+
+    // ---- classification (delegates to the data-pack classifier) ----
+
+    /// All type tags for an item ("gem", "valuable", ...), via
+    /// `gameobj-data.xml`. Comma-joined string available as `classify`.
+    pub fn types_of<'a>(&self, item: &GameItem, data: &'a GameObjData) -> Vec<&'a str> {
+        data.types_of(&item.name, &item.noun)
+    }
+
+    /// Comma-joined type string, Lich `GameObj#type` shape, or None.
+    pub fn classify(&self, item: &GameItem, data: &GameObjData) -> Option<String> {
+        data.classify(&item.name, &item.noun)
+    }
+
+    pub fn sellable(&self, item: &GameItem, data: &GameObjData) -> Option<String> {
+        data.sellable(&item.name, &item.noun)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn data() -> GameObjData {
+        GameObjData::parse(
+            r#"<data>
+                 <type name="gem"><name>^(blue sapphire|quartz crystal)$</name></type>
+               </data>"#,
+        )
+    }
+
+    #[test]
+    fn container_ingest_and_command_target() {
+        let mut reg = GameObjects::default();
+        // Normal container: target == #id.
+        reg.register_container(
+            "77".into(),
+            "Bandolier".into(),
+            Some("#77".into()),
+        );
+        reg.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
+        assert_eq!(reg.items_in("77").len(), 1);
+        assert_eq!(reg.container("77").unwrap().command_target(), "77");
+
+        // stow: id is the string, target is the object id.
+        reg.register_container("stow".into(), "My Shroud".into(), Some("#691".into()));
+        assert_eq!(reg.container("stow").unwrap().command_target(), "691");
+    }
+
+    #[test]
+    fn find_container_is_article_and_abbreviation_tolerant() {
+        let mut reg = GameObjects::default();
+        reg.register_container("77".into(), "iron boar hide bandolier".into(), None);
+        reg.register_container("88".into(), "coal black purse".into(), None);
+        assert_eq!(reg.find_container("my bando").map(|c| &c.id), Some(&"77".into()));
+        assert_eq!(reg.find_container("boar hide").map(|c| &c.id), Some(&"77".into()));
+        assert_eq!(reg.find_container("my purse").map(|c| &c.id), Some(&"88".into()));
+        assert!(reg.find_container("my locker").is_none());
+    }
+
+    #[test]
+    fn carried_is_worn_plus_hands() {
+        let mut reg = GameObjects::default();
+        reg.set_worn(vec![GameItem::new("1", "cloak", "wool cloak")]);
+        reg.set_hands(
+            Some(GameItem::new("2", "sword", "short sword")),
+            None,
+        );
+        let carried: Vec<&str> = reg.carried().iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(carried, vec!["1", "2"]);
+    }
+
+    #[test]
+    fn classification_delegates_to_data_pack() {
+        let reg = GameObjects::default();
+        let data = data();
+        let gem = GameItem::new("1", "crystal", "quartz crystal");
+        let junk = GameItem::new("2", "rock", "smooth rock");
+        assert_eq!(reg.classify(&gem, &data).as_deref(), Some("gem"));
+        assert!(reg.classify(&junk, &data).is_none());
+    }
+
+    #[test]
+    fn set_ground_bumps_generation_only_on_change() {
+        let mut reg = GameObjects::default();
+        let g0 = reg.generation;
+        reg.set_ground(vec![GameItem::new("1", "ring", "silver ring")]);
+        assert!(reg.generation > g0);
+        let g1 = reg.generation;
+        reg.set_ground(vec![GameItem::new("1", "ring", "silver ring")]);
+        assert_eq!(reg.generation, g1, "no-op set must not bump");
+    }
+}
