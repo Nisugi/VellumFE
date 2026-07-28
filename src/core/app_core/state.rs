@@ -1282,6 +1282,28 @@ impl AppCore {
         }
     }
 
+    /// Surface `span` problems across every configured wheel (default +
+    /// named, recursing into folders): spans that sum over 360°, resolve
+    /// below the minimum width, or leave a ring unable to close. Advisory
+    /// only — the runtime resolver always produces a usable ring by
+    /// clamping and scaling; these tell the user their numbers were
+    /// adjusted. Called alongside `warn_wheel_binding_conflicts` on load
+    /// and editor save. The dynamic portals wheel carries no spans, so it
+    /// is skipped.
+    pub fn warn_wheel_span_conflicts(&mut self) {
+        use crate::config::validate_wheel_spans;
+        let mut issues = validate_wheel_spans("default", &self.config.controller_wheel);
+        for (name, slices) in &self.config.controller_wheels {
+            if name == Self::PORTAL_WHEEL_KEY {
+                continue;
+            }
+            issues.extend(validate_wheel_spans(name, slices));
+        }
+        for issue in issues {
+            self.add_system_message(&issue.message());
+        }
+    }
+
     /// Reserved dynamic wheel name: slices are built from the current
     /// room's portal list at open time instead of TOML.
     pub const PORTAL_WHEEL_KEY: &str = "portals";
@@ -1305,8 +1327,9 @@ impl AppCore {
                         .map(|(_, rest)| rest.to_string())
                         .unwrap_or_else(|| command.clone()),
                     command,
-                    color: None,
-                    slices: vec![],
+                    // Dynamic slices carry no span/inner/color: the portals
+                    // ring stays evenly spaced with the global dead zone.
+                    ..Default::default()
                 })
                 .collect();
             return (!slices.is_empty()).then_some(slices);
@@ -4861,6 +4884,7 @@ impl AppCore {
                 // Web clients render the wheel from a shipped copy.
                 self.push_remote_wheels();
                 self.warn_wheel_binding_conflicts();
+                self.warn_wheel_span_conflicts();
                 self.add_system_message("Keybinds reloaded");
             }
             Err(e) => {

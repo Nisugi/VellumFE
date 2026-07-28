@@ -1557,8 +1557,7 @@ mod portal_tests {
             vec![crate::config::WheelSlice {
                 label: "static".into(),
                 command: "static".into(),
-                color: None,
-                slices: vec![],
+                ..Default::default()
             }],
         );
 
@@ -1581,8 +1580,7 @@ mod portal_tests {
             vec![crate::config::WheelSlice {
                 label: "prep".into(),
                 command: "prep 101".into(),
-                color: None,
-                slices: vec![],
+                ..Default::default()
             }],
         );
         assert_eq!(core.wheel_pick_command("spells", &[0]), Some("prep 101".into()));

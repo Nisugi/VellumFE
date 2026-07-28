@@ -85,7 +85,7 @@ async fn main() {
             label: label.into(),
             command: command.into(),
             color: color.map(str::to_owned),
-            slices: vec![],
+            ..Default::default()
         };
         let mut config = vellum_fe::config::Config::default();
         config.controller_wheel = vec![
@@ -95,12 +95,15 @@ async fn main() {
             WheelSlice {
                 label: "stance".into(),
                 command: String::new(),
-                color: None,
                 slices: vec![
                     slice("defensive", "stance defensive", Some("#2e8b57")),
                     slice("neutral", "stance neutral", Some("#4682b4")),
                     slice("offensive", "stance offensive", Some("#b03030")),
                 ],
+                // Give the folder an explicit span so the payload exercises
+                // the variable-width fields end-to-end (harmless until B2).
+                span: Some(120.0),
+                ..Default::default()
             },
             slice("hide", "hide", None),
             slice("portal", ".portal", Some("#d9b44f")),
@@ -116,6 +119,8 @@ async fn main() {
             vellum_fe::config::WheelMeta {
                 button: Some("l3".into()),
                 stick: Some("right".into()),
+                // Exercises the per-wheel start payload (inert until B2).
+                start: Some(-30.0),
             },
         );
         // Non-default fire mode so the tuning payload carries fire_mode /

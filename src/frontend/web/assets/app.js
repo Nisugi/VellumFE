@@ -781,6 +781,7 @@ function handleMessage(msg) {
       // the desktop wheel (one source of truth: host keybinds.toml).
       wheelTuning = { ...WHEEL_TUNING_DEFAULTS, ...(wheels.tuning || {}) };
       wheelStick = wheels.wheel_stick || {};
+      wheelStart = wheels.wheel_start || {};
       if (gpWheel) renderWheel();
       break;
     case "session": setSession(msg.d); break;
@@ -1403,6 +1404,7 @@ const WHEEL_TUNING_DEFAULTS = {
 };
 let wheelTuning = { ...WHEEL_TUNING_DEFAULTS };
 let wheelStick = {}; // wheel name ("default" = default wheel) -> "left"|"right"
+let wheelStart = {}; // wheel name -> ring rotation in degrees (0 = up)
 // Dwell wheel state. `aimed` is the committed display slice (release
 // fires it); `candidate`/`candidateSince` track the slice the stick is
 // over but hasn't dwelt on yet; `rearmUntilCenter` blocks a new dwell
@@ -1417,8 +1419,8 @@ let gpWheelFired = false;
 // After a wheel closes with the aim stick still deflected, its normal
 // function (scroll / interact cycle) stays suppressed until it recenters.
 let gpAimRecenterNeeded = false;
-// Sentinel command/marker for the injected Back slice.
-const WHEEL_BACK = "__wheel_back__";
+// Sentinel command/marker for the injected Back slice (wheel-core.js).
+const WHEEL_BACK = WheelCore.WHEEL_BACK;
 
 // The wheel key of a bind value: "" for "wheel", the name for
 // "wheel:<name>", null for anything that is not a wheel bind.
@@ -1473,65 +1475,19 @@ function wheelLevelSlices(key, path) {
   return level;
 }
 
-// Which slice the stick aims at: slice 0 centered at the top, clockwise.
-// Null inside the dead zone (`deadzone`, 0..1) — mirrors the desktop
-// wheel's geometry.
-function wheelSliceAt(x, yUp, count, deadzone) {
-  const dz = deadzone == null ? 0.5 : deadzone;
-  if (!count || Math.hypot(x, yUp) < dz) return null;
-  const step = 360 / count;
-  const angle = (Math.atan2(x, yUp) * 180) / Math.PI;
-  return Math.floor((angle + 360 + step / 2) / step) % count;
-}
-
 // Wheel dead zone as a 0..1 stick magnitude (percent in tuning).
 function wheelDeadzone() {
   return Math.min(0.99, Math.max(0, (wheelTuning.deadzone || 0) / 100));
 }
 
-// Display index (0 = top, cw) whose seat is nearest a screen-anchor word,
-// for `count` even seats. Places the reserved Back slice at its side.
-function anchorDisplayIndex(anchor, count) {
-  if (!count) return 0;
-  const map = {
-    up: [0, 1], down: [0, -1], left: [-1, 0], right: [1, 0],
-    "up-left": [-1, 1], "up-right": [1, 1],
-    "down-left": [-1, -1], "down-right": [1, -1],
-  };
-  const [ax, ay] = map[anchor] || [0, -1];
-  return wheelSliceAt(ax, ay, count, 0) || 0;
-}
-
-// The displayed ring for a wheel level: the real slices plus, inside a
-// folder, a synthetic Back slice at the configured anchor. Returns
-// { slices, realIndex } where realIndex[d] is the real slice index for
-// display index d, or null for the Back slice. Mirrors WheelView (Rust).
+// The displayed ring for a wheel level: gathers this level's slices from
+// state and delegates the geometry (Back injection + anchor rotation) to
+// WheelCore.buildWheelView — the shared, node-tested core.
 function wheelView(key, path) {
   const real = wheelLevelSlices(key, path);
   if (!Array.isArray(real)) return null;
-  if (!path.length) {
-    return { slices: real.slice(), realIndex: real.map((_, i) => i) };
-  }
-  const count = real.length + 1;
-  const back = { label: "◂ Back", command: WHEEL_BACK };
-  const slices = real.slice();
-  slices.push(back);
-  const realIndex = real.map((_, i) => i);
-  realIndex.push(null);
-  // Back is last; rotate right so it lands at the anchor seat.
-  const target = anchorDisplayIndex(wheelTuning.back_slice, count);
-  const shift = (target + 1) % count;
-  rotateRight(slices, shift);
-  rotateRight(realIndex, shift);
-  return { slices, realIndex };
-}
-
-function rotateRight(arr, n) {
-  const len = arr.length;
-  if (!len) return;
-  n = ((n % len) + len) % len;
-  const tail = arr.splice(len - n, n);
-  arr.unshift(...tail);
+  const start = wheelStart[key === "" ? "default" : key] || 0;
+  return WheelCore.buildWheelView(real, path.length > 0, wheelTuning.back_slice, start);
 }
 
 function sendWheelPick(key, path) {
@@ -1570,8 +1526,12 @@ function renderWheel() {
   const outer = 104;
   const hub = 34;
   const labelR = 70;
-  const step = (2 * Math.PI) / slices.length;
-  const top = -Math.PI / 2; // slice 0 centered at the top
+  // Per-seat angles from the resolved layout (aim degrees, 0 = up cw);
+  // screen radians = deg*pi/180 - pi/2 (up is -90 in screen space).
+  const seats = view.layout.seats;
+  const seatCenter = (i) => (seats[i].startDeg + seats[i].spanDeg / 2) * (Math.PI / 180) - Math.PI / 2;
+  const seatSpan = (i) => seats[i].spanDeg * (Math.PI / 180);
+  const globalDz = wheelDeadzone();
 
   const svg = wheelSvgEl("svg", { viewBox: "-110 -110 220 220" });
   svg.appendChild(
@@ -1585,7 +1545,8 @@ function renderWheel() {
     `${(Math.cos(angle) * radius).toFixed(2)} ${(Math.sin(angle) * radius).toFixed(2)}`;
 
   slices.forEach((slice, i) => {
-    const centerAngle = top + i * step;
+    const centerAngle = seatCenter(i);
+    const step = seatSpan(i);
     const isAimed = aimed === i;
     // Wedge fill: the slice's tint (dim at rest, bright while aimed);
     // colorless slices highlight with the accent color.
@@ -1639,6 +1600,28 @@ function renderWheel() {
     );
     text.textContent = label;
     svg.appendChild(text);
+
+    // Per-slice inner floor: a slice whose own `inner` sits above the
+    // global dead zone needs a deeper throw — draw a faint arc across its
+    // wedge at that floor radius (mirrors the desktop cue).
+    if (slice.inner != null) {
+      const frac = Math.min(1, Math.max(0, slice.inner / 100));
+      if (frac > globalDz + 1e-3) {
+        const r = hub + (outer - hub) * frac;
+        const a0 = centerAngle - step / 2;
+        const a1 = centerAngle + step / 2;
+        svg.appendChild(
+          wheelSvgEl(
+            "path",
+            {
+              d: `M ${point(a0, r)} A ${r} ${r} 0 0 1 ${point(a1, r)}`,
+              fill: "none",
+            },
+            { stroke: "var(--warn, #d0a020)", "stroke-width": 1.5, opacity: 0.8 },
+          ),
+        );
+      }
+    }
   });
 
   // Center hub hosts the hint text.
@@ -2165,11 +2148,8 @@ function pollGamepads() {
     hideWheel();
     if (sheet.hidden && aimed !== null) {
       const view = wheelView(key, path);
-      const real = view && view.realIndex[aimed];
-      const slice = view && real != null ? view.slices[aimed] : null;
-      if (slice && slice.command !== WHEEL_BACK && !(slice.slices || []).length) {
-        wheelFire(key, [...path, real]);
-      }
+      const real = view ? WheelCore.leafRealAt(view, aimed) : null;
+      if (real != null) wheelFire(key, [...path, real]);
     }
     gpStickSector = gpStickSectorFor(stickX, stickYUp, gpStickSector);
     gpAimRecenterNeeded = true;
@@ -2218,111 +2198,40 @@ function pollGamepads() {
   }
 }
 
-// Advance the dwell state machine for one frame while the wheel is up and
-// the aim stick is at (x, yUp). Mirrors the desktop wheel_aim: commit a
-// leaf after aim_dwell_ms, auto-descend a folder / auto-ascend via Back
-// after nav_dwell_ms; the recenter latch blocks chaining. Indices are
-// display indices (Back injected).
+// Advance the dwell state machine one frame while the wheel is up. Thin
+// adapter over WheelCore.wheelAimStep (the shared, node-tested machine):
+// builds the view and tuning snapshot, injects the clock, then applies
+// the outcome (repaint and/or a mid-hold edge/retract fire).
 function wheelAim(x, yUp) {
   const view = wheelView(gpWheel.key, gpWheel.path);
   if (!view) return;
-  const dz = wheelDeadzone();
-  const aimMs = wheelTuning.aim_dwell_ms || 0;
-  const navMs = wheelTuning.nav_dwell_ms || 0;
-  const candidate = wheelSliceAt(x, yUp, view.slices.length, dz);
-  const centered = candidate === null;
-
-  // Re-neutralizing is the only thing that clears the latch (keyed on
-  // physical stick state, never a display index).
-  if (gpWheel.rearmUntilCenter && centered) gpWheel.rearmUntilCenter = false;
-
-  if (gpWheel.candidate !== candidate) {
-    gpWheel.candidate = candidate;
-    gpWheel.candidateSince = performance.now();
-    gpWheel.aimed = null; // drop a stale commit the moment the stick moves
-    gpWheel.peakMagnitude = 0;
-    renderWheel();
-  }
-  if (gpWheel.rearmUntilCenter || candidate === null) return;
-
-  const dwelt = performance.now() - gpWheel.candidateSince;
-  const real = view.realIndex[candidate];
-  if (real == null) {
-    // Back slice: auto-ascend.
-    if (dwelt >= navMs) {
-      gpWheel.path.pop();
-      gpWheel.aimed = null;
-      gpWheel.candidate = null;
-      gpWheel.rearmUntilCenter = true;
-      renderWheel();
-    }
-    return;
-  }
-  const slice = view.slices[candidate];
-  if ((slice.slices || []).length) {
-    // Folders always descend on dwell -- never fired by edge/retract.
-    if (dwelt >= navMs) {
-      gpWheel.path.push(real);
-      gpWheel.aimed = null;
-      gpWheel.candidate = null;
-      gpWheel.rearmUntilCenter = true;
-      gpWheel.peakMagnitude = 0;
-      renderWheel();
-    }
-    return;
-  }
-
-  // Leaf, by fire mode (mirrors the desktop wheel_aim).
-  const mode = wheelTuning.fire_mode || "release";
-  const magnitude = Math.hypot(x, yUp);
-  if (mode === "edge") {
-    // Fire the instant deflection crosses the threshold, no dwell. The
-    // rearm-until-center latch above already blocks refiring across slices.
-    if (magnitude >= wheelEdgeThreshold()) {
-      wheelFireCommittedLeaf(view, candidate, real);
-    }
-    return;
-  }
-  if (mode === "retract") {
-    // Dwell to commit, track the deflection peak, then fire once it drops
-    // retract_delta below that peak (a small inward flick).
-    if (dwelt >= aimMs) {
-      if (gpWheel.aimed !== candidate) {
-        gpWheel.aimed = candidate;
-        gpWheel.peakMagnitude = magnitude;
-        renderWheel();
-      }
-      gpWheel.peakMagnitude = Math.max(gpWheel.peakMagnitude, magnitude);
-      if (gpWheel.aimed === candidate && retractShouldFire(magnitude, gpWheel.peakMagnitude, wheelRetractDelta())) {
-        wheelFireCommittedLeaf(view, candidate, real);
-      }
-    }
-    return;
-  }
-  // release: commit; the release branch fires on button-up.
-  if (dwelt >= aimMs && gpWheel.aimed !== candidate) {
-    gpWheel.aimed = candidate;
-    renderWheel();
-  }
+  const out = WheelCore.wheelAimStep(
+    gpWheel, view, wheelTimingSnapshot(), x, yUp, performance.now(),
+  );
+  if (out.render) renderWheel();
+  if (out.fire != null) wheelCloseAndFire(view, out.fire);
 }
 
-// edge_threshold / retract_delta as 0..1 magnitudes.
-function wheelEdgeThreshold() {
-  return Math.min(1, Math.max(0, (wheelTuning.edge_threshold || 0) / 100));
+// [controller_tuning] snapshot in the units the machine consumes
+// (magnitudes 0..1, dwells in ms).
+function wheelTimingSnapshot() {
+  return {
+    deadzone: wheelDeadzone(),
+    aimMs: wheelTuning.aim_dwell_ms || 0,
+    navMs: wheelTuning.nav_dwell_ms || 0,
+    fireMode: wheelTuning.fire_mode || "release",
+    edgeThreshold: Math.min(1, Math.max(0, (wheelTuning.edge_threshold || 0) / 100)),
+    retractDelta: Math.min(1, Math.max(0, (wheelTuning.retract_delta || 0) / 100)),
+  };
 }
-function wheelRetractDelta() {
-  return Math.min(1, Math.max(0, (wheelTuning.retract_delta || 0) / 100));
-}
-// Retract fires once deflection falls delta below its peak. A small epsilon
-// keeps the exact boundary from being lost to float rounding.
-function retractShouldFire(magnitude, peak, delta) {
-  return magnitude <= peak - delta + 1e-4;
-}
-// Fire a committed leaf mid-hold (edge/retract) and close the wheel, the
-// way release does. Folders are never passed here.
-function wheelFireCommittedLeaf(view, display, real) {
-  const slice = view.slices[display];
-  if (!slice || slice.command === WHEEL_BACK || (slice.slices || []).length) return;
+
+// Close the wheel and fire the leaf at a display seat, if it is a real,
+// non-folder seat (WheelCore.leafRealAt is the one shared guard). Used by
+// the edge/retract mid-hold fires; the release branch uses leafRealAt
+// directly (the wheel is already down there).
+function wheelCloseAndFire(view, display) {
+  const real = WheelCore.leafRealAt(view, display);
+  if (real == null) return;
   const { key, path } = gpWheel;
   gpWheel = null;
   hideWheel();
@@ -2330,7 +2239,6 @@ function wheelFireCommittedLeaf(view, display, real) {
   gpAimRecenterNeeded = true;
   wheelFire(key, [...path, real]);
 }
-
 // Send a wheel pick to the host (commands + <target_id> resolve there),
 // honoring a fire debounce so a bounced button can't double-send.
 let gpWheelLastFire = 0;

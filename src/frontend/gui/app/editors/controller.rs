@@ -4,7 +4,7 @@
 //! Bindings are global — controllers belong to the desk, not a character.
 
 use super::super::VellumGuiApp;
-use crate::config::{Config, KeyAction, KeyBindAction, MacroAction, WheelSlice};
+use crate::config::{Config, KeyAction, KeyBindAction, MacroAction, WheelSlice, WHEEL_MIN_SPAN_DEG};
 use eframe::egui;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,8 +28,10 @@ const MOVEMENT_STICKS: [&str; 2] = ["left", "right"];
 /// Leaf fire-mode choices for the Tuning tab (see `[controller_tuning]`).
 const FIRE_MODES: [&str; 3] = ["release", "edge", "retract"];
 /// Screen-anchor choices for the reserved Back slice.
-const BACK_ANCHORS: [&str; 8] = [
+const BACK_ANCHORS: [&str; 9] = [
     "up", "down", "left", "right", "up-left", "up-right", "down-left", "down-right",
+    // "none" drops the reserved Back seat in folders — ascend with East/B.
+    "none",
 ];
 
 pub(in super::super) struct ControllerEditorState {
@@ -98,9 +100,7 @@ fn apply_wheel_op(slices: &mut Vec<WheelSlice>, op: WheelOp) {
             if let Some(level) = wheel_slices_at(slices, &path) {
                 level.push(WheelSlice {
                     label: "new".to_string(),
-                    command: String::new(),
-                    color: None,
-                    slices: Vec::new(),
+                    ..Default::default()
                 });
             }
         }
@@ -412,8 +412,10 @@ impl VellumGuiApp {
                         ui,
                         "Back slice anchor",
                         "Screen side the reserved Back slice is pinned to inside a folder. \
-                         Back is always a real, aimable slice; the ring rotates so it sits \
-                         nearest this side at every level.",
+                         Back is a real, aimable slice; the ring rotates so its center sits \
+                         on this side at every level. 'none' drops the reserved Back seat \
+                         entirely — folders then have only their own slices, and you go up \
+                         a level with the East/B button.",
                         &mut tuning.back_slice,
                         &BACK_ANCHORS,
                         &mut changed,
@@ -685,6 +687,10 @@ impl VellumGuiApp {
                         self.app_core.config.controller_wheels =
                             Config::load_controller_wheels().unwrap_or_default();
                         self.app_core.push_remote_wheels();
+                        // Surface any span problems in what was just saved
+                        // (advisory — the runtime still produces a usable
+                        // ring). The inline editor advisory is B6.
+                        self.app_core.warn_wheel_span_conflicts();
                         state.wheel_status = Some(if buffer.is_empty() && name.is_some() {
                             "Wheel deleted (no slices).".to_string()
                         } else {
@@ -984,6 +990,27 @@ fn render_wheels_tab(
                         }
                     }
                 });
+
+            ui.separator();
+            ui.label("Start").on_hover_text(
+                "Ring rotation in degrees (0 = up, clockwise). Rotates the whole \
+                 layout so the slices sit where your thumb likes them. 0 = the \
+                 first slice at the top.",
+            );
+            let mut start = meta.start.unwrap_or(0.0);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut start)
+                        .speed(1.0)
+                        .range(0.0..=359.0)
+                        .suffix("°"),
+                )
+                .changed()
+            {
+                let norm = start.rem_euclid(360.0);
+                meta.start = if norm.abs() < f32::EPSILON { None } else { Some(norm) };
+                changed = true;
+            }
         });
         if changed {
             *meta_save = Some((name_key.to_string(), meta.clone()));
@@ -1019,13 +1046,23 @@ fn render_wheels_tab(
         }
     });
 
+    // Inner aim floor can't exceed usable travel: it must sit below the
+    // fire point (edge threshold, minus the retract delta) with a little
+    // headroom, so every slice keeps room between its floor and firing.
+    let t = &config.controller_tuning;
+    let inner_ceiling = t
+        .edge_threshold
+        .saturating_sub(t.retract_delta)
+        .saturating_sub(5)
+        .max(5);
+
     let mut ops: Vec<WheelOp> = Vec::new();
     egui::ScrollArea::vertical()
         .id_salt("controller_wheel_slices")
         .auto_shrink([false, false])
-        .max_height((ui.available_height() - 40.0).max(60.0))
+        .max_height((ui.available_height() - 60.0).max(60.0))
         .show(ui, |ui| {
-            render_slice_rows(ui, buffer, &mut Vec::new(), &mut ops);
+            render_slice_rows(ui, buffer, &mut Vec::new(), &mut ops, inner_ceiling);
             if ui.button("+ Add slice").clicked() {
                 ops.push(WheelOp::AddChild(Vec::new()));
             }
@@ -1033,6 +1070,15 @@ fn render_wheels_tab(
     for op in ops {
         apply_wheel_op(buffer, op);
     }
+
+    // Inline advisory: warn (without blocking) when the current buffer's
+    // spans don't fit — same check the load/save-time warner runs.
+    let wheel_name = if state.wheel_selected.is_empty() {
+        "default"
+    } else {
+        state.wheel_selected.as_str()
+    };
+    let span_issues = crate::config::validate_wheel_spans(wheel_name, buffer);
 
     ui.separator();
     ui.horizontal(|ui| {
@@ -1043,6 +1089,9 @@ fn render_wheels_tab(
             ui.weak(status);
         }
     });
+    for issue in &span_issues {
+        ui.colored_label(ui.visuals().warn_fg_color, format!("⚠ {}", issue.message()));
+    }
 }
 
 fn render_slice_rows(
@@ -1050,6 +1099,7 @@ fn render_slice_rows(
     slices: &mut Vec<WheelSlice>,
     path: &mut Vec<usize>,
     ops: &mut Vec<WheelOp>,
+    inner_ceiling: u8,
 ) {
     for i in 0..slices.len() {
         path.push(i);
@@ -1075,6 +1125,53 @@ fn render_slice_rows(
                 } else {
                     Some(color)
                 };
+
+                // Span: 0 = auto (share the remainder). Non-zero is clamped
+                // to the minimum so the field can't express an unhittable
+                // wedge; the resolver clamps too, this just shows it.
+                let mut span = slice.span.unwrap_or(0.0);
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut span)
+                            .speed(1.0)
+                            .range(0.0..=300.0)
+                            .suffix("°")
+                            .custom_formatter(|n, _| {
+                                if n <= 0.0 { "auto".to_string() } else { format!("{n:.0}°") }
+                            }),
+                    )
+                    .on_hover_text("Wedge width in degrees. auto (0) shares the leftover evenly.")
+                    .changed()
+                {
+                    slice.span = if span <= 0.0 {
+                        None
+                    } else {
+                        Some(span.max(WHEEL_MIN_SPAN_DEG))
+                    };
+                }
+
+                // Inner: 0 = auto (global dead zone). Non-zero is the aim
+                // floor in percent, clamped to a usable ceiling so a slice
+                // never demands more throw than it has travel before firing.
+                let mut inner = slice.inner.unwrap_or(0) as f32;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut inner)
+                            .speed(1.0)
+                            .range(0.0..=inner_ceiling as f32)
+                            .custom_formatter(|n, _| {
+                                if n <= 0.0 { "auto".to_string() } else { format!("{n:.0}%") }
+                            }),
+                    )
+                    .on_hover_text(
+                        "Aim floor: how far the stick must push before this slice registers. \
+                         auto (0) uses the global dead zone.",
+                    )
+                    .changed()
+                {
+                    slice.inner = if inner <= 0.0 { None } else { Some(inner as u8) };
+                }
+
                 if ui.small_button("^").on_hover_text("Move up").clicked() {
                     ops.push(WheelOp::MoveUp(path.clone()));
                 }
@@ -1091,7 +1188,7 @@ fn render_slice_rows(
             });
         }
         if !slices[i].slices.is_empty() {
-            render_slice_rows(ui, &mut slices[i].slices, path, ops);
+            render_slice_rows(ui, &mut slices[i].slices, path, ops, inner_ceiling);
         }
         path.pop();
     }

@@ -58,7 +58,7 @@ const STICK_RELEASE: f32 = 0.35;
 
 /// How a committed leaf slice fires. See `[controller_tuning] fire_mode`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum FireMode {
+pub(super) enum FireMode {
     /// Fire when the wheel button is released (the default, and the only
     /// mode before this existed).
     Release,
@@ -234,22 +234,13 @@ impl VellumGuiApp {
             }
             (true, None) => {
                 // Release: fire the committed leaf, if any and if the
-                // debounce window has elapsed.
+                // debounce window has elapsed. `wheel_release_command` is
+                // the machine-side decision (display-indexed, Back/folder/
+                // empty-guarded via `leaf_command_at`).
                 let ui = self.gp_wheel.take().expect("just matched Some");
-                if let Some(display) = ui.aimed {
-                    let view = self.wheel_view(&ui.key, &ui.path);
-                    // `view.slices` is the DISPLAY-ordered (Back-injected,
-                    // rotated) ring, so index it by `display`, not the real
-                    // index — indexing by `real` double-applied the rotation
-                    // and fired the wrong slice inside a rotated folder.
-                    if let Some(Some(_real)) = view.as_ref().and_then(|v| v.real(display)) {
-                        if let Some(slice) =
-                            view.as_ref().and_then(|v| v.slices.get(display)).cloned()
-                        {
-                            if !slice.is_folder() && !slice.command.is_empty() {
-                                self.wheel_fire(slice.command);
-                            }
-                        }
+                if let Some(view) = self.wheel_view(&ui.key, &ui.path) {
+                    if let Some(command) = wheel_release_command(&ui, &view) {
+                        self.wheel_fire(command);
                     }
                 }
                 // The aim stick is usually still deflected on release; if it
@@ -621,15 +612,27 @@ impl VellumGuiApp {
     pub(super) fn wheel_view(&self, key: &str, path: &[usize]) -> Option<WheelView> {
         let real = self.wheel_level_slices(key, path)?;
         let anchor = &self.app_core.config.controller_tuning.back_slice;
-        Some(WheelView::build(&real, !path.is_empty(), anchor))
+        Some(WheelView::build(&real, !path.is_empty(), anchor, self.wheel_start(key)))
+    }
+
+    /// The ring rotation in degrees for wheel `key` (0 = up), from
+    /// `[controller_wheels_meta.<name>].start`; 0 when unset. The default
+    /// wheel uses the "default" key.
+    fn wheel_start(&self, key: &str) -> f32 {
+        let name = if key.is_empty() { "default" } else { key };
+        self.app_core
+            .config
+            .controller_wheels_meta
+            .get(name)
+            .and_then(|m| m.start)
+            .unwrap_or(0.0)
     }
 
     /// Advance the dwell state machine for one frame while the wheel is
-    /// up and the aim stick is at `(x, y_up)`. Tracks the candidate slice
-    /// and its dwell time; commits a leaf (arming release-fire), auto-
-    /// descends a folder, or auto-ascends via the Back slice once the
-    /// relevant dwell elapses. The re-arm block prevents a still-deflected
-    /// stick from chaining through nested levels.
+    /// up and the aim stick is at `(x, y_up)`. Thin adapter over the
+    /// app-independent `wheel_aim_step` machine: builds the view and the
+    /// tuning snapshot, injects the clock, then applies the outcome
+    /// (repaint and/or a mid-hold edge/retract fire).
     fn wheel_aim(&mut self, x: f32, y_up: f32) {
         let (key, path) = {
             let ui = self.gp_wheel.as_ref().expect("wheel active");
@@ -638,153 +641,31 @@ impl VellumGuiApp {
         let Some(view) = self.wheel_view(&key, &path) else {
             return;
         };
-        let deadzone = self.wheel_deadzone();
-        let aim_ms = self.app_core.config.controller_tuning.aim_dwell_ms as u128;
-        let nav_ms = self.app_core.config.controller_tuning.nav_dwell_ms as u128;
-        let fire_mode = self.wheel_fire_mode();
-        let magnitude = (x * x + y_up * y_up).sqrt();
-        let candidate = wheel_slice_at(x, y_up, view.len(), deadzone);
-        // The stick is "neutral" when it has fallen back inside the dead
-        // zone (candidate None). Re-neutralizing is the ONLY thing that
-        // clears the re-arm latch — keyed on physical stick state, not a
-        // display index (indices are meaningless across a level change,
-        // since seat counts differ).
-        let centered = candidate.is_none();
-        let latched = self
-            .gp_wheel
-            .as_ref()
-            .map(|ui| ui.rearm_until_center)
-            .unwrap_or(true);
-        let (latch_after, may_dwell) = dwell_rearm_step(latched, centered);
-
-        if let Some(ui) = self.gp_wheel.as_mut() {
-            ui.rearm_until_center = latch_after;
-            // Track the candidate and restart its dwell clock whenever it
-            // changes. Any change also drops a prior commit — release only
-            // fires a leaf the stick is *currently* dwelling, never a stale
-            // one it has already moved off (whether to center or to another
-            // slice).
-            if ui.candidate != candidate {
-                ui.candidate = candidate;
-                ui.candidate_since = Some(std::time::Instant::now());
-                ui.aimed = None;
-                ui.peak_magnitude = 0.0;
-                self.app_core.needs_render = true;
-            }
+        let timing = self.wheel_timing();
+        let outcome = {
+            let ui = self.gp_wheel.as_mut().expect("wheel active");
+            wheel_aim_step(ui, &view, &timing, x, y_up, std::time::Instant::now())
+        };
+        if outcome.render {
+            self.app_core.needs_render = true;
         }
-
-        // While the latch is up (stick hasn't re-neutralized since the last
-        // auto descend/ascend), no dwell may accrue — this is what stops a
-        // still-deflected stick from chaining through nested folders.
-        if !may_dwell {
-            return;
+        if let Some(display) = outcome.fire {
+            self.wheel_close_and_fire(&view, display);
         }
+    }
 
-        // Nothing under the stick: nothing to dwell.
-        let Some(display) = candidate else { return };
-        let dwelt = self
-            .gp_wheel
-            .as_ref()
-            .and_then(|ui| ui.candidate_since)
-            .map(|t| t.elapsed().as_millis())
-            .unwrap_or(0);
-
-        match view.real(display) {
-            // Back slice: auto-ascend once the nav dwell elapses.
-            Some(None) => {
-                if dwelt >= nav_ms {
-                    if let Some(ui) = self.gp_wheel.as_mut() {
-                        ui.path.pop();
-                        ui.aimed = None;
-                        ui.candidate = None;
-                        ui.candidate_since = None;
-                        ui.rearm_until_center = true;
-                        self.app_core.needs_render = true;
-                    }
-                }
-            }
-            // A real slice.
-            Some(Some(real)) => {
-                // Look the slice up by DISPLAY index (view.slices is the rotated
-                // ring); `real` is only for path.push on descend. Using `real`
-                // here read a different seat's is_folder() flag inside a rotated
-                // sub-folder, so dwell-to-open silently failed one level deep.
-                let is_folder = view
-                    .slices
-                    .get(display)
-                    .map(|s| s.is_folder())
-                    .unwrap_or(false);
-                if is_folder {
-                    // Folders always descend on dwell — never fired by edge
-                    // or retract (Niffy's invariant).
-                    if dwelt >= nav_ms {
-                        if let Some(ui) = self.gp_wheel.as_mut() {
-                            ui.path.push(real);
-                            ui.aimed = None;
-                            ui.candidate = None;
-                            ui.candidate_since = None;
-                            ui.rearm_until_center = true;
-                            ui.peak_magnitude = 0.0;
-                            self.app_core.needs_render = true;
-                        }
-                    }
-                    return;
-                }
-
-                // Leaf, by fire mode.
-                match fire_mode {
-                    FireMode::Edge => {
-                        // Fire the moment deflection crosses the threshold —
-                        // no dwell. `may_dwell` gated us here, so the rearm
-                        // latch already blocks a still-deflected stick from
-                        // refiring across slices until it recenters.
-                        if edge_should_fire(magnitude, self.wheel_edge_threshold()) {
-                            self.wheel_fire_committed_leaf(&key, &path, display);
-                        }
-                    }
-                    FireMode::Retract => {
-                        // Dwell to commit, then track the deflection peak and
-                        // fire once it falls retract_delta below that peak.
-                        if dwelt >= aim_ms {
-                            if let Some(ui) = self.gp_wheel.as_mut() {
-                                if ui.aimed != Some(display) {
-                                    ui.aimed = Some(display);
-                                    ui.peak_magnitude = magnitude;
-                                    self.app_core.needs_render = true;
-                                }
-                                ui.peak_magnitude = ui.peak_magnitude.max(magnitude);
-                            }
-                            let committed = self
-                                .gp_wheel
-                                .as_ref()
-                                .map(|ui| (ui.aimed == Some(display), ui.peak_magnitude))
-                                .unwrap_or((false, 0.0));
-                            if committed.0
-                                && retract_should_fire(
-                                    magnitude,
-                                    committed.1,
-                                    self.wheel_retract_delta(),
-                                )
-                            {
-                                self.wheel_fire_committed_leaf(&key, &path, display);
-                            }
-                        }
-                    }
-                    FireMode::Release => {
-                        // Commit (arm release-fire); the release arm in
-                        // poll_gamepad does the firing.
-                        if dwelt >= aim_ms {
-                            if let Some(ui) = self.gp_wheel.as_mut() {
-                                if ui.aimed != Some(display) {
-                                    ui.aimed = Some(display);
-                                    self.app_core.needs_render = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            None => {}
+    /// Snapshot of `[controller_tuning]` in the units the wheel state
+    /// machine consumes. A plain struct so tests can drive the machine
+    /// with arbitrary feels and no app.
+    fn wheel_timing(&self) -> WheelTiming {
+        let t = &self.app_core.config.controller_tuning;
+        WheelTiming {
+            deadzone: self.wheel_deadzone(),
+            aim_ms: t.aim_dwell_ms as u128,
+            nav_ms: t.nav_dwell_ms as u128,
+            fire_mode: self.wheel_fire_mode(),
+            edge_threshold: self.wheel_edge_threshold(),
+            retract_delta: self.wheel_retract_delta(),
         }
     }
 
@@ -831,24 +712,19 @@ impl VellumGuiApp {
         (self.app_core.config.controller_tuning.retract_delta as f32 / 100.0).clamp(0.0, 1.0)
     }
 
-    /// Fire the committed leaf at display index `display` and close the
-    /// wheel, exactly as the South accelerator does. Used by the `edge` and
-    /// `retract` fire modes, which fire a leaf mid-hold instead of waiting
-    /// for the wheel button to come up. Folders are never passed here.
-    fn wheel_fire_committed_leaf(&mut self, key: &str, path: &[usize], display: usize) {
-        let Some(view) = self.wheel_view(key, path) else {
+    /// Close the wheel and fire the leaf at display seat `display`, if it
+    /// is a real, non-folder, non-empty seat (`leaf_command_at` is the one
+    /// shared guard). Used by the edge/retract mid-hold fires and the South
+    /// accelerator; release goes through `wheel_release_command` instead
+    /// (same guard, no close needed — the wheel is already down).
+    fn wheel_close_and_fire(&mut self, view: &WheelView, display: usize) {
+        let Some(command) = leaf_command_at(view, display) else {
             return;
         };
-        let Some(slice) = view.slices.get(display).cloned() else {
-            return;
-        };
-        if slice.is_folder() || slice.command.is_empty() {
-            return;
-        }
         self.gp_wheel = None;
         self.gp_wheel_fired = true;
         self.gp_aim_recenter_needed = true;
-        self.wheel_fire(slice.command);
+        self.wheel_fire(command);
         self.app_core.needs_render = true;
     }
 
@@ -859,58 +735,26 @@ impl VellumGuiApp {
 
     /// South accelerator while the wheel is up: act on whatever the stick
     /// is over right now (the committed slice, or the live candidate if a
-    /// dwell hasn't landed yet), skipping the dwell wait. Fires a leaf,
-    /// descends a folder, or ascends via the Back slice.
+    /// dwell hasn't landed yet), skipping the dwell wait. Thin adapter over
+    /// `wheel_south_step`: fires a leaf, descends a folder, or ascends via
+    /// the Back slice.
     fn wheel_accelerator_south(&mut self) {
-        // Act on the slice the stick is over *right now* — the live
-        // candidate wins over any earlier commit, so South never fires a
-        // slice the stick has already moved off.
-        let (key, path, target) = {
+        let (key, path) = {
             let ui = self.gp_wheel.as_ref().expect("wheel active");
-            (ui.key.clone(), ui.path.clone(), ui.candidate.or(ui.aimed))
+            (ui.key.clone(), ui.path.clone())
         };
-        let Some(display) = target else { return };
         let Some(view) = self.wheel_view(&key, &path) else {
             return;
         };
-        match view.real(display) {
-            Some(None) => {
-                // Back slice.
-                if let Some(ui) = self.gp_wheel.as_mut() {
-                    if ui.path.pop().is_some() {
-                        ui.aimed = None;
-                        ui.candidate = None;
-                        ui.candidate_since = None;
-                        ui.rearm_until_center = true;
-                        self.app_core.needs_render = true;
-                    }
-                }
-            }
-            Some(Some(real)) => {
-                // Look the slice up by DISPLAY index (view.slices is the
-                // rotated ring); `real` is only for path.push on descend.
-                let slice = match view.slices.get(display) {
-                    Some(s) => s.clone(),
-                    None => return,
-                };
-                if slice.is_folder() {
-                    if let Some(ui) = self.gp_wheel.as_mut() {
-                        ui.path.push(real);
-                        ui.aimed = None;
-                        ui.candidate = None;
-                        ui.candidate_since = None;
-                        ui.rearm_until_center = true;
-                        self.app_core.needs_render = true;
-                    }
-                } else if !slice.command.is_empty() {
-                    self.gp_wheel = None;
-                    self.gp_wheel_fired = true;
-                    self.gp_aim_recenter_needed = true;
-                    self.wheel_fire(slice.command);
-                    self.app_core.needs_render = true;
-                }
-            }
-            None => {}
+        let outcome = {
+            let ui = self.gp_wheel.as_mut().expect("wheel active");
+            wheel_south_step(ui, &view)
+        };
+        if outcome.render {
+            self.app_core.needs_render = true;
+        }
+        if let Some(display) = outcome.fire {
+            self.wheel_close_and_fire(&view, display);
         }
     }
 
@@ -987,7 +831,14 @@ impl VellumGuiApp {
         if slices.is_empty() {
             return;
         }
+        let seats = &view.layout.seats;
+        // Screen radians for a seat center: the aim convention is 0 = up,
+        // clockwise (degrees); screen is 0 = +x with y down, so up is
+        // -90°. screen = aim - 90°.
+        let seat_center_screen = |i: usize| seats[i].center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
+        let seat_span_rad = |i: usize| seats[i].span_deg.to_radians();
         let in_folder = !path.is_empty();
+        let global_dz = self.wheel_deadzone();
         let center = ctx.content_rect().center();
         let radius = (ctx.content_rect().height() * 0.28).clamp(90.0, 220.0);
 
@@ -1006,13 +857,12 @@ impl VellumGuiApp {
                     outer,
                     egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
                 );
-                let step = std::f32::consts::TAU / slices.len() as f32;
-
                 // Wedge fills: the whole pie piece carries the slice's
                 // color (dim at rest, bright while aimed); colorless
                 // slices highlight with the theme selection fill.
                 for (i, slice) in slices.iter().enumerate() {
-                    let center_angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
+                    let center_angle = seat_center_screen(i);
+                    let step = seat_span_rad(i);
                     let is_selected = selected == Some(i);
                     let tint = slice
                         .color
@@ -1047,9 +897,9 @@ impl VellumGuiApp {
 
                 // Wedge separators + labels over the fills.
                 for (i, slice) in slices.iter().enumerate() {
-                    let center_angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
+                    let center_angle = seat_center_screen(i);
                     if slices.len() > 1 {
-                        let a0 = center_angle - step / 2.0;
+                        let a0 = center_angle - seat_span_rad(i) / 2.0;
                         let dir = egui::vec2(a0.cos(), a0.sin());
                         painter.line_segment(
                             [center + dir * hub, center + dir * outer],
@@ -1075,6 +925,36 @@ impl VellumGuiApp {
                         egui::FontId::proportional(size),
                         color,
                     );
+                }
+
+                // Per-slice inner floor: a slice with its own `inner` above
+                // the global dead zone needs a deeper throw, so draw a faint
+                // arc across its wedge at that floor radius — the deflection
+                // you must cross before it registers. Slices on the default
+                // floor get no extra line (keeps the common case clean).
+                let floor_stroke = egui::Stroke::new(
+                    1.5,
+                    ui.visuals().warn_fg_color.gamma_multiply(0.8),
+                );
+                for (i, slice) in slices.iter().enumerate() {
+                    let Some(inner_pct) = slice.inner else { continue };
+                    let frac = (inner_pct as f32 / 100.0).clamp(0.0, 1.0);
+                    if frac <= global_dz + 1e-3 {
+                        continue; // not harder than the default reach
+                    }
+                    let r = hub + (outer - hub) * frac;
+                    let center_angle = seat_center_screen(i);
+                    let half = seat_span_rad(i) / 2.0;
+                    let a0 = center_angle - half;
+                    let a1 = center_angle + half;
+                    const ARC_STEPS: usize = 12;
+                    let pts: Vec<egui::Pos2> = (0..=ARC_STEPS)
+                        .map(|k| {
+                            let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
+                            center + egui::vec2(a.cos(), a.sin()) * r
+                        })
+                        .collect();
+                    painter.add(egui::Shape::line(pts, floor_stroke));
                 }
 
                 // Center hub hosts the hint text. `selected` is the
@@ -1140,39 +1020,195 @@ fn four_way(x: f32, y_up: f32, previous: Option<FourWay>) -> Option<FourWay> {
     })
 }
 
-/// Which wheel slice the stick is aiming at: slice 0 centered at the top,
-/// clockwise. None inside the dead zone (`deadzone`, 0.0–1.0) or with no
-/// slices.
-fn wheel_slice_at(x: f32, y_up: f32, count: usize, deadzone: f32) -> Option<usize> {
-    if count == 0 || (x * x + y_up * y_up).sqrt() < deadzone {
-        return None;
-    }
-    let step = 360.0 / count as f32;
-    let angle = x.atan2(y_up).to_degrees();
-    Some((((angle + 360.0 + step / 2.0) / step) as usize) % count)
+/// The minimum wedge width the resolver will produce; a slice narrower
+/// than this is hard to hit, so explicit spans are clamped up and the
+/// remainder scaled to keep the ring closed. Shared with the config-layer
+/// validator so the resolver and the warnings can't disagree.
+use crate::config::WHEEL_MIN_SPAN_DEG as MIN_SPAN_DEG;
+
+/// One seat in a resolved ring: its clockwise span and the angle of its
+/// leading edge, both in degrees in the AIM convention (0 = up, clockwise).
+/// Consecutive seats abut, wrapping the full 360.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Seat {
+    /// Leading (counter-clockwise) edge of the seat, degrees from up.
+    pub(super) start_deg: f32,
+    pub(super) span_deg: f32,
 }
 
-/// Display index (0 = top, clockwise) whose seat center lies nearest a
-/// screen-anchor word, given `count` evenly-spaced seats. Used to place
-/// the reserved Back slice at its configured side.
-fn anchor_display_index(anchor: &str, count: usize) -> usize {
-    if count == 0 {
-        return 0;
+impl Seat {
+    fn center_deg(&self) -> f32 {
+        self.start_deg + self.span_deg / 2.0
     }
-    // Anchor screen direction as a (x, y_up) unit-ish vector, y_up
-    // positive = up (matching the stick convention wheel_slice_at reads).
-    let (ax, ay) = match anchor {
-        "up" => (0.0, 1.0),
-        "down" => (0.0, -1.0),
-        "left" => (-1.0, 0.0),
-        "right" => (1.0, 0.0),
-        "up-left" => (-1.0, 1.0),
-        "up-right" => (1.0, 1.0),
-        "down-left" => (-1.0, -1.0),
-        "down-right" => (1.0, -1.0),
-        _ => (0.0, -1.0), // default: down
+}
+
+/// A ring laid out into concrete angular seats — the single source of
+/// truth the aim lookup, the render, and the Back placement all read, so
+/// they can never disagree about where a wedge sits. Built by
+/// `resolve_spans` from the per-slice `span` list plus the wheel's `start`.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ResolvedLayout {
+    pub(super) seats: Vec<Seat>,
+}
+
+impl ResolvedLayout {
+    fn len(&self) -> usize {
+        self.seats.len()
+    }
+}
+
+/// Turn a per-slice span list (`None` = take an even share of the leftover)
+/// into concrete abutting seats. Seat 0 is *centered* at `start_deg` (not
+/// started there), matching the historical convention where slice 0 sits
+/// at the top (`start_deg == 0`); the rest follow clockwise.
+///
+/// Resolution: explicit spans are taken as-is (clamped up to `MIN_SPAN_DEG`),
+/// and whatever remains of 360° is split evenly among the span-less slices.
+/// If the totals can't fit — explicit spans clamped up overshoot, or there
+/// are no free slices to absorb a shortfall/overflow — every seat is scaled
+/// proportionally so the ring still closes exactly. The runtime is thus
+/// always forgiving (never a gap, never a panic); the editor/load warnings
+/// (B5) are where the user is told to fix numbers that had to be adjusted.
+///
+/// With all spans `None` and `start_deg == 0` this reproduces the old
+/// `360/count` ring with seat 0 centered at the top — the byte-for-byte
+/// backward-compatible path, pinned by the golden vectors.
+fn resolve_spans(spans: &[Option<f32>], start_deg: f32) -> ResolvedLayout {
+    let n = spans.len();
+    if n == 0 {
+        return ResolvedLayout { seats: Vec::new() };
+    }
+
+    // Each explicit span, floored at the minimum; None marks a free seat.
+    let explicit: Vec<Option<f32>> = spans
+        .iter()
+        .map(|s| s.map(|v| v.max(MIN_SPAN_DEG)))
+        .collect();
+    let explicit_sum: f32 = explicit.iter().flatten().sum();
+    let free_count = explicit.iter().filter(|s| s.is_none()).count();
+
+    // Provisional width for each seat before the final normalize.
+    let free_each = if free_count > 0 {
+        ((360.0 - explicit_sum) / free_count as f32).max(0.0)
+    } else {
+        0.0
     };
-    wheel_slice_at(ax, ay, count, 0.0).unwrap_or(0)
+    let mut widths: Vec<f32> = explicit
+        .iter()
+        .map(|s| s.unwrap_or(free_each))
+        .collect();
+
+    // Close the ring exactly: scale to 360 whenever the provisional widths
+    // don't already sum there (explicit overflow, or no free seats to take
+    // up the slack). A degenerate all-zero total falls back to even.
+    let total: f32 = widths.iter().sum();
+    if total <= f32::EPSILON {
+        widths = vec![360.0 / n as f32; n];
+    } else if (total - 360.0).abs() > 1e-3 {
+        let scale = 360.0 / total;
+        for w in &mut widths {
+            *w *= scale;
+        }
+    }
+
+    // Lay the widths out into abutting seats. Seat 0 is CENTERED at
+    // `start_deg`, so its leading edge sits half its own width earlier;
+    // the rest abut clockwise from there.
+    let mut seats = Vec::with_capacity(n);
+    let mut edge = start_deg - widths[0] / 2.0;
+    for w in widths {
+        seats.push(Seat { start_deg: edge, span_deg: w });
+        edge += w;
+    }
+    ResolvedLayout { seats }
+}
+
+/// Which seat the stick is aiming at, by cumulative-range lookup over a
+/// resolved layout: the seat whose `[start, start+span)` arc contains the
+/// stick angle. None inside the dead zone (`deadzone`, 0.0–1.0) or with no
+/// seats. Angle uses the aim convention (0 = up, clockwise), normalized
+/// relative to seat 0's start so wrap is automatic.
+fn seat_at(x: f32, y_up: f32, layout: &ResolvedLayout, deadzone: f32) -> Option<usize> {
+    if (x * x + y_up * y_up).sqrt() < deadzone {
+        return None;
+    }
+    seat_index_at_angle(x, y_up, layout)
+}
+
+/// Pure angular resolution: which seat's arc the stick points at, ignoring
+/// magnitude. None only when there are no seats. The radial floor (global
+/// dead zone or a per-slice `inner`) is applied by the caller.
+fn seat_index_at_angle(x: f32, y_up: f32, layout: &ResolvedLayout) -> Option<usize> {
+    if layout.len() == 0 {
+        return None;
+    }
+    let start = layout.seats[0].start_deg;
+    let rel = (x.atan2(y_up).to_degrees() - start).rem_euclid(360.0);
+    let mut cum = 0.0;
+    for (i, seat) in layout.seats.iter().enumerate() {
+        cum += seat.span_deg;
+        if rel < cum {
+            return Some(i);
+        }
+    }
+    // Float slop at the wrap: the last seat owns the boundary.
+    Some(layout.len() - 1)
+}
+
+/// The seat under the stick honoring per-slice `inner`: resolve the angle,
+/// then apply that seat's radial floor — its own `inner` (percent of full
+/// deflection) if set, else the global `deadzone`. Below the floor the seat
+/// isn't aimable, so this returns None (the stick reads as centered). This
+/// gates aiming/commit only; firing stays with the active fire mode.
+fn seat_at_with_inner(
+    x: f32,
+    y_up: f32,
+    view: &WheelView,
+    deadzone: f32,
+) -> Option<usize> {
+    let seat = seat_index_at_angle(x, y_up, &view.layout)?;
+    let floor = view
+        .slices
+        .get(seat)
+        .and_then(|s| s.inner)
+        .map(|pct| pct as f32 / 100.0)
+        .unwrap_or(deadzone);
+    if (x * x + y_up * y_up).sqrt() < floor {
+        return None;
+    }
+    Some(seat)
+}
+
+/// Even-ring seat lookup by count — the backward-compatible shim used by
+/// call sites (and tests) that don't have a layout: build the all-even
+/// layout and delegate to `seat_at`. Equivalent to the old
+/// `wheel_slice_at`.
+fn wheel_slice_at(x: f32, y_up: f32, count: usize, deadzone: f32) -> Option<usize> {
+    let layout = resolve_spans(&vec![None; count], 0.0);
+    seat_at(x, y_up, &layout, deadzone)
+}
+
+/// The aim-convention angle (degrees, 0 = up, clockwise) of a screen
+/// anchor word, used to place the reserved Back slice at its side.
+/// Unknown words (and "none", handled earlier) fall back to down.
+fn anchor_angle_deg(anchor: &str) -> f32 {
+    match anchor {
+        "up" => 0.0,
+        "up-right" => 45.0,
+        "right" => 90.0,
+        "down-right" => 135.0,
+        "down" => 180.0,
+        "down-left" => 225.0,
+        "left" => 270.0,
+        "up-left" => 315.0,
+        _ => 180.0, // default: down
+    }
+}
+
+/// Smallest absolute difference between two angles in degrees (0..=180).
+fn angular_gap(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(360.0);
+    d.min(360.0 - d)
 }
 
 /// One step of the wheel re-arm gate. Given whether the latch is up and
@@ -1187,6 +1223,244 @@ fn dwell_rearm_step(latched: bool, centered: bool) -> (bool, bool) {
     let latch_after = latched && !centered;
     let may_dwell = !latch_after && !centered;
     (latch_after, may_dwell)
+}
+
+/// Snapshot of `[controller_tuning]` in machine units: deadzone and
+/// thresholds as 0.0–1.0 magnitudes, dwells in ms. App-independent so
+/// scenario tests can drive the machine with arbitrary feels.
+pub(super) struct WheelTiming {
+    pub(super) deadzone: f32,
+    pub(super) aim_ms: u128,
+    pub(super) nav_ms: u128,
+    pub(super) fire_mode: FireMode,
+    pub(super) edge_threshold: f32,
+    pub(super) retract_delta: f32,
+}
+
+/// One frame's outcome from the wheel state machine: the display seat of a
+/// leaf that must fire NOW (edge/retract fire mid-hold; South fires on
+/// press), and whether the frame changed anything visible.
+#[derive(Debug, Default, PartialEq)]
+pub(super) struct WheelStepOutcome {
+    pub(super) fire: Option<usize>,
+    pub(super) render: bool,
+}
+
+/// The command of the real, non-folder, non-empty leaf at a DISPLAY seat,
+/// if that seat holds one. The single guard shared by every fire path
+/// (release, edge, retract, South) so they can't drift: Back seats
+/// (`real == None`), folders, and empty commands all return None.
+fn leaf_command_at(view: &WheelView, display: usize) -> Option<String> {
+    match view.real(display) {
+        Some(Some(_)) => {}
+        _ => return None,
+    }
+    let slice = view.slices.get(display)?;
+    if slice.is_folder() || slice.command.is_empty() {
+        return None;
+    }
+    Some(slice.command.clone())
+}
+
+/// Release-fire decision: the committed leaf's command, if the stick is
+/// still dwelling one when the wheel button comes up.
+fn wheel_release_command(ui: &WheelUi, view: &WheelView) -> Option<String> {
+    leaf_command_at(view, ui.aimed?)
+}
+
+/// Advance the dwell/commit/fire state machine one frame. App-independent:
+/// takes the current display ring, a tuning snapshot, the aim-stick sample,
+/// and an injected clock, and mutates only `ui`. Descend/ascend happen
+/// in place (path push/pop + rearm latch); a leaf that must fire NOW
+/// (edge/retract modes) is returned for the app layer to dispatch.
+/// Release-mode firing stays with the caller via `wheel_release_command`.
+///
+/// The re-arm latch semantics: the stick is "neutral" when it has fallen
+/// back inside the dead zone (candidate None), and re-neutralizing is the
+/// ONLY thing that clears the latch — keyed on physical stick state, not a
+/// display index (indices are meaningless across a level change, since
+/// seat counts differ).
+fn wheel_aim_step(
+    ui: &mut WheelUi,
+    view: &WheelView,
+    timing: &WheelTiming,
+    x: f32,
+    y_up: f32,
+    now: std::time::Instant,
+) -> WheelStepOutcome {
+    let mut render = false;
+    let magnitude = (x * x + y_up * y_up).sqrt();
+    // Per-slice `inner` gates aiming: a seat below its own floor reads as
+    // no candidate (and thus as "centered", clearing the rearm latch).
+    let candidate = seat_at_with_inner(x, y_up, view, timing.deadzone);
+    let centered = candidate.is_none();
+    let (latch_after, may_dwell) = dwell_rearm_step(ui.rearm_until_center, centered);
+    ui.rearm_until_center = latch_after;
+
+    // Track the candidate and restart its dwell clock whenever it changes.
+    // Any change also drops a prior commit — release only fires a leaf the
+    // stick is *currently* dwelling, never a stale one it has already moved
+    // off (whether to center or to another slice).
+    if ui.candidate != candidate {
+        ui.candidate = candidate;
+        ui.candidate_since = Some(now);
+        ui.aimed = None;
+        ui.peak_magnitude = 0.0;
+        render = true;
+    }
+
+    // While the latch is up (stick hasn't re-neutralized since the last
+    // auto descend/ascend), no dwell may accrue — this is what stops a
+    // still-deflected stick from chaining through nested folders.
+    if !may_dwell {
+        return WheelStepOutcome { fire: None, render };
+    }
+
+    // Nothing under the stick: nothing to dwell.
+    let Some(display) = candidate else {
+        return WheelStepOutcome { fire: None, render };
+    };
+    let dwelt = ui
+        .candidate_since
+        .map(|since| now.saturating_duration_since(since).as_millis())
+        .unwrap_or(0);
+
+    match view.real(display) {
+        // Back slice: auto-ascend once the nav dwell elapses.
+        Some(None) => {
+            if dwelt >= timing.nav_ms {
+                ui.path.pop();
+                ui.aimed = None;
+                ui.candidate = None;
+                ui.candidate_since = None;
+                ui.rearm_until_center = true;
+                render = true;
+            }
+        }
+        // A real slice. Folder-ness is read from the DISPLAY seat —
+        // view.slices is the rotated ring, so indexing it by `real`
+        // classified the wrong slice inside a rotated folder (the same
+        // display-vs-real trap 0fb3431 fixed for firing); `real` is only
+        // for path.push on descend.
+        Some(Some(real)) => {
+            let is_folder = view
+                .slices
+                .get(display)
+                .map(|s| s.is_folder())
+                .unwrap_or(false);
+            if is_folder {
+                // Folders always descend on dwell — never fired by edge
+                // or retract (Niffy's invariant).
+                if dwelt >= timing.nav_ms {
+                    ui.path.push(real);
+                    ui.aimed = None;
+                    ui.candidate = None;
+                    ui.candidate_since = None;
+                    ui.rearm_until_center = true;
+                    ui.peak_magnitude = 0.0;
+                    render = true;
+                }
+                return WheelStepOutcome { fire: None, render };
+            }
+
+            // Leaf, by fire mode.
+            match timing.fire_mode {
+                FireMode::Edge => {
+                    // Fire the moment deflection crosses the threshold —
+                    // no dwell. `may_dwell` gated us here, so the rearm
+                    // latch already blocks a still-deflected stick from
+                    // refiring across slices until it recenters.
+                    if edge_should_fire(magnitude, timing.edge_threshold) {
+                        return WheelStepOutcome {
+                            fire: Some(display),
+                            render,
+                        };
+                    }
+                }
+                FireMode::Retract => {
+                    // Dwell to commit, then track the deflection peak and
+                    // fire once it falls retract_delta below that peak.
+                    if dwelt >= timing.aim_ms {
+                        if ui.aimed != Some(display) {
+                            ui.aimed = Some(display);
+                            ui.peak_magnitude = magnitude;
+                            render = true;
+                        }
+                        ui.peak_magnitude = ui.peak_magnitude.max(magnitude);
+                        if retract_should_fire(magnitude, ui.peak_magnitude, timing.retract_delta)
+                        {
+                            return WheelStepOutcome {
+                                fire: Some(display),
+                                render,
+                            };
+                        }
+                    }
+                }
+                FireMode::Release => {
+                    // Commit (arm release-fire); the release arm in
+                    // poll_gamepad does the firing.
+                    if dwelt >= timing.aim_ms && ui.aimed != Some(display) {
+                        ui.aimed = Some(display);
+                        render = true;
+                    }
+                }
+            }
+        }
+        None => {}
+    }
+    WheelStepOutcome { fire: None, render }
+}
+
+/// South accelerator step: act on the seat the stick is over *right now*
+/// (the live candidate wins over an earlier commit, so South never fires a
+/// slice the stick has already moved off), skipping the dwell wait.
+/// Descends/ascends by mutating `ui`; a leaf to fire is returned as its
+/// display seat. Slices are looked up by DISPLAY index (view.slices is the
+/// rotated ring); `real` is only for `path.push` on descend.
+fn wheel_south_step(ui: &mut WheelUi, view: &WheelView) -> WheelStepOutcome {
+    let Some(display) = ui.candidate.or(ui.aimed) else {
+        return WheelStepOutcome::default();
+    };
+    match view.real(display) {
+        Some(None) => {
+            // Back slice.
+            if ui.path.pop().is_some() {
+                ui.aimed = None;
+                ui.candidate = None;
+                ui.candidate_since = None;
+                ui.rearm_until_center = true;
+                return WheelStepOutcome {
+                    fire: None,
+                    render: true,
+                };
+            }
+            WheelStepOutcome::default()
+        }
+        Some(Some(real)) => {
+            let Some(slice) = view.slices.get(display) else {
+                return WheelStepOutcome::default();
+            };
+            if slice.is_folder() {
+                ui.path.push(real);
+                ui.aimed = None;
+                ui.candidate = None;
+                ui.candidate_since = None;
+                ui.rearm_until_center = true;
+                WheelStepOutcome {
+                    fire: None,
+                    render: true,
+                }
+            } else if !slice.command.is_empty() {
+                WheelStepOutcome {
+                    fire: Some(display),
+                    render: false,
+                }
+            } else {
+                WheelStepOutcome::default()
+            }
+        }
+        None => WheelStepOutcome::default(),
+    }
 }
 
 /// True when the aim stick has returned close enough to center to clear
@@ -1210,45 +1484,66 @@ fn resolve_aim_stick(move_on_right: bool, wheel_override: Option<bool>) -> bool 
 pub(super) struct WheelView {
     pub(super) slices: Vec<WheelSlice>,
     real_index: Vec<Option<usize>>,
+    /// Concrete angular seats for `slices`, in display order — the single
+    /// geometry the aim lookup and the render both read.
+    pub(super) layout: ResolvedLayout,
 }
 
 /// Sentinel command marking the injected Back slice.
 const BACK_COMMAND: &str = "\u{0}__wheel_back__";
 
 impl WheelView {
-    /// Build the display ring. `in_folder` injects the Back slice at the
-    /// anchor; the top level (no parent) shows only real slices.
-    fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str) -> Self {
-        if !in_folder {
+    /// Build the display ring.
+    ///
+    /// Top level (not `in_folder`): the real slices, laid out by their spans
+    /// and rotated by the wheel's `start` (0 = up, clockwise).
+    ///
+    /// Inside a folder: a reserved Back slice is appended as the LAST seat
+    /// (real slices keep their order 0..n-1 — no array rotation, so display
+    /// index n is always Back), then the whole ring is rotated by ANGLE so
+    /// Back's seat center lands at the `back_anchor` direction. Back keeps
+    /// the same screen side at every level, as before, but now that works
+    /// with uneven seats too. `back_anchor == "none"` skips Back entirely —
+    /// the folder ring is just the real slices (rotated by `start`), and
+    /// you ascend with the East/B accelerator.
+    fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str, start: f32) -> Self {
+        let real_spans = || -> Vec<Option<f32>> { real.iter().map(|s| s.span).collect() };
+
+        if !in_folder || back_anchor == "none" {
+            let slices = real.to_vec();
+            let layout = resolve_spans(&real_spans(), start);
             return Self {
-                slices: real.to_vec(),
                 real_index: (0..real.len()).map(Some).collect(),
+                layout,
+                slices,
             };
         }
-        // Displayed count includes the Back seat; rotate the assembled
-        // ring so Back lands nearest the anchor while the real slices stay
-        // in order around it.
-        let count = real.len() + 1;
-        let back = WheelSlice {
+
+        // [real..., Back] — Back is always the last display seat.
+        let mut slices: Vec<WheelSlice> = real.to_vec();
+        slices.push(WheelSlice {
             label: "◂ Back".to_string(),
             command: BACK_COMMAND.to_string(),
-            color: None,
-            slices: Vec::new(),
-        };
-        // Assemble as [real..., Back] then rotate right so Back moves from
-        // the last seat to the anchor seat.
-        let target = anchor_display_index(back_anchor, count);
-        let mut slices: Vec<WheelSlice> = real.to_vec();
-        slices.push(back);
+            ..Default::default()
+        });
         let mut real_index: Vec<Option<usize>> = (0..real.len()).map(Some).collect();
         real_index.push(None);
-        // Back currently at index count-1; rotate so it sits at `target`.
-        let shift = (target + count - (count - 1)) % count; // = (target + 1) % count
-        slices.rotate_right(shift);
-        real_index.rotate_right(shift);
-        Self { slices, real_index }
+
+        // Back participates as a span-less seat in the remainder split (no
+        // magic width — an even ring keeps today's geometry). Lay it out at
+        // start 0 to read Back's center, then rotate so that center lands on
+        // the anchor direction. (This ignores a user `start` inside folders,
+        // by design: Back-position consistency across levels wins there.)
+        let mut spans = real_spans();
+        spans.push(None);
+        let back_idx = slices.len() - 1;
+        let at_zero = resolve_spans(&spans, 0.0);
+        let rotation = anchor_angle_deg(back_anchor) - at_zero.seats[back_idx].center_deg();
+        let layout = resolve_spans(&spans, rotation);
+        Self { slices, real_index, layout }
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.slices.len()
     }
@@ -1374,19 +1669,128 @@ mod wheel_tests {
         assert_eq!(wheel_slice_at(0.0, 0.05, 8, 0.0), Some(0));
     }
 
+    fn spans(v: &[Option<f32>]) -> Vec<f32> {
+        resolve_spans(v, 0.0).seats.iter().map(|s| s.span_deg).collect()
+    }
+
+    #[test]
+    fn resolve_all_none_is_the_even_ring_centered_at_top() {
+        // Backward-compat property: no spans + start 0 == the old geometry,
+        // seat 0 centered at the top (leading edge half a step early).
+        let layout = resolve_spans(&[None, None, None, None], 0.0);
+        for s in &layout.seats {
+            assert!((s.span_deg - 90.0).abs() < 1e-3, "even 90 each");
+        }
+        assert!((layout.seats[0].start_deg - -45.0).abs() < 1e-3, "seat 0 centered at up");
+        assert!((layout.seats[0].center_deg() - 0.0).abs() < 1e-3);
+        // And the seat lookup matches the compass exactly (up/right/down/left).
+        assert_eq!(seat_at(0.0, 1.0, &layout, 0.5), Some(0));
+        assert_eq!(seat_at(1.0, 0.0, &layout, 0.5), Some(1));
+        assert_eq!(seat_at(0.0, -1.0, &layout, 0.5), Some(2));
+        assert_eq!(seat_at(-1.0, 0.0, &layout, 0.5), Some(3));
+    }
+
+    #[test]
+    fn resolve_explicit_spans_take_value_remainder_splits_evenly() {
+        // One 120° slice; the other three share the remaining 240° = 80 each.
+        assert_eq!(spans(&[Some(120.0), None, None, None]), vec![120.0, 80.0, 80.0, 80.0]);
+        // Two explicit; two free share what's left.
+        assert_eq!(spans(&[Some(100.0), Some(60.0), None, None]), vec![100.0, 60.0, 100.0, 100.0]);
+    }
+
+    #[test]
+    fn resolve_clamps_min_span() {
+        // A 10° request is floored to the 30° minimum; the free slice takes
+        // the rest so the ring still closes.
+        assert_eq!(spans(&[Some(10.0), None]), vec![30.0, 330.0]);
+    }
+
+    #[test]
+    fn resolve_scales_overflow_to_close_the_ring() {
+        // Explicit spans summing past 360 with no free seats scale down
+        // proportionally to exactly 360, keeping their ratio (2:1).
+        let got = spans(&[Some(400.0), Some(200.0)]);
+        let sum: f32 = got.iter().sum();
+        assert!((sum - 360.0).abs() < 1e-3, "closes at 360: {got:?}");
+        assert!((got[0] / got[1] - 2.0).abs() < 1e-3, "ratio kept: {got:?}");
+    }
+
+    #[test]
+    fn resolve_no_free_seats_underfill_scales_up() {
+        // Explicit spans under 360 with nothing free are scaled UP to fill,
+        // so there is never an unhittable gap.
+        let got = spans(&[Some(60.0), Some(60.0)]);
+        assert_eq!(got, vec![180.0, 180.0]);
+    }
+
+    #[test]
+    fn resolve_start_rotates_the_ring() {
+        // start = 90 puts seat 0's center on the right; the lookup follows.
+        let layout = resolve_spans(&[None, None, None, None], 90.0);
+        assert!((layout.seats[0].center_deg() - 90.0).abs() < 1e-3);
+        assert_eq!(seat_at(1.0, 0.0, &layout, 0.5), Some(0), "seat 0 now points right");
+        assert_eq!(seat_at(0.0, -1.0, &layout, 0.5), Some(1), "seat 1 points down");
+    }
+
+    #[test]
+    fn variable_span_lookup_hits_the_wide_slice_across_its_arc() {
+        // A 180° slice at seat 0 (start 0): its arc is [-90, 90) in aim
+        // degrees, so anything from left-of-up to right-of-up lands on it,
+        // while straight down falls to one of the narrow slices.
+        let layout = resolve_spans(&[Some(180.0), None, None], 0.0);
+        assert_eq!(seat_at(0.0, 1.0, &layout, 0.5), Some(0), "up");
+        assert_eq!(seat_at(0.7, 0.7, &layout, 0.5), Some(0), "up-right still seat 0");
+        assert_eq!(seat_at(-0.7, 0.7, &layout, 0.5), Some(0), "up-left still seat 0");
+        assert_ne!(seat_at(0.0, -1.0, &layout, 0.5), Some(0), "down is a narrow slice");
+    }
+
     fn leaf(label: &str) -> WheelSlice {
         WheelSlice {
             label: label.to_string(),
             command: label.to_string(),
-            color: None,
-            slices: Vec::new(),
+            ..Default::default()
+        }
+    }
+
+    fn folder(label: &str, children: Vec<WheelSlice>) -> WheelSlice {
+        WheelSlice {
+            label: label.to_string(),
+            command: String::new(),
+            slices: children,
+            ..Default::default()
+        }
+    }
+
+    /// A fresh wheel state as poll_gamepad opens it.
+    fn fresh_ui() -> WheelUi {
+        WheelUi {
+            key: String::new(),
+            path: Vec::new(),
+            aimed: None,
+            candidate: None,
+            candidate_since: None,
+            rearm_until_center: false,
+            peak_magnitude: 0.0,
+        }
+    }
+
+    /// The shipped default feel with a chosen fire mode: 50% dead zone,
+    /// 150 ms dwells, 90% edge threshold, 10% retract delta.
+    fn feel(fire_mode: FireMode) -> WheelTiming {
+        WheelTiming {
+            deadzone: 0.5,
+            aim_ms: 150,
+            nav_ms: 150,
+            fire_mode,
+            edge_threshold: 0.9,
+            retract_delta: 0.10,
         }
     }
 
     #[test]
     fn top_level_view_has_no_back_slice() {
         let real = vec![leaf("a"), leaf("b"), leaf("c")];
-        let view = WheelView::build(&real, false, "down");
+        let view = WheelView::build(&real, false, "down", 0.0);
         assert_eq!(view.len(), 3);
         // Every display index maps to a real slice.
         for i in 0..3 {
@@ -1395,27 +1799,112 @@ mod wheel_tests {
     }
 
     #[test]
-    fn folder_view_injects_back_at_anchor() {
+    fn folder_view_appends_back_as_last_seat() {
         let real = vec![leaf("a"), leaf("b"), leaf("c")];
-        // 4 seats once Back is added; "down" anchor => display index 2.
-        let view = WheelView::build(&real, true, "down");
+        let view = WheelView::build(&real, true, "down", 0.0);
         assert_eq!(view.len(), 4);
-        let back_at = anchor_display_index("down", 4);
-        assert_eq!(view.real(back_at), Some(None), "Back sits at its anchor");
-        assert_eq!(view.slices[back_at].command, BACK_COMMAND);
-        // The three real slices are all present exactly once.
-        let mut reals: Vec<usize> = (0..4).filter_map(|i| view.real(i).flatten()).collect();
-        reals.sort();
-        assert_eq!(reals, vec![0, 1, 2]);
+        // Back is always the LAST display seat now (no array rotation); the
+        // real slices keep their order at display indices 0..n-1.
+        assert_eq!(view.real(0), Some(Some(0)));
+        assert_eq!(view.real(1), Some(Some(1)));
+        assert_eq!(view.real(2), Some(Some(2)));
+        assert_eq!(view.real(3), Some(None), "Back is the last seat");
+        assert_eq!(view.slices[3].command, BACK_COMMAND);
     }
 
     #[test]
-    fn back_anchor_lands_on_the_named_side() {
-        // With 4 seats: up=0, right=1, down=2, left=3.
-        assert_eq!(anchor_display_index("up", 4), 0);
-        assert_eq!(anchor_display_index("right", 4), 1);
-        assert_eq!(anchor_display_index("down", 4), 2);
-        assert_eq!(anchor_display_index("left", 4), 3);
+    fn back_center_lands_on_the_named_side() {
+        // Back is positioned by ANGLE now: its seat center sits at the
+        // anchor direction (up=0, right=90, down=180, left=270 in the aim
+        // convention), whatever the seat count or spans.
+        let real = vec![leaf("a"), leaf("b"), leaf("c")];
+        for (anchor, want) in [("up", 0.0), ("right", 90.0), ("down", 180.0), ("left", 270.0)] {
+            let view = WheelView::build(&real, true, anchor, 0.0);
+            let back = *view.layout.seats.last().unwrap();
+            assert!(
+                angular_gap(back.center_deg(), want) < 1e-3,
+                "Back center for {anchor}: {} vs {want}",
+                back.center_deg()
+            );
+        }
+    }
+
+    #[test]
+    fn back_slice_none_skips_the_back_seat() {
+        // back_anchor "none": a folder ring is just the real slices, no
+        // reserved Back seat — you ascend via the East/B accelerator.
+        let real = vec![leaf("a"), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, true, "none", 0.0);
+        assert_eq!(view.len(), 3, "no Back seat");
+        for i in 0..3 {
+            assert_eq!(view.real(i), Some(Some(i)));
+        }
+    }
+
+    fn leaf_inner(label: &str, inner: u8) -> WheelSlice {
+        WheelSlice {
+            label: label.to_string(),
+            command: label.to_string(),
+            inner: Some(inner),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn per_slice_inner_gates_aiming_above_and_below_its_floor() {
+        // Seat 0 (up) demands a 65% throw; seat 1 (right) an easy 20%.
+        // Global dead zone 50%.
+        let mut a = leaf_inner("hard", 65);
+        a.span = Some(120.0);
+        let real = vec![a, leaf_inner("easy", 20), leaf("plain")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        let dz = 0.5;
+
+        // Aiming up at 0.55: past the global dead zone but under seat 0's
+        // 65% floor, so it does NOT register.
+        assert_eq!(seat_at_with_inner(0.0, 0.55, &view, dz), None, "under hard floor");
+        // At 0.70 it clears the floor.
+        assert_eq!(seat_at_with_inner(0.0, 0.70, &view, dz), Some(0), "over hard floor");
+
+        // Seat 1 (right) registers at just 0.25 — below the global dead
+        // zone — because its own inner (20%) is lower.
+        assert_eq!(seat_at_with_inner(1.0, 0.0, &view, dz), Some(1));
+        assert_eq!(
+            seat_at_with_inner(0.25, 0.0, &view, dz).map(|s| s),
+            Some(1),
+            "easy slice reachable below the global dead zone"
+        );
+
+        // The plain slice (no inner) still uses the global dead zone: seat 2
+        // is down (180). At 0.4 it's under 0.5 -> None; at 0.6 -> Some(2).
+        assert_eq!(seat_at_with_inner(0.0, -0.4, &view, dz), None, "plain under global dz");
+        assert_eq!(seat_at_with_inner(0.0, -0.6, &view, dz), Some(2), "plain over global dz");
+    }
+
+    #[test]
+    fn inner_gates_commit_but_not_the_fire_mode() {
+        // A high-inner leaf under a moderate throw never commits (the dwell
+        // machine sees no candidate); pushing past the floor commits and
+        // release then fires it — inner gates aiming, not the fire path.
+        let real = vec![leaf_inner("drop", 65), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, false, "down", 0.0);
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Dwell up at 0.55 (under the 65% floor): no candidate ever, no
+        // commit, so release fires nothing.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.55, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.55, steps(t0, 300));
+        assert_eq!(ui.candidate, None, "sub-floor seat is not a candidate");
+        assert_eq!(ui.aimed, None);
+        assert_eq!(wheel_release_command(&ui, &view), None);
+
+        // Push past the floor and dwell: now it commits and release fires.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.9, steps(t0, 400));
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.9, steps(t0, 600));
+        assert_eq!(ui.aimed, Some(0), "clears the floor -> commits");
+        assert_eq!(wheel_release_command(&ui, &view), Some("drop".to_string()));
     }
 
     #[test]
@@ -1491,6 +1980,424 @@ mod wheel_tests {
         // A hair above the boundary still holds (the epsilon is far smaller
         // than the 1% config granularity, so it won't fire early).
         assert!(!retract_should_fire(0.605, 0.70, 0.10));
+    }
+
+    // ---- whole-interaction scenarios against the extracted machine ----
+    //
+    // These drive wheel_aim_step / wheel_release_command / wheel_south_step
+    // across frames with a synthetic clock — the wheel's behavior without a
+    // controller in hand. Directions: (0,1)=up, (1,0)=right, (0,-1)=down.
+
+    use std::time::{Duration, Instant};
+
+    fn steps(t0: Instant, ms: u64) -> Instant {
+        t0 + Duration::from_millis(ms)
+    }
+
+    #[test]
+    fn scenario_release_dwell_commits_then_release_fires() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Frame 1: stick lands on seat 0 — candidate, no commit yet.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        assert_eq!((ui.candidate, ui.aimed, out.fire), (Some(0), None, None));
+        // Releasing mid-sweep (before the dwell) fires nothing.
+        assert_eq!(wheel_release_command(&ui, &view), None);
+
+        // Frame 2, 160 ms later: dwell elapsed — committed, still no fire.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 160));
+        assert_eq!((ui.aimed, out.fire), (Some(0), None));
+        // Release now fires the committed leaf.
+        assert_eq!(wheel_release_command(&ui, &view), Some("a".to_string()));
+    }
+
+    #[test]
+    fn scenario_sweeping_across_slices_never_commits() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Sweep seat 0 -> 1 -> 2, each hop under the 150 ms dwell: every
+        // hop restarts the clock, so nothing ever commits.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 1.0, 0.0, steps(t0, 100));
+        assert_eq!(ui.aimed, None);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, steps(t0, 200));
+        assert_eq!((ui.candidate, ui.aimed), (Some(2), None));
+        assert_eq!(wheel_release_command(&ui, &view), None);
+    }
+
+    #[test]
+    fn scenario_center_then_release_cancels() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Commit seat 0, then return to center: the commit is dropped, so
+        // releasing fires nothing (the cancel gesture).
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!(ui.aimed, Some(0));
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.0, steps(t0, 300));
+        assert_eq!(ui.aimed, None);
+        assert_eq!(wheel_release_command(&ui, &view), None);
+    }
+
+    #[test]
+    fn scenario_folder_descends_and_rearm_blocks_chaining() {
+        // Top level: [folder, leaf] — two seats, folder at the top.
+        let top = WheelView::build(
+            &[folder("f", vec![leaf("a"), leaf("b")]), leaf("x")],
+            false,
+            "down",
+            0.0,
+        );
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Dwell the folder: path descends and the rearm latch goes up.
+        wheel_aim_step(&mut ui, &top, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &top, &t, 0.0, 1.0, steps(t0, 160));
+        assert_eq!(ui.path, vec![0]);
+        assert!(ui.rearm_until_center);
+
+        // Still fully deflected inside the folder ring: the latch blocks
+        // all dwell — no chained descend, no commit — for as long as the
+        // stick stays out.
+        let inner = WheelView::build(&[leaf("a"), leaf("b")], true, "down", 0.0);
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 170));
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 600));
+        assert_eq!(ui.path, vec![0], "latched stick must not chain");
+        assert_eq!(ui.aimed, None);
+        assert!(ui.rearm_until_center);
+
+        // Re-center once: latch clears. Re-aim and dwell: now it commits.
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 0.0, steps(t0, 700));
+        assert!(!ui.rearm_until_center);
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 800));
+        wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 1000));
+        assert!(ui.aimed.is_some());
+    }
+
+    #[test]
+    fn scenario_back_dwell_ascends() {
+        // Inside a folder: 3 real slices + Back appended last and anchored
+        // down. Back is display index 3 (the last seat); aiming down lands
+        // on it by angle.
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down", 0.0);
+        let back_at = 3;
+        assert_eq!(view.real(back_at), Some(None), "Back is the last seat");
+
+        let t = feel(FireMode::Release);
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        let t0 = Instant::now();
+
+        wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, t0);
+        assert_eq!(ui.candidate, Some(back_at), "aiming down hits Back");
+        wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, steps(t0, 160));
+        assert_eq!(ui.path, Vec::<usize>::new(), "Back dwell ascends");
+        assert!(ui.rearm_until_center);
+    }
+
+    #[test]
+    fn scenario_edge_fires_at_threshold_without_dwell() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
+        let t = feel(FireMode::Edge);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Below the 90% threshold: aimable but never fires, no matter how
+        // long it dwells (edge mode doesn't commit).
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.7, t0);
+        assert_eq!(out.fire, None);
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.7, steps(t0, 500));
+        assert_eq!((out.fire, ui.aimed), (None, None));
+
+        // Cross the threshold: fires the same frame — zero dwell.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, steps(t0, 510));
+        assert_eq!(out.fire, Some(0));
+    }
+
+    #[test]
+    fn scenario_edge_respects_rearm_latch() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
+        let t = feel(FireMode::Edge);
+        let mut ui = fresh_ui();
+        // As after an auto descend: stick still out, latch up.
+        ui.rearm_until_center = true;
+        let t0 = Instant::now();
+
+        // Full deflection cannot fire through the latch.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        assert_eq!(out.fire, None);
+        // Re-center clears it; the next full deflection fires.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 0.0, steps(t0, 100));
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!(out.fire, Some(0));
+    }
+
+    #[test]
+    fn scenario_retract_tracks_peak_and_fires_on_inward_flick() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
+        let t = feel(FireMode::Retract);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Dwell at full throw: commits, peak = 1.0, no fire yet.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!((ui.aimed, out.fire), (Some(0), None));
+        assert!((ui.peak_magnitude - 1.0).abs() < 1e-6);
+
+        // Easing to 0.95 is inside the 10% delta: still holding.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.95, steps(t0, 250));
+        assert_eq!(out.fire, None);
+        // Flick inward past peak - delta (0.90): fires.
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.88, steps(t0, 300));
+        assert_eq!(out.fire, Some(0));
+    }
+
+    #[test]
+    fn scenario_retract_snap_to_center_cancels() {
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
+        let t = feel(FireMode::Retract);
+        let mut ui = fresh_ui();
+        let t0 = Instant::now();
+
+        // Commit at full throw, then snap inside the dead zone in one
+        // frame: the candidate drops before the retract check can run, so
+        // it cancels instead of firing.
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 200));
+        assert_eq!(ui.aimed, Some(0));
+        let out = wheel_aim_step(&mut ui, &view, &t, 0.0, 0.2, steps(t0, 250));
+        assert_eq!((out.fire, ui.aimed), (None, None));
+        assert_eq!(wheel_release_command(&ui, &view), None);
+    }
+
+    #[test]
+    fn scenario_folder_ring_with_back_descends_and_commits_correctly() {
+        // A Back-bearing folder ring: children [a(leaf), inner(folder),
+        // c(leaf)] + Back appended last. Append-not-rotate means real slices
+        // sit at their OWN display index (0..n-1) and Back is last, so the
+        // display-vs-real divergence can no longer occur by construction —
+        // this test locks that in while still exercising folder-descend and
+        // leaf-commit in a ring that has a Back seat.
+        //
+        // 4 even seats anchored "down": Back(3) is placed at 180 by a -90
+        // rotation, so the reals land at up=seat1(inner), left=seat0(a),
+        // right=seat2(c).
+        let children = vec![leaf("a"), folder("inner", vec![leaf("b")]), leaf("c")];
+        let view = WheelView::build(&children, true, "down", 0.0);
+        assert_eq!(view.real(0), Some(Some(0)), "reals keep their own index");
+        assert_eq!(view.real(1), Some(Some(1)));
+        assert_eq!(view.real(3), Some(None), "Back last");
+
+        let t = feel(FireMode::Release);
+        let t0 = Instant::now();
+
+        // Up aims the inner folder (seat 1) — dwelling descends.
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 160));
+        assert_eq!(ui.path, vec![0, 1], "folder seat descends");
+        assert_eq!(ui.aimed, None);
+
+        // Left aims leaf a (seat 0) — dwelling commits, never descends.
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        wheel_aim_step(&mut ui, &view, &t, -1.0, 0.0, t0);
+        wheel_aim_step(&mut ui, &view, &t, -1.0, 0.0, steps(t0, 160));
+        assert_eq!(ui.path, vec![0], "leaf seat must not descend");
+        assert_eq!(ui.aimed, Some(0), "leaf seat commits");
+    }
+
+    /// The golden-vector parity harness: one truth table
+    /// (tests/data/wheel_golden.json) driven against this machine here and
+    /// against the shipped JS core via `node tests/wheel_parity.cjs`. A
+    /// geometry or state-machine change on one side only turns the other
+    /// side's run red instead of the phone firing a different slice than
+    /// the desktop. Keep the two runners semantically identical.
+    #[test]
+    fn golden_vectors_match_the_rust_machine() {
+        let data: serde_json::Value =
+            serde_json::from_str(include_str!("../../../../tests/data/wheel_golden.json"))
+                .expect("wheel_golden.json parses");
+
+        for case in data["geometry"].as_array().unwrap() {
+            let got = wheel_slice_at(
+                case["x"].as_f64().unwrap() as f32,
+                case["yUp"].as_f64().unwrap() as f32,
+                case["count"].as_u64().unwrap() as usize,
+                case["deadzone"].as_f64().unwrap() as f32,
+            );
+            assert_eq!(
+                got.map(|v| v as u64),
+                case["expect"].as_u64(),
+                "geometry {case}"
+            );
+        }
+
+        // Back placement is checked by ANGLE (Rust-only until B7): Back is
+        // the last seat, and its center sits at the anchor direction.
+        for case in data["back_placement"].as_array().unwrap() {
+            let n = case["realCount"].as_u64().unwrap() as usize;
+            let real: Vec<WheelSlice> = (0..n).map(|i| leaf(&format!("s{i}"))).collect();
+            let view = WheelView::build(&real, true, case["anchor"].as_str().unwrap(), 0.0);
+            let back = *view.layout.seats.last().unwrap();
+            assert_eq!(view.real(view.len() - 1), Some(None), "Back is last: {case}");
+            let want = case["expectBackCenterDeg"].as_f64().unwrap() as f32;
+            assert!(
+                angular_gap(back.center_deg(), want) < 1e-2,
+                "back angle {case}: got {}",
+                back.center_deg()
+            );
+        }
+
+        // Every scenario runs here AND in node/wheel-core.js — one shared
+        // contract now that the phone has the same geometry.
+        let run_scenario = |sc: &serde_json::Value| {
+            let name = sc["name"].as_str().unwrap();
+            let ring = &sc["ring"];
+            let folders: Vec<usize> = ring["folders"]
+                .as_array()
+                .map(|a| a.iter().map(|v| v.as_u64().unwrap() as usize).collect())
+                .unwrap_or_default();
+            let spans = ring["spans"].as_object();
+            let inners = ring["inner"].as_object();
+            let real: Vec<WheelSlice> = ring["labels"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    let label = l.as_str().unwrap();
+                    let mut slice = if folders.contains(&i) {
+                        folder(label, vec![leaf("child")])
+                    } else {
+                        leaf(label)
+                    };
+                    let key = i.to_string();
+                    if let Some(span) = spans.and_then(|m| m.get(&key)).and_then(|v| v.as_f64()) {
+                        slice.span = Some(span as f32);
+                    }
+                    if let Some(inner) = inners.and_then(|m| m.get(&key)).and_then(|v| v.as_u64()) {
+                        slice.inner = Some(inner as u8);
+                    }
+                    slice
+                })
+                .collect();
+            let view = WheelView::build(
+                &real,
+                ring["inFolder"].as_bool().unwrap_or(false),
+                ring["anchor"].as_str().unwrap_or("down"),
+                0.0,
+            );
+            let timing = WheelTiming {
+                deadzone: 0.5,
+                aim_ms: 150,
+                nav_ms: 150,
+                fire_mode: FireMode::from_str(sc["fireMode"].as_str().unwrap_or("release")),
+                edge_threshold: 0.9,
+                retract_delta: 0.10,
+            };
+            let mut ui = fresh_ui();
+            if let Some(p) = sc["initialPath"].as_array() {
+                ui.path = p.iter().map(|v| v.as_u64().unwrap() as usize).collect();
+            }
+            if sc["initialRearm"].as_bool() == Some(true) {
+                ui.rearm_until_center = true;
+            }
+
+            let t0 = Instant::now();
+            let mut fired: Option<usize> = None;
+            for frame in sc["frames"].as_array().unwrap() {
+                let out = wheel_aim_step(
+                    &mut ui,
+                    &view,
+                    &timing,
+                    frame["x"].as_f64().unwrap() as f32,
+                    frame["y"].as_f64().unwrap() as f32,
+                    steps(t0, frame["t"].as_u64().unwrap()),
+                );
+                if let Some(display) = out.fire {
+                    fired = Some(display);
+                    break; // the wheel closes on a mid-hold fire
+                }
+            }
+
+            let expect = sc["expect"].as_object().unwrap();
+            if let Some(want) = expect.get("fired") {
+                assert_eq!(fired.map(|v| v as u64), want.as_u64(), "{name}: fired");
+            }
+            if let Some(want) = expect.get("aimed") {
+                assert_eq!(ui.aimed.map(|v| v as u64), want.as_u64(), "{name}: aimed");
+            }
+            if let Some(want) = expect.get("path") {
+                let want: Vec<usize> = want
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.as_u64().unwrap() as usize)
+                    .collect();
+                assert_eq!(ui.path, want, "{name}: path");
+            }
+            if let Some(want) = expect.get("releaseReal") {
+                // The real index release would fire, or None — matches the
+                // JS side's leafRealAt(view, aimed) (phone picks are
+                // real-index paths; commands resolve host-side).
+                let got = ui.aimed.and_then(|display| {
+                    leaf_command_at(&view, display)
+                        .and_then(|_| view.real(display).flatten())
+                });
+                assert_eq!(got.map(|v| v as u64), want.as_u64(), "{name}: releaseReal");
+            }
+        };
+
+        for sc in data["scenarios"].as_array().unwrap() {
+            run_scenario(sc);
+        }
+    }
+
+    #[test]
+    fn scenario_south_fires_leaf_descends_folder_pops_back() {
+        let t0_view = WheelView::build(
+            &[folder("f", vec![leaf("a")]), leaf("x")],
+            false,
+            "down",
+            0.0,
+        );
+        // Leaf under the stick: South returns it to fire.
+        let mut ui = fresh_ui();
+        ui.candidate = Some(1);
+        let out = wheel_south_step(&mut ui, &t0_view);
+        assert_eq!(out.fire, Some(1));
+
+        // Folder under the stick: South descends and re-arms.
+        let mut ui = fresh_ui();
+        ui.candidate = Some(0);
+        let out = wheel_south_step(&mut ui, &t0_view);
+        assert_eq!((out.fire, ui.path.as_slice()), (None, &[0][..]));
+        assert!(ui.rearm_until_center);
+
+        // Back under the stick inside a folder: South ascends. Back is the
+        // last display seat now.
+        let inner = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down", 0.0);
+        let back_at = inner.slices.len() - 1;
+        assert_eq!(inner.real(back_at), Some(None));
+        let mut ui = fresh_ui();
+        ui.path = vec![0];
+        ui.candidate = Some(back_at);
+        let out = wheel_south_step(&mut ui, &inner);
+        assert_eq!((out.fire, ui.path.len()), (None, 0));
     }
 }
 

@@ -127,6 +127,12 @@ pub struct RemoteWheels {
     /// default (non-movement) stick.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub wheel_stick: std::collections::HashMap<String, String>,
+    /// Per-wheel ring rotation in degrees (0 = up, clockwise), from
+    /// `[controller_wheels_meta.<name>].start`. Per-wheel like
+    /// `wheel_stick` — NOT part of the global tuning. Absent = slice 0 at
+    /// the top, today's layout.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub wheel_start: std::collections::HashMap<String, f32>,
 }
 
 /// Wheel input-feel values mirrored to remote clients (see TuningConfig).
@@ -167,6 +173,14 @@ pub struct RemoteWheelSlice {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Explicit wedge width in degrees; absent = an even share of the
+    /// remainder. The phone lays out and aims its own ring, so spans ship.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub span: Option<f32>,
+    /// Per-slice aim floor (percent of full deflection); absent = the
+    /// global deadzone from tuning.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inner: Option<u8>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub slices: Vec<RemoteWheelSlice>,
 }
@@ -182,6 +196,8 @@ impl RemoteWheels {
                         .color
                         .as_deref()
                         .map(|c| config.resolve_palette_color(c)),
+                    span: slice.span,
+                    inner: slice.inner,
                     slices: wire_slices(config, &slice.slices),
                 })
                 .collect()
@@ -215,6 +231,11 @@ impl RemoteWheels {
                 .filter_map(|(name, meta)| {
                     meta.stick.clone().map(|s| (name.clone(), s))
                 })
+                .collect(),
+            wheel_start: config
+                .controller_wheels_meta
+                .iter()
+                .filter_map(|(name, meta)| meta.start.map(|s| (name.clone(), s)))
                 .collect(),
         }
     }

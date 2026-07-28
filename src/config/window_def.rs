@@ -692,10 +692,10 @@ mod blank_tests {
     fn sample_base() -> WindowBase {
         WindowBase {
             name: "test".to_string(),
-            row: 0,
-            col: 0,
-            rows: 3,
-            cols: 20,
+            row: crate::data::geometry::Row::new(0),
+            col: crate::data::geometry::Col::new(0),
+            rows: crate::data::geometry::Height::new(3),
+            cols: crate::data::geometry::Width::new(20),
             show_border: true,
             border_style: "single".to_string(),
             border_sides: BorderSides::default(),

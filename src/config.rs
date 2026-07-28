@@ -39,8 +39,9 @@ pub use hotbars::{
     HotbarCountdownSource, HotbarDef, HotbarStyle, HotbarsConfig, NameMatch, VitalKind, VitalUnit,
 };
 pub use keybinds::{
-    parse_key_string, AppKeybinds, KeyAction, KeyBindAction, MacroAction, MenuKeybinds,
-    RumbleConfig, TuningConfig, WheelMeta, WheelSlice,
+    parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,
+    MenuKeybinds, RumbleConfig, TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue,
+    WHEEL_MIN_SPAN_DEG,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
