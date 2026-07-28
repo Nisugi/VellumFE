@@ -33,6 +33,10 @@ pub struct HotbarDef {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Icon face edge in pixels (GUI only; None = match the text-button
+    /// height, ~24px). barbar-style 64px art reads best at 32-64.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_size: Option<u32>,
     #[serde(default)]
     pub buttons: Vec<HotbarButton>,
 }

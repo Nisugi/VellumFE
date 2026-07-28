@@ -349,6 +349,7 @@ impl VellumGuiApp {
                                         HotbarDef {
                                             name,
                                             title: None,
+                                            icon_size: None,
                                             buttons: Vec::new(),
                                         },
                                         true,
@@ -409,6 +410,19 @@ impl VellumGuiApp {
                                 (!title.trim().is_empty()).then(|| title.clone());
                             state.dirty = true;
                         }
+                        ui.label("Icon px:");
+                        let mut px = working.icon_size.unwrap_or(24);
+                        if ui
+                            .add(egui::DragValue::new(&mut px).range(16..=128))
+                            .on_hover_text(
+                                "Icon face size in pixels for this bar (default 24; \
+                                 barbar-style art reads best at 32-64)",
+                            )
+                            .changed()
+                        {
+                            working.icon_size = Some(px);
+                            state.dirty = true;
+                        }
                         ui.checkbox(&mut state.is_global, "Global (all characters)");
                         if ui
                             .add_enabled(state.dirty, egui::Button::new("Save bar"))
@@ -429,6 +443,7 @@ impl VellumGuiApp {
                         &self.app_core.game_state,
                         now_server,
                     );
+                    let icon_px = working.icon_size;
                     if !preview.is_empty() {
                         ui.horizontal_wrapped(|ui| {
                             ui.weak("Preview:");
@@ -448,7 +463,8 @@ impl VellumGuiApp {
                                     None
                                 };
                                 if let Some((texture, uv)) = sprite {
-                                    let _ = Self::draw_icon_button(ui, b, texture, uv);
+                                    let edge = Self::icon_edge(ui, icon_px);
+                                    let _ = Self::draw_icon_button(ui, b, texture, uv, edge);
                                     continue;
                                 }
                                 let text = match b.countdown_secs {

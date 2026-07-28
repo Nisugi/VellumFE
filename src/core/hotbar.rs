@@ -460,6 +460,7 @@ mod tests {
         let bar = HotbarDef {
             name: "test".to_string(),
             title: None,
+            icon_size: None,
             buttons: vec![button_with_states(vec![
                 HotbarButtonState {
                     when: HotbarCondition::RtActive,
@@ -526,6 +527,7 @@ mod tests {
         let bar = HotbarDef {
             name: "t".to_string(),
             title: None,
+            icon_size: None,
             buttons: vec![button],
         };
 
@@ -554,6 +556,7 @@ mod tests {
         let bar = HotbarDef {
             name: "t".to_string(),
             title: None,
+            icon_size: None,
             buttons: vec![button],
         };
 
@@ -609,6 +612,7 @@ mod tests {
         let bar = HotbarDef {
             name: "t".to_string(),
             title: None,
+            icon_size: None,
             buttons: vec![button],
         };
 
@@ -632,6 +636,7 @@ mod tests {
         let mk = |countdown: HotbarCountdownSource| HotbarDef {
             name: "t".to_string(),
             title: None,
+            icon_size: None,
             buttons: vec![HotbarButton {
                 id: "x".to_string(),
                 label: "X".to_string(),

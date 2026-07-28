@@ -512,6 +512,7 @@ mod tests {
             bars: vec![HotbarDef {
                 name: "combat".to_string(),
                 title: None,
+                icon_size: None,
                 buttons: buttons
                     .into_iter()
                     .map(|(id, command, hotkey)| HotbarButton {

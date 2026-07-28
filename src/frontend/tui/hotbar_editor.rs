@@ -289,6 +289,7 @@ impl HotbarEditor {
                         self.working = Some(HotbarDef {
                             name,
                             title: None,
+                            icon_size: None,
                             buttons: Vec::new(),
                         });
                         self.is_global = true;

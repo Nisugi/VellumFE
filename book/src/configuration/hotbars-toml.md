@@ -15,6 +15,7 @@ with the same name replaces the global one entirely.
 [[bars]]
 name = "default"      # referenced by hotkeybar windows in layout.toml
 title = "Actions"
+icon_size = 48        # optional: icon face edge in px (GUI; default 24)
 
 [[bars.buttons]]
 id = "hide"           # stable id, unique within the bar

@@ -2574,7 +2574,8 @@ impl VellumGuiApp {
                 };
 
                 let mut response = if let Some((texture, uv)) = sprite {
-                    Self::draw_icon_button(ui, button, texture, uv)
+                    let edge = Self::icon_edge(ui, bar_def.icon_size);
+                    Self::draw_icon_button(ui, button, texture, uv, edge)
                 } else {
                     let text = match button.countdown_secs {
                         Some(secs) if secs > 0 => {
@@ -2641,6 +2642,15 @@ impl VellumGuiApp {
         clicked
     }
 
+    /// Icon face edge for a bar: its configured size (clamped sane) or the
+    /// text-button height so mixed icon/text bars line up by default.
+    pub(super) fn icon_edge(ui: &egui::Ui, configured: Option<u32>) -> f32 {
+        match configured {
+            Some(px) => px.clamp(16, 128) as f32,
+            None => ui.spacing().interact_size.y.max(24.0),
+        }
+    }
+
     /// Paint one icon-faced hotbar button: allocated click rect + painter
     /// image (the codebase's sprite idiom — no egui Image widget), with
     /// optional label, solid border, dim tint, and countdown overlay.
@@ -2650,10 +2660,10 @@ impl VellumGuiApp {
         button: &crate::core::hotbar::ResolvedHotbarButton,
         texture: crate::frontend::gui::skin::SkinTexture,
         uv: egui::Rect,
+        edge: f32,
     ) -> egui::Response {
         use crate::config::IconMode;
 
-        let edge = ui.spacing().interact_size.y.max(24.0);
         let with_label = matches!(button.icon_mode, IconMode::IconAndLabel);
 
         // Label galley first so the allocation can fit icon + text.
