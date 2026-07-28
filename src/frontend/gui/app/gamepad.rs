@@ -612,7 +612,20 @@ impl VellumGuiApp {
     pub(super) fn wheel_view(&self, key: &str, path: &[usize]) -> Option<WheelView> {
         let real = self.wheel_level_slices(key, path)?;
         let anchor = &self.app_core.config.controller_tuning.back_slice;
-        Some(WheelView::build(&real, !path.is_empty(), anchor))
+        Some(WheelView::build(&real, !path.is_empty(), anchor, self.wheel_start(key)))
+    }
+
+    /// The ring rotation in degrees for wheel `key` (0 = up), from
+    /// `[controller_wheels_meta.<name>].start`; 0 when unset. The default
+    /// wheel uses the "default" key.
+    fn wheel_start(&self, key: &str) -> f32 {
+        let name = if key.is_empty() { "default" } else { key };
+        self.app_core
+            .config
+            .controller_wheels_meta
+            .get(name)
+            .and_then(|m| m.start)
+            .unwrap_or(0.0)
     }
 
     /// Advance the dwell state machine for one frame while the wheel is
@@ -818,6 +831,12 @@ impl VellumGuiApp {
         if slices.is_empty() {
             return;
         }
+        let seats = &view.layout.seats;
+        // Screen radians for a seat center: the aim convention is 0 = up,
+        // clockwise (degrees); screen is 0 = +x with y down, so up is
+        // -90°. screen = aim - 90°.
+        let seat_center_screen = |i: usize| seats[i].center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
+        let seat_span_rad = |i: usize| seats[i].span_deg.to_radians();
         let in_folder = !path.is_empty();
         let center = ctx.content_rect().center();
         let radius = (ctx.content_rect().height() * 0.28).clamp(90.0, 220.0);
@@ -837,13 +856,12 @@ impl VellumGuiApp {
                     outer,
                     egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
                 );
-                let step = std::f32::consts::TAU / slices.len() as f32;
-
                 // Wedge fills: the whole pie piece carries the slice's
                 // color (dim at rest, bright while aimed); colorless
                 // slices highlight with the theme selection fill.
                 for (i, slice) in slices.iter().enumerate() {
-                    let center_angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
+                    let center_angle = seat_center_screen(i);
+                    let step = seat_span_rad(i);
                     let is_selected = selected == Some(i);
                     let tint = slice
                         .color
@@ -878,9 +896,9 @@ impl VellumGuiApp {
 
                 // Wedge separators + labels over the fills.
                 for (i, slice) in slices.iter().enumerate() {
-                    let center_angle = i as f32 * step - std::f32::consts::FRAC_PI_2;
+                    let center_angle = seat_center_screen(i);
                     if slices.len() > 1 {
-                        let a0 = center_angle - step / 2.0;
+                        let a0 = center_angle - seat_span_rad(i) / 2.0;
                         let dir = egui::vec2(a0.cos(), a0.sin());
                         painter.line_segment(
                             [center + dir * hub, center + dir * outer],
@@ -971,16 +989,137 @@ fn four_way(x: f32, y_up: f32, previous: Option<FourWay>) -> Option<FourWay> {
     })
 }
 
-/// Which wheel slice the stick is aiming at: slice 0 centered at the top,
-/// clockwise. None inside the dead zone (`deadzone`, 0.0–1.0) or with no
-/// slices.
-fn wheel_slice_at(x: f32, y_up: f32, count: usize, deadzone: f32) -> Option<usize> {
-    if count == 0 || (x * x + y_up * y_up).sqrt() < deadzone {
+/// The minimum wedge width the resolver will produce; a slice narrower
+/// than this is hard to hit, so explicit spans are clamped up and the
+/// remainder scaled to keep the ring closed.
+const MIN_SPAN_DEG: f32 = 30.0;
+
+/// One seat in a resolved ring: its clockwise span and the angle of its
+/// leading edge, both in degrees in the AIM convention (0 = up, clockwise).
+/// Consecutive seats abut, wrapping the full 360.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Seat {
+    /// Leading (counter-clockwise) edge of the seat, degrees from up.
+    pub(super) start_deg: f32,
+    pub(super) span_deg: f32,
+}
+
+impl Seat {
+    fn center_deg(&self) -> f32 {
+        self.start_deg + self.span_deg / 2.0
+    }
+}
+
+/// A ring laid out into concrete angular seats — the single source of
+/// truth the aim lookup, the render, and the Back placement all read, so
+/// they can never disagree about where a wedge sits. Built by
+/// `resolve_spans` from the per-slice `span` list plus the wheel's `start`.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ResolvedLayout {
+    pub(super) seats: Vec<Seat>,
+}
+
+impl ResolvedLayout {
+    fn len(&self) -> usize {
+        self.seats.len()
+    }
+}
+
+/// Turn a per-slice span list (`None` = take an even share of the leftover)
+/// into concrete abutting seats. Seat 0 is *centered* at `start_deg` (not
+/// started there), matching the historical convention where slice 0 sits
+/// at the top (`start_deg == 0`); the rest follow clockwise.
+///
+/// Resolution: explicit spans are taken as-is (clamped up to `MIN_SPAN_DEG`),
+/// and whatever remains of 360° is split evenly among the span-less slices.
+/// If the totals can't fit — explicit spans clamped up overshoot, or there
+/// are no free slices to absorb a shortfall/overflow — every seat is scaled
+/// proportionally so the ring still closes exactly. The runtime is thus
+/// always forgiving (never a gap, never a panic); the editor/load warnings
+/// (B5) are where the user is told to fix numbers that had to be adjusted.
+///
+/// With all spans `None` and `start_deg == 0` this reproduces the old
+/// `360/count` ring with seat 0 centered at the top — the byte-for-byte
+/// backward-compatible path, pinned by the golden vectors.
+fn resolve_spans(spans: &[Option<f32>], start_deg: f32) -> ResolvedLayout {
+    let n = spans.len();
+    if n == 0 {
+        return ResolvedLayout { seats: Vec::new() };
+    }
+
+    // Each explicit span, floored at the minimum; None marks a free seat.
+    let explicit: Vec<Option<f32>> = spans
+        .iter()
+        .map(|s| s.map(|v| v.max(MIN_SPAN_DEG)))
+        .collect();
+    let explicit_sum: f32 = explicit.iter().flatten().sum();
+    let free_count = explicit.iter().filter(|s| s.is_none()).count();
+
+    // Provisional width for each seat before the final normalize.
+    let free_each = if free_count > 0 {
+        ((360.0 - explicit_sum) / free_count as f32).max(0.0)
+    } else {
+        0.0
+    };
+    let mut widths: Vec<f32> = explicit
+        .iter()
+        .map(|s| s.unwrap_or(free_each))
+        .collect();
+
+    // Close the ring exactly: scale to 360 whenever the provisional widths
+    // don't already sum there (explicit overflow, or no free seats to take
+    // up the slack). A degenerate all-zero total falls back to even.
+    let total: f32 = widths.iter().sum();
+    if total <= f32::EPSILON {
+        widths = vec![360.0 / n as f32; n];
+    } else if (total - 360.0).abs() > 1e-3 {
+        let scale = 360.0 / total;
+        for w in &mut widths {
+            *w *= scale;
+        }
+    }
+
+    // Lay the widths out into abutting seats. Seat 0 is CENTERED at
+    // `start_deg`, so its leading edge sits half its own width earlier;
+    // the rest abut clockwise from there.
+    let mut seats = Vec::with_capacity(n);
+    let mut edge = start_deg - widths[0] / 2.0;
+    for w in widths {
+        seats.push(Seat { start_deg: edge, span_deg: w });
+        edge += w;
+    }
+    ResolvedLayout { seats }
+}
+
+/// Which seat the stick is aiming at, by cumulative-range lookup over a
+/// resolved layout: the seat whose `[start, start+span)` arc contains the
+/// stick angle. None inside the dead zone (`deadzone`, 0.0–1.0) or with no
+/// seats. Angle uses the aim convention (0 = up, clockwise), normalized
+/// relative to seat 0's start so wrap is automatic.
+fn seat_at(x: f32, y_up: f32, layout: &ResolvedLayout, deadzone: f32) -> Option<usize> {
+    if layout.len() == 0 || (x * x + y_up * y_up).sqrt() < deadzone {
         return None;
     }
-    let step = 360.0 / count as f32;
-    let angle = x.atan2(y_up).to_degrees();
-    Some((((angle + 360.0 + step / 2.0) / step) as usize) % count)
+    let start = layout.seats[0].start_deg;
+    let rel = (x.atan2(y_up).to_degrees() - start).rem_euclid(360.0);
+    let mut cum = 0.0;
+    for (i, seat) in layout.seats.iter().enumerate() {
+        cum += seat.span_deg;
+        if rel < cum {
+            return Some(i);
+        }
+    }
+    // Float slop at the wrap: the last seat owns the boundary.
+    Some(layout.len() - 1)
+}
+
+/// Even-ring seat lookup by count — the backward-compatible shim used by
+/// call sites (and tests) that don't have a layout: build the all-even
+/// layout and delegate to `seat_at`. Equivalent to the old
+/// `wheel_slice_at`.
+fn wheel_slice_at(x: f32, y_up: f32, count: usize, deadzone: f32) -> Option<usize> {
+    let layout = resolve_spans(&vec![None; count], 0.0);
+    seat_at(x, y_up, &layout, deadzone)
 }
 
 /// Display index (0 = top, clockwise) whose seat center lies nearest a
@@ -1085,7 +1224,7 @@ fn wheel_aim_step(
 ) -> WheelStepOutcome {
     let mut render = false;
     let magnitude = (x * x + y_up * y_up).sqrt();
-    let candidate = wheel_slice_at(x, y_up, view.len(), timing.deadzone);
+    let candidate = seat_at(x, y_up, &view.layout, timing.deadzone);
     let centered = candidate.is_none();
     let (latch_after, may_dwell) = dwell_rearm_step(ui.rearm_until_center, centered);
     ui.rearm_until_center = latch_after;
@@ -1277,6 +1416,9 @@ fn resolve_aim_stick(move_on_right: bool, wheel_override: Option<bool>) -> bool 
 pub(super) struct WheelView {
     pub(super) slices: Vec<WheelSlice>,
     real_index: Vec<Option<usize>>,
+    /// Concrete angular seats for `slices`, in display order — the single
+    /// geometry the aim lookup and the render both read.
+    pub(super) layout: ResolvedLayout,
 }
 
 /// Sentinel command marking the injected Back slice.
@@ -1284,12 +1426,21 @@ const BACK_COMMAND: &str = "\u{0}__wheel_back__";
 
 impl WheelView {
     /// Build the display ring. `in_folder` injects the Back slice at the
-    /// anchor; the top level (no parent) shows only real slices.
-    fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str) -> Self {
+    /// anchor; the top level (no parent) shows only real slices. `start`
+    /// rotates the whole ring (degrees, 0 = up); the Back anchor still
+    /// owns folder rotation as before (B3 reworks that).
+    fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str, start: f32) -> Self {
+        let layout_for = |slices: &[WheelSlice]| {
+            let spans: Vec<Option<f32>> = slices.iter().map(|s| s.span).collect();
+            resolve_spans(&spans, start)
+        };
         if !in_folder {
+            let slices = real.to_vec();
+            let layout = layout_for(&slices);
             return Self {
-                slices: real.to_vec(),
                 real_index: (0..real.len()).map(Some).collect(),
+                layout,
+                slices,
             };
         }
         // Displayed count includes the Back seat; rotate the assembled
@@ -1312,9 +1463,11 @@ impl WheelView {
         let shift = (target + count - (count - 1)) % count; // = (target + 1) % count
         slices.rotate_right(shift);
         real_index.rotate_right(shift);
-        Self { slices, real_index }
+        let layout = layout_for(&slices);
+        Self { slices, real_index, layout }
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.slices.len()
     }
@@ -1440,6 +1593,81 @@ mod wheel_tests {
         assert_eq!(wheel_slice_at(0.0, 0.05, 8, 0.0), Some(0));
     }
 
+    fn spans(v: &[Option<f32>]) -> Vec<f32> {
+        resolve_spans(v, 0.0).seats.iter().map(|s| s.span_deg).collect()
+    }
+
+    #[test]
+    fn resolve_all_none_is_the_even_ring_centered_at_top() {
+        // Backward-compat property: no spans + start 0 == the old geometry,
+        // seat 0 centered at the top (leading edge half a step early).
+        let layout = resolve_spans(&[None, None, None, None], 0.0);
+        for s in &layout.seats {
+            assert!((s.span_deg - 90.0).abs() < 1e-3, "even 90 each");
+        }
+        assert!((layout.seats[0].start_deg - -45.0).abs() < 1e-3, "seat 0 centered at up");
+        assert!((layout.seats[0].center_deg() - 0.0).abs() < 1e-3);
+        // And the seat lookup matches the compass exactly (up/right/down/left).
+        assert_eq!(seat_at(0.0, 1.0, &layout, 0.5), Some(0));
+        assert_eq!(seat_at(1.0, 0.0, &layout, 0.5), Some(1));
+        assert_eq!(seat_at(0.0, -1.0, &layout, 0.5), Some(2));
+        assert_eq!(seat_at(-1.0, 0.0, &layout, 0.5), Some(3));
+    }
+
+    #[test]
+    fn resolve_explicit_spans_take_value_remainder_splits_evenly() {
+        // One 120° slice; the other three share the remaining 240° = 80 each.
+        assert_eq!(spans(&[Some(120.0), None, None, None]), vec![120.0, 80.0, 80.0, 80.0]);
+        // Two explicit; two free share what's left.
+        assert_eq!(spans(&[Some(100.0), Some(60.0), None, None]), vec![100.0, 60.0, 100.0, 100.0]);
+    }
+
+    #[test]
+    fn resolve_clamps_min_span() {
+        // A 10° request is floored to the 30° minimum; the free slice takes
+        // the rest so the ring still closes.
+        assert_eq!(spans(&[Some(10.0), None]), vec![30.0, 330.0]);
+    }
+
+    #[test]
+    fn resolve_scales_overflow_to_close_the_ring() {
+        // Explicit spans summing past 360 with no free seats scale down
+        // proportionally to exactly 360, keeping their ratio (2:1).
+        let got = spans(&[Some(400.0), Some(200.0)]);
+        let sum: f32 = got.iter().sum();
+        assert!((sum - 360.0).abs() < 1e-3, "closes at 360: {got:?}");
+        assert!((got[0] / got[1] - 2.0).abs() < 1e-3, "ratio kept: {got:?}");
+    }
+
+    #[test]
+    fn resolve_no_free_seats_underfill_scales_up() {
+        // Explicit spans under 360 with nothing free are scaled UP to fill,
+        // so there is never an unhittable gap.
+        let got = spans(&[Some(60.0), Some(60.0)]);
+        assert_eq!(got, vec![180.0, 180.0]);
+    }
+
+    #[test]
+    fn resolve_start_rotates_the_ring() {
+        // start = 90 puts seat 0's center on the right; the lookup follows.
+        let layout = resolve_spans(&[None, None, None, None], 90.0);
+        assert!((layout.seats[0].center_deg() - 90.0).abs() < 1e-3);
+        assert_eq!(seat_at(1.0, 0.0, &layout, 0.5), Some(0), "seat 0 now points right");
+        assert_eq!(seat_at(0.0, -1.0, &layout, 0.5), Some(1), "seat 1 points down");
+    }
+
+    #[test]
+    fn variable_span_lookup_hits_the_wide_slice_across_its_arc() {
+        // A 180° slice at seat 0 (start 0): its arc is [-90, 90) in aim
+        // degrees, so anything from left-of-up to right-of-up lands on it,
+        // while straight down falls to one of the narrow slices.
+        let layout = resolve_spans(&[Some(180.0), None, None], 0.0);
+        assert_eq!(seat_at(0.0, 1.0, &layout, 0.5), Some(0), "up");
+        assert_eq!(seat_at(0.7, 0.7, &layout, 0.5), Some(0), "up-right still seat 0");
+        assert_eq!(seat_at(-0.7, 0.7, &layout, 0.5), Some(0), "up-left still seat 0");
+        assert_ne!(seat_at(0.0, -1.0, &layout, 0.5), Some(0), "down is a narrow slice");
+    }
+
     fn leaf(label: &str) -> WheelSlice {
         WheelSlice {
             label: label.to_string(),
@@ -1486,7 +1714,7 @@ mod wheel_tests {
     #[test]
     fn top_level_view_has_no_back_slice() {
         let real = vec![leaf("a"), leaf("b"), leaf("c")];
-        let view = WheelView::build(&real, false, "down");
+        let view = WheelView::build(&real, false, "down", 0.0);
         assert_eq!(view.len(), 3);
         // Every display index maps to a real slice.
         for i in 0..3 {
@@ -1498,7 +1726,7 @@ mod wheel_tests {
     fn folder_view_injects_back_at_anchor() {
         let real = vec![leaf("a"), leaf("b"), leaf("c")];
         // 4 seats once Back is added; "down" anchor => display index 2.
-        let view = WheelView::build(&real, true, "down");
+        let view = WheelView::build(&real, true, "down", 0.0);
         assert_eq!(view.len(), 4);
         let back_at = anchor_display_index("down", 4);
         assert_eq!(view.real(back_at), Some(None), "Back sits at its anchor");
@@ -1607,7 +1835,7 @@ mod wheel_tests {
 
     #[test]
     fn scenario_release_dwell_commits_then_release_fires() {
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
         let t = feel(FireMode::Release);
         let mut ui = fresh_ui();
         let t0 = Instant::now();
@@ -1627,7 +1855,7 @@ mod wheel_tests {
 
     #[test]
     fn scenario_sweeping_across_slices_never_commits() {
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
         let t = feel(FireMode::Release);
         let mut ui = fresh_ui();
         let t0 = Instant::now();
@@ -1644,7 +1872,7 @@ mod wheel_tests {
 
     #[test]
     fn scenario_center_then_release_cancels() {
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
         let t = feel(FireMode::Release);
         let mut ui = fresh_ui();
         let t0 = Instant::now();
@@ -1666,6 +1894,7 @@ mod wheel_tests {
             &[folder("f", vec![leaf("a"), leaf("b")]), leaf("x")],
             false,
             "down",
+            0.0,
         );
         let t = feel(FireMode::Release);
         let mut ui = fresh_ui();
@@ -1680,7 +1909,7 @@ mod wheel_tests {
         // Still fully deflected inside the folder ring: the latch blocks
         // all dwell — no chained descend, no commit — for as long as the
         // stick stays out.
-        let inner = WheelView::build(&[leaf("a"), leaf("b")], true, "down");
+        let inner = WheelView::build(&[leaf("a"), leaf("b")], true, "down", 0.0);
         wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 170));
         wheel_aim_step(&mut ui, &inner, &t, 0.0, 1.0, steps(t0, 600));
         assert_eq!(ui.path, vec![0], "latched stick must not chain");
@@ -1698,7 +1927,7 @@ mod wheel_tests {
     #[test]
     fn scenario_back_dwell_ascends() {
         // Inside a folder: 3 real slices + Back anchored down (display 2).
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down", 0.0);
         let back_at = anchor_display_index("down", 4);
         assert_eq!(view.real(back_at), Some(None));
 
@@ -1716,7 +1945,7 @@ mod wheel_tests {
 
     #[test]
     fn scenario_edge_fires_at_threshold_without_dwell() {
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
         let t = feel(FireMode::Edge);
         let mut ui = fresh_ui();
         let t0 = Instant::now();
@@ -1735,7 +1964,7 @@ mod wheel_tests {
 
     #[test]
     fn scenario_edge_respects_rearm_latch() {
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
         let t = feel(FireMode::Edge);
         let mut ui = fresh_ui();
         // As after an auto descend: stick still out, latch up.
@@ -1753,7 +1982,7 @@ mod wheel_tests {
 
     #[test]
     fn scenario_retract_tracks_peak_and_fires_on_inward_flick() {
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
         let t = feel(FireMode::Retract);
         let mut ui = fresh_ui();
         let t0 = Instant::now();
@@ -1774,7 +2003,7 @@ mod wheel_tests {
 
     #[test]
     fn scenario_retract_snap_to_center_cancels() {
-        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down");
+        let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], false, "down", 0.0);
         let t = feel(FireMode::Retract);
         let mut ui = fresh_ui();
         let t0 = Instant::now();
@@ -1798,7 +2027,7 @@ mod wheel_tests {
         // Ring here: children [a, inner(folder), c] + Back anchored down
         // rotates to [inner, c, Back, a].
         let children = vec![leaf("a"), folder("inner", vec![leaf("b")]), leaf("c")];
-        let view = WheelView::build(&children, true, "down");
+        let view = WheelView::build(&children, true, "down", 0.0);
         assert_eq!(view.real(0), Some(Some(1)), "display 0 is the inner folder");
         assert_eq!(view.real(3), Some(Some(0)), "display 3 is leaf a");
 
@@ -1852,7 +2081,7 @@ mod wheel_tests {
         for case in data["back_placement"].as_array().unwrap() {
             let n = case["realCount"].as_u64().unwrap() as usize;
             let real: Vec<WheelSlice> = (0..n).map(|i| leaf(&format!("s{i}"))).collect();
-            let view = WheelView::build(&real, true, case["anchor"].as_str().unwrap());
+            let view = WheelView::build(&real, true, case["anchor"].as_str().unwrap(), 0.0);
             let back_at = (0..view.len())
                 .find(|&i| view.real(i) == Some(None))
                 .expect("Back seat exists");
@@ -1888,6 +2117,7 @@ mod wheel_tests {
                 &real,
                 ring["inFolder"].as_bool().unwrap_or(false),
                 ring["anchor"].as_str().unwrap_or("down"),
+                0.0,
             );
             let timing = WheelTiming {
                 deadzone: 0.5,
@@ -1957,6 +2187,7 @@ mod wheel_tests {
             &[folder("f", vec![leaf("a")]), leaf("x")],
             false,
             "down",
+            0.0,
         );
         // Leaf under the stick: South returns it to fire.
         let mut ui = fresh_ui();
@@ -1972,7 +2203,7 @@ mod wheel_tests {
         assert!(ui.rearm_until_center);
 
         // Back under the stick inside a folder: South ascends.
-        let inner = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down");
+        let inner = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down", 0.0);
         let back_at = anchor_display_index("down", 4);
         let mut ui = fresh_ui();
         ui.path = vec![0];
