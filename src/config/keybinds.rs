@@ -261,6 +261,12 @@ pub enum WheelSpanIssue {
     /// No span-less slice to absorb the remainder, and the explicit spans
     /// don't already fill 360° — the ring gets scaled to close.
     DoesNotClose { wheel: String, sum_deg: f32 },
+    /// A `back` slice sits on the top-level ring, which has no parent to
+    /// ascend to — it will never do anything.
+    BackAtTopLevel { wheel: String, label: String },
+    /// More than one `back` slice in a ring — only the ascend behavior is
+    /// shared; extras are redundant.
+    MultipleBack { wheel: String, count: usize },
 }
 
 /// Check one ring's slices for span problems, recursing into folders.
@@ -269,11 +275,33 @@ pub enum WheelSpanIssue {
 /// the warnings match what the wheel will actually do.
 pub fn validate_wheel_spans(wheel: &str, slices: &[WheelSlice]) -> Vec<WheelSpanIssue> {
     let mut issues = Vec::new();
-    validate_ring(wheel, slices, &mut issues);
+    validate_ring(wheel, slices, false, &mut issues);
     issues
 }
 
-fn validate_ring(wheel: &str, slices: &[WheelSlice], issues: &mut Vec<WheelSpanIssue>) {
+fn validate_ring(
+    wheel: &str,
+    slices: &[WheelSlice],
+    in_folder: bool,
+    issues: &mut Vec<WheelSpanIssue>,
+) {
+    // Back-slice sanity: a Back on the top ring has nothing to ascend to,
+    // and more than one Back in a ring is redundant.
+    let back_count = slices.iter().filter(|s| s.back).count();
+    if !in_folder {
+        for slice in slices.iter().filter(|s| s.back) {
+            issues.push(WheelSpanIssue::BackAtTopLevel {
+                wheel: wheel.to_string(),
+                label: slice.label.clone(),
+            });
+        }
+    }
+    if back_count > 1 {
+        issues.push(WheelSpanIssue::MultipleBack {
+            wheel: wheel.to_string(),
+            count: back_count,
+        });
+    }
     if !slices.is_empty() {
         // Explicit spans, each floored at the minimum (the resolver does the
         // same before splitting the remainder).
@@ -322,7 +350,7 @@ fn validate_ring(wheel: &str, slices: &[WheelSlice], issues: &mut Vec<WheelSpanI
     for slice in slices {
         if slice.is_folder() {
             let sub = format!("{wheel} > {}", slice.label);
-            validate_ring(&sub, &slice.slices, issues);
+            validate_ring(&sub, &slice.slices, true, issues);
         }
     }
 }
@@ -342,6 +370,12 @@ impl WheelSpanIssue {
             WheelSpanIssue::DoesNotClose { wheel, sum_deg } => format!(
                 "Wheel '{wheel}' spans sum to {:.0}° with no flexible slice — the wheel will scale them to fill 360°.",
                 sum_deg
+            ),
+            WheelSpanIssue::BackAtTopLevel { wheel, label } => format!(
+                "Wheel '{wheel}' has a Back slice '{label}' at the top level — there's no level to go up to, so it does nothing.",
+            ),
+            WheelSpanIssue::MultipleBack { wheel, count } => format!(
+                "Wheel '{wheel}' has {count} Back slices — only one is needed; the extras just take up seats.",
             ),
         }
     }
@@ -1522,6 +1556,9 @@ impl Config {
             if let Some(inner) = slice.inner {
                 t.insert("inner", Value::from(inner as i64));
             }
+            if slice.back {
+                t.insert("back", Value::from(true));
+            }
             if !slice.slices.is_empty() {
                 t.insert("slices", Self::wheel_slices_to_inline(&slice.slices));
             }
@@ -2505,6 +2542,49 @@ mod tests {
     }
 
     #[test]
+    fn validate_flags_back_at_top_level_and_duplicate_back() {
+        let back = |label: &str| WheelSlice {
+            label: label.into(),
+            back: true,
+            ..Default::default()
+        };
+        let leaf = |label: &str| WheelSlice {
+            label: label.into(),
+            command: label.into(),
+            ..Default::default()
+        };
+
+        // A Back on the top ring is useless — nothing to ascend to.
+        let top = validate_wheel_spans("w", &[leaf("a"), back("◂ Back")]);
+        assert!(top
+            .iter()
+            .any(|i| matches!(i, WheelSpanIssue::BackAtTopLevel { .. })));
+
+        // Inside a folder, a single Back is fine (no Back issue).
+        let folder = WheelSlice {
+            label: "f".into(),
+            slices: vec![leaf("a"), back("◂ Back")],
+            ..Default::default()
+        };
+        let nested = validate_wheel_spans("w", &[folder]);
+        assert!(!nested
+            .iter()
+            .any(|i| matches!(i, WheelSpanIssue::BackAtTopLevel { .. }
+                | WheelSpanIssue::MultipleBack { .. })));
+
+        // Two Backs in one ring: MultipleBack.
+        let folder2 = WheelSlice {
+            label: "f".into(),
+            slices: vec![back("b1"), leaf("a"), back("b2")],
+            ..Default::default()
+        };
+        let dup = validate_wheel_spans("w", &[folder2]);
+        assert!(dup
+            .iter()
+            .any(|i| matches!(i, WheelSpanIssue::MultipleBack { count: 2, .. })));
+    }
+
+    #[test]
     fn validate_spans_recurses_into_folders_with_names() {
         let folder = WheelSlice {
             label: "stance".into(),
@@ -2537,6 +2617,12 @@ mod tests {
                 inner: Some(20),
                 ..Default::default()
             },
+            WheelSlice {
+                label: "◂ Back".into(),
+                back: true,
+                span: Some(60.0),
+                ..Default::default()
+            },
             WheelSlice { label: "hide".into(), command: "hide".into(), ..Default::default() },
         ];
         let mut doc = toml_edit::DocumentMut::new();
@@ -2547,6 +2633,7 @@ mod tests {
         let serialized = doc.to_string();
         assert!(serialized.contains("span = 120.0"), "explicit span written: {serialized}");
         assert!(serialized.contains("inner = 20"), "explicit inner written: {serialized}");
+        assert!(serialized.contains("back = true"), "back flag written: {serialized}");
         // The span-less slice's inline table must not mention either key.
         let hide_entry = serialized
             .split("label = \"hide\"")
@@ -2555,6 +2642,7 @@ mod tests {
         let hide_entry = hide_entry.split('}').next().unwrap();
         assert!(!hide_entry.contains("span"), "no span on unset slice: {hide_entry}");
         assert!(!hide_entry.contains("inner"), "no inner on unset slice: {hide_entry}");
+        assert!(!hide_entry.contains("back"), "no back on a normal slice: {hide_entry}");
 
         let reparsed: Vec<WheelSlice> = {
             let doc: toml::Value = toml::from_str(&serialized).expect("valid TOML");

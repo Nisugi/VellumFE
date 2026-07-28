@@ -52,6 +52,10 @@ enum WheelDesignerDrag {
     Divider { boundary: usize, start_dirty: bool },
     /// Radial drag of one slice's aim floor (its `inner`).
     InnerArc { slice: usize },
+    /// Body drag of a whole wedge to another position around the ring;
+    /// the move applies on release (`target` tracks the seat under the
+    /// pointer, highlighted while dragging).
+    Wedge { slice: usize, target: usize },
 }
 
 pub(in super::super) struct ControllerEditorState {
@@ -1321,10 +1325,11 @@ fn render_slice_rows(
                 if ui.small_button("^").on_hover_text("Move up").clicked() {
                     ops.push(WheelOp::MoveUp(path.clone()));
                 }
-                if ui
-                    .small_button("+sub")
-                    .on_hover_text("Add a child slice (makes this a folder)")
-                    .clicked()
+                if !slice.back
+                    && ui
+                        .small_button("+sub")
+                        .on_hover_text("Add a child slice (makes this a folder)")
+                        .clicked()
                 {
                     ops.push(WheelOp::AddChild(path.clone()));
                 }
@@ -1352,15 +1357,29 @@ fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling:
             .hint_text("label"),
     )
     .on_hover_text("Label: the text drawn on this wedge.");
-    ui.add(
-        egui::TextEdit::singleline(&mut slice.command)
-            .desired_width(150.0)
-            .hint_text(if is_folder { "(folder)" } else { "command" }),
-    )
-    .on_hover_text(
-        "Command sent to the game when this slice fires. A slice with \
-         sub-slices is a folder — leave its command empty.",
-    );
+    if slice.back {
+        // A Back slice never fires a command — dwelling it goes up a
+        // level — so there is nothing to type here.
+        ui.add_sized(
+            [150.0, 18.0],
+            egui::Label::new(egui::RichText::new("(goes up one level)").weak()),
+        )
+        .on_hover_text(
+            "This is the Back slice: dwelling it ascends to the parent \
+             ring. It has no command; everything else — width, color, \
+             floor, position — edits like any other slice.",
+        );
+    } else {
+        ui.add(
+            egui::TextEdit::singleline(&mut slice.command)
+                .desired_width(150.0)
+                .hint_text(if is_folder { "(folder)" } else { "command" }),
+        )
+        .on_hover_text(
+            "Command sent to the game when this slice fires. A slice with \
+             sub-slices is a folder — leave its command empty.",
+        );
+    }
     let mut color = slice.color.clone().unwrap_or_default();
     super::color_field(ui, &mut color);
     slice.color = if color.trim().is_empty() {
@@ -1371,10 +1390,12 @@ fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling:
 
     // Span: 0 = auto (share the remainder). Non-zero is clamped
     // to the minimum so the field can't express an unhittable
-    // wedge; the resolver clamps too, this just shows it.
+    // wedge; the resolver clamps too, this just shows it. A locked
+    // slice's width is frozen — the field disables with the drags.
     let mut span = slice.span.unwrap_or(0.0);
     if ui
-        .add(
+        .add_enabled(
+            !slice.locked,
             egui::DragValue::new(&mut span)
                 .speed(1.0)
                 .range(0.0..=300.0)
@@ -1384,6 +1405,7 @@ fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling:
                 }),
         )
         .on_hover_text("Wedge width in degrees. auto (0) shares the leftover evenly.")
+        .on_disabled_hover_text("Width is locked — untick lock to resize.")
         .changed()
     {
         slice.span = if span <= 0.0 {
@@ -1539,9 +1561,12 @@ fn render_wheel_designer(
         let aim = aim_of(pos);
         // Nearest draggable divider (the shared edge after each seat)
         // within grab range. The ghost Back seat's width is the runtime's
-        // to decide, so neither of its edges is draggable.
+        // to decide, so neither of its edges is draggable — and a locked
+        // slice's width can't be traded, so neither of its edges is
+        // either.
         let draggable = |b: usize| {
-            if has_ghost { b + 1 < real_len } else { real_len >= 2 }
+            let structural = if has_ghost { b + 1 < real_len } else { real_len >= 2 };
+            structural && !level[b].locked && !level[(b + 1) % real_len].locked
         };
         let nearest = view
             .layout
@@ -1579,7 +1604,7 @@ fn render_wheel_designer(
     // already reflects the pointer). -----
     if response.drag_started() {
         if let Some(pos) = response.interact_pointer_pos() {
-            let grabbed = grab_handle(level, meta, pos);
+            let mut grabbed = grab_handle(level, meta, pos);
             if let WheelDesignerDrag::Divider { .. } = grabbed {
                 // Freeze the real slices to concrete widths so the drag
                 // edits predictable numbers (auto seats would otherwise
@@ -1587,6 +1612,24 @@ fn render_wheel_designer(
                 // its width is the remainder, exactly as at runtime.
                 let view = build_view(level, meta);
                 materialize_spans(level, &view.layout);
+            }
+            // Nothing grabbable under the pointer: a drag on a wedge's
+            // body moves the whole slice to another position (applied on
+            // release). The ghost Back isn't movable — its seat is the
+            // runtime's.
+            if grabbed == WheelDesignerDrag::None {
+                let v = pos - center;
+                let r = v.length();
+                if r >= hub && r <= outer {
+                    let view = build_view(level, meta);
+                    if let Some(seat) =
+                        super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
+                    {
+                        if seat < level.len() {
+                            grabbed = WheelDesignerDrag::Wedge { slice: seat, target: seat };
+                        }
+                    }
+                }
             }
             *drag = grabbed;
         }
@@ -1645,21 +1688,51 @@ fn render_wheel_designer(
             }
         }
     }
+    if let WheelDesignerDrag::Wedge { target, .. } = drag {
+        if response.dragged() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let v = pos - center;
+                let view = build_view(level, meta);
+                if let Some(seat) =
+                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
+                {
+                    if seat < level.len() {
+                        *target = seat;
+                    }
+                }
+            }
+        }
+    }
     if response.drag_stopped() {
         if let WheelDesignerDrag::Divider { start_dirty: true, .. } = drag {
             // Spans save with the Save button, but `start` lives in the
             // wheel meta, which saves on change — flush the rotation now.
             *meta_save = Some((wheel_name.to_string(), meta.clone()));
         }
+        if let WheelDesignerDrag::Wedge { slice, target } = *drag {
+            if let Some(at) = move_slice(level, slice, target) {
+                *selected_slice = Some(at);
+            }
+        }
         *drag = WheelDesignerDrag::None;
     }
 
     // Cursor affordances: grabbing during a live drag, a grab hand over
-    // anything a drag would take hold of.
+    // anything a drag would take hold of — a divider, a floor arc, or a
+    // real wedge body (which drags to reorder).
     if *drag != WheelDesignerDrag::None {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     } else if let Some(pos) = response.hover_pos() {
-        if grab_handle(level, meta, pos) != WheelDesignerDrag::None {
+        let on_handle = grab_handle(level, meta, pos) != WheelDesignerDrag::None;
+        let on_wedge = {
+            let v = pos - center;
+            let r = v.length();
+            r >= hub
+                && r <= outer
+                && super::super::gamepad::seat_index_at_angle(v.x, -v.y, &build_view(level, meta).layout)
+                    .is_some_and(|s| s < level.len())
+        };
+        if on_handle || on_wedge {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
     }
@@ -1736,9 +1809,12 @@ fn render_wheel_designer(
         ));
 
         // A dot on the rim end of every draggable divider (the ghost
-        // Back's edges are the runtime's, so they get none)...
-        let draggable =
-            |b: usize| if has_ghost { b + 1 < real_len } else { real_len >= 2 };
+        // Back's edges are the runtime's, and a locked slice's edges
+        // can't trade width, so those get none)...
+        let draggable = |b: usize| {
+            let structural = if has_ghost { b + 1 < real_len } else { real_len >= 2 };
+            structural && !level[b].locked && !level[(b + 1) % real_len].locked
+        };
         for (b, seat) in view.layout.seats.iter().enumerate() {
             if !draggable(b) {
                 continue;
@@ -1797,6 +1873,28 @@ fn render_wheel_designer(
             }
         }
 
+        // Wedge-move feedback: outline the seat the dragged slice will
+        // land on.
+        if let WheelDesignerDrag::Wedge { slice, target } = *drag {
+            if slice != target {
+                if let Some(seat) = view.layout.seats.get(target) {
+                    let a0 = seat.start_deg.to_radians() - std::f32::consts::FRAC_PI_2;
+                    let a1 = (seat.start_deg + seat.span_deg).to_radians()
+                        - std::f32::consts::FRAC_PI_2;
+                    let pts: Vec<egui::Pos2> = (0..=16)
+                        .map(|k| {
+                            let a = a0 + (a1 - a0) * k as f32 / 16.0;
+                            center + egui::vec2(a.cos(), a.sin()) * (outer + 4.0)
+                        })
+                        .collect();
+                    painter.add(egui::Shape::line(
+                        pts,
+                        egui::Stroke::new(3.0, ui.visuals().selection.stroke.color),
+                    ));
+                }
+            }
+        }
+
         // Click on a wedge selects it; the hub, the rim's outside, and the
         // ghost Back seat clear the selection.
         if response.clicked() {
@@ -1820,6 +1918,12 @@ fn render_wheel_designer(
                 if r >= hub && r <= outer {
                     match super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
                     {
+                        // Explicit Back first — like the runtime, back
+                        // wins over folder-ness.
+                        Some(s) if s < level.len() && level[s].back => {
+                            designer_path.pop();
+                            *selected_slice = None;
+                        }
                         Some(s) if s < level.len() && level[s].is_folder() => {
                             designer_path.push(s);
                             *selected_slice = None;
@@ -1867,6 +1971,40 @@ fn render_wheel_designer(
                 if sel != 0 && sel < level.len() {
                     *selected_slice = Some(level.len() - sel);
                 }
+            }
+        }
+        // Add/Remove Back — a folder level only (the top ring has no
+        // parent to ascend to). An explicit Back replaces the synthesized
+        // ghost with a real, movable, resizable seat.
+        if !at_top {
+            let has_back = level.iter().any(|s| s.back);
+            if has_back {
+                if ui
+                    .button("Remove Back")
+                    .on_hover_text(
+                        "Delete the explicit Back slice. The auto Back \
+                         reappears at the anchor from the Tuning tab.",
+                    )
+                    .clicked()
+                {
+                    level.retain(|s| !s.back);
+                    *selected_slice = None;
+                }
+            } else if ui
+                .button("Add Back")
+                .on_hover_text(
+                    "Add a real Back slice you can move, resize, and \
+                     color. It replaces the auto Back ghost; dwelling it \
+                     still ascends a level.",
+                )
+                .clicked()
+            {
+                level.push(WheelSlice {
+                    label: "◂ Back".to_string(),
+                    back: true,
+                    ..Default::default()
+                });
+                *selected_slice = Some(level.len() - 1);
             }
         }
         if at_top {
@@ -1970,10 +2108,11 @@ fn render_wheel_designer(
                 if ui.small_button("^").on_hover_text("Move up").clicked() {
                     ops.push(WheelOp::MoveUp(slice_path.clone()));
                 }
-                if ui
-                    .small_button("+sub")
-                    .on_hover_text("Add a child slice (makes this a folder)")
-                    .clicked()
+                if !level[i].back
+                    && ui
+                        .small_button("+sub")
+                        .on_hover_text("Add a child slice (makes this a folder)")
+                        .clicked()
                 {
                     ops.push(WheelOp::AddChild(slice_path.clone()));
                 }
@@ -1984,7 +2123,7 @@ fn render_wheel_designer(
             });
         }
         None => {
-            ui.weak("Click a wedge to edit it.");
+            ui.weak("Click a wedge to edit it · drag a wedge to reorder.");
         }
     }
     if ui.button("+ Add slice").clicked() {
@@ -2022,6 +2161,21 @@ fn even_out_unlocked(level: &mut [WheelSlice]) {
             s.span = None;
         }
     }
+}
+
+/// Move the slice at `from` so it occupies the seat at `to`, shifting the
+/// slices between them by one. Widths, floors, colors, locks, and folder
+/// contents travel with the moved slice. Returns the slice's new index, or
+/// None when the move is a no-op or out of range. The single reorder used
+/// by the designer's drag-to-arrange so the behavior is unit-testable.
+fn move_slice(level: &mut Vec<WheelSlice>, from: usize, to: usize) -> Option<usize> {
+    if from == to || from >= level.len() {
+        return None;
+    }
+    let moved = level.remove(from);
+    let at = to.min(level.len());
+    level.insert(at, moved);
+    Some(at)
 }
 
 /// Mirror a ring left↔right (angle → −angle). Slice 0 keeps its seat —
@@ -2238,6 +2392,41 @@ mod designer_tests {
 
     fn slice(span: Option<f32>) -> WheelSlice {
         WheelSlice { span, ..Default::default() }
+    }
+
+    fn labeled(name: &str) -> WheelSlice {
+        WheelSlice { label: name.to_string(), ..Default::default() }
+    }
+
+    #[test]
+    fn move_slice_carries_the_slice_and_reports_its_new_index() {
+        let mut level = vec![labeled("a"), labeled("b"), labeled("c"), labeled("d")];
+        // Drag "a" (0) onto seat 2: b, c shift left, a lands at 2.
+        assert_eq!(move_slice(&mut level, 0, 2), Some(2));
+        let order: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(order, vec!["b", "c", "a", "d"]);
+    }
+
+    #[test]
+    fn move_slice_backwards_and_noop_and_bounds() {
+        let mut level = vec![labeled("a"), labeled("b"), labeled("c")];
+        assert_eq!(move_slice(&mut level, 2, 0), Some(0));
+        let order: Vec<&str> = level.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(order, vec!["c", "a", "b"]);
+        // Same seat is a no-op; out-of-range is rejected.
+        assert_eq!(move_slice(&mut level, 1, 1), None);
+        assert_eq!(move_slice(&mut level, 9, 0), None);
+    }
+
+    #[test]
+    fn move_slice_preserves_an_explicit_back_flag() {
+        let mut back = labeled("◂ Back");
+        back.back = true;
+        let mut level = vec![labeled("a"), back, labeled("b")];
+        // Move Back from the middle to the front.
+        assert_eq!(move_slice(&mut level, 1, 0), Some(0));
+        assert!(level[0].back, "back flag rides along");
+        assert_eq!(level[0].label, "◂ Back");
     }
 
     #[test]
