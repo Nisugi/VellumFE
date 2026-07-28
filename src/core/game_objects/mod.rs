@@ -82,7 +82,13 @@ pub enum Location {
     Container(String),
     /// Worn on the body.
     Worn,
-    /// On the ground in the current room ("you also see" objs line).
+    /// At your feet ("Placed alongside you:"). Distinct from room Ground:
+    /// these are YOUR items — they count toward encumbrance and a heavy
+    /// one can pin you in place — they just aren't worn or held. Arrives
+    /// in the `inv` stream after the worn block.
+    AtFeet,
+    /// On the ground in the current room ("you also see" objs line) — NOT
+    /// yours; loot you could pick up. Distinct from AtFeet.
     Ground,
     /// Linked inside the room description prose (scenery: fountains,
     /// doors, signs). Referenceable but not ground loot.
@@ -165,6 +171,9 @@ pub struct GameObjects {
     /// referenceable but distinct from ground loot.
     room_desc: Vec<GameItem>,
     worn: Vec<GameItem>,
+    /// Items at your feet ("Placed alongside you:") — yours, encumbering,
+    /// distinct from room ground. See `Location::AtFeet`.
+    at_feet: Vec<GameItem>,
     left_hand: Option<GameItem>,
     right_hand: Option<GameItem>,
     /// exist id -> status, from the last INVENTORY FULL scan.
@@ -263,34 +272,67 @@ impl GameObjects {
         }
     }
 
-    /// Replace worn items from the buffered "Your worn items are:" block.
-    /// Each buffered line is one worn item; we take the first link-bearing
-    /// segment per line (the item's `<a>`), reusing the canonical parse
-    /// (the main parser already resolved exist id + noun into `link_data`)
-    /// rather than re-parsing raw XML. Anchor-less lines (the header, blank
-    /// lines) contribute nothing. Verified against a real feed 2026-01-02:
-    /// worn items carry `<a exist>` ids; the article/quantifier sits
-    /// outside the anchor so `name` is clean.
+    /// Replace worn AND at-feet items from the buffered `inv` block. The
+    /// game sends both under one push: worn items after "Your worn items
+    /// are:", then optionally items after "Placed alongside you:" (at your
+    /// feet — yours, encumbering). We split on that header, so the two land
+    /// in separate collections.
+    ///
+    /// Each item line contributes its first link-bearing segment (the
+    /// item's `<a>`), reusing the main parser's already-resolved link_data
+    /// rather than re-parsing XML. Header/blank lines carry no link.
+    /// Verified against real feeds 2026-01-02 and 2026-07-28.
     pub fn set_worn_from_lines(&mut self, lines: &[Vec<crate::data::widget::TextSegment>]) {
-        let items: Vec<GameItem> = lines
-            .iter()
-            .filter_map(|segments| {
-                let seg = segments.iter().find(|s| s.link_data.is_some())?;
-                let link = seg.link_data.as_ref()?;
-                Some(GameItem {
-                    id: link.exist_id.clone(),
-                    noun: link.noun.clone(),
-                    name: seg.text.trim().to_string(),
-                    weight: None,
-                })
+        fn line_text(segments: &[crate::data::widget::TextSegment]) -> String {
+            segments.iter().map(|s| s.text.as_str()).collect()
+        }
+        fn item_of(segments: &[crate::data::widget::TextSegment]) -> Option<GameItem> {
+            let seg = segments.iter().find(|s| s.link_data.is_some())?;
+            let link = seg.link_data.as_ref()?;
+            Some(GameItem {
+                id: link.exist_id.clone(),
+                noun: link.noun.clone(),
+                name: seg.text.trim().to_string(),
+                weight: None,
             })
-            .collect();
-        self.set_worn(items);
+        }
+
+        let mut worn = Vec::new();
+        let mut at_feet = Vec::new();
+        // Everything after the "Placed alongside you:" header is at-feet.
+        let mut in_feet = false;
+        for segments in lines {
+            if line_text(segments)
+                .trim_start()
+                .starts_with("Placed alongside you")
+            {
+                in_feet = true;
+                continue;
+            }
+            if let Some(item) = item_of(segments) {
+                if in_feet {
+                    at_feet.push(item);
+                } else {
+                    worn.push(item);
+                }
+            }
+        }
+        self.set_worn(worn);
+        self.set_at_feet(at_feet);
     }
 
     pub fn set_worn(&mut self, items: Vec<GameItem>) {
         if self.worn != items {
             self.worn = items;
+            self.generation += 1;
+        }
+    }
+
+    /// Items at your feet ("Placed alongside you:") — yours + encumbering,
+    /// distinct from room ground.
+    pub fn set_at_feet(&mut self, items: Vec<GameItem>) {
+        if self.at_feet != items {
+            self.at_feet = items;
             self.generation += 1;
         }
     }
@@ -339,6 +381,11 @@ impl GameObjects {
         &self.worn
     }
 
+    /// Items at your feet ("Placed alongside you:") — yours, encumbering.
+    pub fn at_feet(&self) -> &[GameItem] {
+        &self.at_feet
+    }
+
     pub fn hand(&self, hand: Hand) -> Option<&GameItem> {
         match hand {
             Hand::Left => self.left_hand.as_ref(),
@@ -346,13 +393,16 @@ impl GameObjects {
         }
     }
 
-    /// Everything on the body: worn + both hands (the `inv` target's
-    /// enumeration, sans container contents).
+    /// Everything in your possession: worn + both hands + at-feet. At-feet
+    /// items count toward encumbrance and are yours, so they belong here
+    /// (they're in the `inv` enumeration, unlike room ground loot). Does
+    /// not include container contents.
     pub fn carried(&self) -> Vec<&GameItem> {
         self.worn
             .iter()
             .chain(self.left_hand.iter())
             .chain(self.right_hand.iter())
+            .chain(self.at_feet.iter())
             .collect()
     }
 
@@ -491,6 +541,48 @@ mod tests {
         assert_eq!(worn[1].id, "417774188");
         assert_eq!(worn[1].noun, "pants");
         assert_eq!(worn[1].name, "elesine pants");
+        assert!(reg.at_feet().is_empty(), "no Placed-alongside block here");
+    }
+
+    #[test]
+    fn set_worn_from_lines_splits_at_feet() {
+        use crate::data::widget::{LinkData, TextSegment};
+        let link = |id: &str, noun: &str, name: &str| TextSegment {
+            text: name.to_string(),
+            link_data: Some(LinkData {
+                exist_id: id.to_string(),
+                noun: noun.to_string(),
+                text: name.to_string(),
+                coord: None,
+            }),
+            ..Default::default()
+        };
+        // Real 2026-07-28 feed shape: worn block, then "Placed alongside
+        // you:" header, then feet items. The jewel must NOT be worn.
+        let lines = vec![
+            vec![TextSegment::plain("Your worn items are:")],
+            vec![
+                TextSegment::plain("  some "),
+                link("511640642", "gloves", "darkened triton hide gloves"),
+                TextSegment::plain(" with faenor-plated knuckles"),
+            ],
+            vec![TextSegment::plain("")],
+            vec![TextSegment::plain("Placed alongside you:")],
+            vec![
+                TextSegment::plain("  a "),
+                link("511775582", "jewel", "trilliant-cut leaden grey jewel"),
+                TextSegment::plain(" mottled with fractal forms"),
+            ],
+        ];
+        let mut reg = GameObjects::default();
+        reg.set_worn_from_lines(&lines);
+        assert_eq!(reg.worn().len(), 1);
+        assert_eq!(reg.worn()[0].id, "511640642");
+        assert_eq!(reg.at_feet().len(), 1, "the jewel is at feet, not worn");
+        assert_eq!(reg.at_feet()[0].id, "511775582");
+        assert_eq!(reg.at_feet()[0].noun, "jewel");
+        // At-feet counts as carried (encumbrance), room ground would not.
+        assert_eq!(reg.carried().len(), 2);
     }
 
     #[test]
