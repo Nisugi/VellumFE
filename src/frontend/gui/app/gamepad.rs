@@ -932,9 +932,12 @@ pub(super) fn paint_wheel_ring(
     // can't collide with its neighbors or the hub.
     let (selected_size, normal_size) = if outer < 120.0 { (15.0, 12.0) } else { (18.0, 14.0) };
 
-    // Wedge fills: the whole pie piece carries the slice's
-    // color (dim at rest, bright while aimed); colorless
-    // slices highlight with the theme selection fill.
+    // Wedge fills: the colored area is the ACTIVATION zone — it runs
+    // from the slice's floor radius (its own `inner`, else the global
+    // dead zone) out to the rim, so the fill's inner edge is the
+    // deflection you must cross before the slice registers. Inside
+    // the floor stays unfilled. (Dim at rest, bright while aimed;
+    // colorless slices highlight with the theme selection fill.)
     for (i, slice) in slices.iter().enumerate() {
         let center_angle = seat_center_screen(i);
         let step = seat_span_rad(i);
@@ -950,23 +953,32 @@ pub(super) fn paint_wheel_ring(
             (None, false) => egui::Color32::TRANSPARENT,
         };
         if fill != egui::Color32::TRANSPARENT {
-            if slices.len() == 1 {
-                painter.circle_filled(center, outer, fill);
+            let frac = slice
+                .inner
+                .map(|pct| pct as f32 / 100.0)
+                .unwrap_or(global_deadzone)
+                .clamp(0.0, 1.0);
+            let floor_r = hub + (outer - hub) * frac;
+            let (a0, a1, steps) = if slices.len() == 1 {
+                (0.0, std::f32::consts::TAU, 48)
             } else {
-                let a0 = center_angle - step / 2.0;
-                let a1 = center_angle + step / 2.0;
-                let mut points = vec![center];
-                const ARC_STEPS: usize = 16;
-                for k in 0..=ARC_STEPS {
-                    let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
-                    points.push(center + egui::vec2(a.cos(), a.sin()) * outer);
+                (center_angle - step / 2.0, center_angle + step / 2.0, 16)
+            };
+            // An annular sector is concave, so convex_polygon can't
+            // fill it; a single triangle mesh keeps it seam-free.
+            let mut mesh = egui::Mesh::default();
+            for k in 0..=steps {
+                let a = a0 + (a1 - a0) * k as f32 / steps as f32;
+                let dir = egui::vec2(a.cos(), a.sin());
+                mesh.colored_vertex(center + dir * floor_r, fill);
+                mesh.colored_vertex(center + dir * outer, fill);
+                if k > 0 {
+                    let b = (2 * k) as u32;
+                    mesh.add_triangle(b - 2, b - 1, b);
+                    mesh.add_triangle(b - 1, b + 1, b);
                 }
-                painter.add(egui::Shape::convex_polygon(
-                    points,
-                    fill,
-                    egui::Stroke::NONE,
-                ));
             }
+            painter.add(egui::Shape::mesh(mesh));
         }
     }
 
