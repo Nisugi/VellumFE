@@ -1730,7 +1730,74 @@ fn render_wheel_designer(
                 }
             }
         }
+        if at_top {
+            let mut rotate = 0.0f32;
+            if ui
+                .button("-15°")
+                .on_hover_text(
+                    "Rotate the whole ring 15° counter-clockwise (adjusts the \
+                     wheel's Start).",
+                )
+                .clicked()
+            {
+                rotate = -15.0;
+            }
+            if ui
+                .button("+15°")
+                .on_hover_text(
+                    "Rotate the whole ring 15° clockwise (adjusts the wheel's \
+                     Start).",
+                )
+                .clicked()
+            {
+                rotate = 15.0;
+            }
+            if rotate != 0.0 {
+                let norm = (meta.start.unwrap_or(0.0) + rotate).rem_euclid(360.0);
+                meta.start = if norm.abs() < 1e-4 { None } else { Some(norm) };
+                *meta_save = Some((wheel_name.to_string(), meta.clone()));
+            }
+        }
     });
+
+    // Directed mirrors (top level only): keep the named half, replace the
+    // other with its reflection — the reference designer's mirror.
+    if at_top && !level.is_empty() {
+        ui.horizontal(|ui| {
+            let mirrors = [
+                ("Left → right", MirrorKeep::Left),
+                ("Right → left", MirrorKeep::Right),
+                ("Top → bottom", MirrorKeep::Top),
+                ("Bottom → top", MirrorKeep::Bottom),
+            ];
+            for (label, keep) in mirrors {
+                if ui
+                    .button(label)
+                    .on_hover_text(
+                        "Keep that half of the ring and replace the opposite half \
+                         with its mirror image (slices are cloned). A slice \
+                         crossing the axis isn't cut — it becomes symmetric \
+                         about it.",
+                    )
+                    .clicked()
+                {
+                    let view = build_view(level, meta);
+                    if let Some((mirrored, new_start)) =
+                        mirror_half(level, &view.layout, keep)
+                    {
+                        *level = mirrored;
+                        let norm = new_start.rem_euclid(360.0);
+                        let new = if norm.abs() < 1e-4 { None } else { Some(norm) };
+                        if new != meta.start {
+                            meta.start = new;
+                            *meta_save = Some((wheel_name.to_string(), meta.clone()));
+                        }
+                        *selected_slice = None;
+                    }
+                }
+            }
+        });
+    }
 
     // Selected-slice panel: the shared field widgets plus the structural
     // buttons the numeric rows offer.
@@ -1826,6 +1893,115 @@ fn mirror_slices(level: &mut [WheelSlice]) {
     if level.len() > 1 {
         level[1..].reverse();
     }
+}
+
+/// Which half of the ring a directed mirror keeps.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MirrorKeep {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl MirrorKeep {
+    /// The two angles (aim convention) where the mirror axis meets the
+    /// ring: the vertical axis (0/180) for left/right keeps, the
+    /// horizontal one (90/270) for top/bottom.
+    fn axis_points(self) -> [f32; 2] {
+        match self {
+            MirrorKeep::Left | MirrorKeep::Right => [0.0, 180.0],
+            MirrorKeep::Top | MirrorKeep::Bottom => [90.0, 270.0],
+        }
+    }
+
+    /// Reflect an angle across the mirror axis.
+    fn reflect(self, deg: f32) -> f32 {
+        match self {
+            MirrorKeep::Left | MirrorKeep::Right => (-deg).rem_euclid(360.0),
+            MirrorKeep::Top | MirrorKeep::Bottom => (180.0 - deg).rem_euclid(360.0),
+        }
+    }
+
+    /// Is an angle strictly inside the kept half (the axis itself is
+    /// neither side — axis-crossing slices are handled separately)?
+    fn keeps(self, deg: f32) -> bool {
+        let d = deg.rem_euclid(360.0);
+        match self {
+            MirrorKeep::Right => d > 0.0 && d < 180.0,
+            MirrorKeep::Left => d > 180.0 && d < 360.0,
+            MirrorKeep::Top => !(90.0..=270.0).contains(&d),
+            MirrorKeep::Bottom => d > 90.0 && d < 270.0,
+        }
+    }
+}
+
+/// The reference designer's directed mirror: keep the named half and
+/// replace the opposite half with its reflection. Kept slices project
+/// mirrored clones (labels, commands, folders and all) onto the other
+/// side; a slice whose wedge crosses the axis isn't cut — it recenters ON
+/// the axis, symmetric about it; the rest are dropped. The result is
+/// scaled uniformly to close the ring (which preserves the symmetry) and
+/// anchored at the axis, so the mirror is exact after normalization.
+/// Returns the new slice list (all spans explicit) plus the ring's new
+/// `start`; None only for an empty level.
+fn mirror_half(
+    level: &[WheelSlice],
+    layout: &super::super::gamepad::ResolvedLayout,
+    keep: MirrorKeep,
+) -> Option<(Vec<WheelSlice>, f32)> {
+    use super::super::gamepad::angular_gap;
+    let [p0, p1] = keep.axis_points();
+
+    // The surviving seats as (center, width, slice), pre-normalization.
+    let mut seats: Vec<(f32, f32, WheelSlice)> = Vec::new();
+    for (slice, seat) in level.iter().zip(&layout.seats) {
+        let center = seat.center_deg().rem_euclid(360.0);
+        let w = seat.span_deg;
+        let g0 = angular_gap(center, p0);
+        let g1 = angular_gap(center, p1);
+        if g0 < w / 2.0 || g1 < w / 2.0 {
+            // Crosses the axis: becomes symmetric about the nearer point.
+            let p = if g0 <= g1 { p0 } else { p1 };
+            seats.push((p, w, slice.clone()));
+        } else if keep.keeps(center) {
+            seats.push((center, w, slice.clone()));
+            seats.push((keep.reflect(center), w, slice.clone()));
+        }
+    }
+    if seats.is_empty() {
+        return None;
+    }
+
+    // Lay the symmetric set back out: sort clockwise from the axis and
+    // anchor there — a seat centered on the axis keeps its center on it,
+    // otherwise a boundary sits exactly on it. Uniform scaling keeps the
+    // palindrome (and thus the symmetry) intact.
+    seats.sort_by(|a, b| {
+        (a.0 - p0)
+            .rem_euclid(360.0)
+            .total_cmp(&(b.0 - p0).rem_euclid(360.0))
+    });
+    let total: f32 = seats.iter().map(|s| s.1).sum();
+    let scale = 360.0 / total;
+    let first_on_axis = angular_gap(seats[0].0, p0) < 1e-3;
+    let mut edge = if first_on_axis {
+        p0 - seats[0].1 * scale / 2.0
+    } else {
+        p0
+    };
+    let mut out = Vec::with_capacity(seats.len());
+    let mut start = 0.0;
+    for (i, (_, w, mut slice)) in seats.into_iter().enumerate() {
+        let w = w * scale;
+        if i == 0 {
+            start = edge + w / 2.0;
+        }
+        slice.span = Some(w);
+        out.push(slice);
+        edge += w;
+    }
+    Some((out, start.rem_euclid(360.0)))
 }
 
 /// A dragged floor radius → the slice's `inner` value: percent of full
@@ -2007,6 +2183,71 @@ mod designer_tests {
         let start = apply_divider_drag(&mut w, 35.0, 3, 5.0);
         assert_eq!(w, vec![70.0, 90.0, 90.0, 110.0]);
         assert!((start - 40.0).abs() < 1e-4);
+    }
+
+    fn named(label: &str, span: Option<f32>) -> WheelSlice {
+        WheelSlice {
+            label: label.to_string(),
+            span,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn directed_mirror_keeps_left_and_projects_it_right() {
+        // Even 4-ring a(0) b(90) c(180) d(270), keep Left: a and c cross
+        // the axis and recenter on it, d projects a clone to 90, b (right
+        // half) is replaced by it.
+        let level = vec![named("a", None), named("b", None), named("c", None), named("d", None)];
+        let layout = gamepad::resolve_spans(&[None, None, None, None], 0.0);
+        let (out, start) = mirror_half(&level, &layout, MirrorKeep::Left).unwrap();
+        let labels: Vec<&str> = out.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "d", "c", "d"]);
+        assert!(start.abs() < 1e-3);
+        for s in &out {
+            assert!((s.span.unwrap() - 90.0).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn directed_mirror_rescales_and_stays_symmetric() {
+        // Widths [60,120,90,90] from start 0 → centers 0/90/195/285.
+        // Keep Right: a crosses the top axis point, c (center 195) crosses
+        // the bottom one and recenters at 180, b is kept and cloned to the
+        // left, d is replaced. Total 390 → uniform rescale closes the ring
+        // without breaking the symmetry.
+        let level = vec![
+            named("a", Some(60.0)),
+            named("b", Some(120.0)),
+            named("c", Some(90.0)),
+            named("d", Some(90.0)),
+        ];
+        let layout =
+            gamepad::resolve_spans(&[Some(60.0), Some(120.0), Some(90.0), Some(90.0)], 0.0);
+        let (out, start) = mirror_half(&level, &layout, MirrorKeep::Right).unwrap();
+        let labels: Vec<&str> = out.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, vec!["a", "b", "c", "b"]);
+        assert!(start.abs() < 1e-3);
+        let spans: Vec<f32> = out.iter().map(|s| s.span.unwrap()).collect();
+        assert!((spans.iter().sum::<f32>() - 360.0).abs() < 1e-2);
+        // The two b wedges mirror each other exactly.
+        assert!((spans[1] - spans[3]).abs() < 1e-3);
+        // Proportions kept: b is still twice a's width... (120/60 = 2).
+        assert!((spans[1] / spans[0] - 2.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn directed_mirror_single_slice_and_empty() {
+        // A one-slice ring covers the axis and survives unchanged.
+        let level = vec![named("solo", None)];
+        let layout = gamepad::resolve_spans(&[None], 0.0);
+        let (out, start) = mirror_half(&level, &layout, MirrorKeep::Top).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!((out[0].span.unwrap() - 360.0).abs() < 1e-3);
+        assert!(start.abs() < 1e-3 || (start - 90.0).abs() < 1e-3);
+        // Empty rings have nothing to mirror.
+        let layout = gamepad::resolve_spans(&[], 0.0);
+        assert!(mirror_half(&[], &layout, MirrorKeep::Left).is_none());
     }
 
     #[test]
