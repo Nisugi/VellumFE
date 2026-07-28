@@ -831,12 +831,6 @@ impl VellumGuiApp {
         if slices.is_empty() {
             return;
         }
-        let seats = &view.layout.seats;
-        // Screen radians for a seat center: the aim convention is 0 = up,
-        // clockwise (degrees); screen is 0 = +x with y down, so up is
-        // -90°. screen = aim - 90°.
-        let seat_center_screen = |i: usize| seats[i].center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
-        let seat_span_rad = |i: usize| seats[i].span_deg.to_radians();
         let in_folder = !path.is_empty();
         let global_dz = self.wheel_deadzone();
         let center = ctx.content_rect().center();
@@ -857,105 +851,18 @@ impl VellumGuiApp {
                     outer,
                     egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
                 );
-                // Wedge fills: the whole pie piece carries the slice's
-                // color (dim at rest, bright while aimed); colorless
-                // slices highlight with the theme selection fill.
-                for (i, slice) in slices.iter().enumerate() {
-                    let center_angle = seat_center_screen(i);
-                    let step = seat_span_rad(i);
-                    let is_selected = selected == Some(i);
-                    let tint = slice
-                        .color
-                        .as_deref()
-                        .and_then(super::theme::resolve_color);
-                    let fill = match (tint, is_selected) {
-                        (Some(c), true) => c.gamma_multiply(0.85),
-                        (Some(c), false) => c.gamma_multiply(0.22),
-                        (None, true) => ui.visuals().selection.bg_fill,
-                        (None, false) => egui::Color32::TRANSPARENT,
-                    };
-                    if fill != egui::Color32::TRANSPARENT {
-                        if slices.len() == 1 {
-                            painter.circle_filled(center, outer, fill);
-                        } else {
-                            let a0 = center_angle - step / 2.0;
-                            let a1 = center_angle + step / 2.0;
-                            let mut points = vec![center];
-                            const ARC_STEPS: usize = 16;
-                            for k in 0..=ARC_STEPS {
-                                let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
-                                points.push(center + egui::vec2(a.cos(), a.sin()) * outer);
-                            }
-                            painter.add(egui::Shape::convex_polygon(
-                                points,
-                                fill,
-                                egui::Stroke::NONE,
-                            ));
-                        }
-                    }
-                }
-
-                // Wedge separators + labels over the fills.
-                for (i, slice) in slices.iter().enumerate() {
-                    let center_angle = seat_center_screen(i);
-                    if slices.len() > 1 {
-                        let a0 = center_angle - seat_span_rad(i) / 2.0;
-                        let dir = egui::vec2(a0.cos(), a0.sin());
-                        painter.line_segment(
-                            [center + dir * hub, center + dir * outer],
-                            egui::Stroke::new(1.0, ui.visuals().window_stroke.color),
-                        );
-                    }
-                    let pos = center + egui::vec2(center_angle.cos(), center_angle.sin()) * radius;
-                    let is_selected = selected == Some(i);
-                    let (color, size) = if is_selected {
-                        (ui.visuals().strong_text_color(), 18.0)
-                    } else {
-                        (ui.visuals().text_color(), 14.0)
-                    };
-                    let label = if slice.is_folder() {
-                        format!("{} ▸", slice.label)
-                    } else {
-                        slice.label.clone()
-                    };
-                    painter.text(
-                        pos,
-                        egui::Align2::CENTER_CENTER,
-                        label,
-                        egui::FontId::proportional(size),
-                        color,
-                    );
-                }
-
-                // Per-slice inner floor: a slice with its own `inner` above
-                // the global dead zone needs a deeper throw, so draw a faint
-                // arc across its wedge at that floor radius — the deflection
-                // you must cross before it registers. Slices on the default
-                // floor get no extra line (keeps the common case clean).
-                let floor_stroke = egui::Stroke::new(
-                    1.5,
-                    ui.visuals().warn_fg_color.gamma_multiply(0.8),
+                paint_wheel_ring(
+                    painter,
+                    ui.visuals(),
+                    center,
+                    outer,
+                    hub,
+                    radius,
+                    slices,
+                    &view.layout,
+                    selected,
+                    global_dz,
                 );
-                for (i, slice) in slices.iter().enumerate() {
-                    let Some(inner_pct) = slice.inner else { continue };
-                    let frac = (inner_pct as f32 / 100.0).clamp(0.0, 1.0);
-                    if frac <= global_dz + 1e-3 {
-                        continue; // not harder than the default reach
-                    }
-                    let r = hub + (outer - hub) * frac;
-                    let center_angle = seat_center_screen(i);
-                    let half = seat_span_rad(i) / 2.0;
-                    let a0 = center_angle - half;
-                    let a1 = center_angle + half;
-                    const ARC_STEPS: usize = 12;
-                    let pts: Vec<egui::Pos2> = (0..=ARC_STEPS)
-                        .map(|k| {
-                            let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
-                            center + egui::vec2(a.cos(), a.sin()) * r
-                        })
-                        .collect();
-                    painter.add(egui::Shape::line(pts, floor_stroke));
-                }
 
                 // Center hub hosts the hint text. `selected` is the
                 // committed slice (post-dwell); until a dwell lands it is
@@ -982,6 +889,134 @@ impl VellumGuiApp {
                     ui.visuals().weak_text_color(),
                 );
             });
+    }
+}
+
+/// Draw a wheel ring's wedges onto `painter`: color fills, separator
+/// lines, slice labels, and the per-slice inner-floor arcs. Shared by the
+/// live controller wheel and the visual wheel designer so the two renders
+/// can never drift. The caller owns the backdrop circle, the center hub,
+/// and any hint text. `label_radius` is where slice labels sit;
+/// `global_deadzone` suppresses floor arcs that aren't deeper than the
+/// default reach.
+pub(super) fn paint_wheel_ring(
+    painter: &egui::Painter,
+    visuals: &egui::Visuals,
+    center: egui::Pos2,
+    outer: f32,
+    hub: f32,
+    label_radius: f32,
+    slices: &[WheelSlice],
+    layout: &ResolvedLayout,
+    selected: Option<usize>,
+    global_deadzone: f32,
+) {
+    let seats = &layout.seats;
+    // Screen radians for a seat center: the aim convention is 0 = up,
+    // clockwise (degrees); screen is 0 = +x with y down, so up is
+    // -90°. screen = aim - 90°.
+    let seat_center_screen =
+        |i: usize| seats[i].center_deg().to_radians() - std::f32::consts::FRAC_PI_2;
+    let seat_span_rad = |i: usize| seats[i].span_deg.to_radians();
+
+    // Wedge fills: the whole pie piece carries the slice's
+    // color (dim at rest, bright while aimed); colorless
+    // slices highlight with the theme selection fill.
+    for (i, slice) in slices.iter().enumerate() {
+        let center_angle = seat_center_screen(i);
+        let step = seat_span_rad(i);
+        let is_selected = selected == Some(i);
+        let tint = slice
+            .color
+            .as_deref()
+            .and_then(super::theme::resolve_color);
+        let fill = match (tint, is_selected) {
+            (Some(c), true) => c.gamma_multiply(0.85),
+            (Some(c), false) => c.gamma_multiply(0.22),
+            (None, true) => visuals.selection.bg_fill,
+            (None, false) => egui::Color32::TRANSPARENT,
+        };
+        if fill != egui::Color32::TRANSPARENT {
+            if slices.len() == 1 {
+                painter.circle_filled(center, outer, fill);
+            } else {
+                let a0 = center_angle - step / 2.0;
+                let a1 = center_angle + step / 2.0;
+                let mut points = vec![center];
+                const ARC_STEPS: usize = 16;
+                for k in 0..=ARC_STEPS {
+                    let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
+                    points.push(center + egui::vec2(a.cos(), a.sin()) * outer);
+                }
+                painter.add(egui::Shape::convex_polygon(
+                    points,
+                    fill,
+                    egui::Stroke::NONE,
+                ));
+            }
+        }
+    }
+
+    // Wedge separators + labels over the fills.
+    for (i, slice) in slices.iter().enumerate() {
+        let center_angle = seat_center_screen(i);
+        if slices.len() > 1 {
+            let a0 = center_angle - seat_span_rad(i) / 2.0;
+            let dir = egui::vec2(a0.cos(), a0.sin());
+            painter.line_segment(
+                [center + dir * hub, center + dir * outer],
+                egui::Stroke::new(1.0, visuals.window_stroke.color),
+            );
+        }
+        let pos = center + egui::vec2(center_angle.cos(), center_angle.sin()) * label_radius;
+        let is_selected = selected == Some(i);
+        let (color, size) = if is_selected {
+            (visuals.strong_text_color(), 18.0)
+        } else {
+            (visuals.text_color(), 14.0)
+        };
+        let label = if slice.is_folder() {
+            format!("{} ▸", slice.label)
+        } else {
+            slice.label.clone()
+        };
+        painter.text(
+            pos,
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(size),
+            color,
+        );
+    }
+
+    // Per-slice inner floor: a slice with its own `inner` above
+    // the global dead zone needs a deeper throw, so draw a faint
+    // arc across its wedge at that floor radius — the deflection
+    // you must cross before it registers. Slices on the default
+    // floor get no extra line (keeps the common case clean).
+    let floor_stroke = egui::Stroke::new(
+        1.5,
+        visuals.warn_fg_color.gamma_multiply(0.8),
+    );
+    for (i, slice) in slices.iter().enumerate() {
+        let Some(inner_pct) = slice.inner else { continue };
+        let frac = (inner_pct as f32 / 100.0).clamp(0.0, 1.0);
+        if frac <= global_deadzone + 1e-3 {
+            continue; // not harder than the default reach
+        }
+        let r = hub + (outer - hub) * frac;
+        let center_angle = seat_center_screen(i);
+        let half = seat_span_rad(i) / 2.0;
+        let a0 = center_angle - half;
+        let a1 = center_angle + half;
+        const ARC_STEPS: usize = 12;
+        let pts: Vec<egui::Pos2> = (0..=ARC_STEPS)
+            .map(|k| {
+                let a = a0 + (a1 - a0) * k as f32 / ARC_STEPS as f32;
+                center + egui::vec2(a.cos(), a.sin()) * r
+            })
+            .collect();
+        painter.add(egui::Shape::line(pts, floor_stroke));
     }
 }
 
@@ -1037,7 +1072,7 @@ pub(super) struct Seat {
 }
 
 impl Seat {
-    fn center_deg(&self) -> f32 {
+    pub(super) fn center_deg(&self) -> f32 {
         self.start_deg + self.span_deg / 2.0
     }
 }
@@ -1052,7 +1087,7 @@ pub(super) struct ResolvedLayout {
 }
 
 impl ResolvedLayout {
-    fn len(&self) -> usize {
+    pub(super) fn len(&self) -> usize {
         self.seats.len()
     }
 }
@@ -1073,7 +1108,7 @@ impl ResolvedLayout {
 /// With all spans `None` and `start_deg == 0` this reproduces the old
 /// `360/count` ring with seat 0 centered at the top — the byte-for-byte
 /// backward-compatible path, pinned by the golden vectors.
-fn resolve_spans(spans: &[Option<f32>], start_deg: f32) -> ResolvedLayout {
+pub(super) fn resolve_spans(spans: &[Option<f32>], start_deg: f32) -> ResolvedLayout {
     let n = spans.len();
     if n == 0 {
         return ResolvedLayout { seats: Vec::new() };
@@ -1138,7 +1173,7 @@ fn seat_at(x: f32, y_up: f32, layout: &ResolvedLayout, deadzone: f32) -> Option<
 /// Pure angular resolution: which seat's arc the stick points at, ignoring
 /// magnitude. None only when there are no seats. The radial floor (global
 /// dead zone or a per-slice `inner`) is applied by the caller.
-fn seat_index_at_angle(x: f32, y_up: f32, layout: &ResolvedLayout) -> Option<usize> {
+pub(super) fn seat_index_at_angle(x: f32, y_up: f32, layout: &ResolvedLayout) -> Option<usize> {
     if layout.len() == 0 {
         return None;
     }
@@ -1191,7 +1226,7 @@ fn wheel_slice_at(x: f32, y_up: f32, count: usize, deadzone: f32) -> Option<usiz
 /// The aim-convention angle (degrees, 0 = up, clockwise) of a screen
 /// anchor word, used to place the reserved Back slice at its side.
 /// Unknown words (and "none", handled earlier) fall back to down.
-fn anchor_angle_deg(anchor: &str) -> f32 {
+pub(super) fn anchor_angle_deg(anchor: &str) -> f32 {
     match anchor {
         "up" => 0.0,
         "up-right" => 45.0,
