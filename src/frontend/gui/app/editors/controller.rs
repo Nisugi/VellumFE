@@ -1368,63 +1368,76 @@ fn render_wheel_designer(
         v.x.atan2(-v.y).to_degrees().rem_euclid(360.0)
     };
 
-    // ----- Drag lifecycle (before painting, so the ring drawn this frame
-    // already reflects the pointer). Dividers get grab priority; missing
-    // one, a grab lands on the wedge's aim-floor arc — the slice's own
+    // What a grab at `pos` would take hold of: a draggable divider (grab
+    // priority), else the aimed wedge's floor arc — the slice's own
     // `inner`, or the global dead-zone radius when it has none (that's the
-    // affordance for creating one). -----
-    if response.drag_started() && !level.is_empty() {
-        if let Some(pos) = response.interact_pointer_pos() {
-            let v = pos - center;
-            let r = v.length();
-            if r >= hub * 0.6 && r <= outer + 12.0 {
-                let view = build_view(level, meta);
-                let real_len = level.len();
-                let has_ghost = view.layout.len() > real_len;
-                let aim = aim_of(pos);
-                // Nearest draggable divider (the shared edge after each
-                // seat) within grab range. The ghost Back seat's width is
-                // the runtime's to decide, so neither of its edges is
-                // draggable.
-                let draggable = |b: usize| {
-                    if has_ghost { b + 1 < real_len } else { real_len >= 2 }
-                };
-                let nearest = view
-                    .layout
-                    .seats
-                    .iter()
-                    .enumerate()
-                    .filter(|(b, _)| draggable(*b))
-                    .map(|(b, seat)| {
-                        let angle = (seat.start_deg + seat.span_deg).rem_euclid(360.0);
-                        (b, super::super::gamepad::angular_gap(aim, angle))
-                    })
-                    .min_by(|a, b| a.1.total_cmp(&b.1))
-                    .filter(|(_, gap)| *gap <= 8.0);
-                if let Some((boundary, _)) = nearest {
-                    // Freeze the real slices to concrete widths so the
-                    // drag edits predictable numbers (auto seats would
-                    // otherwise re-split under the pointer). A ghost Back
-                    // stays auto — its width is the remainder, exactly as
-                    // at runtime.
-                    materialize_spans(level, &view.layout);
-                    *drag = WheelDesignerDrag::Divider { boundary, start_dirty: false };
-                } else if let Some(seat) =
-                    super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
-                {
-                    // Aim floors belong to real slices only.
-                    if seat < real_len {
-                        let floor = level[seat]
-                            .inner
-                            .map(|p| p as f32 / 100.0)
-                            .unwrap_or(global_deadzone);
-                        let floor_r = hub + (outer - hub) * floor;
-                        if (r - floor_r).abs() <= 10.0 {
-                            *drag = WheelDesignerDrag::InnerArc { slice: seat };
-                        }
-                    }
+    // affordance for creating one). Shared by the drag start and the
+    // hover-cursor hint so they can't disagree.
+    let grab_handle = |level: &[WheelSlice],
+                       meta: &crate::config::WheelMeta,
+                       pos: egui::Pos2|
+     -> WheelDesignerDrag {
+        let v = pos - center;
+        let r = v.length();
+        if level.is_empty() || r < hub * 0.6 || r > outer + 12.0 {
+            return WheelDesignerDrag::None;
+        }
+        let view = build_view(level, meta);
+        let real_len = level.len();
+        let has_ghost = view.layout.len() > real_len;
+        let aim = aim_of(pos);
+        // Nearest draggable divider (the shared edge after each seat)
+        // within grab range. The ghost Back seat's width is the runtime's
+        // to decide, so neither of its edges is draggable.
+        let draggable = |b: usize| {
+            if has_ghost { b + 1 < real_len } else { real_len >= 2 }
+        };
+        let nearest = view
+            .layout
+            .seats
+            .iter()
+            .enumerate()
+            .filter(|(b, _)| draggable(*b))
+            .map(|(b, seat)| {
+                let angle = (seat.start_deg + seat.span_deg).rem_euclid(360.0);
+                (b, super::super::gamepad::angular_gap(aim, angle))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .filter(|(_, gap)| *gap <= 8.0);
+        if let Some((boundary, _)) = nearest {
+            return WheelDesignerDrag::Divider { boundary, start_dirty: false };
+        }
+        if let Some(seat) = super::super::gamepad::seat_index_at_angle(v.x, -v.y, &view.layout)
+        {
+            // Aim floors belong to real slices only.
+            if seat < real_len {
+                let floor = level[seat]
+                    .inner
+                    .map(|p| p as f32 / 100.0)
+                    .unwrap_or(global_deadzone);
+                let floor_r = hub + (outer - hub) * floor;
+                if (r - floor_r).abs() <= 10.0 {
+                    return WheelDesignerDrag::InnerArc { slice: seat };
                 }
             }
+        }
+        WheelDesignerDrag::None
+    };
+
+    // ----- Drag lifecycle (before painting, so the ring drawn this frame
+    // already reflects the pointer). -----
+    if response.drag_started() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let grabbed = grab_handle(level, meta, pos);
+            if let WheelDesignerDrag::Divider { .. } = grabbed {
+                // Freeze the real slices to concrete widths so the drag
+                // edits predictable numbers (auto seats would otherwise
+                // re-split under the pointer). A ghost Back stays auto —
+                // its width is the remainder, exactly as at runtime.
+                let view = build_view(level, meta);
+                materialize_spans(level, &view.layout);
+            }
+            *drag = grabbed;
         }
     }
     if let WheelDesignerDrag::Divider { boundary, start_dirty } = drag {
@@ -1438,8 +1451,17 @@ fn render_wheel_designer(
                     let old_start = seat0.center_deg();
                     let mut widths: Vec<f32> =
                         view.layout.seats.iter().map(|s| s.span_deg).collect();
+                    // Snap to the compass points (45° multiples) when the
+                    // pointer is close; Shift holds the drag free.
+                    let mut target = aim_of(pos);
+                    if !ui.input(|i| i.modifiers.shift) {
+                        let compass = ((target / 45.0).round() * 45.0).rem_euclid(360.0);
+                        if super::super::gamepad::angular_gap(target, compass) <= 4.0 {
+                            target = compass;
+                        }
+                    }
                     let new_start =
-                        apply_divider_drag(&mut widths, old_start, *boundary, aim_of(pos));
+                        apply_divider_drag(&mut widths, old_start, *boundary, target);
                     for (slice, w) in level.iter_mut().zip(&widths) {
                         slice.span = Some(*w);
                     }
@@ -1479,6 +1501,16 @@ fn render_wheel_designer(
             *meta_save = Some((wheel_name.to_string(), meta.clone()));
         }
         *drag = WheelDesignerDrag::None;
+    }
+
+    // Cursor affordances: grabbing during a live drag, a grab hand over
+    // anything a drag would take hold of.
+    if *drag != WheelDesignerDrag::None {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if let Some(pos) = response.hover_pos() {
+        if grab_handle(level, meta, pos) != WheelDesignerDrag::None {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
     }
 
     let bg = ui.visuals().window_fill.gamma_multiply(0.92);
