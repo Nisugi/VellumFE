@@ -98,9 +98,7 @@ fn apply_wheel_op(slices: &mut Vec<WheelSlice>, op: WheelOp) {
             if let Some(level) = wheel_slices_at(slices, &path) {
                 level.push(WheelSlice {
                     label: "new".to_string(),
-                    command: String::new(),
-                    color: None,
-                    slices: Vec::new(),
+                    ..Default::default()
                 });
             }
         }

@@ -1067,14 +1067,20 @@ mod tests {
                 RemoteWheelSlice {
                     label: "look".to_string(),
                     color: None,
+                    span: None,
+                    inner: Some(65),
                     slices: vec![],
                 },
                 RemoteWheelSlice {
                     label: "stance".to_string(),
                     color: Some("#2e8b57".to_string()),
+                    span: Some(120.0),
+                    inner: None,
                     slices: vec![RemoteWheelSlice {
                         label: "defensive".to_string(),
                         color: None,
+                        span: None,
+                        inner: None,
                         slices: vec![],
                     }],
                 },
@@ -1093,6 +1099,7 @@ mod tests {
                 retract_delta: 10,
             },
             wheel_stick: std::iter::once(("exits".to_string(), "right".to_string())).collect(),
+            wheel_start: std::iter::once(("combat".to_string(), -30.0_f32)).collect(),
         };
         let json: serde_json::Value =
             serde_json::from_str(&delta(&RemoteDelta::Wheels(Arc::new(w)), 5)).unwrap();
@@ -1110,6 +1117,13 @@ mod tests {
         assert_eq!(json["d"]["tuning"]["edge_threshold"], 90);
         assert_eq!(json["d"]["tuning"]["retract_delta"], 10);
         assert_eq!(json["d"]["wheel_stick"]["exits"], "right");
+        // Variable-width fields ship: explicit spans/inners per slice
+        // (absent = even share / global deadzone) and per-wheel start.
+        assert_eq!(json["d"]["default"][1]["span"], 120.0);
+        assert_eq!(json["d"]["default"][0]["inner"], 65);
+        assert!(json["d"]["default"][0].get("span").is_none());
+        assert!(json["d"]["default"][1].get("inner").is_none());
+        assert_eq!(json["d"]["wheel_start"]["combat"], -30.0);
     }
 
     #[test]

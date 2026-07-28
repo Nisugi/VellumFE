@@ -1299,8 +1299,7 @@ impl WheelView {
         let back = WheelSlice {
             label: "◂ Back".to_string(),
             command: BACK_COMMAND.to_string(),
-            color: None,
-            slices: Vec::new(),
+            ..Default::default()
         };
         // Assemble as [real..., Back] then rotate right so Back moves from
         // the last seat to the anchor seat.
@@ -1445,8 +1444,7 @@ mod wheel_tests {
         WheelSlice {
             label: label.to_string(),
             command: label.to_string(),
-            color: None,
-            slices: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1454,8 +1452,8 @@ mod wheel_tests {
         WheelSlice {
             label: label.to_string(),
             command: String::new(),
-            color: None,
             slices: children,
+            ..Default::default()
         }
     }
 

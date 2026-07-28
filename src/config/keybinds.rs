@@ -193,7 +193,7 @@ pub enum KeyAction {
 /// One slice of the controller radial wheel: a label drawn on the wheel
 /// and either a command to fire (game text or dot-command) or a child
 /// ring of slices (a folder — opened with South while the wheel is held).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WheelSlice {
     pub label: String,
     #[serde(default)]
@@ -202,6 +202,19 @@ pub struct WheelSlice {
     /// while aimed, so wheels can be color-coded by function.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// Optional wedge width in degrees. Slices with a span take exactly
+    /// that; whatever remains of the 360° splits evenly among span-less
+    /// slices, so a config with no spans keeps today's even ring. Sums
+    /// over 360 and sub-30° results warn and auto-normalize at load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<f32>,
+    /// Optional per-slice aim floor, percent of full deflection: below it
+    /// this slice can't be aimed or committed (a destructive action can
+    /// demand a deliberate throw). None falls back to the global
+    /// `[controller_tuning] deadzone`. Gates aiming only — firing stays
+    /// with the active fire mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inner: Option<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slices: Vec<WheelSlice>,
 }
@@ -377,6 +390,13 @@ pub struct WheelMeta {
     pub button: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stick: Option<String>,
+    /// Optional ring rotation in degrees (0 = up, clockwise) applied to
+    /// the whole top-level layout, so a wheel's slices can be anchored
+    /// wherever the thumb likes them. None = today's slice-0-at-top.
+    /// Inside folders the Back anchor keeps owning the rotation (Back
+    /// stays put across levels) unless `back_slice = "none"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<f32>,
 }
 
 /// Keybinds for menu system (popups, browsers, forms, editors)
@@ -1235,7 +1255,7 @@ impl Config {
         };
         let pruned: HashMap<&String, &WheelMeta> = meta
             .iter()
-            .filter(|(_, m)| m.button.is_some() || m.stick.is_some())
+            .filter(|(_, m)| m.button.is_some() || m.stick.is_some() || m.start.is_some())
             .collect();
         if pruned.is_empty() {
             toml_table.remove("controller_wheels_meta");
@@ -1304,6 +1324,12 @@ impl Config {
             }
             if let Some(color) = &slice.color {
                 t.insert("color", Value::from(color.clone()));
+            }
+            if let Some(span) = slice.span {
+                t.insert("span", Value::from(span as f64));
+            }
+            if let Some(inner) = slice.inner {
+                t.insert("inner", Value::from(inner as i64));
             }
             if !slice.slices.is_empty() {
                 t.insert("slices", Self::wheel_slices_to_inline(&slice.slices));
@@ -2061,19 +2087,17 @@ mod tests {
             WheelSlice {
                 label: "look".into(),
                 command: "look".into(),
-                color: None,
-                slices: vec![],
+                ..Default::default()
             },
             WheelSlice {
                 label: "stance".into(),
                 command: String::new(),
-                color: None,
                 slices: vec![WheelSlice {
                     label: "defensive".into(),
                     command: "stance defensive".into(),
-                    color: None,
-                    slices: vec![],
+                    ..Default::default()
                 }],
+                ..Default::default()
             },
         ];
         config.controller_wheels.insert(
@@ -2081,8 +2105,7 @@ mod tests {
             vec![WheelSlice {
                 label: "prep".into(),
                 command: "prep 101".into(),
-                color: None,
-                slices: vec![],
+                ..Default::default()
             }],
         );
         config
@@ -2112,8 +2135,7 @@ mod tests {
             vec![WheelSlice {
                 label: "hide".into(),
                 command: "hide".into(),
-                color: None,
-                slices: vec![],
+                ..Default::default()
             }],
         );
         assert_eq!(config.wheel_level_slices("", &[]).unwrap()[0].label, "hide");
@@ -2173,13 +2195,13 @@ mod tests {
         let stance = WheelSlice {
             label: "stance".into(),
             command: String::new(),
-            color: None,
             slices: vec![
-                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), color: None, slices: vec![] },
-                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), color: None, slices: vec![] },
+                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), ..Default::default() },
+                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), ..Default::default() },
             ],
+            ..Default::default()
         };
-        let leaf = |l: &str| WheelSlice { label: l.into(), command: l.into(), color: None, slices: vec![] };
+        let leaf = |l: &str| WheelSlice { label: l.into(), command: l.into(), ..Default::default() };
         let wheel = vec![leaf("look"), stance, leaf("exp"), leaf("health")];
 
         // Serialize the way the writer does, re-parse, and confirm the
@@ -2207,6 +2229,82 @@ mod tests {
     }
 
     #[test]
+    fn span_and_inner_round_trip_and_stay_absent_when_unset() {
+        // A slice with explicit span/inner survives the inline writer and
+        // re-parses identically; a slice without them re-serializes with
+        // NEITHER key — the byte-shape guarantee that keeps old configs
+        // untouched by the new fields.
+        let wheel = vec![
+            WheelSlice {
+                label: "attack".into(),
+                command: "attack".into(),
+                span: Some(120.0),
+                inner: Some(20),
+                ..Default::default()
+            },
+            WheelSlice { label: "hide".into(), command: "hide".into(), ..Default::default() },
+        ];
+        let mut doc = toml_edit::DocumentMut::new();
+        doc.insert(
+            "controller_wheel",
+            toml_edit::Item::Value(Config::wheel_slices_to_inline(&wheel)),
+        );
+        let serialized = doc.to_string();
+        assert!(serialized.contains("span = 120.0"), "explicit span written: {serialized}");
+        assert!(serialized.contains("inner = 20"), "explicit inner written: {serialized}");
+        // The span-less slice's inline table must not mention either key.
+        let hide_entry = serialized
+            .split("label = \"hide\"")
+            .nth(1)
+            .expect("hide slice present");
+        let hide_entry = hide_entry.split('}').next().unwrap();
+        assert!(!hide_entry.contains("span"), "no span on unset slice: {hide_entry}");
+        assert!(!hide_entry.contains("inner"), "no inner on unset slice: {hide_entry}");
+
+        let reparsed: Vec<WheelSlice> = {
+            let doc: toml::Value = toml::from_str(&serialized).expect("valid TOML");
+            doc.get("controller_wheel").unwrap().clone().try_into().expect("parse slices")
+        };
+        assert_eq!(reparsed, wheel, "wheel round-trips exactly");
+
+        // An old-style config (no new keys) parses to None for both.
+        let legacy: Vec<WheelSlice> = {
+            let doc: toml::Value =
+                toml::from_str("controller_wheel = [{ label = \"look\", command = \"look\" }]")
+                    .unwrap();
+            doc.get("controller_wheel").unwrap().clone().try_into().expect("legacy parses")
+        };
+        assert_eq!((legacy[0].span, legacy[0].inner), (None, None));
+    }
+
+    #[test]
+    fn wheel_meta_start_round_trips_and_survives_prune() {
+        // start serializes when set, is absent when unset, and — the prune
+        // trap — a meta with ONLY start must survive save (the predicate
+        // that drops empty metas must count it).
+        let meta = WheelMeta { button: None, stick: None, start: Some(-30.0) };
+        let serialized = toml::to_string(&meta).unwrap();
+        assert!(serialized.contains("start = -30.0"), "{serialized}");
+        assert!(!serialized.contains("button"), "{serialized}");
+        let back: WheelMeta = toml::from_str(&serialized).unwrap();
+        assert_eq!(back.start, Some(-30.0));
+
+        // Unset start emits nothing (old files stay byte-identical).
+        let plain = WheelMeta { button: Some("l3".into()), stick: None, start: None };
+        assert!(!toml::to_string(&plain).unwrap().contains("start"));
+
+        // Legacy metas (no start key) load with None.
+        let legacy: WheelMeta = toml::from_str("button = \"r3\"").unwrap();
+        assert_eq!(legacy.start, None);
+
+        // The save-path prune keeps a start-only meta (same predicate as
+        // save_controller_wheels_meta).
+        let keeps = |m: &WheelMeta| m.button.is_some() || m.stick.is_some() || m.start.is_some();
+        assert!(keeps(&meta), "start-only meta must not be pruned on save");
+        assert!(!keeps(&WheelMeta::default()));
+    }
+
+    #[test]
     fn wheel_written_at_root_survives_trailing_section() {
         // A doc that ends in a nested section header ([controller_shift.
         // south]) is exactly what bit the real config: a bare
@@ -2217,16 +2315,17 @@ mod tests {
         let existing = "[controller_shift]\ndpad_up = \"x\"\n\n[controller_shift.south]\nmacro_text = \"stand\\r\"\n";
         let mut doc: toml_edit::DocumentMut = existing.parse().unwrap();
         let stance = WheelSlice {
-            label: "stance".into(), command: String::new(), color: None,
+            label: "stance".into(), command: String::new(),
             slices: vec![
-                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), color: None, slices: vec![] },
-                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), color: None, slices: vec![] },
+                WheelSlice { label: "offensive".into(), command: "stance offensive".into(), ..Default::default() },
+                WheelSlice { label: "defensive".into(), command: "stance defensive".into(), ..Default::default() },
             ],
+            ..Default::default()
         };
         let wheel = vec![
-            WheelSlice { label: "look".into(), command: "look".into(), color: None, slices: vec![] },
+            WheelSlice { label: "look".into(), command: "look".into(), ..Default::default() },
             stance,
-            WheelSlice { label: "exp".into(), command: "exp".into(), color: None, slices: vec![] },
+            WheelSlice { label: "exp".into(), command: "exp".into(), ..Default::default() },
         ];
         Config::set_root_value_before_tables(
             &mut doc, "controller_wheel", Config::wheel_slices_to_inline(&wheel),

@@ -498,19 +498,18 @@ async fn wheels_flow_definitions_out_picks_in() {
         vellum_fe::config::WheelSlice {
             label: "look".into(),
             command: "look".into(),
-            color: None,
-            slices: vec![],
+            ..Default::default()
         },
         vellum_fe::config::WheelSlice {
             label: "stance".into(),
             command: String::new(),
-            color: None,
             slices: vec![vellum_fe::config::WheelSlice {
                 label: "defensive".into(),
                 command: "stance defensive".into(),
                 color: Some("#2e8b57".into()),
-                slices: vec![],
+                ..Default::default()
             }],
+            ..Default::default()
         },
     ];
     sink.set_wheels(&wheel_config);

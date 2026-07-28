@@ -1305,8 +1305,9 @@ impl AppCore {
                         .map(|(_, rest)| rest.to_string())
                         .unwrap_or_else(|| command.clone()),
                     command,
-                    color: None,
-                    slices: vec![],
+                    // Dynamic slices carry no span/inner/color: the portals
+                    // ring stays evenly spaced with the global dead zone.
+                    ..Default::default()
                 })
                 .collect();
             return (!slices.is_empty()).then_some(slices);
