@@ -14,6 +14,14 @@
 // Sentinel command marking the injected Back slice.
 const WHEEL_BACK = "__wheel_back__";
 
+// A Back seat by the slice itself: an explicit `back: true` slice from
+// config, or the synthesized seat carrying the sentinel. The machine keys
+// ascend/never-fire on this — never on the display index — so an explicit
+// Back works anywhere in the ring. Mirrors is_back_slice (Rust).
+function isBackSlice(slice) {
+  return !!(slice && (slice.back || slice.command === WHEEL_BACK));
+}
+
 // Minimum wedge width; mirrors WHEEL_MIN_SPAN_DEG (Rust). Explicit spans
 // below this are clamped up and the ring scaled to close.
 const MIN_SPAN_DEG = 30;
@@ -95,7 +103,11 @@ function buildWheelView(real, inFolder, backAnchor, start) {
   const startDeg = start || 0;
   const realSpans = () => real.map((s) => (s.span == null ? null : s.span));
 
-  if (!inFolder || backAnchor === "none") {
+  // An explicit `back: true` slice replaces the synthesized seat: the
+  // ring is used verbatim (the user owns order, width, and rotation), so
+  // the anchor rotation doesn't apply either. Mirrors WheelView::build.
+  const explicitBack = real.some((s) => s.back);
+  if (!inFolder || backAnchor === "none" || explicitBack) {
     return {
       slices: real.slice(),
       realIndex: real.map((_, i) => i),
@@ -146,7 +158,7 @@ function leafRealAt(view, display) {
   const real = view.realIndex[display];
   if (real == null) return null;
   const slice = view.slices[display];
-  if (!slice || slice.command === WHEEL_BACK || (slice.slices || []).length) return null;
+  if (!slice || isBackSlice(slice) || (slice.slices || []).length) return null;
   return real;
 }
 
@@ -193,8 +205,10 @@ function wheelAimStep(ui, view, timing, x, yUp, now) {
 
   const dwelt = now - (ui.candidateSince == null ? now : ui.candidateSince);
   const real = view.realIndex[candidate];
-  if (real == null) {
-    // Back slice: auto-ascend once the nav dwell elapses.
+  const slice = view.slices[candidate];
+  // Back seat — synthesized (realIndex null) or an explicit back slice:
+  // auto-ascend once the nav dwell elapses, never fire.
+  if (real == null || isBackSlice(slice)) {
     if (dwelt >= timing.navMs) {
       ui.path.pop();
       ui.aimed = null;
@@ -208,7 +222,6 @@ function wheelAimStep(ui, view, timing, x, yUp, now) {
 
   // A real slice. Folder-ness reads the DISPLAY seat — view.slices is the
   // rotated ring; `real` is only for path.push on descend.
-  const slice = view.slices[candidate];
   if ((slice.slices || []).length) {
     // Folders always descend on dwell — never fired by edge/retract.
     if (dwelt >= timing.navMs) {
@@ -257,6 +270,7 @@ function wheelAimStep(ui, view, timing, x, yUp, now) {
 const WheelCore = {
   WHEEL_BACK,
   MIN_SPAN_DEG,
+  isBackSlice,
   resolveSpans,
   seatIndexAtAngle,
   seatAtWithInner,

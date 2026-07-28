@@ -63,10 +63,12 @@ const TIMING_BASE = { deadzone: 0.5, aimMs: 150, navMs: 150, edgeThreshold: 0.9,
 
 for (const sc of data.scenarios) {
   const folders = sc.ring.folders || [];
+  const backs = sc.ring.backs || [];
   const spans = sc.ring.spans || {};
   const inners = sc.ring.inner || {};
   const real = sc.ring.labels.map((label, i) => {
     const slice = folders.includes(i) ? { label, slices: [{ label: "child" }] } : { label };
+    if (backs.includes(i)) slice.back = true;
     if (spans[i] != null) slice.span = spans[i];
     if (inners[i] != null) slice.inner = inners[i];
     return slice;

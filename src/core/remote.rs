@@ -181,6 +181,10 @@ pub struct RemoteWheelSlice {
     /// global deadzone from tuning.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inner: Option<u8>,
+    /// An explicit "go up one level" seat (see WheelSlice::back); the
+    /// phone's view builder skips its synthesized Back when one ships.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub back: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub slices: Vec<RemoteWheelSlice>,
 }
@@ -198,6 +202,7 @@ impl RemoteWheels {
                         .map(|c| config.resolve_palette_color(c)),
                     span: slice.span,
                     inner: slice.inner,
+                    back: slice.back,
                     slices: wire_slices(config, &slice.slices),
                 })
                 .collect()

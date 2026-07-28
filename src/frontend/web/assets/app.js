@@ -1633,7 +1633,7 @@ function renderWheel() {
   );
   const aimedSlice = aimed !== null ? slices[aimed] : null;
   const hint = aimedSlice
-    ? aimedSlice.command === WHEEL_BACK
+    ? WheelCore.isBackSlice(aimedSlice)
       ? "dwell to go back"
       : (aimedSlice.slices || []).length
         ? "dwell to open"
@@ -2292,8 +2292,8 @@ function handleGamepadButton(index) {
       const view = wheelView(key, path);
       if (!view) return;
       const real = view.realIndex[display];
-      if (real == null) {
-        // Back slice.
+      if (real == null || WheelCore.isBackSlice(view.slices[display])) {
+        // Back seat — synthesized or an explicit back slice.
         if (gpWheel.path.length) {
           gpWheel.path.pop();
           gpWheel.aimed = null;

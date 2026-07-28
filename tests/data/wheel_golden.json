@@ -212,6 +212,57 @@
         { "t": 200, "x": 0.0, "y": 0.9 }
       ],
       "expect": { "aimed": 0, "fired": null, "releaseReal": 0 }
+    },
+    {
+      "name": "explicit_back_ring_ignores_the_anchor_rotation",
+      "fireMode": "release",
+      "ring": {
+        "labels": ["a", "back", "b"],
+        "folders": [],
+        "backs": [1],
+        "inFolder": true,
+        "anchor": "down"
+      },
+      "initialPath": [0],
+      "frames": [
+        { "t": 0, "x": 0.0, "y": 1.0 },
+        { "t": 200, "x": 0.0, "y": 1.0 }
+      ],
+      "expect": { "aimed": 0, "path": [0], "fired": null, "releaseReal": 0 }
+    },
+    {
+      "name": "explicit_back_dwell_ascends",
+      "fireMode": "release",
+      "ring": {
+        "labels": ["a", "back", "b"],
+        "folders": [],
+        "backs": [1],
+        "inFolder": true,
+        "anchor": "down"
+      },
+      "initialPath": [0],
+      "frames": [
+        { "t": 0, "x": 0.8660254, "y": -0.5 },
+        { "t": 200, "x": 0.8660254, "y": -0.5 }
+      ],
+      "expect": { "aimed": null, "path": [], "fired": null }
+    },
+    {
+      "name": "explicit_back_short_dwell_neither_fires_nor_ascends",
+      "fireMode": "release",
+      "ring": {
+        "labels": ["a", "back", "b"],
+        "folders": [],
+        "backs": [1],
+        "inFolder": true,
+        "anchor": "down"
+      },
+      "initialPath": [0],
+      "frames": [
+        { "t": 0, "x": 0.8660254, "y": -0.5 },
+        { "t": 140, "x": 0.8660254, "y": -0.5 }
+      ],
+      "expect": { "aimed": null, "path": [0], "fired": null, "releaseReal": null }
     }
   ]
 }

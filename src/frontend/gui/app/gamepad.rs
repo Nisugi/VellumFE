@@ -2419,6 +2419,10 @@ mod wheel_tests {
                 .as_array()
                 .map(|a| a.iter().map(|v| v.as_u64().unwrap() as usize).collect())
                 .unwrap_or_default();
+            let backs: Vec<usize> = ring["backs"]
+                .as_array()
+                .map(|a| a.iter().map(|v| v.as_u64().unwrap() as usize).collect())
+                .unwrap_or_default();
             let spans = ring["spans"].as_object();
             let inners = ring["inner"].as_object();
             let real: Vec<WheelSlice> = ring["labels"]
@@ -2433,6 +2437,10 @@ mod wheel_tests {
                     } else {
                         leaf(label)
                     };
+                    if backs.contains(&i) {
+                        slice.back = true;
+                        slice.command = String::new();
+                    }
                     let key = i.to_string();
                     if let Some(span) = spans.and_then(|m| m.get(&key)).and_then(|v| v.as_f64()) {
                         slice.span = Some(span as f32);

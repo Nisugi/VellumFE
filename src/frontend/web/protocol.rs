@@ -1069,6 +1069,7 @@ mod tests {
                     color: None,
                     span: None,
                     inner: Some(65),
+                    back: false,
                     slices: vec![],
                 },
                 RemoteWheelSlice {
@@ -1076,11 +1077,13 @@ mod tests {
                     color: Some("#2e8b57".to_string()),
                     span: Some(120.0),
                     inner: None,
+                    back: false,
                     slices: vec![RemoteWheelSlice {
                         label: "defensive".to_string(),
                         color: None,
                         span: None,
                         inner: None,
+                        back: false,
                         slices: vec![],
                     }],
                 },
