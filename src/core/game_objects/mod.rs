@@ -61,14 +61,24 @@ impl GameItem {
 
 /// Where an item currently lives. Mirrors Lich's per-item container id,
 /// including its pseudo-locations for non-container sources.
+///
+/// `Ground` and `RoomDesc` are deliberately distinct: Lich populates them
+/// from different stream sections (`GameObj.loot` from the "you also see"
+/// objs line vs `GameObj.new_room_desc` from `<a>` links inside the room
+/// description prose). foreach's `floor`/`ground`/`room` targets read the
+/// former; its `desc` target reads the latter. They are different sets —
+/// you pick up ground loot, you reference described scenery.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
     /// Inside a tracked container (bag, sack, ...), by container id.
     Container(String),
     /// Worn on the body.
     Worn,
-    /// On the ground in the current room.
+    /// On the ground in the current room ("you also see" objs line).
     Ground,
+    /// Linked inside the room description prose (scenery: fountains,
+    /// doors, signs). Referenceable but not ground loot.
+    RoomDesc,
     /// In a hand.
     Hand(Hand),
 }
@@ -122,7 +132,11 @@ pub struct GameObjects {
     containers: HashMap<String, Container>,
     /// Container insertion order for oldest-first eviction (cap growth).
     container_order: Vec<String>,
+    /// Pickable items on the ground (the "you also see" objs line).
     ground: Vec<GameItem>,
+    /// Scenery linked in the room description prose (Lich's room_desc);
+    /// referenceable but distinct from ground loot.
+    room_desc: Vec<GameItem>,
     worn: Vec<GameItem>,
     left_hand: Option<GameItem>,
     right_hand: Option<GameItem>,
@@ -212,6 +226,15 @@ impl GameObjects {
         }
     }
 
+    /// Scenery objects linked in the room description (Lich's room_desc).
+    /// Distinct from ground loot — see `Location::RoomDesc`.
+    pub fn set_room_desc(&mut self, items: Vec<GameItem>) {
+        if self.room_desc != items {
+            self.room_desc = items;
+            self.generation += 1;
+        }
+    }
+
     pub fn set_worn(&mut self, items: Vec<GameItem>) {
         if self.worn != items {
             self.worn = items;
@@ -252,6 +275,11 @@ impl GameObjects {
 
     pub fn ground(&self) -> &[GameItem] {
         &self.ground
+    }
+
+    /// Scenery objects from the room description (the `desc` target).
+    pub fn room_desc(&self) -> &[GameItem] {
+        &self.room_desc
     }
 
     pub fn worn(&self) -> &[GameItem] {
@@ -380,6 +408,23 @@ mod tests {
         );
         let carried: Vec<&str> = reg.carried().iter().map(|i| i.id.as_str()).collect();
         assert_eq!(carried, vec!["1", "2"]);
+    }
+
+    #[test]
+    fn ground_and_room_desc_are_separate_sets() {
+        // Lich populates these from different stream sections; foreach's
+        // floor/ground/room vs desc targets read them separately.
+        let mut reg = GameObjects::default();
+        reg.set_ground(vec![GameItem::new("1", "ring", "silver ring")]);
+        reg.set_room_desc(vec![GameItem::new("2", "fountain", "marble fountain")]);
+        assert_eq!(reg.ground().len(), 1);
+        assert_eq!(reg.room_desc().len(), 1);
+        assert_eq!(reg.ground()[0].id, "1");
+        assert_eq!(reg.room_desc()[0].id, "2");
+        // Setting one must not touch the other.
+        reg.set_ground(vec![]);
+        assert!(reg.ground().is_empty());
+        assert_eq!(reg.room_desc().len(), 1, "room_desc untouched");
     }
 
     #[test]
