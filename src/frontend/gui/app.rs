@@ -5364,7 +5364,9 @@ mod tests {
     }
 
     #[test]
-    fn test_should_filter_target_creature_filters_dead_and_excluded_nouns() {
+    fn test_is_valid_target_filters_dead_and_excluded_nouns() {
+        // Filtering is now canonical on Creature::is_valid_target; the GUI
+        // routes through it. Default excluded_nouns = ["arm", "coal"].
         let cfg = TargetListConfig::default();
         let dead_creature = Creature {
             name: "a dead goblin".to_string(),
@@ -5381,18 +5383,12 @@ mod tests {
             flags: None,
         };
 
-        assert!(VellumGuiApp::should_filter_target_creature(
-            &dead_creature,
-            &cfg
-        ));
-        assert!(VellumGuiApp::should_filter_target_creature(
-            &body_part_creature,
-            &cfg
-        ));
+        assert!(!dead_creature.is_valid_target(&cfg.excluded_nouns));
+        assert!(!body_part_creature.is_valid_target(&cfg.excluded_nouns));
     }
 
     #[test]
-    fn test_should_filter_target_creature_keeps_live_creatures() {
+    fn test_is_valid_target_keeps_live_creatures() {
         let cfg = TargetListConfig::default();
         let live_creature = Creature {
             name: "a forest troll".to_string(),
@@ -5402,10 +5398,7 @@ mod tests {
             flags: None,
         };
 
-        assert!(!VellumGuiApp::should_filter_target_creature(
-            &live_creature,
-            &cfg
-        ));
+        assert!(live_creature.is_valid_target(&cfg.excluded_nouns));
     }
 
     fn migration_test_layout() -> crate::config::Layout {

@@ -898,13 +898,20 @@ impl RemoteStateSnapshot {
                 .collect(),
             injuries: game_state.injuries.clone(),
             targets: {
-                // dDBTarget narrows room creatures to the targetable set
-                // (direct mode); when absent, every room creature counts.
-                let ids = &game_state.target_list.target_ids;
+                // Lich Creature.targets, matching the TUI/GUI widgets: a room
+                // creature with <crtrStatus> hostile==1 that also passes the
+                // valid_target? filter (dead/animated/appendage). The stale
+                // dDBTarget dropdown no longer gates membership.
+                // NOTE: excluded_nouns is passed empty here — from_game_state
+                // has no config handle. Web never applied it before, so this
+                // is no regression; thread config in to honor it fully.
                 game_state
                     .room_creatures
                     .iter()
-                    .filter(|c| ids.is_empty() || ids.contains(&c.id))
+                    .filter(|c| {
+                        c.flags.as_ref().is_some_and(|f| f.hostile)
+                            && c.is_valid_target(&[])
+                    })
                     .map(|c| RemoteTarget {
                         id: c.id.clone(),
                         name: c.name.clone(),
