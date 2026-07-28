@@ -226,6 +226,7 @@ pub struct CountdownData {
     pub label: String,         // Display label
     pub countdown_id: String,  // Feed id (XML event id), case-sensitive
     pub color: Option<String>, // Fill color override; None = id-based default
+    pub show_when_zero: bool,  // Keep visible at rest as "label: 0"; else hide
 }
 
 /// Compass directions

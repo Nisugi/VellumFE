@@ -2268,7 +2268,7 @@ impl AppCore {
                     })
                 }
                 WidgetType::Countdown => {
-                    let (label, countdown_id, color) =
+                    let (label, countdown_id, color, show_when_zero) =
                         if let crate::config::WindowDef::Countdown { data, .. } = window_def {
                             (
                                 data.label
@@ -2278,9 +2278,10 @@ impl AppCore {
                                     .clone()
                                     .unwrap_or_else(|| window_def.name().to_string()),
                                 data.color.clone(),
+                                data.show_when_zero.unwrap_or(false),
                             )
                         } else {
-                            (title.to_string(), window_def.name().to_string(), None)
+                            (title.to_string(), window_def.name().to_string(), None, false)
                         };
 
                     WindowContent::Countdown(CountdownData {
@@ -2288,6 +2289,7 @@ impl AppCore {
                         label,
                         countdown_id,
                         color,
+                        show_when_zero,
                     })
                 }
                 WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
@@ -2612,7 +2614,7 @@ impl AppCore {
                 })
             }
             WidgetType::Countdown => {
-                let (label, countdown_id, color) =
+                let (label, countdown_id, color, show_when_zero) =
                     if let crate::config::WindowDef::Countdown { data, .. } = window_def {
                         (
                             data.label.clone().unwrap_or_else(|| title.to_string()),
@@ -2620,15 +2622,17 @@ impl AppCore {
                                 .clone()
                                 .unwrap_or_else(|| window_def.name().to_string()),
                             data.color.clone(),
+                            data.show_when_zero.unwrap_or(false),
                         )
                     } else {
-                        (title.to_string(), window_def.name().to_string(), None)
+                        (title.to_string(), window_def.name().to_string(), None, false)
                     };
                 WindowContent::Countdown(CountdownData {
                     end_time: 0,
                     label,
                     countdown_id,
                     color,
+                    show_when_zero,
                 })
             }
             WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
@@ -4532,6 +4536,7 @@ impl AppCore {
                 label: name.to_string(),
                 countdown_id: name.to_string(),
                 color: None,
+                show_when_zero: false,
             }),
             WidgetType::Map => WindowContent::Map(crate::data::MapData::default()),
             WidgetType::Compass => WindowContent::Compass(CompassData {

@@ -376,6 +376,7 @@ impl WindowDef {
                     icon: None,
                     color: None,
                     background_color: None,
+                    show_when_zero: None,
                 },
             },
             "compass" => WindowDef::Compass {

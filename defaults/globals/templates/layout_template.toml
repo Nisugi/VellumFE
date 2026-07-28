@@ -422,6 +422,8 @@
 # icon = "◼"                   # Fill character (Nerd Font icon, optional)
 # color = "#ffff00"            # Timer color (optional)
 # background_color = "#333333" # Background color (optional)
+# show_when_zero = true        # Keep visible at rest as "RT: 0" (optional;
+#                              # default false = hide when the timer ends)
 
 
 # ------------------------------------------------------------

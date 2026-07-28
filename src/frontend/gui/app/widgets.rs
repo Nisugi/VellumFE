@@ -1280,8 +1280,8 @@ impl VellumGuiApp {
 
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         let bar_width = ui.available_width().max(40.0);
-        if remaining == 0 {
-            // Idle timers render blank, matching the TUI.
+        if remaining == 0 && !countdown.show_when_zero {
+            // Idle timers render blank unless configured to stay visible.
             ui.allocate_space(Vec2::new(bar_width, bar_height));
             return;
         }

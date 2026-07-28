@@ -538,6 +538,10 @@ pub struct CountdownWidgetData {
     pub color: Option<String>,
     #[serde(default)]
     pub background_color: Option<String>,
+    /// Keep the timer visible at rest, showing "label: 0" with an empty bar,
+    /// instead of hiding when it reaches zero. Default false (hide on zero).
+    #[serde(default)]
+    pub show_when_zero: Option<bool>,
 }
 
 /// Compass widget specific data

@@ -5980,6 +5980,7 @@ mod tests {
             label: "Stun".to_string(),
             countdown_id: "stuntime".to_string(),
             color: None,
+            show_when_zero: false,
         });
         ui_state.windows.insert("stuntime".to_string(), ws);
 
@@ -6051,6 +6052,7 @@ mod tests {
             label: "Cataclysm".to_string(),
             countdown_id: "dark-cataclyst".to_string(),
             color: None,
+            show_when_zero: false,
         });
         ui_state.windows.insert("cataclysm".to_string(), ws);
 

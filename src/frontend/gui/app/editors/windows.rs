@@ -185,6 +185,8 @@ struct FeedFields {
     numbers_only: bool,
     /// Progress only: show just the current value.
     current_only: bool,
+    /// Countdown only: stay visible at rest showing "label: 0".
+    show_when_zero: bool,
 }
 
 /// Valid ActiveEffects feed categories (matched exactly by the router).
@@ -426,6 +428,7 @@ impl VellumGuiApp {
                     color: countdown.color.clone().unwrap_or_default(),
                     numbers_only: false,
                     current_only: false,
+                    show_when_zero: countdown.show_when_zero,
                 }),
                 WindowContent::Progress(progress) => Some(FeedFields {
                     kind: FeedKind::Progress,
@@ -434,6 +437,7 @@ impl VellumGuiApp {
                     color: progress.color.clone().unwrap_or_default(),
                     numbers_only: progress.numbers_only,
                     current_only: progress.current_only,
+                    show_when_zero: false,
                 }),
                 _ => None,
             };
@@ -542,6 +546,7 @@ impl VellumGuiApp {
                     } else {
                         Some(color.to_string())
                     };
+                    countdown.show_when_zero = feed.show_when_zero;
                 }
                 (WindowContent::Progress(progress), FeedKind::Progress) => {
                     progress.progress_id = id.clone();
@@ -583,6 +588,7 @@ impl VellumGuiApp {
                         data.id = opt(&id);
                         data.label = opt(&label);
                         data.color = opt(feed.color.trim());
+                        data.show_when_zero = Some(feed.show_when_zero);
                     }
                     (crate::config::WindowDef::Progress { data, .. }, FeedKind::Progress) => {
                         data.id = opt(&id);
@@ -938,6 +944,15 @@ impl VellumGuiApp {
                                     ui.checkbox(&mut feed.current_only, "value only")
                                         .on_hover_text("Show just the current value.");
                                 });
+                                ui.end_row();
+                            }
+                            if feed.kind == FeedKind::Countdown {
+                                ui.label("At rest");
+                                ui.checkbox(&mut feed.show_when_zero, "stay visible")
+                                    .on_hover_text(
+                                        "Keep the timer visible at zero (e.g. \"RT: 0\" \
+                                         with an empty bar) instead of hiding it.",
+                                    );
                                 ui.end_row();
                             }
                         }

@@ -25,7 +25,8 @@ pub struct Countdown {
     text_color: Option<String>,
     background_color: Option<String>,
     transparent_background: bool,
-    icon: char, // Character to use for countdown blocks
+    icon: char,          // Character to use for countdown blocks
+    show_when_zero: bool, // Keep "label 0" visible at rest instead of hiding
 }
 
 impl Countdown {
@@ -42,11 +43,18 @@ impl Countdown {
             background_color: None,
             transparent_background: false,
             icon: '█', // Default to filled block
+            show_when_zero: false,
         }
     }
 
     pub fn set_icon(&mut self, icon: char) {
         self.icon = icon;
+    }
+
+    /// When true, the timer stays visible at rest showing "label  0" (no
+    /// blocks) instead of hiding when it reaches zero.
+    pub fn set_show_when_zero(&mut self, show: bool) {
+        self.show_when_zero = show;
     }
 
     pub fn set_border_config(
@@ -201,8 +209,10 @@ impl Countdown {
             }
         }
 
-        // If countdown is 0, leave it blank (invisible)
-        if remaining == 0 {
+        // If countdown is 0, leave it blank (invisible) unless configured to
+        // stay visible — then fall through to render " 0" with no blocks
+        // (blocks_to_show computes to 0 for remaining == 0).
+        if remaining == 0 && !self.show_when_zero {
             return;
         }
 
@@ -302,6 +312,38 @@ mod tests {
 
         let line = buffer_line(&buf, 0, area.width);
         assert!(line.contains('#'));
+    }
+
+    #[test]
+    fn test_render_zero_visible_when_show_when_zero() {
+        let mut countdown = Countdown::new("RT");
+        countdown.set_border_config(false, None, None);
+        countdown.set_show_when_zero(true);
+        countdown.set_end_time(now_seconds() - 1); // elapsed => remaining 0
+
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        let theme = crate::theme::AppTheme::default();
+        countdown.render(area, &mut buf, 0, &theme);
+
+        // Shows the right-aligned "0" (no blocks) instead of going blank.
+        let line = buffer_line(&buf, 0, area.width);
+        assert_eq!(line.trim(), "0", "got: {:?}", line);
+    }
+
+    #[test]
+    fn test_render_zero_hidden_by_default() {
+        // Default (show_when_zero = false) still blanks at rest.
+        let mut countdown = Countdown::new("RT");
+        countdown.set_border_config(false, None, None);
+        countdown.set_end_time(now_seconds() - 1);
+
+        let area = Rect::new(0, 0, 8, 1);
+        let mut buf = Buffer::empty(area);
+        let theme = crate::theme::AppTheme::default();
+        countdown.render(area, &mut buf, 0, &theme);
+
+        assert!(buffer_line(&buf, 0, area.width).trim().is_empty());
     }
 
     #[test]

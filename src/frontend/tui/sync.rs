@@ -733,6 +733,8 @@ impl TuiFrontend {
                             if let Some(icon) = data.icon {
                                 countdown_widget.set_icon(icon);
                             }
+                            countdown_widget
+                                .set_show_when_zero(data.show_when_zero.unwrap_or(false));
                             let text_color = data.color.clone().or_else(|| colors.text.clone());
                             countdown_widget.set_text_color(text_color);
                             let bg_color = data

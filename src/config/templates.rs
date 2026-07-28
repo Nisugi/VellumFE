@@ -705,6 +705,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    show_when_zero: None,
                 },
             }),
 
@@ -726,6 +727,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    show_when_zero: None,
                 },
             }),
 
@@ -747,6 +749,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    show_when_zero: None,
                 },
             }),
 
@@ -767,6 +770,7 @@ impl Config {
                     icon: Some(default_countdown_icon().chars().next().unwrap_or('█')),
                     color: None,
                     background_color: None,
+                    show_when_zero: None,
                 },
             }),
 
