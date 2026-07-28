@@ -90,6 +90,29 @@ pub struct HotbarIcon {
     /// Border width in pixels (1-10); defaults to 2 when `border` is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border_width: Option<u8>,
+    /// Gradient end color; when set the border blends border→border_end
+    /// along `border_dir` (barbar's cg variant, drawn not baked).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_end: Option<String>,
+    /// Gradient direction; only meaningful with `border_end`.
+    #[serde(default)]
+    pub border_dir: GradientDir,
+}
+
+/// Gradient direction for two-color icon borders (barbar's cg dirs:
+/// h/v/d/b/r/s).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientDir {
+    #[default]
+    Horizontal,
+    Vertical,
+    /// Top-left toward bottom-right (barbar `d`).
+    DiagonalDown,
+    /// Bottom-left toward top-right (barbar `b`).
+    DiagonalUp,
+    Radial,
+    Square,
 }
 
 /// How the GUI renders a button's face. TUI ignores this (text only).
@@ -126,6 +149,12 @@ pub struct HotbarButtonState {
     /// state is active this replaces the button-level `countdown`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub countdown: Option<HotbarCountdownSource>,
+    /// Per-state command override (barbar-style): sent instead of the
+    /// button's command while this state is active. Plain literal text —
+    /// dynamic behavior belongs in the command itself (e.g. `;eq ...`,
+    /// which Lich intercepts and evaluates).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
 }
 
 /// Appearance overrides; unset fields fall through to the button's
@@ -555,7 +584,10 @@ dim = true
             cell = 5
             border = "#00ff00"
             border_width = 3
+            border_end = "#004400"
+            border_dir = "radial"
             [[bars.buttons.states]]
+            command = ";eq Spell[906].force_incant"
             [bars.buttons.states.when]
             type = "rt_active"
             [bars.buttons.states.style]
@@ -575,13 +607,20 @@ dim = true
         assert!(!icon.grayscale);
         assert_eq!(icon.border.as_deref(), Some("#00ff00"));
         assert_eq!(icon.border_width, Some(3));
+        assert_eq!(icon.border_end.as_deref(), Some("#004400"));
+        assert_eq!(icon.border_dir, GradientDir::Radial);
         let state = &button.states[0];
         let state_icon = state.style.icon.as_ref().expect("state icon");
         assert_eq!((state_icon.cell, state_icon.grayscale), (6, true));
+        assert_eq!(state_icon.border_dir, GradientDir::Horizontal); // default
         assert!(matches!(
             state.countdown,
             Some(HotbarCountdownSource::Roundtime)
         ));
+        assert_eq!(
+            state.command.as_deref(),
+            Some(";eq Spell[906].force_incant")
+        );
 
         // Round-trips losslessly like the rest of the schema.
         let serialized = toml::to_string_pretty(&config).expect("serialize");

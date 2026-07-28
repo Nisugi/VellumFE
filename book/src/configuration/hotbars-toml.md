@@ -95,7 +95,9 @@ dim = true
 A state may also carry its own `[bars.buttons.states.countdown]` (same
 schema as the button-level countdown); while the state is active it
 replaces the button-level source — e.g. show the cooldown timer only in
-the "on cooldown" state.
+the "on cooldown" state. Likewise `command = "..."` on a state replaces
+the button's command while active (literal text — `;eq ...` commands are
+evaluated by Lich, so dynamic behavior belongs in the command itself).
 
 ## Icons (GUI)
 
@@ -128,6 +130,9 @@ cell = 5                      # 1-based cell index
 grayscale = false             # desaturate (e.g. for a "not ready" look)
 border = "#00ff00"            # optional solid border over the icon
 border_width = 3              # pixels, 1-10 (default 2)
+border_end = "#004400"        # optional: gradient border toward this color
+border_dir = "radial"         # horizontal (default) | vertical |
+                              # diagonal_down | diagonal_up | radial | square
 ```
 
 With `icon_mode = "icon"` the label moves into the hover tooltip. States

@@ -58,7 +58,11 @@ pub fn resolve_bar(bar: &HotbarDef, gs: &GameState, now_server: i64) -> Vec<Reso
             ResolvedHotbarButton {
                 id: button.id.clone(),
                 label: pick(|s| s.label.clone()).unwrap_or_else(|| button.label.clone()),
-                command: button.command.clone(),
+                // Active state's command override wins (literal text; Lich
+                // evaluates `;eq ...` commands itself).
+                command: matched
+                    .and_then(|s| s.command.clone())
+                    .unwrap_or_else(|| button.command.clone()),
                 tooltip: button.tooltip.clone(),
                 hotkey: button.hotkey.clone(),
                 fg: pick(|s| s.fg.clone()),
@@ -443,6 +447,7 @@ mod tests {
                         ..Default::default()
                     },
                     countdown: None,
+                    command: None,
                 },
                 HotbarButtonState {
                     when: HotbarCondition::Indicator {
@@ -454,6 +459,7 @@ mod tests {
                         ..Default::default()
                     },
                     countdown: None,
+                    command: None,
                 },
             ])],
         };
@@ -490,6 +496,7 @@ mod tests {
                 ..Default::default()
             },
             countdown: None,
+            command: None,
         }]);
         button.icon = Some(icon(1));
         button.icon_mode = IconMode::Icon;
@@ -518,6 +525,7 @@ mod tests {
             when: HotbarCondition::RtActive,
             style: HotbarStyle::default(),
             countdown: Some(HotbarCountdownSource::Roundtime),
+            command: None,
         }]);
         button.countdown = Some(HotbarCountdownSource::Casttime);
         let bar = HotbarDef {
@@ -539,6 +547,31 @@ mod tests {
         idle.casttime_end = Some(NOW + 30);
         let resolved = resolve_bar(&bar, &idle, NOW);
         assert_eq!(resolved[0].countdown_secs, Some(30));
+    }
+
+    #[test]
+    fn state_command_overrides_button_command() {
+        let button = button_with_states(vec![HotbarButtonState {
+            when: HotbarCondition::RtActive,
+            style: HotbarStyle::default(),
+            countdown: None,
+            command: Some(";eq Spell[906].force_incant".to_string()),
+        }]);
+        let bar = HotbarDef {
+            name: "t".to_string(),
+            title: None,
+            buttons: vec![button],
+        };
+
+        // State active: its command replaces the button's.
+        let mut gs = GameState::new();
+        gs.roundtime_end = Some(NOW + 5);
+        let resolved = resolve_bar(&bar, &gs, NOW);
+        assert_eq!(resolved[0].command, ";eq Spell[906].force_incant");
+
+        // Idle: button command.
+        let resolved = resolve_bar(&bar, &GameState::new(), NOW);
+        assert_eq!(resolved[0].command, "look");
     }
 
     #[test]

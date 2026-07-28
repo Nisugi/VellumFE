@@ -944,6 +944,7 @@ fn render_states_editor(
                     ..Default::default()
                 },
                 countdown: None,
+                command: None,
             });
             changed = true;
         }
@@ -989,6 +990,26 @@ fn render_states_editor(
                 &mut hb_state.countdown,
                 suggestions,
             );
+            ui.horizontal(|ui| {
+                ui.label("Command while active:");
+                let mut cmd = hb_state.command.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut cmd)
+                            .hint_text("(button command)")
+                            .desired_width(220.0),
+                    )
+                    .on_hover_text(
+                        "Sent instead of the button's command while this state \
+                         is active. Literal text; `;eq ...` commands are \
+                         evaluated by Lich.",
+                    )
+                    .changed()
+                {
+                    hb_state.command = (!cmd.trim().is_empty()).then(|| cmd.clone());
+                    changed = true;
+                }
+            });
         });
     }
 
@@ -1448,6 +1469,52 @@ fn render_icon_editor(
             }
         }
     });
+
+    // Gradient border: second color + direction (barbar's cg variant).
+    if let Some(icon) = icon.as_mut() {
+        if icon.border.is_some() {
+            ui.horizontal(|ui| {
+                ui.label("gradient to:");
+                let mut end = icon.border_end.clone().unwrap_or_default();
+                let before = end.clone();
+                color_field(ui, &mut end);
+                if end != before {
+                    icon.border_end = (!end.trim().is_empty()).then(|| end.clone());
+                    changed = true;
+                }
+                if icon.border_end.is_some() {
+                    use crate::config::GradientDir;
+                    const DIRS: &[(GradientDir, &str)] = &[
+                        (GradientDir::Horizontal, "horizontal"),
+                        (GradientDir::Vertical, "vertical"),
+                        (GradientDir::DiagonalDown, "diagonal down"),
+                        (GradientDir::DiagonalUp, "diagonal up"),
+                        (GradientDir::Radial, "radial"),
+                        (GradientDir::Square, "square"),
+                    ];
+                    let current = DIRS
+                        .iter()
+                        .find(|(d, _)| *d == icon.border_dir)
+                        .map(|(_, t)| *t)
+                        .unwrap_or("horizontal");
+                    egui::ComboBox::from_id_salt(format!("{id}_grad_dir"))
+                        .selected_text(current)
+                        .show_ui(ui, |ui| {
+                            for (dir, text) in DIRS {
+                                if ui
+                                    .selectable_label(icon.border_dir == *dir, *text)
+                                    .clicked()
+                                    && icon.border_dir != *dir
+                                {
+                                    icon.border_dir = *dir;
+                                    changed = true;
+                                }
+                            }
+                        });
+                }
+            });
+        }
+    }
 
     // Clickable cell grid: barbar's "Browse Icons", inline. Collapsed by
     // default so long sheets don't dominate the form.

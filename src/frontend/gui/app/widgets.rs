@@ -2718,25 +2718,29 @@ impl VellumGuiApp {
             painter.galley(pos, galley, ui.visuals().text_color());
         }
 
-        // Solid border variant (barbar's c_HEX / bw_N, drawn not baked).
-        if let Some(color) = button
-            .icon
-            .as_ref()
-            .and_then(|icon| icon.border.as_deref())
-            .and_then(parse_hex_color)
-        {
-            let bw = button
-                .icon
-                .as_ref()
-                .and_then(|icon| icon.border_width)
-                .unwrap_or(2)
-                .clamp(1, 10) as f32;
-            painter.rect_stroke(
-                icon_rect.shrink(bw / 2.0),
-                visuals.corner_radius,
-                egui::Stroke::new(bw, color),
-                egui::StrokeKind::Inside,
-            );
+        // Border variant (barbar's c_HEX / cg_.. / bw_N, drawn not baked).
+        if let Some(icon) = button.icon.as_ref() {
+            if let Some(color) = icon.border.as_deref().and_then(parse_hex_color) {
+                let bw = icon.border_width.unwrap_or(2).clamp(1, 10) as f32;
+                match icon.border_end.as_deref().and_then(parse_hex_color) {
+                    Some(end) => Self::paint_gradient_border(
+                        painter,
+                        icon_rect,
+                        bw,
+                        color,
+                        end,
+                        icon.border_dir,
+                    ),
+                    None => {
+                        painter.rect_stroke(
+                            icon_rect.shrink(bw / 2.0),
+                            visuals.corner_radius,
+                            egui::Stroke::new(bw, color),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                }
+            }
         }
 
         // Countdown overlay: bottom-center of the icon, barbar-style.
@@ -2759,6 +2763,90 @@ impl VellumGuiApp {
         }
 
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    }
+
+    /// Gradient position 0..1 at `pos` within `rect`, per barbar's cg
+    /// direction formulas (horizontal px/w, diagonal averages, radial
+    /// center distance, square Chebyshev distance).
+    fn gradient_t(dir: crate::config::GradientDir, pos: egui::Pos2, rect: egui::Rect) -> f32 {
+        use crate::config::GradientDir;
+        let w = rect.width().max(1.0);
+        let h = rect.height().max(1.0);
+        let px = pos.x - rect.min.x;
+        let py = pos.y - rect.min.y;
+        let t = match dir {
+            GradientDir::Horizontal => px / w,
+            GradientDir::Vertical => py / h,
+            GradientDir::DiagonalDown => (px / w + py / h) / 2.0,
+            GradientDir::DiagonalUp => ((w - px) / w + py / h) / 2.0,
+            GradientDir::Radial => {
+                let c = rect.center();
+                let max = (w * w + h * h).sqrt() / 2.0;
+                pos.distance(c) / max.max(1.0)
+            }
+            GradientDir::Square => {
+                let c = rect.center();
+                ((pos.x - c.x).abs() / (w / 2.0)).max((pos.y - c.y).abs() / (h / 2.0))
+            }
+        };
+        t.clamp(0.0, 1.0)
+    }
+
+    /// Two-color border drawn as short filled strips along the rect's four
+    /// edges, each tinted by the gradient at its midpoint. Segments give
+    /// uniform handling of all six directions (a mesh can't express the
+    /// radial/square ones per-vertex).
+    fn paint_gradient_border(
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        bw: f32,
+        start: egui::Color32,
+        end: egui::Color32,
+        dir: crate::config::GradientDir,
+    ) {
+        const SEGMENTS: u32 = 16;
+        let lerp = |t: f32| -> egui::Color32 {
+            let a = egui::Rgba::from(start);
+            let b = egui::Rgba::from(end);
+            egui::Color32::from(a * (1.0 - t) + b * t)
+        };
+        let mut strip = |seg: egui::Rect| {
+            painter.rect_filled(seg, 0.0, lerp(Self::gradient_t(dir, seg.center(), rect)));
+        };
+        let step = rect.width() / SEGMENTS as f32;
+        for i in 0..SEGMENTS {
+            let x0 = rect.min.x + i as f32 * step;
+            let x1 = if i + 1 == SEGMENTS { rect.max.x } else { x0 + step };
+            strip(egui::Rect::from_min_max(
+                egui::pos2(x0, rect.min.y),
+                egui::pos2(x1, rect.min.y + bw),
+            ));
+            strip(egui::Rect::from_min_max(
+                egui::pos2(x0, rect.max.y - bw),
+                egui::pos2(x1, rect.max.y),
+            ));
+        }
+        // Side strips skip the corner rows the top/bottom already painted.
+        let inner_h = (rect.height() - 2.0 * bw).max(0.0);
+        let step = inner_h / SEGMENTS as f32;
+        if step > 0.0 {
+            for i in 0..SEGMENTS {
+                let y0 = rect.min.y + bw + i as f32 * step;
+                let y1 = if i + 1 == SEGMENTS {
+                    rect.max.y - bw
+                } else {
+                    y0 + step
+                };
+                strip(egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x, y0),
+                    egui::pos2(rect.min.x + bw, y1),
+                ));
+                strip(egui::Rect::from_min_max(
+                    egui::pos2(rect.max.x - bw, y0),
+                    egui::pos2(rect.max.x, y1),
+                ));
+            }
+        }
     }
 
     pub(super) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
