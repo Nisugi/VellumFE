@@ -1104,73 +1104,10 @@ fn render_slice_rows(
     for i in 0..slices.len() {
         path.push(i);
         {
-            let is_folder = slices[i].is_folder();
             let slice = &mut slices[i];
             ui.horizontal(|ui| {
                 ui.add_space((path.len() - 1) as f32 * 18.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut slice.label)
-                        .desired_width(100.0)
-                        .hint_text("label"),
-                );
-                ui.add(
-                    egui::TextEdit::singleline(&mut slice.command)
-                        .desired_width(150.0)
-                        .hint_text(if is_folder { "(folder)" } else { "command" }),
-                );
-                let mut color = slice.color.clone().unwrap_or_default();
-                super::color_field(ui, &mut color);
-                slice.color = if color.trim().is_empty() {
-                    None
-                } else {
-                    Some(color)
-                };
-
-                // Span: 0 = auto (share the remainder). Non-zero is clamped
-                // to the minimum so the field can't express an unhittable
-                // wedge; the resolver clamps too, this just shows it.
-                let mut span = slice.span.unwrap_or(0.0);
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut span)
-                            .speed(1.0)
-                            .range(0.0..=300.0)
-                            .suffix("°")
-                            .custom_formatter(|n, _| {
-                                if n <= 0.0 { "auto".to_string() } else { format!("{n:.0}°") }
-                            }),
-                    )
-                    .on_hover_text("Wedge width in degrees. auto (0) shares the leftover evenly.")
-                    .changed()
-                {
-                    slice.span = if span <= 0.0 {
-                        None
-                    } else {
-                        Some(span.max(WHEEL_MIN_SPAN_DEG))
-                    };
-                }
-
-                // Inner: 0 = auto (global dead zone). Non-zero is the aim
-                // floor in percent, clamped to a usable ceiling so a slice
-                // never demands more throw than it has travel before firing.
-                let mut inner = slice.inner.unwrap_or(0) as f32;
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut inner)
-                            .speed(1.0)
-                            .range(0.0..=inner_ceiling as f32)
-                            .custom_formatter(|n, _| {
-                                if n <= 0.0 { "auto".to_string() } else { format!("{n:.0}%") }
-                            }),
-                    )
-                    .on_hover_text(
-                        "Aim floor: how far the stick must push before this slice registers. \
-                         auto (0) uses the global dead zone.",
-                    )
-                    .changed()
-                {
-                    slice.inner = if inner <= 0.0 { None } else { Some(inner as u8) };
-                }
+                render_slice_fields(ui, slice, inner_ceiling);
 
                 if ui.small_button("^").on_hover_text("Move up").clicked() {
                     ops.push(WheelOp::MoveUp(path.clone()));
@@ -1191,5 +1128,76 @@ fn render_slice_rows(
             render_slice_rows(ui, &mut slices[i].slices, path, ops, inner_ceiling);
         }
         path.pop();
+    }
+}
+
+/// The per-slice edit widgets — label, command, color, span, inner —
+/// shared by the numeric rows and the designer's selected-slice panel so
+/// the two edit paths can't diverge. Caller supplies the surrounding row
+/// (indent, move/add/delete buttons).
+fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling: u8) {
+    let is_folder = slice.is_folder();
+    ui.add(
+        egui::TextEdit::singleline(&mut slice.label)
+            .desired_width(100.0)
+            .hint_text("label"),
+    );
+    ui.add(
+        egui::TextEdit::singleline(&mut slice.command)
+            .desired_width(150.0)
+            .hint_text(if is_folder { "(folder)" } else { "command" }),
+    );
+    let mut color = slice.color.clone().unwrap_or_default();
+    super::color_field(ui, &mut color);
+    slice.color = if color.trim().is_empty() {
+        None
+    } else {
+        Some(color)
+    };
+
+    // Span: 0 = auto (share the remainder). Non-zero is clamped
+    // to the minimum so the field can't express an unhittable
+    // wedge; the resolver clamps too, this just shows it.
+    let mut span = slice.span.unwrap_or(0.0);
+    if ui
+        .add(
+            egui::DragValue::new(&mut span)
+                .speed(1.0)
+                .range(0.0..=300.0)
+                .suffix("°")
+                .custom_formatter(|n, _| {
+                    if n <= 0.0 { "auto".to_string() } else { format!("{n:.0}°") }
+                }),
+        )
+        .on_hover_text("Wedge width in degrees. auto (0) shares the leftover evenly.")
+        .changed()
+    {
+        slice.span = if span <= 0.0 {
+            None
+        } else {
+            Some(span.max(WHEEL_MIN_SPAN_DEG))
+        };
+    }
+
+    // Inner: 0 = auto (global dead zone). Non-zero is the aim
+    // floor in percent, clamped to a usable ceiling so a slice
+    // never demands more throw than it has travel before firing.
+    let mut inner = slice.inner.unwrap_or(0) as f32;
+    if ui
+        .add(
+            egui::DragValue::new(&mut inner)
+                .speed(1.0)
+                .range(0.0..=inner_ceiling as f32)
+                .custom_formatter(|n, _| {
+                    if n <= 0.0 { "auto".to_string() } else { format!("{n:.0}%") }
+                }),
+        )
+        .on_hover_text(
+            "Aim floor: how far the stick must push before this slice registers. \
+             auto (0) uses the global dead zone.",
+        )
+        .changed()
+    {
+        slice.inner = if inner <= 0.0 { None } else { Some(inner as u8) };
     }
 }
