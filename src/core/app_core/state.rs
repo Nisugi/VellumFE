@@ -178,6 +178,10 @@ pub struct AppCore {
     /// (keybinds.toml or an earlier hotbar button). Editors surface these.
     pub hotbar_key_conflicts: Vec<crate::core::app_core::keybinds::HotbarKeyConflict>,
 
+    /// Item classifier from the data pack, built on first use.
+    /// `.data reload` drops it so the next use re-resolves sources.
+    pub gameobj_data: Option<std::sync::Arc<crate::core::gameobj_data::GameObjData>>,
+
     // === Dialog Position Persistence ===
     /// Saved dialog positions loaded from widget_state.toml
     /// Updated when dialogs with save='t' are dragged/resized
@@ -185,6 +189,29 @@ pub struct AppCore {
 }
 
 impl AppCore {
+    /// Item classifier (gameobj-data.xml), built on first use from the
+    /// data pack: Lich folder > local store > bundled snapshot.
+    pub fn gameobj_data(&mut self) -> std::sync::Arc<crate::core::gameobj_data::GameObjData> {
+        if self.gameobj_data.is_none() {
+            let resolved = crate::core::data_pack::resolve(
+                &crate::core::data_pack::GAMEOBJ_DATA,
+                self.config.map.lich_dir.as_deref(),
+            );
+            let data = crate::core::gameobj_data::GameObjData::parse(&resolved.content);
+            tracing::info!(
+                "gameobj-data loaded from {}: {} types, {} sellable, {} skipped regexes",
+                resolved.source.label(),
+                data.type_count(),
+                data.sellable_count(),
+                data.skipped.len()
+            );
+            self.gameobj_data = Some(std::sync::Arc::new(data));
+        }
+        self.gameobj_data
+            .clone()
+            .expect("gameobj_data initialized above")
+    }
+
     /// Create a new AppCore instance
     /// Disk-free constructor for unit tests: default config, empty layout,
     /// no cmdlist/sound, TTS disabled. Never touches VELLUM_FE_DIR.
@@ -257,6 +284,7 @@ impl AppCore {
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts: Vec::new(),
+            gameobj_data: None,
             saved_dialog_positions,
         }
     }
@@ -383,6 +411,7 @@ impl AppCore {
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts,
+            gameobj_data: None,
             saved_dialog_positions,
         };
 
@@ -2959,6 +2988,7 @@ impl AppCore {
         self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
         self.add_system_message("  .room                   - Show how the current room resolved against the mapdb");
         self.add_system_message("  .mapdb [download|remove|repo <r>] - Manage downloaded map data (status by default)");
+        self.add_system_message("  .data [status|reload]   - Shared game-data assets: source + age (Lich folder > local > bundled)");
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");

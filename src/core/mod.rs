@@ -6,8 +6,10 @@
 
 pub mod app_core;
 pub mod bounty_parser;
+pub mod data_pack;
 pub mod emoji;
 pub mod evidence;
+pub mod gameobj_data;
 pub mod ghost_rooms;
 pub mod highlight_engine;
 pub mod hotbar;

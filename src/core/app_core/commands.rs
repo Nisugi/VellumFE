@@ -996,6 +996,49 @@ impl AppCore {
                 self.handle_mapdb(&args);
             }
 
+            // Data-pack assets (gameobj-data.xml, ...): source tier + age.
+            // `.data reload` re-resolves mid-session, e.g. after Lich's
+            // `;repo` refreshed its copy. Settings panel surface is owed;
+            // these dot-commands are the agreed v1 interface.
+            "data" => {
+                let sub = parts.get(1).map(|s| s.to_lowercase()).unwrap_or_default();
+                match sub.as_str() {
+                    "" | "status" => {
+                        for line in crate::core::data_pack::status_lines(
+                            self.config.map.lich_dir.as_deref(),
+                        ) {
+                            self.add_system_message(&line);
+                        }
+                        let data = self.gameobj_data();
+                        self.add_system_message(&format!(
+                            "gameobj classifier: {} types, {} sellable{}",
+                            data.type_count(),
+                            data.sellable_count(),
+                            if data.skipped.is_empty() {
+                                String::new()
+                            } else {
+                                format!(
+                                    ", {} incompatible regex(es) skipped",
+                                    data.skipped.len()
+                                )
+                            }
+                        ));
+                    }
+                    "reload" => {
+                        self.gameobj_data = None;
+                        let data = self.gameobj_data();
+                        self.add_system_message(&format!(
+                            "Data pack re-resolved: gameobj classifier reloaded \
+                             ({} types).",
+                            data.type_count()
+                        ));
+                    }
+                    _ => {
+                        self.add_system_message("Usage: .data [status|reload]");
+                    }
+                }
+            }
+
             // Web frontend: reload macros.toml (+ the phone-edited local
             // overlay) and push to connected phones
             "reloadmacros" => {

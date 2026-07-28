@@ -134,6 +134,13 @@ impl Config {
         Ok(Self::global_dir()?.join("icons"))
     }
 
+    /// Get the data-pack local store (gameobj-data.xml and friends; see
+    /// `core::data_pack`)
+    /// Returns: ~/.vellum-fe/global/data/
+    pub fn global_data_dir() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("data"))
+    }
+
     /// Get path to common (global) highlights file
     /// Returns: ~/.vellum-fe/global/highlights.toml
     pub fn common_highlights_path() -> Result<PathBuf> {
