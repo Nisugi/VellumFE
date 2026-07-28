@@ -353,7 +353,7 @@ impl VellumGuiApp {
         self.persist_zone_order(&ordered);
     }
 
-    fn title_bar_hidden(&self, key: &TabKey) -> bool {
+    pub(super) fn title_bar_hidden(&self, key: &TabKey) -> bool {
         self.no_title_tabs.contains(key)
     }
 
@@ -1144,7 +1144,6 @@ impl VellumGuiApp {
                                 tab_key: tab.id.key.clone(),
                                 zone,
                                 allow_reorder: true,
-                                title_bar_hidden,
                                 position: pointer_pos,
                                 window_rect: inner.response.rect,
                             });
@@ -1445,7 +1444,6 @@ impl VellumGuiApp {
                             tab_key: tab.id.key.clone(),
                             zone,
                             allow_reorder: false,
-                            title_bar_hidden,
                             position: pointer_pos,
                             window_rect: inner.response.rect,
                         });

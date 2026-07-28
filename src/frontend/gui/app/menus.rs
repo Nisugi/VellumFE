@@ -25,7 +25,6 @@ pub(super) struct GuiWindowMenuRequest {
     pub(super) tab_key: TabKey,
     pub(super) zone: GuiShellZone,
     pub(super) allow_reorder: bool,
-    pub(super) title_bar_hidden: bool,
     pub(super) position: Pos2,
     /// The window's rendered rect at the time of the right-click; seeds the
     /// stored rect for Move mode when the window was never moved before.
@@ -33,7 +32,7 @@ pub(super) struct GuiWindowMenuRequest {
 }
 
 #[derive(Clone, Debug)]
-enum GuiWindowMenuCommand {
+pub(super) enum GuiWindowMenuCommand {
     /// Open the Window Editor on this window (title, streams, feed ids).
     Edit,
     Hide,
@@ -81,24 +80,30 @@ enum GuiWindowMenuCommand {
 struct WindowMenuView<'a> {
     zone: GuiShellZone,
     allow_reorder: bool,
-    title_bar_hidden: bool,
-    text_size_override: Option<f32>,
-    global_text_size: f32,
-    /// Wrap toggle: shown only for text-list widgets; current value.
-    supports_wrap: bool,
-    /// Map widget: offer "Open Map Explorer".
-    is_map: bool,
-    /// Mini map zoom override (px per cell), when is_map.
-    map_zoom: Option<f32>,
-    wrap_text: bool,
-    current_font: Option<&'a str>,
-    accent_color: Option<Color32>,
+    appearance: WindowAppearanceView,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
     /// Members of this window's group in render order (empty when ungrouped).
     group_members: &'a [(TabKey, String)],
     /// Windows this one could be grouped with (visible, ungrouped).
     group_candidates: &'a [(TabKey, String)],
+}
+
+/// Per-window appearance state, shared between the context menu's Appearance
+/// section and the Window Editor (see `appearance_view_for_tab`).
+pub(super) struct WindowAppearanceView {
+    title_bar_hidden: bool,
+    text_size_override: Option<f32>,
+    global_text_size: f32,
+    /// Wrap toggle: shown only for text-list widgets; current value.
+    supports_wrap: bool,
+    /// Map widget: offer "Open Map Explorer" and the zoom override.
+    is_map: bool,
+    /// Mini map zoom override (px per cell), when is_map.
+    map_zoom: Option<f32>,
+    wrap_text: bool,
+    current_font: Option<String>,
+    accent_color: Option<Color32>,
 }
 
 /// Preset border accent colors offered in the window context menu.
@@ -254,7 +259,6 @@ impl VellumGuiApp {
                     just_started: true,
                 });
             }
-            GuiWindowMenuCommand::ToggleTitleBar => self.toggle_title_bar(request.tab_key.clone()),
             GuiWindowMenuCommand::MoveUp => {
                 if request.allow_reorder {
                     self.move_tab_within_zone(&request.tab_key, request.zone, true);
@@ -270,45 +274,14 @@ impl VellumGuiApp {
                     self.set_tab_zone(request.tab_key.clone(), target);
                 }
             }
-            GuiWindowMenuCommand::SetTextSize(size) => {
-                self.with_layout_def_for_tab(&request.tab_key, |def| {
-                    def.base_mut().text_size = size;
-                });
-            }
-            GuiWindowMenuCommand::SetWrapText(wrap) => {
-                if self.def_wordwrap_for_tab(&request.tab_key).is_some() {
-                    // Text-list defs carry wordwrap; store it there (shared
-                    // with the TUI and layout.toml).
-                    self.with_layout_def_for_tab(&request.tab_key, |def| match def {
-                        crate::config::WindowDef::Text { data, .. } => data.wordwrap = wrap,
-                        crate::config::WindowDef::Inventory { data, .. }
-                        | crate::config::WindowDef::Reserve { data, .. } => data.wordwrap = wrap,
-                        _ => {}
-                    });
-                } else {
-                    // Widget types with no wordwrap field (tabbedtext, spells,
-                    // container) keep the per-tab GUI setting.
-                    self.tab_settings
-                        .entry(request.tab_key.clone())
-                        .or_default()
-                        .wrap_text = wrap;
-                    self.layout_dirty = true;
-                }
-            }
-            GuiWindowMenuCommand::SetFont(name) => {
-                self.with_layout_def_for_tab(&request.tab_key, |def| {
-                    def.base_mut().font_family = name;
-                });
-                // Rebuild font definitions so the new family is registered.
-                self.fonts_applied = false;
-            }
-            GuiWindowMenuCommand::SetAccent(color) => {
-                self.tab_settings
-                    .entry(request.tab_key.clone())
-                    .or_default()
-                    .accent_color =
-                    color.map(|[r, g, b]| format!("#{:02x}{:02x}{:02x}", r, g, b));
-                self.layout_dirty = true;
+            GuiWindowMenuCommand::ToggleTitleBar
+            | GuiWindowMenuCommand::SetTextSize(_)
+            | GuiWindowMenuCommand::SetWrapText(_)
+            | GuiWindowMenuCommand::SetFont(_)
+            | GuiWindowMenuCommand::SetAccent(_)
+            | GuiWindowMenuCommand::SetMapZoom(_) => {
+                let tab_key = request.tab_key.clone();
+                self.apply_appearance_command(&tab_key, command);
             }
             GuiWindowMenuCommand::GroupWith(other) => {
                 self.group_tabs(&request.tab_key.clone(), other);
@@ -346,13 +319,6 @@ impl VellumGuiApp {
             GuiWindowMenuCommand::OpenMapExplorer => {
                 self.map_explorer.open = true;
             }
-            GuiWindowMenuCommand::SetMapZoom(zoom) => {
-                self.tab_settings
-                    .entry(request.tab_key.clone())
-                    .or_default()
-                    .map_zoom = zoom;
-                self.layout_dirty = true;
-            }
             GuiWindowMenuCommand::SetGroupOrientation(horizontal) => {
                 if let Some(group) = self
                     .tab_groups
@@ -368,18 +334,111 @@ impl VellumGuiApp {
         }
     }
 
+    /// Apply an appearance-only command for `tab_key`. Split out from
+    /// `apply_window_menu_command` because the Window Editor's Appearance
+    /// section drives the same commands without a menu request.
+    pub(super) fn apply_appearance_command(
+        &mut self,
+        tab_key: &TabKey,
+        command: GuiWindowMenuCommand,
+    ) {
+        match command {
+            GuiWindowMenuCommand::ToggleTitleBar => self.toggle_title_bar(tab_key.clone()),
+            GuiWindowMenuCommand::SetTextSize(size) => {
+                self.with_layout_def_for_tab(tab_key, |def| {
+                    def.base_mut().text_size = size;
+                });
+            }
+            GuiWindowMenuCommand::SetWrapText(wrap) => {
+                if self.def_wordwrap_for_tab(tab_key).is_some() {
+                    // Text-list defs carry wordwrap; store it there (shared
+                    // with the TUI and layout.toml).
+                    self.with_layout_def_for_tab(tab_key, |def| match def {
+                        crate::config::WindowDef::Text { data, .. } => data.wordwrap = wrap,
+                        crate::config::WindowDef::Inventory { data, .. }
+                        | crate::config::WindowDef::Reserve { data, .. } => data.wordwrap = wrap,
+                        _ => {}
+                    });
+                } else {
+                    // Widget types with no wordwrap field (tabbedtext, spells,
+                    // container) keep the per-tab GUI setting.
+                    self.tab_settings
+                        .entry(tab_key.clone())
+                        .or_default()
+                        .wrap_text = wrap;
+                    self.layout_dirty = true;
+                }
+            }
+            GuiWindowMenuCommand::SetFont(name) => {
+                self.with_layout_def_for_tab(tab_key, |def| {
+                    def.base_mut().font_family = name;
+                });
+                // Rebuild font definitions so the new family is registered.
+                self.fonts_applied = false;
+            }
+            GuiWindowMenuCommand::SetAccent(color) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .accent_color =
+                    color.map(|[r, g, b]| format!("#{:02x}{:02x}{:02x}", r, g, b));
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetMapZoom(zoom) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .map_zoom = zoom;
+                self.layout_dirty = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolve the current appearance state for `tab_key`, shared by the
+    /// context menu and the Window Editor.
+    pub(super) fn appearance_view_for_tab(&self, tab_key: &TabKey) -> WindowAppearanceView {
+        let current_font = self.font_ref_for_tab(tab_key).and_then(|font| match font {
+            FontRef::Named(name) => Some(name),
+            _ => None,
+        });
+        let widget_type = self
+            .available_tabs
+            .get(tab_key)
+            .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
+            .map(|window| window.widget_type.clone());
+        let supports_wrap = matches!(
+            widget_type,
+            Some(
+                WidgetType::Text
+                    | WidgetType::TabbedText
+                    | WidgetType::Inventory
+                    | WidgetType::Reserve
+                    | WidgetType::Spells
+                    | WidgetType::Container
+            )
+        );
+        WindowAppearanceView {
+            title_bar_hidden: self.title_bar_hidden(tab_key),
+            text_size_override: self.text_size_override_for_tab(tab_key),
+            global_text_size: self.ui_settings.text_size,
+            supports_wrap,
+            is_map: widget_type == Some(WidgetType::Map),
+            map_zoom: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.map_zoom),
+            wrap_text: self.effective_wrap_text(tab_key),
+            current_font,
+            accent_color: self.accent_color_for_tab(tab_key),
+        }
+    }
+
     pub(super) fn render_window_context_popup(&mut self, ctx: &egui::Context) {
         let Some(request) = self.window_context_menu.clone() else {
             return;
         };
 
-        let text_size_override = self.text_size_override_for_tab(&request.tab_key);
-        let current_font = self
-            .font_ref_for_tab(&request.tab_key)
-            .and_then(|font| match font {
-                FontRef::Named(name) => Some(name),
-                _ => None,
-            });
         let detached_tabs = self.detached_tab_keys();
         let mut group_candidates: Vec<(TabKey, String)> = self
             .available_tabs
@@ -406,44 +465,10 @@ impl VellumGuiApp {
                     .collect()
             })
             .unwrap_or_default();
-        let supports_wrap = self
-            .available_tabs
-            .get(&request.tab_key)
-            .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
-            .map(|window| {
-                matches!(
-                    window.widget_type,
-                    WidgetType::Text
-                        | WidgetType::TabbedText
-                        | WidgetType::Inventory
-                        | WidgetType::Reserve
-                        | WidgetType::Spells
-                        | WidgetType::Container
-                )
-            })
-            .unwrap_or(false);
-        let wrap_text = self.effective_wrap_text(&request.tab_key);
-        let is_map = self
-            .available_tabs
-            .get(&request.tab_key)
-            .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
-            .map(|window| window.widget_type == WidgetType::Map)
-            .unwrap_or(false);
         let view = WindowMenuView {
             zone: request.zone,
             allow_reorder: request.allow_reorder,
-            title_bar_hidden: request.title_bar_hidden,
-            text_size_override,
-            global_text_size: self.ui_settings.text_size,
-            supports_wrap,
-            wrap_text,
-            is_map,
-            map_zoom: self
-                .tab_settings
-                .get(&request.tab_key)
-                .and_then(|settings| settings.map_zoom),
-            current_font: current_font.as_deref(),
-            accent_color: self.accent_color_for_tab(&request.tab_key),
+            appearance: self.appearance_view_for_tab(&request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
                 .map(|group| group.horizontal),
@@ -472,6 +497,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetMapZoom(_)
                     | GuiWindowMenuCommand::SetWrapText(_)
                     | GuiWindowMenuCommand::SetAccent(_)
+                    | GuiWindowMenuCommand::ToggleTitleBar
                     | GuiWindowMenuCommand::SetGroupOrientation(_)
                     | GuiWindowMenuCommand::MoveGroupMember { .. }
                     | GuiWindowMenuCommand::UngroupMember(_)
@@ -860,8 +886,8 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         view: &WindowMenuView<'_>,
     ) -> Option<GuiWindowMenuCommand> {
-        // Action rows are flat selectable labels (hover highlight only), like
-        // the Move to list below; framed buttons read as noisy chips here.
+        // Action rows are flat selectable labels (hover highlight only);
+        // framed buttons read as noisy chips here.
         if ui.selectable_label(false, "Edit Window…").clicked() {
             return Some(GuiWindowMenuCommand::Edit);
         }
@@ -874,46 +900,147 @@ impl VellumGuiApp {
         if ui.selectable_label(false, "Move Window").clicked() {
             return Some(GuiWindowMenuCommand::StartMove);
         }
-        // Stacking only matters where windows float and overlap — the Center
-        // zone. Docked strips (header/footer/sidebars) never overlap.
-        if view.zone == GuiShellZone::Center
-            && ui
-                .selectable_label(false, "Send to Back")
-                .on_hover_text("Drop this window behind any it overlaps")
-                .clicked()
+        if view.appearance.is_map
+            && ui.selectable_label(false, "Open Map Explorer").clicked()
         {
-            return Some(GuiWindowMenuCommand::SendToBack);
-        }
-        if ui
-            .selectable_label(
-                false,
-                if view.title_bar_hidden {
-                    "Show Title Bar"
-                } else {
-                    "Hide Title Bar"
-                },
-            )
-            .clicked()
-        {
-            return Some(GuiWindowMenuCommand::ToggleTitleBar);
-        }
-        if view.allow_reorder {
-            ui.separator();
-            if ui.selectable_label(false, "Move Up").clicked() {
-                return Some(GuiWindowMenuCommand::MoveUp);
-            }
-            if ui.selectable_label(false, "Move Down").clicked() {
-                return Some(GuiWindowMenuCommand::MoveDown);
-            }
+            return Some(GuiWindowMenuCommand::OpenMapExplorer);
         }
         ui.separator();
-        let mut settings_command = None;
+        // Everything below folds into sections so the menu opens short.
+        // Commands are collected instead of returned early so the layout
+        // stays stable while a slider or palette inside a section is in use.
+        let mut command = None;
+        ui.collapsing("Arrange", |ui| {
+            if view.allow_reorder {
+                if ui.selectable_label(false, "Move Up").clicked() {
+                    command = Some(GuiWindowMenuCommand::MoveUp);
+                }
+                if ui.selectable_label(false, "Move Down").clicked() {
+                    command = Some(GuiWindowMenuCommand::MoveDown);
+                }
+            }
+            // Stacking only matters where windows float and overlap — the
+            // Center zone. Docked strips (header/footer/sidebars) never
+            // overlap.
+            if view.zone == GuiShellZone::Center
+                && ui
+                    .selectable_label(false, "Send to Back")
+                    .on_hover_text("Drop this window behind any it overlaps")
+                    .clicked()
+            {
+                command = Some(GuiWindowMenuCommand::SendToBack);
+            }
+            ui.label("Move to");
+            for target in GuiShellZone::all() {
+                let is_current = target == view.zone;
+                let label = if is_current {
+                    format!("{} (current)", target.label())
+                } else {
+                    target.label().to_string()
+                };
+                if ui.selectable_label(is_current, label).clicked() {
+                    command = Some(GuiWindowMenuCommand::MoveTo(target));
+                }
+            }
+        });
+        ui.collapsing("Appearance", |ui| {
+            if let Some(appearance) = Self::render_appearance_controls(ui, &view.appearance) {
+                command = Some(appearance);
+            }
+        });
+        if view.group_horizontal.is_some() || !view.group_candidates.is_empty() {
+            ui.collapsing("Group", |ui| {
+                if let Some(horizontal) = view.group_horizontal {
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(!horizontal, "Stacked").clicked() && horizontal {
+                            command = Some(GuiWindowMenuCommand::SetGroupOrientation(false));
+                        }
+                        if ui.selectable_label(horizontal, "Side by side").clicked()
+                            && !horizontal
+                        {
+                            command = Some(GuiWindowMenuCommand::SetGroupOrientation(true));
+                        }
+                    });
+                    if view.group_members.len() > 1 {
+                        ui.label("Order");
+                        let last = view.group_members.len() - 1;
+                        for (index, (key, title)) in view.group_members.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .add_enabled(index > 0, egui::Button::new("⬆").small())
+                                    .clicked()
+                                {
+                                    command = Some(GuiWindowMenuCommand::MoveGroupMember {
+                                        member: key.clone(),
+                                        up: true,
+                                    });
+                                }
+                                if ui
+                                    .add_enabled(index < last, egui::Button::new("⬇").small())
+                                    .clicked()
+                                {
+                                    command = Some(GuiWindowMenuCommand::MoveGroupMember {
+                                        member: key.clone(),
+                                        up: false,
+                                    });
+                                }
+                                if ui
+                                    .add(egui::Button::new("✕").small())
+                                    .on_hover_text("Remove this window from the group")
+                                    .clicked()
+                                {
+                                    command =
+                                        Some(GuiWindowMenuCommand::UngroupMember(key.clone()));
+                                }
+                                ui.label(title);
+                            });
+                        }
+                    }
+                    if ui
+                        .selectable_label(false, "Dissolve group")
+                        .on_hover_text("Ungroup all members; every window stands alone again")
+                        .clicked()
+                    {
+                        command = Some(GuiWindowMenuCommand::DissolveGroup);
+                    }
+                }
+                if !view.group_candidates.is_empty() {
+                    ui.label("Group with");
+                    egui::ScrollArea::vertical()
+                        .id_salt("gui_window_group_list")
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for (key, title) in view.group_candidates {
+                                if ui.selectable_label(false, title).clicked() {
+                                    command = Some(GuiWindowMenuCommand::GroupWith(key.clone()));
+                                }
+                            }
+                        });
+                }
+            });
+        }
+        command
+    }
+
+    /// Per-window appearance controls, shared between the context menu's
+    /// Appearance section and the Window Editor. Returns a command to run
+    /// through `apply_appearance_command`; live controls (sliders, swatches)
+    /// emit one every frame their value changes.
+    pub(super) fn render_appearance_controls(
+        ui: &mut egui::Ui,
+        view: &WindowAppearanceView,
+    ) -> Option<GuiWindowMenuCommand> {
+        let mut command = None;
+        let mut show_title_bar = !view.title_bar_hidden;
+        if ui.checkbox(&mut show_title_bar, "Title bar").changed() {
+            command = Some(GuiWindowMenuCommand::ToggleTitleBar);
+        }
         let mut override_enabled = view.text_size_override.is_some();
         if ui
             .checkbox(&mut override_enabled, "Custom text size")
             .changed()
         {
-            settings_command = Some(GuiWindowMenuCommand::SetTextSize(if override_enabled {
+            command = Some(GuiWindowMenuCommand::SetTextSize(if override_enabled {
                 Some(view.text_size_override.unwrap_or(view.global_text_size))
             } else {
                 None
@@ -925,16 +1052,13 @@ impl VellumGuiApp {
                 .add(egui::Slider::new(&mut value, 8.0..=32.0).step_by(0.5))
                 .changed()
             {
-                settings_command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
+                command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
             }
         }
         if view.is_map {
-            if ui.selectable_label(false, "Open Map Explorer").clicked() {
-                return Some(GuiWindowMenuCommand::OpenMapExplorer);
-            }
             let mut has_override = view.map_zoom.is_some();
             if ui.checkbox(&mut has_override, "Custom map zoom").changed() {
-                settings_command = Some(GuiWindowMenuCommand::SetMapZoom(
+                command = Some(GuiWindowMenuCommand::SetMapZoom(
                     has_override.then_some(view.map_zoom.unwrap_or(16.0)),
                 ));
             }
@@ -944,20 +1068,23 @@ impl VellumGuiApp {
                     .add(egui::Slider::new(&mut value, 6.0..=48.0).suffix(" px/cell"))
                     .changed()
                 {
-                    settings_command = Some(GuiWindowMenuCommand::SetMapZoom(Some(value)));
+                    command = Some(GuiWindowMenuCommand::SetMapZoom(Some(value)));
                 }
             }
         }
         if view.supports_wrap {
             let mut wrap = view.wrap_text;
             if ui.checkbox(&mut wrap, "Word wrap").changed() {
-                settings_command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
+                command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
             }
         }
         ui.collapsing("Font", |ui| {
             // Filter box: system font lists run to hundreds of families.
-            let filter_id = egui::Id::new("gui_window_font_filter");
-            let mut filter: String = ui.data_mut(|data| data.get_temp(filter_id).unwrap_or_default());
+            // Ids derive from ui.id() so the menu's and the editor's copies
+            // of this section don't share state.
+            let filter_id = ui.id().with("font_filter");
+            let mut filter: String =
+                ui.data_mut(|data| data.get_temp(filter_id).unwrap_or_default());
             if ui
                 .add(egui::TextEdit::singleline(&mut filter).hint_text("Filter fonts"))
                 .changed()
@@ -966,14 +1093,14 @@ impl VellumGuiApp {
             }
             let filter_lower = filter.to_lowercase();
             egui::ScrollArea::vertical()
-                .id_salt("gui_window_font_list")
+                .id_salt("font_list")
                 .max_height(180.0)
                 .show(ui, |ui| {
                     if ui
                         .selectable_label(view.current_font.is_none(), "Default")
                         .clicked()
                     {
-                        settings_command = Some(GuiWindowMenuCommand::SetFont(None));
+                        command = Some(GuiWindowMenuCommand::SetFont(None));
                     }
                     for family in theme::system_font_families() {
                         if !filter_lower.is_empty()
@@ -981,15 +1108,13 @@ impl VellumGuiApp {
                         {
                             continue;
                         }
-                        let selected = view.current_font == Some(family.as_str());
+                        let selected = view.current_font.as_deref() == Some(family.as_str());
                         if ui.selectable_label(selected, family).clicked() {
-                            settings_command =
-                                Some(GuiWindowMenuCommand::SetFont(Some(family.clone())));
+                            command = Some(GuiWindowMenuCommand::SetFont(Some(family.clone())));
                         }
                     }
                 });
         });
-        ui.separator();
         ui.label("Accent color");
         ui.horizontal(|ui| {
             for color in ACCENT_PALETTE {
@@ -1000,102 +1125,14 @@ impl VellumGuiApp {
                     button = button.stroke(egui::Stroke::new(2.0, ui.visuals().text_color()));
                 }
                 if ui.add(button).clicked() {
-                    settings_command = Some(GuiWindowMenuCommand::SetAccent(Some(color)));
+                    command = Some(GuiWindowMenuCommand::SetAccent(Some(color)));
                 }
             }
             if view.accent_color.is_some() && ui.small_button("✕").clicked() {
-                settings_command = Some(GuiWindowMenuCommand::SetAccent(None));
+                command = Some(GuiWindowMenuCommand::SetAccent(None));
             }
         });
-        ui.separator();
-        if let Some(horizontal) = view.group_horizontal {
-            ui.label("Grouped window");
-            ui.horizontal(|ui| {
-                if ui.selectable_label(!horizontal, "Stacked").clicked() && horizontal {
-                    settings_command = Some(GuiWindowMenuCommand::SetGroupOrientation(false));
-                }
-                if ui.selectable_label(horizontal, "Side by side").clicked() && !horizontal {
-                    settings_command = Some(GuiWindowMenuCommand::SetGroupOrientation(true));
-                }
-            });
-            if view.group_members.len() > 1 {
-                ui.label("Order");
-                let last = view.group_members.len() - 1;
-                for (index, (key, title)) in view.group_members.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(index > 0, egui::Button::new("⬆").small())
-                            .clicked()
-                        {
-                            settings_command = Some(GuiWindowMenuCommand::MoveGroupMember {
-                                member: key.clone(),
-                                up: true,
-                            });
-                        }
-                        if ui
-                            .add_enabled(index < last, egui::Button::new("⬇").small())
-                            .clicked()
-                        {
-                            settings_command = Some(GuiWindowMenuCommand::MoveGroupMember {
-                                member: key.clone(),
-                                up: false,
-                            });
-                        }
-                        if ui
-                            .add(egui::Button::new("✕").small())
-                            .on_hover_text("Remove this window from the group")
-                            .clicked()
-                        {
-                            settings_command =
-                                Some(GuiWindowMenuCommand::UngroupMember(key.clone()));
-                        }
-                        ui.label(title);
-                    });
-                }
-            }
-            if ui
-                .selectable_label(false, "Dissolve group")
-                .on_hover_text("Ungroup all members; every window stands alone again")
-                .clicked()
-            {
-                return Some(GuiWindowMenuCommand::DissolveGroup);
-            }
-        }
-        if !view.group_candidates.is_empty() {
-            let mut group_command = None;
-            ui.collapsing("Group with", |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("gui_window_group_list")
-                    .max_height(180.0)
-                    .show(ui, |ui| {
-                        for (key, title) in view.group_candidates {
-                            if ui.selectable_label(false, title).clicked() {
-                                group_command =
-                                    Some(GuiWindowMenuCommand::GroupWith(key.clone()));
-                            }
-                        }
-                    });
-            });
-            if group_command.is_some() {
-                return group_command;
-            }
-        }
-        ui.separator();
-        ui.label("Move to");
-        for target in GuiShellZone::all() {
-            let is_current = target == view.zone;
-            let label = if is_current {
-                format!("{} (current)", target.label())
-            } else {
-                target.label().to_string()
-            };
-            if ui.selectable_label(is_current, label).clicked() {
-                return Some(GuiWindowMenuCommand::MoveTo(target));
-            }
-        }
-        // Returned last (not early) so the menu keeps its full layout while
-        // the slider or palette is being used.
-        settings_command
+        command
     }
 }
 

@@ -766,6 +766,21 @@ impl VellumGuiApp {
             .skin_state
             .widget_art()
             .is_some_and(|art| art.doll_base.is_some());
+        // Appearance overrides (title bar, text size, font, accent, wrap)
+        // live on the window's tab, not in the buffered editor state; the
+        // Appearance section applies them immediately, like the same
+        // controls in the window's right-click menu.
+        let appearance_tab = state.selected.as_ref().and_then(|name| {
+            self.app_core
+                .ui_state
+                .windows
+                .get(name)
+                .and_then(|window| Self::tab_key_for_window(name, window))
+        });
+        let appearance_view = appearance_tab
+            .as_ref()
+            .map(|key| self.appearance_view_for_tab(key));
+        let mut appearance_command = None;
 
         egui::Window::new("Window Editor")
             .id(egui::Id::new("gui_window_editor"))
@@ -1255,6 +1270,16 @@ impl VellumGuiApp {
                     }
                 }
 
+                if let Some(view) = &appearance_view {
+                    ui.separator();
+                    ui.collapsing("Appearance", |ui| {
+                        ui.weak("Applies immediately; also in the window's right-click menu.");
+                        if let Some(command) = Self::render_appearance_controls(ui, view) {
+                            appearance_command = Some(command);
+                        }
+                    });
+                }
+
                 if state.is_injury_doll {
                     ui.separator();
                     if ui
@@ -1310,6 +1335,10 @@ impl VellumGuiApp {
 
         if calibrate_doll_clicked {
             self.open_doll_calibration();
+        }
+
+        if let (Some(key), Some(command)) = (appearance_tab.as_ref(), appearance_command) {
+            self.apply_appearance_command(key, command);
         }
 
         // Apply the global targets edits: write through the registry setter
