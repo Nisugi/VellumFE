@@ -181,12 +181,23 @@ Beyond plain bindings:
   editor's Shift tab. Defaults: shift+d-pad pages the story window,
   shift+South stands up.
 - **Radial command wheels** — hold the button bound to
-  `controller_wheel` (r2 by default), aim with the left stick, release
+  `controller_wheel` (r2 by default), aim with the free stick (the one
+  that isn't walking — right, unless you move `movement_stick`), release
   to fire. Slices can be **folders** (South opens, East backs up) and
   carry **colors** — the whole pie wedge tints, dim at rest and bright
-  while aimed, so wheels can be color-coded by function. Multiple named
+  while aimed, so wheels can be color-coded by function. Wedges don't
+  have to be even: give a slice a fixed **span** in degrees, rotate the
+  ring with **Start**, and set a per-slice **inner** floor that demands
+  a deeper stick throw before that slice will aim. Multiple named
   wheels via `controller_wheel:<name>` bindings; build it all on the
-  editor's Wheels tab. One name is dynamic: **`controller_wheel:portals`**
+  editor's Wheels tab. Its **Visual** view is a drag-and-drop designer:
+  drag a divider to trade width between wedges (it snaps to the compass
+  points — hold Shift to go free), drag a wedge's floor arc to set its
+  inner, click a wedge to edit its fields, double-click a folder to
+  step inside (and the ghost Back wedge to step back out), plus
+  lock / even-out / mirror / rotate tools. **Numeric**
+  shows the same wheel as exact rows. One name is dynamic:
+  **`controller_wheel:portals`**
   (r3 by default) fills its slices from the current room's noun exits —
   the same list [`.portal`](../reference/commands.md) resolves — so
   `go gate` / `climb ladder` are always one hold-and-flick away.

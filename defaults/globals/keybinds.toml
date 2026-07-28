@@ -180,11 +180,11 @@ dpad_right = { macro_text = "out\r" }  # Leave (buildings, rooms)
 dpad_left = { macro_text = ".portal\r" } # Walk the room's door/arch/gate
 south = { macro_text = "look\r" }      # A / cross
 l2 = "controller_shift"                # Hold: buttons use [controller_shift]
-r2 = "controller_wheel"                # Hold: radial command wheel (left stick picks)
-# On r3, not l3: the wheel aims with the LEFT stick, and clicking that
-# same stick deflects it past the movement threshold before the hold
-# registers - stray compass moves. The right stick's click-nudge only
-# feathers the story scroll.
+r2 = "controller_wheel"                # Hold: radial command wheel (aim stick picks)
+# On r3, not l3: clicking l3 nudges the LEFT stick - the movement stick -
+# past the walk threshold before the hold registers, causing stray
+# compass moves. The right stick's click only jostles the aim, which
+# settles harmlessly as the wheel opens.
 r3 = "controller_wheel:portals"        # Hold: the room's noun exits (go gate, ...)
 select = "controller_overlay"          # Toggle the binding-legend overlay
 

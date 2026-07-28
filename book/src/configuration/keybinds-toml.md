@@ -91,13 +91,14 @@ Controller-specific actions: `controller_shift` (hold: buttons use
 `controller_wheel` / `controller_wheel:<name>` (hold: radial command
 wheel — default ring in `[[controller_wheel]]`, named rings in
 `[controller_wheels.<name>]`; slices take `label`, `command`, optional
-`color`, and nested `slices` for folders — the phone client renders
-these same wheels for its `wheel` binds; the name **`portals` is
-reserved**: `controller_wheel:portals` (r3 by default — the wheel aims
-with the left stick, so its own click would jostle out stray moves)
-builds its slices from the current room's noun exits at open time —
-the same list `.portal` resolves — shadowing any static wheel of that
-name),
+`color`, optional `span` and `inner` ([geometry](#wheel-geometry)), and
+nested `slices` for folders — the phone client renders these same
+wheels for its `wheel` binds; the name **`portals` is reserved**:
+`controller_wheel:portals` (r3 by default — clicking l3 would nudge the
+movement stick into stray steps, while the aim stick's click settles
+harmlessly) builds its slices from the current room's noun exits at
+open time — the same list `.portal` resolves — shadowing any static
+wheel of that name),
 and `controller_overlay`
 (toggle the binding legend — curated by `[controller_overlay]
 buttons`, with `shift/<button>` entries for the shift bank). Rumble
@@ -125,7 +126,9 @@ wheel button fires the committed leaf; returning the stick to center
 before releasing cancels. Sweeping across the ring never commits the
 slices you pass through, so a far slice is safe to reach. Inside a folder
 a Back slice is reserved at the `back_slice` screen anchor
-(`up`/`down`/`left`/`right` and the four diagonals). `deadzone` (percent)
+(`up`/`down`/`left`/`right` and the four diagonals) — or `back_slice =
+"none"` drops the reserved seat entirely and you back out with East.
+`deadzone` (percent)
 is how far the stick must deflect before a slice registers; a `0` dwell
 means instant commit. `fire_debounce_ms` suppresses double-fires and
 `release_grace_ms` keeps a still-deflected stick from walking as the
@@ -178,6 +181,29 @@ open: name the movement stick and walking is silenced for the wheel's
 duration; name the other and movement stays live (e.g. an exits wheel
 aimed with the right stick while you keep walking on the left). Left
 unset, a wheel aims with the non-movement stick as before.
+
+### Wheel geometry
+
+Wedges don't have to be even. Per-slice **`span`** fixes a wedge's width
+in degrees; whatever remains of the 360° splits evenly among the
+span-less slices, so a wheel with no spans keeps the classic even ring.
+Bad numbers are never rejected — spans below 30° clamp up and a ring
+that doesn't close rescales to fit, with a warning at load and in the
+editor telling you what was adjusted. Per-slice **`inner`** sets that
+slice's aim floor as a percent of full stick deflection: below it the
+slice can't be aimed or committed, so a destructive command can demand a
+deliberately deep throw. Unset slices use the global `deadzone`, and the
+editor caps the value below the fire thresholds so a slice always has
+travel left to fire. A per-wheel **`start`** in
+`[controller_wheels_meta.<name>]` rotates the whole ring (degrees, 0 =
+up, clockwise). Folder rings anchor to their Back seat instead and
+ignore `start` — unless `back_slice = "none"`, in which case they rotate
+with it too. The portals wheel always keeps an even ring, since its
+slices are rebuilt per room.
+
+All of this is drawn and edited live in the Wheels tab's **Visual**
+designer — see [the GUI chapter](../frontends/gui.md#controllers) — or
+typed exactly in its **Numeric** view; both edit the same wheel.
 
 ## Macros
 

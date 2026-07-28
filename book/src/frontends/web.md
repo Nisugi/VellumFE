@@ -127,9 +127,10 @@ The gear button (also reachable from the login screen) opens Settings:
 
   Hold a button bound to `wheel` (R2 by default) for the **radial
   command wheel** — the same wheel the desktop GUI shows, defined once
-  in the host's `keybinds.toml`: aim a slice with the left stick,
-  release to fire it; South opens a folder slice, East backs up a
-  level. `wheel:<name>` opens a named wheel — and `wheel:portals`
+  in the host's `keybinds.toml`, wedge widths, ring rotation and
+  per-slice aim floors included: aim a slice with the free stick (the
+  one that isn't walking), release to fire it; South opens a folder
+  slice, East backs up a level. `wheel:<name>` opens a named wheel — and `wheel:portals`
   (R3 by default) is always available, its slices built live from the
   current room's noun exits (go gate, climb ladder). Buttons can also run
   client-side **UI actions** instead of game commands: `left_panel` /
