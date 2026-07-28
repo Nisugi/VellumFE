@@ -968,10 +968,11 @@ impl AppCore {
         if raw.trim().is_empty() {
             self.add_system_message(
                 "[foreach] usage: .foreach [unique] [first N] [after N] [sorted] \
-                 [reversed] [attr=]value in <container>[,...]; command; command...",
+                 [reversed] [attr=]value in <target>[,...]; command; command...",
             );
             self.add_system_message(
-                "[foreach] attrs: type (default) | sellable | noun | name | quick; \
+                "[foreach] targets: a container name, or inv | worn | feet | floor. \
+                 attrs: type (default) | sellable | noun | name | quick; \
                  'item'/'container' substitute in commands; no commands = list \
                  matches. Containers must have been seen open (look in them once).",
             );
@@ -1010,42 +1011,75 @@ impl AppCore {
 
         let mut candidates: Vec<foreach::Candidate> = Vec::new();
         let mut missing: Vec<String> = Vec::new();
-        for (query, optional) in &spec.targets {
-            // Registry is the source of truth (dual-written from the same
-            // feed the old cache read; consumers migrated here in step 3).
-            let Some(container) = self.game_state.objects.find_container(query) else {
-                if *optional {
-                    missing.push(query.clone());
-                    continue;
+        for (target, optional) in &spec.targets {
+            use crate::core::foreach::Target;
+            // Gather (id, noun, name, container_id) for the target. For
+            // pseudo-targets the item isn't inside a container, so the
+            // `container` substitution falls back to the item's own id
+            // (harmless — `item` is what these commands use).
+            let rows: Vec<(String, String, String, String)> = match target {
+                Target::Container(query) => {
+                    let Some(container) = self.game_state.objects.find_container(query)
+                    else {
+                        if *optional {
+                            missing.push(query.clone());
+                            continue;
+                        }
+                        self.add_system_message(&format!(
+                            "[foreach] no tracked container matches '{query}' - look \
+                             in it once so VellumFE sees its contents, or suffix '?' \
+                             to skip it."
+                        ));
+                        let titles = self.game_state.objects.container_titles();
+                        if titles.is_empty() {
+                            self.add_system_message(
+                                "[foreach] (no containers tracked yet - look in one to start)",
+                            );
+                        } else {
+                            self.add_system_message(&format!(
+                                "[foreach] tracked: {}",
+                                titles.iter().take(12).cloned().collect::<Vec<_>>().join(", ")
+                            ));
+                        }
+                        return;
+                    };
+                    let ct = container.command_target();
+                    container
+                        .items
+                        .iter()
+                        .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), ct.clone()))
+                        .collect()
                 }
-                self.add_system_message(&format!(
-                    "[foreach] no tracked container matches '{query}' - look in it \
-                     once so VellumFE sees its contents, or suffix '?' to skip it."
-                ));
-                // Show what IS tracked so the mismatch is diagnosable
-                // (an empty list reveals e.g. Lich's ;sorter having eaten
-                // the inv stream before it reached us).
-                let titles = self.game_state.objects.container_titles();
-                if titles.is_empty() {
-                    self.add_system_message(
-                        "[foreach] (no containers tracked yet - look in one to start)",
-                    );
-                } else {
-                    self.add_system_message(&format!(
-                        "[foreach] tracked: {}",
-                        titles.iter().take(12).cloned().collect::<Vec<_>>().join(", ")
-                    ));
-                }
-                return;
+                Target::Inv => self
+                    .game_state
+                    .objects
+                    .carried()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
+                Target::Worn => self
+                    .game_state
+                    .objects
+                    .worn()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
+                Target::AtFeet => self
+                    .game_state
+                    .objects
+                    .at_feet()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
+                Target::Floor => self
+                    .game_state
+                    .objects
+                    .ground()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
             };
-            // Registry items are already parsed GameItems (no re-parse).
-            let container_target = container.command_target();
-            let items: Vec<(String, String, String)> = container
-                .items
-                .iter()
-                .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone()))
-                .collect();
-            for (id, noun, name) in items {
+            for (id, noun, name, container_id) in rows {
                 let types = data
                     .types_of(&name, &noun)
                     .iter()
@@ -1059,9 +1093,7 @@ impl AppCore {
                     id,
                     noun,
                     name,
-                    // The game-command id, not the stream id (differs for
-                    // stow), so `put item in container` -> a real target.
-                    container_id: container_target.clone(),
+                    container_id,
                     types,
                     sellable,
                 });
@@ -2633,6 +2665,34 @@ mod foreach_tests {
             core.take_outbound(),
             vec!["put #333 in #225766691".to_string()]
         );
+    }
+
+    #[test]
+    fn foreach_worn_and_floor_pseudo_targets() {
+        use crate::core::game_objects::GameItem;
+        let mut core = AppCore::new_for_test();
+        {
+            let o = &mut core.game_state.objects;
+            // A gem worn (odd, but exercises worn), a non-gem worn.
+            o.set_worn(vec![
+                GameItem::new("10", "sapphire", "blue sapphire"),
+                GameItem::new("11", "cloak", "wool cloak"),
+            ]);
+            // A gem on the ground.
+            o.set_ground(vec![GameItem::new("20", "crystal", "quartz crystal")]);
+        }
+
+        // worn target: only the gem matches; item substitution uses its id.
+        let _ = core.handle_dot_command(".foreach gem in worn; get item");
+        assert!(core.foreach.is_running());
+        assert_eq!(core.take_outbound(), vec!["get #10".to_string()]);
+        let _ = core.handle_dot_command(".stop");
+
+        // floor target reads registry ground.
+        let _ = core.handle_dot_command(".foreach gem in floor; get item");
+        assert!(core.foreach.is_running());
+        assert_eq!(core.take_outbound(), vec!["get #20".to_string()]);
+        let _ = core.handle_dot_command(".stop");
     }
 
     #[test]

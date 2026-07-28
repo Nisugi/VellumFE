@@ -57,10 +57,37 @@ pub struct ForeachSpec {
     pub tags: Vec<String>,
     /// Compiled patterns for Noun/Name.
     pub patterns: Vec<regex::Regex>,
-    /// Container title queries; (query, optional) where optional = had `?`.
-    pub targets: Vec<(String, bool)>,
+    /// Where to look. Each `(target, optional)`; optional = had `?`.
+    pub targets: Vec<(Target, bool)>,
     /// Raw command templates; empty = dry-run listing.
     pub commands: Vec<String>,
+}
+
+/// A `.foreach` search target: a pseudo-target backed by a registry
+/// collection, or a named container the user typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Target {
+    /// Everything carried: worn + hands + at-feet (`inv`/`inventory`).
+    Inv,
+    /// Worn items only (`worn`).
+    Worn,
+    /// Items at your feet — "Placed alongside you" (`feet`/`atfeet`).
+    AtFeet,
+    /// Loot on the ground in the room (`floor`/`ground`/`room`).
+    Floor,
+    /// A named container the user typed (resolved via find_container).
+    Container(String),
+}
+
+/// Classify a target token: a known pseudo-target keyword, or a container.
+fn classify_target(query: &str) -> Target {
+    match query {
+        "inv" | "inventory" => Target::Inv,
+        "worn" => Target::Worn,
+        "feet" | "atfeet" | "at feet" => Target::AtFeet,
+        "floor" | "ground" | "room" => Target::Floor,
+        other => Target::Container(other.to_string()),
+    }
 }
 
 /// Convert a `*`-wildcard value to an anchored case-insensitive regex.
@@ -151,7 +178,8 @@ pub fn parse(raw: &str) -> Result<ForeachSpec, String> {
             Some(stripped) => (stripped.trim(), true),
             None => (part, false),
         };
-        spec.targets.push((query.to_lowercase(), optional));
+        spec.targets
+            .push((classify_target(&query.to_lowercase()), optional));
     }
 
     // The value expression: `attr=value`, a bare `/regex/`, or a bare
@@ -572,9 +600,25 @@ mod tests {
         assert_eq!(spec.tags, vec!["gem"]);
         assert_eq!(
             spec.targets,
-            vec![("backpack".to_string(), false), ("red sack".to_string(), true)]
+            vec![
+                (Target::Container("backpack".to_string()), false),
+                (Target::Container("red sack".to_string()), true),
+            ]
         );
         assert_eq!(spec.commands, vec!["get item", "sell item"]);
+    }
+
+    #[test]
+    fn classifies_pseudo_targets() {
+        assert_eq!(parse("gem in inv").unwrap().targets[0].0, Target::Inv);
+        assert_eq!(parse("gem in worn").unwrap().targets[0].0, Target::Worn);
+        assert_eq!(parse("gem in floor").unwrap().targets[0].0, Target::Floor);
+        assert_eq!(parse("gem in ground").unwrap().targets[0].0, Target::Floor);
+        assert_eq!(parse("gem in feet").unwrap().targets[0].0, Target::AtFeet);
+        assert_eq!(
+            parse("gem in backpack").unwrap().targets[0].0,
+            Target::Container("backpack".to_string())
+        );
     }
 
     #[test]

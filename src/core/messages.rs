@@ -2396,6 +2396,22 @@ impl MessageProcessor {
                 "Extracted {} room objects from room objs",
                 game_state.room_objects.len()
             );
+
+            // Dual-write ground items into the registry (the `floor`/
+            // `ground`/`room` foreach targets). Room loot = NOT yours,
+            // distinct from at-feet. Consumers still read room_objects.
+            let ground: Vec<crate::core::game_objects::GameItem> = game_state
+                .room_objects
+                .iter()
+                .map(|o| {
+                    crate::core::game_objects::GameItem::new(
+                        o.id.clone(),
+                        o.noun.clone().unwrap_or_default(),
+                        o.name.clone(),
+                    )
+                })
+                .collect();
+            game_state.objects.set_ground(ground);
         }
 
         // Extract players from room players component

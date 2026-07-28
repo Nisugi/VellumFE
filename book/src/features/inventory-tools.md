@@ -61,21 +61,34 @@ with no known type.
 
 ### Targets (where to look)
 
-Targets are containers you have looked in this session, addressed by
-title (`backpack`, `red sack`, `locker sack`). A comma-separated list
-searches several. Suffix a container with `?` to **skip it if it isn't
-found** instead of stopping with an error:
+A target is either a **container name** or a **pseudo-target keyword**. A
+comma-separated list searches several. Suffix any target with `?` to
+**skip it if it isn't found** instead of stopping with an error:
 
 ```
 .foreach box in inv-sack, disk?; move to locker
+.foreach gem in worn; get item; put item in my gem pouch
+.foreach herb in floor; get item
 ```
+
+**Container names** — a container you have looked in this session,
+addressed by title (`backpack`, `red sack`, `my bandolier`).
 
 > **Containers must have been opened and looked in.** Like `;foreach`,
 > this is blind to closed containers — if a container isn't matching,
 > `look in` it once so VellumFE has seen its contents.
 
-Not yet supported (planned): the `inv`, `hands`, `floor`, and `locker`
-pseudo-targets, and the `marked`/`registered` filters.
+**Pseudo-targets:**
+
+| Keyword | Matches |
+|---------|---------|
+| `inv` / `inventory` | everything you carry — worn items, both hands, and items at your feet |
+| `worn` | worn items only |
+| `feet` | items at your feet ("Placed alongside you") |
+| `floor` / `ground` / `room` | loot on the ground in the room |
+
+Not yet supported (planned): `desc` (room-description scenery), `locker`
+auto-open, and the `marked`/`registered` filters.
 
 ### Commands
 
