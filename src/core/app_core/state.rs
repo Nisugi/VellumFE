@@ -182,6 +182,9 @@ pub struct AppCore {
     /// `.data reload` drops it so the next use re-resolves sources.
     pub gameobj_data: Option<std::sync::Arc<crate::core::gameobj_data::GameObjData>>,
 
+    /// `.foreach` batch runner (automation lease root when active).
+    pub foreach: crate::core::foreach::ForeachService,
+
     // === Dialog Position Persistence ===
     /// Saved dialog positions loaded from widget_state.toml
     /// Updated when dialogs with save='t' are dragged/resized
@@ -285,6 +288,7 @@ impl AppCore {
             keybind_map,
             hotbar_key_conflicts: Vec::new(),
             gameobj_data: None,
+            foreach: Default::default(),
             saved_dialog_positions,
         }
     }
@@ -412,6 +416,7 @@ impl AppCore {
             keybind_map,
             hotbar_key_conflicts,
             gameobj_data: None,
+            foreach: Default::default(),
             saved_dialog_positions,
         };
 
@@ -568,6 +573,7 @@ impl AppCore {
             self.add_system_message(&format!("[map] {text}"));
         }
         self.tick_travel();
+        self.tick_foreach();
         // Browse replies waiting on the layout worker.
         self.service_pending_map_views();
         // A layout that finished generating between game lines still needs
@@ -640,11 +646,45 @@ impl AppCore {
         }
     }
 
+    /// Advance the `.foreach` runner. Called from the same two places as
+    /// `tick_travel` (per network line + per frontend frame).
+    pub fn tick_foreach(&mut self) {
+        if !self.foreach.is_running() {
+            return;
+        }
+        let ctx = crate::core::foreach::ForeachContext {
+            rt_remaining: self.game_state.roundtime_remaining() as f64,
+            now_ms: self.foreach.now_ms(),
+            dead: self.game_state.status.dead,
+        };
+        let events = self.foreach.tick(&ctx);
+        for event in events {
+            match event {
+                crate::core::foreach::ForeachEvent::Status(text) => {
+                    self.add_system_message(&format!("[foreach] {text}"));
+                }
+                crate::core::foreach::ForeachEvent::Done { items } => {
+                    self.add_system_message(&format!(
+                        "[foreach] done - {items} item{} processed.",
+                        if items == 1 { "" } else { "s" }
+                    ));
+                }
+                crate::core::foreach::ForeachEvent::Failed(reason) => {
+                    self.add_system_message(&format!("[foreach] {reason}"));
+                }
+                crate::core::foreach::ForeachEvent::Send(_) => {
+                    unreachable!("queued by the service")
+                }
+            }
+        }
+    }
+
     /// Commands automation wants sent to the game; frontends drain this
     /// through the same path as typed commands. Includes macro sleep
     /// segments whose pause has elapsed.
     pub fn take_outbound(&mut self) -> Vec<String> {
         let mut commands = self.travel.take_outbound();
+        commands.extend(self.foreach.take_outbound());
         let now = std::time::Instant::now();
         let mut i = 0;
         while i < self.timed_commands.len() {
@@ -2682,9 +2722,10 @@ impl AppCore {
         }
 
         self.sync_map_room();
-        // Walk executor reacts to whatever this line changed (room, RT,
+        // Automation reacts to whatever this line changed (room, RT,
         // status); the per-frame tick covers pure time-based waits.
         self.tick_travel();
+        self.tick_foreach();
 
         Ok(())
     }
@@ -3001,7 +3042,8 @@ impl AppCore {
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
-        self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, ...)");
+        self.add_system_message("  .foreach ... in <bag>; cmd; cmd - Batch commands over matching container items (.foreach for usage)");
+        self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, foreach run)");
         self.add_system_message("");
 
         // Layout commands

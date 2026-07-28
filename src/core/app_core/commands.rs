@@ -960,6 +960,161 @@ impl AppCore {
         }
     }
 
+    /// `.foreach` entry point: parse, gate on the lease, resolve targets
+    /// against tracked containers, classify, and start (or dry-run list).
+    fn handle_foreach(&mut self, raw: &str) {
+        use crate::core::foreach;
+
+        if raw.trim().is_empty() {
+            self.add_system_message(
+                "[foreach] usage: .foreach [unique] [first N] [after N] [sorted] \
+                 [reversed] [attr=]value in <container>[,...]; command; command...",
+            );
+            self.add_system_message(
+                "[foreach] attrs: type (default) | sellable | noun | name | quick; \
+                 'item'/'container' substitute in commands; no commands = list \
+                 matches. Containers must have been seen open (look in them once).",
+            );
+            return;
+        }
+
+        if self.foreach.is_running() {
+            let desc = self
+                .foreach
+                .task()
+                .map(|t| t.desc.clone())
+                .unwrap_or_default();
+            self.add_system_message(&format!(
+                "[foreach] already running ({desc}) - .stop to cancel it first."
+            ));
+            return;
+        }
+        if let Some(owner) = self.automation_blocked_by("foreach") {
+            self.add_system_message(&format!(
+                "[foreach] {} is driving - .stop to cancel it first.",
+                owner.desc
+            ));
+            return;
+        }
+
+        let spec = match foreach::parse(raw) {
+            Ok(spec) => spec,
+            Err(err) => {
+                self.add_system_message(&format!("[foreach] {err}"));
+                return;
+            }
+        };
+
+        // Classifier first (needs &mut self), then borrow the cache.
+        let data = self.gameobj_data();
+
+        let mut candidates: Vec<foreach::Candidate> = Vec::new();
+        let mut missing: Vec<String> = Vec::new();
+        for (query, optional) in &spec.targets {
+            let Some(container) = self.game_state.container_cache.find_by_title(query)
+            else {
+                if *optional {
+                    missing.push(query.clone());
+                    continue;
+                }
+                self.add_system_message(&format!(
+                    "[foreach] no tracked container matches '{query}' - open it and \
+                     look in it once, or suffix '?' to skip it."
+                ));
+                return;
+            };
+            for item in container.parsed_items() {
+                let types = data
+                    .types_of(&item.name, &item.noun)
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect();
+                let sellable = data
+                    .sellable(&item.name, &item.noun)
+                    .map(|joined| joined.split(',').map(str::to_string).collect())
+                    .unwrap_or_default();
+                candidates.push(foreach::Candidate {
+                    id: item.id,
+                    noun: item.noun,
+                    name: item.name,
+                    container_id: container.id.clone(),
+                    types,
+                    sellable,
+                });
+            }
+        }
+
+        let picked: Vec<foreach::Candidate> =
+            spec.select(&candidates).into_iter().cloned().collect();
+        for query in &missing {
+            self.add_system_message(&format!("[foreach] skipping '{query}?' (not tracked)"));
+        }
+        if picked.is_empty() {
+            self.add_system_message("[foreach] no matching items.");
+            return;
+        }
+
+        if spec.commands.is_empty() {
+            // Dry run: list what a command list would act on.
+            self.add_system_message(&format!(
+                "[foreach] {} matching item{}:",
+                picked.len(),
+                if picked.len() == 1 { "" } else { "s" }
+            ));
+            const SHOW: usize = 50;
+            for candidate in picked.iter().take(SHOW) {
+                let tags = if candidate.types.is_empty() {
+                    "-".to_string()
+                } else {
+                    candidate.types.join(",")
+                };
+                self.add_system_message(&format!(
+                    "  {}  ({})  #{}",
+                    candidate.name, tags, candidate.id
+                ));
+            }
+            if picked.len() > SHOW {
+                self.add_system_message(&format!("  ... and {} more", picked.len() - SHOW));
+            }
+            return;
+        }
+
+        let mut items = Vec::new();
+        for candidate in &picked {
+            let steps = {
+                let cache = &self.game_state.container_cache;
+                foreach::build_steps(&spec.commands, candidate, |query| {
+                    cache.find_by_title(query).map(|c| c.id.clone())
+                })
+            };
+            match steps {
+                Ok(steps) => items.push(foreach::WorkItem {
+                    id: candidate.id.clone(),
+                    name: candidate.name.clone(),
+                    steps,
+                }),
+                Err(err) => {
+                    self.add_system_message(&format!("[foreach] {err}"));
+                    return;
+                }
+            }
+        }
+
+        let count = items.len();
+        let desc = raw.split(';').next().unwrap_or("").trim().to_string();
+        self.foreach
+            .set_task(foreach::ForeachTask::new(desc, items));
+        self.add_system_message(&format!(
+            "[foreach] running {} command{} over {} item{} - .stop cancels.",
+            spec.commands.len(),
+            if spec.commands.len() == 1 { "" } else { "s" },
+            count,
+            if count == 1 { "" } else { "s" }
+        ));
+        // Fire the first send now instead of on the next frame.
+        self.tick_foreach();
+    }
+
     fn handle_dot_command(&mut self, command: &str) -> Result<String> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
@@ -987,6 +1142,17 @@ impl AppCore {
             "go2" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
                 self.handle_go2(&args);
+            }
+
+            // Batch item commands over tracked containers (foreach.lic's
+            // native cousin). Needs raw text - ';' separates commands.
+            "foreach" => {
+                let raw = command[1..]
+                    .splitn(2, char::is_whitespace)
+                    .nth(1)
+                    .unwrap_or("")
+                    .to_string();
+                self.handle_foreach(&raw);
             }
 
             // Automation panic button: cancel whatever owns the connection
@@ -2359,5 +2525,59 @@ mod tests {
         let command = "";
         let formatted = format!("{}\n", command);
         assert_eq!(formatted, "\n");
+    }
+}
+
+#[cfg(test)]
+mod foreach_tests {
+    use crate::core::AppCore;
+
+    fn core_with_bandolier() -> AppCore {
+        let mut core = AppCore::new_for_test();
+        let cache = &mut core.game_state.container_cache;
+        cache.register_container("77".to_string(), "Bandolier".to_string());
+        cache.add_item(
+            "77",
+            r#"In the <a exist="77" noun="bandolier">bandolier</a>:"#.to_string(),
+        );
+        cache.add_item(
+            "77",
+            r#" a <a exist="101" noun="crystal">quartz crystal</a>"#.to_string(),
+        );
+        cache.add_item(
+            "77",
+            r#" a <a exist="102" noun="sword">slim short sword</a>"#.to_string(),
+        );
+        core
+    }
+
+    #[test]
+    fn foreach_end_to_end_over_tracked_container() {
+        let mut core = core_with_bandolier();
+        let _ = core.handle_dot_command(".foreach gem in bandolier; sell item");
+
+        // Runs under the lease as root owner...
+        assert!(core.foreach.is_running());
+        assert_eq!(core.automation_owner().unwrap().kind, "foreach");
+        // ...matched only the gem (bundled classifier), and the start
+        // tick fired the implicit get with the exist id.
+        assert_eq!(core.take_outbound(), vec!["get #101".to_string()]);
+
+        // .stop cancels the run through the lease.
+        let _ = core.handle_dot_command(".stop");
+        assert!(!core.foreach.is_running());
+        assert!(core.automation_owner().is_none());
+    }
+
+    #[test]
+    fn foreach_rejects_unknown_container_and_dry_runs() {
+        let mut core = core_with_bandolier();
+        let _ = core.handle_dot_command(".foreach gem in knapsack; sell item");
+        assert!(!core.foreach.is_running(), "unknown container must not start");
+
+        // Dry run (no commands) lists matches without starting anything.
+        let _ = core.handle_dot_command(".foreach in bandolier");
+        assert!(!core.foreach.is_running());
+        assert!(core.take_outbound().is_empty());
     }
 }

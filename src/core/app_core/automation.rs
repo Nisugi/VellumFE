@@ -32,7 +32,13 @@ impl AppCore {
     /// Ownership chain, root first. Empty when nothing is driving.
     pub fn automation_chain(&self) -> Vec<AutomationOwner> {
         let mut chain = Vec::new();
-        // foreach (P3) will push its owner ahead of a travel leg it drives.
+        // Root-first: a travel leg driven by foreach reads as its child.
+        if let Some(task) = self.foreach.task() {
+            chain.push(AutomationOwner {
+                kind: "foreach",
+                desc: format!("foreach {}", task.desc),
+            });
+        }
         if let Some(task) = self.travel.task() {
             chain.push(AutomationOwner {
                 kind: "go2",
@@ -59,6 +65,12 @@ impl AppCore {
         let owner = self.automation_owner()?;
         match owner.kind {
             "go2" => {
+                self.travel.stop();
+            }
+            "foreach" => {
+                // Cancel the whole chain: the run plus any travel leg it
+                // (or the user) started underneath.
+                self.foreach.stop();
                 self.travel.stop();
             }
             other => {
