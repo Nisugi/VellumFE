@@ -1026,12 +1026,91 @@ impl ContainerCache {
         None
     }
 
+    /// Resolve a user's container reference the way `.foreach` needs it:
+    /// tolerant of leading articles (`my bando`, `the sack`) and
+    /// abbreviations, matching how players actually name containers. The
+    /// stored title is the container window's noun-phrase (e.g. "iron boar
+    /// hide bandolier"); a query matches when, after stripping articles,
+    /// every query word is a prefix of some title word in order — so
+    /// "bando" hits "bandolier" and "boar hide" hits the full title.
+    /// Exact-title and plain-substring matches (existing behavior) win
+    /// first. Returns the single best match, or None.
+    pub fn find_container_for_query(&self, query: &str) -> Option<&ContainerData> {
+        if let Some(found) = self.find_by_title(query) {
+            return Some(found);
+        }
+        let words = strip_container_articles(query);
+        if words.is_empty() {
+            return None;
+        }
+        // Also retry the article-stripped phrase as a plain substring
+        // (handles "my iron boar hide bandolier" -> stored full title).
+        let stripped = words.join(" ");
+        for container in self.containers.values() {
+            if container.title_lower.contains(&stripped) {
+                return Some(container);
+            }
+        }
+        // Word-prefix match: every query word is a prefix of a title word,
+        // consumed in order (subsequence), so abbreviations resolve.
+        self.containers
+            .values()
+            .find(|container| title_matches_words(&container.title_lower, &words))
+    }
+
+    /// (helpers `strip_container_articles` / `title_matches_words` live
+    /// below the impl.)
+
     /// Get all known containers sorted by title
     pub fn list_containers(&self) -> Vec<&ContainerData> {
         let mut containers: Vec<_> = self.containers.values().collect();
         containers.sort_by(|a, b| a.title_lower.cmp(&b.title_lower));
         containers
     }
+}
+
+/// Lowercase a container query and drop a single leading article
+/// (`my`/`the`/`a`/`an`), returning the remaining words. Only the *first*
+/// word is treated as an article, so "my black sack" -> ["black","sack"].
+fn strip_container_articles(query: &str) -> Vec<String> {
+    let mut words: Vec<String> = query
+        .to_lowercase()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    if words
+        .first()
+        .is_some_and(|w| matches!(w.as_str(), "my" | "the" | "a" | "an"))
+    {
+        words.remove(0);
+    }
+    words
+}
+
+/// True when every `query` word is a prefix of some word in `title`
+/// (lowercased), consumed left to right as a subsequence. Lets "bando"
+/// match "bandolier" and "boar hide" match "iron boar hide bandolier".
+fn title_matches_words(title_lower: &str, query_words: &[String]) -> bool {
+    if query_words.is_empty() {
+        return false;
+    }
+    let title_words: Vec<&str> = title_lower.split_whitespace().collect();
+    let mut ti = 0;
+    for qw in query_words {
+        let mut matched = false;
+        while ti < title_words.len() {
+            let tw = title_words[ti];
+            ti += 1;
+            if tw.starts_with(qw.as_str()) {
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return false;
+        }
+    }
+    true
 }
 
 impl GameState {
@@ -1273,6 +1352,40 @@ mod tests {
         );
         assert_eq!(items[1].id, "225766999");
         assert_eq!(items[1].name, "ornate silver plate");
+    }
+
+    #[test]
+    fn find_container_for_query_handles_articles_and_abbreviations() {
+        let mut cache = ContainerCache::default();
+        cache.register_container("77".to_string(), "iron boar hide bandolier".to_string());
+        cache.register_container("88".to_string(), "coal black purse".to_string());
+
+        // The exact case from live testing: "my bando" -> the bandolier.
+        assert_eq!(
+            cache.find_container_for_query("my bando").map(|c| &c.id),
+            Some(&"77".to_string())
+        );
+        // Article stripping + full noun.
+        assert_eq!(
+            cache
+                .find_container_for_query("the bandolier")
+                .map(|c| &c.id),
+            Some(&"77".to_string())
+        );
+        // Multi-word abbreviation, in order.
+        assert_eq!(
+            cache.find_container_for_query("boar hide").map(|c| &c.id),
+            Some(&"77".to_string())
+        );
+        // A different container by a distinguishing word.
+        assert_eq!(
+            cache.find_container_for_query("my purse").map(|c| &c.id),
+            Some(&"88".to_string())
+        );
+        // Out-of-order words don't subsequence-match.
+        assert!(cache.find_container_for_query("hide iron").is_none());
+        // No spurious match.
+        assert!(cache.find_container_for_query("my locker").is_none());
     }
 
     #[test]

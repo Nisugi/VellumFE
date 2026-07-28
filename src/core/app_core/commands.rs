@@ -1011,16 +1011,39 @@ impl AppCore {
         let mut candidates: Vec<foreach::Candidate> = Vec::new();
         let mut missing: Vec<String> = Vec::new();
         for (query, optional) in &spec.targets {
-            let Some(container) = self.game_state.container_cache.find_by_title(query)
+            let Some(container) = self
+                .game_state
+                .container_cache
+                .find_container_for_query(query)
             else {
                 if *optional {
                     missing.push(query.clone());
                     continue;
                 }
                 self.add_system_message(&format!(
-                    "[foreach] no tracked container matches '{query}' - open it and \
-                     look in it once, or suffix '?' to skip it."
+                    "[foreach] no tracked container matches '{query}' - look in it \
+                     once so VellumFE sees its contents, or suffix '?' to skip it."
                 ));
+                // Show what IS tracked so the mismatch is diagnosable
+                // (and reveals an empty cache, e.g. Lich's ;sorter eating
+                // the inv stream).
+                let known = self.game_state.container_cache.list_containers();
+                if known.is_empty() {
+                    self.add_system_message(
+                        "[foreach] (no containers tracked yet - look in one to start)",
+                    );
+                } else {
+                    let titles: Vec<&str> = known
+                        .iter()
+                        .filter(|c| !c.title.is_empty())
+                        .map(|c| c.title.as_str())
+                        .take(12)
+                        .collect();
+                    self.add_system_message(&format!(
+                        "[foreach] tracked: {}",
+                        titles.join(", ")
+                    ));
+                }
                 return;
             };
             for item in container.parsed_items() {
@@ -1084,7 +1107,7 @@ impl AppCore {
             let steps = {
                 let cache = &self.game_state.container_cache;
                 foreach::build_steps(&spec.commands, candidate, |query| {
-                    cache.find_by_title(query).map(|c| c.id.clone())
+                    cache.find_container_for_query(query).map(|c| c.id.clone())
                 })
             };
             match steps {
