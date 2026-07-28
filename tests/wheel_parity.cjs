@@ -34,14 +34,13 @@ for (const c of data.geometry) {
   );
 }
 
-// ---- Back placement -------------------------------------------------------
-for (const c of data.back_placement) {
-  const real = Array.from({ length: c.realCount }, (_, i) => ({ label: `s${i}` }));
-  const view = wc.buildWheelView(real, true, c.anchor);
-  check(view.realIndex.indexOf(null), c.expectBackDisplay, `back anchor=${c.anchor} n=${c.realCount}`);
-}
+// Back placement (back_placement_angle) and the in-folder rust_only_
+// scenarios are checked ONLY on the Rust side until B7: the desktop now
+// places Back by angle, while this shipped wheel-core.js still uses the
+// pre-span display-index rotation and exposes no seat angles. B7 ports the
+// angle scheme here and folds those groups back into the shared contract.
 
-// ---- scenarios ------------------------------------------------------------
+// ---- scenarios (shared: geometry + fire-mode state machine) ---------------
 const TIMING_BASE = { deadzone: 0.5, aimMs: 150, navMs: 150, edgeThreshold: 0.9, retractDelta: 0.1 };
 
 for (const sc of data.scenarios) {
@@ -79,8 +78,7 @@ for (const sc of data.scenarios) {
   }
 }
 
-const total =
-  data.geometry.length + data.back_placement.length + data.scenarios.length;
+const total = data.geometry.length + data.scenarios.length;
 if (failures) {
   console.error(`wheel parity: ${failures} failure(s) across ${total} vector groups`);
   process.exit(1);

@@ -32,19 +32,28 @@
     { "x": 0.0, "yUp": 1.0, "count": 1, "deadzone": 0.5, "expect": 0 },
     { "x": 0.0, "yUp": 0.05, "count": 8, "deadzone": 0.0, "expect": 0 }
   ],
-  "back_placement": [
-    { "realCount": 3, "anchor": "up", "expectBackDisplay": 0 },
-    { "realCount": 3, "anchor": "right", "expectBackDisplay": 1 },
-    { "realCount": 3, "anchor": "down", "expectBackDisplay": 2 },
-    { "realCount": 3, "anchor": "left", "expectBackDisplay": 3 },
-    { "realCount": 7, "anchor": "up", "expectBackDisplay": 0 },
-    { "realCount": 7, "anchor": "up-right", "expectBackDisplay": 1 },
-    { "realCount": 7, "anchor": "right", "expectBackDisplay": 2 },
-    { "realCount": 7, "anchor": "down-right", "expectBackDisplay": 3 },
-    { "realCount": 7, "anchor": "down", "expectBackDisplay": 4 },
-    { "realCount": 7, "anchor": "down-left", "expectBackDisplay": 5 },
-    { "realCount": 7, "anchor": "left", "expectBackDisplay": 6 },
-    { "realCount": 7, "anchor": "up-left", "expectBackDisplay": 7 }
+  "_back_placement_note": [
+    "back_placement_angle is RUST-ONLY until B7. The desktop places Back by",
+    "angle (append as the last seat, rotate the ring so Back's center hits",
+    "the anchor); the phone's wheel-core.js still uses the pre-span display-",
+    "index rotation and exposes no seat angles, so the node harness skips",
+    "this group. B7 ports the angle scheme to JS and folds these back into",
+    "the shared contract. expectBackCenterDeg is the aim-convention angle",
+    "(0 = up, clockwise) of Back's seat center."
+  ],
+  "back_placement_angle": [
+    { "realCount": 3, "anchor": "up", "expectBackCenterDeg": 0 },
+    { "realCount": 3, "anchor": "right", "expectBackCenterDeg": 90 },
+    { "realCount": 3, "anchor": "down", "expectBackCenterDeg": 180 },
+    { "realCount": 3, "anchor": "left", "expectBackCenterDeg": 270 },
+    { "realCount": 7, "anchor": "up", "expectBackCenterDeg": 0 },
+    { "realCount": 7, "anchor": "up-right", "expectBackCenterDeg": 45 },
+    { "realCount": 7, "anchor": "right", "expectBackCenterDeg": 90 },
+    { "realCount": 7, "anchor": "down-right", "expectBackCenterDeg": 135 },
+    { "realCount": 7, "anchor": "down", "expectBackCenterDeg": 180 },
+    { "realCount": 7, "anchor": "down-left", "expectBackCenterDeg": 225 },
+    { "realCount": 7, "anchor": "left", "expectBackCenterDeg": 270 },
+    { "realCount": 7, "anchor": "up-left", "expectBackCenterDeg": 315 }
   ],
   "scenarios": [
     {
@@ -151,9 +160,18 @@
         { "t": 250, "x": 0.0, "y": 0.2 }
       ],
       "expect": { "aimed": null, "fired": null, "releaseReal": null }
-    },
+    }
+  ],
+  "_rust_only_scenarios_note": [
+    "In-folder scenarios whose expected seats depend on Back placement.",
+    "RUST-ONLY until B7 for the same reason as back_placement_angle: the",
+    "phone still uses the old display-index rotation, so the seats differ.",
+    "Under the desktop append-Back-and-rotate-by-angle scheme, a 3-real +",
+    "Back ring anchored down rotates so up->seat1, left->seat0, right->seat2."
+  ],
+  "rust_only_scenarios": [
     {
-      "name": "rotated_folder_seat_descends_by_display_index",
+      "name": "folder_up_descends_the_inner_folder_seat",
       "fireMode": "release",
       "ring": { "labels": ["a", "inner", "c"], "folders": [1], "inFolder": true, "anchor": "down" },
       "initialPath": [0],
@@ -164,7 +182,7 @@
       "expect": { "aimed": null, "path": [0, 1], "fired": null }
     },
     {
-      "name": "rotated_folder_leaf_commits_by_display_index",
+      "name": "folder_left_commits_leaf_a",
       "fireMode": "release",
       "ring": { "labels": ["a", "inner", "c"], "folders": [1], "inFolder": true, "anchor": "down" },
       "initialPath": [0],
@@ -172,7 +190,7 @@
         { "t": 0, "x": -1.0, "y": 0.0 },
         { "t": 160, "x": -1.0, "y": 0.0 }
       ],
-      "expect": { "aimed": 3, "path": [0], "fired": null, "releaseReal": 0 }
+      "expect": { "aimed": 0, "path": [0], "fired": null, "releaseReal": 0 }
     }
   ]
 }

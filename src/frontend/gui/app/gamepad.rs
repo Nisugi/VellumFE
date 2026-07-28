@@ -1122,27 +1122,47 @@ fn wheel_slice_at(x: f32, y_up: f32, count: usize, deadzone: f32) -> Option<usiz
     seat_at(x, y_up, &layout, deadzone)
 }
 
+/// The aim-convention angle (degrees, 0 = up, clockwise) of a screen
+/// anchor word, used to place the reserved Back slice at its side.
+/// Unknown words (and "none", handled earlier) fall back to down.
+fn anchor_angle_deg(anchor: &str) -> f32 {
+    match anchor {
+        "up" => 0.0,
+        "up-right" => 45.0,
+        "right" => 90.0,
+        "down-right" => 135.0,
+        "down" => 180.0,
+        "down-left" => 225.0,
+        "left" => 270.0,
+        "up-left" => 315.0,
+        _ => 180.0, // default: down
+    }
+}
+
+/// Smallest absolute difference between two angles in degrees (0..=180).
+fn angular_gap(a: f32, b: f32) -> f32 {
+    let d = (a - b).rem_euclid(360.0);
+    d.min(360.0 - d)
+}
+
 /// Display index (0 = top, clockwise) whose seat center lies nearest a
-/// screen-anchor word, given `count` evenly-spaced seats. Used to place
-/// the reserved Back slice at its configured side.
+/// screen-anchor word, given `count` evenly-spaced seats. Retained for the
+/// even-ring Back-placement tests; the runtime positions Back by angle
+/// (see `WheelView::build`).
+#[cfg(test)]
 fn anchor_display_index(anchor: &str, count: usize) -> usize {
     if count == 0 {
         return 0;
     }
-    // Anchor screen direction as a (x, y_up) unit-ish vector, y_up
-    // positive = up (matching the stick convention wheel_slice_at reads).
-    let (ax, ay) = match anchor {
-        "up" => (0.0, 1.0),
-        "down" => (0.0, -1.0),
-        "left" => (-1.0, 0.0),
-        "right" => (1.0, 0.0),
-        "up-left" => (-1.0, 1.0),
-        "up-right" => (1.0, 1.0),
-        "down-left" => (-1.0, -1.0),
-        "down-right" => (1.0, -1.0),
-        _ => (0.0, -1.0), // default: down
-    };
-    wheel_slice_at(ax, ay, count, 0.0).unwrap_or(0)
+    let layout = resolve_spans(&vec![None; count], 0.0);
+    let target = anchor_angle_deg(anchor);
+    (0..count)
+        .min_by(|&a, &b| {
+            angular_gap(layout.seats[a].center_deg(), target)
+                .partial_cmp(&angular_gap(layout.seats[b].center_deg(), target))
+                .unwrap()
+        })
+        .unwrap_or(0)
 }
 
 /// One step of the wheel re-arm gate. Given whether the latch is up and
@@ -1425,45 +1445,53 @@ pub(super) struct WheelView {
 const BACK_COMMAND: &str = "\u{0}__wheel_back__";
 
 impl WheelView {
-    /// Build the display ring. `in_folder` injects the Back slice at the
-    /// anchor; the top level (no parent) shows only real slices. `start`
-    /// rotates the whole ring (degrees, 0 = up); the Back anchor still
-    /// owns folder rotation as before (B3 reworks that).
+    /// Build the display ring.
+    ///
+    /// Top level (not `in_folder`): the real slices, laid out by their spans
+    /// and rotated by the wheel's `start` (0 = up, clockwise).
+    ///
+    /// Inside a folder: a reserved Back slice is appended as the LAST seat
+    /// (real slices keep their order 0..n-1 — no array rotation, so display
+    /// index n is always Back), then the whole ring is rotated by ANGLE so
+    /// Back's seat center lands at the `back_anchor` direction. Back keeps
+    /// the same screen side at every level, as before, but now that works
+    /// with uneven seats too. `back_anchor == "none"` skips Back entirely —
+    /// the folder ring is just the real slices (rotated by `start`), and
+    /// you ascend with the East/B accelerator.
     fn build(real: &[WheelSlice], in_folder: bool, back_anchor: &str, start: f32) -> Self {
-        let layout_for = |slices: &[WheelSlice]| {
-            let spans: Vec<Option<f32>> = slices.iter().map(|s| s.span).collect();
-            resolve_spans(&spans, start)
-        };
-        if !in_folder {
+        let real_spans = || -> Vec<Option<f32>> { real.iter().map(|s| s.span).collect() };
+
+        if !in_folder || back_anchor == "none" {
             let slices = real.to_vec();
-            let layout = layout_for(&slices);
+            let layout = resolve_spans(&real_spans(), start);
             return Self {
                 real_index: (0..real.len()).map(Some).collect(),
                 layout,
                 slices,
             };
         }
-        // Displayed count includes the Back seat; rotate the assembled
-        // ring so Back lands nearest the anchor while the real slices stay
-        // in order around it.
-        let count = real.len() + 1;
-        let back = WheelSlice {
+
+        // [real..., Back] — Back is always the last display seat.
+        let mut slices: Vec<WheelSlice> = real.to_vec();
+        slices.push(WheelSlice {
             label: "◂ Back".to_string(),
             command: BACK_COMMAND.to_string(),
             ..Default::default()
-        };
-        // Assemble as [real..., Back] then rotate right so Back moves from
-        // the last seat to the anchor seat.
-        let target = anchor_display_index(back_anchor, count);
-        let mut slices: Vec<WheelSlice> = real.to_vec();
-        slices.push(back);
+        });
         let mut real_index: Vec<Option<usize>> = (0..real.len()).map(Some).collect();
         real_index.push(None);
-        // Back currently at index count-1; rotate so it sits at `target`.
-        let shift = (target + count - (count - 1)) % count; // = (target + 1) % count
-        slices.rotate_right(shift);
-        real_index.rotate_right(shift);
-        let layout = layout_for(&slices);
+
+        // Back participates as a span-less seat in the remainder split (no
+        // magic width — an even ring keeps today's geometry). Lay it out at
+        // start 0 to read Back's center, then rotate so that center lands on
+        // the anchor direction. (This ignores a user `start` inside folders,
+        // by design: Back-position consistency across levels wins there.)
+        let mut spans = real_spans();
+        spans.push(None);
+        let back_idx = slices.len() - 1;
+        let at_zero = resolve_spans(&spans, 0.0);
+        let rotation = anchor_angle_deg(back_anchor) - at_zero.seats[back_idx].center_deg();
+        let layout = resolve_spans(&spans, rotation);
         Self { slices, real_index, layout }
     }
 
@@ -1723,27 +1751,46 @@ mod wheel_tests {
     }
 
     #[test]
-    fn folder_view_injects_back_at_anchor() {
+    fn folder_view_appends_back_as_last_seat() {
         let real = vec![leaf("a"), leaf("b"), leaf("c")];
-        // 4 seats once Back is added; "down" anchor => display index 2.
         let view = WheelView::build(&real, true, "down", 0.0);
         assert_eq!(view.len(), 4);
-        let back_at = anchor_display_index("down", 4);
-        assert_eq!(view.real(back_at), Some(None), "Back sits at its anchor");
-        assert_eq!(view.slices[back_at].command, BACK_COMMAND);
-        // The three real slices are all present exactly once.
-        let mut reals: Vec<usize> = (0..4).filter_map(|i| view.real(i).flatten()).collect();
-        reals.sort();
-        assert_eq!(reals, vec![0, 1, 2]);
+        // Back is always the LAST display seat now (no array rotation); the
+        // real slices keep their order at display indices 0..n-1.
+        assert_eq!(view.real(0), Some(Some(0)));
+        assert_eq!(view.real(1), Some(Some(1)));
+        assert_eq!(view.real(2), Some(Some(2)));
+        assert_eq!(view.real(3), Some(None), "Back is the last seat");
+        assert_eq!(view.slices[3].command, BACK_COMMAND);
     }
 
     #[test]
-    fn back_anchor_lands_on_the_named_side() {
-        // With 4 seats: up=0, right=1, down=2, left=3.
-        assert_eq!(anchor_display_index("up", 4), 0);
-        assert_eq!(anchor_display_index("right", 4), 1);
-        assert_eq!(anchor_display_index("down", 4), 2);
-        assert_eq!(anchor_display_index("left", 4), 3);
+    fn back_center_lands_on_the_named_side() {
+        // Back is positioned by ANGLE now: its seat center sits at the
+        // anchor direction (up=0, right=90, down=180, left=270 in the aim
+        // convention), whatever the seat count or spans.
+        let real = vec![leaf("a"), leaf("b"), leaf("c")];
+        for (anchor, want) in [("up", 0.0), ("right", 90.0), ("down", 180.0), ("left", 270.0)] {
+            let view = WheelView::build(&real, true, anchor, 0.0);
+            let back = *view.layout.seats.last().unwrap();
+            assert!(
+                angular_gap(back.center_deg(), want) < 1e-3,
+                "Back center for {anchor}: {} vs {want}",
+                back.center_deg()
+            );
+        }
+    }
+
+    #[test]
+    fn back_slice_none_skips_the_back_seat() {
+        // back_anchor "none": a folder ring is just the real slices, no
+        // reserved Back seat — you ascend via the East/B accelerator.
+        let real = vec![leaf("a"), leaf("b"), leaf("c")];
+        let view = WheelView::build(&real, true, "none", 0.0);
+        assert_eq!(view.len(), 3, "no Back seat");
+        for i in 0..3 {
+            assert_eq!(view.real(i), Some(Some(i)));
+        }
     }
 
     #[test]
@@ -1926,10 +1973,12 @@ mod wheel_tests {
 
     #[test]
     fn scenario_back_dwell_ascends() {
-        // Inside a folder: 3 real slices + Back anchored down (display 2).
+        // Inside a folder: 3 real slices + Back appended last and anchored
+        // down. Back is display index 3 (the last seat); aiming down lands
+        // on it by angle.
         let view = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down", 0.0);
-        let back_at = anchor_display_index("down", 4);
-        assert_eq!(view.real(back_at), Some(None));
+        let back_at = 3;
+        assert_eq!(view.real(back_at), Some(None), "Back is the last seat");
 
         let t = feel(FireMode::Release);
         let mut ui = fresh_ui();
@@ -1937,7 +1986,7 @@ mod wheel_tests {
         let t0 = Instant::now();
 
         wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, t0);
-        assert_eq!(ui.candidate, Some(back_at));
+        assert_eq!(ui.candidate, Some(back_at), "aiming down hits Back");
         wheel_aim_step(&mut ui, &view, &t, 0.0, -1.0, steps(t0, 160));
         assert_eq!(ui.path, Vec::<usize>::new(), "Back dwell ascends");
         assert!(ui.rearm_until_center);
@@ -2020,36 +2069,41 @@ mod wheel_tests {
     }
 
     #[test]
-    fn scenario_rotated_folder_ring_classifies_seats_by_display_index() {
-        // Inside a folder whose ring is rotated by the Back anchor, the
-        // folder/leaf decision must read the DISPLAY seat, not the real
-        // index — the same display-vs-real trap 0fb3431 fixed for firing.
-        // Ring here: children [a, inner(folder), c] + Back anchored down
-        // rotates to [inner, c, Back, a].
+    fn scenario_folder_ring_with_back_descends_and_commits_correctly() {
+        // A Back-bearing folder ring: children [a(leaf), inner(folder),
+        // c(leaf)] + Back appended last. Append-not-rotate means real slices
+        // sit at their OWN display index (0..n-1) and Back is last, so the
+        // display-vs-real divergence can no longer occur by construction —
+        // this test locks that in while still exercising folder-descend and
+        // leaf-commit in a ring that has a Back seat.
+        //
+        // 4 even seats anchored "down": Back(3) is placed at 180 by a -90
+        // rotation, so the reals land at up=seat1(inner), left=seat0(a),
+        // right=seat2(c).
         let children = vec![leaf("a"), folder("inner", vec![leaf("b")]), leaf("c")];
         let view = WheelView::build(&children, true, "down", 0.0);
-        assert_eq!(view.real(0), Some(Some(1)), "display 0 is the inner folder");
-        assert_eq!(view.real(3), Some(Some(0)), "display 3 is leaf a");
+        assert_eq!(view.real(0), Some(Some(0)), "reals keep their own index");
+        assert_eq!(view.real(1), Some(Some(1)));
+        assert_eq!(view.real(3), Some(None), "Back last");
 
         let t = feel(FireMode::Release);
         let t0 = Instant::now();
 
-        // Dwelling the folder seat (up = display 0) must DESCEND into it.
+        // Up aims the inner folder (seat 1) — dwelling descends.
         let mut ui = fresh_ui();
         ui.path = vec![0];
         wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, t0);
         wheel_aim_step(&mut ui, &view, &t, 0.0, 1.0, steps(t0, 160));
-        assert_eq!(ui.path, vec![0, 1], "folder seat descends (real index 1)");
+        assert_eq!(ui.path, vec![0, 1], "folder seat descends");
         assert_eq!(ui.aimed, None);
 
-        // Dwelling the leaf seat (left = display 3) must COMMIT, not
-        // wander into a phantom folder.
+        // Left aims leaf a (seat 0) — dwelling commits, never descends.
         let mut ui = fresh_ui();
         ui.path = vec![0];
         wheel_aim_step(&mut ui, &view, &t, -1.0, 0.0, t0);
         wheel_aim_step(&mut ui, &view, &t, -1.0, 0.0, steps(t0, 160));
         assert_eq!(ui.path, vec![0], "leaf seat must not descend");
-        assert_eq!(ui.aimed, Some(3), "leaf seat commits");
+        assert_eq!(ui.aimed, Some(0), "leaf seat commits");
     }
 
     /// The golden-vector parity harness: one truth table
@@ -2078,21 +2132,26 @@ mod wheel_tests {
             );
         }
 
-        for case in data["back_placement"].as_array().unwrap() {
+        // Back placement is checked by ANGLE (Rust-only until B7): Back is
+        // the last seat, and its center sits at the anchor direction.
+        for case in data["back_placement_angle"].as_array().unwrap() {
             let n = case["realCount"].as_u64().unwrap() as usize;
             let real: Vec<WheelSlice> = (0..n).map(|i| leaf(&format!("s{i}"))).collect();
             let view = WheelView::build(&real, true, case["anchor"].as_str().unwrap(), 0.0);
-            let back_at = (0..view.len())
-                .find(|&i| view.real(i) == Some(None))
-                .expect("Back seat exists");
-            assert_eq!(
-                back_at as u64,
-                case["expectBackDisplay"].as_u64().unwrap(),
-                "back placement {case}"
+            let back = *view.layout.seats.last().unwrap();
+            assert_eq!(view.real(view.len() - 1), Some(None), "Back is last: {case}");
+            let want = case["expectBackCenterDeg"].as_f64().unwrap() as f32;
+            assert!(
+                angular_gap(back.center_deg(), want) < 1e-2,
+                "back angle {case}: got {}",
+                back.center_deg()
             );
         }
 
-        for sc in data["scenarios"].as_array().unwrap() {
+        // Shared scenarios run here AND in node; rust_only_scenarios run
+        // only here (in-folder seats that depend on the Back scheme, which
+        // the phone hasn't adopted until B7). Both use the same runner.
+        let run_scenario = |sc: &serde_json::Value| {
             let name = sc["name"].as_str().unwrap();
             let ring = &sc["ring"];
             let folders: Vec<usize> = ring["folders"]
@@ -2178,6 +2237,13 @@ mod wheel_tests {
                 });
                 assert_eq!(got.map(|v| v as u64), want.as_u64(), "{name}: releaseReal");
             }
+        };
+
+        for sc in data["scenarios"].as_array().unwrap() {
+            run_scenario(sc);
+        }
+        for sc in data["rust_only_scenarios"].as_array().unwrap() {
+            run_scenario(sc);
         }
     }
 
@@ -2202,9 +2268,11 @@ mod wheel_tests {
         assert_eq!((out.fire, ui.path.as_slice()), (None, &[0][..]));
         assert!(ui.rearm_until_center);
 
-        // Back under the stick inside a folder: South ascends.
+        // Back under the stick inside a folder: South ascends. Back is the
+        // last display seat now.
         let inner = WheelView::build(&[leaf("a"), leaf("b"), leaf("c")], true, "down", 0.0);
-        let back_at = anchor_display_index("down", 4);
+        let back_at = inner.slices.len() - 1;
+        assert_eq!(inner.real(back_at), Some(None));
         let mut ui = fresh_ui();
         ui.path = vec![0];
         ui.candidate = Some(back_at);
