@@ -41,6 +41,7 @@ dirs = "5"
 
 # Text processing
 regex = "1"
+fancy-regex = "0.14"  # Lookaround support for Ruby-authored gameobj-data regexes
 aho-corasick = "1"  # Fast literal string matching for highlights
 emojis = "0.9.0"  # Embedded gemoji data for :grin:-style shortcode expansion
 quick-xml = "0.36"  # XML parsing
