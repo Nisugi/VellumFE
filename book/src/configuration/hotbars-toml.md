@@ -81,6 +81,7 @@ dim = true
 | `ct_active` | — | Casttime is running |
 | `indicator` | `id`, `active` | A status indicator matches: `standing`, `kneeling`, `sitting`, `prone`, `stunned`, `bleeding`, `hidden`, `invisible`, `webbed`, `joined`, `dead` |
 | `vital` | `vital`, `cmp`, `value`, `unit` | A vital compares true: `health`/`mana`/`stamina`/`spirit`, `cmp` one of `<` `<=` `>` `>=`, `unit` `"percent"` or `"absolute"` |
+| `spell_affordable` | `number` | The bundled spell table lists static costs for that spell number and your current absolute vitals cover them. Works without Lich. Fails closed on unknown numbers, variable (formula) costs, or before vitals data arrives; unlike Lich's `affordable?` it does not model feats or debuffs. |
 | `all` / `any` | `conditions = [ ... ]` | All / any of the nested conditions match |
 
 ### Style Fields

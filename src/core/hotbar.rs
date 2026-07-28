@@ -130,7 +130,30 @@ pub fn eval_condition(cond: &HotbarCondition, gs: &GameState, now_server: i64) -
         } => vital_value(gs, *vital, *unit)
             .map(|v| cmp.eval(v, *value as i64))
             .unwrap_or(false),
+        HotbarCondition::SpellAffordable { number } => spell_affordable(gs, *number),
     }
+}
+
+/// True when the bundled spell table knows this spell's static costs and
+/// the character's current absolute vitals (minivitals feed) cover them.
+/// Fails closed on unknown spells, formula costs, and vitals not yet seen
+/// (max == 0) — this is deliberately an approximation of Lich's
+/// `Spell[n].affordable?` without its feat/debuff adjustments.
+fn spell_affordable(gs: &GameState, number: u16) -> bool {
+    let Some(spell) = crate::core::spell_table::spell(number) else {
+        return false;
+    };
+    if spell.dynamic_cost {
+        return false;
+    }
+    let covers = |cost: Option<u16>, entry: &crate::core::state::VitalEntry| match cost {
+        None => true,
+        Some(c) => entry.max > 0 && entry.value >= c as u32,
+    };
+    let mv = &gs.minivitals;
+    covers(spell.mana, &mv.mana)
+        && covers(spell.stamina, &mv.stamina)
+        && covers(spell.spirit, &mv.spirit)
 }
 
 /// Seconds remaining for a countdown source; None when idle/absent.
@@ -547,6 +570,32 @@ mod tests {
         idle.casttime_end = Some(NOW + 30);
         let resolved = resolve_bar(&bar, &idle, NOW);
         assert_eq!(resolved[0].countdown_secs, Some(30));
+    }
+
+    #[test]
+    fn spell_affordable_checks_static_costs_and_fails_closed() {
+        let cond = HotbarCondition::SpellAffordable { number: 101 }; // 1 mana
+
+        // No vitals data yet (max == 0): fail closed.
+        let mut gs = GameState::new();
+        assert!(!eval_condition(&cond, &gs, NOW));
+
+        // Enough mana: affordable.
+        gs.minivitals.update_vital("mana", 8, 54, "mana 8/54".to_string());
+        assert!(eval_condition(&cond, &gs, NOW));
+
+        // Not enough mana.
+        gs.minivitals.update_vital("mana", 0, 54, "mana 0/54".to_string());
+        assert!(!eval_condition(&cond, &gs, NOW));
+
+        // Unknown spell number: fail closed.
+        let unknown = HotbarCondition::SpellAffordable { number: 9999 };
+        assert!(!eval_condition(&unknown, &gs, NOW));
+
+        // Formula-cost spell (Song of Luck): fail closed even with mana.
+        gs.minivitals.update_vital("mana", 999, 999, String::new());
+        let dynamic = HotbarCondition::SpellAffordable { number: 1006 };
+        assert!(!eval_condition(&dynamic, &gs, NOW));
     }
 
     #[test]

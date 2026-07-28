@@ -70,6 +70,7 @@ const LEAF_KINDS: &[&str] = &[
     "Casttime active",
     "Indicator",
     "Vital",
+    "Spell affordable",
 ];
 
 fn leaf_kind_index(cond: &HotbarCondition) -> usize {
@@ -81,6 +82,7 @@ fn leaf_kind_index(cond: &HotbarCondition) -> usize {
         HotbarCondition::CtActive => 4,
         HotbarCondition::Indicator { .. } => 5,
         HotbarCondition::Vital { .. } => 6,
+        HotbarCondition::SpellAffordable { .. } => 7,
         HotbarCondition::All { .. } | HotbarCondition::Any { .. } => 0,
     }
 }
@@ -110,12 +112,13 @@ fn default_leaf(kind: usize) -> HotbarCondition {
             id: "hidden".to_string(),
             active: true,
         },
-        _ => HotbarCondition::Vital {
+        6 => HotbarCondition::Vital {
             vital: VitalKind::Stamina,
             cmp: HotbarCmp::Lt,
             value: 25,
             unit: VitalUnit::Percent,
         },
+        _ => HotbarCondition::SpellAffordable { number: 101 },
     }
 }
 
@@ -1278,6 +1281,39 @@ fn render_leaf_condition(
                         changed = true;
                     }
                 });
+        }
+        HotbarCondition::SpellAffordable { number } => {
+            ui.label("spell #:");
+            changed |= ui
+                .add(egui::DragValue::new(number).range(1..=9999))
+                .changed();
+            // Bundled-table lookup as instant feedback on the number.
+            match crate::core::spell_table::spell(*number) {
+                Some(info) if info.dynamic_cost => {
+                    ui.weak(format!("{} (variable cost - never affordable here)", info.name));
+                }
+                Some(info) => {
+                    let mut costs = Vec::new();
+                    if let Some(m) = info.mana {
+                        costs.push(format!("{} mana", m));
+                    }
+                    if let Some(s) = info.stamina {
+                        costs.push(format!("{} stamina", s));
+                    }
+                    if let Some(s) = info.spirit {
+                        costs.push(format!("{} spirit", s));
+                    }
+                    let costs = if costs.is_empty() {
+                        "no cost".to_string()
+                    } else {
+                        costs.join(", ")
+                    };
+                    ui.weak(format!("{} ({})", info.name, costs));
+                }
+                None => {
+                    ui.weak("unknown spell number");
+                }
+            }
         }
         HotbarCondition::RtActive | HotbarCondition::CtActive => {}
         HotbarCondition::All { .. } | HotbarCondition::Any { .. } => {}

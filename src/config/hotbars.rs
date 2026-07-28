@@ -225,6 +225,11 @@ pub enum HotbarCondition {
         #[serde(default)]
         unit: VitalUnit,
     },
+    /// The bundled spell table (effect-list.xml) lists static costs for
+    /// this spell number and current absolute vitals cover them. Fails
+    /// closed: unknown numbers, formula costs, and missing vitals data
+    /// all evaluate false. No Lich required.
+    SpellAffordable { number: u16 },
 }
 
 fn default_true() -> bool {
