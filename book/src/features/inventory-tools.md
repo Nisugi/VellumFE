@@ -167,5 +167,7 @@ Check what's in use and how old it is:
 .data reload     # re-resolve now (e.g. after ;repo download in Lich)
 ```
 
-> A Settings panel for the data pack is planned; for now `.data` is the
-> way to inspect and refresh it.
+In the GUI, the same information and a **Reload** button live under
+**Settings → Data**. Setting your Lich folder (**Settings → Map → Lich
+Directory**) lets VellumFE use your `;repo`-maintained copy, which is
+always the freshest.

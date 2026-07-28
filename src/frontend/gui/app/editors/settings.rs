@@ -516,12 +516,20 @@ impl VellumGuiApp {
         // Test button applies the panel's live values and speaks a sample
         // without waiting for Save.
         let mut tts_test_clicked = false;
+        // `.data reload` action from the Data panel (re-resolves the shared
+        // item database used by .foreach/.sorter).
+        let mut data_reload_clicked = false;
         let can_calibrate_doll = self
             .skin_state
             .widget_art()
             .is_some_and(|art| art.doll_base.is_some());
         let updater_status = self.app_core.map_updater.status.clone();
         let updater_installed = self.app_core.map_updater.installed.clone();
+        // Data-pack asset status (source tier + age), computed before the
+        // UI closure borrows self immutably.
+        let data_status_lines = crate::core::data_pack::status_lines(
+            self.app_core.config.map.lich_dir.as_deref(),
+        );
         let updater_in_flight = self.app_core.map_updater.in_flight();
         let saved_target_count = self.app_core.config.go2.saved.len();
         egui::Window::new("Settings")
@@ -844,6 +852,41 @@ impl VellumGuiApp {
                             }
                         }
 
+                        // Data pack: shared game-data assets used by
+                        // .foreach and .sorter. Action-only (no editable
+                        // settings), so it lives outside the registry-driven
+                        // category loop.
+                        ui.collapsing("Data", |ui| {
+                            ui.label(
+                                "Item database for .foreach and .sorter \
+                                 (gameobj-data.xml). Resolved from your Lich \
+                                 folder if set, then a local copy, then the \
+                                 bundled snapshot.",
+                            );
+                            for line in &data_status_lines {
+                                ui.label(egui::RichText::new(line).weak());
+                            }
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .button("Reload")
+                                    .on_hover_text(
+                                        "Re-resolve the sources now — e.g. after \
+                                         ';repo download' in Lich",
+                                    )
+                                    .clicked()
+                                {
+                                    data_reload_clicked = true;
+                                }
+                                ui.label(
+                                    egui::RichText::new(
+                                        "Set the Lich folder under Map for the \
+                                         freshest data.",
+                                    )
+                                    .weak(),
+                                );
+                            });
+                        });
+
                         if !state.errors.is_empty() {
                             ui.separator();
                             for error in &state.errors {
@@ -872,6 +915,12 @@ impl VellumGuiApp {
         }
         if calibrate_doll_clicked {
             self.open_doll_calibration();
+        }
+        if data_reload_clicked {
+            let types = self.app_core.reload_data_pack();
+            self.app_core.add_system_message(&format!(
+                "Data pack reloaded ({types} item types)."
+            ));
         }
         if tts_test_clicked {
             let rate = state.float_draft("tts.rate") as f32;

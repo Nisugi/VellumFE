@@ -1231,15 +1231,10 @@ impl AppCore {
                         ));
                     }
                     "reload" => {
-                        self.gameobj_data = None;
-                        // The sorter keeps its own copy in the message
-                        // processor; drop it too so both re-resolve.
-                        self.message_processor.reset_gameobj_cache();
-                        let data = self.gameobj_data();
+                        let types = self.reload_data_pack();
                         self.add_system_message(&format!(
                             "Data pack re-resolved: gameobj classifier reloaded \
-                             ({} types).",
-                            data.type_count()
+                             ({types} types)."
                         ));
                     }
                     _ => {

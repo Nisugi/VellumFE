@@ -215,6 +215,15 @@ impl AppCore {
             .expect("gameobj_data initialized above")
     }
 
+    /// Drop and rebuild the item classifier from the data pack, in both
+    /// AppCore and the message processor (the sorter's copy). Returns the
+    /// reloaded type count. Shared by `.data reload` and Settings > Data.
+    pub fn reload_data_pack(&mut self) -> usize {
+        self.gameobj_data = None;
+        self.message_processor.reset_gameobj_cache();
+        self.gameobj_data().type_count()
+    }
+
     /// Create a new AppCore instance
     /// Disk-free constructor for unit tests: default config, empty layout,
     /// no cmdlist/sound, TTS disabled. Never touches VELLUM_FE_DIR.
