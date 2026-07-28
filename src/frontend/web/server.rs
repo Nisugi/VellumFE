@@ -276,6 +276,7 @@ pub async fn serve_listener_with_token(
         .route("/play", get(index_html))
         .route("/sessions", get(sessions_json))
         .route("/app.js", get(app_js))
+        .route("/wheel-core.js", get(wheel_core_js))
         .route("/app.css", get(app_css))
         .route("/manifest.webmanifest", get(manifest))
         .route("/sw.js", get(sw_js))
@@ -376,6 +377,16 @@ async fn app_js() -> impl IntoResponse {
             (header::CACHE_CONTROL, "no-cache"),
         ],
         include_str!("assets/app.js"),
+    )
+}
+
+async fn wheel_core_js() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("assets/wheel-core.js"),
     )
 }
 

@@ -305,6 +305,9 @@
     </div>
     <div id="sheet-items"></div>
   </div>
+  <!-- Classic script: wheel-core must define globalThis.WheelCore before
+       the app module runs (module scripts are deferred; this is not). -->
+  <script src="/wheel-core.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>
