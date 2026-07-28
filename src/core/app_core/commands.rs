@@ -989,6 +989,18 @@ impl AppCore {
                 self.handle_go2(&args);
             }
 
+            // Automation panic button: cancel whatever owns the connection
+            // (a go2 trip today; foreach chains later) and everything it
+            // drives. Feature-specific cancels (.go2 stop, Esc) still work.
+            "stop" => match self.stop_automation() {
+                Some(desc) => {
+                    self.add_system_message(&format!("Stopped: {}", desc));
+                }
+                None => {
+                    self.add_system_message("Nothing is running.");
+                }
+            },
+
             // Map data management from any frontend — on phones this is THE
             // way to get map data (no Settings > Map panel there).
             "mapdb" => {

@@ -4,6 +4,7 @@
 //! It has NO knowledge of rendering - all state is stored in data structures
 //! that frontends read from.
 
+mod automation;
 mod commands;
 mod config_editor;
 mod haptics;
@@ -12,6 +13,7 @@ mod keybinds;
 mod layout;
 mod state;
 
+pub use automation::AutomationOwner;
 pub use haptics::{HapticEvent, HapticSnapshot};
 pub use interact::{InteractAction, InteractEntity};
 pub use keybinds::HotbarKeyConflict;

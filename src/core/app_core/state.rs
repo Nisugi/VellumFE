@@ -665,6 +665,15 @@ impl AppCore {
 
     /// Plan and begin a trip to a mapdb room id.
     pub fn start_travel(&mut self, destination: u32) {
+        // Lease gate: a different automation root (e.g. a running foreach)
+        // must be stopped first; a go2-owned chain retargets as always.
+        if let Some(owner) = self.automation_blocked_by("go2") {
+            self.add_system_message(&format!(
+                "[go2] {} is driving - .stop to cancel it first.",
+                owner.desc
+            ));
+            return;
+        }
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",
@@ -2992,6 +3001,7 @@ impl AppCore {
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
+        self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, ...)");
         self.add_system_message("");
 
         // Layout commands
