@@ -26,6 +26,7 @@
 // widgets + foreach read from the registry (plan steps 3-6).
 #![allow(dead_code)]
 
+pub mod inv_scan;
 pub mod parse;
 
 pub use parse::parse_anchor;
@@ -106,7 +107,7 @@ pub enum Hand {
 /// Mark/registration status for an item, populated only by an active
 /// `INVENTORY FULL` scan (the passive feed doesn't carry it). `None`
 /// fields mean "not yet scanned", distinct from a known false.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ItemStatus {
     pub marked: Option<bool>,
     pub registered: Option<bool>,
