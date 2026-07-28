@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
+            window.path_to_searchindex_js = "../searchindex-6cb82e4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -375,6 +375,19 @@ up, clockwise). Folder rings anchor to their Back seat instead and
 ignore <code>start</code> — unless <code>back_slice = "none"</code>, in which case they rotate
 with it too. The portals wheel always keeps an even ring, since its
 slices are rebuilt per room.</p>
+<p>Inside a folder, the “go up a level” seat is normally synthesized for
+you and pinned at the <code>back_slice</code> anchor set globally in
+<code>[controller_tuning]</code> (the Tuning tab). That anchor is one of the eight
+compass directions, or <strong><code>none</code></strong> to drop the synthesized Back from
+<em>every</em> folder — you then ascend with the East/B button. To place the
+seat yourself on one ring instead, mark a slice <strong><code>back = true</code></strong>: it
+becomes a real slice you can position, size, color, and floor like any
+other — dwelling it still ascends instead of firing, and it never sends
+a command (any <code>command</code> on it is ignored). A folder with an explicit
+Back uses your ring verbatim: the synthesized seat, the <code>back_slice</code>
+anchor, and the anchor rotation all step aside for that folder only. A
+<code>back</code> slice on the top ring does nothing (there’s no level to go up
+to) and is flagged; only one Back per ring is useful.</p>
 <p>All of this is drawn and edited live in the Wheels tab’s <strong>Visual</strong>
 designer — see <a href="../frontends/gui.html#controllers">the GUI chapter</a> — or
 typed exactly in its <strong>Numeric</strong> view; both edit the same wheel. On

@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-ee9c54e4.js";
+            window.path_to_searchindex_js = "searchindex-6cb82e4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-e125f080.js"></script>
@@ -303,7 +303,7 @@ only requires Perl, which virtually every distro ships by default.</p>
 <h2 id="verify-installation"><a class="header" href="#verify-installation">Verify Installation</a></h2>
 <pre><code class="language-bash">vellum-fe --version
 </code></pre>
-<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.14</code>).</p>
+<p>Should display the version number (e.g., <code>vellum-fe 0.3.0-beta.15</code>).</p>
 <h2 id="configuration-directory"><a class="header" href="#configuration-directory">Configuration Directory</a></h2>
 <p>On first run, VellumFE creates <code>~/.vellum-fe/</code> with default configuration files.</p>
 <p>You can override this location with the <code>VELLUM_FE_DIR</code> environment variable:</p>
@@ -710,10 +710,15 @@ wheels via <code>controller_wheel:&lt;name&gt;</code> bindings; build it all on 
 editor’s Wheels tab. Its <strong>Visual</strong> view is a drag-and-drop designer:
 drag a divider to trade width between wedges (it snaps to the compass
 points — hold Shift to go free), drag a wedge’s floor arc to set its
-inner, click a wedge to edit its fields, double-click a folder to
-step inside (and the ghost Back wedge to step back out), plus
-lock / even-out / mirror / rotate tools. <strong>Numeric</strong>
-shows the same wheel as exact rows. One name is dynamic:
+inner, drag a wedge’s body to reorder the ring, click a wedge to edit
+its fields, double-click a folder to step inside (and the Back wedge
+to step back out), plus lock / even-out / mirror / rotate tools.
+Inside a folder, <strong>Add Back</strong> turns the auto Back ghost into a real
+slice you can move, resize, and color (dwelling it still ascends);
+<strong>Remove Back</strong> restores the ghost. <strong>Lock</strong> a slice to freeze its
+width — its span field and dividers disable, and even-out leaves it
+alone. <strong>Numeric</strong> shows the same wheel as exact rows. One name is
+dynamic:
 <strong><code>controller_wheel:portals</code></strong>
 (r3 by default) fills its slices from the current room’s noun exits —
 the same list <a href="#command-reference"><code>.portal</code></a> resolves — so
@@ -1844,6 +1849,19 @@ up, clockwise). Folder rings anchor to their Back seat instead and
 ignore <code>start</code> — unless <code>back_slice = "none"</code>, in which case they rotate
 with it too. The portals wheel always keeps an even ring, since its
 slices are rebuilt per room.</p>
+<p>Inside a folder, the “go up a level” seat is normally synthesized for
+you and pinned at the <code>back_slice</code> anchor set globally in
+<code>[controller_tuning]</code> (the Tuning tab). That anchor is one of the eight
+compass directions, or <strong><code>none</code></strong> to drop the synthesized Back from
+<em>every</em> folder — you then ascend with the East/B button. To place the
+seat yourself on one ring instead, mark a slice <strong><code>back = true</code></strong>: it
+becomes a real slice you can position, size, color, and floor like any
+other — dwelling it still ascends instead of firing, and it never sends
+a command (any <code>command</code> on it is ignored). A folder with an explicit
+Back uses your ring verbatim: the synthesized seat, the <code>back_slice</code>
+anchor, and the anchor rotation all step aside for that folder only. A
+<code>back</code> slice on the top ring does nothing (there’s no level to go up
+to) and is flagged; only one Back per ring is useful.</p>
 <p>All of this is drawn and edited live in the Wheels tab’s <strong>Visual</strong>
 designer — see <a href="#controllers">the GUI chapter</a> — or
 typed exactly in its <strong>Numeric</strong> view; both edit the same wheel. On

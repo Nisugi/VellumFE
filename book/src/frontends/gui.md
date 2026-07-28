@@ -195,10 +195,15 @@ Beyond plain bindings:
   editor's Wheels tab. Its **Visual** view is a drag-and-drop designer:
   drag a divider to trade width between wedges (it snaps to the compass
   points — hold Shift to go free), drag a wedge's floor arc to set its
-  inner, click a wedge to edit its fields, double-click a folder to
-  step inside (and the ghost Back wedge to step back out), plus
-  lock / even-out / mirror / rotate tools. **Numeric**
-  shows the same wheel as exact rows. One name is dynamic:
+  inner, drag a wedge's body to reorder the ring, click a wedge to edit
+  its fields, double-click a folder to step inside (and the Back wedge
+  to step back out), plus lock / even-out / mirror / rotate tools.
+  Inside a folder, **Add Back** turns the auto Back ghost into a real
+  slice you can move, resize, and color (dwelling it still ascends);
+  **Remove Back** restores the ghost. **Lock** a slice to freeze its
+  width — its span field and dividers disable, and even-out leaves it
+  alone. **Numeric** shows the same wheel as exact rows. One name is
+  dynamic:
   **`controller_wheel:portals`**
   (r3 by default) fills its slices from the current room's noun exits —
   the same list [`.portal`](../reference/commands.md) resolves — so

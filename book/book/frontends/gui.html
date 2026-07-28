@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-ee9c54e4.js";
+            window.path_to_searchindex_js = "../searchindex-6cb82e4e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-e125f080.js"></script>
@@ -350,10 +350,15 @@ wheels via <code>controller_wheel:&lt;name&gt;</code> bindings; build it all on 
 editor’s Wheels tab. Its <strong>Visual</strong> view is a drag-and-drop designer:
 drag a divider to trade width between wedges (it snaps to the compass
 points — hold Shift to go free), drag a wedge’s floor arc to set its
-inner, click a wedge to edit its fields, double-click a folder to
-step inside (and the ghost Back wedge to step back out), plus
-lock / even-out / mirror / rotate tools. <strong>Numeric</strong>
-shows the same wheel as exact rows. One name is dynamic:
+inner, drag a wedge’s body to reorder the ring, click a wedge to edit
+its fields, double-click a folder to step inside (and the Back wedge
+to step back out), plus lock / even-out / mirror / rotate tools.
+Inside a folder, <strong>Add Back</strong> turns the auto Back ghost into a real
+slice you can move, resize, and color (dwelling it still ascends);
+<strong>Remove Back</strong> restores the ghost. <strong>Lock</strong> a slice to freeze its
+width — its span field and dividers disable, and even-out leaves it
+alone. <strong>Numeric</strong> shows the same wheel as exact rows. One name is
+dynamic:
 <strong><code>controller_wheel:portals</code></strong>
 (r3 by default) fills its slices from the current room’s noun exits —
 the same list <a href="../reference/commands.html"><code>.portal</code></a> resolves — so

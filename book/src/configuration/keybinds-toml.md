@@ -209,6 +209,20 @@ ignore `start` — unless `back_slice = "none"`, in which case they rotate
 with it too. The portals wheel always keeps an even ring, since its
 slices are rebuilt per room.
 
+Inside a folder, the "go up a level" seat is normally synthesized for
+you and pinned at the `back_slice` anchor set globally in
+`[controller_tuning]` (the Tuning tab). That anchor is one of the eight
+compass directions, or **`none`** to drop the synthesized Back from
+*every* folder — you then ascend with the East/B button. To place the
+seat yourself on one ring instead, mark a slice **`back = true`**: it
+becomes a real slice you can position, size, color, and floor like any
+other — dwelling it still ascends instead of firing, and it never sends
+a command (any `command` on it is ignored). A folder with an explicit
+Back uses your ring verbatim: the synthesized seat, the `back_slice`
+anchor, and the anchor rotation all step aside for that folder only. A
+`back` slice on the top ring does nothing (there's no level to go up
+to) and is flagged; only one Back per ring is useful.
+
 All of this is drawn and edited live in the Wheels tab's **Visual**
 designer — see [the GUI chapter](../frontends/gui.md#controllers) — or
 typed exactly in its **Numeric** view; both edit the same wheel. On
