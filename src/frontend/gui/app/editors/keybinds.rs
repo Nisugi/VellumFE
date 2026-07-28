@@ -109,6 +109,10 @@ fn display_action(action: &KeyBindAction) -> String {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_keybind_editor(&mut self) {
+        if self.keybind_editor.is_some() {
+            self.raise_editor(egui::Id::new("gui_keybind_browser"));
+            return;
+        }
         self.keybind_editor = Some(KeybindEditorState::new());
     }
 

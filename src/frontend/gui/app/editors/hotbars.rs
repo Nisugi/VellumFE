@@ -148,6 +148,10 @@ impl HotbarEditorState {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_hotbar_editor(&mut self) {
+        if self.hotbar_editor.is_some() {
+            self.raise_editor(egui::Id::new("gui_hotbar_editor"));
+            return;
+        }
         self.hotbar_editor = Some(HotbarEditorState::new());
     }
 

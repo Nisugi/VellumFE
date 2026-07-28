@@ -32,8 +32,25 @@ use super::{theme, VellumGuiApp};
 use eframe::egui;
 
 impl VellumGuiApp {
+    /// Request that the editor window with `window_id` be raised to the top
+    /// on the next frame. Called by the `open_*` methods when their editor
+    /// is already open, so re-issuing a settings command (`.controller`,
+    /// `.settings`, …) surfaces the buried window instead of rebuilding —
+    /// and wiping — its unsaved state. `window_id` is the same `Id` passed
+    /// to the editor window's `.id(...)`.
+    pub(in super::super) fn raise_editor(&mut self, window_id: egui::Id) {
+        self.pending_editor_raise = Some(window_id);
+    }
+
     /// Render whichever editors are open. Called once per frame.
     pub(super) fn render_editors(&mut self, ctx: &eframe::egui::Context) {
+        // Raise a re-requested editor before rendering it, so it draws on
+        // top this frame. A Window lives in the middle-order layer keyed by
+        // its `.id(...)`.
+        if let Some(window_id) = self.pending_editor_raise.take() {
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
+            ctx.request_repaint();
+        }
         self.render_settings_editor(ctx);
         self.render_highlight_editor(ctx);
         self.render_keybind_editor(ctx);

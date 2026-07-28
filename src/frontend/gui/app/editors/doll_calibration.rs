@@ -57,6 +57,12 @@ impl DollCalibrationState {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_doll_calibration(&mut self) {
+        // Already calibrating: raise rather than re-read the manifest, so
+        // in-progress dot placement isn't reset.
+        if self.doll_calibration.is_some() {
+            self.raise_editor(egui::Id::new("gui_doll_calibration"));
+            return;
+        }
         let Some(skin_name) = self.skin_state.loaded_skin().map(str::to_owned) else {
             self.app_core.add_system_message(
                 "No skin active. Pick one in Settings > Appearance > Skin first.",

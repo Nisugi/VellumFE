@@ -204,6 +204,10 @@ struct StreamRow {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_custom_windows_editor(&mut self) {
+        if self.custom_windows_editor.is_some() {
+            self.raise_editor(egui::Id::new("gui_custom_windows"));
+            return;
+        }
         self.custom_windows_editor = Some(CustomWindowsEditorState::new());
     }
 

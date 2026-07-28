@@ -196,6 +196,13 @@ fn display_action(action: &KeyBindAction) -> String {
 
 impl VellumGuiApp {
     pub(in super::super) fn open_controller_editor(&mut self) {
+        // Re-issuing `.controller` while it is open must not rebuild the
+        // state — that would wipe an unsaved wheel buffer or open form.
+        // Raise the existing window to the top instead.
+        if self.controller_editor.is_some() {
+            self.raise_editor(egui::Id::new("gui_controller_editor"));
+            return;
+        }
         self.controller_editor = Some(ControllerEditorState::new());
     }
 

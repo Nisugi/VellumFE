@@ -204,16 +204,26 @@ impl UiColorsBuffer {
 use super::color_field;
 
 impl VellumGuiApp {
+    /// Open the colors editor on `tab`, or — if it is already open — switch
+    /// it to that tab and raise it, preserving any unsaved buffer/form.
+    fn open_or_focus_colors(&mut self, tab: ColorsTab) {
+        match self.colors_editor.as_mut() {
+            Some(state) => state.tab = tab,
+            None => self.colors_editor = Some(ColorsEditorState::new(tab)),
+        }
+        self.raise_editor(egui::Id::new("gui_colors_editor"));
+    }
+
     pub(in super::super) fn open_colors_editor(&mut self) {
-        self.colors_editor = Some(ColorsEditorState::new(ColorsTab::Palette));
+        self.open_or_focus_colors(ColorsTab::Palette);
     }
 
     pub(in super::super) fn open_ui_colors_editor(&mut self) {
-        self.colors_editor = Some(ColorsEditorState::new(ColorsTab::Ui));
+        self.open_or_focus_colors(ColorsTab::Ui);
     }
 
     pub(in super::super) fn open_spell_colors_editor(&mut self) {
-        self.colors_editor = Some(ColorsEditorState::new(ColorsTab::Spells));
+        self.open_or_focus_colors(ColorsTab::Spells);
     }
 
     pub(in super::super) fn open_palette_form_new(&mut self) {
