@@ -225,6 +225,111 @@ impl WheelSlice {
     }
 }
 
+/// The minimum sensible wedge width in degrees. Explicit spans below this
+/// are hard to hit; the layout resolver clamps up to it and the validator
+/// warns. The single source shared by the frontend layout (`resolve_spans`)
+/// and the load-time validator.
+pub const WHEEL_MIN_SPAN_DEG: f32 = 30.0;
+
+/// A problem with one ring's `span` numbers, surfaced as an advisory (the
+/// runtime resolver always produces a usable ring anyway — it clamps and
+/// scales to 360). `wheel` is the display name of the ring ("default" or a
+/// named wheel, with " > folder" appended for a sub-ring).
+#[derive(Debug, Clone, PartialEq)]
+pub enum WheelSpanIssue {
+    /// Explicit spans (each floored at the minimum) sum past 360°.
+    SumOver { wheel: String, sum_deg: f32 },
+    /// A slice's span resolves below the minimum and will be hard to hit.
+    TooNarrow { wheel: String, label: String, span_deg: f32 },
+    /// No span-less slice to absorb the remainder, and the explicit spans
+    /// don't already fill 360° — the ring gets scaled to close.
+    DoesNotClose { wheel: String, sum_deg: f32 },
+}
+
+/// Check one ring's slices for span problems, recursing into folders.
+/// Pure and frontend-free so both the load-time validator (core) and the
+/// editor (frontend) can call it. Mirrors the resolver's remainder-split so
+/// the warnings match what the wheel will actually do.
+pub fn validate_wheel_spans(wheel: &str, slices: &[WheelSlice]) -> Vec<WheelSpanIssue> {
+    let mut issues = Vec::new();
+    validate_ring(wheel, slices, &mut issues);
+    issues
+}
+
+fn validate_ring(wheel: &str, slices: &[WheelSlice], issues: &mut Vec<WheelSpanIssue>) {
+    if !slices.is_empty() {
+        // Explicit spans, each floored at the minimum (the resolver does the
+        // same before splitting the remainder).
+        let explicit: Vec<Option<f32>> = slices
+            .iter()
+            .map(|s| s.span.map(|v| v.max(WHEEL_MIN_SPAN_DEG)))
+            .collect();
+        let explicit_sum: f32 = explicit.iter().flatten().sum();
+        let free_count = explicit.iter().filter(|s| s.is_none()).count();
+
+        if explicit_sum > 360.0 + 1e-3 {
+            issues.push(WheelSpanIssue::SumOver { wheel: wheel.to_string(), sum_deg: explicit_sum });
+        } else if free_count == 0 && (explicit_sum - 360.0).abs() > 0.5 {
+            issues.push(WheelSpanIssue::DoesNotClose {
+                wheel: wheel.to_string(),
+                sum_deg: explicit_sum,
+            });
+        } else if free_count > 0 {
+            // Each free slice's resolved share; warn if it lands sub-minimum.
+            let free_each = (360.0 - explicit_sum) / free_count as f32;
+            if free_each < WHEEL_MIN_SPAN_DEG - 1e-3 {
+                for slice in slices.iter().filter(|s| s.span.is_none()) {
+                    issues.push(WheelSpanIssue::TooNarrow {
+                        wheel: wheel.to_string(),
+                        label: slice.label.clone(),
+                        span_deg: free_each.max(0.0),
+                    });
+                }
+            }
+        }
+        // An explicit span written below the minimum is clamped up by the
+        // resolver — warn so the user knows their number was adjusted.
+        for slice in slices {
+            if let Some(span) = slice.span {
+                if span < WHEEL_MIN_SPAN_DEG - 1e-3 {
+                    issues.push(WheelSpanIssue::TooNarrow {
+                        wheel: wheel.to_string(),
+                        label: slice.label.clone(),
+                        span_deg: span,
+                    });
+                }
+            }
+        }
+    }
+    // Recurse into folders, naming the sub-ring by its folder label.
+    for slice in slices {
+        if slice.is_folder() {
+            let sub = format!("{wheel} > {}", slice.label);
+            validate_ring(&sub, &slice.slices, issues);
+        }
+    }
+}
+
+impl WheelSpanIssue {
+    /// One-line advisory for a system message / editor status.
+    pub fn message(&self) -> String {
+        match self {
+            WheelSpanIssue::SumOver { wheel, sum_deg } => format!(
+                "Wheel '{wheel}' slice spans sum to {:.0}° (over 360) — the wheel will scale them to fit.",
+                sum_deg
+            ),
+            WheelSpanIssue::TooNarrow { wheel, label, span_deg } => format!(
+                "Wheel '{wheel}' slice '{label}' is {:.0}° (under the {:.0}° minimum) — it may be hard to hit.",
+                span_deg, WHEEL_MIN_SPAN_DEG
+            ),
+            WheelSpanIssue::DoesNotClose { wheel, sum_deg } => format!(
+                "Wheel '{wheel}' spans sum to {:.0}° with no flexible slice — the wheel will scale them to fill 360°.",
+                sum_deg
+            ),
+        }
+    }
+}
+
 /// Rumble (haptics) event map: pattern per game event. Patterns:
 /// "off", "short", "long", "double".
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2226,6 +2331,71 @@ mod tests {
         assert_eq!(reparsed[2].slices.len(), 0, "exp is NOT a folder");
         assert_eq!(reparsed[3].label, "health");
         assert_eq!(reparsed[3].slices.len(), 0, "health is NOT a folder");
+    }
+
+    #[test]
+    fn validate_spans_flags_over_narrow_and_nonclosing_rings() {
+        let sp = |label: &str, span: Option<f32>| WheelSlice {
+            label: label.into(),
+            command: label.into(),
+            span,
+            ..Default::default()
+        };
+
+        // All span-less: no issue (even ring).
+        assert!(validate_wheel_spans("w", &[sp("a", None), sp("b", None)]).is_empty());
+
+        // One 120 + three free @ 80 each: fine.
+        let ok = vec![sp("a", Some(120.0)), sp("b", None), sp("c", None), sp("d", None)];
+        assert!(validate_wheel_spans("w", &ok).is_empty());
+
+        // Explicit spans sum over 360 (200 + 200): SumOver.
+        let over = vec![sp("a", Some(200.0)), sp("b", Some(200.0))];
+        assert!(matches!(
+            validate_wheel_spans("w", &over).as_slice(),
+            [WheelSpanIssue::SumOver { .. }]
+        ));
+
+        // Free slices exist but their share is sub-minimum (350 explicit
+        // leaves 10 for one free slice): TooNarrow names that slice.
+        let narrow = vec![sp("wide", Some(350.0)), sp("tiny", None)];
+        let issues = validate_wheel_spans("w", &narrow);
+        assert!(issues.iter().any(|i| matches!(
+            i,
+            WheelSpanIssue::TooNarrow { label, .. } if label == "tiny"
+        )));
+
+        // No free slice and explicit spans don't fill 360: DoesNotClose.
+        let short = vec![sp("a", Some(60.0)), sp("b", Some(60.0))];
+        assert!(matches!(
+            validate_wheel_spans("w", &short).as_slice(),
+            [WheelSpanIssue::DoesNotClose { .. }]
+        ));
+
+        // A single explicit span written below the minimum is flagged.
+        let tiny = vec![sp("t", Some(10.0)), sp("b", None)];
+        assert!(validate_wheel_spans("w", &tiny)
+            .iter()
+            .any(|i| matches!(i, WheelSpanIssue::TooNarrow { label, .. } if label == "t")));
+    }
+
+    #[test]
+    fn validate_spans_recurses_into_folders_with_names() {
+        let folder = WheelSlice {
+            label: "stance".into(),
+            command: String::new(),
+            slices: vec![
+                WheelSlice { label: "def".into(), command: "d".into(), span: Some(200.0), ..Default::default() },
+                WheelSlice { label: "off".into(), command: "o".into(), span: Some(200.0), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let issues = validate_wheel_spans("default", &[folder]);
+        // The over-sum is reported against the folder's sub-ring name.
+        assert!(issues.iter().any(|i| matches!(
+            i,
+            WheelSpanIssue::SumOver { wheel, .. } if wheel == "default > stance"
+        )));
     }
 
     #[test]

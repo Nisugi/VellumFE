@@ -991,8 +991,9 @@ fn four_way(x: f32, y_up: f32, previous: Option<FourWay>) -> Option<FourWay> {
 
 /// The minimum wedge width the resolver will produce; a slice narrower
 /// than this is hard to hit, so explicit spans are clamped up and the
-/// remainder scaled to keep the ring closed.
-const MIN_SPAN_DEG: f32 = 30.0;
+/// remainder scaled to keep the ring closed. Shared with the config-layer
+/// validator so the resolver and the warnings can't disagree.
+use crate::config::WHEEL_MIN_SPAN_DEG as MIN_SPAN_DEG;
 
 /// One seat in a resolved ring: its clockwise span and the angle of its
 /// leading edge, both in degrees in the AIM convention (0 = up, clockwise).

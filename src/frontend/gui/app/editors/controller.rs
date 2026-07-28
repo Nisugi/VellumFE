@@ -683,6 +683,10 @@ impl VellumGuiApp {
                         self.app_core.config.controller_wheels =
                             Config::load_controller_wheels().unwrap_or_default();
                         self.app_core.push_remote_wheels();
+                        // Surface any span problems in what was just saved
+                        // (advisory — the runtime still produces a usable
+                        // ring). The inline editor advisory is B6.
+                        self.app_core.warn_wheel_span_conflicts();
                         state.wheel_status = Some(if buffer.is_empty() && name.is_some() {
                             "Wheel deleted (no slices).".to_string()
                         } else {
