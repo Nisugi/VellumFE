@@ -70,7 +70,12 @@ impl VellumGuiApp {
 /// Hex/name text field with a live swatch and an egui color picker.
 fn color_field(ui: &mut egui::Ui, value: &mut String) {
     ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(value).desired_width(110.0));
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(110.0)
+                .hint_text("color"),
+        )
+        .on_hover_text("Color: a hex value like #b0503a or a palette name.");
         if let Some(color) = theme::resolve_color(value) {
             let mut rgb = [color.r(), color.g(), color.b()];
             if ui.color_edit_button_srgb(&mut rgb).changed() {

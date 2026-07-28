@@ -217,6 +217,12 @@ pub struct WheelSlice {
     pub inner: Option<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slices: Vec<WheelSlice>,
+    /// Designer-session lock: while set, whole-ring operations (even out)
+    /// leave this slice's width alone. Never persisted — locks are an
+    /// editing aid, not wheel config — but kept on the slice so structural
+    /// edits (move, mirror, delete) carry them along for free.
+    #[serde(skip)]
+    pub locked: bool,
 }
 
 impl WheelSlice {

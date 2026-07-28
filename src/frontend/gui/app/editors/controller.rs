@@ -1145,7 +1145,14 @@ fn render_wheels_tab(
 
     ui.separator();
     ui.horizontal(|ui| {
-        if ui.button("Save wheel").clicked() {
+        if ui
+            .button("Save wheel")
+            .on_hover_text(
+                "Write this wheel's slices to keybinds.toml. Until then edits \
+                 live only in this editor.",
+            )
+            .clicked()
+        {
             *save_clicked = true;
         }
         if let Some(status) = &state.wheel_status {
@@ -1204,11 +1211,16 @@ fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling:
         egui::TextEdit::singleline(&mut slice.label)
             .desired_width(100.0)
             .hint_text("label"),
-    );
+    )
+    .on_hover_text("Label: the text drawn on this wedge.");
     ui.add(
         egui::TextEdit::singleline(&mut slice.command)
             .desired_width(150.0)
             .hint_text(if is_folder { "(folder)" } else { "command" }),
+    )
+    .on_hover_text(
+        "Command sent to the game when this slice fires. A slice with \
+         sub-slices is a folder — leave its command empty.",
     );
     let mut color = slice.color.clone().unwrap_or_default();
     super::color_field(ui, &mut color);
@@ -1594,12 +1606,13 @@ fn render_wheel_designer(
     ui.horizontal(|ui| {
         if ui
             .button("Even out")
-            .on_hover_text("Return every slice at this level to an even, automatic split.")
+            .on_hover_text(
+                "Give every unlocked slice an even share of the leftover. \
+                 Locked slices keep their exact width.",
+            )
             .clicked()
         {
-            for s in level.iter_mut() {
-                s.span = None;
-            }
+            even_out_unlocked(level);
         }
         if ui
             .button("Mirror")
@@ -1637,16 +1650,20 @@ fn render_wheel_designer(
             slice_path.push(i);
             ui.horizontal(|ui| {
                 render_slice_fields(ui, &mut level[i], inner_ceiling);
-                let mut locked = level[i].span.is_some();
+                let mut locked = level[i].locked;
                 if ui
                     .checkbox(&mut locked, "lock")
                     .on_hover_text(
-                        "Fix this slice's width at its current degrees. Unlocked \
-                         slices share the ring's leftover automatically.",
+                        "Lock this slice's width: freezes it at its current \
+                         degrees and Even out leaves it alone. Unlocking keeps \
+                         the width; Even out returns it to the automatic share.",
                     )
                     .changed()
                 {
-                    level[i].span = if locked { Some(resolved_width) } else { None };
+                    level[i].locked = locked;
+                    if locked {
+                        level[i].span = Some(resolved_width);
+                    }
                 }
                 if ui.small_button("^").on_hover_text("Move up").clicked() {
                     ops.push(WheelOp::MoveUp(slice_path.clone()));
@@ -1690,6 +1707,18 @@ fn materialize_spans(
 ) {
     for (slice, seat) in level.iter_mut().zip(&layout.seats) {
         slice.span = Some(seat.span_deg);
+    }
+}
+
+/// Even out the ring, honoring locks: every unlocked slice returns to the
+/// automatic even split of whatever the locked slices leave over. (The
+/// reference designer's rule — "evening out only respaces the gaps
+/// between locked slices" — expressed in span-list form.)
+fn even_out_unlocked(level: &mut [WheelSlice]) {
+    for s in level.iter_mut() {
+        if !s.locked {
+            s.span = None;
+        }
     }
 }
 
@@ -1884,6 +1913,22 @@ mod designer_tests {
         let start = apply_divider_drag(&mut w, 35.0, 3, 5.0);
         assert_eq!(w, vec![70.0, 90.0, 90.0, 110.0]);
         assert!((start - 40.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn even_out_spares_locked_slices() {
+        let mut level = vec![slice(Some(120.0)), slice(Some(90.0)), slice(Some(150.0))];
+        level[0].locked = true;
+        even_out_unlocked(&mut level);
+        // The locked width survives; the rest go back to auto and split
+        // the leftover evenly when resolved.
+        assert_eq!(level[0].span, Some(120.0));
+        assert_eq!(level[1].span, None);
+        assert_eq!(level[2].span, None);
+        let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
+        let layout = gamepad::resolve_spans(&spans, 0.0);
+        assert_eq!(layout.seats[1].span_deg, 120.0);
+        assert_eq!(layout.seats[2].span_deg, 120.0);
     }
 
     #[test]
