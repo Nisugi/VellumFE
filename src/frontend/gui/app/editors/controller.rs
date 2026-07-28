@@ -43,6 +43,15 @@ enum WheelViewMode {
     Numeric,
 }
 
+/// Live pointer drag on the designer canvas. `start_dirty` on a divider
+/// drag records that the ring's `start` was rotated to keep the other
+/// dividers pinned, so the wheel meta must be saved when the drag ends.
+#[derive(Clone, Copy, PartialEq)]
+enum WheelDesignerDrag {
+    None,
+    Divider { boundary: usize, start_dirty: bool },
+}
+
 pub(in super::super) struct ControllerEditorState {
     form: Option<ControllerFormState>,
     tab: ControllerTab,
@@ -61,6 +70,8 @@ pub(in super::super) struct ControllerEditorState {
     wheel_designer_path: Vec<usize>,
     /// Designer: index of the selected slice within the current level.
     wheel_selected_slice: Option<usize>,
+    /// Designer: drag in progress on the canvas.
+    wheel_drag: WheelDesignerDrag,
 }
 
 impl ControllerEditorState {
@@ -76,6 +87,7 @@ impl ControllerEditorState {
             wheel_view_mode: WheelViewMode::Visual,
             wheel_designer_path: Vec::new(),
             wheel_selected_slice: None,
+            wheel_drag: WheelDesignerDrag::None,
         }
     }
 
@@ -889,6 +901,7 @@ fn render_wheels_tab(
             state.wheel_status = None;
             state.wheel_designer_path.clear();
             state.wheel_selected_slice = None;
+            state.wheel_drag = WheelDesignerDrag::None;
         };
         egui::ComboBox::from_id_salt("controller_wheel_pick")
             .selected_text(if state.wheel_selected.is_empty() {
@@ -1099,20 +1112,20 @@ fn render_wheels_tab(
                 });
         }
         WheelViewMode::Visual => {
-            let start_deg = state
-                .wheel_meta_buffer
-                .as_ref()
-                .and_then(|m| m.start)
-                .unwrap_or(0.0);
             let global_dz =
                 (config.controller_tuning.deadzone as f32 / 100.0).clamp(0.0, 0.99);
+            let meta = state
+                .wheel_meta_buffer
+                .get_or_insert_with(Default::default);
             render_wheel_designer(
                 ui,
                 wheel_name,
                 buffer,
                 &mut state.wheel_designer_path,
                 &mut state.wheel_selected_slice,
-                start_deg,
+                &mut state.wheel_drag,
+                meta,
+                meta_save,
                 global_dz,
                 inner_ceiling,
                 &mut ops,
@@ -1254,6 +1267,12 @@ fn render_slice_fields(ui: &mut egui::Ui, slice: &mut WheelSlice, inner_ceiling:
 /// drift from the real thing), a breadcrumb naming the level, click on a
 /// wedge to select it, and the selected slice's fields underneath. Edits
 /// go to the same buffer the numeric rows use.
+///
+/// Dragging a divider trades width between its two seats
+/// (`apply_divider_drag`); the first drag frame freezes every auto span at
+/// its resolved width so the whole ring edits as concrete numbers. A trade
+/// touching seat 0 rotates the ring's `start` to keep the other dividers
+/// pinned — that lands in the wheel meta and is saved when the drag ends.
 #[allow(clippy::too_many_arguments)]
 fn render_wheel_designer(
     ui: &mut egui::Ui,
@@ -1261,7 +1280,9 @@ fn render_wheel_designer(
     buffer: &mut Vec<WheelSlice>,
     designer_path: &mut Vec<usize>,
     selected_slice: &mut Option<usize>,
-    start_deg: f32,
+    drag: &mut WheelDesignerDrag,
+    meta: &mut crate::config::WheelMeta,
+    meta_save: &mut Option<(String, crate::config::WheelMeta)>,
     global_deadzone: f32,
     inner_ceiling: u8,
     ops: &mut Vec<WheelOp>,
@@ -1295,10 +1316,12 @@ fn render_wheel_designer(
 
     let level = wheel_slices_at(buffer, designer_path)
         .expect("designer path resolves after the fallback above");
+    let at_top = designer_path.is_empty();
     // Folder levels lay out at start 0 (the runtime rotates them for the
     // Back anchor, which the designer doesn't draw); only the top level
     // takes the wheel's `start`.
-    let level_start = if designer_path.is_empty() { start_deg } else { 0.0 };
+    let level_start =
+        |meta: &crate::config::WheelMeta| if at_top { meta.start.unwrap_or(0.0) } else { 0.0 };
 
     // Canvas: full available width, wheel centered; leave room below for
     // the selected-slice panel and the Save row.
@@ -1310,7 +1333,7 @@ fn render_wheel_designer(
         .clamp(200.0, 440.0);
     let (rect, response) = ui.allocate_exact_size(
         egui::Vec2::new(avail.x.max(side), side),
-        egui::Sense::click(),
+        egui::Sense::click_and_drag(),
     );
     let painter = ui.painter().with_clip_rect(rect);
     let center = rect.center();
@@ -1318,6 +1341,79 @@ fn render_wheel_designer(
     let hub = (outer * 0.22).clamp(28.0, 46.0);
     // Same label placement as the live wheel: 34px inside the rim.
     let label_radius = outer - 34.0;
+    // Pointer position → aim-convention degrees (0 = up, clockwise).
+    let aim_of = |pos: egui::Pos2| {
+        let v = pos - center;
+        v.x.atan2(-v.y).to_degrees().rem_euclid(360.0)
+    };
+
+    // ----- Divider drag lifecycle (before painting, so the ring drawn
+    // this frame already reflects the pointer). -----
+    if response.drag_started() && level.len() >= 2 {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let v = pos - center;
+            let r = v.length();
+            if r >= hub * 0.6 && r <= outer + 12.0 {
+                let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
+                let layout =
+                    super::super::gamepad::resolve_spans(&spans, level_start(meta));
+                let aim = aim_of(pos);
+                // Nearest divider (the shared edge after each seat) within
+                // grab range.
+                let nearest = layout
+                    .seats
+                    .iter()
+                    .enumerate()
+                    .map(|(b, seat)| {
+                        let angle = (seat.start_deg + seat.span_deg).rem_euclid(360.0);
+                        (b, super::super::gamepad::angular_gap(aim, angle))
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1));
+                if let Some((boundary, gap)) = nearest {
+                    if gap <= 8.0 {
+                        // Freeze the whole ring to concrete widths so the
+                        // drag edits predictable numbers (auto seats would
+                        // otherwise re-split under the pointer).
+                        materialize_spans(level, level_start(meta));
+                        *drag = WheelDesignerDrag::Divider { boundary, start_dirty: false };
+                    }
+                }
+            }
+        }
+    }
+    if let WheelDesignerDrag::Divider { boundary, start_dirty } = drag {
+        if response.dragged() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let old_start = level_start(meta);
+                let mut widths: Vec<f32> =
+                    level.iter().map(|s| s.span.unwrap_or(0.0)).collect();
+                let new_start =
+                    apply_divider_drag(&mut widths, old_start, *boundary, aim_of(pos));
+                for (slice, w) in level.iter_mut().zip(&widths) {
+                    slice.span = Some(*w);
+                }
+                // A trade touching seat 0 rotated the ring to keep the
+                // other dividers pinned. At the top level that rotation is
+                // real state (the wheel's `start`); in a folder the runtime
+                // pins seat 0's center at 0, so the rotation is discarded
+                // and those two dividers track the pointer at half speed —
+                // an honest preview beats a lying one.
+                if at_top && (new_start - old_start).abs() > 1e-4 {
+                    let norm = new_start.rem_euclid(360.0);
+                    meta.start = if norm.abs() < 1e-4 { None } else { Some(norm) };
+                    *start_dirty = true;
+                }
+            }
+        }
+    }
+    if response.drag_stopped() {
+        if let WheelDesignerDrag::Divider { start_dirty: true, .. } = drag {
+            // Spans save with the Save button, but `start` lives in the
+            // wheel meta, which saves on change — flush the rotation now.
+            *meta_save = Some((wheel_name.to_string(), meta.clone()));
+        }
+        *drag = WheelDesignerDrag::None;
+    }
 
     let bg = ui.visuals().window_fill.gamma_multiply(0.92);
     painter.circle_filled(center, outer, bg);
@@ -1337,7 +1433,7 @@ fn render_wheel_designer(
         );
     } else {
         let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
-        let layout = super::super::gamepad::resolve_spans(&spans, level_start);
+        let layout = super::super::gamepad::resolve_spans(&spans, level_start(meta));
         super::super::gamepad::paint_wheel_ring(
             &painter,
             ui.visuals(),
@@ -1410,5 +1506,167 @@ fn render_wheel_designer(
         // fields open immediately.
         *selected_slice = Some(level.len());
         ops.push(WheelOp::AddChild(designer_path.clone()));
+    }
+}
+
+/// Freeze every slice at this level to its resolved width (auto seats
+/// become explicit spans). Run once when a divider drag starts, so the
+/// drag trades concrete numbers across the whole ring instead of fighting
+/// the auto re-split; the numeric list shows the same frozen values live.
+fn materialize_spans(level: &mut [WheelSlice], start_deg: f32) {
+    let spans: Vec<Option<f32>> = level.iter().map(|s| s.span).collect();
+    let layout = super::super::gamepad::resolve_spans(&spans, start_deg);
+    for (slice, seat) in level.iter_mut().zip(&layout.seats) {
+        slice.span = Some(seat.span_deg);
+    }
+}
+
+/// Move the divider between seat `boundary` and the next seat (wrapping)
+/// toward the absolute aim angle `new_deg`, trading width between the two
+/// so the ring stays exactly 360. Both seats are clamped at
+/// `WHEEL_MIN_SPAN_DEG`, which also caps how far the divider can travel.
+///
+/// `widths` must be fully materialized (see `materialize_spans`). Returns
+/// the ring's start angle after the drag: `resolve_spans` centers seat 0
+/// at `start`, so a trade that changes seat 0's width would shift every
+/// boundary by half the delta — rotating `start` by `d/2` cancels that,
+/// leaving the dragged divider tracking the pointer and every other
+/// divider pinned. Trades not touching seat 0 return `start_deg`
+/// unchanged.
+fn apply_divider_drag(
+    widths: &mut [f32],
+    start_deg: f32,
+    boundary: usize,
+    new_deg: f32,
+) -> f32 {
+    let n = widths.len();
+    if n < 2 || boundary >= n {
+        return start_deg;
+    }
+    let next = (boundary + 1) % n;
+
+    // Current absolute angle of the dragged divider (aim convention).
+    let leading = start_deg - widths[0] / 2.0;
+    let current = leading + widths[..=boundary].iter().sum::<f32>();
+
+    // Shortest signed way from the divider to the pointer, then clamped so
+    // neither traded seat drops below the minimum span.
+    let mut d = (new_deg - current).rem_euclid(360.0);
+    if d > 180.0 {
+        d -= 360.0;
+    }
+    d = d.clamp(
+        -(widths[boundary] - WHEEL_MIN_SPAN_DEG).max(0.0),
+        (widths[next] - WHEEL_MIN_SPAN_DEG).max(0.0),
+    );
+
+    widths[boundary] += d;
+    widths[next] -= d;
+    if boundary == 0 || next == 0 {
+        start_deg + d / 2.0
+    } else {
+        start_deg
+    }
+}
+
+#[cfg(test)]
+mod designer_tests {
+    use super::*;
+
+    /// Absolute divider angles implied by widths + start (aim convention,
+    /// normalized), for asserting which boundaries moved.
+    fn divider_angles(widths: &[f32], start_deg: f32) -> Vec<f32> {
+        let leading = start_deg - widths[0] / 2.0;
+        let mut cum = 0.0;
+        widths
+            .iter()
+            .map(|w| {
+                cum += w;
+                (leading + cum).rem_euclid(360.0)
+            })
+            .collect()
+    }
+
+    fn slice(span: Option<f32>) -> WheelSlice {
+        WheelSlice { span, ..Default::default() }
+    }
+
+    #[test]
+    fn materialize_freezes_autos_at_resolved_widths() {
+        let mut level = vec![slice(None), slice(None), slice(Some(120.0)), slice(None)];
+        materialize_spans(&mut level, 0.0);
+        let spans: Vec<f32> = level.iter().map(|s| s.span.unwrap()).collect();
+        assert_eq!(spans, vec![80.0, 80.0, 120.0, 80.0]);
+        assert!((spans.iter().sum::<f32>() - 360.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn drag_trades_width_between_the_two_seats_only() {
+        // Even 4-ring, start 0: dividers at 45/135/225/315. Drag the one
+        // after seat 1 (135°) to 150°.
+        let mut w = vec![90.0, 90.0, 90.0, 90.0];
+        let start = apply_divider_drag(&mut w, 0.0, 1, 150.0);
+        assert_eq!(start, 0.0);
+        assert_eq!(w, vec![90.0, 105.0, 75.0, 90.0]);
+        // Only the dragged divider moved.
+        assert_eq!(divider_angles(&w, start), vec![45.0, 150.0, 225.0, 315.0]);
+    }
+
+    #[test]
+    fn drag_clamps_at_min_span_both_directions() {
+        // Shrinking the next seat stops at the 30° floor...
+        let mut w = vec![90.0, 90.0, 90.0, 90.0];
+        apply_divider_drag(&mut w, 0.0, 1, 210.0);
+        assert_eq!(w, vec![90.0, 150.0, 30.0, 90.0]);
+        // ...and shrinking the dragged seat stops there too.
+        let mut w = vec![90.0, 90.0, 90.0, 90.0];
+        apply_divider_drag(&mut w, 0.0, 1, 60.0);
+        assert_eq!(w, vec![90.0, 30.0, 150.0, 90.0]);
+    }
+
+    #[test]
+    fn seat_zero_trades_rotate_start_to_pin_other_dividers() {
+        // Wrap divider (after the last seat, at 315°) dragged clockwise to
+        // 325°: last seat grows, seat 0 shrinks, start absorbs half the
+        // delta so dividers 0..2 stay put.
+        let mut w = vec![90.0, 90.0, 90.0, 90.0];
+        let start = apply_divider_drag(&mut w, 0.0, 3, 325.0);
+        assert!((start - 5.0).abs() < 1e-4);
+        assert_eq!(w, vec![80.0, 90.0, 90.0, 100.0]);
+        let angles = divider_angles(&w, start);
+        assert!((angles[0] - 45.0).abs() < 1e-3);
+        assert!((angles[1] - 135.0).abs() < 1e-3);
+        assert!((angles[2] - 225.0).abs() < 1e-3);
+        assert!((angles[3] - 325.0).abs() < 1e-3);
+
+        // Divider after seat 0 (45°) dragged to 55°: seat 0 grows.
+        let mut w = vec![90.0, 90.0, 90.0, 90.0];
+        let start = apply_divider_drag(&mut w, 0.0, 0, 55.0);
+        assert!((start - 5.0).abs() < 1e-4);
+        assert_eq!(w, vec![100.0, 80.0, 90.0, 90.0]);
+        let angles = divider_angles(&w, start);
+        assert!((angles[0] - 55.0).abs() < 1e-3);
+        assert!((angles[1] - 135.0).abs() < 1e-3);
+        assert!((angles[3] - 315.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn drag_takes_the_shortest_way_across_the_wrap() {
+        // Widths [80,90,90,100] with start 35 put the wrap divider at
+        // 355°; dragging it to 5° must move +10° clockwise, not −350°.
+        let mut w = vec![80.0, 90.0, 90.0, 100.0];
+        let start = apply_divider_drag(&mut w, 35.0, 3, 5.0);
+        assert_eq!(w, vec![70.0, 90.0, 90.0, 110.0]);
+        assert!((start - 40.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn degenerate_rings_are_untouched() {
+        let mut w = vec![360.0];
+        assert_eq!(apply_divider_drag(&mut w, 0.0, 0, 90.0), 0.0);
+        assert_eq!(w, vec![360.0]);
+        let mut w = vec![180.0, 180.0];
+        assert_eq!(apply_divider_drag(&mut w, 0.0, 5, 90.0), 0.0);
+        assert_eq!(w, vec![180.0, 180.0]);
     }
 }

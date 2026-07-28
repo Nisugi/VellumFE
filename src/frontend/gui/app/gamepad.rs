@@ -1241,7 +1241,7 @@ pub(super) fn anchor_angle_deg(anchor: &str) -> f32 {
 }
 
 /// Smallest absolute difference between two angles in degrees (0..=180).
-fn angular_gap(a: f32, b: f32) -> f32 {
+pub(super) fn angular_gap(a: f32, b: f32) -> f32 {
     let d = (a - b).rem_euclid(360.0);
     d.min(360.0 - d)
 }
