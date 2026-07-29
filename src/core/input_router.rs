@@ -32,6 +32,7 @@ fn get_action_context(mode: &InputMode) -> ActionContext {
         | InputMode::SpellColorsBrowser
         | InputMode::UIColorsBrowser
         | InputMode::ThemeBrowser
+        | InputMode::MenuKeybindEditor
         | InputMode::IndicatorTemplateEditor => ActionContext::Browser,
 
         // Form widgets

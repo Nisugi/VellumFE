@@ -23,7 +23,14 @@ pub enum FormMode {
 
 #[derive(Debug, Clone)]
 pub enum SpellColorFormResult {
-    Save(SpellColorRange),
+    /// Persist the range. `edit_index` is `Some(i)` when editing an existing
+    /// entry (replace `spell_colors[i]` in place) and `None` for a new one
+    /// (append). Without this the save handler always pushed, so editing a
+    /// range appended a duplicate instead of replacing it.
+    Save {
+        range: SpellColorRange,
+        edit_index: Option<usize>,
+    },
     Delete(usize), // Index to delete
     Cancel,
 }
@@ -230,7 +237,14 @@ impl SpellColorFormWidget {
             },
         };
 
-        Some(SpellColorFormResult::Save(spell_color))
+        let edit_index = match self.mode {
+            FormMode::Edit(index) => Some(index),
+            FormMode::Create => None,
+        };
+        Some(SpellColorFormResult::Save {
+            range: spell_color,
+            edit_index,
+        })
     }
 
     /// Title-bar dragging with grab offset. The popup is modal, so the
@@ -614,5 +628,52 @@ impl Cyclable for SpellColorFormWidget {
 
     fn cycle_backward(&mut self) {
         // No cyclable fields in SpellColorFormWidget
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::menu_actions::MenuAction;
+
+    fn sample_range() -> SpellColorRange {
+        SpellColorRange {
+            spells: vec![101, 102],
+            color: "#ff0000".to_string(),
+            bar_color: Some("#ff0000".to_string()),
+            text_color: Some("#ffffff".to_string()),
+            bg_color: Some("#000000".to_string()),
+        }
+    }
+
+    /// Regression: saving an EDIT must carry the entry's index so the handler
+    /// replaces it in place. Before the fix, Save carried no index and the
+    /// handler always pushed, appending a duplicate on every edit.
+    #[test]
+    fn edit_mode_save_carries_index() {
+        let mut form = SpellColorFormWidget::new_edit(3, &sample_range());
+        let result = form.handle_action(MenuAction::Save).expect("save result");
+        match result {
+            SpellColorFormResult::Save { edit_index, .. } => {
+                assert_eq!(edit_index, Some(3), "edit save must target its index");
+            }
+            other => panic!("expected Save, got {other:?}"),
+        }
+    }
+
+    /// A new (Create-mode) range saves with no index → the handler appends.
+    #[test]
+    fn create_mode_save_has_no_index() {
+        let mut form = SpellColorFormWidget::new();
+        // A fresh form has empty spell ids; give it a valid one so save succeeds.
+        form.spell_ids = TextArea::from(["101"]);
+        form.bar_color = TextArea::from(["#ff0000"]);
+        let result = form.handle_action(MenuAction::Save).expect("save result");
+        match result {
+            SpellColorFormResult::Save { edit_index, .. } => {
+                assert_eq!(edit_index, None, "new range must not target an index");
+            }
+            other => panic!("expected Save, got {other:?}"),
+        }
     }
 }

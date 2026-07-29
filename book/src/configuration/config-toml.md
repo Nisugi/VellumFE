@@ -251,19 +251,6 @@ enabled = false
 # max_lines_per_file = 30000
 ```
 
-## Layout Mappings
-
-Automatically switch layouts based on terminal size:
-
-```toml
-[[layout_mappings]]
-min_width = 80
-min_height = 24
-max_width = 120
-max_height = 40
-layout = "compact"
-```
-
 ## Event Patterns
 
 Regex patterns that drive countdown timers. The defaults cover standard

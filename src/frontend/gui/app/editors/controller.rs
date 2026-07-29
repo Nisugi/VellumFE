@@ -1049,11 +1049,11 @@ impl VellumGuiApp {
                                         form.action.as_str()
                                     })
                                     .show_ui(ui, |ui| {
-                                        for name in KeyAction::CONTROLLER_ACTION_NAMES {
+                                        for name in KeyAction::controller_action_names() {
                                             ui.selectable_value(
                                                 &mut form.action,
                                                 name.to_string(),
-                                                *name,
+                                                name,
                                             );
                                         }
                                     });

@@ -32,8 +32,13 @@ mod templates;
 mod widgets;
 mod window_def;
 
-pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle, UiColors};
-pub use highlights::{EventAction, EventPattern, HighlightPattern, RedirectMode};
+pub use colors::{
+    ColorConfig, PaletteColor, PresetColor, PromptColor, SpellColorRange, SpellColorStyle,
+    UiColors,
+};
+pub use highlights::{
+    highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
+};
 pub use hotbars::{
     EffectCategory, GradientDir, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
     HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, HotbarsConfig, IconMode, NameMatch,
@@ -41,10 +46,10 @@ pub use hotbars::{
 };
 pub use keybinds::{
     parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,
-    MenuKeybinds, RumbleConfig, RumblePattern, TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue,
-    WHEEL_MIN_SPAN_DEG,
+    MenuKeybindField, MenuKeybinds, RumbleConfig, RumblePattern, TuningConfig, WheelMeta,
+    WheelSlice, WheelSpanIssue, WHEEL_MIN_SPAN_DEG,
 };
-pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
+pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
 pub use paths::{write_atomic, DialogPosition, SavedDialogPositions};
 pub use settings::{
@@ -261,8 +266,6 @@ pub struct Config {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub event_patterns: HashMap<String, EventPattern>,
-    #[serde(default)]
-    pub layout_mappings: Vec<LayoutMapping>,
     #[serde(skip)] // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>, // Character name for character-specific saving
     #[serde(skip)] // Loaded from separate colors.toml file (includes color_palette)

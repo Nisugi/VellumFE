@@ -362,29 +362,6 @@ duration_multiplier = 1.0
 enabled = true
 
 
-# ------------------------------------------------------------
-# LAYOUT MAPPINGS
-# ------------------------------------------------------------
-# Automatically switch layouts based on terminal size.
-# Useful for responsive layouts on resize.
-#
-# Example:
-# [[layout_mappings]]
-# min_width = 80
-# min_height = 24
-# max_width = 120
-# max_height = 40
-# layout = "compact"
-#
-# [[layout_mappings]]
-# min_width = 121
-# min_height = 41
-# max_width = 9999
-# max_height = 9999
-# layout = "fullscreen"
-
-layout_mappings = []
-
 
 # ------------------------------------------------------------
 # WEB SERVER (mobile web frontend)

@@ -607,8 +607,39 @@ async fn main() {
                         "whisper": { "fg": "#80ff80", "bg": "#102010" },
                     },
                     "prompt_colors": [ { "character": ">", "fg": "#888888" } ],
+                    "ui": {
+                        "command_echo_color": "#cccccc",
+                        "border_color": "#444444",
+                        "focused_border_color": "#88aaff",
+                        "text_color": "#e0e0e0",
+                        "background_color": "#101010",
+                        "selection_bg_color": "#334466",
+                        "textarea_background": "#181818",
+                    },
+                    "spell_colors": [
+                        { "spells": [101, 107], "color": "", "bar_color": "#00ffff", "text_color": "#ffffff", "bg_color": "#000000" },
+                    ],
+                    "color_palette": [
+                        { "name": "danger", "color": "#ff3030", "category": "red", "favorite": false },
+                    ],
                 });
                 sink.push_colors(client_id, request_id, scope, colors, None, false);
+            }
+            RemoteEvent::ColorsPut {
+                client_id,
+                request_id,
+                scope,
+                colors,
+            } => {
+                // Echo which sections the phone sent so a save round-trip is
+                // visible on stdout (the highlight/colors editors send the
+                // whole ColorConfig back).
+                let sections: Vec<&str> = ["presets", "prompt_colors", "ui", "spell_colors", "color_palette"]
+                    .into_iter()
+                    .filter(|k| colors.get(*k).is_some())
+                    .collect();
+                println!("EVENT colors_put: scope={scope:?} sections={sections:?} body={colors}");
+                sink.push_colors(client_id, request_id, scope, serde_json::Value::Null, None, true);
             }
             RemoteEvent::Command(text) => {
                 println!("EVENT cmd: {text:?}");

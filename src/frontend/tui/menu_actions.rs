@@ -246,8 +246,9 @@ pub fn handle_menu_action(
             }
             "action:addhighlight" => {
                 // Open highlight form for creating new highlight
-                frontend.highlight_form =
-                    Some(crate::frontend::tui::highlight_form::HighlightFormWidget::new());
+                let mut form = crate::frontend::tui::highlight_form::HighlightFormWidget::new();
+                form.set_rumble_options(app_core.config.controller_rumble.pattern_names());
+                frontend.highlight_form = Some(form);
                 // Close menus so only the form remains
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::HighlightForm;
@@ -271,6 +272,18 @@ pub fn handle_menu_action(
                 // Close menus so focus moves to the browser
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::KeybindBrowser;
+            }
+            "action:menukeybinds" => {
+                // Open the menu keybind editor (the fixed [menu] nav/action
+                // keys). Defaults to global scope; toggle with 'g' inside.
+                frontend.menu_keybind_editor = Some(
+                    crate::frontend::tui::menu_keybind_editor::MenuKeybindEditor::new(
+                        app_core.config.menu_keybinds.clone(),
+                        true,
+                    ),
+                );
+                close_all_menus(&mut app_core.ui_state);
+                app_core.ui_state.input_mode = InputMode::MenuKeybindEditor;
             }
             "action:streams" => {
                 // Open the streams routing menu (every known stream and where

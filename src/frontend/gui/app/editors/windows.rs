@@ -74,13 +74,17 @@ struct RoomFields {
     show_exits: bool,
 }
 
-/// gs4_experience field toggles (shared with the TUI via GS4ExperienceWidgetData).
+/// gs4_experience field toggles + bar colors (shared with the TUI via
+/// GS4ExperienceWidgetData). Colors are edited as free text (empty = None,
+/// falling back to the theme/default), matching the color_field idiom.
 struct ExperienceFields {
     show_level: bool,
     show_mind_bar: bool,
     show_exp_bar: bool,
     show_total_exp: bool,
     show_ascension_exp: bool,
+    mind_bar_color: String,
+    exp_bar_color: String,
 }
 
 /// Encumbrance display toggles (shared via EncumbranceWidgetData).
@@ -329,6 +333,8 @@ impl VellumGuiApp {
                         show_exp_bar: data.show_exp_bar,
                         show_total_exp: data.show_total_exp,
                         show_ascension_exp: data.show_ascension_exp,
+                        mind_bar_color: data.mind_bar_color.clone().unwrap_or_default(),
+                        exp_bar_color: data.exp_bar_color.clone().unwrap_or_default(),
                     });
                 }
                 crate::config::WindowDef::Encumbrance { data, .. } => {
@@ -643,6 +649,12 @@ impl VellumGuiApp {
                 data.show_exp_bar = experience.show_exp_bar;
                 data.show_total_exp = experience.show_total_exp;
                 data.show_ascension_exp = experience.show_ascension_exp;
+                let opt = |s: &str| {
+                    let t = s.trim();
+                    if t.is_empty() { None } else { Some(t.to_string()) }
+                };
+                data.mind_bar_color = opt(&experience.mind_bar_color);
+                data.exp_bar_color = opt(&experience.exp_bar_color);
                 self.app_core.layout_modified_since_save = true;
             }
         }
@@ -945,6 +957,12 @@ impl VellumGuiApp {
                                          experience feed).",
                                     );
                             });
+                            ui.end_row();
+                            ui.label("Mind bar color");
+                            super::color_field(ui, &mut experience.mind_bar_color);
+                            ui.end_row();
+                            ui.label("Exp bar color");
+                            super::color_field(ui, &mut experience.exp_bar_color);
                             ui.end_row();
                         }
                         if let Some(encum) = state.encum.as_mut() {

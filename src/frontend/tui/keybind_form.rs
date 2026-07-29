@@ -66,7 +66,13 @@ pub enum ActionSection {
 pub struct KeybindFormWidget {
     key_combo: TextArea<'static>,
     action_type: KeybindActionType,
-    action_dropdown_index: usize, // Index in AVAILABLE_ACTIONS
+    action_dropdown_index: usize, // Index into offered_actions()
+    /// The action name loaded when editing an existing bind. Preserved so that
+    /// a bind whose action isn't offered in the dropdown (e.g. a newer action,
+    /// or one only reachable via the GUI) round-trips VERBATIM on save instead
+    /// of being silently rewritten to the first dropdown entry. `None` for new
+    /// binds and once the user actively moves the dropdown.
+    loaded_action: Option<String>,
     macro_text: TextArea<'static>,
     is_global: bool, // Scope: true = global, false = character-specific
 
@@ -90,39 +96,14 @@ enum FormMode {
     Edit { original_key: String },
 }
 
-// Available built-in actions
-const AVAILABLE_ACTIONS: &[&str] = &[
-    "send_command",
-    "cursor_left",
-    "cursor_right",
-    "cursor_word_left",
-    "cursor_word_right",
-    "cursor_home",
-    "cursor_end",
-    "cursor_backspace",
-    "cursor_delete",
-    "cursor_delete_word",
-    "cursor_clear_line",
-    "switch_current_window",
-    "scroll_current_window_up_one",
-    "scroll_current_window_down_one",
-    "scroll_current_window_up_page",
-    "scroll_current_window_down_page",
-    "scroll_current_window_home",
-    "scroll_current_window_end",
-    "previous_command",
-    "next_command",
-    "send_last_command",
-    "send_second_last_command",
-    "next_tab",
-    "prev_tab",
-    "next_unread_tab",
-    "start_search",
-    "prev_search_match",
-    "next_search_match",
-    "clear_search",
-    "toggle_performance_stats",
-];
+/// The action names offered by this form's dropdown, generated from the
+/// canonical `KeyAction::ACTIONS` table (in table order) — the single source of
+/// truth shared with the parser and the controller editor. Never hand-maintain
+/// a parallel list here again: the old local `AVAILABLE_ACTIONS` const drifted
+/// from `from_str` and silently clobbered bindings it couldn't display.
+fn offered_actions() -> Vec<&'static str> {
+    crate::config::KeyAction::offered_action_names().collect()
+}
 
 impl KeybindFormWidget {
     pub fn new() -> Self {
@@ -136,6 +117,7 @@ impl KeybindFormWidget {
             key_combo,
             action_type: KeybindActionType::Action,
             action_dropdown_index: 0,
+            loaded_action: None,
             macro_text,
             is_global: true, // Default to global scope for new keybinds
             focused_field: 0,
@@ -163,9 +145,14 @@ impl KeybindFormWidget {
 
         match action_type {
             KeybindActionType::Action => {
-                // Find action in list
-                if let Some(idx) = AVAILABLE_ACTIONS.iter().position(|&a| a == value) {
-                    form.action_dropdown_index = idx;
+                // Point the dropdown at the loaded action if it's offered.
+                // If it ISN'T offered (a newer action, or a GUI-only one), we
+                // must NOT silently fall back to index 0 and clobber it on
+                // save — remember the original string and write it back
+                // verbatim unless the user actively picks something else.
+                match offered_actions().iter().position(|&a| a == value) {
+                    Some(idx) => form.action_dropdown_index = idx,
+                    None => form.loaded_action = Some(value.clone()),
                 }
             }
             KeybindActionType::Macro => {
@@ -223,6 +210,7 @@ impl KeybindFormWidget {
             MenuAction::CycleBackward => {
                 // Left arrow - cycle dropdown backward (when on action dropdown)
                 if self.focused_field == 3 && self.action_type == KeybindActionType::Action {
+                    self.loaded_action = None;
                     self.action_dropdown_index = self.action_dropdown_index.saturating_sub(1);
                 }
                 None
@@ -230,8 +218,9 @@ impl KeybindFormWidget {
             MenuAction::CycleForward => {
                 // Right arrow - cycle dropdown forward (when on action dropdown)
                 if self.focused_field == 3 && self.action_type == KeybindActionType::Action {
+                    self.loaded_action = None;
                     self.action_dropdown_index =
-                        (self.action_dropdown_index + 1).min(AVAILABLE_ACTIONS.len() - 1);
+                        (self.action_dropdown_index + 1).min(offered_actions().len().saturating_sub(1));
                 }
                 None
             }
@@ -383,7 +372,22 @@ impl KeybindFormWidget {
         }
 
         let value = match self.action_type {
-            KeybindActionType::Action => AVAILABLE_ACTIONS[self.action_dropdown_index].to_string(),
+            // A preserved loaded action (not offered in the dropdown) wins, so
+            // editing an unrelated field never rewrites it. Otherwise use the
+            // dropdown selection. Bounds-guarded so an out-of-range index can
+            // never panic or clobber to a wrong action.
+            KeybindActionType::Action => {
+                if let Some(loaded) = &self.loaded_action {
+                    loaded.clone()
+                } else {
+                    let actions = offered_actions();
+                    actions
+                        .get(self.action_dropdown_index)
+                        .copied()
+                        .unwrap_or("send_command")
+                        .to_string()
+                }
+            }
             KeybindActionType::Macro => {
                 let text = self.macro_text.lines()[0].to_string();
                 if text.is_empty() {
@@ -789,8 +793,18 @@ impl KeybindFormWidget {
                 .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
         }
 
-        // Get current value from dropdown index
-        let current_value = AVAILABLE_ACTIONS[self.action_dropdown_index];
+        // Show the preserved loaded action if the bind uses one not offered in
+        // the dropdown; otherwise the dropdown selection. Bounds-guarded so a
+        // stale index can never panic during render.
+        let offered = offered_actions();
+        let current_value: &str = if let Some(loaded) = &self.loaded_action {
+            loaded.as_str()
+        } else {
+            offered
+                .get(self.action_dropdown_index)
+                .copied()
+                .unwrap_or("send_command")
+        };
 
         // Render current value (highlight if focused, no background)
         let value_color = crossterm_bridge::to_ratatui_color(if focused {
@@ -931,25 +945,24 @@ impl KeybindFormWidget {
 
     /// Jump the action dropdown to the first action of a section
     /// (Ctrl+1..8 in the form). Sections are display groupings over the
-    /// flat AVAILABLE_ACTIONS list.
+    /// canonical `offered_actions()` list. Every section now has real bindable
+    /// actions (clipboard, TTS, and controller/menu actions all became
+    /// offerable once the dropdown was unified with the action table).
     pub fn go_to_section(&mut self, section: ActionSection) {
         let (target, label) = match section {
-            ActionSection::CommandInput => (Some("send_command"), "command input"),
-            ActionSection::CommandHistory => (Some("previous_command"), "command history"),
-            ActionSection::WindowScrolling => {
-                (Some("scroll_current_window_up_one"), "window scrolling")
-            }
-            ActionSection::TabNavigation => (Some("next_tab"), "tab navigation"),
-            ActionSection::Search => (Some("start_search"), "search"),
-            ActionSection::SystemToggles => (Some("toggle_performance_stats"), "system toggles"),
-            ActionSection::Clipboard | ActionSection::TTS | ActionSection::Meta => (None, ""),
+            ActionSection::CommandInput => ("send_command", "command input"),
+            ActionSection::CommandHistory => ("previous_command", "command history"),
+            ActionSection::WindowScrolling => ("scroll_current_window_up_one", "window scrolling"),
+            ActionSection::TabNavigation => ("next_tab", "tab navigation"),
+            ActionSection::Search => ("start_search", "search"),
+            ActionSection::SystemToggles => ("toggle_performance_stats", "system toggles"),
+            ActionSection::Clipboard => ("copy", "clipboard"),
+            ActionSection::TTS => ("tts_next", "text-to-speech"),
+            ActionSection::Meta => ("interact_mode", "interact & menu"),
         };
-        let Some(target) = target else {
-            self.status_message = "No bindable actions in that section yet".to_string();
-            return;
-        };
-        if let Some(idx) = AVAILABLE_ACTIONS.iter().position(|&a| a == target) {
+        if let Some(idx) = offered_actions().iter().position(|&a| a == target) {
             self.action_type = KeybindActionType::Action;
+            self.loaded_action = None;
             self.action_dropdown_index = idx;
             self.focused_field = 3; // action dropdown field
             self.status_message = format!("Jumped to {} actions", label);
@@ -958,14 +971,18 @@ impl KeybindFormWidget {
 
     /// Cycle action dropdown forward
     fn cycle_action_dropdown(&mut self, backward: bool) {
+        // Any active cycle is a deliberate choice: drop the preserved loaded
+        // action so the new selection is what saves.
+        self.loaded_action = None;
+        let len = offered_actions().len().max(1);
         if backward {
             if self.action_dropdown_index > 0 {
                 self.action_dropdown_index -= 1;
             } else {
-                self.action_dropdown_index = AVAILABLE_ACTIONS.len() - 1;
+                self.action_dropdown_index = len - 1;
             }
         } else {
-            self.action_dropdown_index = (self.action_dropdown_index + 1) % AVAILABLE_ACTIONS.len();
+            self.action_dropdown_index = (self.action_dropdown_index + 1) % len;
         }
     }
 
@@ -1050,14 +1067,84 @@ impl Toggleable for KeybindFormWidget {
 impl Cyclable for KeybindFormWidget {
     fn cycle_forward(&mut self) {
         if self.focused_field == 3 && self.action_type == KeybindActionType::Action {
+            self.loaded_action = None;
             self.action_dropdown_index =
-                (self.action_dropdown_index + 1).min(AVAILABLE_ACTIONS.len() - 1);
+                (self.action_dropdown_index + 1).min(offered_actions().len().saturating_sub(1));
         }
     }
 
     fn cycle_backward(&mut self) {
         if self.focused_field == 3 && self.action_type == KeybindActionType::Action {
+            self.loaded_action = None;
             self.action_dropdown_index = self.action_dropdown_index.saturating_sub(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn saved_value(form: &mut KeybindFormWidget) -> String {
+        match form.save_internal() {
+            Some(KeybindFormResult::Save { value, .. }) => value,
+            other => panic!("expected Save, got {other:?}"),
+        }
+    }
+
+    /// Regression: editing a bind whose action ISN'T offered in the dropdown
+    /// (e.g. `copy`, or any action reachable only via the GUI / a newer build)
+    /// must round-trip the action VERBATIM on save. Before the fix, the unknown
+    /// action left the dropdown at index 0 and save silently rewrote it to
+    /// `send_command`, destroying the user's binding.
+    #[test]
+    fn editing_unoffered_action_preserves_it_on_save() {
+        // `copy` is a real, valid action but intentionally not controller-scoped;
+        // the point is any name absent from offered_actions() must survive. Use
+        // a name guaranteed absent from the dropdown to prove the mechanism.
+        let unoffered = "tts_pause_resume"; // legacy alias: parses, never offered
+        assert!(
+            !offered_actions().contains(&unoffered),
+            "test premise: '{unoffered}' must not be offered"
+        );
+        let mut form = KeybindFormWidget::new_edit(
+            "ctrl+e".to_string(),
+            KeybindActionType::Action,
+            unoffered.to_string(),
+            true,
+        );
+        // No user interaction with the dropdown → the loaded action is kept.
+        assert_eq!(saved_value(&mut form), unoffered, "unoffered action was clobbered on save");
+    }
+
+    /// A known action still round-trips through edit → save unchanged.
+    #[test]
+    fn editing_offered_action_round_trips() {
+        let action = "scroll_current_window_up_page";
+        assert!(offered_actions().contains(&action));
+        let mut form = KeybindFormWidget::new_edit(
+            "f5".to_string(),
+            KeybindActionType::Action,
+            action.to_string(),
+            false,
+        );
+        assert_eq!(saved_value(&mut form), action);
+    }
+
+    /// Actively cycling the dropdown while editing an unoffered action drops the
+    /// preserved value, so the user's new pick is what saves (no stale ghost).
+    #[test]
+    fn cycling_after_load_overrides_preserved_action() {
+        let mut form = KeybindFormWidget::new_edit(
+            "ctrl+e".to_string(),
+            KeybindActionType::Action,
+            "tts_pause_resume".to_string(),
+            true,
+        );
+        form.focused_field = 3;
+        form.cycle_action_dropdown(false); // user moves the dropdown
+        let saved = saved_value(&mut form);
+        assert_ne!(saved, "tts_pause_resume", "preserved action should be dropped after cycling");
+        assert!(offered_actions().contains(&saved.as_str()), "saved a real offered action");
     }
 }
