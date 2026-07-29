@@ -3810,6 +3810,16 @@ impl AppCore {
     /// openDialog-templated widgets queued by the message processor get
     /// added to the layout.
     pub fn realize_offered_windows(&mut self, terminal_width: u16, terminal_height: u16) {
+        // Drain game-window discoveries the message processor observed into
+        // the layout (it can't reach the layout itself). U3: streams and
+        // resident dialog panels become bound, Hidden-by-default layout
+        // entries — known forever, not auto-shown. Idempotent per binding.
+        let discoveries: Vec<crate::data::WindowDiscovery> =
+            self.ui_state.pending_window_discoveries.drain(..).collect();
+        for d in discoveries {
+            self.register_window_discovery(d);
+        }
+
         if let Some((id, title)) = self.message_processor.newly_registered_container.take() {
             let show = self
                 .game_state
@@ -3821,6 +3831,69 @@ impl AppCore {
             }
         }
         self.process_pending_window_additions(terminal_width, terminal_height);
+    }
+
+    /// Register a game-window discovery into the layout as a bound entry.
+    /// Streams and resident dialog panels become persistent Hidden layout
+    /// windows (known forever); the visibility default respects the config
+    /// blocklist. No-op if a window is already bound to this id.
+    fn register_window_discovery(&mut self, d: crate::data::WindowDiscovery) {
+        use crate::config::{WindowBinding, WindowVisibility};
+        use crate::data::WindowDiscoveryKind;
+
+        if self.layout.has_window_bound_to(&d.id) {
+            return;
+        }
+
+        // Pick the template + binding for this discovery kind.
+        let (binding, template) = match d.kind {
+            WindowDiscoveryKind::Stream => {
+                // Streams bind to a blank text window that subscribes to
+                // the id ("text_custom" is the addable blank-text template).
+                (WindowBinding::Stream(d.id.clone()), "text_custom")
+            }
+            WindowDiscoveryKind::DialogPanel => {
+                (WindowBinding::Dialog(d.id.clone()), "dialogpanel")
+            }
+            // Popups (bank) aren't layout widgets; they're handled by the
+            // active_dialog popup path. Skip layout registration for now
+            // (U5 gives bank a first-class row).
+            WindowDiscoveryKind::DialogPopup => return,
+        };
+
+        if let Some(name) = self.layout.register_discovered_window(binding, template) {
+            // Set a friendly title + Shown/Hidden default.
+            if let Some(def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
+                if !d.title.is_empty() {
+                    def.base_mut().title = Some(d.title.clone());
+                }
+                // Blocklisted → stay Hidden (already the register default);
+                // otherwise a freshly discovered window is Hidden too (U3:
+                // hidden-by-default), but this is where a future policy
+                // (e.g. resident streams shown) would flip it.
+                def.base_mut().visibility = WindowVisibility::Hidden;
+                // Wire the widget to its game feed by id.
+                match (d.kind, def) {
+                    // A stream text window subscribes to the stream id.
+                    (
+                        WindowDiscoveryKind::Stream,
+                        crate::config::WindowDef::Text { data, .. },
+                    ) => {
+                        if !data.streams.contains(&d.id) {
+                            data.streams.push(d.id.clone());
+                        }
+                    }
+                    // A dialog panel renders from the dialog store by id.
+                    (
+                        WindowDiscoveryKind::DialogPanel,
+                        crate::config::WindowDef::DialogPanel { data, .. },
+                    ) => {
+                        data.dialog_id = d.id.clone();
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// Close all ephemeral container windows
@@ -6541,6 +6614,66 @@ mod tests {
         assert_eq!(core.layout.windows.len(), 3, "should not create a 4th");
         // All three are addressable for delivery.
         assert_eq!(core.layout.windows_bound_to("expr").len(), 3);
+    }
+
+    #[test]
+    fn window_discoveries_register_as_bound_hidden_layout_entries() {
+        use crate::config::{WindowBinding, WindowVisibility};
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        let mut core = core_with_layout(vec![]);
+
+        // A stream and a resident dialog panel are discovered.
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "thoughts".to_string(),
+            title: "Thoughts".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+            blocklisted: false,
+        });
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "combat".to_string(),
+            title: "Combat".to_string(),
+            kind: WindowDiscoveryKind::DialogPanel,
+            save: false,
+            blocklisted: true,
+        });
+        core.realize_offered_windows(80, 24);
+
+        // Both became bound, Hidden layout entries (known forever, not shown).
+        assert!(core.layout.has_window_bound_to("thoughts"));
+        assert!(core.layout.has_window_bound_to("combat"));
+        for id in ["thoughts", "combat"] {
+            let w = core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+                .unwrap();
+            assert_eq!(w.base().visibility, WindowVisibility::Hidden, "{id} hidden");
+        }
+        // The stream window subscribes to its stream id.
+        let stream_win = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.base().binding == Some(WindowBinding::Stream("thoughts".to_string())))
+            .unwrap();
+        if let crate::config::WindowDef::Text { data, .. } = stream_win {
+            assert!(data.streams.contains(&"thoughts".to_string()));
+        } else {
+            panic!("stream discovery should be a text window");
+        }
+
+        // Idempotent: re-discovering doesn't add duplicates.
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "thoughts".to_string(),
+            title: "Thoughts".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+            blocklisted: false,
+        });
+        core.realize_offered_windows(80, 24);
+        assert_eq!(core.layout.windows_bound_to("thoughts").len(), 1);
     }
 
     #[test]

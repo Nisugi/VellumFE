@@ -450,16 +450,22 @@ impl MessageProcessor {
         match element {
             ParsedElement::StreamWindow { id, subtitle, title } => {
                 self.note_seen_stream(id, title.as_deref());
-                // Register as a window offer too (unified list; P1). Streams
-                // are the persistent named windows, so mark resident.
-                game_state.window_offers.offer(
-                    id.clone(),
-                    title.clone().unwrap_or_else(|| id.clone()),
-                    crate::core::window_offers::OfferKind::Stream,
-                    None,
-                    false,
-                    true,
-                );
+                // U3: record the stream as a window discovery for AppCore to
+                // register as a bound, Hidden-by-default layout entry (the
+                // processor can't reach the layout). Replaces the Stream
+                // offer.
+                ui_state.pending_window_discoveries.push(crate::data::WindowDiscovery {
+                    id: id.clone(),
+                    title: title.clone().unwrap_or_else(|| id.clone()),
+                    kind: crate::data::WindowDiscoveryKind::Stream,
+                    save: false,
+                    blocklisted: self
+                        .config
+                        .ui
+                        .open_dialog_blocklist
+                        .iter()
+                        .any(|b| b.eq_ignore_ascii_case(id)),
+                });
                 self.handle_stream_window(
                     id,
                     subtitle.as_deref(),
@@ -1516,30 +1522,22 @@ impl MessageProcessor {
                 if Config::get_window_template(Config::dialog_id_to_template(id)).is_some() {
                     return;
                 }
-                // Register (or refresh) as a RESIDENT dialog offer so the
-                // known-windows list shows it and enabling it creates a
-                // dockable panel. Seed the store title.
-                let existed = game_state.window_offers.get(id).is_some();
-                game_state.window_offers.offer(
-                    id.clone(),
-                    title.clone().unwrap_or_else(|| id.clone()),
-                    crate::core::window_offers::OfferKind::Dialog,
-                    None,
-                    *save,
-                    true, // resident
-                );
-                if !existed
-                    && self
+                // U3: record the resident dialog as a DialogPanel discovery
+                // for AppCore to register as a bound, Hidden-by-default
+                // dockable-panel layout entry. Replaces the resident Dialog
+                // offer. Seed the store title so the panel renders when shown.
+                ui_state.pending_window_discoveries.push(crate::data::WindowDiscovery {
+                    id: id.clone(),
+                    title: title.clone().unwrap_or_else(|| id.clone()),
+                    kind: crate::data::WindowDiscoveryKind::DialogPanel,
+                    save: *save,
+                    blocklisted: self
                         .config
                         .ui
                         .open_dialog_blocklist
                         .iter()
-                        .any(|b| b.eq_ignore_ascii_case(id))
-                {
-                    game_state
-                        .window_offers
-                        .set_policy(id, crate::core::window_offers::Policy::Hidden);
-                }
+                        .any(|b| b.eq_ignore_ascii_case(id)),
+                });
                 let dialog = ui_state.dialog_slot_mut(id);
                 if dialog.title.is_none() {
                     dialog.title = title.clone();
@@ -4631,7 +4629,10 @@ mod tests {
     }
 
     #[test]
-    fn window_offers_registered_from_all_three_tag_families() {
+    fn discovery_split_container_offer_dialog_offer_stream_queue() {
+        // U3 transitional: container + non-resident dialog (bank) still
+        // register offers (retired in a later sub-step); a streamWindow now
+        // pushes a WindowDiscovery for AppCore to bind into the layout.
         use crate::core::window_offers::OfferKind;
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
@@ -4669,17 +4670,18 @@ mod tests {
             );
         }
 
+        // Container + bank still go through offers (for now).
         let offers = &game_state.window_offers;
-        assert_eq!(offers.len(), 3);
         assert_eq!(offers.get("77").unwrap().kind, OfferKind::Container);
         assert_eq!(offers.get("bank").unwrap().kind, OfferKind::Dialog);
         assert!(offers.get("bank").unwrap().save, "save='t' captured");
-        let stream = offers.get("thoughts").unwrap();
-        assert_eq!(stream.kind, OfferKind::Stream);
-        assert!(stream.resident, "streams are resident");
-        assert!(stream.should_show(), "resident+unset shows");
-        // Container non-resident + unset = not auto-shown.
-        assert!(!offers.get("77").unwrap().should_show());
+        assert!(offers.get("thoughts").is_none(), "stream no longer an offer");
+
+        // The stream became a WindowDiscovery for AppCore to register.
+        let disc = &ui_state.pending_window_discoveries;
+        assert_eq!(disc.len(), 1);
+        assert_eq!(disc[0].id, "thoughts");
+        assert_eq!(disc[0].kind, crate::data::WindowDiscoveryKind::Stream);
     }
 
     #[test]
@@ -4770,10 +4772,15 @@ mod tests {
             }
         }
 
-        // Resident dialog offer, blocklist-hidden, not popped up.
-        let offer = game_state.window_offers.get("combat").expect("offer");
-        assert!(offer.resident, "combat is a resident panel");
-        assert!(!offer.should_show(), "blocklisted → hidden by default");
+        // U3: combat is recorded as a DialogPanel discovery (blocklisted),
+        // not a resident offer, and never popped up.
+        let disc = ui_state
+            .pending_window_discoveries
+            .iter()
+            .find(|d| d.id == "combat")
+            .expect("combat discovery");
+        assert_eq!(disc.kind, crate::data::WindowDiscoveryKind::DialogPanel);
+        assert!(disc.blocklisted, "combat is in the default blocklist");
         assert!(ui_state.active_dialog.is_none(), "no transient popup");
 
         // Store accumulated the whole panel.

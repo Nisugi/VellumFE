@@ -107,6 +107,37 @@ pub struct UiState {
     /// Pending window additions (template names to add to layout)
     /// Set by message processor when openDialog has a matching template
     pub pending_window_additions: Vec<String>,
+
+    /// Game-window discoveries the message processor observed (streamWindow,
+    /// resident dialog panels, containers) that AppCore drains against the
+    /// layout — the processor can't reach the layout itself. U3's unified
+    /// discovery path, replacing the window_offers registry.
+    pub pending_window_discoveries: Vec<WindowDiscovery>,
+}
+
+/// A game window the client just saw announced, to be registered as a
+/// bound layout/ephemeral entry by AppCore (the message processor has no
+/// layout access). `blocklisted` seeds Hidden-by-default.
+#[derive(Clone, Debug)]
+pub struct WindowDiscovery {
+    /// The game id (dialog/stream/container id).
+    pub id: String,
+    pub title: String,
+    pub kind: WindowDiscoveryKind,
+    /// The game asked to persist position (save='t').
+    pub save: bool,
+    /// In the config blocklist → register Hidden-by-default.
+    pub blocklisted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowDiscoveryKind {
+    /// A named text stream (thoughts/loot/bounty/…).
+    Stream,
+    /// A resident dialog panel with no dedicated widget (combat/befriend).
+    DialogPanel,
+    /// A non-resident dialog that pops up (bank).
+    DialogPopup,
 }
 
 /// Mouse drag state for window operations
@@ -754,6 +785,7 @@ impl UiState {
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
+            pending_window_discoveries: Vec::new(),
         }
     }
 

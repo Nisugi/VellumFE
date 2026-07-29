@@ -726,10 +726,19 @@ impl Layout {
         if self.has_window_bound_to(binding.id()) {
             return None;
         }
-        let mut window_def = Config::get_window_template(template_name)?;
-        // Stable name from the binding so re-discovery is idempotent and
-        // the layout entry is recognizable (e.g. "combat", "expr").
+        // Prefer a registered template; fall back to a blank widget of the
+        // type (e.g. "dialogpanel" has no template entry but is a valid
+        // widget type built via WindowDef::blank). Borrow a default base
+        // from a always-present template for the blank path.
         let name = binding.id().to_string();
+        let mut window_def = match Config::get_window_template(template_name) {
+            Some(def) => def,
+            None => {
+                let base = Config::get_window_template("text_custom")
+                    .map(|d| d.base().clone())?;
+                crate::config::WindowDef::blank(template_name, base)?
+            }
+        };
         window_def.base_mut().name = name.clone();
         window_def.base_mut().binding = Some(binding);
         // Discovered windows start Hidden: known but not shown/auto-spawned.
