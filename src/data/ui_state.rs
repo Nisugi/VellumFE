@@ -398,6 +398,163 @@ pub struct DialogProgressBar {
     pub text: String, // Display text (e.g., "defensive (100%)")
 }
 
+/// Which dialog control a resolved rect belongs to (index into the
+/// corresponding DialogState vec).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PositionedControlKind {
+    Button(usize),
+    DropDown(usize),
+    ProgressBar(usize),
+}
+
+/// A dialog control resolved to a pixel-space rect by the anchor grid.
+#[derive(Clone, Debug)]
+pub struct PositionedControl {
+    pub kind: PositionedControlKind,
+    /// (x, y, width, height) in dialog-content pixels, origin top-left.
+    pub rect: (f32, f32, f32, f32),
+}
+
+impl DialogState {
+    /// Wrayth's right-panel dialogs are ~190px wide; centered/right
+    /// alignment resolves against this canvas unless controls overflow it.
+    const CANVAS_WIDTH: f32 = 190.0;
+
+    /// Resolve buttons/dropdowns/progress bars to pixel rects using the
+    /// game's layout language: absolute `top`/`left` interpreted through
+    /// compass `align` (nw = from left, n = from horizontal center,
+    /// ne = from right), then `anchor_top`/`anchor_left`/`anchor_right`
+    /// constraints re-positioning controls against resolved siblings
+    /// (offsets add to the anchored edge; anchor_left + anchor_right
+    /// together stretch the control between them). Returns None when no
+    /// control carries position data — callers fall back to flow layout.
+    /// Anchor references to controls we don't capture (images) are
+    /// skipped, leaving that axis at its absolute placement.
+    pub fn positioned_controls(&self) -> Option<(Vec<PositionedControl>, (f32, f32))> {
+        struct Entry {
+            id: String,
+            layout: Option<DialogControlLayout>,
+            kind: PositionedControlKind,
+            rect: (f32, f32, f32, f32),
+        }
+
+        let mut entries: Vec<Entry> = Vec::new();
+        for (i, button) in self.buttons.iter().enumerate() {
+            entries.push(Entry {
+                id: button.id.clone(),
+                layout: button.layout.clone(),
+                kind: PositionedControlKind::Button(i),
+                rect: (0.0, 0.0, 55.0, 20.0),
+            });
+        }
+        for (i, dropdown) in self.dropdowns.iter().enumerate() {
+            entries.push(Entry {
+                id: dropdown.id.clone(),
+                layout: dropdown.layout.clone(),
+                kind: PositionedControlKind::DropDown(i),
+                rect: (0.0, 0.0, 80.0, 20.0),
+            });
+        }
+        for (i, _bar) in self.progress_bars.iter().enumerate() {
+            // Progress bars don't carry layout on DialogProgressBar yet;
+            // give them stacked rows at the top so combat's stance bar
+            // lands in roughly the right zone.
+            entries.push(Entry {
+                id: self.progress_bars[i].id.clone(),
+                layout: None,
+                kind: PositionedControlKind::ProgressBar(i),
+                rect: (0.0, i as f32 * 20.0, 130.0, 16.0),
+            });
+        }
+
+        let has_positions = entries.iter().any(|e| {
+            e.layout.as_ref().is_some_and(|l| {
+                l.top.is_some()
+                    || l.left.is_some()
+                    || l.anchor_top.is_some()
+                    || l.anchor_left.is_some()
+                    || l.anchor_right.is_some()
+            })
+        });
+        if !has_positions {
+            return None;
+        }
+
+        let canvas = Self::CANVAS_WIDTH;
+
+        // Pass 1: absolute placement from align + top/left.
+        for entry in entries.iter_mut() {
+            let Some(layout) = entry.layout.clone() else {
+                continue;
+            };
+            let w = layout.width.map(f32::from).unwrap_or(entry.rect.2);
+            let h = layout.height.map(f32::from).unwrap_or(entry.rect.3);
+            let left = layout.left.unwrap_or(0) as f32;
+            let top = layout.top.unwrap_or(0) as f32;
+            let align = layout.align.as_deref().unwrap_or("nw");
+            let x = match align {
+                "n" | "s" | "c" | "" => canvas / 2.0 - w / 2.0 + left,
+                "ne" | "e" | "se" => canvas - w - left,
+                _ => left, // nw/w/sw and anything unknown: from the left
+            };
+            entry.rect = (x, top, w, h);
+        }
+
+        // Pass 2 (iterated): anchors against resolved siblings. A few
+        // rounds lets chains (a anchored to b anchored to c) settle.
+        for _ in 0..3 {
+            for index in 0..entries.len() {
+                let Some(layout) = entries[index].layout.clone() else {
+                    continue;
+                };
+                let find = |id: &str| -> Option<(f32, f32, f32, f32)> {
+                    entries
+                        .iter()
+                        .find(|e| !e.id.is_empty() && e.id == id)
+                        .map(|e| e.rect)
+                };
+                let mut rect = entries[index].rect;
+                if let Some(target) = layout.anchor_top.as_deref().and_then(find) {
+                    rect.1 = target.1 + target.3 + layout.top.unwrap_or(2) as f32;
+                }
+                match (
+                    layout.anchor_left.as_deref().and_then(find),
+                    layout.anchor_right.as_deref().and_then(find),
+                ) {
+                    (Some(left_of), Some(right_of)) => {
+                        rect.0 = left_of.0 + left_of.2 + layout.left.unwrap_or(2) as f32;
+                        rect.2 = (right_of.0 - rect.0 - 2.0).max(10.0);
+                    }
+                    (Some(left_of), None) => {
+                        rect.0 = left_of.0 + left_of.2 + layout.left.unwrap_or(2) as f32;
+                    }
+                    (None, Some(right_of)) => {
+                        rect.0 = right_of.0 - rect.2 - layout.left.unwrap_or(2) as f32;
+                    }
+                    (None, None) => {}
+                }
+                entries[index].rect = rect;
+            }
+        }
+
+        let mut max_x: f32 = canvas;
+        let mut max_y: f32 = 0.0;
+        for entry in &entries {
+            max_x = max_x.max(entry.rect.0 + entry.rect.2);
+            max_y = max_y.max(entry.rect.1 + entry.rect.3);
+        }
+
+        let controls = entries
+            .into_iter()
+            .map(|e| PositionedControl {
+                kind: e.kind,
+                rect: e.rect,
+            })
+            .collect();
+        Some((controls, (max_x + 4.0, max_y + 4.0)))
+    }
+}
+
 /// Injuries popup state for viewing another player's injuries
 #[derive(Clone, Debug)]
 pub struct InjuriesPopupState {
@@ -1143,5 +1300,125 @@ mod tests {
         let cloned = state.clone();
         assert_eq!(cloned.input_mode, state.input_mode);
         assert_eq!(cloned.status_text, state.status_text);
+    }
+
+    fn dialog_with(buttons: Vec<DialogButton>, dropdowns: Vec<DialogDropDown>) -> DialogState {
+        DialogState {
+            id: "combat".to_string(),
+            title: None,
+            buttons,
+            selected: 0,
+            fields: Vec::new(),
+            labels: Vec::new(),
+            focused_field: None,
+            progress_bars: Vec::new(),
+            display_labels: Vec::new(),
+            dropdowns,
+            position: None,
+            size: None,
+            save_position: false,
+        }
+    }
+
+    fn button(id: &str, layout: DialogControlLayout) -> DialogButton {
+        DialogButton {
+            id: id.to_string(),
+            label: id.to_string(),
+            command: String::new(),
+            is_close: false,
+            is_radio: false,
+            selected: false,
+            autosend: false,
+            group: None,
+            layout: Some(layout),
+        }
+    }
+
+    #[test]
+    fn anchor_grid_resolves_combat_stance_row() {
+        // Real combat-window row: [defense (nw)] [stance dropdown,
+        // anchored between] [offense (ne)], all at top=70.
+        use crate::data::ui_state::PositionedControlKind;
+        let defense = button(
+            "cmdDefStance",
+            DialogControlLayout {
+                top: Some(70),
+                left: Some(0),
+                width: Some(55),
+                height: Some(20),
+                align: Some("nw".to_string()),
+                ..Default::default()
+            },
+        );
+        let offense = button(
+            "cmdOffStance",
+            DialogControlLayout {
+                top: Some(70),
+                left: Some(0),
+                width: Some(50),
+                height: Some(20),
+                align: Some("ne".to_string()),
+                ..Default::default()
+            },
+        );
+        let stance = DialogDropDown {
+            id: "dDBStance".to_string(),
+            value: "defensive".to_string(),
+            options: vec![("offensive".into(), "offensive".into())],
+            command: "_stance %dDBStance%".to_string(),
+            tooltip: None,
+            layout: Some(DialogControlLayout {
+                top: Some(70),
+                left: Some(0),
+                width: Some(80),
+                height: Some(20),
+                align: Some("n".to_string()),
+                anchor_left: Some("cmdDefStance".to_string()),
+                anchor_right: Some("cmdOffStance".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        let dialog = dialog_with(vec![defense, offense], vec![stance]);
+        let (controls, (w, h)) = dialog.positioned_controls().expect("positioned");
+
+        let rect_of = |kind: PositionedControlKind| {
+            controls
+                .iter()
+                .find(|c| c.kind == kind)
+                .map(|c| c.rect)
+                .unwrap()
+        };
+        let defense = rect_of(PositionedControlKind::Button(0));
+        let offense = rect_of(PositionedControlKind::Button(1));
+        let stance = rect_of(PositionedControlKind::DropDown(0));
+
+        // Defense flush left, offense flush right of the 190px canvas.
+        assert_eq!(defense.0, 0.0);
+        assert_eq!(offense.0, 190.0 - 50.0);
+        // Stance starts at defense's right edge and stretches to offense.
+        assert_eq!(stance.0, defense.0 + defense.2);
+        assert!((stance.0 + stance.2 - offense.0).abs() <= 2.0 + f32::EPSILON);
+        // Whole row at y=70; content bounds cover it.
+        assert_eq!(defense.1, 70.0);
+        assert_eq!(stance.1, 70.0);
+        assert!(w >= 190.0 && h >= 90.0);
+    }
+
+    #[test]
+    fn no_layout_means_flow_mode() {
+        let plain = DialogButton {
+            id: "ok".to_string(),
+            label: "OK".to_string(),
+            command: String::new(),
+            is_close: true,
+            is_radio: false,
+            selected: false,
+            autosend: false,
+            group: None,
+            layout: None,
+        };
+        let dialog = dialog_with(vec![plain], Vec::new());
+        assert!(dialog.positioned_controls().is_none());
     }
 }
