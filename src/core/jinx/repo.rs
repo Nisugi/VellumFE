@@ -53,8 +53,18 @@ const SEEDS: &[Seed] = &[
     // NOTE: the VellumFE asset repos (vellum-skins/icons/layouts, served from
     // the vellum-assets monorepo) are NOT seeded yet — the monorepo isn't
     // built. Re-add them here in the commit that stands up the infrastructure,
-    // so `.jinx list` doesn't 404 on repos that don't exist.
+    // so `.jinx list` doesn't 404 on repos that don't exist. Until then they're
+    // in PRUNE below so any install that already seeded them self-heals.
 ];
+
+/// Repo names to remove on load if present — deprecated or not-yet-built seeds
+/// a past version wrote to a user's `repos.toml`. Mirrors Jinx's
+/// `Setup.apply` `repos_to_prune` (`jinx.lic:1244`): the list self-heals every
+/// existing install without the user doing anything. A user who *deliberately*
+/// re-adds one of these keeps it only until the next load — acceptable while
+/// these URLs don't exist yet. Move a name out of here (and into `SEEDS`) when
+/// its repo goes live.
+const PRUNE: &[&str] = &["vellum-skins", "vellum-icons", "vellum-layouts"];
 
 impl RepoList {
     /// Load `repos.toml`, seeding and persisting the standard sources on first
@@ -68,10 +78,21 @@ impl RepoList {
         } else {
             RepoList::default()
         };
-        if list.apply_seeds(game.unwrap_or(GameType::GS4)) {
+        let pruned = list.prune_deprecated();
+        let seeded = list.apply_seeds(game.unwrap_or(GameType::GS4));
+        if pruned || seeded {
             list.save()?;
         }
         Ok(list)
+    }
+
+    /// Remove any repo whose name is in [`PRUNE`]. Returns whether the list
+    /// changed. Self-heals installs that a past version seeded with repos that
+    /// don't exist yet.
+    fn prune_deprecated(&mut self) -> bool {
+        let before = self.repos.len();
+        self.repos.retain(|r| !PRUNE.contains(&r.name.as_str()));
+        self.repos.len() != before
     }
 
     /// Add any missing standard seeds for `game`. Returns whether the list
@@ -178,6 +199,27 @@ mod tests {
         assert!(!list.apply_seeds(GameType::GS4)); // second: no change
         assert_eq!(list.repos.len(), count);
         assert!(list.find("myfriend").is_some()); // user repo untouched
+    }
+
+    #[test]
+    fn prune_removes_deprecated_seeds_and_self_heals() {
+        // Simulate a repos.toml an earlier version wrote with the now-unbuilt
+        // vellum-* repos plus a repo the user added themselves.
+        let mut list = RepoList::default();
+        for name in ["elanthia-online", "vellum-skins", "vellum-icons", "vellum-layouts"] {
+            list.repos.push(RepoSource { name: name.into(), url: "https://x".into() });
+        }
+        list.add("myfriend", "https://example.com").unwrap();
+
+        assert!(list.prune_deprecated(), "should report a change");
+        assert!(list.find("vellum-skins").is_none());
+        assert!(list.find("vellum-icons").is_none());
+        assert!(list.find("vellum-layouts").is_none());
+        // Non-pruned repos survive.
+        assert!(list.find("elanthia-online").is_some());
+        assert!(list.find("myfriend").is_some());
+        // Idempotent: a second prune is a no-op.
+        assert!(!list.prune_deprecated());
     }
 
     #[test]
