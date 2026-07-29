@@ -333,10 +333,17 @@ impl VellumGuiApp {
             .show(ui, |ui| {
                 for color in &entries {
                     ui.horizontal(|ui| {
+                        let is_character = character_scoped.contains(&color.name);
+                        let scope = if is_character { "[C]" } else { "[G]" };
+                        ui.label(egui::RichText::new(scope).weak().monospace())
+                            .on_hover_text(if is_character {
+                                "This character's override"
+                            } else {
+                                "Global (all characters)"
+                            });
                         if ui.small_button("Edit").clicked() {
-                            let is_global = !character_scoped.contains(&color.name);
                             state.palette_form =
-                                Some(PaletteFormState::from_color(color, is_global));
+                                Some(PaletteFormState::from_color(color, !is_character));
                         }
                         if ui.small_button("Delete").clicked() {
                             delete_request = Some(color.name.clone());

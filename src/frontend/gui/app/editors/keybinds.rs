@@ -202,16 +202,32 @@ impl VellumGuiApp {
                 entries.sort_by(|a, b| a.0.cmp(b.0));
 
                 let row_count = entries.len();
+                // Character overrides (vs global) for the [C]/[G] row tags,
+                // loaded once per render rather than per row.
+                let char_keybinds = Config::load_character_keybinds_only(
+                    self.app_core.config.character.as_deref(),
+                )
+                .unwrap_or_default();
                 egui::ScrollArea::vertical()
                     .id_salt("keybind_browser_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         for (key, action) in entries {
                             ui.horizontal(|ui| {
+                                let is_character = char_keybinds.contains_key(key);
+                                let scope = if is_character { "[C]" } else { "[G]" };
+                                ui.label(egui::RichText::new(scope).weak().monospace())
+                                    .on_hover_text(if is_character {
+                                        "This character's override"
+                                    } else {
+                                        "Global (all characters)"
+                                    });
                                 if ui.small_button("Edit").clicked() {
-                                    let is_global = !self.keybind_is_character_override(key);
-                                    open_form =
-                                        Some(KeybindFormState::from_binding(key, action, is_global));
+                                    open_form = Some(KeybindFormState::from_binding(
+                                        key,
+                                        action,
+                                        !is_character,
+                                    ));
                                 }
                                 if ui.small_button("Delete").clicked() {
                                     delete_request = Some(key.clone());

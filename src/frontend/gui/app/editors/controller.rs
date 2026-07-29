@@ -787,12 +787,32 @@ impl VellumGuiApp {
                 entries.sort_by(|a, b| a.0.cmp(b.0));
                 let row_count = entries.len();
 
+                // Which buttons are this character's overrides (vs global), so
+                // each row can show a [C]/[G] tag. Loaded once per render, not
+                // per row, to keep the file read off the hot path.
+                let char_binds = Config::load_character_controller_binds_only(
+                    state.shift_layer(),
+                    self.app_core.config.character.as_deref(),
+                )
+                .unwrap_or_default();
+
                 egui::ScrollArea::vertical()
                     .id_salt("controller_editor_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         for (button, action) in entries {
                             ui.horizontal(|ui| {
+                                let scope = if char_binds.contains_key(button) {
+                                    "[C]"
+                                } else {
+                                    "[G]"
+                                };
+                                ui.label(egui::RichText::new(scope).weak().monospace())
+                                    .on_hover_text(if scope == "[C]" {
+                                        "This character's override"
+                                    } else {
+                                        "Global (all characters)"
+                                    });
                                 if ui.small_button("Edit").clicked() {
                                     open_form =
                                         Some(ControllerFormState::from_binding(button, action));
