@@ -1344,21 +1344,18 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true;
                 tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
 
-                // Check blocklist first
-                if self
+                let blocked = self
                     .config
                     .ui
                     .open_dialog_blocklist
                     .iter()
-                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
-                {
-                    tracing::debug!("DialogOpen blocked: id={}", id);
-                    return;
-                }
+                    .any(|b| b.eq_ignore_ascii_case(id));
 
-                // Register as a window offer (unified list; P1). Dialogs
-                // reaching here are non-resident (the parser mines resident
-                // ones into panels). save='t' asks to persist position.
+                // Register as a window offer FIRST (unified list; P1) — even
+                // blocklisted dialogs, so they appear in the known-windows
+                // list and can be un-hidden. Blocklist = a remembered
+                // Hidden policy in the unified model. Dialogs reaching here
+                // are non-resident (resident ones are mined into panels).
                 game_state.window_offers.offer(
                     id.clone(),
                     title.clone().unwrap_or_else(|| id.clone()),
@@ -1367,6 +1364,15 @@ impl MessageProcessor {
                     *save,
                     false,
                 );
+                if blocked {
+                    game_state
+                        .window_offers
+                        .set_policy(id, crate::core::window_offers::Policy::Hidden);
+                    // Old popup path still suppresses blocklisted dialogs
+                    // (behavior unchanged until that path is retired in P2b).
+                    tracing::debug!("DialogOpen blocked (offer hidden): id={}", id);
+                    return;
+                }
 
                 // Handle injuries popup for viewing another player's injuries
                 // Dialog ID format: "injuries-PLAYERID" (e.g., "injuries-10154507")

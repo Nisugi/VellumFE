@@ -205,8 +205,13 @@ pub fn parse(raw: &str) -> Result<ForeachSpec, String> {
     }
 
     // The value expression: `attr=value`, a bare `/regex/`, or a bare
-    // type value (`.foreach box in inv`). Empty = match everything.
-    let (attr, value, quick) = if filter_expr.is_empty() {
+    // type value (`.foreach box in inv`). Empty (or a match-all token like
+    // `*`/`all`/`any`/`everything`, foreach.lic-style) = match everything.
+    let match_all = matches!(
+        filter_expr.trim().to_lowercase().as_str(),
+        "" | "*" | "all" | "any" | "everything"
+    );
+    let (attr, value, quick) = if match_all {
         (FilterAttr::Type, String::new(), false)
     } else if filter_expr.len() > 2
         && filter_expr.starts_with('/')
@@ -659,6 +664,23 @@ mod tests {
             ]
         );
         assert_eq!(spec.commands, vec!["get item", "sell item"]);
+    }
+
+    #[test]
+    fn wildcard_and_all_tokens_match_everything() {
+        // `*` (and all/any/everything) = no filter, not a literal type tag.
+        for expr in ["*", "all", "any", "everything"] {
+            let spec = parse(&format!("{} in bandolier; look item", expr)).unwrap();
+            assert_eq!(spec.attr, FilterAttr::Type);
+            assert!(spec.tags.is_empty(), "'{}' should be match-all", expr);
+            assert!(spec.patterns.is_empty());
+            // Matches an arbitrary item.
+            let c = candidate("1", "sword", "short sword", &["weapon"]);
+            assert!(spec.select(std::slice::from_ref(&c)).len() == 1);
+        }
+        // A real type tag still filters.
+        let spec = parse("gem in bag").unwrap();
+        assert_eq!(spec.tags, vec!["gem"]);
     }
 
     #[test]

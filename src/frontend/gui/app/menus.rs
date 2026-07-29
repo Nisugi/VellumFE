@@ -759,6 +759,16 @@ impl VellumGuiApp {
             return;
         }
 
+        // Known-windows list: flip this offer's show/hide, then re-open the
+        // list (refreshed marks) so several toggle in one pass.
+        if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
+            let offer_id = offer_id.to_string();
+            self.app_core.toggle_window_offer(&offer_id);
+            let items = self.app_core.build_known_windows_menu();
+            self.open_child_menu_for_layer(menu_command.layer, items);
+            return;
+        }
+
         // Internal (double-underscore) menu commands must never reach the server.
         if command.starts_with("__") {
             self.app_core

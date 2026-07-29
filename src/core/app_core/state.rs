@@ -4353,8 +4353,8 @@ impl AppCore {
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
-                text: "List windows >".to_string(),
-                command: ".windows".to_string(),
+                text: "Known windows (game-offered) >".to_string(),
+                command: ".knownwindows".to_string(),
                 disabled: false,
             },
         ]
