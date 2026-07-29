@@ -54,7 +54,16 @@ pub fn latest_downloaded(dir: &Path) -> Option<(String, PathBuf)> {
     downloaded_versions(dir).pop()
 }
 
-/// All downloaded mapdbs, oldest → newest.
+/// Tag given to a plain `mapdb.json` (installed by `.jinx install mapdb.json`,
+/// which has no release version). It sorts below every real versioned tag —
+/// `tag_order` sees no digits, so its numeric run is empty and it loses to any
+/// tag with a number — so a real release download always wins when both exist,
+/// while a plain file is still used when it's the only mapdb present.
+const PLAIN_TAG: &str = "installed";
+
+/// All downloaded mapdbs, oldest → newest. Recognizes both the versioned
+/// `mapdb-<tag>.json` files the updater writes and a plain `mapdb.json` a user
+/// dropped in or installed via `.jinx`.
 fn downloaded_versions(dir: &Path) -> Vec<(String, PathBuf)> {
     let mut found = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -65,6 +74,10 @@ fn downloaded_versions(dir: &Path) -> Vec<(String, PathBuf)> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
+        if name == "mapdb.json" {
+            found.push((PLAIN_TAG.to_owned(), path.clone()));
+            continue;
+        }
         let Some(tag) = name
             .strip_prefix("mapdb-")
             .and_then(|rest| rest.strip_suffix(".json"))
@@ -479,6 +492,22 @@ mod tests {
         assert!(!dir.path().join("mapdb-v0.3.0.json").exists());
         assert!(!dir.path().join("overrides-v0.3.0.json").exists());
         assert!(dir.path().join("mapdb-v0.10.0.json").exists());
+    }
+
+    #[test]
+    fn plain_mapdb_json_is_recognized_but_loses_to_a_versioned_release() {
+        let dir = tempfile::tempdir().unwrap();
+        // A plain mapdb.json (as .jinx installs) is found when it's alone.
+        std::fs::write(dir.path().join("mapdb.json"), "[]").unwrap();
+        let (tag, path) = latest_downloaded(dir.path()).unwrap();
+        assert_eq!(tag, PLAIN_TAG);
+        assert!(path.ends_with("mapdb.json"));
+
+        // A real versioned release outranks the plain file.
+        std::fs::write(dir.path().join("mapdb-v0.4.0.json"), "[]").unwrap();
+        let (tag, path) = latest_downloaded(dir.path()).unwrap();
+        assert_eq!(tag, "v0.4.0");
+        assert!(path.ends_with("mapdb-v0.4.0.json"));
     }
 
     #[test]

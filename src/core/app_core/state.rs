@@ -638,14 +638,12 @@ impl AppCore {
                         "[jinx] spell table reloaded ({count} spells)"
                     ));
                 }
-                // mapdb.json landed in the map dir, but the map loader looks
-                // for the versioned mapdb-<tag>.json names the updater writes;
-                // unifying that is a follow-up. Restart picks it up via the
-                // configured source resolution.
+                // mapdb.json landed in the map dir; resolve_source now
+                // recognizes a plain mapdb.json (below any versioned release),
+                // so re-resolving the source loads it live.
                 "mapdb.json" => {
-                    self.add_system_message(
-                        "[jinx] mapdb.json installed — use .mapdb or restart to load it",
-                    );
+                    self.refresh_map_source();
+                    self.add_system_message("[jinx] map database reloaded");
                 }
                 _ => match kind.as_str() {
                     "skin" => self.add_system_message(&format!(
