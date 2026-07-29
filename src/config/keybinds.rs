@@ -857,6 +857,59 @@ pub struct MenuKeybinds {
     pub edit: String,
 }
 
+/// One editable menu-keybind field, used to drive both the TUI and GUI menu
+/// keybind editors from a single list (the registry pattern: declare once,
+/// render everywhere). `MenuKeybinds` is a fixed 26-field struct rather than a
+/// map, so the editor is a form over these rows, not a browsable list.
+pub struct MenuKeybindField {
+    /// Human label shown in the editor (e.g. "Select").
+    pub label: &'static str,
+    /// Section header the row groups under.
+    pub group: &'static str,
+    pub get: fn(&MenuKeybinds) -> &str,
+    pub set: fn(&mut MenuKeybinds, String),
+}
+
+impl MenuKeybinds {
+    /// The 26 editable fields, in editor order (grouped as the struct is).
+    /// Both editors iterate this so neither hardcodes a parallel field list.
+    pub const FIELDS: &'static [MenuKeybindField] = &[
+        // Navigation
+        MenuKeybindField { label: "Navigate Up", group: "Navigation", get: |m| &m.navigate_up, set: |m, v| m.navigate_up = v },
+        MenuKeybindField { label: "Navigate Down", group: "Navigation", get: |m| &m.navigate_down, set: |m, v| m.navigate_down = v },
+        MenuKeybindField { label: "Navigate Left", group: "Navigation", get: |m| &m.navigate_left, set: |m, v| m.navigate_left = v },
+        MenuKeybindField { label: "Navigate Right", group: "Navigation", get: |m| &m.navigate_right, set: |m, v| m.navigate_right = v },
+        MenuKeybindField { label: "Page Up", group: "Navigation", get: |m| &m.page_up, set: |m, v| m.page_up = v },
+        MenuKeybindField { label: "Page Down", group: "Navigation", get: |m| &m.page_down, set: |m, v| m.page_down = v },
+        MenuKeybindField { label: "Home", group: "Navigation", get: |m| &m.home, set: |m, v| m.home = v },
+        MenuKeybindField { label: "End", group: "Navigation", get: |m| &m.end, set: |m, v| m.end = v },
+        // Field navigation
+        MenuKeybindField { label: "Next Field", group: "Field Navigation", get: |m| &m.next_field, set: |m, v| m.next_field = v },
+        MenuKeybindField { label: "Previous Field", group: "Field Navigation", get: |m| &m.previous_field, set: |m, v| m.previous_field = v },
+        // Actions
+        MenuKeybindField { label: "Select", group: "Actions", get: |m| &m.select, set: |m, v| m.select = v },
+        MenuKeybindField { label: "Cancel", group: "Actions", get: |m| &m.cancel, set: |m, v| m.cancel = v },
+        MenuKeybindField { label: "Save", group: "Actions", get: |m| &m.save, set: |m, v| m.save = v },
+        MenuKeybindField { label: "Delete", group: "Actions", get: |m| &m.delete, set: |m, v| m.delete = v },
+        // Clipboard
+        MenuKeybindField { label: "Select All", group: "Clipboard", get: |m| &m.select_all, set: |m, v| m.select_all = v },
+        MenuKeybindField { label: "Copy", group: "Clipboard", get: |m| &m.copy, set: |m, v| m.copy = v },
+        MenuKeybindField { label: "Cut", group: "Clipboard", get: |m| &m.cut, set: |m, v| m.cut = v },
+        MenuKeybindField { label: "Paste", group: "Clipboard", get: |m| &m.paste, set: |m, v| m.paste = v },
+        // Toggles / cycling
+        MenuKeybindField { label: "Toggle", group: "Toggles", get: |m| &m.toggle, set: |m, v| m.toggle = v },
+        MenuKeybindField { label: "Toggle Filter", group: "Toggles", get: |m| &m.toggle_filter, set: |m, v| m.toggle_filter = v },
+        MenuKeybindField { label: "Cycle Forward", group: "Toggles", get: |m| &m.cycle_forward, set: |m, v| m.cycle_forward = v },
+        MenuKeybindField { label: "Cycle Backward", group: "Toggles", get: |m| &m.cycle_backward, set: |m, v| m.cycle_backward = v },
+        // Reordering
+        MenuKeybindField { label: "Move Up", group: "Reordering", get: |m| &m.move_up, set: |m, v| m.move_up = v },
+        MenuKeybindField { label: "Move Down", group: "Reordering", get: |m| &m.move_down, set: |m, v| m.move_down = v },
+        // List management
+        MenuKeybindField { label: "Add", group: "List Management", get: |m| &m.add, set: |m, v| m.add = v },
+        MenuKeybindField { label: "Edit", group: "List Management", get: |m| &m.edit, set: |m, v| m.edit = v },
+    ];
+}
+
 // Default keybind functions
 fn default_navigate_up() -> String {
     "Up".to_string()
@@ -1946,6 +1999,53 @@ impl Config {
         Ok(())
     }
 
+    /// Persist the full [menu] keybinds table to the scope's keybinds.toml,
+    /// leaving other sections ([user], [app], ...) untouched. Menu keybinds
+    /// are a fixed 26-field struct (not an add/delete map), so the editor
+    /// always writes the whole set — the read-modify-write mirrors
+    /// `save_single_keybind`. Global writes global/keybinds.toml; character
+    /// writes the profile keybinds.toml.
+    pub fn save_menu_keybinds(
+        menu: &MenuKeybinds,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let path = if is_global {
+            Self::common_keybinds_path()?
+        } else {
+            Self::keybinds_path(character)?
+        };
+
+        let mut toml_table: toml::value::Table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+
+        // Replace the [menu] section wholesale with the serialized struct.
+        let menu_value =
+            toml::Value::try_from(menu).context("Failed to serialize menu keybinds")?;
+        toml_table.insert("menu".to_string(), menu_value);
+
+        let contents =
+            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
+        write_atomic(&path, contents)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+
+        tracing::info!(
+            "Saved menu keybinds to {} keybinds file: {:?}",
+            if is_global { "global" } else { "character" },
+            path
+        );
+        Ok(())
+    }
+
     /// Delete a single keybind from the appropriate file based on scope
     ///
     /// # Arguments
@@ -2443,6 +2543,62 @@ fn last_controller_value<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The [menu] section that save_menu_keybinds writes must survive a
+    /// serialize → deserialize round trip with every field intact (the save
+    /// path replaces [menu] with toml::Value::try_from(menu); load reads it
+    /// back the same way). A dropped field here = a setting the editor could
+    /// silently lose.
+    #[test]
+    fn menu_keybinds_toml_section_round_trips() {
+        let mut menu = MenuKeybinds::default();
+        // Diverge every field from its default so a lost field is detectable.
+        for field in MenuKeybinds::FIELDS {
+            let mangled = format!("Test+{}", (field.get)(&menu));
+            (field.set)(&mut menu, mangled);
+        }
+        // Emulate save (write the [menu] value) then load (try_into back).
+        let value = toml::Value::try_from(&menu).expect("serialize menu");
+        let back: MenuKeybinds = value.try_into().expect("deserialize menu");
+        for field in MenuKeybinds::FIELDS {
+            assert_eq!(
+                (field.get)(&back),
+                (field.get)(&menu),
+                "menu keybind field '{}' did not round-trip",
+                field.label
+            );
+        }
+    }
+
+    /// The FIELDS table must cover every editable menu keybind (26) and each
+    /// get/set must address the same field. Adding a MenuKeybinds field without
+    /// a FIELDS entry means the editors can't reach it — this catches that.
+    #[test]
+    fn menu_keybind_fields_cover_all_26_and_round_trip() {
+        assert_eq!(MenuKeybinds::FIELDS.len(), 26, "expected 26 menu keybind fields");
+
+        // Every field's setter writes what its getter reads back.
+        let mut menu = MenuKeybinds::default();
+        for (i, field) in MenuKeybinds::FIELDS.iter().enumerate() {
+            let sentinel = format!("Sentinel{i}");
+            (field.set)(&mut menu, sentinel.clone());
+            assert_eq!(
+                (field.get)(&menu),
+                sentinel,
+                "field '{}' get/set address different storage",
+                field.label
+            );
+        }
+        // No two fields alias the same storage: after setting each to a unique
+        // value, all 26 read back distinct.
+        let mut fresh = MenuKeybinds::default();
+        for (i, field) in MenuKeybinds::FIELDS.iter().enumerate() {
+            (field.set)(&mut fresh, format!("K{i}"));
+        }
+        let values: std::collections::HashSet<&str> =
+            MenuKeybinds::FIELDS.iter().map(|f| (f.get)(&fresh)).collect();
+        assert_eq!(values.len(), 26, "some FIELDS entries alias the same field");
+    }
 
     #[test]
     fn rumble_resolve_builtins_and_off() {

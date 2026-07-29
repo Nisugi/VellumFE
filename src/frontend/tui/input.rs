@@ -3659,6 +3659,91 @@ impl TuiFrontend {
                 }
                 return Ok(None);
             }
+            InputMode::MenuKeybindEditor => {
+                if let Some(ref mut editor) = self.menu_keybind_editor {
+                    // While capturing, the next key press IS the binding — take
+                    // it verbatim (including Esc/Enter, which are valid menu
+                    // keys) rather than routing it as a menu action.
+                    if editor.is_capturing() {
+                        let key_event = crate::data::input::KeyEvent { code, modifiers };
+                        let key = crate::core::menu_actions::key_event_to_string(key_event);
+                        editor.apply_captured_key(key);
+                        app_core.needs_render = true;
+                        return Ok(None);
+                    }
+
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
+                    let action = input_router::route_input(
+                        &key_event,
+                        &app_core.ui_state.input_mode,
+                        &app_core.config,
+                    );
+                    match action {
+                        crate::core::menu_actions::MenuAction::NavigateUp
+                        | crate::core::menu_actions::MenuAction::PreviousItem => {
+                            editor.navigate_up()
+                        }
+                        crate::core::menu_actions::MenuAction::NavigateDown
+                        | crate::core::menu_actions::MenuAction::NextItem => {
+                            editor.navigate_down()
+                        }
+                        crate::core::menu_actions::MenuAction::Select
+                        | crate::core::menu_actions::MenuAction::Edit => editor.arm_capture(),
+                        crate::core::menu_actions::MenuAction::Cancel => {
+                            self.menu_keybind_editor = None;
+                            app_core.ui_state.input_mode = InputMode::Normal;
+                        }
+                        crate::core::menu_actions::MenuAction::Save => {
+                            // Validate, then persist to the chosen scope.
+                            let validation = crate::config::menu_keybind_validator::validate_menu_keybinds(&editor.working);
+                            if validation.has_errors() {
+                                let first = validation
+                                    .errors()
+                                    .first()
+                                    .map(|e| e.message())
+                                    .unwrap_or_default();
+                                editor.set_status(format!("Cannot save: {}", first));
+                            } else {
+                                let character = app_core.config.character.clone();
+                                match crate::config::Config::save_menu_keybinds(
+                                    &editor.working,
+                                    editor.is_global,
+                                    character.as_deref(),
+                                ) {
+                                    Ok(()) => {
+                                        app_core.config.menu_keybinds = editor.working.clone();
+                                        self.menu_keybind_editor = None;
+                                        app_core.ui_state.input_mode = InputMode::Normal;
+                                        app_core.add_system_message("Menu keybinds saved.");
+                                    }
+                                    Err(err) => editor
+                                        .set_status(format!("Save failed: {}", err)),
+                                }
+                            }
+                        }
+                        _ => {
+                            // Plain 'd' resets the selected row to default; 'g'
+                            // toggles scope. These aren't menu-nav actions, so
+                            // they fall through to here.
+                            if modifiers.is_empty() {
+                                match code {
+                                    crate::data::input::KeyCode::Char('d')
+                                    | crate::data::input::KeyCode::Char('D') => {
+                                        editor.reset_selected_to_default()
+                                    }
+                                    crate::data::input::KeyCode::Char('g')
+                                    | crate::data::input::KeyCode::Char('G') => {
+                                        editor.toggle_scope()
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    app_core.needs_render = true;
+                }
+                return Ok(None);
+            }
             InputMode::ThemeEditor => {
                 if let Some(ref mut editor) = self.theme_editor {
                     use crate::core::input_router;

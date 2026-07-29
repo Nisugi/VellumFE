@@ -273,6 +273,18 @@ pub fn handle_menu_action(
                 close_all_menus(&mut app_core.ui_state);
                 app_core.ui_state.input_mode = InputMode::KeybindBrowser;
             }
+            "action:menukeybinds" => {
+                // Open the menu keybind editor (the fixed [menu] nav/action
+                // keys). Defaults to global scope; toggle with 'g' inside.
+                frontend.menu_keybind_editor = Some(
+                    crate::frontend::tui::menu_keybind_editor::MenuKeybindEditor::new(
+                        app_core.config.menu_keybinds.clone(),
+                        true,
+                    ),
+                );
+                close_all_menus(&mut app_core.ui_state);
+                app_core.ui_state.input_mode = InputMode::MenuKeybindEditor;
+            }
             "action:streams" => {
                 // Open the streams routing menu (every known stream and where
                 // it goes) — the TUI mirror of the GUI Streams panel.

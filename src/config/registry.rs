@@ -116,7 +116,7 @@ pub struct SettingDef {
 pub const EXEMPT_PREFIXES: &[&str] = &[
     "event_patterns",             // pattern map; highlights editor territory
     "layout_mappings",            // structured layout routing
-    "menu_keybinds",              // keybinds editor territory
+    "menu_keybinds",              // 26-field struct; .menukeybinds editor (TUI menu_keybind_editor + GUI editors/menu_keybinds)
     "quickbars",                  // quickbar definitions (config template docs)
     "ui.layout",                  // legacy empty section
     "target_list.status_abbrev",  // abbreviation map; targets editor later

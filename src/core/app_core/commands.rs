@@ -1559,6 +1559,10 @@ impl AppCore {
             "keybinds" | "kb" => {
                 return Ok("action:keybinds".to_string());
             }
+            // Menu keybinds (nav/action keys active while a menu has focus)
+            "menukeybinds" | "menukb" => {
+                return Ok("action:menukeybinds".to_string());
+            }
             // Controller bindings editor (GUI)
             "controller" => {
                 return Ok("action:controller".to_string());

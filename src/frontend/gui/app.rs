@@ -278,6 +278,7 @@ pub struct VellumGuiApp {
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
+    menu_keybind_editor: Option<editors::MenuKeybindEditorState>,
     #[cfg(feature = "gamepad")]
     controller_editor: Option<editors::ControllerEditorState>,
     hotbar_editor: Option<editors::HotbarEditorState>,
@@ -585,6 +586,7 @@ impl VellumGuiApp {
             settings_editor: None,
             highlight_editor: None,
             keybind_editor: None,
+            menu_keybind_editor: None,
             #[cfg(feature = "gamepad")]
             controller_editor: None,
             hotbar_editor: None,
@@ -3907,6 +3909,10 @@ impl VellumGuiApp {
             self.open_keybind_editor();
             return true;
         }
+        if action == "action:menukeybinds" {
+            self.open_menu_keybind_editor();
+            return true;
+        }
         if action == "action:controller" {
             #[cfg(feature = "gamepad")]
             self.open_controller_editor();
@@ -4820,7 +4826,11 @@ impl eframe::App for VellumGuiApp {
         // exempt so the captured key doesn't also type into the input.
         if let Some(input_id) = self.command_input_id {
             let nothing_focused = ctx.memory(|memory| memory.focused().is_none());
-            if nothing_focused && !self.keybind_capture_armed() && !self.hotbar_capture_armed() {
+            if nothing_focused
+                && !self.keybind_capture_armed()
+                && !self.menu_keybind_capture_armed()
+                && !self.hotbar_capture_armed()
+            {
                 ctx.memory_mut(|memory| memory.request_focus(input_id));
             }
         }

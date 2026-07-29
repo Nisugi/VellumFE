@@ -46,8 +46,8 @@ pub use hotbars::{
 };
 pub use keybinds::{
     parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,
-    MenuKeybinds, RumbleConfig, RumblePattern, TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue,
-    WHEEL_MIN_SPAN_DEG,
+    MenuKeybindField, MenuKeybinds, RumbleConfig, RumblePattern, TuningConfig, WheelMeta,
+    WheelSlice, WheelSpanIssue, WHEEL_MIN_SPAN_DEG,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};

@@ -202,6 +202,8 @@ pub enum InputMode {
     SpellColorsBrowser,
     /// Spell color form is open (create/edit spell color)
     SpellColorForm,
+    /// Menu keybind editor is open (edit the [menu] navigation/action keys)
+    MenuKeybindEditor,
     /// Theme browser is open
     ThemeBrowser,
     /// Theme editor is open (create/edit theme)
@@ -1065,6 +1067,7 @@ mod tests {
             InputMode::UIColorsBrowser,
             InputMode::SpellColorsBrowser,
             InputMode::SpellColorForm,
+            InputMode::MenuKeybindEditor,
             InputMode::ThemeBrowser,
             InputMode::ThemeEditor,
             InputMode::SettingsEditor,

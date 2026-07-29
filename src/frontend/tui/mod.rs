@@ -51,6 +51,7 @@ mod scrollable_container;
 mod search;
 pub mod settings_editor;
 mod spacer;
+pub mod menu_keybind_editor;
 pub mod spell_color_browser;
 pub mod spell_color_form;
 mod spells_window;
@@ -110,6 +111,8 @@ pub struct TuiFrontend {
     pub spell_color_browser: Option<spell_color_browser::SpellColorBrowser>,
     /// Active spell color form (if any)
     pub spell_color_form: Option<spell_color_form::SpellColorFormWidget>,
+    /// Active menu keybind editor (if any)
+    pub menu_keybind_editor: Option<menu_keybind_editor::MenuKeybindEditor>,
     /// Active theme browser (if any)
     pub theme_browser: Option<theme_browser::ThemeBrowser>,
     /// Active theme editor (if any)
@@ -249,6 +252,7 @@ impl TuiFrontend {
             uicolors_browser: None,
             spell_color_browser: None,
             spell_color_form: None,
+            menu_keybind_editor: None,
             theme_browser: None,
             theme_editor: None,
             settings_editor: None,
