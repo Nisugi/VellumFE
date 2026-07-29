@@ -4618,9 +4618,17 @@ impl AppCore {
         ]
     }
 
-    /// Build windows submenu
+    /// Build windows submenu. U6: "Show/Hide windows" is the primary
+    /// manager (every known window, toggle each); Add creates new ones;
+    /// Edit tweaks geometry/settings. ("Hide window" is subsumed by the
+    /// Show/Hide list — you untick a row there.)
     pub fn build_windows_submenu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         vec![
+            crate::data::ui_state::PopupMenuItem {
+                text: "Show/Hide windows >".to_string(),
+                command: "menu:knownwindows".to_string(),
+                disabled: false,
+            },
             crate::data::ui_state::PopupMenuItem {
                 text: "Add window >".to_string(),
                 command: "menu:addwindow".to_string(),
@@ -4629,17 +4637,6 @@ impl AppCore {
             crate::data::ui_state::PopupMenuItem {
                 text: "Edit window >".to_string(),
                 command: "menu:editwindow".to_string(),
-                disabled: false,
-            },
-            // "Edit Performance" removed - now use right-click on overlay to toggle metrics
-            crate::data::ui_state::PopupMenuItem {
-                text: "Hide window >".to_string(),
-                command: "menu:hidewindow".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: "Show/Hide windows >".to_string(),
-                command: "menu:knownwindows".to_string(),
                 disabled: false,
             },
         ]
