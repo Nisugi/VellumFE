@@ -4622,6 +4622,53 @@ mod tests {
     }
 
     #[test]
+    fn blocklisted_combat_dialogdata_never_opens_popup() {
+        // Real shapes from a 2026-07-28 session log: the combat window is a
+        // RESIDENT openDialog (so no DialogOpen is emitted) whose dialogData
+        // then arrives both embedded and standalone. 'combat' is in the
+        // default blocklist, so none of it may create the generic popup.
+        let mut parser = crate::parser::XmlParser::new();
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        let lines = [
+            "<openDialog type='dynamic' id='combat' title='Combat' location='right' target='combat' height='288' resident='true'><dialogData id='combat' clear='t'><image id='unsheathe' name='SwordBtn' cmd='_ready weapon' tooltip='Unsheathe Weapon' echo='ready weapon' align='n' top='3' left='-50' height='29' width='29'/></dialogData></openDialog>",
+            "<dialogData id='combat'><progressBar id='pbarStance' value='100' text='defensive (100%)' top='51' width='130' height='16' left='0' align='n' tooltip='Percent of stance contributing to defense'/></dialogData>",
+            "<dialogData id='combat'><cmdButton id='cmdDefStance' value='defense' cmd='_stance defensive' tooltip='Assume a Defensive Stance' echo='stance defensive' height='20' width='55' top='70' left='0' align='nw'/><cmdButton id='cmdTarget' value='target' cmd='target random' tooltip='Select a Random Target' height='20' width='55' top='93' left='0' align='nw'/></dialogData>",
+        ];
+        for line in &lines {
+            for element in parser.parse_line(line) {
+                processor.process_element(
+                    &element,
+                    &mut game_state,
+                    &mut ui_state,
+                    &mut std::collections::HashMap::new(),
+                    &mut None,
+                    &mut false,
+                    &mut None,
+                    &mut None,
+                    &mut None,
+                    None,
+                );
+            }
+        }
+
+        assert!(
+            ui_state.active_dialog.is_none(),
+            "blocklisted combat dialogData opened the generic popup: {:?}",
+            ui_state.active_dialog.as_ref().map(|d| &d.id)
+        );
+        // And it still appears in the known-windows list as hidden.
+        let offer = game_state.window_offers.get("combat");
+        assert!(
+            offer.is_some_and(|o| !o.should_show()),
+            "combat offer should exist and be hidden, got {:?}",
+            offer
+        );
+    }
+
+    #[test]
     fn container_feed_populates_registry_in_parallel() {
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
