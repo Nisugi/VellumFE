@@ -34,16 +34,20 @@ pub fn run(
     // save; catch it and save geometry there.
     #[cfg(windows)]
     console_close::install(character.clone(), console_size_profile.clone());
-    // Use tokio runtime for async network I/O
+    // Use tokio runtime for async network I/O.
+    // Box::pin: async_run's state machine is enormous in debug builds and
+    // block_on would otherwise pin it on the main thread's stack — which on
+    // Windows is only 1 MiB and was overflowing under the deeper keyboard
+    // input-handler call chains (menu Enter). Heap-allocate it instead.
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(async_run(
+    runtime.block_on(Box::pin(async_run(
         config,
         character,
         direct,
         setup_palette,
         login_key,
         console_size_profile,
-    ))
+    )))
 }
 
 /// If this process owns a console window but a standard handle doesn't
