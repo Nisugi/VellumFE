@@ -52,8 +52,7 @@ with `--character` (or `--profile`).
 
 **Can I have multiple layouts?**
 Yes: `.savelayout hunting`, then `.loadlayout hunting` — in both the TUI
-and the GUI (each keeps its own set). In the TUI you can also switch
-automatically by terminal size with `layout_mappings` in config.toml.
+and the GUI (each keeps its own set).
 
 **How do I reset to defaults?**
 Delete the file (or the whole `~/.vellum-fe/` directory); defaults are

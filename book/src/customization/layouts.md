@@ -67,9 +67,8 @@ Windows can overlap. Later windows in the file render on top.
 .resize                 # refit layout to the current terminal size
 ```
 
-Window positions also auto-save per character. You can switch layouts
-automatically by terminal size with `layout_mappings` in
-[config.toml](../configuration/config-toml.md).
+Window positions also auto-save per character. Use `.resize` to refit the
+current layout to the terminal, or `.loadlayout <name>` to switch layouts.
 
 The same three commands work in the [Desktop GUI](../frontends/gui.md)
 on its own layout format: named checkpoints of the GUI arrangement,

@@ -5210,7 +5210,6 @@ impl AppCore {
                         self.config.ui = new_config.ui;
                         self.config.sound = new_config.sound;
                         self.config.event_patterns = new_config.event_patterns;
-                        self.config.layout_mappings = new_config.layout_mappings;
                         self.parser
                             .update_event_patterns(self.config.event_patterns.clone());
                         self.message_processor.apply_config(self.config.clone());

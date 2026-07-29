@@ -430,11 +430,6 @@ impl Config {
             self.event_patterns.insert(key, pattern);
         }
 
-        // Layout mappings: character replaces global if provided
-        if !character_config.layout_mappings.is_empty() {
-            self.layout_mappings = character_config.layout_mappings;
-        }
-
         // Menu keybinds: character overrides global
         self.menu_keybinds = character_config.menu_keybinds;
 
@@ -723,7 +718,6 @@ impl Default for Config {
             macros: MacrosConfig::default(), // Loaded from macros.toml
             macros_local: MacrosConfig::default(),
             event_patterns: HashMap::new(), // Empty by default - user adds via config
-            layout_mappings: Vec::new(),    // Empty by default - user adds via config
             character: None,                // Set at runtime via load_with_options
             menu_keybinds: MenuKeybinds::default(),
             active_theme: default_theme_name(),

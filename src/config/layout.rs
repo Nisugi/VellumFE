@@ -6,26 +6,6 @@
 
 use super::*;
 
-/// Terminal size range to layout mapping
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LayoutMapping {
-    pub min_width: u16,
-    pub min_height: u16,
-    pub max_width: u16,
-    pub max_height: u16,
-    pub layout: String, // Layout name (e.g., "compact1", "half_screen")
-}
-
-impl LayoutMapping {
-    /// Check if terminal size matches this mapping
-    pub fn matches(&self, width: u16, height: u16) -> bool {
-        width >= self.min_width
-            && width <= self.max_width
-            && height >= self.min_height
-            && height <= self.max_height
-    }
-}
-
 // CommandInputConfig removed - command_input is now a regular window in the windows array
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -738,34 +718,6 @@ impl Layout {
                 }
             });
         }
-    }
-}
-
-impl Config {
-    /// Find the appropriate layout for a given terminal size
-    /// Returns the layout name if a matching mapping is found
-    pub fn find_layout_for_size(&self, width: u16, height: u16) -> Option<String> {
-        for mapping in &self.layout_mappings {
-            if mapping.matches(width, height) {
-                tracing::info!(
-                    "Found layout mapping for {}x{}: '{}' (range: {}x{} to {}x{})",
-                    width,
-                    height,
-                    mapping.layout,
-                    mapping.min_width,
-                    mapping.min_height,
-                    mapping.max_width,
-                    mapping.max_height
-                );
-                return Some(mapping.layout.clone());
-            }
-        }
-        tracing::debug!(
-            "No layout mapping found for terminal size {}x{}",
-            width,
-            height
-        );
-        None
     }
 }
 

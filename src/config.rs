@@ -49,7 +49,7 @@ pub use keybinds::{
     MenuKeybindField, MenuKeybinds, RumbleConfig, RumblePattern, TuningConfig, WheelMeta,
     WheelSlice, WheelSpanIssue, WHEEL_MIN_SPAN_DEG,
 };
-pub use layout::{ContentAlign, Layout, LayoutConfig, LayoutMapping};
+pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
 pub use paths::{write_atomic, DialogPosition, SavedDialogPositions};
 pub use settings::{
@@ -266,8 +266,6 @@ pub struct Config {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub event_patterns: HashMap<String, EventPattern>,
-    #[serde(default)]
-    pub layout_mappings: Vec<LayoutMapping>,
     #[serde(skip)] // Don't serialize/deserialize this - it's set at runtime
     pub character: Option<String>, // Character name for character-specific saving
     #[serde(skip)] // Loaded from separate colors.toml file (includes color_palette)

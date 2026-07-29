@@ -355,31 +355,6 @@
 # enabled = true
 
 
-# ============================================================
-# LAYOUT MAPPINGS
-# ============================================================
-# Automatically switch layouts based on terminal size.
-# Useful for responsive layouts on resize.
-#
-# VellumFE checks these mappings when the terminal is resized.
-# First matching mapping wins (order matters).
-
-# [[layout_mappings]]
-# min_width = 80
-# min_height = 24
-# max_width = 120
-# max_height = 40
-# layout = "compact"           # Layout name to switch to
-#
-# [[layout_mappings]]
-# min_width = 121
-# min_height = 41
-# max_width = 9999
-# max_height = 9999
-# layout = "fullscreen"
-
-# layout_mappings = []         # Empty by default (no auto-switching)
-
 
 # ============================================================
 # MENU KEYBINDS
