@@ -264,6 +264,12 @@ pub struct DialogState {
     pub display_labels: Vec<DialogLabel>,
     /// Option pickers (`<dropDownBox>`), e.g. combat stance/aim/spell.
     pub dropdowns: Vec<DialogDropDown>,
+    /// Text-command links (`<link>`), e.g. combat's skin/search footer.
+    pub links: Vec<DialogLink>,
+    /// Icon buttons (`<image>`), e.g. combat's weapon-ready row.
+    pub images: Vec<DialogImage>,
+    /// Integer spinners (`<upDownEditBox>`), e.g. quickstrike offset.
+    pub spinboxes: Vec<DialogSpinBox>,
     /// Manual position override (None = auto-center)
     pub position: Option<(u16, u16)>,
     /// Manual size override (None = auto-size based on content)
@@ -287,6 +293,9 @@ impl DialogState {
             progress_bars: Vec::new(),
             display_labels: Vec::new(),
             dropdowns: Vec::new(),
+            links: Vec::new(),
+            images: Vec::new(),
+            spinboxes: Vec::new(),
             position: None,
             size: None,
             save_position: false,
@@ -305,6 +314,10 @@ impl DialogState {
         for dropdown in &self.dropdowns {
             let token = format!("%{}%", dropdown.id);
             resolved = resolved.replace(&token, &dropdown.value);
+        }
+        for spinbox in &self.spinboxes {
+            let token = format!("%{}%", spinbox.id);
+            resolved = resolved.replace(&token, &spinbox.value.to_string());
         }
         resolved
     }
@@ -410,6 +423,40 @@ pub struct DialogButton {
     pub autosend: bool,
     pub group: Option<String>,
     /// Layout hints from the tag (None when the tag carried none).
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// A `<link>` inside dialogData: a text command (combat's skin/search/
+/// grip/multistrike footer). Like a button but rendered as a link.
+#[derive(Clone, Debug)]
+pub struct DialogLink {
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// An `<image>` inside dialogData: a clickable icon by skin asset name
+/// (combat's SwordBtn/ShieldBtn weapon-ready row). `name` keys into the
+/// shared icon store; renderers fall back to the tooltip/label as text.
+#[derive(Clone, Debug)]
+pub struct DialogImage {
+    pub id: String,
+    /// Skin asset name (e.g. "SwordBtn"); resolved against the icon store.
+    pub name: String,
+    pub command: String,
+    pub tooltip: Option<String>,
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// An `<upDownEditBox>` inside dialogData: a bounded integer spinner
+/// (combat's quickstrike offset). Its value feeds `%id%` substitution.
+#[derive(Clone, Debug)]
+pub struct DialogSpinBox {
+    pub id: String,
+    pub value: i32,
+    pub min: i32,
+    pub max: i32,
     pub layout: Option<DialogControlLayout>,
 }
 
@@ -1392,19 +1439,9 @@ mod tests {
 
     fn dialog_with(buttons: Vec<DialogButton>, dropdowns: Vec<DialogDropDown>) -> DialogState {
         DialogState {
-            id: "combat".to_string(),
-            title: None,
             buttons,
-            selected: 0,
-            fields: Vec::new(),
-            labels: Vec::new(),
-            focused_field: None,
-            progress_bars: Vec::new(),
-            display_labels: Vec::new(),
             dropdowns,
-            position: None,
-            size: None,
-            save_position: false,
+            ..DialogState::empty("combat".to_string(), None)
         }
     }
 

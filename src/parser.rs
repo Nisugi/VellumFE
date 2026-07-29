@@ -239,6 +239,21 @@ pub enum ParsedElement {
         clear: bool,
         dropdowns: Vec<DialogDropDown>,
     },
+    DialogControls {
+        id: String,
+        clear: bool,
+        links: Vec<crate::data::DialogLink>,
+        images: Vec<crate::data::DialogImage>,
+        spinboxes: Vec<crate::data::DialogSpinBox>,
+    },
+    /// A resident dialog announcing itself as a persistent panel (combat,
+    /// Buffs, injuries, ...) — registers a resident window offer rather
+    /// than a transient popup.
+    DialogPanelOpen {
+        id: String,
+        title: Option<String>,
+        save: bool,
+    },
     DialogFields {
         id: String,
         clear: bool,
@@ -1095,6 +1110,30 @@ impl XmlParser {
                 }
             }
         }
+        // Links/images/spinboxes (combat's icon row, footer, quickstrike).
+        // Additive, no early return, so buttons below still parse.
+        if tag.contains("<link ") || tag.contains("<image ") || tag.contains("<upDownEditBox ") {
+            if let Some(id) = Self::extract_dialog_data_id(tag_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(tag_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let (links, images, spinboxes) = Self::parse_dialog_controls(tag);
+                    if !links.is_empty() || !images.is_empty() || !spinboxes.is_empty() {
+                        elements.push(ParsedElement::DialogControls {
+                            id,
+                            clear,
+                            links,
+                            images,
+                            spinboxes,
+                        });
+                    }
+                }
+            }
+        }
         if tag.contains("<cmdButton") || tag.contains("<closeButton") || tag.contains("<radio") {
             if let Some(id) = Self::extract_dialog_data_id(tag_head) {
                 if !Self::is_quickbar_id(&id) {
@@ -1370,20 +1409,31 @@ impl XmlParser {
                     .map(|t| t.trim().to_string())
                     .filter(|t| !t.is_empty());
                 elements.push(ParsedElement::QuickbarOpen { id, title });
-            } else if !is_resident {
-                // Only emit DialogOpen for non-resident dialogs (popups)
-                // Resident dialogs are persistent panels that should update widgets, not show popups
+            } else {
                 let title = Self::extract_attribute(tag_head, "title")
                     .map(|t| t.trim().to_string())
                     .filter(|t| !t.is_empty());
-                tracing::debug!("Parser emitting DialogOpen: id={}, title={:?}, save={}", id, title, save_position);
-                elements.push(ParsedElement::DialogOpen { id, title, save: save_position });
+                if is_resident {
+                    // Resident dialogs are persistent PANELS (combat, Buffs,
+                    // injuries, ...). Announce them so they register as a
+                    // resident offer and can be enabled as a dockable panel
+                    // — distinct from the transient popup path below.
+                    elements.push(ParsedElement::DialogPanelOpen {
+                        id,
+                        title,
+                        save: save_position,
+                    });
+                } else {
+                    tracing::debug!("Parser emitting DialogOpen: id={}, title={:?}, save={}", id, title, save_position);
+                    elements.push(ParsedElement::DialogOpen { id, title, save: save_position });
+                }
             }
         }
 
         self.handle_embedded_quickbar_dialog_data(tag, elements);
         self.handle_embedded_dialog_buttons(tag, elements);
         self.handle_embedded_dialog_dropdowns(tag, elements);
+        self.handle_embedded_dialog_controls(tag, elements);
         self.handle_embedded_dialog_fields(tag, elements);
 
         // For resident dialogs, extract progressBar data for widget updates
@@ -1466,6 +1516,52 @@ impl XmlParser {
                 }
             }
 
+            remaining = &remaining[end..];
+        }
+    }
+
+    /// Emit DialogControls (links/images/spinboxes) for dialogData blocks
+    /// embedded in an openDialog tag — combat's login-time icon+configure
+    /// chunk arrives this way (mirrors handle_embedded_dialog_dropdowns).
+    fn handle_embedded_dialog_controls(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let mut remaining = tag;
+        let end_pattern = "</dialogData>";
+        while let Some(start) = remaining.find("<dialogData") {
+            let Some(end_start) = remaining[start..].find(end_pattern) else {
+                break;
+            };
+            let end = start + end_start + end_pattern.len();
+            let dialog_tag = &remaining[start..end];
+
+            if !(dialog_tag.contains("<link ")
+                || dialog_tag.contains("<image ")
+                || dialog_tag.contains("<upDownEditBox "))
+            {
+                remaining = &remaining[end..];
+                continue;
+            }
+
+            let dialog_head = dialog_tag.split('>').next().unwrap_or(dialog_tag);
+            if let Some(id) = Self::extract_dialog_data_id(dialog_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(dialog_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let (links, images, spinboxes) = Self::parse_dialog_controls(dialog_tag);
+                    if !links.is_empty() || !images.is_empty() || !spinboxes.is_empty() {
+                        elements.push(ParsedElement::DialogControls {
+                            id,
+                            clear,
+                            links,
+                            images,
+                            spinboxes,
+                        });
+                    }
+                }
+            }
             remaining = &remaining[end..];
         }
     }
@@ -1873,6 +1969,86 @@ impl XmlParser {
                 .filter(|v| !v.is_empty()),
         };
         (!layout.is_empty()).then_some(layout)
+    }
+
+    /// Parse `<link>`, `<image>`, and `<upDownEditBox>` controls from a
+    /// dialogData chunk (combat's icon row, footer commands, quickstrike
+    /// spinner). Links inside quickbar dialogData are the quickbar's own
+    /// buttons and handled elsewhere, so callers gate on non-quickbar ids.
+    fn parse_dialog_controls(
+        tag: &str,
+    ) -> (
+        Vec<crate::data::DialogLink>,
+        Vec<crate::data::DialogImage>,
+        Vec<crate::data::DialogSpinBox>,
+    ) {
+        let mut links = Vec::new();
+        let mut images = Vec::new();
+        let mut spinboxes = Vec::new();
+
+        let mut remaining = tag;
+        while let Some(start) = remaining.find("<link ") {
+            remaining = &remaining[start..];
+            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let slice = &remaining[..end];
+            if let Some(id) = Self::extract_attribute(slice, "id") {
+                links.push(crate::data::DialogLink {
+                    id,
+                    label: Self::extract_attribute(slice, "value").unwrap_or_default(),
+                    command: Self::extract_attribute(slice, "cmd").unwrap_or_default(),
+                    layout: Self::parse_control_layout(slice),
+                });
+            }
+            remaining = &remaining[end..];
+        }
+
+        let mut remaining = tag;
+        while let Some(start) = remaining.find("<image ") {
+            remaining = &remaining[start..];
+            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let slice = &remaining[..end];
+            if let Some(id) = Self::extract_attribute(slice, "id") {
+                images.push(crate::data::DialogImage {
+                    id,
+                    name: Self::extract_attribute(slice, "name").unwrap_or_default(),
+                    command: Self::extract_attribute(slice, "cmd").unwrap_or_default(),
+                    tooltip: Self::extract_attribute(slice, "tooltip").filter(|v| !v.is_empty()),
+                    layout: Self::parse_control_layout(slice),
+                });
+            }
+            remaining = &remaining[end..];
+        }
+
+        let mut remaining = tag;
+        while let Some(start) = remaining.find("<upDownEditBox ") {
+            remaining = &remaining[start..];
+            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let slice = &remaining[..end];
+            if let Some(id) = Self::extract_attribute(slice, "id") {
+                spinboxes.push(crate::data::DialogSpinBox {
+                    id,
+                    value: Self::extract_attribute(slice, "value")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0),
+                    min: Self::extract_attribute(slice, "min")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(i32::MIN),
+                    max: Self::extract_attribute(slice, "max")
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(i32::MAX),
+                    layout: Self::parse_control_layout(slice),
+                });
+            }
+            remaining = &remaining[end..];
+        }
+
+        (links, images, spinboxes)
+    }
+
+    /// End offset (exclusive) of a self-closing or open tag at the start
+    /// of `s`: prefers `/>`, falls back to `>`.
+    fn self_closing_end(s: &str) -> Option<usize> {
+        s.find("/>").map(|e| e + 2).or_else(|| s.find('>').map(|e| e + 1))
     }
 
     /// Parse every `<dropDownBox>` in a dialogData chunk into option

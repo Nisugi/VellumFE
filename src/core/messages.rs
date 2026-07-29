@@ -1504,6 +1504,86 @@ impl MessageProcessor {
                 }
                 self.sync_shown_dialog(ui_state, id, show);
             }
+            ParsedElement::DialogPanelOpen { id, title, save } => {
+                self.chunk_has_silent_updates = true;
+                // Resident dialogs that already have a dedicated widget
+                // (Buffs/Debuffs/Cooldowns/injuries/encum/expr/stance/...)
+                // are mined into those panels — don't offer them as generic
+                // dialog panels too. Only ids WITHOUT a template become
+                // dockable dialog panels (combat, befriend, ...).
+                if Config::get_window_template(Config::dialog_id_to_template(id)).is_some() {
+                    return;
+                }
+                // Register (or refresh) as a RESIDENT dialog offer so the
+                // known-windows list shows it and enabling it creates a
+                // dockable panel. Seed the store title.
+                let existed = game_state.window_offers.get(id).is_some();
+                game_state.window_offers.offer(
+                    id.clone(),
+                    title.clone().unwrap_or_else(|| id.clone()),
+                    crate::core::window_offers::OfferKind::Dialog,
+                    None,
+                    *save,
+                    true, // resident
+                );
+                if !existed
+                    && self
+                        .config
+                        .ui
+                        .open_dialog_blocklist
+                        .iter()
+                        .any(|b| b.eq_ignore_ascii_case(id))
+                {
+                    game_state
+                        .window_offers
+                        .set_policy(id, crate::core::window_offers::Policy::Hidden);
+                }
+                let dialog = ui_state.dialog_slot_mut(id);
+                if dialog.title.is_none() {
+                    dialog.title = title.clone();
+                }
+            }
+            ParsedElement::DialogControls {
+                id,
+                clear,
+                links,
+                images,
+                spinboxes,
+            } => {
+                self.chunk_has_silent_updates = true;
+                let show = self.dialog_offer_allows(game_state, id);
+                let dialog = ui_state.dialog_slot_mut(id);
+                if *clear {
+                    dialog.links.clear();
+                    dialog.images.clear();
+                    dialog.spinboxes.clear();
+                }
+                for link in links {
+                    match dialog.links.iter_mut().find(|l| l.id == link.id) {
+                        Some(slot) => *slot = link.clone(),
+                        None => dialog.links.push(link.clone()),
+                    }
+                }
+                for image in images {
+                    match dialog.images.iter_mut().find(|i| i.id == image.id) {
+                        Some(slot) => *slot = image.clone(),
+                        None => dialog.images.push(image.clone()),
+                    }
+                }
+                for spinbox in spinboxes {
+                    match dialog.spinboxes.iter_mut().find(|s| s.id == spinbox.id) {
+                        // Preserve a user-edited value across re-sends: only
+                        // take the game's value if bounds changed.
+                        Some(slot) => {
+                            slot.min = spinbox.min;
+                            slot.max = spinbox.max;
+                            slot.layout = spinbox.layout.clone();
+                        }
+                        None => dialog.spinboxes.push(spinbox.clone()),
+                    }
+                }
+                self.sync_shown_dialog(ui_state, id, show);
+            }
             ParsedElement::DialogFields {
                 id,
                 clear,
@@ -4650,6 +4730,63 @@ mod tests {
         let stored = ui_state.dialog_store.get("combat").expect("combat stored");
         assert_eq!(stored.progress_bars.len(), 1, "stance bar stored");
         assert_eq!(stored.buttons.len(), 2, "both stance/target buttons stored");
+    }
+
+    #[test]
+    fn combat_registers_as_resident_and_ingests_all_controls() {
+        // The real login-time combat panel (2026-01 log): resident
+        // openDialog + the full set of dialogData chunks. It must register
+        // as a RESIDENT dialog offer and accumulate every control type in
+        // the store (icons, links, spinbox, buttons, dropdowns, bar).
+        let mut parser = crate::parser::XmlParser::new();
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        let lines = [
+            "<openDialog type='dynamic' id='combat' title='Combat' location='right' target='combat' height='288' resident='true'><dialogData id='combat' clear='t'><image id='unsheathe' name='SwordBtn' cmd='_ready weapon' tooltip='Unsheathe Weapon' align='n' top='3' left='-50' height='29' width='29'/><link id='lnConfigure' value='configure' cmd='_cmbtpl configure dialog' top='30' align='n' left='0'/></dialogData></openDialog>",
+            "<dialogData id='combat'><progressBar id='pbarStance' value='100' text='defensive (100%)' top='51' width='130' height='16' left='0' align='n'/></dialogData>",
+            "<dialogData id='combat'><cmdButton id='cmdDefStance' value='defense' cmd='_stance defensive' top='70' left='0' align='nw'/><cmdButton id='cmdOffStance' value='offense' cmd='_stance offensive' top='70' left='0' align='ne'/></dialogData>",
+            "<dialogData id='combat'><dropDownBox id='dDBStance' value='defensive' cmd='_stance %dDBStance%' content_text='offensive,defensive' content_value='offensive,defensive' top='70' anchor_left='cmdDefStance' anchor_right='cmdOffStance'/></dialogData>",
+            "<dialogData id='combat'><upDownEditBox id='uDEQuickstrike' min='-60' max='60' value='-1' top='231' left='0' width='50' height='26'/><cmdButton id='cmdQuickstrike' value='prepare to quickstrike' cmd='quickstrike %uDEQuickstrike%' top='234' left='53'/></dialogData>",
+            "<dialogData id='combat'><link id='lnSkin' value='skin' cmd='_skin' top='260' left='0'/><link id='mstrike' value='multistrike' cmd='mstrike'/></dialogData>",
+        ];
+        for line in &lines {
+            for element in parser.parse_line(line) {
+                processor.process_element(
+                    &element,
+                    &mut game_state,
+                    &mut ui_state,
+                    &mut std::collections::HashMap::new(),
+                    &mut None,
+                    &mut false,
+                    &mut None,
+                    &mut None,
+                    &mut None,
+                    None,
+                );
+            }
+        }
+
+        // Resident dialog offer, blocklist-hidden, not popped up.
+        let offer = game_state.window_offers.get("combat").expect("offer");
+        assert!(offer.resident, "combat is a resident panel");
+        assert!(!offer.should_show(), "blocklisted → hidden by default");
+        assert!(ui_state.active_dialog.is_none(), "no transient popup");
+
+        // Store accumulated the whole panel.
+        let s = ui_state.dialog_store.get("combat").expect("stored");
+        assert_eq!(s.images.len(), 1, "sword icon");
+        assert_eq!(s.buttons.len(), 3, "defense + offense + quickstrike");
+        assert_eq!(s.dropdowns.len(), 1, "stance");
+        assert_eq!(s.spinboxes.len(), 1, "quickstrike offset");
+        assert_eq!(s.progress_bars.len(), 1, "stance bar");
+        assert_eq!(s.links.len(), 3, "configure + skin + multistrike");
+        // %id% resolves the spinbox value in a button command.
+        assert_eq!(
+            s.command_with_placeholders("quickstrike %uDEQuickstrike%"),
+            "quickstrike -1"
+        );
     }
 
     #[test]
