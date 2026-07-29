@@ -5,7 +5,7 @@
 //! operate on higher-level `ParsedElement` values instead of raw XML.
 
 use crate::config::EventAction;
-use crate::data::{DialogButton, LinkData, QuickbarEntry};
+use crate::data::{DialogButton, DialogDropDown, LinkData, QuickbarEntry};
 use regex::Regex;
 use std::sync::LazyLock;
 use std::collections::HashMap;
@@ -233,6 +233,11 @@ pub enum ParsedElement {
         id: String,
         clear: bool,
         buttons: Vec<DialogButton>,
+    },
+    DialogDropDowns {
+        id: String,
+        clear: bool,
+        dropdowns: Vec<DialogDropDown>,
     },
     DialogFields {
         id: String,
@@ -1049,6 +1054,26 @@ impl XmlParser {
         tag_head: &str,
         elements: &mut Vec<ParsedElement>,
     ) -> bool {
+        // dropDownBoxes can share a chunk with buttons or arrive alone.
+        // Emit them ADDITIVELY (no early return, and without marking the
+        // chunk specialized) so button parsing below and the legacy
+        // dDBTarget target-list extraction both keep running.
+        if tag.contains("<dropDownBox") {
+            if let Some(id) = Self::extract_dialog_data_id(tag_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(tag_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let dropdowns = Self::parse_dialog_dropdowns(tag);
+                    if !dropdowns.is_empty() {
+                        elements.push(ParsedElement::DialogDropDowns { id, clear, dropdowns });
+                    }
+                }
+            }
+        }
         if tag.contains("<cmdButton") || tag.contains("<closeButton") || tag.contains("<radio") {
             if let Some(id) = Self::extract_dialog_data_id(tag_head) {
                 if !Self::is_quickbar_id(&id) {
@@ -1337,6 +1362,7 @@ impl XmlParser {
 
         self.handle_embedded_quickbar_dialog_data(tag, elements);
         self.handle_embedded_dialog_buttons(tag, elements);
+        self.handle_embedded_dialog_dropdowns(tag, elements);
         self.handle_embedded_dialog_fields(tag, elements);
 
         // For resident dialogs, extract progressBar data for widget updates
@@ -1416,6 +1442,44 @@ impl XmlParser {
                         .unwrap_or(false);
                     let entries = Self::parse_quickbar_entries(dialog_tag);
                     elements.push(ParsedElement::QuickbarEntries { id, clear, entries });
+                }
+            }
+
+            remaining = &remaining[end..];
+        }
+    }
+
+    /// Emit DialogDropDowns for dropDownBoxes inside dialogData blocks
+    /// embedded in an openDialog tag (mirrors handle_embedded_dialog_buttons).
+    fn handle_embedded_dialog_dropdowns(&self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        let mut remaining = tag;
+        let end_pattern = "</dialogData>";
+
+        while let Some(start) = remaining.find("<dialogData") {
+            let Some(end_start) = remaining[start..].find(end_pattern) else {
+                break;
+            };
+            let end = start + end_start + end_pattern.len();
+            let dialog_tag = &remaining[start..end];
+
+            if !dialog_tag.contains("<dropDownBox") {
+                remaining = &remaining[end..];
+                continue;
+            }
+
+            let dialog_head = dialog_tag.split('>').next().unwrap_or(dialog_tag);
+            if let Some(id) = Self::extract_dialog_data_id(dialog_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(dialog_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let dropdowns = Self::parse_dialog_dropdowns(dialog_tag);
+                    if !dropdowns.is_empty() {
+                        elements.push(ParsedElement::DialogDropDowns { id, clear, dropdowns });
+                    }
                 }
             }
 
@@ -1763,12 +1827,77 @@ impl XmlParser {
                 selected,
                 autosend,
                 group,
+                layout: Self::parse_control_layout(tag_slice),
             });
 
             remaining = &remaining[advance_by..];
         }
 
         buttons
+    }
+
+    /// Pull the pixel layout hints (top/left/size/align/anchors) off a
+    /// dialog control tag. None when the tag carries none.
+    fn parse_control_layout(tag_slice: &str) -> Option<crate::data::DialogControlLayout> {
+        let layout = crate::data::DialogControlLayout {
+            top: Self::extract_attribute(tag_slice, "top").and_then(|v| v.parse().ok()),
+            left: Self::extract_attribute(tag_slice, "left").and_then(|v| v.parse().ok()),
+            width: Self::extract_attribute(tag_slice, "width").and_then(|v| v.parse().ok()),
+            height: Self::extract_attribute(tag_slice, "height").and_then(|v| v.parse().ok()),
+            align: Self::extract_attribute(tag_slice, "align").filter(|v| !v.is_empty()),
+            anchor_top: Self::extract_attribute(tag_slice, "anchor_top").filter(|v| !v.is_empty()),
+            anchor_left: Self::extract_attribute(tag_slice, "anchor_left")
+                .filter(|v| !v.is_empty()),
+            anchor_right: Self::extract_attribute(tag_slice, "anchor_right")
+                .filter(|v| !v.is_empty()),
+        };
+        (!layout.is_empty()).then_some(layout)
+    }
+
+    /// Parse every `<dropDownBox>` in a dialogData chunk into option
+    /// pickers: current value, (text, value) option pairs zipped from the
+    /// content_text/content_value CSVs, the selection command, and layout.
+    fn parse_dialog_dropdowns(tag: &str) -> Vec<crate::data::DialogDropDown> {
+        let mut dropdowns = Vec::new();
+        let mut remaining = tag;
+        while let Some(start) = remaining.find("<dropDownBox") {
+            remaining = &remaining[start..];
+            let Some(end) = remaining.find("/>").map(|e| e + 2).or_else(|| {
+                remaining.find('>').map(|e| e + 1)
+            }) else {
+                break;
+            };
+            let tag_slice = &remaining[..end];
+
+            if let Some(id) = Self::extract_attribute(tag_slice, "id") {
+                let texts = Self::extract_attribute(tag_slice, "content_text").unwrap_or_default();
+                let values =
+                    Self::extract_attribute(tag_slice, "content_value").unwrap_or_default();
+                let texts: Vec<&str> = texts.split(',').filter(|s| !s.is_empty()).collect();
+                let values: Vec<&str> = values.split(',').filter(|s| !s.is_empty()).collect();
+                // Pair text with value; a mismatched/missing value list
+                // falls back to the display text as the submit value.
+                let options: Vec<(String, String)> = texts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, text)| {
+                        let value = values.get(i).copied().unwrap_or(text);
+                        (text.to_string(), value.to_string())
+                    })
+                    .collect();
+                dropdowns.push(crate::data::DialogDropDown {
+                    id,
+                    value: Self::extract_attribute(tag_slice, "value").unwrap_or_default(),
+                    options,
+                    command: Self::extract_attribute(tag_slice, "cmd").unwrap_or_default(),
+                    tooltip: Self::extract_attribute(tag_slice, "tooltip")
+                        .filter(|v| !v.is_empty()),
+                    layout: Self::parse_control_layout(tag_slice),
+                });
+            }
+            remaining = &remaining[end..];
+        }
+        dropdowns
     }
 
     fn parse_dialog_fields(tag: &str) -> (Vec<DialogFieldSpec>, Vec<DialogLabelSpec>) {
@@ -2693,6 +2822,87 @@ mod tests {
             ("roomName".to_string(), Some("#9BA2B2".to_string()), Some("#395573".to_string())),
         ];
         XmlParser::with_presets(presets, std::collections::HashMap::new())
+    }
+
+    // ==================== Dialog dropdowns (P3a) ====================
+
+    #[test]
+    fn parses_combat_dropdowns_with_options_anchors_and_buttons() {
+        // Real shapes from a 2026-07-28 session log: one dialogData chunk
+        // carrying both cmdButtons and dropDownBoxes.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<dialogData id='combat'>\
+             <cmdButton id='cmdDefStance' value='defense' cmd='_stance defensive' tooltip='Assume a Defensive Stance' echo='stance defensive' height='20' width='55' top='70' left='0' align='nw'/>\
+             <dropDownBox id='dDBStance' value=\"defensive\" cmd='_stance %dDBStance%' content_text='offensive,advance,forward,neutral,guarded,defensive' content_value='offensive,advance,forward,neutral,guarded,defensive' align='n' top='70' left='0' anchor_left='cmdDefStance' anchor_right='cmdOffStance' height='20' width='80' tooltip='Stance Selection'/>\
+             <dropDownBox id='dDBCman0' value=\"none\" cmd=\"_cmbtpl ddbcman 0 %dDBCman0%\" content_text=\"none,Combat Movement\" content_value=\"usage,cmovement\" align='ne' anchor_left='cmdCman0' anchor_right='imgSpacer' top='208' left='0' height='20' width='80' tooltip='Maneuver Selection'/>\
+             </dialogData>",
+        );
+
+        // Both dropdowns captured, alongside the button element.
+        let dropdowns: Vec<_> = elements
+            .iter()
+            .filter_map(|e| {
+                if let ParsedElement::DialogDropDowns { id, dropdowns, .. } = e {
+                    Some((id, dropdowns))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(dropdowns.len(), 1);
+        let (id, boxes) = &dropdowns[0];
+        assert_eq!(*id, "combat");
+        assert_eq!(boxes.len(), 2);
+
+        let stance = &boxes[0];
+        assert_eq!(stance.id, "dDBStance");
+        assert_eq!(stance.value, "defensive");
+        assert_eq!(stance.command, "_stance %dDBStance%");
+        assert_eq!(stance.options.len(), 6);
+        assert_eq!(stance.options[0], ("offensive".to_string(), "offensive".to_string()));
+        let layout = stance.layout.as_ref().expect("layout captured");
+        assert_eq!(layout.top, Some(70));
+        assert_eq!(layout.anchor_left.as_deref(), Some("cmdDefStance"));
+        assert_eq!(layout.anchor_right.as_deref(), Some("cmdOffStance"));
+
+        // content_text/content_value pair by position (display, submit).
+        let cman = &boxes[1];
+        assert_eq!(cman.options[1], ("Combat Movement".to_string(), "cmovement".to_string()));
+
+        // Buttons still parse from the same chunk, now with layout.
+        let buttons = elements.iter().find_map(|e| {
+            if let ParsedElement::DialogButtons { buttons, .. } = e {
+                Some(buttons)
+            } else {
+                None
+            }
+        });
+        let buttons = buttons.expect("buttons emitted alongside dropdowns");
+        assert_eq!(buttons[0].id, "cmdDefStance");
+        let layout = buttons[0].layout.as_ref().expect("button layout captured");
+        assert_eq!(layout.top, Some(70));
+        assert_eq!(layout.align.as_deref(), Some("nw"));
+    }
+
+    #[test]
+    fn negative_pixel_offsets_parse() {
+        // Real: <image ... left='-50'> — layout offsets can be negative.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<dialogData id='x'><dropDownBox id='d' value='a' cmd='c %d%' content_text='a' content_value='a' top='3' left='-50'/></dialogData>",
+        );
+        let layout = elements
+            .iter()
+            .find_map(|e| {
+                if let ParsedElement::DialogDropDowns { dropdowns, .. } = e {
+                    dropdowns[0].layout.clone()
+                } else {
+                    None
+                }
+            })
+            .expect("layout");
+        assert_eq!(layout.left, Some(-50));
     }
 
     // ==================== Entity Decoding ====================

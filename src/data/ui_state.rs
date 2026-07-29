@@ -252,6 +252,8 @@ pub struct DialogState {
     pub progress_bars: Vec<DialogProgressBar>,
     /// Standalone display labels (not paired with input fields)
     pub display_labels: Vec<DialogLabel>,
+    /// Option pickers (`<dropDownBox>`), e.g. combat stance/aim/spell.
+    pub dropdowns: Vec<DialogDropDown>,
     /// Manual position override (None = auto-center)
     pub position: Option<(u16, u16)>,
     /// Manual size override (None = auto-size based on content)
@@ -261,13 +263,18 @@ pub struct DialogState {
 }
 
 impl DialogState {
-    /// Substitute `%fieldid%` placeholders in a button command with the
-    /// current field values.
+    /// Substitute `%id%` placeholders in a control command with the
+    /// current field values and dropdown selections (the game's commands
+    /// reference sibling controls: `cmd='prep %dDBSpell0%'`).
     pub fn command_with_placeholders(&self, command: &str) -> String {
         let mut resolved = command.to_string();
         for field in &self.fields {
             let token = format!("%{}%", field.id);
             resolved = resolved.replace(&token, &field.value);
+        }
+        for dropdown in &self.dropdowns {
+            let token = format!("%{}%", dropdown.id);
+            resolved = resolved.replace(&token, &dropdown.value);
         }
         resolved
     }
@@ -312,6 +319,29 @@ impl DialogState {
     }
 }
 
+/// Pixel-space layout hints the game attaches to dialog controls:
+/// absolute `top`/`left` (can be negative), size, compass `align`
+/// (n/nw/ne/...), and anchors positioning a control relative to sibling
+/// control ids (`anchor_left='cmdHide'`). Renderers translate these into
+/// their own coordinate systems (GUI near-literally, TUI to cells).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DialogControlLayout {
+    pub top: Option<i32>,
+    pub left: Option<i32>,
+    pub width: Option<u16>,
+    pub height: Option<u16>,
+    pub align: Option<String>,
+    pub anchor_top: Option<String>,
+    pub anchor_left: Option<String>,
+    pub anchor_right: Option<String>,
+}
+
+impl DialogControlLayout {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Dialog button definition
 #[derive(Clone, Debug)]
 pub struct DialogButton {
@@ -323,6 +353,26 @@ pub struct DialogButton {
     pub selected: bool,
     pub autosend: bool,
     pub group: Option<String>,
+    /// Layout hints from the tag (None when the tag carried none).
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// A `<dropDownBox>` inside dialogData: a labelled option picker whose
+/// current value other controls' commands can reference via `%id%`
+/// (e.g. `cmd='aim %dDBAim%'` on the dropdown itself, or a sibling
+/// button's `cmd='prep %dDBSpell0%'`).
+#[derive(Clone, Debug)]
+pub struct DialogDropDown {
+    pub id: String,
+    /// Currently selected VALUE (matches an options entry's value).
+    pub value: String,
+    /// (display text, submit value) pairs from content_text/content_value.
+    pub options: Vec<(String, String)>,
+    /// Command template sent when the selection changes ("" = passive;
+    /// other controls read the value via %id%).
+    pub command: String,
+    pub tooltip: Option<String>,
+    pub layout: Option<DialogControlLayout>,
 }
 
 #[derive(Clone, Debug)]

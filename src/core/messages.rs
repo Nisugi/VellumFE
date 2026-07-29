@@ -1456,6 +1456,7 @@ impl MessageProcessor {
                     focused_field: None,
                     progress_bars: Vec::new(),
                     display_labels: Vec::new(),
+                    dropdowns: Vec::new(),
                     position,
                     size,
                     save_position: *save,
@@ -1495,6 +1496,7 @@ impl MessageProcessor {
                         focused_field: None,
                         progress_bars: Vec::new(),
                         display_labels: Vec::new(),
+                        dropdowns: Vec::new(),
                         position,
                         size,
                         save_position,
@@ -1511,9 +1513,83 @@ impl MessageProcessor {
                         if *clear {
                             dialog.buttons.clear();
                         }
-                        dialog.buttons.extend(buttons.clone());
+                        // Re-sent controls REPLACE their same-id entry —
+                        // blind extend piled up duplicate buttons on every
+                        // dialogData refresh (seen live: combat's target/
+                        // attack repeating). Id-less buttons still append.
+                        for button in buttons {
+                            let existing = (!button.id.is_empty())
+                                .then(|| {
+                                    dialog.buttons.iter_mut().find(|b| b.id == button.id)
+                                })
+                                .flatten();
+                            match existing {
+                                Some(slot) => *slot = button.clone(),
+                                None => dialog.buttons.push(button.clone()),
+                            }
+                        }
                         if dialog.selected >= dialog.buttons.len() {
                             dialog.selected = 0;
+                        }
+                    }
+                }
+            }
+            ParsedElement::DialogDropDowns { id, clear, dropdowns } => {
+                self.chunk_has_silent_updates = true;
+                if !self.dialog_offer_allows(game_state, id) {
+                    return;
+                }
+
+                // Same open-if-needed behavior as buttons/fields: a
+                // dropdown-only chunk for a shown dialog materializes it.
+                let needs_new_dialog = ui_state
+                    .active_dialog
+                    .as_ref()
+                    .map(|dialog| dialog.id != *id)
+                    .unwrap_or(true);
+                if needs_new_dialog {
+                    let saved = self.saved_dialog_positions.dialogs.get(id);
+                    let (position, size, save_position) = if let Some(p) = saved {
+                        (Some((p.x, p.y)), p.width.zip(p.height), true)
+                    } else {
+                        (None, None, false)
+                    };
+                    ui_state.active_dialog = Some(DialogState {
+                        id: id.clone(),
+                        title: None,
+                        buttons: Vec::new(),
+                        selected: 0,
+                        fields: Vec::new(),
+                        labels: Vec::new(),
+                        focused_field: None,
+                        progress_bars: Vec::new(),
+                        display_labels: Vec::new(),
+                        dropdowns: Vec::new(),
+                        position,
+                        size,
+                        save_position,
+                    });
+                    ui_state.input_mode = InputMode::Dialog;
+                    ui_state.popup_menu = None;
+                    ui_state.submenu = None;
+                    ui_state.nested_submenu = None;
+                    ui_state.deep_submenu = None;
+                }
+
+                if let Some(dialog) = ui_state.active_dialog.as_mut() {
+                    if dialog.id == *id {
+                        if *clear {
+                            dialog.dropdowns.clear();
+                        }
+                        for dropdown in dropdowns {
+                            match dialog
+                                .dropdowns
+                                .iter_mut()
+                                .find(|d| d.id == dropdown.id)
+                            {
+                                Some(slot) => *slot = dropdown.clone(),
+                                None => dialog.dropdowns.push(dropdown.clone()),
+                            }
                         }
                     }
                 }
@@ -1552,6 +1628,7 @@ impl MessageProcessor {
                         focused_field: None,
                         progress_bars: Vec::new(),
                         display_labels: Vec::new(),
+                        dropdowns: Vec::new(),
                         position,
                         size,
                         save_position,
@@ -1664,11 +1741,15 @@ impl MessageProcessor {
                             dialog.progress_bars.clear();
                         }
                         for pb in progress_bars {
-                            dialog.progress_bars.push(crate::data::DialogProgressBar {
+                            let bar = crate::data::DialogProgressBar {
                                 id: pb.id.clone(),
                                 value: pb.value,
                                 text: pb.text.clone(),
-                            });
+                            };
+                            match dialog.progress_bars.iter_mut().find(|b| b.id == pb.id) {
+                                Some(slot) => *slot = bar,
+                                None => dialog.progress_bars.push(bar),
+                            }
                         }
                     }
                 }
@@ -4665,6 +4746,53 @@ mod tests {
             offer.is_some_and(|o| !o.should_show()),
             "combat offer should exist and be hidden, got {:?}",
             offer
+        );
+    }
+
+    #[test]
+    fn shown_dialog_updates_replace_controls_by_id() {
+        use crate::core::window_offers::{OfferKind, Policy};
+        let mut parser = crate::parser::XmlParser::new();
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        // The user opted in to the combat dialog via the known-windows list.
+        game_state
+            .window_offers
+            .offer("combat", "Combat", OfferKind::Dialog, None, false, false);
+        game_state.window_offers.set_policy("combat", Policy::Shown);
+
+        let chunk = "<dialogData id='combat'><cmdButton id='cmdTarget' value='target' cmd='target random' top='93' left='0'/><cmdButton id='cmdAttack' value='attack' cmd='attack' top='93' left='55'/><dropDownBox id='dDBStance' value='defensive' cmd='_stance %dDBStance%' content_text='offensive,defensive' content_value='offensive,defensive' top='70'/></dialogData>";
+        let updated = "<dialogData id='combat'><dropDownBox id='dDBStance' value='offensive' cmd='_stance %dDBStance%' content_text='offensive,defensive' content_value='offensive,defensive' top='70'/></dialogData>";
+        for line in [chunk, chunk, updated] {
+            for element in parser.parse_line(line) {
+                processor.process_element(
+                    &element,
+                    &mut game_state,
+                    &mut ui_state,
+                    &mut std::collections::HashMap::new(),
+                    &mut None,
+                    &mut false,
+                    &mut None,
+                    &mut None,
+                    &mut None,
+                    None,
+                );
+            }
+        }
+
+        let dialog = ui_state.active_dialog.as_ref().expect("dialog opened");
+        // Re-sent controls replaced their same-id entries, no pile-up
+        // (the old extend produced target/attack duplicates live).
+        assert_eq!(dialog.buttons.len(), 2, "buttons: {:?}", dialog.buttons);
+        assert_eq!(dialog.dropdowns.len(), 1);
+        // The refresh updated the dropdown's current value...
+        assert_eq!(dialog.dropdowns[0].value, "offensive");
+        // ...which %id% substitution resolves in sibling commands.
+        assert_eq!(
+            dialog.command_with_placeholders("_stance %dDBStance%"),
+            "_stance offensive"
         );
     }
 
