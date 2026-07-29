@@ -5654,6 +5654,7 @@ impl AppCore {
                 name: name.clone(),
                 title: base.title.clone().unwrap_or(name),
                 kind,
+                widget_type: w.widget_type().to_string(),
                 shown: base.visibility.is_shown(),
                 ephemeral: false,
             });
@@ -5665,10 +5666,14 @@ impl AppCore {
             let Some(win) = self.ui_state.windows.get(name) else {
                 continue;
             };
-            let kind = match win.widget_type {
-                crate::data::WidgetType::Container => KnownWindowKind::Container,
-                crate::data::WidgetType::DialogPanel => KnownWindowKind::Dialog,
-                _ => KnownWindowKind::Layout,
+            let (kind, wt) = match win.widget_type {
+                crate::data::WidgetType::Container => {
+                    (KnownWindowKind::Container, "container")
+                }
+                crate::data::WidgetType::DialogPanel => {
+                    (KnownWindowKind::Dialog, "dialogpanel")
+                }
+                _ => (KnownWindowKind::Layout, "text"),
             };
             let title = match &win.content {
                 crate::data::WindowContent::Container { container_title } => {
@@ -5680,6 +5685,7 @@ impl AppCore {
                 name: name.clone(),
                 title,
                 kind,
+                widget_type: wt.to_string(),
                 shown: win.visible,
                 ephemeral: true,
             });
@@ -5700,6 +5706,7 @@ impl AppCore {
                 name: win_name,
                 title: container.title.clone(),
                 kind: KnownWindowKind::Container,
+                widget_type: "container".to_string(),
                 shown: false,
                 ephemeral: true,
             });

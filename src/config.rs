@@ -109,6 +109,18 @@ pub enum WidgetCategory {
 }
 
 impl WidgetCategory {
+    /// All categories in a stable display order.
+    pub const ALL: [WidgetCategory; 8] = [
+        WidgetCategory::Status,
+        WidgetCategory::ProgressBar,
+        WidgetCategory::Countdown,
+        WidgetCategory::ActiveEffects,
+        WidgetCategory::Entity,
+        WidgetCategory::Hand,
+        WidgetCategory::TextWindow,
+        WidgetCategory::Other,
+    ];
+
     pub fn display_name(&self) -> &str {
         match self {
             Self::ActiveEffects => "Active Effects",

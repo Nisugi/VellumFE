@@ -53,6 +53,8 @@ pub struct KnownWindow {
     /// Human-facing title (falls back to name).
     pub title: String,
     pub kind: KnownWindowKind,
+    /// Widget type string (for grouping by WidgetCategory in the UI).
+    pub widget_type: String,
     /// Whether it is currently rendered.
     pub shown: bool,
     /// Whether it lives only for the session (never persisted).
