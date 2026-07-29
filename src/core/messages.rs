@@ -91,6 +91,10 @@ pub struct MessageProcessor {
     /// Item classifier for the sorter transform, lazily resolved through
     /// the data pack. Cleared by `.data reload`.
     sorter_gameobj: Option<std::sync::Arc<crate::core::gameobj_data::GameObjData>>,
+    /// Active INVENTORY FULL scan (marked/registered status → registry).
+    /// While capturing, reply lines are squelched and parsed; the prompt
+    /// finalizes it into `game_state.objects`.
+    inv_scan: crate::core::game_objects::inv_scan::InvScan,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -261,6 +265,7 @@ impl MessageProcessor {
             current_segments: Vec::new(),
             injected_lines: std::collections::VecDeque::new(),
             sorter_gameobj: None,
+            inv_scan: Default::default(),
             remote: None,
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
@@ -691,6 +696,14 @@ impl MessageProcessor {
             ParsedElement::Prompt { time, text } => {
                 // Finish current stream before prompt
                 self.flush_current_stream_with_tts(ui_state, tts_manager.as_deref_mut());
+
+                // An INVENTORY FULL scan ends at the prompt: write the
+                // collected mark/register statuses into the registry.
+                if self.inv_scan.is_capturing() {
+                    for (id, status) in self.inv_scan.finish() {
+                        game_state.objects.set_status(id, status);
+                    }
+                }
 
                 // Flush perception buffer on prompt (after all entries have accumulated)
                 if !self.perception_buffer.is_empty() {
@@ -2642,6 +2655,22 @@ impl MessageProcessor {
         self.config.ui.sorter_enabled = enabled;
     }
 
+    /// Begin an INVENTORY FULL scan: the caller must send the returned
+    /// command to the game. Reply lines are then squelched and parsed into
+    /// per-item mark/register status, finalized at the next prompt. Returns
+    /// None if a scan is already in flight.
+    pub fn start_inventory_scan(&mut self) -> Option<&'static str> {
+        if self.inv_scan.is_capturing() {
+            return None;
+        }
+        self.inv_scan.start();
+        Some(crate::core::game_objects::inv_scan::INVENTORY_FULL_COMMAND)
+    }
+
+    pub fn inventory_scan_in_flight(&self) -> bool {
+        self.inv_scan.is_capturing()
+    }
+
     /// Flush current stream with optional TTS enqueuing. Wrapper drains
     /// any lines a transform injected (sorter categories) through the
     /// same pipeline, so each gets highlights/squelch/TTS individually.
@@ -2675,6 +2704,17 @@ impl MessageProcessor {
         // while filtering noise blank lines before any content appears
         let is_blank_line = full_text.trim().is_empty();
         if is_blank_line && !self.chunk_has_main_text {
+            self.current_segments.clear();
+            return;
+        }
+
+        // Active INVENTORY FULL scan: capture status lines into the scan
+        // and squelch the whole reply from the display. The prompt handler
+        // finalizes the scan into the registry. Header/footer lines
+        // (no link) are captured for the window bound and squelched too,
+        // so the reply block doesn't leak into the main window.
+        if self.inv_scan.is_capturing() {
+            self.inv_scan.ingest_segments(&self.current_segments);
             self.current_segments.clear();
             return;
         }
@@ -4364,6 +4404,71 @@ mod tests {
     // ===========================================
     // GameObjects registry dual-write (migration step 2)
     // ===========================================
+
+    #[test]
+    fn inventory_scan_captures_status_then_prompt_writes_registry() {
+        use crate::data::widget::{LinkData, TextSegment};
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        // Start the scan (the caller would send the returned command).
+        assert_eq!(processor.start_inventory_scan(), Some("inventory full"));
+        assert!(processor.inventory_scan_in_flight());
+        // Starting again while in flight is a no-op.
+        assert_eq!(processor.start_inventory_scan(), None);
+
+        // Feed reply lines as segments (what the flush path would pass).
+        let link = |id: &str, noun: &str, name: &str| TextSegment {
+            text: name.to_string(),
+            link_data: Some(LinkData {
+                exist_id: id.to_string(),
+                noun: noun.to_string(),
+                text: name.to_string(),
+                coord: None,
+            }),
+            ..Default::default()
+        };
+        // header (no link) — captured for the window, no status.
+        processor.inv_scan.ingest_segments(&[TextSegment::plain(
+            "You are currently wearing:",
+        )]);
+        processor.inv_scan.ingest_segments(&[
+            TextSegment::plain("  some "),
+            link("1", "gloves", "triton hide gloves"),
+            TextSegment::plain(" with knuckles (registered) (marked)"),
+        ]);
+        processor.inv_scan.ingest_segments(&[
+            TextSegment::plain("  a "),
+            link("2", "ring", "plain ring"),
+        ]);
+
+        // The prompt finalizes into the registry.
+        let prompt = ParsedElement::Prompt {
+            time: "0".to_string(),
+            text: ">".to_string(),
+        };
+        processor.process_element(
+            &prompt,
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+
+        assert!(!processor.inventory_scan_in_flight());
+        let s1 = game_state.objects.status_of("1").unwrap();
+        assert_eq!(s1.registered, Some(true));
+        assert_eq!(s1.marked, Some(true));
+        let s2 = game_state.objects.status_of("2").unwrap();
+        assert_eq!(s2.registered, Some(false), "in reply, no marker = false");
+        assert_eq!(s2.marked, Some(false));
+    }
 
     #[test]
     fn container_feed_populates_registry_in_parallel() {

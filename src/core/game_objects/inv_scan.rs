@@ -77,17 +77,11 @@ impl InvScan {
         self.capturing
     }
 
-    /// Feed one reply line while capturing. Returns true if the line was a
-    /// status-bearing item line (so the caller can squelch it). Non-item
-    /// lines (header/footer) return false but are still consumed by the
-    /// scan window; the caller decides whether to squelch those too.
+    /// Feed one raw reply line while capturing (string form; used by
+    /// tests and any raw-line caller). Returns true if it was a
+    /// status-bearing item line.
     pub fn ingest_line(&mut self, line: &str) -> bool {
-        if !self.capturing {
-            return false;
-        }
-        self.lines_seen += 1;
-        if self.lines_seen > MAX_SCAN_LINES {
-            self.capturing = false; // runaway guard
+        if !self.tick_window() {
             return false;
         }
         if let Some((id, status)) = parse_status_line(line) {
@@ -96,6 +90,56 @@ impl InvScan {
         } else {
             false
         }
+    }
+
+    /// Feed one reply line as parsed segments (the live pipeline path).
+    /// Reuses the main parser's resolved `link_data` for the exist id and
+    /// reads the status column from the concatenated text after the link.
+    /// Returns true if the line was a status-bearing item line.
+    pub fn ingest_segments(
+        &mut self,
+        segments: &[crate::data::widget::TextSegment],
+    ) -> bool {
+        if !self.tick_window() {
+            return false;
+        }
+        // The item's link segment carries the exist id.
+        let Some(link_seg) = segments.iter().find(|s| s.link_data.is_some()) else {
+            return false;
+        };
+        let id = link_seg.link_data.as_ref().unwrap().exist_id.clone();
+        // Status text follows the link — scan segments after the linked one.
+        let link_idx = segments
+            .iter()
+            .position(|s| std::ptr::eq(s, link_seg))
+            .unwrap_or(0);
+        let tail: String = segments[link_idx + 1..]
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<String>()
+            .to_ascii_lowercase();
+        self.collected.push((
+            id,
+            ItemStatus {
+                registered: Some(tail.contains("registered")),
+                marked: Some(tail.contains("marked")),
+            },
+        ));
+        true
+    }
+
+    /// Advance the capture window; returns false (and stops capturing) when
+    /// the runaway guard trips.
+    fn tick_window(&mut self) -> bool {
+        if !self.capturing {
+            return false;
+        }
+        self.lines_seen += 1;
+        if self.lines_seen > MAX_SCAN_LINES {
+            self.capturing = false;
+            return false;
+        }
+        true
     }
 
     /// End the scan (at the prompt), returning the collected statuses.
