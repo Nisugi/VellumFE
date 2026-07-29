@@ -765,7 +765,9 @@ impl VellumGuiApp {
         // after the UI closure (the closure only borrows self immutably).
         let mut changed_global: Vec<&'static str> = Vec::new();
         // Snapshot outside the closure: the closure borrows self immutably.
-        let seen_streams = if state.supports_streams {
+        // Available for single-stream text windows AND tabbed windows (each
+        // tab picks streams from it).
+        let seen_streams = if state.supports_streams || state.tabs.is_some() {
             self.app_core.message_processor.seen_streams()
         } else {
             Vec::new()
@@ -1240,19 +1242,43 @@ impl VellumGuiApp {
                             for (index, tab) in tabs.iter_mut().enumerate() {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut tab.name)
-                                        .desired_width(90.0),
+                                        .desired_width(130.0),
                                 );
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut tab.streams)
-                                        .desired_width(160.0),
-                                );
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut tab.streams)
+                                            .desired_width(210.0)
+                                            .hint_text("stream ids, comma-separated"),
+                                    );
+                                    // Pick a seen stream to add to THIS tab.
+                                    if !seen_streams.is_empty() {
+                                        ui.menu_button("+", |ui| {
+                                            ui.set_min_width(180.0);
+                                            for (id, label) in &seen_streams {
+                                                let text = match label {
+                                                    Some(label) => format!("{} ({})", id, label),
+                                                    None => id.clone(),
+                                                };
+                                                if ui.button(text).clicked() {
+                                                    append_stream_id(&mut tab.streams, id);
+                                                    ui.close();
+                                                }
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text("Add a seen stream to this tab");
+                                    }
+                                });
                                 ui.checkbox(&mut tab.ignore_activity, "")
                                     .on_hover_text("Don't mark this tab unread on activity.");
                                 ui.checkbox(&mut tab.show_timestamps, "")
                                     .on_hover_text("Show per-line timestamps on this tab.");
                                 ui.horizontal(|ui| {
+                                    // Geometric triangles render in the bundled
+                                    // fonts; the ↑/↓ arrow block is tofu.
                                     if ui
-                                        .add_enabled(index > 0, egui::Button::new("↑").small())
+                                        .add_enabled(index > 0, egui::Button::new("▲").small())
+                                        .on_hover_text("Move up")
                                         .clicked()
                                     {
                                         move_op = Some((index, true));
@@ -1260,8 +1286,9 @@ impl VellumGuiApp {
                                     if ui
                                         .add_enabled(
                                             index + 1 < tab_count,
-                                            egui::Button::new("↓").small(),
+                                            egui::Button::new("▼").small(),
                                         )
+                                        .on_hover_text("Move down")
                                         .clicked()
                                     {
                                         move_op = Some((index, false));
