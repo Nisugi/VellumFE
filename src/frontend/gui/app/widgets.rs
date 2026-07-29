@@ -2418,18 +2418,17 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         container_title: &str,
         wrap: bool,
-    ) {
+    ) -> Option<GuiLinkClick> {
         let Some(container) = app_core.game_state.objects.find_container(container_title)
         else {
             ui.weak(format!("No contents cached for \"{}\".", container_title));
-            return;
+            return None;
         };
 
-        if container.items.is_empty() {
-            ui.weak("Empty.");
-            return;
-        }
+        let container_id = container.id.clone();
+        let items: Vec<crate::core::game_objects::GameItem> = container.items.clone();
 
+        let mut clicked_link: Option<GuiLinkClick> = None;
         let max_height = ui.available_height().max(1.0);
         let scroll_area = if wrap {
             egui::ScrollArea::vertical()
@@ -2437,7 +2436,7 @@ impl VellumGuiApp {
             egui::ScrollArea::both()
         };
         scroll_area
-            .id_salt(format!("container_scroll_{}", container.id))
+            .id_salt(format!("container_scroll_{}", container_id))
             .auto_shrink([false, false])
             .min_scrolled_height(max_height)
             .max_height(max_height)
@@ -2445,13 +2444,39 @@ impl VellumGuiApp {
                 if !wrap {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 }
-                // Registry items are structured; render the clean name.
-                // (Clickable container-item links in the GUI are a
-                // follow-up — this renderer is display-only today.)
-                for item in &container.items {
-                    ui.label(&item.name);
+                if items.is_empty() {
+                    ui.weak("Empty.");
+                    return;
+                }
+                // Registry items are structured; render each as a clickable,
+                // draggable link (mirrors render_items_content). Dropping an
+                // item onto the WINDOW BODY is handled by the window-level
+                // drag-drop path (handle_link_drag_drop); here per-item drops
+                // let you drag one item directly onto another.
+                for item in &items {
+                    let link = LinkData {
+                        exist_id: item.id.clone(),
+                        noun: item.noun.clone(),
+                        text: item.name.clone(),
+                        coord: None,
+                    };
+                    let response = ui
+                        .add(
+                            egui::Label::new(item.name.as_str())
+                                .sense(egui::Sense::click_and_drag())
+                                .selectable(!Self::link_drag_blocks_selection(ui)),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if let Some(drop) = Self::handle_link_dnd(ui, &response, &link) {
+                        clicked_link.get_or_insert(drop);
+                    }
+                    if response.clicked() && clicked_link.is_none() {
+                        clicked_link =
+                            Some(Self::gui_link_click_from_response(&response, ui, link));
+                    }
                 }
             });
+        clicked_link
     }
 
     /// Sentinel exist_id used to route quickbar switching through the
@@ -4483,8 +4508,7 @@ impl VellumGuiApp {
             }
             WindowContent::Items => Self::render_items_content(app_core, ui),
             WindowContent::Container { container_title } => {
-                Self::render_container_content(app_core, ui, container_title, settings.wrap_text);
-                None
+                Self::render_container_content(app_core, ui, container_title, settings.wrap_text)
             }
             WindowContent::DialogPanel { dialog_id } => {
                 Self::render_dialog_panel_content(app_core, ui, dialog_id);
