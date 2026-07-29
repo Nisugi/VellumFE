@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Hotbars - VellumFE User Guide</title>
+        <title>controller.toml - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -177,73 +177,173 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="hotbars"><a class="header" href="#hotbars">Hotbars</a></h1>
-<p>Bars of clickable command buttons — VellumFE’s take on barbar-style action
-bars. Buttons send a game command on click (or hotkey), can overlay a
-countdown, and can restyle themselves while a condition holds (hidden,
-stunned, low health, a spell about to drop…).</p>
-<p>Bars are defined once in <a href="../configuration/hotbars-toml.html">hotbars.toml</a>
-and displayed by <code>hotkeybar</code> windows in a layout. Several windows can show
-the same bar, and one layout can show several bars.</p>
-<h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
-<p>Prefer the built-in editor: <code>.hotbars</code> (TUI and GUI) creates and edits bars
-without touching TOML. Then add a window for the bar:</p>
-<pre><code class="language-toml">[[windows]]
-name = "actions"
-widget_type = "hotkeybar"
-row = 38
-col = 0
-rows = 1
-cols = 60
-bar = "default"              # bar name from hotbars.toml
-orientation = "horizontal"   # or "vertical" (one button per row)
+                        <h1 id="controllertoml"><a class="header" href="#controllertoml">controller.toml</a></h1>
+<p>Controller (GUI gamepad) configuration lives in its own
+<code>global/controller.toml</code> — separate from <a href="keybinds-toml.html">keybinds.toml</a>
+so a controller setup can be shared or version-controlled as one file,
+and a malformed edit here cannot take keyboard input down with it.
+Controller binds are <strong>global</strong> (pads are per-desk, not per-character).
+Everything below is edited in the <code>.controller</code> editor (GUI) — hand-editing
+is never required.</p>
+<p>Installs that predate this split are migrated automatically on first run:
+the <code>[controller*]</code> tables are moved out of <code>keybinds.toml</code> into
+<code>controller.toml</code> (both files backed up), so existing controller setups
+carry over untouched.</p>
+<h2 id="bindings"><a class="header" href="#bindings">Bindings</a></h2>
+<p>The <code>[controller]</code> table (global file only — pads are per-desk, not
+per-character) maps gamepad buttons to the same actions and macros as
+<code>[user]</code>. Edit with <code>.controller</code> in the GUI. Buttons: <code>south</code>, <code>east</code>,
+<code>north</code>, <code>west</code>, <code>dpad_up</code>/<code>down</code>/<code>left</code>/<code>right</code>, <code>l1</code>, <code>r1</code>, <code>l2</code>,
+<code>r2</code>, <code>l3</code>, <code>r3</code>, <code>select</code>, <code>start</code>, <code>guide</code>.</p>
+<pre><code class="language-toml">[controller]
+start = "interact_mode"
+dpad_up = { macro_text = "n\r" }
 </code></pre>
-<p>Or in-app: <code>.addwindow hotkeybar</code>.</p>
-<h2 id="display"><a class="header" href="#display">Display</a></h2>
-<pre><code>┌─ Actions ──────────────────────────────────────┐
-│ [Look] [Hidden] [Defensive] [Offensive] [Heal] │
-└────────────────────────────────────────────────┘
-</code></pre>
+<p>Inside interact mode and context menus the d-pad, South, and East are
+fixed navigation keys; bindings apply outside those modes.</p>
+<p>Controller-specific actions: <code>controller_shift</code> (hold: buttons use
+<code>[controller_shift]</code>, a second bank in the same format),
+<code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> (hold: radial command
+wheel — default ring in <code>[[controller_wheel]]</code>, named rings in
+<code>[controller_wheels.&lt;name&gt;]</code>; slices take <code>label</code>, <code>command</code>, optional
+<code>color</code>, optional <code>span</code> and <code>inner</code> (<a href="#wheel-geometry">geometry</a>), and
+nested <code>slices</code> for folders — the phone client renders these same
+wheels for its <code>wheel</code> binds; the name <strong><code>portals</code> is reserved</strong>:
+<code>controller_wheel:portals</code> (r3 by default — clicking l3 would nudge the
+movement stick into stray steps, while the aim stick’s click settles
+harmlessly) builds its slices from the current room’s noun exits at
+open time — the same list <code>.portal</code> resolves — shadowing any static
+wheel of that name),
+and <code>controller_overlay</code>
+(toggle the binding legend — curated by <code>[controller_overlay] buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
+lives in <code>[controller_rumble]</code>: a pattern per event (<code>off</code>, the
+built-ins <code>short</code>/<code>long</code>/<code>double</code>, or the name of one of your own),
+plus custom patterns under <code>[[controller_rumble.patterns]]</code> — each has
+a <code>name</code>, <code>strength</code> (0–1), <code>pulse_ms</code> (length of each buzz), <code>pulses</code>
+(how many), and <code>gap_ms</code> (silence between them). The editor’s Rumble
+tab has a row per pattern with a <strong>Test</strong> button that plays it on the
+pad immediately, unsaved edits included. Custom patterns are also
+selectable on any highlight rule, so any text match can buzz the pad —
+see <a href="highlights-toml.html">highlights.toml</a>. Built-in names win if a
+custom pattern reuses one. All of it is edited in the <code>.controller</code>
+editor’s tabs — hand-editing is never required.</p>
+<p>Interact mode and popup-menu navigation are configurable too.
+<code>interact_select</code> activates the interact focus (walk an exit, open a
+creature/object menu) and confirms a menu item; <code>menu_up</code> / <code>menu_down</code> /
+<code>menu_left</code> / <code>menu_right</code> move a menu selection; <code>menu_cancel</code> closes a
+menu. By default these live on the d-pad (navigate), south (select), and
+east (cancel) — binding one to another button moves the role there and
+frees the physical default. Two escape hatches are always guaranteed no
+matter how you rebind: the <code>interact_mode</code> button always exits interact
+mode, and <strong>east always cancels a menu</strong>.</p>
+<p>Input feel lives in <code>[controller_tuning]</code> (Tuning tab). <code>movement_stick</code>
+(<code>"left"</code>/<code>"right"</code>) chooses which stick walks the compass; the other
+stick aims the wheel and scrolls the story. The radial wheel is
+<strong>dwell-driven</strong>: aim a slice, rest on it, and it <em>commits</em> — leaves
+after <code>aim_dwell_ms</code>, folders and the reserved Back slice after
+<code>nav_dwell_ms</code> (folders auto-descend, Back auto-ascends). Releasing the
+wheel button fires the committed leaf; returning the stick to center
+before releasing cancels. Sweeping across the ring never commits the
+slices you pass through, so a far slice is safe to reach. Inside a folder
+a Back slice is reserved at the <code>back_slice</code> screen anchor
+(<code>up</code>/<code>down</code>/<code>left</code>/<code>right</code> and the four diagonals) — or <code>back_slice = "none"</code> drops the reserved seat entirely and you back out with East.
+<code>deadzone</code> (percent)
+is how far the stick must deflect before a slice registers; a <code>0</code> dwell
+means instant commit. <code>fire_debounce_ms</code> suppresses double-fires and
+<code>release_grace_ms</code> keeps a still-deflected stick from walking as the
+wheel closes. <code>south</code>/<code>east</code> remain optional accelerators while the wheel
+is up (fire/descend now, back up now).</p>
+<p><code>fire_mode</code> chooses how a <em>committed leaf</em> fires (folders always descend
+on dwell and are never fired by these modes; cancel is unchanged):</p>
 <ul>
-<li>Buttons show their <code>label</code>, restyled (color, relabel, dim) while a
-state condition matches — e.g. the Hide button turns green and reads
-“Hidden” while you’re hidden, or dims during roundtime.</li>
-<li>Buttons with a countdown source show remaining seconds
-(<code>Heal  12s</code>).</li>
-<li>In the GUI, hovering shows the tooltip and hotkey.</li>
+<li><code>"release"</code> (default) — the behavior above: dwell to commit, fire when
+the wheel button comes up.</li>
+<li><code>"edge"</code> — fire the instant deflection crosses <code>edge_threshold</code> (percent),
+no dwell. Fastest on sparse wheels. The re-arm-until-center guard means
+it fires once per hold, not repeatedly as you sweep the ring.</li>
+<li><code>"retract"</code> — dwell to commit, then fire as soon as deflection drops
+<code>retract_delta</code> (percent) below its peak — a small inward flick, without
+waiting for a full return to center. Best when recenter-based firing
+feels sluggish.</li>
 </ul>
-<h2 id="hotkeys"><a class="header" href="#hotkeys">Hotkeys</a></h2>
-<p>Each button can bind a key combo (<code>keybinds.toml</code> syntax, e.g. <code>alt+h</code>,
-<code>f5</code>). Hotkeys register automatically while a window shows the bar;
-existing <code>keybinds.toml</code> bindings win on conflict.</p>
-<h2 id="commands"><a class="header" href="#commands">Commands</a></h2>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Command</th><th>Purpose</th></tr>
-</thead>
-<tbody>
-<tr><td><code>.hotbars</code> / <code>.hotbar</code></td><td>Open the hotbar editor</td></tr>
-<tr><td><code>.reload hotbars</code></td><td>Reload hotbars.toml from disk</td></tr>
-</tbody>
-</table>
-</div>
-<h2 id="per-character-bars"><a class="header" href="#per-character-bars">Per-Character Bars</a></h2>
-<p>The global <code>~/.vellum-fe/global/hotbars.toml</code> applies to all characters. A
-per-character <code>~/.vellum-fe/profiles/&lt;name&gt;/hotbars.toml</code> can define bars
-too — a character bar with the same name replaces the global one entirely.</p>
-<p>See <a href="../configuration/hotbars-toml.html">hotbars.toml</a> for the full button
-and condition schema.</p>
+<p>Both thresholds are exposed so you can tune the feel. Every field is
+optional and defaults to the shipped feel. Fire modes apply to the
+native controller (they read the analog stick); the phone client’s touch
+wheel is dwell/release only.</p>
+<p>Wheel slices resolve <code>&lt;target_id&gt;</code>/<code>&lt;target_noun&gt;</code> against the interact
+focus, exactly like bound interact macros — so a combat wheel slice such
+as <code>cast at &lt;target_id&gt;</code> fires at the creature currently selected in
+interact mode. Slices without a placeholder are sent as-is; a slice that
+needs a target with nothing focused is dropped (not sent literally) with
+a note.</p>
+<p>Each wheel declares, in the Wheels tab, which <strong>button</strong> opens it
+and which <strong>stick</strong> aims it (stored in <code>[controller_wheels_meta.&lt;name&gt;]</code>).
+The Wheels tab is the single place to set a wheel’s button — the
+<code>controller_wheel</code> / <code>controller_wheel:&lt;name&gt;</code> actions are no longer in
+the Base tab’s action dropdown to avoid two sources of truth. The reserved
+<strong><code>portals</code></strong> wheel has its own permanent, non-deletable Wheels-tab entry
+(<code>portals (dynamic)</code>): it exposes the same <strong>Opens with</strong> and <strong>Aim
+stick</strong> fields, but no slice list, because its slices are generated from
+the room every time it opens.
+The button field is a convenience: saving it writes the matching
+<code>[controller]</code> entry, which remains the runtime authority — so if the two
+ever disagree, <code>[controller]</code> wins and a note says which button really
+opens the wheel, and two wheels claiming one button are flagged. When a
+wheel’s meta doesn’t record a button (e.g. it was bound before the Wheels
+tab existed), the editor back-fills <strong>Opens with</strong> from <code>[controller]</code> so
+you always see the real key. The
+stick field overrides the global <code>movement_stick</code> while that wheel is
+open: name the movement stick and walking is silenced for the wheel’s
+duration; name the other and movement stays live (e.g. an exits wheel
+aimed with the right stick while you keep walking on the left). Left
+unset, a wheel aims with the non-movement stick as before.</p>
+<h3 id="wheel-geometry"><a class="header" href="#wheel-geometry">Wheel geometry</a></h3>
+<p>Wedges don’t have to be even. Per-slice <strong><code>span</code></strong> fixes a wedge’s width
+in degrees; whatever remains of the 360° splits evenly among the
+span-less slices, so a wheel with no spans keeps the classic even ring.
+Bad numbers are never rejected — spans below 30° clamp up and a ring
+that doesn’t close rescales to fit, with a warning at load and in the
+editor telling you what was adjusted. Per-slice <strong><code>inner</code></strong> sets that
+slice’s aim floor as a percent of full stick deflection: below it the
+slice can’t be aimed or committed, so a destructive command can demand a
+deliberately deep throw. Unset slices use the global <code>deadzone</code>, and the
+editor caps the value below the fire thresholds so a slice always has
+travel left to fire. A per-wheel <strong><code>start</code></strong> in
+<code>[controller_wheels_meta.&lt;name&gt;]</code> rotates the whole ring (degrees, 0 =
+up, clockwise). Folder rings anchor to their Back seat instead and
+ignore <code>start</code> — unless <code>back_slice = "none"</code>, in which case they rotate
+with it too. The portals wheel always keeps an even ring, since its
+slices are rebuilt per room.</p>
+<p>Inside a folder, the “go up a level” seat is normally synthesized for
+you and pinned at the <code>back_slice</code> anchor set globally in
+<code>[controller_tuning]</code> (the Tuning tab). That anchor is one of the eight
+compass directions, or <strong><code>none</code></strong> to drop the synthesized Back from
+<em>every</em> folder — you then ascend with the East/B button. To place the
+seat yourself on one ring instead, mark a slice <strong><code>back = true</code></strong>: it
+becomes a real slice you can position, size, color, and floor like any
+other — dwelling it still ascends instead of firing, and it never sends
+a command (any <code>command</code> on it is ignored). A folder with an explicit
+Back uses your ring verbatim: the synthesized seat, the <code>back_slice</code>
+anchor, and the anchor rotation all step aside for that folder only. A
+<code>back</code> slice on the top ring does nothing (there’s no level to go up
+to) and is flagged; only one Back per ring is useful.</p>
+<p>All of this is drawn and edited live in the Wheels tab’s <strong>Visual</strong>
+designer — see <a href="../frontends/gui.html#controllers">the GUI chapter</a> — or
+typed exactly in its <strong>Numeric</strong> view; both edit the same wheel. On
+the wheel itself (designer and live alike), a slice’s colored fill
+covers only its <strong>activation zone</strong> — from its aim floor out to the
+rim — so the empty ring inside the fill is exactly the stick travel
+that does nothing.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../widgets/containers.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../configuration/keybinds-toml.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../customization/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../configuration/highlights-toml.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -253,11 +353,11 @@ and condition schema.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../widgets/containers.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../configuration/keybinds-toml.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../customization/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../configuration/highlights-toml.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

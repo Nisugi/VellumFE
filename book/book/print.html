@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-a6dbb891.js";
+            window.path_to_searchindex_js = "searchindex-0adf8b02.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e125f080.js"></script>
+        <script src="toc-ba9683ee.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -688,7 +688,8 @@ the ring is on. Toggle the mode off from its Start bind.</li>
 maps to a keybind action or macro, with a “press a button” capture in
 the editor (<code>look</code> on South and interact mode on Start ship as
 defaults). Bindings live in the <code>[controller]</code> table of the global
-keybinds.toml and apply to all characters.</p>
+<a href="#controllertoml">controller.toml</a> and apply to all
+characters.</p>
 <p>Beyond plain bindings:</p>
 <ul>
 <li><strong>Shift layer</strong> — hold the button bound to <code>controller_shift</code> (l2 by
@@ -1134,6 +1135,7 @@ relogging all night.</p>
 <tr><td><a href="#configtoml">config.toml</a></td><td>General settings (connection, UI, sound, TTS, web server)</td></tr>
 <tr><td><a href="#layouttoml">layout.toml</a></td><td>Window positions, sizes, and properties (TUI)</td></tr>
 <tr><td><a href="#keybindstoml">keybinds.toml</a></td><td>Keyboard shortcuts</td></tr>
+<tr><td><a href="#controllertoml">controller.toml</a></td><td>Gamepad binds, wheels, rumble, tuning (global)</td></tr>
 <tr><td><a href="#highlightstoml">highlights.toml</a></td><td>Text highlighting, sounds, squelch rules</td></tr>
 <tr><td><a href="#colorstoml">colors.toml</a></td><td>Color palette, stream presets, spell colors</td></tr>
 <tr><td><a href="#hotbarstoml">hotbars.toml</a></td><td>Hotkey bars (command buttons)</td></tr>
@@ -1147,6 +1149,7 @@ relogging all night.</p>
 ├── global/               # Shared settings for all characters
 │   ├── config.toml
 │   ├── keybinds.toml
+│   ├── controller.toml    # Gamepad binds/wheels/rumble/tuning
 │   ├── highlights.toml
 │   ├── colors.toml
 │   ├── hotbars.toml
@@ -1725,6 +1728,59 @@ lines to see what your terminal actually sends.</p>
 </table>
 </div>
 <h2 id="controller-bindings"><a class="header" href="#controller-bindings">Controller Bindings</a></h2>
+<p>Controller (gamepad) configuration lives in its own file —
+see <strong><a href="#controllertoml">controller.toml</a></strong>. It was split out of
+keybinds.toml so a controller setup is one shareable, version-controllable
+file and a bad edit there can’t take keyboard input down with it.</p>
+<h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
+<p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
+<pre><code class="language-toml">[user]
+num_8 = { macro_text = "n\r" }              # north
+num_2 = { macro_text = "s\r" }              # south
+f5 = { macro_text = "stance defensive\r" }
+f6 = { macro_text = "hide\r" }              # omit \r to just type it
+</code></pre>
+<p>The default file ships numpad movement macros (<code>num_1</code>–<code>num_9</code> for
+directions, <code>num_0</code> down, <code>"num_."</code> up, <code>"num_+"</code> look, and so on).</p>
+<p>A macro can chain several commands with <code>\r</code> between them, and pause
+between commands with a <strong>sleep segment</strong>: a segment that is just <code>s</code>
+followed by seconds (<code>s0.5</code>, <code>s2</code>, <code>s90</code> — decimals fine, no upper
+bound). Everything after the sleep goes out when the pause elapses;
+consecutive sleeps add up. Spaces around segments are ignored, and a
+bare <code>s</code> is still south.</p>
+<pre><code class="language-toml">f7 = { macro_text = "stand\rs1.5\rout\r" }   # stand, wait 1.5s, leave
+f8 = { macro_text = "prep 101\r s3.2 \rcast\r" }
+</code></pre>
+<p>Sleep segments work anywhere command text is dispatched — keyboard
+macros, controller binds, hotbar buttons, macro buttons (including taps
+from the phone client), and wheel slices.</p>
+<p>While <strong>interact mode</strong> is focused on an entity, macros may reference it
+with <code>&lt;target_id&gt;</code> (exist id) and <code>&lt;target_noun&gt;</code>:</p>
+<pre><code class="language-toml">[controller]
+west = { macro_text = "target #&lt;target_id&gt;\rincant 611\r" }
+</code></pre>
+<p>A placeholder macro pressed with nothing focused is dropped (with a
+message) rather than sent literally. Exits have no exist id.</p>
+<h2 id="keybind-profiles"><a class="header" href="#keybind-profiles">Keybind Profiles</a></h2>
+<p>Save and swap whole keybind sets:</p>
+<pre><code>.savekeybinds hunting
+.loadkeybinds hunting
+.keybindprofiles          # list saved profiles
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="controllertoml"><a class="header" href="#controllertoml">controller.toml</a></h1>
+<p>Controller (GUI gamepad) configuration lives in its own
+<code>global/controller.toml</code> — separate from <a href="#keybindstoml">keybinds.toml</a>
+so a controller setup can be shared or version-controlled as one file,
+and a malformed edit here cannot take keyboard input down with it.
+Controller binds are <strong>global</strong> (pads are per-desk, not per-character).
+Everything below is edited in the <code>.controller</code> editor (GUI) — hand-editing
+is never required.</p>
+<p>Installs that predate this split are migrated automatically on first run:
+the <code>[controller*]</code> tables are moved out of <code>keybinds.toml</code> into
+<code>controller.toml</code> (both files backed up), so existing controller setups
+carry over untouched.</p>
+<h2 id="bindings"><a class="header" href="#bindings">Bindings</a></h2>
 <p>The <code>[controller]</code> table (global file only — pads are per-desk, not
 per-character) maps gamepad buttons to the same actions and macros as
 <code>[user]</code>. Edit with <code>.controller</code> in the GUI. Buttons: <code>south</code>, <code>east</code>,
@@ -1750,7 +1806,7 @@ harmlessly) builds its slices from the current room’s noun exits at
 open time — the same list <code>.portal</code> resolves — shadowing any static
 wheel of that name),
 and <code>controller_overlay</code>
-(toggle the binding legend — curated by <code>[controller_overlay]  buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
+(toggle the binding legend — curated by <code>[controller_overlay] buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
 lives in <code>[controller_rumble]</code>: a pattern per event (<code>off</code>, the
 built-ins <code>short</code>/<code>long</code>/<code>double</code>, or the name of one of your own),
 plus custom patterns under <code>[[controller_rumble.patterns]]</code> — each has
@@ -1781,7 +1837,7 @@ wheel button fires the committed leaf; returning the stick to center
 before releasing cancels. Sweeping across the ring never commits the
 slices you pass through, so a far slice is safe to reach. Inside a folder
 a Back slice is reserved at the <code>back_slice</code> screen anchor
-(<code>up</code>/<code>down</code>/<code>left</code>/<code>right</code> and the four diagonals) — or <code>back_slice =  "none"</code> drops the reserved seat entirely and you back out with East.
+(<code>up</code>/<code>down</code>/<code>left</code>/<code>right</code> and the four diagonals) — or <code>back_slice = "none"</code> drops the reserved seat entirely and you back out with East.
 <code>deadzone</code> (percent)
 is how far the stick must deflect before a slice registers; a <code>0</code> dwell
 means instant commit. <code>fire_debounce_ms</code> suppresses double-fires and
@@ -1869,41 +1925,6 @@ the wheel itself (designer and live alike), a slice’s colored fill
 covers only its <strong>activation zone</strong> — from its aim floor out to the
 rim — so the empty ring inside the fill is exactly the stick travel
 that does nothing.</p>
-<h2 id="macros"><a class="header" href="#macros">Macros</a></h2>
-<p>Send text with a keypress using the inline-table form. <code>\r</code> presses Enter:</p>
-<pre><code class="language-toml">[user]
-num_8 = { macro_text = "n\r" }              # north
-num_2 = { macro_text = "s\r" }              # south
-f5 = { macro_text = "stance defensive\r" }
-f6 = { macro_text = "hide\r" }              # omit \r to just type it
-</code></pre>
-<p>The default file ships numpad movement macros (<code>num_1</code>–<code>num_9</code> for
-directions, <code>num_0</code> down, <code>"num_."</code> up, <code>"num_+"</code> look, and so on).</p>
-<p>A macro can chain several commands with <code>\r</code> between them, and pause
-between commands with a <strong>sleep segment</strong>: a segment that is just <code>s</code>
-followed by seconds (<code>s0.5</code>, <code>s2</code>, <code>s90</code> — decimals fine, no upper
-bound). Everything after the sleep goes out when the pause elapses;
-consecutive sleeps add up. Spaces around segments are ignored, and a
-bare <code>s</code> is still south.</p>
-<pre><code class="language-toml">f7 = { macro_text = "stand\rs1.5\rout\r" }   # stand, wait 1.5s, leave
-f8 = { macro_text = "prep 101\r s3.2 \rcast\r" }
-</code></pre>
-<p>Sleep segments work anywhere command text is dispatched — keyboard
-macros, controller binds, hotbar buttons, macro buttons (including taps
-from the phone client), and wheel slices.</p>
-<p>While <strong>interact mode</strong> is focused on an entity, macros may reference it
-with <code>&lt;target_id&gt;</code> (exist id) and <code>&lt;target_noun&gt;</code>:</p>
-<pre><code class="language-toml">[controller]
-west = { macro_text = "target #&lt;target_id&gt;\rincant 611\r" }
-</code></pre>
-<p>A placeholder macro pressed with nothing focused is dropped (with a
-message) rather than sent literally. Exits have no exist id.</p>
-<h2 id="keybind-profiles"><a class="header" href="#keybind-profiles">Keybind Profiles</a></h2>
-<p>Save and swap whole keybind sets:</p>
-<pre><code>.savekeybinds hunting
-.loadkeybinds hunting
-.keybindprofiles          # list saved profiles
-</code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="highlightstoml"><a class="header" href="#highlightstoml">highlights.toml</a></h1>
 <p>Text highlighting rules: coloring, sounds, line filtering (squelch),
@@ -2214,6 +2235,7 @@ with the same name replaces the global one entirely.</p>
 <pre><code class="language-toml">[[bars]]
 name = "default"      # referenced by hotkeybar windows in layout.toml
 title = "Actions"
+icon_size = 48        # optional: icon face edge in px (GUI; default 24)
 
 [[bars.buttons]]
 id = "hide"           # stable id, unique within the bar
@@ -2271,6 +2293,7 @@ dim = true
 <tr><td><code>ct_active</code></td><td>—</td><td>Casttime is running</td></tr>
 <tr><td><code>indicator</code></td><td><code>id</code>, <code>active</code></td><td>A status indicator matches: <code>standing</code>, <code>kneeling</code>, <code>sitting</code>, <code>prone</code>, <code>stunned</code>, <code>bleeding</code>, <code>hidden</code>, <code>invisible</code>, <code>webbed</code>, <code>joined</code>, <code>dead</code></td></tr>
 <tr><td><code>vital</code></td><td><code>vital</code>, <code>cmp</code>, <code>value</code>, <code>unit</code></td><td>A vital compares true: <code>health</code>/<code>mana</code>/<code>stamina</code>/<code>spirit</code>, <code>cmp</code> one of <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code>, <code>unit</code> <code>"percent"</code> or <code>"absolute"</code></td></tr>
+<tr><td><code>spell_affordable</code></td><td><code>number</code></td><td>The bundled spell table lists static costs for that spell number and your current absolute vitals cover them. Works without Lich. Fails closed on unknown numbers, variable (formula) costs, or before vitals data arrives; unlike Lich’s <code>affordable?</code> it does not model feats or debuffs.</td></tr>
 <tr><td><code>all</code> / <code>any</code></td><td><code>conditions = [ ... ]</code></td><td>All / any of the nested conditions match</td></tr>
 </tbody>
 </table>
@@ -2285,9 +2308,66 @@ dim = true
 <tr><td><code>label</code></td><td>Replace the button text</td></tr>
 <tr><td><code>fg</code> / <code>bg</code></td><td>Text / background color (<code>#rrggbb</code>)</td></tr>
 <tr><td><code>dim</code></td><td>Render the button dimmed</td></tr>
+<tr><td><code>icon</code></td><td>Icon override for this state (see Icons below)</td></tr>
 </tbody>
 </table>
 </div>
+<p>A state may also carry its own <code>[bars.buttons.states.countdown]</code> (same
+schema as the button-level countdown); while the state is active it
+replaces the button-level source — e.g. show the cooldown timer only in
+the “on cooldown” state. Likewise <code>command = "..."</code> on a state replaces
+the button’s command while active (literal text — <code>;eq ...</code> commands are
+evaluated by Lich, so dynamic behavior belongs in the command itself).</p>
+<h2 id="icons-gui"><a class="header" href="#icons-gui">Icons (GUI)</a></h2>
+<p>Buttons can show an image face from a registered sprite sheet. Sheets are
+tiled into fixed-size cells with no padding, numbered 1-based left→right
+then top→bottom — the barbar convention. The TUI always renders the text
+label; icons are ignored there, and the GUI falls back to text when no
+registered sheet matches.</p>
+<p>Sheets live in one of two places:</p>
+<ul>
+<li><strong>Shared store</strong> (<code>~/.vellum-fe/global/icons/</code> with an <code>icons.toml</code>
+manifest) — available to every skin, and with no skin active at all.
+This is the default and the right choice for personal icon sets.</li>
+<li><strong>Active skin</strong> (the skin’s <code>[sheets]</code> table in <code>skin.toml</code>, see the
+skin docs) — travels with the skin; a skin sheet overrides a shared
+sheet with the same name.</li>
+</ul>
+<p><strong>The <code>.hotbars</code> editor does all of this without TOML:</strong> the button form
+has a Face selector (Text / Icon / Icon + label), a sheet dropdown, a
+clickable “Pick cell from sheet” grid, grayscale/border controls, and the
+same icon controls on every state card. The editor’s “Icon sheets”
+section registers a new sheet — give it a name and an image path and it
+copies the image into the shared store (or, with “All skins” unticked,
+into the active skin) and records it in the matching manifest for you.
+Each state card also carries its own countdown source (“Countdown while
+active”) that replaces the button-level one while the state matches.</p>
+<pre><code class="language-toml">[[bars.buttons]]
+id = "hide"
+label = "Hide"
+command = "hide"
+icon_mode = "icon"            # "text" (default) | "icon" | "icon_and_label"
+
+[bars.buttons.icon]
+sheet = "rogue"               # sheet name from the skin's [sheets] table
+cell = 5                      # 1-based cell index
+grayscale = false             # desaturate (e.g. for a "not ready" look)
+border = "#00ff00"            # optional solid border over the icon
+border_width = 3              # pixels, 1-10 (default 2)
+border_end = "#004400"        # optional: gradient border toward this color
+border_dir = "radial"         # horizontal (default) | vertical |
+                              # diagonal_down | diagonal_up | radial | square
+</code></pre>
+<p>With <code>icon_mode = "icon"</code> the label moves into the hover tooltip. States
+can swap the icon (a different cell, or the same cell grayscaled) via
+<code>[bars.buttons.states.style.icon]</code> — dimmed states automatically use the
+grayscale variant. The sheet entry itself — in the shared store’s
+<code>icons.toml</code> (paths relative to <code>global/icons/</code>) or a skin’s <code>skin.toml</code>
+(paths relative to the skin directory) — looks the same either way:</p>
+<pre><code class="language-toml">[sheets.rogue]
+path = "icons/rogue.png"      # image path; absolute paths allowed
+cell = 64                     # cell edge in pixels (default 64)
+</code></pre>
 <h2 id="reloading"><a class="header" href="#reloading">Reloading</a></h2>
 <p><code>.reload hotbars</code> re-reads the file; the editor saves and applies
 immediately.</p>
@@ -3734,20 +3814,23 @@ title = "Known Spells"
 <h1 id="containers"><a class="header" href="#containers">Containers</a></h1>
 <p>Displays contents of open containers (bags, backpacks, chests).</p>
 <h2 id="basic-usage-17"><a class="header" href="#basic-usage-17">Basic Usage</a></h2>
-<p>Container windows are created dynamically when you look in a container.</p>
-<h2 id="enabling-containers"><a class="header" href="#enabling-containers">Enabling Containers</a></h2>
-<p>Enable container discovery mode via command:</p>
-<pre><code>.containers
+<p>Container windows are per-container choices in the <strong>known windows</strong> list.
+Every container the game mentions (a <code>LOOK IN</code>, opening a bag, the stow
+feed) is added to the list automatically; tick its row to open a window
+for it, untick to close it again.</p>
+<pre><code>.knownwindows
 </code></pre>
-<p>The client confirms with “Container discovery ON/OFF”. While on, LOOK IN a
-container to create a window for it. <code>.hidecontainers [title]</code> closes
-container windows again.</p>
+<p>opens the list (<code>.containers</code> is an alias). On the GUI the same list is a
+checkbox panel. <code>.hidecontainers [title]</code> closes container windows
+without changing anything else.</p>
+<p>Your choice is remembered for the session: a ticked container’s window
+re-opens whenever the game mentions it again.</p>
 <h2 id="behavior"><a class="header" href="#behavior">Behavior</a></h2>
-<p>When enabled:</p>
 <ol>
-<li>Look in a container (<code>look in backpack</code>)</li>
-<li>A window appears showing contents</li>
-<li>Window closes when you close/leave the container</li>
+<li>Look in a container (<code>look in backpack</code>) — it appears in the known
+windows list</li>
+<li>Tick it — a window appears showing contents</li>
+<li>Contents refresh as the game re-sends them; untick to close</li>
 </ol>
 <h2 id="display-13"><a class="header" href="#display-13">Display</a></h2>
 <pre><code>┌─ leather backpack ─────────┐
@@ -4448,6 +4531,10 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.go2 stop</code> / <code>.go2 status</code></td><td></td><td>Cancel / show the active trip</td></tr>
 <tr><td><code>.go2 save &lt;name&gt; [id]</code></td><td></td><td>Save a travel target (<code>.go2 targets</code> lists them, <code>.go2 back</code> returns to the trip start)</td></tr>
 <tr><td><code>.portal [n|word]</code></td><td></td><td>Walk the room’s non-compass exit (<code>go door</code>, <code>climb stair</code>, …) from the map data (room objects as fallback). One candidate walks it; several open a picker menu (keyboard/pad navigable) — or pick by number or word. Controller d-pad left by default</td></tr>
+<tr><td><code>.foreach ... in &lt;bag&gt;; cmd; cmd</code></td><td></td><td>Run commands over matching container items (native <code>;foreach</code>). No commands = dry-run list. See <a href="#inventory-tools-foreach-sorter">Inventory Tools</a></td></tr>
+<tr><td><code>.sorter [on|off]</code></td><td></td><td>Categorize “look in container” output by item type (native <code>;sorter</code>). No arg toggles</td></tr>
+<tr><td><code>.stop</code></td><td></td><td>Stop whatever automation is driving — a <code>.go2</code> trip or a <code>.foreach</code> run</td></tr>
+<tr><td><code>.data [status|reload]</code></td><td></td><td>Inspect / refresh the shared item database used by <code>.foreach</code> and <code>.sorter</code> (Lich folder → local → bundled)</td></tr>
 </tbody>
 </table>
 </div>
@@ -4590,7 +4677,7 @@ layout.toml).</p>
 </thead>
 <tbody>
 <tr><td><code>.transparent</code></td><td></td><td>Toggle transparent window backgrounds (TUI)</td></tr>
-<tr><td><code>.containers</code></td><td></td><td>Toggle container discovery (LOOK IN a container spawns a window for it)</td></tr>
+<tr><td><code>.knownwindows</code></td><td><code>.containers</code></td><td>Known windows list: every game-offered window (containers/dialogs/streams) with a show/hide checkbox per row</td></tr>
 <tr><td><code>.hidecontainers [title]</code></td><td></td><td>Close container windows (all, or one by title)</td></tr>
 <tr><td><code>.reloadmacros</code></td><td></td><td>Reload macros.toml and push to connected phones</td></tr>
 <tr><td><code>.webinfo</code></td><td></td><td>Show the phone pairing URL / app link and open their QR codes</td></tr>
@@ -4598,6 +4685,183 @@ layout.toml).</p>
 </tbody>
 </table>
 </div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="inventory-tools-foreach-sorter"><a class="header" href="#inventory-tools-foreach-sorter">Inventory Tools (<code>.foreach</code>, <code>.sorter</code>)</a></h1>
+<p>VellumFE ships native versions of two of the most-used Lich inventory
+scripts, so they work <strong>without Lich</strong> (direct connections included). If
+you <em>are</em> running through Lich, the classic <code>;foreach</code> and <code>;sorter</code>
+still work as always — these are the <code>.</code>-prefixed native equivalents,
+and you can use whichever you prefer.</p>
+<p>Both rely on the same item database Lich uses (<code>gameobj-data.xml</code>); see
+<a href="#the-data-pack-data">the data pack</a> below for how VellumFE keeps it
+fresh.</p>
+<h2 id="foreach--run-commands-over-matching-items"><a class="header" href="#foreach--run-commands-over-matching-items"><code>.foreach</code> — run commands over matching items</a></h2>
+<p><code>.foreach</code> finds items in your containers and runs a series of commands
+for each one.</p>
+<pre><code>.foreach [OPTIONS] [ATTR=]VALUE in &lt;CONTAINER&gt;[,&lt;CONTAINER&gt;...][; command; command; ...]
+</code></pre>
+<p>Some examples:</p>
+<pre><code>.foreach gem in backpack; get item; sell item
+.foreach box in locker; move to backpack
+.foreach unique sorted scroll in cloak; read item
+.foreach first 5 sellable=gemshop in pouch; get item; appraise item
+.foreach name=*quartz orb in inv-sack; get item; put item in locker
+.foreach in bandolier
+</code></pre>
+<p>The last form — no commands — is a <strong>dry run</strong>: it lists the matching
+items with their types and ids, so you can check a filter before acting
+on it. Running a dry run first is a good habit.</p>
+<h3 id="filters-what-to-match"><a class="header" href="#filters-what-to-match">Filters (what to match)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Attribute</th><th>Matches</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>type</code> (default)</td><td>item category from <code>gameobj-data.xml</code></td><td><code>.foreach gem in bag</code></td></tr>
+<tr><td><code>sellable</code></td><td>shop the item sells at</td><td><code>.foreach sellable=furrier in sack</code></td></tr>
+<tr><td><code>noun</code></td><td>the item’s noun</td><td><code>.foreach noun=box in locker</code></td></tr>
+<tr><td><code>name</code> / <code>fullname</code></td><td>the full item name</td><td><code>.foreach name=*ruby* in pouch</code></td></tr>
+<tr><td><code>quick</code></td><td>shorthand for <code>name=*VALUE*</code></td><td><code>.foreach q=elan*pack in cloak</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Shorthands <code>t</code>, <code>s</code>, <code>n</code>, <code>m</code>, <code>f</code>, <code>q</code> work too. Values support <code>*</code>
+wildcards, comma-separated lists (match <em>any</em>), and <code>/regex/</code> for a
+regular-expression match against the name. <code>type=none</code> matches items
+with no known type.</p>
+<h3 id="options-which-matches-in-what-order"><a class="header" href="#options-which-matches-in-what-order">Options (which matches, in what order)</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>unique</code></td><td>skip repeats of the same item name</td></tr>
+<tr><td><code>first N</code></td><td>act on only the first N matches</td></tr>
+<tr><td><code>after N</code></td><td>skip the first N matches</td></tr>
+<tr><td><code>sorted</code></td><td>order alphabetically (by last word, articles ignored)</td></tr>
+<tr><td><code>reversed</code></td><td>reverse the order</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="targets-where-to-look"><a class="header" href="#targets-where-to-look">Targets (where to look)</a></h3>
+<p>A target is either a <strong>container name</strong> or a <strong>pseudo-target keyword</strong>. A
+comma-separated list searches several. Suffix any target with <code>?</code> to
+<strong>skip it if it isn’t found</strong> instead of stopping with an error:</p>
+<pre><code>.foreach box in inv-sack, disk?; move to locker
+.foreach gem in worn; get item; put item in my gem pouch
+.foreach herb in floor; get item
+</code></pre>
+<p><strong>Container names</strong> — a container you have looked in this session,
+addressed by title (<code>backpack</code>, <code>red sack</code>, <code>my bandolier</code>).</p>
+<blockquote>
+<p><strong>Containers must have been opened and looked in.</strong> Like <code>;foreach</code>,
+this is blind to closed containers — if a container isn’t matching,
+<code>look in</code> it once so VellumFE has seen its contents.</p>
+</blockquote>
+<p><strong>Pseudo-targets:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Keyword</th><th>Matches</th></tr>
+</thead>
+<tbody>
+<tr><td><code>inv</code> / <code>inventory</code></td><td>everything you carry — worn items, both hands, and items at your feet</td></tr>
+<tr><td><code>worn</code></td><td>worn items only</td></tr>
+<tr><td><code>feet</code></td><td>items at your feet (“Placed alongside you”)</td></tr>
+<tr><td><code>floor</code> / <code>ground</code> / <code>room</code></td><td>loot on the ground in the room</td></tr>
+</tbody>
+</table>
+</div>
+<p>Not yet supported (planned): <code>desc</code> (room-description scenery) and
+<code>locker</code> auto-open.</p>
+<h3 id="marked--registered-filters"><a class="header" href="#marked--registered-filters">Marked / registered filters</a></h3>
+<p>Filter by whether items are marked or registered:</p>
+<pre><code>.foreach marked gem in my gem pouch; get item; sell item
+.foreach unregistered in backpack
+</code></pre>
+<p>Options: <code>marked</code>, <code>unmarked</code>, <code>registered</code>, <code>unregistered</code>. This status
+isn’t in the passive game feed — VellumFE fetches it with an <code>INVENTORY  FULL</code> scan (its output is hidden). The first time you use one of these on
+items whose status isn’t yet known, <code>.foreach</code> runs the scan and asks you
+to <strong>re-run the command in a moment</strong>; the second run has the data.</p>
+<h3 id="commands-1"><a class="header" href="#commands-1">Commands</a></h3>
+<p>Each command runs once per matched item. Two words are substituted:</p>
+<ul>
+<li><code>item</code> → <code>#&lt;exist id&gt;</code> (the item’s unique id — works on direct
+connections, since these are ordinary game commands)</li>
+<li><code>container</code> → <code>#&lt;id&gt;</code> of the container the item was found in</li>
+</ul>
+<p>So <code>put item in container</code> becomes <code>put #12345 in #77</code>. Because ids are
+unambiguous, five identical gems are each handled individually with no
+noun-collision guesswork.</p>
+<p><strong>Implicit <code>get</code></strong>: if the first command is <code>drop</code>, <code>place</code>, <code>sell</code>,
+<code>appraise</code>, <code>trash</code>, <code>register</code>, <code>mark</code>, or <code>unmark</code>, a <code>get item</code> is run
+first automatically — so <code>.foreach gem in bag; sell item</code> gets and sells
+each gem.</p>
+<p>A few special commands are handled by VellumFE rather than sent to the
+game:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Command</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>waitrt</code></td><td>wait until roundtime clears before continuing</td></tr>
+<tr><td><code>sleep &lt;seconds&gt;</code></td><td>pause (e.g. <code>sleep 1.5</code>)</td></tr>
+<tr><td><code>echo &lt;text&gt;</code></td><td>print a note to your main window</td></tr>
+<tr><td><code>move to &lt;container&gt;</code></td><td>shortcut for dragging the item into that container</td></tr>
+</tbody>
+</table>
+</div>
+<p>Everything else is sent to the game verbatim, once per item — including
+<code>;yourscript item</code> when you’re behind Lich.</p>
+<h3 id="pacing-and-stopping"><a class="header" href="#pacing-and-stopping">Pacing and stopping</a></h3>
+<p>Commands are paced: one goes out at a time, only while roundtime is
+clear, with a short gap between. A run announces each item as it starts.</p>
+<p>Stop a run at any time with <strong><code>.stop</code></strong> (or Esc). Dying stops it
+automatically. Only one automation task drives the game at once — if a
+<code>.go2</code> trip is in progress, <code>.foreach</code> will tell you to <code>.stop</code> it first,
+and vice-versa.</p>
+<h2 id="sorter--categorized-container-contents"><a class="header" href="#sorter--categorized-container-contents"><code>.sorter</code> — categorized container contents</a></h2>
+<p><code>.sorter</code> reformats the output of <em>looking in a container</em> so items are
+grouped by type and duplicates are counted, instead of one long run-on
+sentence.</p>
+<pre><code>.sorter on      # enable
+.sorter off     # disable
+.sorter         # toggle
+</code></pre>
+<p>With it on, <code>look in my backpack</code> turns this:</p>
+<pre><code>In the backpack you see a blue sapphire, a quartz crystal, a blue
+sapphire and a copper lockpick.
+</code></pre>
+<p>into this:</p>
+<pre><code>In the backpack:
+  gem (3): quartz crystal, blue sapphire (2)
+  other (1): copper lockpick
+</code></pre>
+<p>Item names stay clickable, categories come from the same
+<code>gameobj-data.xml</code> as <code>.foreach</code>, and the setting is remembered between
+sessions (it also appears in <strong>Settings → UI → Sort Container Looks</strong>).</p>
+<h2 id="the-data-pack-data"><a class="header" href="#the-data-pack-data">The data pack (<code>.data</code>)</a></h2>
+<p><code>.foreach</code> and <code>.sorter</code> classify items using <code>gameobj-data.xml</code>, the
+same file Lich maintains through <code>;repo</code>. VellumFE resolves it from the
+first available of three sources:</p>
+<ol>
+<li><strong>Your Lich data folder</strong>, if the Lich directory is configured
+(Settings → Map → Lich Directory) — the freshest copy, since your
+<code>;repo</code> keeps it current.</li>
+<li><strong>A local copy</strong> in <code>~/.vellum-fe/global/data/</code>.</li>
+<li><strong>A bundled snapshot</strong>, refreshed with each VellumFE release.</li>
+</ol>
+<p>Check what’s in use and how old it is:</p>
+<pre><code>.data status    # show the source and age of each data asset
+.data reload     # re-resolve now (e.g. after ;repo download in Lich)
+</code></pre>
+<p>In the GUI, the same information and a <strong>Reload</strong> button live under
+<strong>Settings → Data</strong>. Setting your Lich folder (<strong>Settings → Map → Lich
+Directory</strong>) lets VellumFE use your <code>;repo</code>-maintained copy, which is
+always the freshest.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
 <pre><code>vellum-fe [OPTIONS] [SUBCOMMAND]

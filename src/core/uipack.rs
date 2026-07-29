@@ -1,5 +1,6 @@
 //! Shareable UI packs (`.vellumpack`): a zip of the files that make a
-//! UI — TUI layout, highlights, keybinds, hotbars, colors, macros, the
+//! UI — TUI layout, highlights, keybinds, controller, hotbars, colors,
+//! macros, the
 //! active skin, and (when exported from the GUI) the live GUI layout.
 //! Built by `.uiexport`, inspected and applied by `.uiimport`; meant
 //! for posting on the community Discord so good setups can become
@@ -28,6 +29,7 @@ pub const PARTS: &[&str] = &[
     "layout",
     "highlights",
     "keybinds",
+    "controller",
     "hotbars",
     "colors",
     "macros",
@@ -42,6 +44,9 @@ pub const GUI_LAYOUT_ENTRY: &str = "gui-layout.json";
 const LAYERED_FILES: &[(&str, &str)] = &[
     ("highlights", "highlights.toml"),
     ("keybinds", "keybinds.toml"),
+    // Controller config is global-only (pads are per-desk); the export loop
+    // just skips the absent profile layer.
+    ("controller", "controller.toml"),
     ("hotbars", "hotbars.toml"),
     ("colors", "colors.toml"),
     ("macros", "macros.toml"),

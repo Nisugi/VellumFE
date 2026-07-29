@@ -10,6 +10,7 @@ VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
 | [config.toml](./config-toml.md) | General settings (connection, UI, sound, TTS, web server) |
 | [layout.toml](./layout-toml.md) | Window positions, sizes, and properties (TUI) |
 | [keybinds.toml](./keybinds-toml.md) | Keyboard shortcuts |
+| [controller.toml](./controller-toml.md) | Gamepad binds, wheels, rumble, tuning (global) |
 | [highlights.toml](./highlights-toml.md) | Text highlighting, sounds, squelch rules |
 | [colors.toml](./colors-toml.md) | Color palette, stream presets, spell colors |
 | [hotbars.toml](./hotbars-toml.md) | Hotkey bars (command buttons) |
@@ -23,6 +24,7 @@ VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
 ├── global/               # Shared settings for all characters
 │   ├── config.toml
 │   ├── keybinds.toml
+│   ├── controller.toml    # Gamepad binds/wheels/rumble/tuning
 │   ├── highlights.toml
 │   ├── colors.toml
 │   ├── hotbars.toml

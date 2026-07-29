@@ -75,6 +75,7 @@ const DEFAULT_CONFIG: &str = include_str!("../defaults/globals/config.toml");
 const DEFAULT_COLORS: &str = include_str!("../defaults/globals/colors.toml");
 const DEFAULT_HIGHLIGHTS: &str = include_str!("../defaults/globals/highlights.toml");
 const DEFAULT_KEYBINDS: &str = include_str!("../defaults/globals/keybinds.toml");
+const DEFAULT_CONTROLLER: &str = include_str!("../defaults/globals/controller.toml");
 const DEFAULT_HOTBARS: &str = include_str!("../defaults/globals/hotbars.toml");
 const DEFAULT_MACROS: &str = include_str!("../defaults/globals/macros.toml");
 const DEFAULT_CMDLIST: &str = include_str!("../defaults/globals/cmdlist1.xml");

@@ -22,6 +22,7 @@
   - [config.toml](./configuration/config-toml.md)
   - [layout.toml](./configuration/layout-toml.md)
   - [keybinds.toml](./configuration/keybinds-toml.md)
+  - [controller.toml](./configuration/controller-toml.md)
   - [highlights.toml](./configuration/highlights-toml.md)
   - [colors.toml](./configuration/colors-toml.md)
   - [macros.toml](./configuration/macros-toml.md)

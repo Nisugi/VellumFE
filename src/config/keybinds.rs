@@ -1265,8 +1265,37 @@ impl Config {
         }
     }
 
+    /// Load the global controller.toml as a plain `toml::value::Table` for
+    /// the section savers (creating the parent dir when the file is absent).
+    /// A file that fails to parse yields an empty table rather than an error
+    /// so a single bad edit can't wedge every controller save.
+    fn load_controller_table() -> Result<(std::path::PathBuf, toml::value::Table)> {
+        let path = Self::common_controller_path()?;
+        let table = if path.exists() {
+            let contents = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
+        } else {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+            }
+            toml::value::Table::new()
+        };
+        Ok((path, table))
+    }
+
+    /// Serialize and atomically write a controller.toml table.
+    fn write_controller_table(path: &std::path::Path, table: &toml::value::Table) -> Result<()> {
+        let contents =
+            toml::to_string_pretty(table).context("Failed to serialize controller config")?;
+        write_atomic(path, contents)
+            .with_context(|| format!("Failed to write controller file: {:?}", path))?;
+        Ok(())
+    }
+
     /// Load the radial wheel slices from `[[controller_wheel]]` of the
-    /// global keybinds.toml, falling back to the shipped defaults when
+    /// global controller.toml, falling back to the shipped defaults when
     /// absent.
     pub fn load_controller_wheel() -> Result<Vec<WheelSlice>> {
         let slices_from = |contents: &str| -> Option<Vec<WheelSlice>> {
@@ -1274,15 +1303,15 @@ impl Config {
             let array = toml_value.get("controller_wheel")?;
             array.clone().try_into().ok()
         };
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             if let Some(slices) = slices_from(&contents) {
                 return Ok(slices);
             }
         }
-        Ok(slices_from(DEFAULT_KEYBINDS).unwrap_or_default())
+        Ok(slices_from(DEFAULT_CONTROLLER).unwrap_or_default())
     }
 
     /// Load the overlay legend's curated entries from
@@ -1298,31 +1327,20 @@ impl Config {
                 .try_into()
                 .ok()
         };
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             if let Some(list) = list_from(&contents) {
                 return Ok(list);
             }
         }
-        Ok(list_from(DEFAULT_KEYBINDS).unwrap_or_default())
+        Ok(list_from(DEFAULT_CONTROLLER).unwrap_or_default())
     }
 
     /// Replace the overlay legend's curated entry list.
     pub fn save_controller_overlay(buttons: &[String]) -> Result<()> {
-        let path = Self::common_keybinds_path()?;
-        let mut toml_table: toml::value::Table = if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
-        } else {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
-            }
-            toml::value::Table::new()
-        };
+        let (path, mut toml_table) = Self::load_controller_table()?;
         let section = toml_table
             .entry("controller_overlay".to_string())
             .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
@@ -1332,116 +1350,82 @@ impl Config {
                 toml::Value::try_from(buttons).context("Failed to serialize overlay list")?,
             );
         }
-        let contents =
-            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        write_atomic(&path, contents)
-            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
-        Ok(())
+        Self::write_controller_table(&path, &toml_table)
     }
 
     /// Load the rumble event map from `[controller_rumble]` of the global
-    /// keybinds.toml (shipped defaults when absent).
+    /// controller.toml (shipped defaults when absent).
     pub fn load_controller_rumble() -> Result<RumbleConfig> {
         let section_from = |contents: &str| -> Option<RumbleConfig> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             toml_value.get("controller_rumble")?.clone().try_into().ok()
         };
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             if let Some(config) = section_from(&contents) {
                 return Ok(config);
             }
         }
-        Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
+        Ok(section_from(DEFAULT_CONTROLLER).unwrap_or_default())
     }
 
     /// Replace the `[controller_rumble]` section.
     pub fn save_controller_rumble(rumble: &RumbleConfig) -> Result<()> {
-        let path = Self::common_keybinds_path()?;
-        let mut toml_table: toml::value::Table = if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
-        } else {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
-            }
-            toml::value::Table::new()
-        };
+        let (path, mut toml_table) = Self::load_controller_table()?;
         toml_table.insert(
             "controller_rumble".to_string(),
             toml::Value::try_from(rumble).context("Failed to serialize rumble config")?,
         );
-        let contents =
-            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        write_atomic(&path, contents)
-            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
-        Ok(())
+        Self::write_controller_table(&path, &toml_table)
     }
 
     /// Load the input-feel tuning from `[controller_tuning]` of the global
-    /// keybinds.toml (shipped defaults when absent).
+    /// controller.toml (shipped defaults when absent).
     pub fn load_controller_tuning() -> Result<TuningConfig> {
         let section_from = |contents: &str| -> Option<TuningConfig> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             toml_value.get("controller_tuning")?.clone().try_into().ok()
         };
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             if let Some(config) = section_from(&contents) {
                 return Ok(config);
             }
         }
-        Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
+        Ok(section_from(DEFAULT_CONTROLLER).unwrap_or_default())
     }
 
     /// Replace the `[controller_tuning]` section.
     pub fn save_controller_tuning(tuning: &TuningConfig) -> Result<()> {
-        let path = Self::common_keybinds_path()?;
-        let mut toml_table: toml::value::Table = if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
-        } else {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
-            }
-            toml::value::Table::new()
-        };
+        let (path, mut toml_table) = Self::load_controller_table()?;
         toml_table.insert(
             "controller_tuning".to_string(),
             toml::Value::try_from(tuning).context("Failed to serialize tuning config")?,
         );
-        let contents =
-            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        write_atomic(&path, contents)
-            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
-        Ok(())
+        Self::write_controller_table(&path, &toml_table)
     }
 
     /// Load the named wheels from `[controller_wheels.<name>]` arrays of
-    /// the global keybinds.toml (bound via "controller_wheel:<name>").
+    /// the global controller.toml (bound via "controller_wheel:<name>").
     pub fn load_controller_wheels() -> Result<HashMap<String, Vec<WheelSlice>>> {
         let wheels_from = |contents: &str| -> Option<HashMap<String, Vec<WheelSlice>>> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             let table = toml_value.get("controller_wheels")?;
             table.clone().try_into().ok()
         };
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             if let Some(wheels) = wheels_from(&contents) {
                 return Ok(wheels);
             }
         }
-        Ok(wheels_from(DEFAULT_KEYBINDS).unwrap_or_default())
+        Ok(wheels_from(DEFAULT_CONTROLLER).unwrap_or_default())
     }
 
     /// Load per-wheel metadata from `[controller_wheels_meta.<name>]`
@@ -1452,32 +1436,21 @@ impl Config {
             let table = toml_value.get("controller_wheels_meta")?;
             table.clone().try_into().ok()
         };
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             if let Some(meta) = meta_from(&contents) {
                 return Ok(meta);
             }
         }
-        Ok(meta_from(DEFAULT_KEYBINDS).unwrap_or_default())
+        Ok(meta_from(DEFAULT_CONTROLLER).unwrap_or_default())
     }
 
     /// Replace the `[controller_wheels_meta]` section. Entries with both
     /// fields None are dropped so the section stays tidy.
     pub fn save_controller_wheels_meta(meta: &HashMap<String, WheelMeta>) -> Result<()> {
-        let path = Self::common_keybinds_path()?;
-        let mut toml_table: toml::value::Table = if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
-        } else {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
-            }
-            toml::value::Table::new()
-        };
+        let (path, mut toml_table) = Self::load_controller_table()?;
         let pruned: HashMap<&String, &WheelMeta> = meta
             .iter()
             .filter(|(_, m)| m.button.is_some() || m.stick.is_some() || m.start.is_some())
@@ -1490,11 +1463,7 @@ impl Config {
                 toml::Value::try_from(&pruned).context("Failed to serialize wheel meta")?,
             );
         }
-        let contents =
-            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        write_atomic(&path, contents)
-            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
-        Ok(())
+        Self::write_controller_table(&path, &toml_table)
     }
 
     /// The slice list at a folder path within a wheel. Key "" is the
@@ -1604,15 +1573,15 @@ impl Config {
             });
     }
 
-    /// Load the keybinds file as a comment-preserving `toml_edit` document
+    /// Load the controller file as a comment-preserving `toml_edit` document
     /// (empty doc when absent), ensuring the parent dir exists. Shared by
     /// the wheel savers so they can splice wheel arrays with inline-table
     /// slices without disturbing the rest of the file.
-    fn load_keybinds_document() -> Result<(std::path::PathBuf, toml_edit::DocumentMut)> {
-        let path = Self::common_keybinds_path()?;
+    fn load_controller_document() -> Result<(std::path::PathBuf, toml_edit::DocumentMut)> {
+        let path = Self::common_controller_path()?;
         let doc = if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             contents
                 .parse::<toml_edit::DocumentMut>()
                 .unwrap_or_default()
@@ -1627,7 +1596,7 @@ impl Config {
     }
 
     pub fn save_controller_wheel_named(name: Option<&str>, slices: &[WheelSlice]) -> Result<()> {
-        let (path, mut doc) = Self::load_keybinds_document()?;
+        let (path, mut doc) = Self::load_controller_document()?;
         match name {
             None => {
                 Self::set_root_value_before_tables(
@@ -1657,23 +1626,23 @@ impl Config {
             }
         }
         write_atomic(&path, doc.to_string())
-            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+            .with_context(|| format!("Failed to write controller file: {:?}", path))?;
         Ok(())
     }
 
     /// Replace the whole `[[controller_wheel]]` array in the global
-    /// keybinds.toml (the wheel editor saves the full slice list). Nested
+    /// controller.toml (the wheel editor saves the full slice list). Nested
     /// folder slices are written as inline tables so a folder's children
     /// can never re-bind to a later sibling on reload.
     pub fn save_controller_wheel(slices: &[WheelSlice]) -> Result<()> {
-        let (path, mut doc) = Self::load_keybinds_document()?;
+        let (path, mut doc) = Self::load_controller_document()?;
         Self::set_root_value_before_tables(
             &mut doc,
             "controller_wheel",
             Self::wheel_slices_to_inline(slices),
         );
         write_atomic(&path, doc.to_string())
-            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+            .with_context(|| format!("Failed to write controller file: {:?}", path))?;
         Ok(())
     }
 
@@ -1686,7 +1655,7 @@ impl Config {
     }
 
     /// Load controller (gamepad) bindings from a `[controller]`-family
-    /// section of the global keybinds.toml. Controller binds are
+    /// section of the global controller.toml. Controller binds are
     /// global-only: pads are per-desk, not per-character. Falls back to
     /// the shipped defaults when the file lacks the section
     /// (pre-refresh installs).
@@ -1698,15 +1667,15 @@ impl Config {
             table.clone().try_into().ok()
         };
 
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if path.exists() {
             let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
             if let Some(binds) = section_from(&contents) {
                 return Ok(binds);
             }
         }
-        Ok(section_from(DEFAULT_KEYBINDS).unwrap_or_default())
+        Ok(section_from(DEFAULT_CONTROLLER).unwrap_or_default())
     }
 
     /// Base-layer controller bindings (`[controller]`).
@@ -1715,25 +1684,13 @@ impl Config {
     }
 
     /// Save one controller binding into a `[controller]`-family section of
-    /// the global keybinds.toml (created if missing).
+    /// the global controller.toml (created if missing).
     pub fn save_single_controller_bind(
         button: &str,
         action: &KeyBindAction,
         shift: bool,
     ) -> Result<()> {
-        let path = Self::common_keybinds_path()?;
-        let mut toml_table: toml::value::Table = if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::value::Table::new())
-        } else {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory: {:?}", parent))?;
-            }
-            toml::value::Table::new()
-        };
-
+        let (path, mut toml_table) = Self::load_controller_table()?;
         let section = toml_table
             .entry(Self::controller_section_name(shift).to_string())
             .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
@@ -1751,34 +1708,27 @@ impl Config {
             };
             table.insert(button.to_string(), action_value);
         }
-
-        let contents =
-            toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-        write_atomic(&path, contents)
-            .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+        Self::write_controller_table(&path, &toml_table)?;
         tracing::info!("Saved controller bind '{}' to {:?}", button, path);
         Ok(())
     }
 
     /// Delete one controller binding from a `[controller]`-family section
-    /// of the global keybinds.toml.
+    /// of the global controller.toml.
     pub fn delete_single_controller_bind(button: &str, shift: bool) -> Result<()> {
-        let path = Self::common_keybinds_path()?;
+        let path = Self::common_controller_path()?;
         if !path.exists() {
             return Ok(());
         }
         let contents = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read keybinds file: {:?}", path))?;
+            .with_context(|| format!("Failed to read controller file: {:?}", path))?;
         let mut toml_table: toml::value::Table = toml::from_str(&contents)
-            .with_context(|| format!("Failed to parse keybinds file: {:?}", path))?;
+            .with_context(|| format!("Failed to parse controller file: {:?}", path))?;
         if let Some(toml::Value::Table(table)) =
             toml_table.get_mut(Self::controller_section_name(shift))
         {
             if table.remove(button).is_some() {
-                let contents =
-                    toml::to_string_pretty(&toml_table).context("Failed to serialize keybinds")?;
-                write_atomic(&path, contents)
-                    .with_context(|| format!("Failed to write keybinds file: {:?}", path))?;
+                Self::write_controller_table(&path, &toml_table)?;
                 tracing::info!("Deleted controller bind '{}' from {:?}", button, path);
             }
         }

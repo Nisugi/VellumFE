@@ -1,6 +1,7 @@
 //! Additive refresh of shipped collection defaults.
 //!
-//! Collection files (highlights, keybinds `[user]`, hotbar bars) extract to
+//! Collection files (highlights, keybinds `[user]`, controller tables,
+//! hotbar bars) extract to
 //! disk once and then belong to the user — so new defaults shipped in a
 //! release never used to reach existing installs. This module fixes that
 //! without resurrecting deletions: a sidecar
@@ -44,6 +45,11 @@ struct SeenDefaults {
     /// Default `[user]` keybind combos already offered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     user_keybinds: Option<BTreeSet<String>>,
+    /// Default controller entries already offered (controller/,
+    /// controller_shift/, wheel/ prefixed keys). Split out of
+    /// `user_keybinds` when controller config moved to controller.toml.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    controller: Option<BTreeSet<String>>,
     /// Default hotbar names already offered.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hotbars: Option<BTreeSet<String>>,
@@ -130,17 +136,21 @@ fn refresh_named_tables(
     })
 }
 
-/// Keybinds: entries live under the `[user]` and `[controller]` tables.
-/// `[controller]` keys carry a `controller/` prefix in the seen-set so
-/// they can't collide with `[user]` combos (sidecars from before the
-/// controller table remain valid unchanged).
-fn refresh_user_keybinds(
+/// Shared table-merge core for the keybinds/controller collection files:
+/// additively fill each named `[table]` from the embedded defaults, keying
+/// the seen-set with the given `prefix` so keys can't collide across tables
+/// (e.g. a `[user]` combo vs a `[controller]` button). When `with_wheel` is
+/// set, `[[controller_wheel]]` slices refresh additively by label under a
+/// `wheel/` prefix. Deleted entries stay deleted (tombstoned via `seen`).
+fn refresh_tables(
     user: &str,
     embedded: &str,
     seen: Option<&BTreeSet<String>>,
+    tables: &[(&str, &str)],
+    with_wheel: bool,
 ) -> Result<RefreshOutcome> {
-    let mut user_doc: DocumentMut = user.parse().context("user keybinds did not parse")?;
-    let embedded_doc: DocumentMut = embedded.parse().context("embedded keybinds did not parse")?;
+    let mut user_doc: DocumentMut = user.parse().context("user file did not parse")?;
+    let embedded_doc: DocumentMut = embedded.parse().context("embedded file did not parse")?;
 
     let table_keys = |doc: &DocumentMut, table: &str, prefix: &str| -> BTreeSet<String> {
         doc.get(table)
@@ -157,11 +167,7 @@ fn refresh_user_keybinds(
     let mut on_disk = BTreeSet::new();
     let mut changed = false;
 
-    for (table, prefix) in [
-        ("user", ""),
-        ("controller", "controller/"),
-        ("controller_shift", "controller_shift/"),
-    ] {
+    for &(table, prefix) in tables {
         let embedded_tbl_keys = table_keys(&embedded_doc, table, prefix);
         let on_disk_tbl_keys = table_keys(&user_doc, table, prefix);
         let to_add = keys_to_add(&embedded_tbl_keys, &on_disk_tbl_keys, seen);
@@ -178,7 +184,7 @@ fn refresh_user_keybinds(
             let embedded_tbl = embedded_doc
                 .get(table)
                 .and_then(|item| item.as_table())
-                .expect("embedded keybinds have the table");
+                .expect("embedded file has the table");
             for prefixed in &to_add {
                 let key = prefixed.strip_prefix(prefix).unwrap_or(prefixed);
                 if let Some(item) = embedded_tbl.get(key) {
@@ -194,7 +200,7 @@ fn refresh_user_keybinds(
 
     // [[controller_wheel]] slices refresh additively by label, with
     // wheel/-prefixed seen keys (deleted slices stay deleted).
-    {
+    if with_wheel {
         let wheel_labels = |doc: &DocumentMut| -> BTreeSet<String> {
             doc.get("controller_wheel")
                 .and_then(|item| item.as_array_of_tables())
@@ -224,7 +230,7 @@ fn refresh_user_keybinds(
             let embedded_slices = embedded_doc
                 .get("controller_wheel")
                 .and_then(|item| item.as_array_of_tables())
-                .expect("embedded keybinds have [[controller_wheel]]");
+                .expect("embedded controller has [[controller_wheel]]");
             let user_slices = user_doc["controller_wheel"]
                 .as_array_of_tables_mut()
                 .expect("just ensured [[controller_wheel]] exists");
@@ -245,6 +251,37 @@ fn refresh_user_keybinds(
         updated_file,
         seen: merged_seen(&embedded_keys, &on_disk, seen),
     })
+}
+
+/// Keybinds: entries live under the `[user]` table. (Controller tables moved
+/// to their own controller.toml — see `refresh_controller`.)
+fn refresh_user_keybinds(
+    user: &str,
+    embedded: &str,
+    seen: Option<&BTreeSet<String>>,
+) -> Result<RefreshOutcome> {
+    refresh_tables(user, embedded, seen, &[("user", "")], false)
+}
+
+/// Controller: `[controller]` / `[controller_shift]` tables (prefixed so
+/// their button names can't collide) plus the `[[controller_wheel]]` slice
+/// array. Split out of keybinds.toml so a controller config is one shareable
+/// file and a bad edit can't take keyboard input down with it.
+fn refresh_controller(
+    user: &str,
+    embedded: &str,
+    seen: Option<&BTreeSet<String>>,
+) -> Result<RefreshOutcome> {
+    refresh_tables(
+        user,
+        embedded,
+        seen,
+        &[
+            ("controller", "controller/"),
+            ("controller_shift", "controller_shift/"),
+        ],
+        true,
+    )
 }
 
 /// Hotbars: entries are `[[bars]]` tables identified by their `name`.
@@ -317,9 +354,33 @@ pub(super) fn refresh_shipped_defaults() -> Result<()> {
     };
     let mut sidecar_dirty = false;
 
-    let collections: [(&str, &str, fn(&str, &str, Option<&BTreeSet<String>>) -> Result<RefreshOutcome>, fn(&mut SeenDefaults) -> &mut Option<BTreeSet<String>>); 3] = [
+    // Controller config moved from keybinds.toml to controller.toml. On the
+    // first run after that split, hand the controller/ · controller_shift/ ·
+    // wheel/ tombstones over from the old user_keybinds slot to the new
+    // controller slot so no already-seen (or user-deleted) controller default
+    // gets re-offered. Leaving user_keybinds's own `[user]` combos untouched.
+    if sidecar.controller.is_none() {
+        if let Some(user_seen) = &sidecar.user_keybinds {
+            let carried: BTreeSet<String> = user_seen
+                .iter()
+                .filter(|k| {
+                    k.starts_with("controller/")
+                        || k.starts_with("controller_shift/")
+                        || k.starts_with("wheel/")
+                })
+                .cloned()
+                .collect();
+            if !carried.is_empty() {
+                sidecar.controller = Some(carried);
+                sidecar_dirty = true;
+            }
+        }
+    }
+
+    let collections: [(&str, &str, fn(&str, &str, Option<&BTreeSet<String>>) -> Result<RefreshOutcome>, fn(&mut SeenDefaults) -> &mut Option<BTreeSet<String>>); 4] = [
         ("highlights.toml", super::DEFAULT_HIGHLIGHTS, refresh_named_tables, |s| &mut s.highlights),
         ("keybinds.toml", super::DEFAULT_KEYBINDS, refresh_user_keybinds, |s| &mut s.user_keybinds),
+        ("controller.toml", super::DEFAULT_CONTROLLER, refresh_controller, |s| &mut s.controller),
         ("hotbars.toml", super::DEFAULT_HOTBARS, refresh_bars, |s| &mut s.hotbars),
     ];
 
@@ -446,21 +507,20 @@ mod tests {
 
     #[test]
     fn controller_binds_refresh_into_their_own_table() {
-        // A pre-controller user file gains the whole [controller] table;
-        // its seen keys carry the controller/ prefix so they can't collide
-        // with same-named [user] combos.
-        let embedded =
-            "[user]\nf5 = \"look\"\n\n[controller]\nstart = \"interact_mode\"\nsouth = \"look\"\n";
-        let user = "[user]\nf5 = \"custom\"\n";
-        let seen: BTreeSet<String> = ["f5".to_string()].into();
-        let outcome = refresh_user_keybinds(user, embedded, Some(&seen)).unwrap();
-        let updated = outcome.updated_file.expect("controller table should be added");
+        // A pre-refresh controller.toml gains newly shipped [controller]
+        // entries; seen keys carry the controller/ prefix so they can't
+        // collide with same-named entries in other tables.
+        let embedded = "[controller]\nstart = \"interact_mode\"\nsouth = \"look\"\n";
+        let user = "[controller]\nstart = \"custom\"\n";
+        let seen: BTreeSet<String> = ["controller/start".to_string()].into();
+        let outcome = refresh_controller(user, embedded, Some(&seen)).unwrap();
+        let updated = outcome.updated_file.expect("south bind should be added");
         assert!(updated.contains("[controller]"), "{}", updated);
-        assert!(updated.contains("start = \"interact_mode\""), "{}", updated);
-        assert!(updated.contains("f5 = \"custom\""), "{}", updated);
+        assert!(updated.contains("south = \"look\""), "{}", updated);
+        // User's own start override is untouched.
+        assert!(updated.contains("start = \"custom\""), "{}", updated);
         assert!(outcome.seen.contains("controller/start"));
         assert!(outcome.seen.contains("controller/south"));
-        assert!(outcome.seen.contains("f5"));
     }
 
     #[test]
@@ -468,7 +528,7 @@ mod tests {
         let embedded = "[controller]\nstart = \"interact_mode\"\n\n[controller_shift]\nsouth = \"tts_stop\"\n";
         let user = "[controller]\nstart = \"interact_mode\"\n";
         let seen: BTreeSet<String> = ["controller/start".to_string()].into();
-        let outcome = refresh_user_keybinds(user, embedded, Some(&seen)).unwrap();
+        let outcome = refresh_controller(user, embedded, Some(&seen)).unwrap();
         let updated = outcome.updated_file.expect("shift table should be added");
         assert!(updated.contains("[controller_shift]"), "{}", updated);
         assert!(outcome.seen.contains("controller_shift/south"));
@@ -476,14 +536,28 @@ mod tests {
 
     #[test]
     fn deleted_controller_bind_stays_deleted() {
-        let embedded = "[user]\nf5 = \"look\"\n\n[controller]\nstart = \"interact_mode\"\n";
-        let user = "[user]\nf5 = \"look\"\n\n[controller]\n";
-        let seen: BTreeSet<String> = ["f5".to_string(), "controller/start".to_string()].into();
-        let outcome = refresh_user_keybinds(user, embedded, Some(&seen)).unwrap();
+        let embedded = "[controller]\nstart = \"interact_mode\"\nsouth = \"look\"\n";
+        let user = "[controller]\nsouth = \"look\"\n";
+        let seen: BTreeSet<String> =
+            ["controller/start".to_string(), "controller/south".to_string()].into();
+        let outcome = refresh_controller(user, embedded, Some(&seen)).unwrap();
         assert!(
             outcome.updated_file.is_none(),
             "tombstoned controller bind must not resurrect"
         );
+    }
+
+    #[test]
+    fn controller_wheel_default_slices_refresh_by_label() {
+        // A new shipped wheel slice appends; a user-deleted (tombstoned)
+        // one does not resurrect.
+        let embedded = "[[controller_wheel]]\nlabel = \"look\"\ncommand = \"look\"\n\n[[controller_wheel]]\nlabel = \"search\"\ncommand = \"search\"\n";
+        let user = "[[controller_wheel]]\nlabel = \"look\"\ncommand = \"look\"\n";
+        let seen: BTreeSet<String> = ["wheel/look".to_string()].into();
+        let outcome = refresh_controller(user, embedded, Some(&seen)).unwrap();
+        let updated = outcome.updated_file.expect("search slice should be added");
+        assert!(updated.contains("label = \"search\""), "{}", updated);
+        assert!(outcome.seen.contains("wheel/search"));
     }
 
     #[test]

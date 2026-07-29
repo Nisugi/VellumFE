@@ -153,6 +153,15 @@ impl Config {
         Ok(Self::global_dir()?.join("keybinds.toml"))
     }
 
+    /// Get path to common (global) controller file. Controller binds are
+    /// global-only (pads are per-desk, not per-character) and live in their
+    /// own file so a controller config can be shared/version-controlled as
+    /// one unit and a malformed edit can't take keyboard input down with it.
+    /// Returns: ~/.vellum-fe/global/controller.toml
+    pub fn common_controller_path() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("controller.toml"))
+    }
+
     /// Get path to common (global) hotbars file
     /// Returns: ~/.vellum-fe/global/hotbars.toml
     pub fn common_hotbars_path() -> Result<PathBuf> {

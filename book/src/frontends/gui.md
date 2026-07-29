@@ -172,7 +172,8 @@ Everything else is yours to bind with **`.controller`**: each button
 maps to a keybind action or macro, with a "press a button" capture in
 the editor (`look` on South and interact mode on Start ship as
 defaults). Bindings live in the `[controller]` table of the global
-keybinds.toml and apply to all characters.
+[controller.toml](../configuration/controller-toml.md) and apply to all
+characters.
 
 Beyond plain bindings:
 

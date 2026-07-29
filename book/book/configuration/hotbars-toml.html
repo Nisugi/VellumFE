@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-a6dbb891.js";
+            window.path_to_searchindex_js = "../searchindex-0adf8b02.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-e125f080.js"></script>
+        <script src="../toc-ba9683ee.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -188,6 +188,7 @@ with the same name replaces the global one entirely.</p>
 <pre><code class="language-toml">[[bars]]
 name = "default"      # referenced by hotkeybar windows in layout.toml
 title = "Actions"
+icon_size = 48        # optional: icon face edge in px (GUI; default 24)
 
 [[bars.buttons]]
 id = "hide"           # stable id, unique within the bar
@@ -245,6 +246,7 @@ dim = true
 <tr><td><code>ct_active</code></td><td>—</td><td>Casttime is running</td></tr>
 <tr><td><code>indicator</code></td><td><code>id</code>, <code>active</code></td><td>A status indicator matches: <code>standing</code>, <code>kneeling</code>, <code>sitting</code>, <code>prone</code>, <code>stunned</code>, <code>bleeding</code>, <code>hidden</code>, <code>invisible</code>, <code>webbed</code>, <code>joined</code>, <code>dead</code></td></tr>
 <tr><td><code>vital</code></td><td><code>vital</code>, <code>cmp</code>, <code>value</code>, <code>unit</code></td><td>A vital compares true: <code>health</code>/<code>mana</code>/<code>stamina</code>/<code>spirit</code>, <code>cmp</code> one of <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code>, <code>unit</code> <code>"percent"</code> or <code>"absolute"</code></td></tr>
+<tr><td><code>spell_affordable</code></td><td><code>number</code></td><td>The bundled spell table lists static costs for that spell number and your current absolute vitals cover them. Works without Lich. Fails closed on unknown numbers, variable (formula) costs, or before vitals data arrives; unlike Lich’s <code>affordable?</code> it does not model feats or debuffs.</td></tr>
 <tr><td><code>all</code> / <code>any</code></td><td><code>conditions = [ ... ]</code></td><td>All / any of the nested conditions match</td></tr>
 </tbody>
 </table>
@@ -259,9 +261,66 @@ dim = true
 <tr><td><code>label</code></td><td>Replace the button text</td></tr>
 <tr><td><code>fg</code> / <code>bg</code></td><td>Text / background color (<code>#rrggbb</code>)</td></tr>
 <tr><td><code>dim</code></td><td>Render the button dimmed</td></tr>
+<tr><td><code>icon</code></td><td>Icon override for this state (see Icons below)</td></tr>
 </tbody>
 </table>
 </div>
+<p>A state may also carry its own <code>[bars.buttons.states.countdown]</code> (same
+schema as the button-level countdown); while the state is active it
+replaces the button-level source — e.g. show the cooldown timer only in
+the “on cooldown” state. Likewise <code>command = "..."</code> on a state replaces
+the button’s command while active (literal text — <code>;eq ...</code> commands are
+evaluated by Lich, so dynamic behavior belongs in the command itself).</p>
+<h2 id="icons-gui"><a class="header" href="#icons-gui">Icons (GUI)</a></h2>
+<p>Buttons can show an image face from a registered sprite sheet. Sheets are
+tiled into fixed-size cells with no padding, numbered 1-based left→right
+then top→bottom — the barbar convention. The TUI always renders the text
+label; icons are ignored there, and the GUI falls back to text when no
+registered sheet matches.</p>
+<p>Sheets live in one of two places:</p>
+<ul>
+<li><strong>Shared store</strong> (<code>~/.vellum-fe/global/icons/</code> with an <code>icons.toml</code>
+manifest) — available to every skin, and with no skin active at all.
+This is the default and the right choice for personal icon sets.</li>
+<li><strong>Active skin</strong> (the skin’s <code>[sheets]</code> table in <code>skin.toml</code>, see the
+skin docs) — travels with the skin; a skin sheet overrides a shared
+sheet with the same name.</li>
+</ul>
+<p><strong>The <code>.hotbars</code> editor does all of this without TOML:</strong> the button form
+has a Face selector (Text / Icon / Icon + label), a sheet dropdown, a
+clickable “Pick cell from sheet” grid, grayscale/border controls, and the
+same icon controls on every state card. The editor’s “Icon sheets”
+section registers a new sheet — give it a name and an image path and it
+copies the image into the shared store (or, with “All skins” unticked,
+into the active skin) and records it in the matching manifest for you.
+Each state card also carries its own countdown source (“Countdown while
+active”) that replaces the button-level one while the state matches.</p>
+<pre><code class="language-toml">[[bars.buttons]]
+id = "hide"
+label = "Hide"
+command = "hide"
+icon_mode = "icon"            # "text" (default) | "icon" | "icon_and_label"
+
+[bars.buttons.icon]
+sheet = "rogue"               # sheet name from the skin's [sheets] table
+cell = 5                      # 1-based cell index
+grayscale = false             # desaturate (e.g. for a "not ready" look)
+border = "#00ff00"            # optional solid border over the icon
+border_width = 3              # pixels, 1-10 (default 2)
+border_end = "#004400"        # optional: gradient border toward this color
+border_dir = "radial"         # horizontal (default) | vertical |
+                              # diagonal_down | diagonal_up | radial | square
+</code></pre>
+<p>With <code>icon_mode = "icon"</code> the label moves into the hover tooltip. States
+can swap the icon (a different cell, or the same cell grayscaled) via
+<code>[bars.buttons.states.style.icon]</code> — dimmed states automatically use the
+grayscale variant. The sheet entry itself — in the shared store’s
+<code>icons.toml</code> (paths relative to <code>global/icons/</code>) or a skin’s <code>skin.toml</code>
+(paths relative to the skin directory) — looks the same either way:</p>
+<pre><code class="language-toml">[sheets.rogue]
+path = "icons/rogue.png"      # image path; absolute paths allowed
+cell = 64                     # cell edge in pixels (default 64)
+</code></pre>
 <h2 id="reloading"><a class="header" href="#reloading">Reloading</a></h2>
 <p><code>.reload hotbars</code> re-reads the file; the editor saves and applies
 immediately.</p>

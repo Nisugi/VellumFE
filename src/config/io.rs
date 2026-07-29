@@ -243,6 +243,18 @@ impl Config {
             tracing::info!("Extracted keybinds.toml to {:?}", keybinds_path);
         }
 
+        // Controller config lives in its own controller.toml. Before extracting
+        // the shipped default, migrate any [controller*] tables an older install
+        // left in keybinds.toml into controller.toml (and strip them from
+        // keybinds.toml), so existing controller customizations carry over.
+        Self::migrate_controller_out_of_keybinds()?;
+        let controller_path = Self::common_controller_path()?;
+        if !controller_path.exists() {
+            fs::write(&controller_path, DEFAULT_CONTROLLER)
+                .context("Failed to write controller.toml")?;
+            tracing::info!("Extracted controller.toml to {:?}", controller_path);
+        }
+
         // Extract macros.toml (web frontend macro buttons) to global directory
         let macros_path = Self::global_dir()?.join("macros.toml");
         if !macros_path.exists() {
@@ -262,6 +274,74 @@ impl Config {
         // refresh managed data files the user never modified.
         super::defaults_refresh::refresh_shipped_defaults()?;
 
+        Ok(())
+    }
+
+    /// The top-level TOML keys that belong to controller.toml. Kept in sync
+    /// with the loaders in `keybinds.rs` and the split in
+    /// `defaults/globals/controller.toml`.
+    const CONTROLLER_TABLE_KEYS: &'static [&'static str] = &[
+        "controller",
+        "controller_shift",
+        "controller_overlay",
+        "controller_rumble",
+        "controller_tuning",
+        "controller_wheel",
+        "controller_wheels",
+        "controller_wheels_meta",
+    ];
+
+    /// Pure core of the controller migration: given the current keybinds.toml
+    /// text, split any `[controller*]` tables out into a fresh controller.toml
+    /// document, returning `(controller_toml, remaining_keybinds_toml)`.
+    /// Returns None when there is nothing to move (no controller tables, or
+    /// the file doesn't parse — the caller leaves both files alone). Kept pure
+    /// so the migration can be unit-tested without touching the filesystem.
+    fn split_controller_tables(keybinds_text: &str) -> Option<(String, String)> {
+        let mut keybinds_doc = keybinds_text.parse::<toml_edit::DocumentMut>().ok()?;
+        let mut controller_doc = toml_edit::DocumentMut::new();
+        let mut moved_any = false;
+        for &key in Self::CONTROLLER_TABLE_KEYS {
+            if let Some(item) = keybinds_doc.remove(key) {
+                controller_doc.insert(key, item);
+                moved_any = true;
+            }
+        }
+        moved_any.then(|| (controller_doc.to_string(), keybinds_doc.to_string()))
+    }
+
+    /// One-time migration for installs that predate the keybinds/controller
+    /// split: move any `[controller*]` tables out of the global keybinds.toml
+    /// into controller.toml, then strip them from keybinds.toml. Runs only
+    /// when controller.toml is absent (so it can't clobber a controller.toml
+    /// the user has since edited) and only when keybinds.toml actually holds
+    /// controller tables (otherwise a no-op). Comment-preserving via
+    /// `toml_edit`; both writes are atomic (a `.bak` backup each).
+    fn migrate_controller_out_of_keybinds() -> Result<()> {
+        let controller_path = Self::common_controller_path()?;
+        if controller_path.exists() {
+            return Ok(()); // already split; nothing to migrate
+        }
+        let keybinds_path = Self::common_keybinds_path()?;
+        let Ok(keybinds_text) = fs::read_to_string(&keybinds_path) else {
+            return Ok(()); // no keybinds.toml (fresh install) — extract handles it
+        };
+        let Some((controller_toml, keybinds_toml)) = Self::split_controller_tables(&keybinds_text)
+        else {
+            // Nothing to move, or a keybinds.toml the user broke (their
+            // problem to fix) — never block startup. The shipped controller
+            // default extracts either way.
+            return Ok(());
+        };
+
+        write_atomic(&controller_path, controller_toml)
+            .with_context(|| format!("Failed to write controller file: {:?}", controller_path))?;
+        write_atomic(&keybinds_path, keybinds_toml)
+            .with_context(|| format!("Failed to write keybinds file: {:?}", keybinds_path))?;
+        tracing::info!(
+            "Migrated controller tables from keybinds.toml into {:?}",
+            controller_path
+        );
         Ok(())
     }
 
@@ -702,6 +782,64 @@ mod tests {
         global.active_skin = Some("stale".to_string());
         global.merge_with(Config::default());
         assert_eq!(global.active_skin, None);
+    }
+
+    /// The migration splits every `[controller*]` table out of keybinds.toml
+    /// into controller.toml, leaving `[user]`/`[app]` behind untouched.
+    #[test]
+    fn split_controller_tables_moves_controller_and_keeps_user() {
+        let keybinds = "\
+[app]
+quit = \"ctrl+c\"
+
+[user]
+f5 = \"look\"
+
+[controller]
+start = \"interact_mode\"
+south = { macro_text = \"look\\r\" }
+
+[controller_tuning]
+deadzone = 40
+
+[[controller_wheel]]
+label = \"look\"
+command = \"look\"
+";
+        let (controller, remaining) =
+            Config::split_controller_tables(keybinds).expect("controller tables present");
+
+        // Controller doc got every controller table.
+        assert!(controller.contains("[controller]"), "{}", controller);
+        assert!(controller.contains("[controller_tuning]"), "{}", controller);
+        assert!(controller.contains("[[controller_wheel]]"), "{}", controller);
+        assert!(controller.contains("start = \"interact_mode\""), "{}", controller);
+        // And the keyboard tables were left out of it.
+        assert!(!controller.contains("[user]"), "{}", controller);
+        assert!(!controller.contains("[app]"), "{}", controller);
+
+        // Keybinds doc kept [app]/[user] and lost every controller table.
+        assert!(remaining.contains("[app]"), "{}", remaining);
+        assert!(remaining.contains("f5 = \"look\""), "{}", remaining);
+        assert!(!remaining.contains("[controller"), "{}", remaining);
+
+        // Both halves parse.
+        let _: toml::Value = toml::from_str(&controller).expect("controller parses");
+        let _: toml::Value = toml::from_str(&remaining).expect("keybinds parses");
+    }
+
+    /// A keybinds.toml with no controller tables is a no-op (None): the
+    /// caller leaves both files alone and extraction seeds the default.
+    #[test]
+    fn split_controller_tables_noop_without_controller() {
+        let keybinds = "[app]\nquit = \"ctrl+c\"\n\n[user]\nf5 = \"look\"\n";
+        assert!(Config::split_controller_tables(keybinds).is_none());
+    }
+
+    /// Broken TOML is left untouched (None) rather than blocking startup.
+    #[test]
+    fn split_controller_tables_ignores_unparseable() {
+        assert!(Config::split_controller_tables("this = = not valid").is_none());
     }
 
     #[test]
