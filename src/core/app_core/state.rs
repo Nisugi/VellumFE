@@ -2899,7 +2899,6 @@ impl AppCore {
             ".lockwindows".to_string(),
             ".lockall".to_string(),
             // Containers
-            ".containers".to_string(),
             ".hidecontainers".to_string(),
             // Menu system
             ".menu".to_string(),
@@ -3052,7 +3051,6 @@ impl AppCore {
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
-        self.add_system_message("  .knownwindows           - List windows the game has offered (containers/dialogs); toggle show/hide");
         self.add_system_message("  .sorter [on|off]        - Categorize 'look in container' output by item type");
         self.add_system_message("  .foreach ... in <bag>; cmd; cmd - Batch commands over matching container items (.foreach for usage)");
         self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, foreach run)");
@@ -4631,8 +4629,8 @@ impl AppCore {
                 disabled: false,
             },
             crate::data::ui_state::PopupMenuItem {
-                text: "Known windows (game-offered) >".to_string(),
-                command: ".knownwindows".to_string(),
+                text: "Show/Hide windows >".to_string(),
+                command: "menu:knownwindows".to_string(),
                 disabled: false,
             },
         ]
@@ -4702,6 +4700,7 @@ impl AppCore {
             "layouts" => self.build_layouts_submenu(),
             "themes" => self.build_themes_submenu(),
             "windows" => self.build_windows_submenu(),
+            "knownwindows" => self.build_known_windows_menu(),
             _ => Vec::new(),
         }
     }

@@ -1775,21 +1775,6 @@ impl AppCore {
                 self.needs_render = true;
             }
 
-            // The old all-or-nothing container discovery toggle is retired:
-            // container windows are now per-container choices in the
-            // known-windows list, so alias .containers to that.
-            "containers" => {
-                self.add_system_message(
-                    "Container windows are now per-container: tick them in the known-windows list.",
-                );
-                let items = self.build_known_windows_menu();
-                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
-                    items,
-                    (40, 12),
-                ));
-                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
-                self.needs_render = true;
-            }
             "hidecontainers" => {
                 // No args = close all, with arg = close matching container
                 let args = parts.get(1..).unwrap_or(&[]).join(" ");
@@ -1817,20 +1802,6 @@ impl AppCore {
                 // Switch to Menu input mode
                 self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
                 tracing::debug!("Input mode set to Menu: {:?}", self.ui_state.input_mode);
-                self.needs_render = true;
-            }
-
-            // Known-windows list: the windows the game has offered
-            // (containers/dialogs/streams), each togglable show/hide. On the
-            // GUI this opens its checkbox panel; on the TUI it's a popup menu.
-            // (`.windows` is taken by list_windows above — use .knownwindows.)
-            "knownwindows" => {
-                let items = self.build_known_windows_menu();
-                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
-                    items,
-                    (40, 12),
-                ));
-                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
                 self.needs_render = true;
             }
 
@@ -2693,12 +2664,12 @@ mod foreach_tests {
         let mut core = AppCore::new_for_test();
         for cmd in [
             ".menu",
-            ".knownwindows",
             ".windows",
             "", // empty-menu placeholder command
             "__SUBMENU__windows",
             "__TOGGLE_WINDOW__stow",
             "menu:windows",
+            "menu:knownwindows",
         ] {
             let _ = core.send_command(cmd.to_string());
         }

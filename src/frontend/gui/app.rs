@@ -4024,17 +4024,9 @@ impl VellumGuiApp {
         }
         if action == "action:addwindow" {
             let mut items = self.app_core.build_add_window_menu();
-            // Surface the custom-window authoring panel + the known-windows
-            // list at the top of the Add Widget menu (GUI-local; the shared
-            // core menu builder stays untouched).
-            items.insert(
-                0,
-                PopupMenuItem {
-                    text: "Known Windows (game dialogs)…".to_string(),
-                    command: "action:knownwindows".to_string(),
-                    disabled: false,
-                },
-            );
+            // Surface the custom-window authoring panel at the top of the
+            // Add Widget menu (GUI-local; the shared core menu builder stays
+            // untouched). The show/hide list lives under Windows > Show/Hide.
             items.insert(
                 0,
                 PopupMenuItem {

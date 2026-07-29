@@ -677,6 +677,13 @@ impl VellumGuiApp {
         }
 
         if let Some(submenu) = command.strip_prefix("menu:") {
+            // The GUI shows the show/hide list as its richer checkbox panel
+            // rather than a nested menu (the TUI uses the menu form).
+            if submenu == "knownwindows" {
+                self.open_known_windows_editor();
+                self.close_menus_to_normal();
+                return;
+            }
             let items = self.app_core.build_submenu(submenu);
             if items.is_empty() {
                 self.app_core

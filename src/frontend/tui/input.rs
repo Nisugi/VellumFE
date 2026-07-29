@@ -4183,6 +4183,7 @@ impl TuiFrontend {
                 "widgetpicker" | "addwindow" => app_core.build_add_window_menu(),
                 "hidewindow" => app_core.build_hide_window_menu(),
                 "editwindow" => app_core.build_edit_window_menu(),
+                "knownwindows" => app_core.build_known_windows_menu(),
                 _ => {
                     app_core.ui_state.popup_menu = None;
                     app_core.ui_state.input_mode = InputMode::Normal;
