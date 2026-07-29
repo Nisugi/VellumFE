@@ -546,6 +546,22 @@ pub struct RumbleConfig {
     pub patterns: Vec<RumblePattern>,
 }
 
+impl RumbleConfig {
+    /// The built-in rumble pattern names, always selectable.
+    pub const BUILTIN_PATTERNS: &'static [&'static str] = &["short", "long", "double"];
+
+    /// Every selectable rumble pattern name — the built-ins followed by any
+    /// user-defined patterns — for editor picklists (highlight rules, event
+    /// rows). Single source shared by the TUI and GUI highlight forms so the
+    /// two can't offer different sets.
+    pub fn pattern_names(&self) -> Vec<String> {
+        let mut names: Vec<String> =
+            Self::BUILTIN_PATTERNS.iter().map(|s| s.to_string()).collect();
+        names.extend(self.patterns.iter().map(|p| p.name.clone()));
+        names
+    }
+}
+
 /// A user-defined vibration pattern: `pulses` buzzes of `strength`
 /// lasting `pulse_ms` each, separated by `gap_ms` of silence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

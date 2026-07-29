@@ -345,17 +345,8 @@ impl VellumGuiApp {
         // Render the form on top of the browser when active.
         if let Some(mut form) = state.form.take() {
             // "(none)" + built-ins + user-defined patterns from the
-            // controller editor's Rumble tab.
-            let mut rumble_options: Vec<String> =
-                vec!["short".to_string(), "long".to_string(), "double".to_string()];
-            rumble_options.extend(
-                self.app_core
-                    .config
-                    .controller_rumble
-                    .patterns
-                    .iter()
-                    .map(|p| p.name.clone()),
-            );
+            // controller editor's Rumble tab (shared source with the TUI form).
+            let rumble_options: Vec<String> = self.app_core.config.controller_rumble.pattern_names();
             let mut form_open = true;
             let mut submitted = false;
             let mut cancelled = false;

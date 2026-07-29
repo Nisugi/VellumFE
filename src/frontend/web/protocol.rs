@@ -326,6 +326,11 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "rules": rules,
                 "sounds": sounds,
                 "error": error,
+                // The canonical highlight-field catalog: the phone renders its
+                // form from this so a field added to HIGHLIGHT_FIELDS surfaces
+                // on the phone without a client edit, and can never silently
+                // drift from the desktop's field set.
+                "fields": crate::config::highlight_web_fields(),
             }),
         ),
         RemoteDelta::Settings {

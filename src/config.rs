@@ -33,7 +33,9 @@ mod widgets;
 mod window_def;
 
 pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle, UiColors};
-pub use highlights::{EventAction, EventPattern, HighlightPattern, RedirectMode};
+pub use highlights::{
+    highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
+};
 pub use hotbars::{
     EffectCategory, GradientDir, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
     HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, HotbarsConfig, IconMode, NameMatch,

@@ -3006,6 +3006,23 @@ function openHlForm(name) {
     hlColors.bg && /^#[0-9a-f]{6}$/i.test(hlColors.bg) ? hlColors.bg : "#333333";
   document.getElementById("hl-bold").checked = !!rule.bold;
   document.getElementById("hl-line").checked = !!rule.color_entire_line;
+  document.getElementById("hl-fast-parse").checked = !!rule.fast_parse;
+  document.getElementById("hl-squelch").checked = !!rule.squelch;
+  document.getElementById("hl-silent-prompt").checked = !!rule.silent_prompt;
+  document.getElementById("hl-category").value = rule.category || "";
+  document.getElementById("hl-sound-volume").value =
+    rule.sound_volume != null ? rule.sound_volume : "";
+  document.getElementById("hl-rumble").value = rule.rumble || "";
+  document.getElementById("hl-replace").value = rule.replace || "";
+  document.getElementById("hl-stream").value = rule.stream || "";
+  document.getElementById("hl-window").value = rule.window || "";
+  // Redirect: "off" when there's no target; else copy/only from the mode.
+  document.getElementById("hl-redirect-to").value = rule.redirect_to || "";
+  document.getElementById("hl-redirect-mode").value = !rule.redirect_to
+    ? "off"
+    : rule.redirect_mode === "redirect_copy"
+      ? "copy"
+      : "only";
 
   // Sound dropdown: server-listed files, plus the rule's current value if
   // it references something not in the folder (keeps it selectable).
@@ -3088,6 +3105,21 @@ function handleHighlightsReply(d) {
   }
   hlRules = d.rules || {};
   hlSounds = d.sounds || [];
+  // The server ships the canonical highlight-field catalog (config::
+  // HIGHLIGHT_FIELDS). If it ever lists a field this form has no control for,
+  // that field silently can't be edited on the phone — surface it in the dev
+  // console so the drift is visible rather than invisible. Element ids follow
+  // the hl-<field> convention with a few historical aliases.
+  if (Array.isArray(d.fields)) {
+    const idFor = { fg: "hl-fg-pick", bg: "hl-bg-pick", color_entire_line: "hl-line" };
+    const missing = d.fields.filter((f) => {
+      const id = idFor[f] || `hl-${f.replace(/_/g, "-")}`;
+      return !document.getElementById(id);
+    });
+    if (missing.length) {
+      console.warn("Highlight form is missing controls for server fields:", missing);
+    }
+  }
   if (hlAwaitingSave) {
     hlAwaitingSave = false;
     showHlList();
@@ -3104,16 +3136,53 @@ hlForm.addEventListener("submit", (ev) => {
     hlStatusMsg("Name and pattern are required.", true);
     return;
   }
-  // Merge the form over the existing rule so fields the form doesn't
-  // cover survive the round trip.
+  // Merge the form over the existing rule so any future field the form
+  // doesn't yet cover survives the round trip. The form now edits the full
+  // HighlightPattern, so each control writes its field (and clears it when
+  // empty rather than leaving a stale value from `base`).
   const base = (hlEditingName && hlRules[hlEditingName]) || {};
   const rule = { ...base, pattern };
+  // Small helpers: set from a text input or delete the key when blank.
+  const setText = (key, id) => {
+    const v = document.getElementById(id).value.trim();
+    if (v) rule[key] = v; else delete rule[key];
+  };
   const sound = document.getElementById("hl-sound").value;
   if (hlColors.fg) rule.fg = hlColors.fg; else delete rule.fg;
   if (hlColors.bg) rule.bg = hlColors.bg; else delete rule.bg;
   if (sound) rule.sound = sound; else delete rule.sound;
   rule.bold = document.getElementById("hl-bold").checked;
   rule.color_entire_line = document.getElementById("hl-line").checked;
+  rule.fast_parse = document.getElementById("hl-fast-parse").checked;
+  rule.squelch = document.getElementById("hl-squelch").checked;
+  rule.silent_prompt = document.getElementById("hl-silent-prompt").checked;
+  setText("category", "hl-category");
+  setText("rumble", "hl-rumble");
+  setText("replace", "hl-replace");
+  setText("stream", "hl-stream");
+  setText("window", "hl-window");
+
+  // Sound volume: a number in [0, 1], or cleared when blank/invalid.
+  const volRaw = document.getElementById("hl-sound-volume").value.trim();
+  const vol = parseFloat(volRaw);
+  if (volRaw !== "" && !Number.isNaN(vol)) {
+    rule.sound_volume = Math.min(1, Math.max(0, vol));
+  } else {
+    delete rule.sound_volume;
+  }
+
+  // Redirect: the mode select drives both fields. "Off" clears the redirect
+  // entirely; otherwise redirect_to is required and redirect_mode is set.
+  const redirectTo = document.getElementById("hl-redirect-to").value.trim();
+  const redirectMode = document.getElementById("hl-redirect-mode").value;
+  if (redirectMode === "off" || !redirectTo) {
+    delete rule.redirect_to;
+    delete rule.redirect_mode;
+  } else {
+    rule.redirect_to = redirectTo;
+    rule.redirect_mode =
+      redirectMode === "copy" ? "redirect_copy" : "redirect_only";
+  }
 
   hlStatusMsg("Saving…", false);
   hlAwaitingSave = true;

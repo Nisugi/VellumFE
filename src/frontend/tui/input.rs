@@ -2270,6 +2270,7 @@ impl TuiFrontend {
                                         name, pattern,
                                     );
                                     form.set_scope(is_global);
+                                    form.set_rumble_options(app_core.config.controller_rumble.pattern_names());
                                     self.highlight_form = Some(form);
                                     app_core.ui_state.input_mode = InputMode::HighlightForm;
                                 }
@@ -2277,9 +2278,10 @@ impl TuiFrontend {
                         }
                         crate::core::menu_actions::MenuAction::New
                         | crate::core::menu_actions::MenuAction::Add => {
-                            self.highlight_form = Some(
-                                crate::frontend::tui::highlight_form::HighlightFormWidget::new(),
-                            );
+                            let mut form =
+                                crate::frontend::tui::highlight_form::HighlightFormWidget::new();
+                            form.set_rumble_options(app_core.config.controller_rumble.pattern_names());
+                            self.highlight_form = Some(form);
                             app_core.ui_state.input_mode = InputMode::HighlightForm;
                         }
                         crate::core::menu_actions::MenuAction::Delete => {

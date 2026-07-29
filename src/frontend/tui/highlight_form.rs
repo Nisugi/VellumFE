@@ -16,7 +16,7 @@ use tui_textarea::TextArea;
 
 // Keep popup geometry in one place so dragging + rendering stay in sync
 const POPUP_WIDTH: u16 = 70;
-const POPUP_HEIGHT: u16 = 23;
+const POPUP_HEIGHT: u16 = 24;
 
 /// Actions that can result from mouse interaction with the highlight form
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -91,9 +91,15 @@ pub struct HighlightFormWidget {
     // Scope (Global vs Character)
     is_global: bool, // true = save to global/, false = save to character profile
 
-    // Rumble pattern name: carried through untouched so a TUI edit never
-    // strips a value set in the GUI editor (rumble editing is GUI-only).
+    // Rumble pattern: a picklist like sound/redirect. `rumble_options` is the
+    // selectable set ("(none)" at index 0, then RumbleConfig::pattern_names),
+    // populated via set_rumble_options from the live controller config so the
+    // TUI offers the same patterns as the GUI. `rumble` mirrors the selected
+    // option and is what saves. Field focus index 19 (appended last so no
+    // existing index shifts).
     rumble: Option<String>,
+    rumble_options: Vec<String>,
+    rumble_index: usize,
 
     // Popup position (for dragging)
     pub popup_x: u16,
@@ -207,6 +213,8 @@ impl HighlightFormWidget {
             window_filter,
             is_global: true,        // Default to global scope
             rumble: None,
+            rumble_options: vec!["(none)".to_string()],
+            rumble_index: 0,
             popup_x: 0,
             popup_y: 0,
             is_dragging: false,
@@ -316,15 +324,47 @@ impl HighlightFormWidget {
         self.is_global
     }
 
+    /// Provide the selectable rumble patterns (built-ins + user patterns from
+    /// the controller config), with "(none)" prepended at index 0. Called
+    /// right after construction from a context that has the live Config, so
+    /// the TUI form offers the same set as the GUI. Re-syncs the dropdown
+    /// index to the currently-loaded `rumble` value.
+    pub fn set_rumble_options(&mut self, patterns: Vec<String>) {
+        let mut options = vec!["(none)".to_string()];
+        options.extend(patterns);
+        self.rumble_options = options;
+        // Point the index at the loaded rumble value if it's still offered;
+        // if a rule references a pattern no longer defined, keep it selectable
+        // by appending it so an edit doesn't silently drop it.
+        self.rumble_index = match &self.rumble {
+            None => 0,
+            Some(name) => match self.rumble_options.iter().position(|o| o == name) {
+                Some(idx) => idx,
+                None => {
+                    self.rumble_options.push(name.clone());
+                    self.rumble_options.len() - 1
+                }
+            },
+        };
+    }
+
+    /// Sync `rumble` from the current dropdown index (index 0 = "(none)").
+    fn update_rumble_from_index(&mut self) {
+        self.rumble = match self.rumble_options.get(self.rumble_index) {
+            Some(opt) if opt != "(none)" => Some(opt.clone()),
+            _ => None,
+        };
+    }
+
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 19; // 0-18 (17/18 = stream/window filters)
+        self.focused_field = (self.focused_field + 1) % 20; // 0-19 (19 = rumble picklist)
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            18
+            19
         } else {
             self.focused_field - 1
         };
@@ -426,6 +466,12 @@ impl HighlightFormWidget {
                     if self.redirect_mode_index > 0 {
                         self.redirect_mode_index -= 1;
                     }
+                } else if self.focused_field == 19 {
+                    // Rumble dropdown
+                    if self.rumble_index > 0 {
+                        self.rumble_index -= 1;
+                        self.update_rumble_from_index();
+                    }
                 }
                 None
             }
@@ -443,6 +489,12 @@ impl HighlightFormWidget {
                     // Redirect mode dropdown
                     if self.redirect_mode_index < 2 {
                         self.redirect_mode_index += 1;
+                    }
+                } else if self.focused_field == 19 {
+                    // Rumble dropdown
+                    if self.rumble_index + 1 < self.rumble_options.len() {
+                        self.rumble_index += 1;
+                        self.update_rumble_from_index();
                     }
                 }
                 None
@@ -473,6 +525,14 @@ impl HighlightFormWidget {
                     14 => self.silent_prompt = !self.silent_prompt,
                     15 => self.is_global = true, // Select "Global" scope
                     16 => self.is_global = false, // Select "Character" scope
+                    19 => {
+                        // Rumble dropdown: cycle (none) -> patterns -> (none)
+                        if !self.rumble_options.is_empty() {
+                            self.rumble_index =
+                                (self.rumble_index + 1) % self.rumble_options.len();
+                            self.update_rumble_from_index();
+                        }
+                    }
                     _ => {}
                 }
                 None
@@ -1356,6 +1416,10 @@ impl HighlightFormWidget {
             buf,
             theme,
         );
+        current_y += 1;
+
+        // Field 19: Rumble pattern (dropdown)
+        self.render_rumble_dropdown(x + 2, current_y, input_start, input_width, buf, theme);
     }
 
     fn render_text_row(
@@ -1549,6 +1613,53 @@ impl HighlightFormWidget {
         };
 
         // Render current value (highlight if focused, no background)
+        let value_color = crossterm_bridge::to_ratatui_color(if focused {
+            theme.form_label_focused
+        } else {
+            theme.text_disabled
+        });
+        for (i, ch) in current_value
+            .chars()
+            .enumerate()
+            .take(available_width as usize)
+        {
+            buf[(input_x + i as u16, y)]
+                .set_char(ch)
+                .set_fg(value_color)
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+    }
+
+    fn render_rumble_dropdown(
+        &self,
+        x: u16,
+        y: u16,
+        input_x: u16,
+        available_width: u16,
+        buf: &mut Buffer,
+        theme: &crate::theme::AppTheme,
+    ) {
+        let focused = self.focused_field == 19;
+        let label_color = crossterm_bridge::to_ratatui_color(if focused {
+            theme.form_label_focused
+        } else {
+            theme.form_label
+        });
+
+        let label = "Rumble:";
+        for (i, ch) in label.chars().enumerate() {
+            buf[(x + i as u16, y)]
+                .set_char(ch)
+                .set_fg(label_color)
+                .set_bg(crossterm_bridge::to_ratatui_color(theme.browser_background));
+        }
+
+        let current_value = self
+            .rumble_options
+            .get(self.rumble_index)
+            .map(|s| s.as_str())
+            .unwrap_or("(none)");
+
         let value_color = crossterm_bridge::to_ratatui_color(if focused {
             theme.form_label_focused
         } else {
@@ -1912,6 +2023,50 @@ mod tests {
         };
         assert_eq!(pattern.stream.as_deref(), Some("combat"));
         assert_eq!(pattern.window.as_deref(), Some("combat_win"));
+    }
+
+    /// The TUI form can now EDIT rumble (previously it only carried the value
+    /// through untouched). Loading a rule with a rumble pattern points the
+    /// dropdown at it, and cycling to a different pattern saves that choice.
+    #[test]
+    fn tui_form_can_edit_rumble() {
+        let mut pattern = pattern_with_filters();
+        pattern.rumble = Some("long".to_string());
+        let mut form = HighlightFormWidget::new_edit("test".to_string(), &pattern);
+        form.set_rumble_options(vec![
+            "short".to_string(),
+            "long".to_string(),
+            "double".to_string(),
+        ]);
+        // Loaded value selected: options = [(none), short, long, double] → idx 2.
+        assert_eq!(form.rumble.as_deref(), Some("long"));
+        assert_eq!(form.rumble_index, 2);
+
+        // Cycle the dropdown forward (long → double) and confirm it saves.
+        form.focused_field = 19;
+        form.rumble_index += 1;
+        form.update_rumble_from_index();
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.rumble.as_deref(), Some("double"));
+    }
+
+    /// A rumble pattern that's no longer defined in the controller config
+    /// stays selectable (appended) so editing an unrelated field doesn't drop
+    /// it — the same "don't clobber unoffered values" rule as the keybind form.
+    #[test]
+    fn tui_form_preserves_unknown_rumble_pattern() {
+        let mut pattern = pattern_with_filters();
+        pattern.rumble = Some("custom-retired".to_string());
+        let mut form = HighlightFormWidget::new_edit("test".to_string(), &pattern);
+        form.set_rumble_options(vec!["short".to_string(), "long".to_string()]);
+        // Unknown pattern was appended and selected, not lost.
+        assert_eq!(form.rumble.as_deref(), Some("custom-retired"));
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.rumble.as_deref(), Some("custom-retired"));
     }
 
     #[test]

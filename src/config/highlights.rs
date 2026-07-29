@@ -99,6 +99,153 @@ fn is_default_redirect_mode(mode: &RedirectMode) -> bool {
     *mode == RedirectMode::default()
 }
 
+// ===================================================================
+// Highlight field catalog — the parity guard.
+//
+// Unlike scalar settings (registry.rs, which DRIVES generic rendering),
+// each highlight editor lays its fields out by hand in its own toolkit
+// (the GUI grid, the TUI form, the phone's static HTML). So the catalog
+// can't render;
+// instead it is the single list of what a highlight rule EXPOSES, and a
+// test cross-checks it against each editor's coverage manifest — a small
+// list every editor keeps next to its form. If an editor omits a field
+// that applies to it (and it isn't exempt), the build fails. This is the
+// keybind-action / registry pattern applied at the enforcement layer.
+// ===================================================================
+
+/// The three editor frontends a highlight field can appear in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HlFrontend {
+    Tui,
+    Gui,
+    Web,
+}
+
+/// One user-facing field of a `HighlightPattern`. Kept intentionally minimal
+/// — just the identity (`name`) and where it must be editable (`applies_to`)
+/// — because that is all the parity guard consumes. Widget-kind/label metadata
+/// is deliberately NOT carried here: no code renders from this catalog today,
+/// so adding it would be speculative dead weight. A future editor-generation
+/// pass can extend `HlFieldDef` when it has a real consumer.
+pub struct HlFieldDef {
+    /// Serde field name on `HighlightPattern` (the catalog's identity).
+    pub name: &'static str,
+    /// Frontends whose editors are expected to edit this field. Every
+    /// listed frontend's coverage manifest must contain `name` or the
+    /// parity test fails (unless listed in `HL_FIELD_EXEMPTIONS`).
+    pub applies_to: &'static [HlFrontend],
+}
+
+use HlFrontend::*;
+
+/// Every field a highlight rule exposes to users. `compiled_regex` is a
+/// non-serialized cache and is deliberately absent. `scope` (global vs
+/// character) is editor routing, not a struct field, so it is tracked by
+/// each editor but not catalogued here.
+pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
+    HlFieldDef { name: "pattern", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "fg", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "bg", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "bold", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "color_entire_line", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "fast_parse", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "sound", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "sound_volume", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "rumble", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "category", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "squelch", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "silent_prompt", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "redirect_to", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "redirect_mode", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
+];
+
+/// Deliberate coverage gaps, each with a reason. A `(field, frontend)`
+/// here is excused from the parity test. Mirror of registry.rs's
+/// EXEMPT_PREFIXES — an explicit, reviewed escape hatch. Empty today:
+/// full parity is the goal, so any entry is a conscious retreat from it.
+pub const HL_FIELD_EXEMPTIONS: &[(&str, HlFrontend, &str)] = &[];
+
+/// The highlight fields the web/phone form should render, in catalog order —
+/// every field that applies to `Web` and isn't exempted there. Shipped to the
+/// phone in the highlights payload so the client renders from the canonical
+/// catalog rather than a hand-kept list that could drift. This is the
+/// catalog's runtime consumer (the parity test is the compile-time one).
+pub fn highlight_web_fields() -> Vec<&'static str> {
+    HIGHLIGHT_FIELDS
+        .iter()
+        .filter(|def| def.applies_to.contains(&HlFrontend::Web))
+        .filter(|def| {
+            !HL_FIELD_EXEMPTIONS
+                .iter()
+                .any(|(f, fe, _)| *f == def.name && *fe == HlFrontend::Web)
+        })
+        .map(|def| def.name)
+        .collect()
+}
+
+// ---- Per-editor coverage manifests ---------------------------------
+//
+// Each editor keeps a manifest of the catalog fields it edits. These live
+// here (not in frontend/, which core cannot import) as the contract the
+// editors must honor; the doc comment names the file that must match. The
+// parity test proves manifest ⊇ (catalog ∩ frontend), and for the web
+// manifest a second test greps the embedded app.js so the manifest can't
+// claim a field the JS doesn't actually render.
+
+/// Fields edited by the TUI highlight form (`frontend/tui/highlight_form.rs`).
+pub const HL_TUI_COVERED: &[&str] = &[
+    "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
+    "sound_volume", "rumble", "category", "squelch", "silent_prompt",
+    "redirect_to", "redirect_mode", "replace", "stream", "window",
+];
+
+/// Fields edited by the GUI highlight editor
+/// (`frontend/gui/app/editors/highlights.rs`).
+pub const HL_GUI_COVERED: &[&str] = &[
+    "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
+    "sound_volume", "rumble", "category", "squelch", "silent_prompt",
+    "redirect_to", "redirect_mode", "replace", "stream", "window",
+];
+
+/// Fields edited by the web/phone highlight form
+/// (`frontend/web/assets/app.js`, `openHlForm` / `hlSaveRule`). Each entry
+/// is cross-checked against the embedded app.js by
+/// `web_highlight_manifest_matches_app_js`.
+pub const HL_WEB_COVERED: &[&str] = &[
+    "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
+    "sound_volume", "rumble", "category", "squelch", "silent_prompt",
+    "redirect_to", "redirect_mode", "replace", "stream", "window",
+];
+
+/// The DOM element id the web form uses for a given catalog field, so the
+/// app.js cross-check knows what to grep for. Web input ids follow the
+/// `hl-<field>` convention with a few historical exceptions.
+pub fn hl_web_element_id(field: &str) -> &'static str {
+    match field {
+        "pattern" => "hl-pattern",
+        "fg" => "hl-fg-pick",
+        "bg" => "hl-bg-pick",
+        "bold" => "hl-bold",
+        "color_entire_line" => "hl-line",
+        "fast_parse" => "hl-fast-parse",
+        "sound" => "hl-sound",
+        "sound_volume" => "hl-sound-volume",
+        "rumble" => "hl-rumble",
+        "category" => "hl-category",
+        "squelch" => "hl-squelch",
+        "silent_prompt" => "hl-silent-prompt",
+        "redirect_to" => "hl-redirect-to",
+        "redirect_mode" => "hl-redirect-mode",
+        "replace" => "hl-replace",
+        "stream" => "hl-stream",
+        "window" => "hl-window",
+        other => panic!("no web element id mapped for highlight field '{other}'"),
+    }
+}
+
 impl Config {
     /// Load common (global) highlights that apply to all characters
     /// Returns: HashMap of global highlights, or empty if file doesn't exist
@@ -389,6 +536,99 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ===========================================
+    // Highlight field-catalog parity guard
+    // ===========================================
+
+    fn covered_for(frontend: HlFrontend) -> &'static [&'static str] {
+        match frontend {
+            HlFrontend::Tui => HL_TUI_COVERED,
+            HlFrontend::Gui => HL_GUI_COVERED,
+            HlFrontend::Web => HL_WEB_COVERED,
+        }
+    }
+
+    fn is_exempt(field: &str, frontend: HlFrontend) -> bool {
+        HL_FIELD_EXEMPTIONS
+            .iter()
+            .any(|(f, fe, _)| *f == field && *fe == frontend)
+    }
+
+    /// THE parity guard: every catalog field must be edited by every editor
+    /// it applies to, unless explicitly exempt. Adding a HighlightPattern
+    /// field to the catalog without wiring it into an editor fails here — the
+    /// highlight analogue of registry.rs's leaf-coverage test.
+    #[test]
+    fn every_highlight_field_is_editable_where_it_applies() {
+        let mut missing = Vec::new();
+        for def in HIGHLIGHT_FIELDS {
+            for &frontend in def.applies_to {
+                if is_exempt(def.name, frontend) {
+                    continue;
+                }
+                if !covered_for(frontend).contains(&def.name) {
+                    missing.push(format!("{} in {:?}", def.name, frontend));
+                }
+            }
+        }
+        missing.sort();
+        assert!(
+            missing.is_empty(),
+            "highlight fields missing from an editor's coverage (wire them into \
+             the editor and add to its HL_*_COVERED manifest, or add an \
+             HL_FIELD_EXEMPTIONS entry with a reason): {:#?}",
+            missing
+        );
+    }
+
+    /// Reverse guard: no manifest may claim a field the catalog doesn't have
+    /// (a typo or a removed field), and no exemption may reference a field or
+    /// frontend pairing that isn't real.
+    #[test]
+    fn manifests_and_exemptions_reference_real_fields() {
+        let names: std::collections::HashSet<&str> =
+            HIGHLIGHT_FIELDS.iter().map(|d| d.name).collect();
+        for frontend in [HlFrontend::Tui, HlFrontend::Gui, HlFrontend::Web] {
+            for field in covered_for(frontend) {
+                assert!(names.contains(field), "manifest {:?} lists unknown field '{}'", frontend, field);
+            }
+        }
+        for (field, frontend, reason) in HL_FIELD_EXEMPTIONS {
+            assert!(names.contains(field), "exemption for unknown field '{}'", field);
+            assert!(!reason.is_empty(), "exemption for '{}' in {:?} needs a reason", field, frontend);
+            let def = HIGHLIGHT_FIELDS.iter().find(|d| d.name == *field).unwrap();
+            assert!(
+                def.applies_to.contains(frontend),
+                "'{}' exempted from {:?} but doesn't apply there anyway",
+                field, frontend
+            );
+        }
+    }
+
+    /// The web manifest can't lie: every field it claims must have its DOM
+    /// element id actually present in the embedded app.js. This turns "the
+    /// phone form is missing field X" into a red build even though the form
+    /// itself is JavaScript.
+    #[test]
+    fn web_highlight_manifest_matches_app_js() {
+        let app_js = include_str!("../frontend/web/assets/app.js");
+        let mut absent = Vec::new();
+        for field in HL_WEB_COVERED {
+            let id = hl_web_element_id(field);
+            // ids appear as getElementById("<id>") in the form code.
+            if !app_js.contains(id) {
+                absent.push(format!("{field} (id '{id}')"));
+            }
+        }
+        assert!(
+            absent.is_empty(),
+            "web manifest lists highlight fields whose element id is not in \
+             app.js — add the control to the phone form or drop it from \
+             HL_WEB_COVERED: {:#?}",
+            absent
+        );
+    }
 
     // ===========================================
     // RedirectMode tests

@@ -245,9 +245,33 @@
           </div>
           <label class="hl-check"><input id="hl-bold" type="checkbox"> Bold</label>
           <label class="hl-check"><input id="hl-line" type="checkbox"> Color entire line</label>
+          <label class="hl-check"><input id="hl-fast-parse" type="checkbox"> Fast parse (literal, faster)</label>
+          <label class="hl-check"><input id="hl-squelch" type="checkbox"> Squelch (hide matching lines)</label>
+          <label class="hl-check"><input id="hl-silent-prompt" type="checkbox"> Silent prompt</label>
+          <label>Category <input id="hl-category" type="text" autocapitalize="off" spellcheck="false"
+                 placeholder="e.g. Combat (optional)"></label>
           <label>Sound
             <select id="hl-sound"><option value="">None</option></select>
           </label>
+          <label>Sound volume <input id="hl-sound-volume" type="number" min="0" max="1" step="0.05"
+                 inputmode="decimal" placeholder="0.0 – 1.0 (optional)"></label>
+          <label>Rumble pattern <input id="hl-rumble" type="text" autocapitalize="off" spellcheck="false"
+                 placeholder="short, long, double, or a custom name (optional)"></label>
+          <label>Redirect to window <input id="hl-redirect-to" type="text" autocapitalize="off"
+                 spellcheck="false" placeholder="window name (optional)"></label>
+          <label>Redirect mode
+            <select id="hl-redirect-mode">
+              <option value="off">Off</option>
+              <option value="copy">Copy (both windows)</option>
+              <option value="only">Redirect only</option>
+            </select>
+          </label>
+          <label>Replace matched text <input id="hl-replace" type="text" autocapitalize="off"
+                 spellcheck="false" placeholder="supports $1, $2 (optional)"></label>
+          <label>Stream filter <input id="hl-stream" type="text" autocapitalize="off"
+                 spellcheck="false" placeholder="only this stream (optional)"></label>
+          <label>Window filter <input id="hl-window" type="text" autocapitalize="off"
+                 spellcheck="false" placeholder="only this window (optional)"></label>
         </div>
         <p id="hl-status" hidden></p>
         <div id="hl-actions">
