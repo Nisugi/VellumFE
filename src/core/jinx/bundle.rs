@@ -106,11 +106,9 @@ fn safe_relative(raw: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::VELLUM_FE_DIR_TEST_LOCK as ENV_LOCK;
     use std::io::Write;
-    use std::sync::Mutex;
     use zip::write::SimpleFileOptions;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Build an in-memory zip from (name, bytes) entries.
     fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -150,7 +148,7 @@ mod tests {
 
     #[test]
     fn install_extracts_skin_dir_and_replaces_prior() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", cfg.path());
 
@@ -176,7 +174,7 @@ mod tests {
 
     #[test]
     fn install_rejects_manifestless_and_unsafe_archives() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", cfg.path());
 

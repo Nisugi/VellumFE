@@ -220,6 +220,9 @@ fn plain_file_dest(kind: &str, name: &str) -> Result<Option<PathBuf>, String> {
         // Individual icon maps / images drop into the shared icon pool next to
         // the ones already there (config/skins.rs load_global_sheets reads it).
         "iconmap" | "image" | "icon" => Config::global_icons_dir(),
+        // Standalone injury-doll base images drop into the doll pool; a skin's
+        // [injury_doll] base references one by (absolute) path.
+        "doll" => Config::global_dolls_dir(),
         // Composed bundles: extracted elsewhere, not a plain write.
         "skin" | "layout" | "uipack" => return Ok(None),
         other => return Err(format!("unknown asset kind '{other}' for '{name}'")),
@@ -372,12 +375,9 @@ mod tests {
 
     // --- install_asset dispatch (env-dependent: serialize VELLUM_FE_DIR) ---
 
+    use crate::config::VELLUM_FE_DIR_TEST_LOCK as ENV_LOCK;
     use crate::core::jinx::metadata::InstalledDb;
     use crate::core::jinx::repo::RepoSource;
-    use std::sync::Mutex;
-
-    // Guards the process-global VELLUM_FE_DIR against parallel test races.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn repo(url: &str) -> RepoSource {
         RepoSource { name: "test-repo".into(), url: url.into() }
@@ -385,9 +385,16 @@ mod tests {
 
     #[test]
     fn install_plain_data_file_then_idempotent_then_update() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", cfg.path());
+        // Guard: never write into the real ~/.vellum-fe. This test installs a
+        // fake gameobj-data.xml; if VELLUM_FE_DIR weren't in effect it would
+        // clobber the user's real data pack and break foreach_tests.
+        assert!(
+            Config::global_data_dir().unwrap().starts_with(cfg.path()),
+            "test config dir must be under the tempdir"
+        );
 
         let ag = agent().unwrap();
         let mut db = InstalledDb::default();
@@ -432,7 +439,7 @@ mod tests {
 
     #[test]
     fn install_iconmap_lands_in_shared_icon_pool() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", cfg.path());
 
@@ -456,8 +463,33 @@ mod tests {
     }
 
     #[test]
+    fn install_doll_lands_in_doll_pool() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+        let body = b"DOLLPNG".to_vec();
+        let base = spawn_stub(body.clone());
+        let mut a = asset("/dolls/soldier.png", &digest_b64(&body));
+        a.kind = Some("doll".into());
+
+        let out = install_asset(&ag, &repo(&base), &a, &mut db, false).unwrap();
+        let dest = match out {
+            InstallOutcome::Installed { path } => path,
+            other => panic!("expected Installed, got {other:?}"),
+        };
+        assert!(dest.ends_with("global/dolls/soldier.png") ||
+                dest.ends_with("global\\dolls\\soldier.png"), "{}", dest.display());
+        assert_eq!(db.get("soldier.png").unwrap().kind, "doll");
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
     fn refuses_script_and_extracts_skin_bundle() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", cfg.path());
         let ag = agent().unwrap();

@@ -103,7 +103,7 @@ impl Asset {
             // Lich's (sloot.ui, lockpicks.yaml, …) and would sit unused.
             "data" => is_known_game_data(self.basename()),
             // Interface assets we own.
-            "iconmap" | "image" | "icon" | "skin" | "layout" | "uipack" => true,
+            "iconmap" | "image" | "icon" | "doll" | "skin" | "layout" | "uipack" => true,
             // Map IMAGE tiles (kind `map`) are not used by VellumFE. The map
             // database itself is `mapdb.json` (kind `data`, allowed above).
             // Scripts/engines are Lich's.
@@ -220,6 +220,7 @@ mod tests {
         assert!(!mk("/moonsedge.png", "map").is_installable());
         // Interface assets: installable.
         assert!(mk("/icons/runes.png", "iconmap").is_installable());
+        assert!(mk("/dolls/soldier.png", "doll").is_installable());
         assert!(mk("/skins/parchment.vellumpack", "skin").is_installable());
         assert!(mk("/layouts/hud.vellumpack", "layout").is_installable());
         // Code stays Lich's.

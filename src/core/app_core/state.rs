@@ -661,6 +661,11 @@ impl AppCore {
                     "iconmap" | "image" | "icon" => self.add_system_message(&format!(
                         "[jinx] {name} installed to the icon pool"
                     )),
+                    // A doll base image lands in the doll pool; a skin points
+                    // its [injury_doll] base at it (paths may be absolute).
+                    "doll" => self.add_system_message(&format!(
+                        "[jinx] {name} installed to the doll pool"
+                    )),
                     _ => {
                         tracing::info!("jinx installed {name} ({kind}); no reload hook");
                     }

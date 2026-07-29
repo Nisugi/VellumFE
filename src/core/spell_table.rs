@@ -205,10 +205,11 @@ mod tests {
 
     #[test]
     fn reload_prefers_installed_copy_then_falls_back() {
-        use std::sync::Mutex;
-        // VELLUM_FE_DIR is process-global; serialize against other env tests.
-        static ENV_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = ENV_LOCK.lock().unwrap();
+        // VELLUM_FE_DIR is process-global; serialize against every other env
+        // test on the one shared lock (per-module locks don't mutually exclude).
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         let cfg = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", cfg.path());
