@@ -1089,6 +1089,12 @@ impl AppCore {
                     .sellable(&name, &noun)
                     .map(|joined| joined.split(',').map(str::to_string).collect())
                     .unwrap_or_default();
+                let status = self
+                    .game_state
+                    .objects
+                    .status_of(&id)
+                    .copied()
+                    .unwrap_or_default();
                 candidates.push(foreach::Candidate {
                     id,
                     noun,
@@ -1096,7 +1102,42 @@ impl AppCore {
                     container_id,
                     types,
                     sellable,
+                    status,
                 });
+            }
+        }
+
+        // Marked/registered filter needs status only the INVENTORY FULL
+        // scan provides. If any candidate that otherwise matches lacks it,
+        // trigger a scan and ask the user to re-run (the scan is async; the
+        // result lands on the registry a moment later).
+        if spec.status.is_active() {
+            let need_scan = candidates.iter().any(|c| {
+                let type_ok = spec.value_matches_public(c);
+                let unknown = (spec.status.marked.is_some() && c.status.marked.is_none())
+                    || (spec.status.registered.is_some()
+                        && c.status.registered.is_none());
+                type_ok && unknown
+            });
+            if need_scan {
+                if let Some(cmd) = self.message_processor.start_inventory_scan() {
+                    // Inject the scan command into the outbound path (zero
+                    // delay = next drain).
+                    self.queue_timed_command(
+                        std::time::Duration::from_millis(0),
+                        cmd.to_string(),
+                    );
+                    self.add_system_message(
+                        "[foreach] fetching item status (INVENTORY FULL) - re-run \
+                         the command in a moment.",
+                    );
+                } else {
+                    self.add_system_message(
+                        "[foreach] an item-status scan is already in progress - \
+                         re-run shortly.",
+                    );
+                }
+                return;
             }
         }
 
@@ -2693,6 +2734,39 @@ mod foreach_tests {
         assert!(core.foreach.is_running());
         assert_eq!(core.take_outbound(), vec!["get #20".to_string()]);
         let _ = core.handle_dot_command(".stop");
+    }
+
+    #[test]
+    fn foreach_marked_filter_triggers_scan_then_filters() {
+        use crate::core::game_objects::{GameItem, ItemStatus};
+        let mut core = AppCore::new_for_test();
+        {
+            let o = &mut core.game_state.objects;
+            o.register_container("77".to_string(), "Bandolier".to_string(), Some("#77".to_string()));
+            o.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
+            o.add_container_item("77", GameItem::new("102", "crystal", "smoky quartz crystal"));
+        }
+
+        // Status unknown → the filter triggers an INVENTORY FULL scan and
+        // defers, rather than running on incomplete data.
+        let _ = core.handle_dot_command(".foreach marked gem in bandolier; get item");
+        assert!(!core.foreach.is_running(), "deferred pending scan");
+        assert_eq!(core.take_outbound(), vec!["inventory full".to_string()]);
+
+        // Simulate the scan result landing on the registry.
+        core.game_state.objects.set_status(
+            "101".to_string(),
+            ItemStatus { marked: Some(true), registered: Some(false) },
+        );
+        core.game_state.objects.set_status(
+            "102".to_string(),
+            ItemStatus { marked: Some(false), registered: Some(false) },
+        );
+
+        // Re-run: now status is known, only the marked gem runs.
+        let _ = core.handle_dot_command(".foreach marked gem in bandolier; get item");
+        assert!(core.foreach.is_running());
+        assert_eq!(core.take_outbound(), vec!["get #101".to_string()]);
     }
 
     #[test]

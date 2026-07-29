@@ -59,8 +59,25 @@ pub struct ForeachSpec {
     pub patterns: Vec<regex::Regex>,
     /// Where to look. Each `(target, optional)`; optional = had `?`.
     pub targets: Vec<(Target, bool)>,
+    /// Optional mark/registration filter (needs an INVENTORY FULL scan).
+    pub status: StatusFilter,
     /// Raw command templates; empty = dry-run listing.
     pub commands: Vec<String>,
+}
+
+/// Mark/registration constraint. `None` = don't care; `Some(true/false)`
+/// = require that state. Populated by the marked/unmarked/registered/
+/// unregistered options; needs status from an INVENTORY FULL scan.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StatusFilter {
+    pub marked: Option<bool>,
+    pub registered: Option<bool>,
+}
+
+impl StatusFilter {
+    pub fn is_active(&self) -> bool {
+        self.marked.is_some() || self.registered.is_some()
+    }
 }
 
 /// A `.foreach` search target: a pseudo-target backed by a registry
@@ -129,6 +146,7 @@ pub fn parse(raw: &str) -> Result<ForeachSpec, String> {
         tags: Vec::new(),
         patterns: Vec::new(),
         targets: Vec::new(),
+        status: StatusFilter::default(),
         commands,
     };
 
@@ -142,6 +160,10 @@ pub fn parse(raw: &str) -> Result<ForeachSpec, String> {
             "unique" => spec.unique = true,
             "sorted" | "sort" | "nsorted" | "nsort" => spec.sorted = true,
             "reversed" | "reverse" => spec.reversed = true,
+            "marked" => spec.status.marked = Some(true),
+            "unmarked" => spec.status.marked = Some(false),
+            "registered" => spec.status.registered = Some(true),
+            "unregistered" => spec.status.registered = Some(false),
             kw @ ("first" | "after") => {
                 i += 1;
                 let n: usize = tokens
@@ -248,9 +270,19 @@ pub struct Candidate {
     pub container_id: String,
     pub types: Vec<String>,
     pub sellable: Vec<String>,
+    /// Mark/register status from the registry (an INVENTORY FULL scan);
+    /// default (both None) when unscanned.
+    pub status: crate::core::game_objects::ItemStatus,
 }
 
 impl ForeachSpec {
+    /// Whether a candidate matches the type/noun/name filter, ignoring the
+    /// status filter (so the caller can tell which items a status scan
+    /// would actually apply to).
+    pub fn value_matches_public(&self, candidate: &Candidate) -> bool {
+        self.value_matches(candidate)
+    }
+
     fn value_matches(&self, candidate: &Candidate) -> bool {
         match self.attr {
             FilterAttr::Type | FilterAttr::Sellable => {
@@ -281,12 +313,32 @@ impl ForeachSpec {
         }
     }
 
+    /// A candidate passes the status filter when each required flag
+    /// matches its scanned status. An unscanned item (status None) never
+    /// satisfies an active filter — the caller triggers a scan when the
+    /// filter is active but status is missing.
+    fn status_matches(&self, c: &Candidate) -> bool {
+        if let Some(want) = self.status.marked {
+            if c.status.marked != Some(want) {
+                return false;
+            }
+        }
+        if let Some(want) = self.status.registered {
+            if c.status.registered != Some(want) {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Filter, order, and slice candidates (foreach.lic semantics:
     /// container order, then sorted/reversed, then unique, then
     /// AFTER-skip, then FIRST-take).
     pub fn select<'a>(&self, all: &'a [Candidate]) -> Vec<&'a Candidate> {
-        let mut picked: Vec<&Candidate> =
-            all.iter().filter(|c| self.value_matches(c)).collect();
+        let mut picked: Vec<&Candidate> = all
+            .iter()
+            .filter(|c| self.value_matches(c) && self.status_matches(c))
+            .collect();
         if self.sorted {
             picked.sort_by_key(|c| sort_key(&c.name));
         }
@@ -584,6 +636,7 @@ mod tests {
             container_id: "c1".to_string(),
             types: types.iter().map(|s| s.to_string()).collect(),
             sellable: Vec::new(),
+            status: crate::core::game_objects::ItemStatus::default(),
         }
     }
 
@@ -606,6 +659,32 @@ mod tests {
             ]
         );
         assert_eq!(spec.commands, vec!["get item", "sell item"]);
+    }
+
+    #[test]
+    fn status_filter_parses_and_selects() {
+        use crate::core::game_objects::ItemStatus;
+        let spec = parse("marked registered gem in bag; get item").unwrap();
+        assert_eq!(spec.status.marked, Some(true));
+        assert_eq!(spec.status.registered, Some(true));
+        assert!(spec.status.is_active());
+
+        let mut marked_reg =
+            candidate("1", "sapphire", "blue sapphire", &["gem"]);
+        marked_reg.status = ItemStatus { marked: Some(true), registered: Some(true) };
+        let mut marked_only =
+            candidate("2", "sapphire", "blue sapphire", &["gem"]);
+        marked_only.status = ItemStatus { marked: Some(true), registered: Some(false) };
+        let unscanned = candidate("3", "sapphire", "blue sapphire", &["gem"]);
+
+        let all = vec![marked_reg, marked_only, unscanned];
+        let picked: Vec<&str> = spec.select(&all).iter().map(|c| c.id.as_str()).collect();
+        // Only the marked+registered one; the marked-only and unscanned fail.
+        assert_eq!(picked, vec!["1"]);
+
+        // unmarked selects the opposite.
+        let spec = parse("unmarked gem in bag").unwrap();
+        assert_eq!(spec.status.marked, Some(false));
     }
 
     #[test]

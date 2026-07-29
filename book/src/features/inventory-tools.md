@@ -87,8 +87,23 @@ addressed by title (`backpack`, `red sack`, `my bandolier`).
 | `feet` | items at your feet ("Placed alongside you") |
 | `floor` / `ground` / `room` | loot on the ground in the room |
 
-Not yet supported (planned): `desc` (room-description scenery), `locker`
-auto-open, and the `marked`/`registered` filters.
+Not yet supported (planned): `desc` (room-description scenery) and
+`locker` auto-open.
+
+### Marked / registered filters
+
+Filter by whether items are marked or registered:
+
+```
+.foreach marked gem in my gem pouch; get item; sell item
+.foreach unregistered in backpack
+```
+
+Options: `marked`, `unmarked`, `registered`, `unregistered`. This status
+isn't in the passive game feed — VellumFE fetches it with an `INVENTORY
+FULL` scan (its output is hidden). The first time you use one of these on
+items whose status isn't yet known, `.foreach` runs the scan and asks you
+to **re-run the command in a moment**; the second run has the data.
 
 ### Commands
 
