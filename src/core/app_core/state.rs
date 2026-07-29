@@ -3623,7 +3623,10 @@ impl AppCore {
 
     /// Close ephemeral container window by title (case-insensitive partial match)
     pub fn close_ephemeral_window_by_title(&mut self, title: &str) {
-        let title_lower = title.to_lowercase();
+        // Window names are built as lowercase-with-underscores (see
+        // create_ephemeral_container_window), so normalize the needle the
+        // same way or multi-word titles like "My Pack" never match.
+        let title_lower = title.to_lowercase().replace(' ', "_");
 
         // Find matching ephemeral windows
         let matches: Vec<_> = self
@@ -6196,6 +6199,33 @@ mod tests {
             Policy::Hidden
         );
         assert!(!core.ui_state.windows.contains_key("backpack"));
+    }
+
+    #[test]
+    fn toggle_closes_multi_word_container_titles() {
+        // Regression: window names are lowercase-with-underscores
+        // ("my_pack") but close-by-title searched with the space intact
+        // ("my pack"), so multi-word containers could be shown but
+        // never hidden again.
+        use crate::core::window_offers::{OfferKind, Policy};
+        let mut core = AppCore::new_for_test();
+        core.game_state.window_offers.offer(
+            "268435466",
+            "My Pack",
+            OfferKind::Container,
+            None,
+            false,
+            false,
+        );
+
+        core.set_window_offer_policy("268435466", Policy::Shown, 80, 24);
+        assert!(core.ui_state.windows.contains_key("my_pack"));
+
+        core.set_window_offer_policy("268435466", Policy::Hidden, 80, 24);
+        assert!(
+            !core.ui_state.windows.contains_key("my_pack"),
+            "multi-word title failed to close its window"
+        );
     }
 }
 

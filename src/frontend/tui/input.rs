@@ -1284,21 +1284,16 @@ impl TuiFrontend {
                                 tracing::warn!("No items for menu submenu: {}", submenu_name);
                             }
                         } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-                            // Known-windows list: flip this offer's show/hide,
-                            // then re-open the list (with refreshed [x]/[ ]
-                            // marks) so several can be toggled in one pass.
+                            // Known-windows list: flip this offer's show/hide
+                            // and close the menu like any other menu action —
+                            // bulk toggling lives in the GUI checkbox panel.
                             let offer_id = offer_id.to_string();
                             app_core.toggle_window_offer(&offer_id);
-                            let items = app_core.build_known_windows_menu();
-                            let position = app_core
-                                .ui_state
-                                .popup_menu
-                                .as_ref()
-                                .map(|m| m.position)
-                                .unwrap_or((8, 4));
-                            app_core.ui_state.popup_menu =
-                                Some(crate::data::ui_state::PopupMenu::new(items, position));
-                            app_core.ui_state.input_mode = InputMode::Menu;
+                            app_core.ui_state.popup_menu = None;
+                            app_core.ui_state.submenu = None;
+                            app_core.ui_state.nested_submenu = None;
+                            app_core.ui_state.deep_submenu = None;
+                            app_core.ui_state.input_mode = InputMode::Normal;
                             app_core.needs_render = true;
                             return Ok((true, None));
                         } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
@@ -4506,20 +4501,16 @@ impl TuiFrontend {
             app_core.needs_render = true;
         } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
             // Known-windows list (keyboard Enter): flip the offer's
-            // show/hide, then re-open the list with refreshed marks so
-            // several toggle in one pass. (The mouse path has its own copy.)
+            // show/hide and close the menu like any other menu action —
+            // bulk toggling lives in the GUI checkbox panel. (The mouse
+            // path has its own copy.)
             let offer_id = offer_id.to_string();
             app_core.toggle_window_offer(&offer_id);
-            let items = app_core.build_known_windows_menu();
-            let position = app_core
-                .ui_state
-                .popup_menu
-                .as_ref()
-                .map(|m| m.get_position())
-                .unwrap_or((40, 12));
-            app_core.ui_state.popup_menu =
-                Some(PopupMenu::new(items, position));
-            app_core.ui_state.input_mode = InputMode::Menu;
+            app_core.ui_state.popup_menu = None;
+            app_core.ui_state.submenu = None;
+            app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
+            app_core.ui_state.input_mode = InputMode::Normal;
             app_core.needs_render = true;
         } else if command == "__PERF_MENU_CLOSE__" {
             // Close the perf metrics menu
