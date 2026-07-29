@@ -1817,7 +1817,8 @@ impl AppCore {
             // Known-windows list: the windows the game has offered
             // (containers/dialogs/streams), each togglable show/hide. On the
             // GUI this opens its checkbox panel; on the TUI it's a popup menu.
-            "knownwindows" | "windows" => {
+            // (`.windows` is taken by list_windows above — use .knownwindows.)
+            "knownwindows" => {
                 let items = self.build_known_windows_menu();
                 self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
                     items,
@@ -2676,6 +2677,25 @@ mod foreach_tests {
         objects.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
         objects.add_container_item("77", GameItem::new("102", "sword", "slim short sword"));
         core
+    }
+
+    #[test]
+    fn menu_commands_do_not_recurse_infinitely() {
+        // Repro for the menu-Enter stack overflow: drive send_command with
+        // exactly what a menu-Enter dispatches. If any recurses, this test
+        // stack-overflows and names the frame.
+        let mut core = AppCore::new_for_test();
+        for cmd in [
+            ".menu",
+            ".knownwindows",
+            ".windows",
+            "", // empty-menu placeholder command
+            "__SUBMENU__windows",
+            "__TOGGLE_OFFER__stow",
+            "menu:windows",
+        ] {
+            let _ = core.send_command(cmd.to_string());
+        }
     }
 
     #[test]
