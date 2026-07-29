@@ -5,6 +5,14 @@
 
 use super::*;
 
+/// One process-wide lock for tests that set the global `VELLUM_FE_DIR` env
+/// var. Every such test across every module must serialize on THIS lock, not
+/// a per-module one — separate mutexes guarding the same global don't mutually
+/// exclude, so tests would race (and one panic would poison only its own lock,
+/// cascading failures). Guard the whole set/use/remove with it.
+#[cfg(test)]
+pub static VELLUM_FE_DIR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Write a user config file safely: write to a sibling `.tmp` file, back up
 /// the existing file to `<name>.bak`, then rename over the target. A crash
 /// mid-write can no longer truncate user data, and the previous version is
@@ -139,6 +147,15 @@ impl Config {
     /// Returns: ~/.vellum-fe/global/data/
     pub fn global_data_dir() -> Result<PathBuf> {
         Ok(Self::global_dir()?.join("data"))
+    }
+
+    /// Get the shared injury-doll base-image pool. Standalone doll base
+    /// images (installed by `.jinx`) drop in here; a skin's
+    /// `[injury_doll] base` can reference one by absolute path (skin art
+    /// paths may be absolute, so a doll from the pool works in any skin).
+    /// Returns: ~/.vellum-fe/global/dolls/
+    pub fn global_dolls_dir() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("dolls"))
     }
 
     /// Get path to common (global) highlights file

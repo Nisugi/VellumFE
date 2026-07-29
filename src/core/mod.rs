@@ -16,6 +16,7 @@ pub mod ghost_rooms;
 pub mod highlight_engine;
 pub mod hotbar;
 pub mod input_router;
+pub mod jinx;
 pub mod layout_engine;
 pub mod map_service;
 pub mod mapdb;
