@@ -3712,6 +3712,51 @@ impl AppCore {
     /// window. Currently wires container offers to ephemeral container
     /// windows; dialog/stream offers record policy for now (their window
     /// wiring lands as those consumption paths migrate).
+    /// U3: show or hide a known window by NAME (from enumerate_known_windows),
+    /// with no offer registry. Dispatches on where the window lives:
+    /// - a persistent LAYOUT window (incl. bound streams / dialog panels):
+    ///   flip visibility via show_window / hide_window.
+    /// - a session-only EPHEMERAL window (container, ad-hoc panel): create
+    ///   or remove the runtime window.
+    /// - the bank-style POPUP: materialize from / clear active_dialog.
+    pub fn set_known_window_shown(
+        &mut self,
+        name: &str,
+        shown: bool,
+        terminal_width: u16,
+        terminal_height: u16,
+    ) {
+        // Persistent layout window? (streams, dialog panels, plain widgets)
+        if self.layout.windows.iter().any(|w| w.name() == name) {
+            if shown {
+                self.show_window(name, terminal_width, terminal_height);
+            } else {
+                self.hide_window(name);
+            }
+            return;
+        }
+
+        // Ephemeral runtime window already present (container/panel): just
+        // toggle its presence.
+        if self.ui_state.windows.contains_key(name) {
+            if !shown {
+                self.ui_state.remove_window(name);
+                self.ui_state.ephemeral_windows.remove(name);
+                self.needs_render = true;
+            }
+            // (Re-showing an already-present ephemeral window is a no-op.)
+            return;
+        }
+
+        // Not yet materialized. A dialog-store entry means it's a
+        // dialog/panel we can conjure; otherwise nothing to do until the
+        // game sends it.
+        if shown && self.ui_state.dialog_store.contains_key(name) {
+            self.create_dialog_panel_window(name, name, terminal_width, terminal_height);
+            self.needs_render = true;
+        }
+    }
+
     pub fn set_window_offer_policy(
         &mut self,
         offer_id: &str,
@@ -6614,6 +6659,45 @@ mod tests {
         assert_eq!(core.layout.windows.len(), 3, "should not create a 4th");
         // All three are addressable for delivery.
         assert_eq!(core.layout.windows_bound_to("expr").len(), 3);
+    }
+
+    #[test]
+    fn set_known_window_shown_flips_layout_visibility() {
+        use crate::config::WindowVisibility;
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        let mut core = core_with_layout(vec![]);
+        core.layout.terminal_width = Some(80);
+        core.layout.terminal_height = Some(24);
+
+        // Discover a stream (bound, Hidden layout entry).
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "thoughts".to_string(),
+            title: "Thoughts".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+            blocklisted: false,
+        });
+        core.realize_offered_windows(80, 24);
+        let vis = |c: &AppCore| {
+            c.layout
+                .windows
+                .iter()
+                .find(|w| w.name() == "thoughts")
+                .unwrap()
+                .base()
+                .visibility
+        };
+        assert_eq!(vis(&core), WindowVisibility::Hidden);
+
+        // Show it by name → visibility flips to Shown + UI state created.
+        core.set_known_window_shown("thoughts", true, 80, 24);
+        assert_eq!(vis(&core), WindowVisibility::Shown);
+        assert!(core.ui_state.windows.contains_key("thoughts"));
+
+        // Hide it → back to Hidden, removed from UI state.
+        core.set_known_window_shown("thoughts", false, 80, 24);
+        assert_eq!(vis(&core), WindowVisibility::Hidden);
+        assert!(!core.ui_state.windows.contains_key("thoughts"));
     }
 
     #[test]
