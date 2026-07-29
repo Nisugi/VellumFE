@@ -3822,11 +3822,48 @@ impl AppCore {
     /// windows (known forever); the visibility default respects the config
     /// blocklist. No-op if a window is already bound to this id.
     fn register_window_discovery(&mut self, d: crate::data::WindowDiscovery) {
-        use crate::config::{WindowBinding, WindowVisibility};
+        use crate::config::{WindowBinding, WindowVisibility, WindowDef};
         use crate::data::WindowDiscoveryKind;
 
         if self.layout.has_window_bound_to(&d.id) {
             return;
+        }
+
+        // ADOPT an existing window instead of creating a duplicate:
+        // - a stream whose id a text/inventory window already subscribes to
+        //   (the default layout ships thoughts/speech/society/inv/... windows
+        //   that predate binding — tag them so the discovery doesn't make a
+        //   second "thoughts" beside the shipped "Thoughts").
+        if d.kind == WindowDiscoveryKind::Stream {
+            // A single-stream window already showing this id: ADOPT it (tag
+            // the binding) so it becomes the one true home for the stream.
+            let single = self.layout.windows.iter_mut().find(|w| match w {
+                WindowDef::Text { data, .. } => data.streams.iter().any(|s| s == &d.id),
+                WindowDef::Inventory { data, .. } | WindowDef::Reserve { data, .. } => {
+                    data.streams.iter().any(|s| s == &d.id)
+                }
+                _ => false,
+            });
+            if let Some(w) = single {
+                if w.base().binding.is_none() {
+                    w.base_mut().binding = Some(WindowBinding::Stream(d.id.clone()));
+                    self.mark_layout_modified();
+                }
+                return;
+            }
+            // A MULTI-stream window (tabbedtext) already routes this stream
+            // through a tab: don't create a duplicate, and don't bind the
+            // whole window (it carries many streams). The tab handles it.
+            let in_tab = self.layout.windows.iter().any(|w| match w {
+                WindowDef::TabbedText { data, .. } => data.tabs.iter().any(|t| {
+                    t.streams.iter().any(|s| s == &d.id)
+                        || t.stream.as_deref() == Some(d.id.as_str())
+                }),
+                _ => false,
+            });
+            if in_tab {
+                return;
+            }
         }
 
         // Pick the template + binding for this discovery kind.
@@ -6723,6 +6760,68 @@ mod tests {
             core.layout.windows.iter().find(|w| w.name() == "combat").unwrap().base().visibility,
             WindowVisibility::Hidden
         );
+    }
+
+    #[test]
+    fn stream_discovery_adopts_existing_subscriber_no_duplicate() {
+        use crate::config::{WindowBinding, WindowDef};
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+
+        // A single-stream text window already subscribes to "thoughts"
+        // (like the default layout's thoughts window, unbound).
+        let mut thoughts = crate::config::Config::get_window_template("text_custom").unwrap();
+        thoughts.base_mut().name = "Thoughts".to_string();
+        if let WindowDef::Text { data, .. } = &mut thoughts {
+            data.streams.push("thoughts".to_string());
+        }
+        let mut core = core_with_layout(vec![thoughts]);
+
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "thoughts".to_string(),
+            title: "Thoughts".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+        });
+        core.realize_offered_windows(80, 24);
+
+        // No duplicate — the existing window was adopted (bound), not cloned.
+        assert_eq!(core.layout.windows.len(), 1, "no duplicate thoughts window");
+        assert_eq!(
+            core.layout.windows[0].base().binding,
+            Some(WindowBinding::Stream("thoughts".to_string()))
+        );
+    }
+
+    #[test]
+    fn stream_discovery_skips_when_a_tab_already_routes_it() {
+        use crate::config::WindowDef;
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+
+        // A tabbedtext window has a tab subscribing to "thoughts".
+        let mut tabbed = crate::config::Config::get_window_template("tabbedtext_custom").unwrap();
+        tabbed.base_mut().name = "chat".to_string();
+        if let WindowDef::TabbedText { data, .. } = &mut tabbed {
+            data.tabs.push(crate::config::TabbedTextTab {
+                name: "Thoughts".to_string(),
+                stream: Some("thoughts".to_string()),
+                streams: vec!["thoughts".to_string()],
+                ..Default::default()
+            });
+        }
+        let mut core = core_with_layout(vec![tabbed]);
+
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "thoughts".to_string(),
+            title: "Thoughts".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+        });
+        core.realize_offered_windows(80, 24);
+
+        // No new window: the tab already routes it (whole tabbed window not
+        // bound, since it carries many streams).
+        assert_eq!(core.layout.windows.len(), 1, "no duplicate for tab-routed stream");
+        assert!(core.layout.windows[0].base().binding.is_none());
     }
 
     #[test]
