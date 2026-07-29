@@ -367,6 +367,20 @@ impl Frontend for TuiFrontend {
                             container_widget.render(area, f.buffer_mut());
                         }
                     }
+                    WindowContent::DialogPanel { dialog_id } => {
+                        // Render the resident dialog panel from the store as
+                        // banded rows (defense | stance ▼ | offense, ...).
+                        if let Some(dialog) =
+                            app_core.ui_state.dialog_store.get(dialog_id)
+                        {
+                            crate::frontend::tui::dialog::render_dialog_panel(
+                                dialog,
+                                area,
+                                f.buffer_mut(),
+                                &theme,
+                            );
+                        }
+                    }
                     WindowContent::Players { .. } => {
                         // Use the Players widget
                         if let Some(players_widget) = players_widgets.get_mut(name) {

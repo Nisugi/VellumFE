@@ -1058,8 +1058,9 @@ fn handle_server_message(app_core: &mut AppCore, msg: ServerMessage) -> bool {
                 }
             }
 
-            // openDialog and similar can request new windows.
-            app_core.process_pending_window_additions(NOMINAL_COLS, NOMINAL_ROWS);
+            // Realize game-offered windows (openDialog-templated widgets,
+            // containers whose offer the user has Shown).
+            app_core.realize_offered_windows(NOMINAL_COLS, NOMINAL_ROWS);
             false
         }
         ServerMessage::Connected => {

@@ -54,6 +54,9 @@ pub enum WidgetType {
     WebUi,
     /// Auto-generated location map (mini map)
     Map,
+    /// A resident game dialog panel (combat, befriend, ...) rendered from
+    /// the accumulated dialog store by its id.
+    DialogPanel,
 }
 
 impl WidgetType {
@@ -100,6 +103,7 @@ impl WidgetType {
             "betrayer" => Some(WidgetType::Betrayer),
             "webui" | "lichui" => Some(WidgetType::WebUi),
             "map" => Some(WidgetType::Map),
+            "dialogpanel" | "dialog_panel" => Some(WidgetType::DialogPanel),
             _ => None,
         }
     }
@@ -136,6 +140,7 @@ impl WidgetType {
         "betrayer",
         "webui",
         "map",
+        "dialogpanel",
     ];
 }
 
@@ -208,6 +213,11 @@ pub enum WindowContent {
     Betrayer,
     /// Lich WebUI panel - carries its page binding and latest component tree
     WebUi(super::webui::WebUiPanelContent),
+    /// Resident dialog panel (combat, befriend, ...) - carries which dialog
+    /// id it renders; content comes from ui_state.dialog_store by that id.
+    DialogPanel {
+        dialog_id: String,
+    },
     Empty, // For spacers or not-yet-implemented widgets
 }
 

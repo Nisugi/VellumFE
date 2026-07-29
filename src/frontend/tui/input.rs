@@ -1140,6 +1140,11 @@ impl TuiFrontend {
                         let (cmd, should_close) = dialog_state.activate_button(index);
                         command_to_send = cmd;
                         close_dialog = should_close;
+                    } else if let Some(index) = dialog::hit_test_dropdown(&layout, *x, *y) {
+                        // Click-to-cycle: advance the dropdown and fire its
+                        // command (resolved through %id% substitution).
+                        Self::set_dialog_focus(dialog_state, None);
+                        command_to_send = dialog_state.cycle_dropdown(index);
                     }
                     app_core.needs_render = true;
                 }
@@ -1283,6 +1288,19 @@ impl TuiFrontend {
                             } else {
                                 tracing::warn!("No items for menu submenu: {}", submenu_name);
                             }
+                        } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
+                            // Known-windows list: flip this offer's show/hide
+                            // and close the menu like any other menu action —
+                            // bulk toggling lives in the GUI checkbox panel.
+                            let offer_id = offer_id.to_string();
+                            app_core.toggle_window_offer(&offer_id);
+                            app_core.ui_state.popup_menu = None;
+                            app_core.ui_state.submenu = None;
+                            app_core.ui_state.nested_submenu = None;
+                            app_core.ui_state.deep_submenu = None;
+                            app_core.ui_state.input_mode = InputMode::Normal;
+                            app_core.needs_render = true;
+                            return Ok((true, None));
                         } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
                             // Context menu or .menu submenu
                             // Try build_submenu first (for .menu categories)
@@ -1889,9 +1907,11 @@ impl TuiFrontend {
                                     if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
                                         drop_target_id = Some(target_link.exist_id);
                                     } else {
-                                        // Fallback: use the window's container ID
-                                        if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
-                                            drop_target_id = Some(container_data.id.clone());
+                                        // Fallback: the window's container as a
+                                        // game-command target (command_target is
+                                        // stow-correct; plain id would be "#stow").
+                                        if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
+                                            drop_target_id = Some(container_data.command_target());
                                         }
                                     }
                                     break;  // Container window handled
@@ -4086,7 +4106,7 @@ impl TuiFrontend {
         app_core: &mut crate::core::AppCore,
         handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
     ) -> Result<Option<String>> {
-        
+
         use crate::data::ui_state::{InputMode, PopupMenu};
 
         if let Some(submenu_name) = command.strip_prefix("menu:") {
@@ -4416,6 +4436,19 @@ impl TuiFrontend {
                 // Regular window - just hide it
                 app_core.hide_window(window_name);
             }
+            app_core.needs_render = true;
+        } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
+            // Known-windows list (keyboard Enter): flip the offer's
+            // show/hide and close the menu like any other menu action —
+            // bulk toggling lives in the GUI checkbox panel. (The mouse
+            // path has its own copy.)
+            let offer_id = offer_id.to_string();
+            app_core.toggle_window_offer(&offer_id);
+            app_core.ui_state.popup_menu = None;
+            app_core.ui_state.submenu = None;
+            app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
+            app_core.ui_state.input_mode = InputMode::Normal;
             app_core.needs_render = true;
         } else if command == "__PERF_MENU_CLOSE__" {
             // Close the perf metrics menu

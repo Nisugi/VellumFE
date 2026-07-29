@@ -4,26 +4,28 @@ Displays contents of open containers (bags, backpacks, chests).
 
 ## Basic Usage
 
-Container windows are created dynamically when you look in a container.
-
-## Enabling Containers
-
-Enable container discovery mode via command:
+Container windows are per-container choices in the **known windows** list.
+Every container the game mentions (a `LOOK IN`, opening a bag, the stow
+feed) is added to the list automatically; tick its row to open a window
+for it, untick to close it again.
 
 ```
-.containers
+.knownwindows
 ```
 
-The client confirms with "Container discovery ON/OFF". While on, LOOK IN a
-container to create a window for it. `.hidecontainers [title]` closes
-container windows again.
+opens the list (`.containers` is an alias). On the GUI the same list is a
+checkbox panel. `.hidecontainers [title]` closes container windows
+without changing anything else.
+
+Your choice is remembered for the session: a ticked container's window
+re-opens whenever the game mentions it again.
 
 ## Behavior
 
-When enabled:
-1. Look in a container (`look in backpack`)
-2. A window appears showing contents
-3. Window closes when you close/leave the container
+1. Look in a container (`look in backpack`) — it appears in the known
+   windows list
+2. Tick it — a window appears showing contents
+3. Contents refresh as the game re-sends them; untick to close
 
 ## Display
 

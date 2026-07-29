@@ -1229,11 +1229,12 @@ impl TuiFrontend {
             if let crate::data::WindowContent::Container { container_title } = &window.content {
                 // Ensure widget exists - use title as the identifier since it's persistent
                 if !self.widget_manager.container_widgets.contains_key(name) {
-                    // Use the container title from cache if available, otherwise use the container_title from config
+                    // Use the container title from the registry if available,
+                    // otherwise the container_title from config.
                     let display_title = app_core
                         .game_state
-                        .container_cache
-                        .find_by_title(container_title)
+                        .objects
+                        .find_container(container_title)
                         .map(|c| c.title.clone())
                         .unwrap_or_else(|| container_title.clone());
                     tracing::debug!(
@@ -1258,7 +1259,7 @@ impl TuiFrontend {
                     widget.set_link_color(link_color.clone());
 
                     // Look up container by title (case-insensitive match)
-                    if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
+                    if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
                         tracing::debug!(
                             "Container sync: found data for '{}' (id='{}'): {} items",
                             container_title,

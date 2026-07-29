@@ -34,16 +34,20 @@ pub fn run(
     // save; catch it and save geometry there.
     #[cfg(windows)]
     console_close::install(character.clone(), console_size_profile.clone());
-    // Use tokio runtime for async network I/O
+    // Use tokio runtime for async network I/O.
+    // Box::pin: async_run's state machine is enormous in debug builds and
+    // block_on would otherwise pin it on the main thread's stack — which on
+    // Windows is only 1 MiB and was overflowing under the deeper keyboard
+    // input-handler call chains (menu Enter). Heap-allocate it instead.
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(async_run(
+    runtime.block_on(Box::pin(async_run(
         config,
         character,
         direct,
         setup_palette,
         login_key,
         console_size_profile,
-    ))
+    )))
 }
 
 /// If this process owns a console window but a standard handle doesn't
@@ -786,31 +790,10 @@ async fn async_run(
                         }
                     }
 
-                    // Container discovery: auto-create window for new containers
-                    if app_core.ui_state.container_discovery_mode {
-                        if let Some((id, title)) =
-                            app_core.message_processor.newly_registered_container.take()
-                        {
-                            tracing::info!(
-                                "Container discovery: creating window for '{}' (id={})",
-                                title,
-                                id
-                            );
-                            let (term_width, term_height) = frontend.size();
-                            app_core.create_ephemeral_container_window(
-                                &title,
-                                term_width,
-                                term_height,
-                            );
-                        }
-                    } else {
-                        // Clear any pending signal if discovery mode is off
-                        app_core.message_processor.newly_registered_container = None;
-                    }
-
-                    // Process pending window additions from openDialog events
+                    // Realize game-offered windows (containers whose offer
+                    // the user has Shown, openDialog-templated widgets).
                     let (term_width, term_height) = frontend.size();
-                    app_core.process_pending_window_additions(term_width, term_height);
+                    app_core.realize_offered_windows(term_width, term_height);
                 }
                 ServerMessage::Connected => {
                     tracing::info!("Connected to game server");

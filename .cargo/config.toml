@@ -1,5 +1,14 @@
 # Workspace-wide cargo configuration.
 
+# Windows defaults the main thread to a 1 MiB stack (Linux/macOS: 8 MiB).
+# The TUI's async main-loop future plus the large debug-build input-handler
+# frames (handle_key_event -> handle_menu_mode_keys -> handle_menu_command)
+# exceeded it: pressing Enter in any popup menu overflowed the stack while
+# the shallower mouse path survived. Reserve 16 MiB instead — reserve is
+# address space, not committed memory, so this is free at runtime.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:16777216"]
+
 [env]
 # Rust objects for iOS embed the build SDK's version as their minimum OS
 # unless this is set, which breaks running on older devices. Keep in

@@ -767,6 +767,7 @@ impl BaseMut for WindowDef {
             WindowDef::Players { base, .. } => Some(base),
             WindowDef::Items { base, .. } => Some(base),
             WindowDef::Container { base, .. } => Some(base),
+            WindowDef::DialogPanel { base, .. } => Some(base),
             WindowDef::Spacer { base, .. } => Some(base),
             WindowDef::Quickbar { base, .. } => Some(base),
             WindowDef::Hotkeybar { base, .. } => Some(base),

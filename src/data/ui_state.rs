@@ -61,15 +61,17 @@ pub struct UiState {
     /// Pending link click (released without drag = send _menu)
     pub pending_link_click: Option<PendingLinkClick>,
 
+    /// Commands queued by dialog-panel widgets (rendered from an immutable
+    /// AppCore borrow) for the app loop to send after rendering. Interior
+    /// mutability so the panel renderer can push without a &mut AppCore.
+    pub pending_panel_commands: std::cell::RefCell<Vec<String>>,
+
     /// Set true after layout reload to signal frontend to reset widget caches
     pub needs_widget_reset: bool,
 
     /// List of specific widget names to reset (used when widget type changes)
     /// More targeted than needs_widget_reset which clears ALL caches
     pub widgets_to_reset: Vec<String>,
-
-    /// Container discovery mode - when ON, auto-creates windows for LOOK IN containers
-    pub container_discovery_mode: bool,
 
     /// Set of ephemeral window names (session-only, not saved to layout)
     pub ephemeral_windows: std::collections::HashSet<String>,
@@ -83,8 +85,18 @@ pub struct UiState {
     /// Currently active quickbar id
     pub active_quickbar_id: Option<String>,
 
-    /// Active dialog popup (dynamic openDialog payloads)
+    /// Active dialog popup (dynamic openDialog payloads). This is the
+    /// currently-DISPLAYED dialog; its full state also lives in
+    /// `dialog_store` so it can be re-shown intact.
     pub active_dialog: Option<DialogState>,
+
+    /// Every dialog the game has described this session, keyed by id,
+    /// accumulated from dialogData regardless of show/hide policy. The
+    /// game sends a dialog's full definition once (typically at login)
+    /// then only deltas; ingesting into this store means enabling a
+    /// dialog mid-session shows it fully formed rather than from whatever
+    /// deltas happened to arrive after the user opted in.
+    pub dialog_store: HashMap<String, DialogState>,
 
     /// Active injuries popup (viewing another player's injuries)
     pub injuries_popup: Option<InjuriesPopupState>,
@@ -255,6 +267,14 @@ pub struct DialogState {
     pub progress_bars: Vec<DialogProgressBar>,
     /// Standalone display labels (not paired with input fields)
     pub display_labels: Vec<DialogLabel>,
+    /// Option pickers (`<dropDownBox>`), e.g. combat stance/aim/spell.
+    pub dropdowns: Vec<DialogDropDown>,
+    /// Text-command links (`<link>`), e.g. combat's skin/search footer.
+    pub links: Vec<DialogLink>,
+    /// Icon buttons (`<image>`), e.g. combat's weapon-ready row.
+    pub images: Vec<DialogImage>,
+    /// Integer spinners (`<upDownEditBox>`), e.g. quickstrike offset.
+    pub spinboxes: Vec<DialogSpinBox>,
     /// Manual position override (None = auto-center)
     pub position: Option<(u16, u16)>,
     /// Manual size override (None = auto-size based on content)
@@ -264,15 +284,73 @@ pub struct DialogState {
 }
 
 impl DialogState {
-    /// Substitute `%fieldid%` placeholders in a button command with the
-    /// current field values.
+    /// An empty dialog with the given id/title, ready to accumulate
+    /// controls from dialogData. `save_position` and geometry default off.
+    pub fn empty(id: String, title: Option<String>) -> Self {
+        DialogState {
+            id,
+            title,
+            buttons: Vec::new(),
+            selected: 0,
+            fields: Vec::new(),
+            labels: Vec::new(),
+            focused_field: None,
+            progress_bars: Vec::new(),
+            display_labels: Vec::new(),
+            dropdowns: Vec::new(),
+            links: Vec::new(),
+            images: Vec::new(),
+            spinboxes: Vec::new(),
+            position: None,
+            size: None,
+            save_position: false,
+        }
+    }
+
+    /// Substitute `%id%` placeholders in a control command with the
+    /// current field values and dropdown selections (the game's commands
+    /// reference sibling controls: `cmd='prep %dDBSpell0%'`).
     pub fn command_with_placeholders(&self, command: &str) -> String {
         let mut resolved = command.to_string();
         for field in &self.fields {
             let token = format!("%{}%", field.id);
             resolved = resolved.replace(&token, &field.value);
         }
+        for dropdown in &self.dropdowns {
+            let token = format!("%{}%", dropdown.id);
+            resolved = resolved.replace(&token, &dropdown.value);
+        }
+        for spinbox in &self.spinboxes {
+            let token = format!("%{}%", spinbox.id);
+            resolved = resolved.replace(&token, &spinbox.value.to_string());
+        }
         resolved
+    }
+
+    /// Advance a dropdown to its next option (wrapping) and return the
+    /// resolved command to send, if the dropdown carries one. The TUI's
+    /// click-to-cycle interaction; the GUI uses a real combo box.
+    pub fn cycle_dropdown(&mut self, index: usize) -> Option<String> {
+        let dropdown = self.dropdowns.get_mut(index)?;
+        if dropdown.options.is_empty() {
+            return None;
+        }
+        let current = dropdown
+            .options
+            .iter()
+            .position(|(_, value)| *value == dropdown.value)
+            .unwrap_or(usize::MAX);
+        let next = if current == usize::MAX {
+            0
+        } else {
+            (current + 1) % dropdown.options.len()
+        };
+        dropdown.value = dropdown.options[next].1.clone();
+        let command = dropdown.command.clone();
+        if command.trim().is_empty() {
+            return None;
+        }
+        Some(format!("{}\n", self.command_with_placeholders(&command)))
     }
 
     /// Activate a button by index, applying close/radio-group/autosend
@@ -315,6 +393,29 @@ impl DialogState {
     }
 }
 
+/// Pixel-space layout hints the game attaches to dialog controls:
+/// absolute `top`/`left` (can be negative), size, compass `align`
+/// (n/nw/ne/...), and anchors positioning a control relative to sibling
+/// control ids (`anchor_left='cmdHide'`). Renderers translate these into
+/// their own coordinate systems (GUI near-literally, TUI to cells).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DialogControlLayout {
+    pub top: Option<i32>,
+    pub left: Option<i32>,
+    pub width: Option<u16>,
+    pub height: Option<u16>,
+    pub align: Option<String>,
+    pub anchor_top: Option<String>,
+    pub anchor_left: Option<String>,
+    pub anchor_right: Option<String>,
+}
+
+impl DialogControlLayout {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Dialog button definition
 #[derive(Clone, Debug)]
 pub struct DialogButton {
@@ -326,6 +427,60 @@ pub struct DialogButton {
     pub selected: bool,
     pub autosend: bool,
     pub group: Option<String>,
+    /// Layout hints from the tag (None when the tag carried none).
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// A `<link>` inside dialogData: a text command (combat's skin/search/
+/// grip/multistrike footer). Like a button but rendered as a link.
+#[derive(Clone, Debug)]
+pub struct DialogLink {
+    pub id: String,
+    pub label: String,
+    pub command: String,
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// An `<image>` inside dialogData: a clickable icon by skin asset name
+/// (combat's SwordBtn/ShieldBtn weapon-ready row). `name` keys into the
+/// shared icon store; renderers fall back to the tooltip/label as text.
+#[derive(Clone, Debug)]
+pub struct DialogImage {
+    pub id: String,
+    /// Skin asset name (e.g. "SwordBtn"); resolved against the icon store.
+    pub name: String,
+    pub command: String,
+    pub tooltip: Option<String>,
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// An `<upDownEditBox>` inside dialogData: a bounded integer spinner
+/// (combat's quickstrike offset). Its value feeds `%id%` substitution.
+#[derive(Clone, Debug)]
+pub struct DialogSpinBox {
+    pub id: String,
+    pub value: i32,
+    pub min: i32,
+    pub max: i32,
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// A `<dropDownBox>` inside dialogData: a labelled option picker whose
+/// current value other controls' commands can reference via `%id%`
+/// (e.g. `cmd='aim %dDBAim%'` on the dropdown itself, or a sibling
+/// button's `cmd='prep %dDBSpell0%'`).
+#[derive(Clone, Debug)]
+pub struct DialogDropDown {
+    pub id: String,
+    /// Currently selected VALUE (matches an options entry's value).
+    pub value: String,
+    /// (display text, submit value) pairs from content_text/content_value.
+    pub options: Vec<(String, String)>,
+    /// Command template sent when the selection changes ("" = passive;
+    /// other controls read the value via %id%).
+    pub command: String,
+    pub tooltip: Option<String>,
+    pub layout: Option<DialogControlLayout>,
 }
 
 #[derive(Clone, Debug)]
@@ -349,6 +504,163 @@ pub struct DialogProgressBar {
     pub id: String,
     pub value: u32,   // Percentage 0-100
     pub text: String, // Display text (e.g., "defensive (100%)")
+}
+
+/// Which dialog control a resolved rect belongs to (index into the
+/// corresponding DialogState vec).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PositionedControlKind {
+    Button(usize),
+    DropDown(usize),
+    ProgressBar(usize),
+}
+
+/// A dialog control resolved to a pixel-space rect by the anchor grid.
+#[derive(Clone, Debug)]
+pub struct PositionedControl {
+    pub kind: PositionedControlKind,
+    /// (x, y, width, height) in dialog-content pixels, origin top-left.
+    pub rect: (f32, f32, f32, f32),
+}
+
+impl DialogState {
+    /// Wrayth's right-panel dialogs are ~190px wide; centered/right
+    /// alignment resolves against this canvas unless controls overflow it.
+    const CANVAS_WIDTH: f32 = 190.0;
+
+    /// Resolve buttons/dropdowns/progress bars to pixel rects using the
+    /// game's layout language: absolute `top`/`left` interpreted through
+    /// compass `align` (nw = from left, n = from horizontal center,
+    /// ne = from right), then `anchor_top`/`anchor_left`/`anchor_right`
+    /// constraints re-positioning controls against resolved siblings
+    /// (offsets add to the anchored edge; anchor_left + anchor_right
+    /// together stretch the control between them). Returns None when no
+    /// control carries position data — callers fall back to flow layout.
+    /// Anchor references to controls we don't capture (images) are
+    /// skipped, leaving that axis at its absolute placement.
+    pub fn positioned_controls(&self) -> Option<(Vec<PositionedControl>, (f32, f32))> {
+        struct Entry {
+            id: String,
+            layout: Option<DialogControlLayout>,
+            kind: PositionedControlKind,
+            rect: (f32, f32, f32, f32),
+        }
+
+        let mut entries: Vec<Entry> = Vec::new();
+        for (i, button) in self.buttons.iter().enumerate() {
+            entries.push(Entry {
+                id: button.id.clone(),
+                layout: button.layout.clone(),
+                kind: PositionedControlKind::Button(i),
+                rect: (0.0, 0.0, 55.0, 20.0),
+            });
+        }
+        for (i, dropdown) in self.dropdowns.iter().enumerate() {
+            entries.push(Entry {
+                id: dropdown.id.clone(),
+                layout: dropdown.layout.clone(),
+                kind: PositionedControlKind::DropDown(i),
+                rect: (0.0, 0.0, 80.0, 20.0),
+            });
+        }
+        for (i, _bar) in self.progress_bars.iter().enumerate() {
+            // Progress bars don't carry layout on DialogProgressBar yet;
+            // give them stacked rows at the top so combat's stance bar
+            // lands in roughly the right zone.
+            entries.push(Entry {
+                id: self.progress_bars[i].id.clone(),
+                layout: None,
+                kind: PositionedControlKind::ProgressBar(i),
+                rect: (0.0, i as f32 * 20.0, 130.0, 16.0),
+            });
+        }
+
+        let has_positions = entries.iter().any(|e| {
+            e.layout.as_ref().is_some_and(|l| {
+                l.top.is_some()
+                    || l.left.is_some()
+                    || l.anchor_top.is_some()
+                    || l.anchor_left.is_some()
+                    || l.anchor_right.is_some()
+            })
+        });
+        if !has_positions {
+            return None;
+        }
+
+        let canvas = Self::CANVAS_WIDTH;
+
+        // Pass 1: absolute placement from align + top/left.
+        for entry in entries.iter_mut() {
+            let Some(layout) = entry.layout.clone() else {
+                continue;
+            };
+            let w = layout.width.map(f32::from).unwrap_or(entry.rect.2);
+            let h = layout.height.map(f32::from).unwrap_or(entry.rect.3);
+            let left = layout.left.unwrap_or(0) as f32;
+            let top = layout.top.unwrap_or(0) as f32;
+            let align = layout.align.as_deref().unwrap_or("nw");
+            let x = match align {
+                "n" | "s" | "c" | "" => canvas / 2.0 - w / 2.0 + left,
+                "ne" | "e" | "se" => canvas - w - left,
+                _ => left, // nw/w/sw and anything unknown: from the left
+            };
+            entry.rect = (x, top, w, h);
+        }
+
+        // Pass 2 (iterated): anchors against resolved siblings. A few
+        // rounds lets chains (a anchored to b anchored to c) settle.
+        for _ in 0..3 {
+            for index in 0..entries.len() {
+                let Some(layout) = entries[index].layout.clone() else {
+                    continue;
+                };
+                let find = |id: &str| -> Option<(f32, f32, f32, f32)> {
+                    entries
+                        .iter()
+                        .find(|e| !e.id.is_empty() && e.id == id)
+                        .map(|e| e.rect)
+                };
+                let mut rect = entries[index].rect;
+                if let Some(target) = layout.anchor_top.as_deref().and_then(find) {
+                    rect.1 = target.1 + target.3 + layout.top.unwrap_or(2) as f32;
+                }
+                match (
+                    layout.anchor_left.as_deref().and_then(find),
+                    layout.anchor_right.as_deref().and_then(find),
+                ) {
+                    (Some(left_of), Some(right_of)) => {
+                        rect.0 = left_of.0 + left_of.2 + layout.left.unwrap_or(2) as f32;
+                        rect.2 = (right_of.0 - rect.0 - 2.0).max(10.0);
+                    }
+                    (Some(left_of), None) => {
+                        rect.0 = left_of.0 + left_of.2 + layout.left.unwrap_or(2) as f32;
+                    }
+                    (None, Some(right_of)) => {
+                        rect.0 = right_of.0 - rect.2 - layout.left.unwrap_or(2) as f32;
+                    }
+                    (None, None) => {}
+                }
+                entries[index].rect = rect;
+            }
+        }
+
+        let mut max_x: f32 = canvas;
+        let mut max_y: f32 = 0.0;
+        for entry in &entries {
+            max_x = max_x.max(entry.rect.0 + entry.rect.2);
+            max_y = max_y.max(entry.rect.1 + entry.rect.3);
+        }
+
+        let controls = entries
+            .into_iter()
+            .map(|e| PositionedControl {
+                kind: e.kind,
+                rect: e.rect,
+            })
+            .collect();
+        Some((controls, (max_x + 4.0, max_y + 4.0)))
+    }
 }
 
 /// Injuries popup state for viewing another player's injuries
@@ -428,18 +740,50 @@ impl UiState {
             selection_drag_start: None,
             link_drag_state: None,
             pending_link_click: None,
+            pending_panel_commands: std::cell::RefCell::new(Vec::new()),
             needs_widget_reset: false,
             widgets_to_reset: Vec::new(),
-            container_discovery_mode: false,
             ephemeral_windows: std::collections::HashSet::new(),
             quickbars: HashMap::new(),
             quickbar_order: Vec::new(),
             active_quickbar_id: None,
             active_dialog: None,
+            dialog_store: HashMap::new(),
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
         }
+    }
+
+    /// Get (creating if absent) the store entry for a dialog id. All
+    /// dialogData ingestion writes here so a dialog can be re-shown intact.
+    pub fn dialog_slot_mut(&mut self, id: &str) -> &mut DialogState {
+        self.dialog_store
+            .entry(id.to_string())
+            .or_insert_with(|| DialogState::empty(id.to_string(), None))
+    }
+
+    /// Mirror a stored dialog into the visible `active_dialog` slot,
+    /// preserving the live position/size/save flag if the same dialog is
+    /// already showing (so an incoming delta doesn't yank a moved popup
+    /// back to center). Switches input mode to Dialog and closes menus.
+    pub fn show_dialog_from_store(&mut self, id: &str) {
+        let Some(mut dialog) = self.dialog_store.get(id).cloned() else {
+            return;
+        };
+        if let Some(current) = self.active_dialog.as_ref().filter(|d| d.id == id) {
+            dialog.position = current.position;
+            dialog.size = current.size;
+            dialog.save_position = current.save_position;
+            dialog.selected = current.selected.min(dialog.buttons.len().saturating_sub(1));
+            dialog.focused_field = current.focused_field;
+        }
+        self.active_dialog = Some(dialog);
+        self.input_mode = InputMode::Dialog;
+        self.popup_menu = None;
+        self.submenu = None;
+        self.nested_submenu = None;
+        self.deep_submenu = None;
     }
 
     /// Get a window by name
@@ -1097,5 +1441,144 @@ mod tests {
         let cloned = state.clone();
         assert_eq!(cloned.input_mode, state.input_mode);
         assert_eq!(cloned.status_text, state.status_text);
+    }
+
+    fn dialog_with(buttons: Vec<DialogButton>, dropdowns: Vec<DialogDropDown>) -> DialogState {
+        DialogState {
+            buttons,
+            dropdowns,
+            ..DialogState::empty("combat".to_string(), None)
+        }
+    }
+
+    fn button(id: &str, layout: DialogControlLayout) -> DialogButton {
+        DialogButton {
+            id: id.to_string(),
+            label: id.to_string(),
+            command: String::new(),
+            is_close: false,
+            is_radio: false,
+            selected: false,
+            autosend: false,
+            group: None,
+            layout: Some(layout),
+        }
+    }
+
+    #[test]
+    fn anchor_grid_resolves_combat_stance_row() {
+        // Real combat-window row: [defense (nw)] [stance dropdown,
+        // anchored between] [offense (ne)], all at top=70.
+        use crate::data::ui_state::PositionedControlKind;
+        let defense = button(
+            "cmdDefStance",
+            DialogControlLayout {
+                top: Some(70),
+                left: Some(0),
+                width: Some(55),
+                height: Some(20),
+                align: Some("nw".to_string()),
+                ..Default::default()
+            },
+        );
+        let offense = button(
+            "cmdOffStance",
+            DialogControlLayout {
+                top: Some(70),
+                left: Some(0),
+                width: Some(50),
+                height: Some(20),
+                align: Some("ne".to_string()),
+                ..Default::default()
+            },
+        );
+        let stance = DialogDropDown {
+            id: "dDBStance".to_string(),
+            value: "defensive".to_string(),
+            options: vec![("offensive".into(), "offensive".into())],
+            command: "_stance %dDBStance%".to_string(),
+            tooltip: None,
+            layout: Some(DialogControlLayout {
+                top: Some(70),
+                left: Some(0),
+                width: Some(80),
+                height: Some(20),
+                align: Some("n".to_string()),
+                anchor_left: Some("cmdDefStance".to_string()),
+                anchor_right: Some("cmdOffStance".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        let dialog = dialog_with(vec![defense, offense], vec![stance]);
+        let (controls, (w, h)) = dialog.positioned_controls().expect("positioned");
+
+        let rect_of = |kind: PositionedControlKind| {
+            controls
+                .iter()
+                .find(|c| c.kind == kind)
+                .map(|c| c.rect)
+                .unwrap()
+        };
+        let defense = rect_of(PositionedControlKind::Button(0));
+        let offense = rect_of(PositionedControlKind::Button(1));
+        let stance = rect_of(PositionedControlKind::DropDown(0));
+
+        // Defense flush left, offense flush right of the 190px canvas.
+        assert_eq!(defense.0, 0.0);
+        assert_eq!(offense.0, 190.0 - 50.0);
+        // Stance starts at defense's right edge and stretches to offense.
+        assert_eq!(stance.0, defense.0 + defense.2);
+        assert!((stance.0 + stance.2 - offense.0).abs() <= 2.0 + f32::EPSILON);
+        // Whole row at y=70; content bounds cover it.
+        assert_eq!(defense.1, 70.0);
+        assert_eq!(stance.1, 70.0);
+        assert!(w >= 190.0 && h >= 90.0);
+    }
+
+    #[test]
+    fn cycle_dropdown_advances_and_resolves_command() {
+        let stance = DialogDropDown {
+            id: "dDBStance".to_string(),
+            value: "defensive".to_string(),
+            options: vec![
+                ("offensive".into(), "offensive".into()),
+                ("defensive".into(), "defensive".into()),
+            ],
+            command: "_stance %dDBStance%".to_string(),
+            tooltip: None,
+            layout: None,
+        };
+        let mut dialog = dialog_with(Vec::new(), vec![stance]);
+
+        // defensive (index 1) wraps to offensive (index 0).
+        let cmd = dialog.cycle_dropdown(0);
+        assert_eq!(dialog.dropdowns[0].value, "offensive");
+        assert_eq!(cmd.as_deref(), Some("_stance offensive\n"));
+
+        // And back again.
+        let cmd = dialog.cycle_dropdown(0);
+        assert_eq!(dialog.dropdowns[0].value, "defensive");
+        assert_eq!(cmd.as_deref(), Some("_stance defensive\n"));
+
+        // Out-of-range index is a no-op.
+        assert!(dialog.cycle_dropdown(5).is_none());
+    }
+
+    #[test]
+    fn no_layout_means_flow_mode() {
+        let plain = DialogButton {
+            id: "ok".to_string(),
+            label: "OK".to_string(),
+            command: String::new(),
+            is_close: true,
+            is_radio: false,
+            selected: false,
+            autosend: false,
+            group: None,
+            layout: None,
+        };
+        let dialog = dialog_with(vec![plain], Vec::new());
+        assert!(dialog.positioned_controls().is_none());
     }
 }

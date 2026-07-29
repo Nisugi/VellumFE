@@ -968,10 +968,11 @@ impl AppCore {
         if raw.trim().is_empty() {
             self.add_system_message(
                 "[foreach] usage: .foreach [unique] [first N] [after N] [sorted] \
-                 [reversed] [attr=]value in <container>[,...]; command; command...",
+                 [reversed] [attr=]value in <target>[,...]; command; command...",
             );
             self.add_system_message(
-                "[foreach] attrs: type (default) | sellable | noun | name | quick; \
+                "[foreach] targets: a container name, or inv | worn | feet | floor. \
+                 attrs: type (default) | sellable | noun | name | quick; \
                  'item'/'container' substitute in commands; no commands = list \
                  matches. Containers must have been seen open (look in them once).",
             );
@@ -1010,62 +1011,133 @@ impl AppCore {
 
         let mut candidates: Vec<foreach::Candidate> = Vec::new();
         let mut missing: Vec<String> = Vec::new();
-        for (query, optional) in &spec.targets {
-            let Some(container) = self
-                .game_state
-                .container_cache
-                .find_container_for_query(query)
-            else {
-                if *optional {
-                    missing.push(query.clone());
-                    continue;
-                }
-                self.add_system_message(&format!(
-                    "[foreach] no tracked container matches '{query}' - look in it \
-                     once so VellumFE sees its contents, or suffix '?' to skip it."
-                ));
-                // Show what IS tracked so the mismatch is diagnosable
-                // (and reveals an empty cache, e.g. Lich's ;sorter eating
-                // the inv stream).
-                let known = self.game_state.container_cache.list_containers();
-                if known.is_empty() {
-                    self.add_system_message(
-                        "[foreach] (no containers tracked yet - look in one to start)",
-                    );
-                } else {
-                    let titles: Vec<&str> = known
+        for (target, optional) in &spec.targets {
+            use crate::core::foreach::Target;
+            // Gather (id, noun, name, container_id) for the target. For
+            // pseudo-targets the item isn't inside a container, so the
+            // `container` substitution falls back to the item's own id
+            // (harmless — `item` is what these commands use).
+            let rows: Vec<(String, String, String, String)> = match target {
+                Target::Container(query) => {
+                    let Some(container) = self.game_state.objects.find_container(query)
+                    else {
+                        if *optional {
+                            missing.push(query.clone());
+                            continue;
+                        }
+                        self.add_system_message(&format!(
+                            "[foreach] no tracked container matches '{query}' - look \
+                             in it once so VellumFE sees its contents, or suffix '?' \
+                             to skip it."
+                        ));
+                        let titles = self.game_state.objects.container_titles();
+                        if titles.is_empty() {
+                            self.add_system_message(
+                                "[foreach] (no containers tracked yet - look in one to start)",
+                            );
+                        } else {
+                            self.add_system_message(&format!(
+                                "[foreach] tracked: {}",
+                                titles.iter().take(12).cloned().collect::<Vec<_>>().join(", ")
+                            ));
+                        }
+                        return;
+                    };
+                    let ct = container.command_target();
+                    container
+                        .items
                         .iter()
-                        .filter(|c| !c.title.is_empty())
-                        .map(|c| c.title.as_str())
-                        .take(12)
-                        .collect();
-                    self.add_system_message(&format!(
-                        "[foreach] tracked: {}",
-                        titles.join(", ")
-                    ));
+                        .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), ct.clone()))
+                        .collect()
                 }
-                return;
+                Target::Inv => self
+                    .game_state
+                    .objects
+                    .carried()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
+                Target::Worn => self
+                    .game_state
+                    .objects
+                    .worn()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
+                Target::AtFeet => self
+                    .game_state
+                    .objects
+                    .at_feet()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
+                Target::Floor => self
+                    .game_state
+                    .objects
+                    .ground()
+                    .iter()
+                    .map(|i| (i.id.clone(), i.noun.clone(), i.name.clone(), i.id.clone()))
+                    .collect(),
             };
-            for item in container.parsed_items() {
+            for (id, noun, name, container_id) in rows {
                 let types = data
-                    .types_of(&item.name, &item.noun)
+                    .types_of(&name, &noun)
                     .iter()
                     .map(|t| t.to_string())
                     .collect();
                 let sellable = data
-                    .sellable(&item.name, &item.noun)
+                    .sellable(&name, &noun)
                     .map(|joined| joined.split(',').map(str::to_string).collect())
                     .unwrap_or_default();
+                let status = self
+                    .game_state
+                    .objects
+                    .status_of(&id)
+                    .copied()
+                    .unwrap_or_default();
                 candidates.push(foreach::Candidate {
-                    id: item.id,
-                    noun: item.noun,
-                    name: item.name,
-                    // The game-command id, not the stream id (differs for
-                    // stow), so `put item in container` -> a real target.
-                    container_id: container.command_target(),
+                    id,
+                    noun,
+                    name,
+                    container_id,
                     types,
                     sellable,
+                    status,
                 });
+            }
+        }
+
+        // Marked/registered filter needs status only the INVENTORY FULL
+        // scan provides. If any candidate that otherwise matches lacks it,
+        // trigger a scan and ask the user to re-run (the scan is async; the
+        // result lands on the registry a moment later).
+        if spec.status.is_active() {
+            let need_scan = candidates.iter().any(|c| {
+                let type_ok = spec.value_matches_public(c);
+                let unknown = (spec.status.marked.is_some() && c.status.marked.is_none())
+                    || (spec.status.registered.is_some()
+                        && c.status.registered.is_none());
+                type_ok && unknown
+            });
+            if need_scan {
+                if let Some(cmd) = self.message_processor.start_inventory_scan() {
+                    // Inject the scan command into the outbound path (zero
+                    // delay = next drain).
+                    self.queue_timed_command(
+                        std::time::Duration::from_millis(0),
+                        cmd.to_string(),
+                    );
+                    self.add_system_message(
+                        "[foreach] fetching item status (INVENTORY FULL) - re-run \
+                         the command in a moment.",
+                    );
+                } else {
+                    self.add_system_message(
+                        "[foreach] an item-status scan is already in progress - \
+                         re-run shortly.",
+                    );
+                }
+                return;
             }
         }
 
@@ -1107,11 +1179,9 @@ impl AppCore {
         let mut items = Vec::new();
         for candidate in &picked {
             let steps = {
-                let cache = &self.game_state.container_cache;
+                let objects = &self.game_state.objects;
                 foreach::build_steps(&spec.commands, candidate, |query| {
-                    cache
-                        .find_container_for_query(query)
-                        .map(|c| c.command_target())
+                    objects.find_container(query).map(|c| c.command_target())
                 })
             };
             match steps {
@@ -1701,18 +1771,20 @@ impl AppCore {
                 self.needs_render = true;
             }
 
-            // Container discovery mode
+            // The old all-or-nothing container discovery toggle is retired:
+            // container windows are now per-container choices in the
+            // known-windows list, so alias .containers to that.
             "containers" => {
-                self.ui_state.container_discovery_mode = !self.ui_state.container_discovery_mode;
-                let status = if self.ui_state.container_discovery_mode {
-                    "ON"
-                } else {
-                    "OFF"
-                };
-                self.add_system_message(&format!("Container discovery {}", status));
-                if self.ui_state.container_discovery_mode {
-                    self.add_system_message("LOOK IN containers to create windows for them");
-                }
+                self.add_system_message(
+                    "Container windows are now per-container: tick them in the known-windows list.",
+                );
+                let items = self.build_known_windows_menu();
+                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
+                    items,
+                    (40, 12),
+                ));
+                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
+                self.needs_render = true;
             }
             "hidecontainers" => {
                 // No args = close all, with arg = close matching container
@@ -1741,6 +1813,20 @@ impl AppCore {
                 // Switch to Menu input mode
                 self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
                 tracing::debug!("Input mode set to Menu: {:?}", self.ui_state.input_mode);
+                self.needs_render = true;
+            }
+
+            // Known-windows list: the windows the game has offered
+            // (containers/dialogs/streams), each togglable show/hide. On the
+            // GUI this opens its checkbox panel; on the TUI it's a popup menu.
+            // (`.windows` is taken by list_windows above — use .knownwindows.)
+            "knownwindows" => {
+                let items = self.build_known_windows_menu();
+                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
+                    items,
+                    (40, 12),
+                ));
+                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
                 self.needs_render = true;
             }
 
@@ -2586,22 +2672,32 @@ mod foreach_tests {
     use crate::core::AppCore;
 
     fn core_with_bandolier() -> AppCore {
+        use crate::core::game_objects::GameItem;
         let mut core = AppCore::new_for_test();
-        let cache = &mut core.game_state.container_cache;
-        cache.register_container("77".to_string(), "Bandolier".to_string(), None);
-        cache.add_item(
-            "77",
-            r#"In the <a exist="77" noun="bandolier">bandolier</a>:"#.to_string(),
-        );
-        cache.add_item(
-            "77",
-            r#" a <a exist="101" noun="crystal">quartz crystal</a>"#.to_string(),
-        );
-        cache.add_item(
-            "77",
-            r#" a <a exist="102" noun="sword">slim short sword</a>"#.to_string(),
-        );
+        let objects = &mut core.game_state.objects;
+        objects.register_container("77".to_string(), "Bandolier".to_string(), Some("#77".to_string()));
+        objects.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
+        objects.add_container_item("77", GameItem::new("102", "sword", "slim short sword"));
         core
+    }
+
+    #[test]
+    fn menu_commands_do_not_recurse_infinitely() {
+        // Repro for the menu-Enter stack overflow: drive send_command with
+        // exactly what a menu-Enter dispatches. If any recurses, this test
+        // stack-overflows and names the frame.
+        let mut core = AppCore::new_for_test();
+        for cmd in [
+            ".menu",
+            ".knownwindows",
+            ".windows",
+            "", // empty-menu placeholder command
+            "__SUBMENU__windows",
+            "__TOGGLE_OFFER__stow",
+            "menu:windows",
+        ] {
+            let _ = core.send_command(cmd.to_string());
+        }
     }
 
     #[test]
@@ -2626,22 +2722,17 @@ mod foreach_tests {
     fn foreach_stow_uses_object_target_not_stream_id() {
         // Regression: stow's stream id is "stow" but game commands need
         // the shroud's object id (from the <container> target attribute).
+        use crate::core::game_objects::GameItem;
         let mut core = AppCore::new_for_test();
         {
-            let cache = &mut core.game_state.container_cache;
-            cache.register_container(
+            let objects = &mut core.game_state.objects;
+            objects.register_container(
                 "stow".to_string(),
                 "My Shroud".to_string(),
                 Some("#225766691".to_string()),
             );
-            cache.add_item(
-                "stow",
-                r#"In the <a exist="225766691" noun="shroud">shroud</a>:"#.to_string(),
-            );
-            cache.add_item(
-                "stow",
-                r#" a <a exist="333" noun="crystal">quartz crystal</a>"#.to_string(),
-            );
+            objects
+                .add_container_item("stow", GameItem::new("333", "crystal", "quartz crystal"));
         }
         // 'container' must substitute to the object id, never "#stow".
         let _ = core.handle_dot_command(".foreach gem in shroud; put item in container");
@@ -2650,6 +2741,67 @@ mod foreach_tests {
             core.take_outbound(),
             vec!["put #333 in #225766691".to_string()]
         );
+    }
+
+    #[test]
+    fn foreach_worn_and_floor_pseudo_targets() {
+        use crate::core::game_objects::GameItem;
+        let mut core = AppCore::new_for_test();
+        {
+            let o = &mut core.game_state.objects;
+            // A gem worn (odd, but exercises worn), a non-gem worn.
+            o.set_worn(vec![
+                GameItem::new("10", "sapphire", "blue sapphire"),
+                GameItem::new("11", "cloak", "wool cloak"),
+            ]);
+            // A gem on the ground.
+            o.set_ground(vec![GameItem::new("20", "crystal", "quartz crystal")]);
+        }
+
+        // worn target: only the gem matches; item substitution uses its id.
+        let _ = core.handle_dot_command(".foreach gem in worn; get item");
+        assert!(core.foreach.is_running());
+        assert_eq!(core.take_outbound(), vec!["get #10".to_string()]);
+        let _ = core.handle_dot_command(".stop");
+
+        // floor target reads registry ground.
+        let _ = core.handle_dot_command(".foreach gem in floor; get item");
+        assert!(core.foreach.is_running());
+        assert_eq!(core.take_outbound(), vec!["get #20".to_string()]);
+        let _ = core.handle_dot_command(".stop");
+    }
+
+    #[test]
+    fn foreach_marked_filter_triggers_scan_then_filters() {
+        use crate::core::game_objects::{GameItem, ItemStatus};
+        let mut core = AppCore::new_for_test();
+        {
+            let o = &mut core.game_state.objects;
+            o.register_container("77".to_string(), "Bandolier".to_string(), Some("#77".to_string()));
+            o.add_container_item("77", GameItem::new("101", "crystal", "quartz crystal"));
+            o.add_container_item("77", GameItem::new("102", "crystal", "smoky quartz crystal"));
+        }
+
+        // Status unknown → the filter triggers an INVENTORY FULL scan and
+        // defers, rather than running on incomplete data.
+        let _ = core.handle_dot_command(".foreach marked gem in bandolier; get item");
+        assert!(!core.foreach.is_running(), "deferred pending scan");
+        assert_eq!(core.take_outbound(), vec!["inventory full".to_string()]);
+
+        // Simulate the scan result landing on the registry.
+        core.game_state.objects.set_status(
+            "101".to_string(),
+            ItemStatus { marked: Some(true), registered: Some(false) },
+        );
+        core.game_state.objects.set_status(
+            "102".to_string(),
+            ItemStatus { marked: Some(false), registered: Some(false) },
+        );
+
+        // Re-run: now status is known, only the marked gem runs.
+        let _ = core.handle_dot_command(".foreach marked gem in bandolier; get item");
+        assert!(core.foreach.is_running());
+        assert_eq!(core.take_outbound(), vec!["get #101".to_string()]);
     }
 
     #[test]

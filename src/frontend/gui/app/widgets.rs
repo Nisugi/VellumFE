@@ -2273,23 +2273,162 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    /// Render a resident dialog panel (combat, befriend, ...) from the
+    /// accumulated dialog store using the game's anchor-grid layout.
+    /// Buttons/links send their command; dropdowns send their selection
+    /// command (the game echoes back new state); the spinbox edits in
+    /// place and its value feeds `%id%` in sibling commands. Commands are
+    /// queued on ui_state.pending_panel_commands (immutable AppCore here).
+    pub(super) fn render_dialog_panel_content(
+        app_core: &AppCore,
+        ui: &mut egui::Ui,
+        dialog_id: &str,
+    ) {
+        let Some(dialog) = app_core.ui_state.dialog_store.get(dialog_id) else {
+            ui.weak("Waiting for the game to send this panel…");
+            return;
+        };
+        let queue = |cmd: String| {
+            if !cmd.trim().is_empty() {
+                app_core.ui_state.pending_panel_commands.borrow_mut().push(cmd);
+            }
+        };
+
+        let positioned = dialog.positioned_controls();
+        let (content_w, content_h) = positioned
+            .as_ref()
+            .map(|(_, size)| *size)
+            .unwrap_or((190.0, 24.0));
+        let (canvas_rect, _) =
+            ui.allocate_exact_size(egui::vec2(content_w, content_h), egui::Sense::hover());
+        let origin = canvas_rect.min;
+
+        if let Some((controls, _)) = &positioned {
+            use crate::data::ui_state::PositionedControlKind;
+            for control in controls {
+                let (x, y, w, h) = control.rect;
+                let rect =
+                    egui::Rect::from_min_size(origin + egui::vec2(x, y), egui::vec2(w, h));
+                match control.kind {
+                    PositionedControlKind::Button(i) => {
+                        if let Some(b) = dialog.buttons.get(i) {
+                            let resp = ui.put(rect, egui::Button::new(&b.label).small());
+                            let resp = match &b.command {
+                                c if c.trim().is_empty() => resp,
+                                _ => resp,
+                            };
+                            if resp.clicked() {
+                                queue(dialog.command_with_placeholders(&b.command));
+                            }
+                        }
+                    }
+                    PositionedControlKind::DropDown(i) => {
+                        if let Some(d) = dialog.dropdowns.get(i) {
+                            if let Some(value) =
+                                Self::dialog_panel_combo(ui, rect, dialog_id, d)
+                            {
+                                // Send the dropdown's command with the NEW
+                                // value substituted (game echoes back state).
+                                let mut probe = dialog.clone();
+                                if let Some(slot) =
+                                    probe.dropdowns.iter_mut().find(|x| x.id == d.id)
+                                {
+                                    slot.value = value;
+                                }
+                                queue(probe.command_with_placeholders(&d.command));
+                            }
+                        }
+                    }
+                    PositionedControlKind::ProgressBar(i) => {
+                        if let Some(bar) = dialog.progress_bars.get(i) {
+                            ui.put(
+                                rect,
+                                egui::ProgressBar::new(bar.value.min(100) as f32 / 100.0)
+                                    .text(bar.text.clone()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Links and images aren't in positioned_controls yet; lay links
+        // out as a wrapped footer row and images as an icon row. (Icon
+        // art from the skin store is a follow-up; show the tooltip text.)
+        if !dialog.images.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                for image in &dialog.images {
+                    if image.command.trim().is_empty() {
+                        continue;
+                    }
+                    let label = image.tooltip.as_deref().unwrap_or(&image.name);
+                    if ui.small_button(label).clicked() {
+                        queue(dialog.command_with_placeholders(&image.command));
+                    }
+                }
+            });
+        }
+        if !dialog.links.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                for link in &dialog.links {
+                    if ui.link(&link.label).clicked() {
+                        queue(dialog.command_with_placeholders(&link.command));
+                    }
+                }
+            });
+        }
+    }
+
+    /// A ComboBox for a dialog-panel dropdown; returns the newly picked
+    /// value. Mirrors the popup dialog's dropdown_combo.
+    fn dialog_panel_combo(
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        dialog_id: &str,
+        dropdown: &crate::data::DialogDropDown,
+    ) -> Option<String> {
+        let selected_text = dropdown
+            .options
+            .iter()
+            .find(|(_, value)| *value == dropdown.value)
+            .map(|(text, _)| text.clone())
+            .unwrap_or_else(|| dropdown.value.clone());
+        let mut picked = None;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            egui::ComboBox::from_id_salt(("dialog_panel", dialog_id, &dropdown.id))
+                .width(rect.width())
+                .selected_text(selected_text)
+                .show_ui(ui, |ui| {
+                    for (text, value) in &dropdown.options {
+                        if ui
+                            .selectable_label(*value == dropdown.value, text)
+                            .clicked()
+                            && *value != dropdown.value
+                        {
+                            picked = Some(value.clone());
+                        }
+                    }
+                });
+        });
+        picked
+    }
+
     pub(super) fn render_container_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         container_title: &str,
         wrap: bool,
-    ) {
-        let Some(container) = app_core.game_state.container_cache.find_by_title(container_title)
+    ) -> Option<GuiLinkClick> {
+        let Some(container) = app_core.game_state.objects.find_container(container_title)
         else {
             ui.weak(format!("No contents cached for \"{}\".", container_title));
-            return;
+            return None;
         };
 
-        if container.items.is_empty() {
-            ui.weak("Empty.");
-            return;
-        }
+        let container_id = container.id.clone();
+        let items: Vec<crate::core::game_objects::GameItem> = container.items.clone();
 
+        let mut clicked_link: Option<GuiLinkClick> = None;
         let max_height = ui.available_height().max(1.0);
         let scroll_area = if wrap {
             egui::ScrollArea::vertical()
@@ -2297,7 +2436,7 @@ impl VellumGuiApp {
             egui::ScrollArea::both()
         };
         scroll_area
-            .id_salt(format!("container_scroll_{}", container.id))
+            .id_salt(format!("container_scroll_{}", container_id))
             .auto_shrink([false, false])
             .min_scrolled_height(max_height)
             .max_height(max_height)
@@ -2305,10 +2444,39 @@ impl VellumGuiApp {
                 if !wrap {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 }
-                for item in &container.items {
-                    ui.label(item);
+                if items.is_empty() {
+                    ui.weak("Empty.");
+                    return;
+                }
+                // Registry items are structured; render each as a clickable,
+                // draggable link (mirrors render_items_content). Dropping an
+                // item onto the WINDOW BODY is handled by the window-level
+                // drag-drop path (handle_link_drag_drop); here per-item drops
+                // let you drag one item directly onto another.
+                for item in &items {
+                    let link = LinkData {
+                        exist_id: item.id.clone(),
+                        noun: item.noun.clone(),
+                        text: item.name.clone(),
+                        coord: None,
+                    };
+                    let response = ui
+                        .add(
+                            egui::Label::new(item.name.as_str())
+                                .sense(egui::Sense::click_and_drag())
+                                .selectable(!Self::link_drag_blocks_selection(ui)),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if let Some(drop) = Self::handle_link_dnd(ui, &response, &link) {
+                        clicked_link.get_or_insert(drop);
+                    }
+                    if response.clicked() && clicked_link.is_none() {
+                        clicked_link =
+                            Some(Self::gui_link_click_from_response(&response, ui, link));
+                    }
                 }
             });
+        clicked_link
     }
 
     /// Sentinel exist_id used to route quickbar switching through the
@@ -4340,7 +4508,10 @@ impl VellumGuiApp {
             }
             WindowContent::Items => Self::render_items_content(app_core, ui),
             WindowContent::Container { container_title } => {
-                Self::render_container_content(app_core, ui, container_title, settings.wrap_text);
+                Self::render_container_content(app_core, ui, container_title, settings.wrap_text)
+            }
+            WindowContent::DialogPanel { dialog_id } => {
+                Self::render_dialog_panel_content(app_core, ui, dialog_id);
                 None
             }
             WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),

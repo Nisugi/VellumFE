@@ -31,12 +31,97 @@ pub enum DialogRowArea {
     },
     /// Single button centered on its own row
     SingleButton { area: Rect, button_idx: usize },
+    /// A positioned control band: anchor-grid controls on one row.
+    ControlBand { cells: Vec<(Rect, BandHit)> },
 }
 
 pub struct DialogLayout {
     pub area: Rect,
     pub title_bar_area: Rect,
     pub row_areas: Vec<DialogRowArea>,
+}
+
+/// What a clicked cell in a positioned control band maps to.
+#[derive(Clone, Copy, Debug)]
+pub enum BandHit {
+    Button(usize),
+    DropDown(usize),
+}
+
+/// One renderable cell in a positioned control band (a horizontal row of
+/// anchor-grid controls, e.g. combat's [defense][stance ▼][offense]).
+enum BandCell {
+    Button { index: usize, text: String },
+    DropDown { index: usize, text: String },
+    Progress { index: usize },
+}
+
+/// Group the anchor-grid resolution into horizontal bands for the TUI:
+/// controls sorted by resolved y then x, with a new band whenever the
+/// vertical gap exceeds half a control height. Pixel positions become
+/// row order + left-to-right cell order — the TUI keeps the structure,
+/// not the pixels. None when the dialog carries no layout data.
+fn positioned_band_cells(dialog: &DialogState) -> Option<Vec<Vec<BandCell>>> {
+    let (mut controls, _) = dialog.positioned_controls()?;
+    controls.sort_by(|a, b| {
+        (a.rect.1, a.rect.0)
+            .partial_cmp(&(b.rect.1, b.rect.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut bands: Vec<Vec<BandCell>> = Vec::new();
+    let mut band_y = f32::MIN;
+    for control in controls {
+        use crate::data::ui_state::PositionedControlKind;
+        let cell = match control.kind {
+            PositionedControlKind::Button(index) => dialog.buttons.get(index).map(|b| {
+                BandCell::Button {
+                    index,
+                    text: display_label(b),
+                }
+            }),
+            PositionedControlKind::DropDown(index) => dialog.dropdowns.get(index).map(|d| {
+                let shown = d
+                    .options
+                    .iter()
+                    .find(|(_, value)| *value == d.value)
+                    .map(|(text, _)| text.as_str())
+                    .unwrap_or(d.value.as_str());
+                BandCell::DropDown {
+                    index,
+                    text: format!("[{} ▼]", shown),
+                }
+            }),
+            PositionedControlKind::ProgressBar(index) => {
+                dialog.progress_bars.get(index).map(|_| BandCell::Progress { index })
+            }
+        };
+        let Some(cell) = cell else { continue };
+        if (control.rect.1 - band_y).abs() > 12.0 || bands.is_empty() {
+            bands.push(Vec::new());
+            band_y = control.rect.1;
+        }
+        bands.last_mut().expect("just ensured").push(cell);
+    }
+    (!bands.is_empty()).then_some(bands)
+}
+
+fn band_cell_text_len(cell: &BandCell, dialog: &DialogState) -> usize {
+    match cell {
+        BandCell::Button { text, .. } | BandCell::DropDown { text, .. } => {
+            text.chars().count()
+        }
+        BandCell::Progress { index } => dialog
+            .progress_bars
+            .get(*index)
+            .map(|pb| pb.text.chars().count().max(20))
+            .unwrap_or(20),
+    }
+}
+
+fn band_width(band: &[BandCell], dialog: &DialogState) -> usize {
+    let cells: usize = band.iter().map(|c| band_cell_text_len(c, dialog)).sum();
+    cells + band.len().saturating_sub(1) * 2
 }
 
 fn display_label(button: &crate::data::DialogButton) -> String {
@@ -117,6 +202,9 @@ fn strip_field_suffix(field_id: &str) -> String {
 
 /// Count the actual number of rows that will be rendered
 fn count_dialog_rows(dialog: &DialogState) -> usize {
+    if let Some(bands) = positioned_band_cells(dialog) {
+        return (dialog.display_labels.len() + bands.len() + dialog.fields.len()).max(1);
+    }
     let mut count = 0;
 
     // Display labels (one row each)
@@ -267,13 +355,33 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
         .map(|b| display_label(b).len() + 2)
         .sum();
 
-    let content_width = max_button_len
-        .max(max_field_button_len)
-        .max(max_progress_bar_len)
-        .max(max_display_label_len)
-        .max(link_group_width)
-        .max(title.len())
-        .max(20); // Minimum width for progress bars to look good
+    let bands = positioned_band_cells(dialog);
+    let max_band_width = bands
+        .as_ref()
+        .map(|bands| {
+            bands
+                .iter()
+                .map(|band| band_width(band, dialog))
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+
+    let content_width = if bands.is_some() {
+        // Positioned mode: bands drive the width (plus labels/title).
+        max_band_width
+            .max(max_display_label_len)
+            .max(title.len())
+            .max(20)
+    } else {
+        max_button_len
+            .max(max_field_button_len)
+            .max(max_progress_bar_len)
+            .max(max_display_label_len)
+            .max(link_group_width)
+            .max(title.len())
+            .max(20) // Minimum width for progress bars to look good
+    };
 
     // Calculate size (use overrides if present)
     let (width, height) = if let Some((w, h)) = dialog.size {
@@ -326,6 +434,80 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
     let mut current_y = y.saturating_add(1); // Start after title bar
     let inner_width = width.saturating_sub(2);
     let inner_x = x.saturating_add(1);
+
+    // Positioned (anchor-grid) mode: labels, then control bands, then
+    // fields. Must mirror render_dialog's banded branch exactly.
+    if let Some(bands) = &bands {
+        for _ in &dialog.display_labels {
+            if current_y < y.saturating_add(height.saturating_sub(1)) {
+                row_areas.push(DialogRowArea::DisplayLabel {
+                    area: Rect {
+                        x: inner_x,
+                        y: current_y,
+                        width: inner_width,
+                        height: 1,
+                    },
+                });
+                current_y += 1;
+            }
+        }
+        for band in bands {
+            if current_y >= y.saturating_add(height.saturating_sub(1)) {
+                break;
+            }
+            let mut cell_x = inner_x.saturating_add(1);
+            let mut cells = Vec::new();
+            for cell in band {
+                let cell_width = band_cell_text_len(cell, dialog) as u16;
+                match cell {
+                    BandCell::Button { index, .. } => cells.push((
+                        Rect {
+                            x: cell_x,
+                            y: current_y,
+                            width: cell_width,
+                            height: 1,
+                        },
+                        BandHit::Button(*index),
+                    )),
+                    BandCell::DropDown { index, .. } => cells.push((
+                        Rect {
+                            x: cell_x,
+                            y: current_y,
+                            width: cell_width,
+                            height: 1,
+                        },
+                        BandHit::DropDown(*index),
+                    )),
+                    BandCell::Progress { .. } => {}
+                }
+                cell_x = cell_x.saturating_add(cell_width + 2);
+            }
+            row_areas.push(DialogRowArea::ControlBand { cells });
+            current_y += 1;
+        }
+        for (field_idx, _field) in dialog.fields.iter().enumerate() {
+            if current_y >= y.saturating_add(height.saturating_sub(1)) {
+                break;
+            }
+            let value = field_formatted_value(dialog, field_idx);
+            let input_box = field_input_box(&value);
+            row_areas.push(DialogRowArea::FieldOnly {
+                field_area: Rect {
+                    x: inner_x + 2,
+                    y: current_y,
+                    width: input_box.len() as u16,
+                    height: 1,
+                },
+                field_idx,
+            });
+            current_y += 1;
+        }
+        return DialogLayout {
+            area,
+            title_bar_area,
+            row_areas,
+        };
+    }
 
     // Track which buttons are used by fields (same as build_dialog_rows)
     let mut used_buttons: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -632,7 +814,40 @@ pub fn hit_test_button(layout: &DialogLayout, x: u16, y: u16) -> Option<usize> {
                     return Some(*button_idx);
                 }
             }
+            DialogRowArea::ControlBand { cells } => {
+                for (area, hit) in cells {
+                    if let BandHit::Button(button_idx) = hit {
+                        if x >= area.x
+                            && x < area.x.saturating_add(area.width)
+                            && y >= area.y
+                            && y < area.y.saturating_add(area.height)
+                        {
+                            return Some(*button_idx);
+                        }
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+    None
+}
+
+/// Hit-test positioned control bands for a dropdown cell.
+pub fn hit_test_dropdown(layout: &DialogLayout, x: u16, y: u16) -> Option<usize> {
+    for row_area in &layout.row_areas {
+        if let DialogRowArea::ControlBand { cells } = row_area {
+            for (area, hit) in cells {
+                if let BandHit::DropDown(index) = hit {
+                    if x >= area.x
+                        && x < area.x.saturating_add(area.width)
+                        && y >= area.y
+                        && y < area.y.saturating_add(area.height)
+                    {
+                        return Some(*index);
+                    }
+                }
+            }
         }
     }
     None
@@ -861,6 +1076,91 @@ pub fn render_dialog(
 
     Clear.render(layout.area, buf);
 
+    let normal_style_banded = Style::default()
+        .fg(crossterm_bridge::to_ratatui_color(theme.menu_item_normal))
+        .bg(crossterm_bridge::to_ratatui_color(theme.menu_background));
+    let selected_style_banded = Style::default()
+        .fg(crossterm_bridge::to_ratatui_color(theme.menu_item_selected))
+        .bg(crossterm_bridge::to_ratatui_color(theme.menu_item_focused));
+
+    // Positioned (anchor-grid) mode: labels, control bands, fields.
+    // Mirrors compute_dialog_layout's banded branch exactly.
+    if let Some(bands) = positioned_band_cells(dialog) {
+        let inner_width = layout.area.width.saturating_sub(4) as usize;
+        let mut lines: Vec<Line> = Vec::new();
+        for label in &dialog.display_labels {
+            let padding = inner_width.saturating_sub(label.value.len()) / 2;
+            lines.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    format!("{:>width$}{}", "", label.value, width = padding),
+                    normal_style_banded,
+                ),
+            ]));
+        }
+        for band in &bands {
+            // A lone progress bar keeps the full bar rendering.
+            if let [BandCell::Progress { index }] = band.as_slice() {
+                if let Some(pb) = dialog.progress_bars.get(*index) {
+                    lines.push(render_progress_bar_line(pb, inner_width, theme));
+                    continue;
+                }
+            }
+            let mut spans = vec![Span::raw(" ")];
+            for (i, cell) in band.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw("  "));
+                }
+                match cell {
+                    BandCell::Button { index, text } => {
+                        let style = if *index == dialog.selected {
+                            selected_style_banded
+                        } else {
+                            normal_style_banded
+                        };
+                        spans.push(Span::styled(text.clone(), style));
+                    }
+                    BandCell::DropDown { text, .. } => {
+                        spans.push(Span::styled(text.clone(), normal_style_banded));
+                    }
+                    BandCell::Progress { index } => {
+                        if let Some(pb) = dialog.progress_bars.get(*index) {
+                            spans.push(Span::styled(pb.text.clone(), normal_style_banded));
+                        }
+                    }
+                }
+            }
+            lines.push(Line::from(spans));
+        }
+        for (field_idx, _) in dialog.fields.iter().enumerate() {
+            let is_focused = dialog.focused_field == Some(field_idx);
+            let field_style = if is_focused {
+                selected_style_banded
+            } else {
+                normal_style_banded
+            };
+            let value = field_formatted_value(dialog, field_idx);
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(field_input_box(&value), field_style),
+            ]));
+        }
+        if lines.is_empty() {
+            lines.push(Line::from(Span::raw(" ")));
+        }
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .border_style(
+                Style::default().fg(crossterm_bridge::to_ratatui_color(theme.menu_border)),
+            )
+            .style(
+                Style::default().bg(crossterm_bridge::to_ratatui_color(theme.menu_background)),
+            );
+        Paragraph::new(lines).block(block).render(layout.area, buf);
+        return;
+    }
+
     // Build the rows from dialog elements
     let rows = build_dialog_rows(dialog);
 
@@ -1039,6 +1339,80 @@ pub fn render_dialog(
 
     let paragraph = Paragraph::new(lines).block(block);
     paragraph.render(layout.area, buf);
+}
+
+/// Render a resident dialog as a DOCKED panel filling `area` (no popup
+/// centering/sizing): title border plus the banded control rows. Reuses
+/// the banded cell layout so combat's rows read defense|stance ▼|offense.
+pub fn render_dialog_panel(
+    dialog: &DialogState,
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &crate::theme::AppTheme,
+) {
+    let title = dialog.title.as_deref().unwrap_or("Panel");
+    let normal = Style::default()
+        .fg(crossterm_bridge::to_ratatui_color(theme.menu_item_normal))
+        .bg(crossterm_bridge::to_ratatui_color(theme.menu_background));
+    let selected = Style::default()
+        .fg(crossterm_bridge::to_ratatui_color(theme.menu_item_selected))
+        .bg(crossterm_bridge::to_ratatui_color(theme.menu_item_focused));
+
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(bands) = positioned_band_cells(dialog) {
+        for band in &bands {
+            if let [BandCell::Progress { index }] = band.as_slice() {
+                if let Some(pb) = dialog.progress_bars.get(*index) {
+                    lines.push(render_progress_bar_line(pb, inner_width, theme));
+                    continue;
+                }
+            }
+            let mut spans = vec![Span::raw(" ")];
+            for (i, cell) in band.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw("  "));
+                }
+                match cell {
+                    BandCell::Button { index, text } => {
+                        let style = if *index == dialog.selected { selected } else { normal };
+                        spans.push(Span::styled(text.clone(), style));
+                    }
+                    BandCell::DropDown { text, .. } => {
+                        spans.push(Span::styled(text.clone(), normal));
+                    }
+                    BandCell::Progress { index } => {
+                        if let Some(pb) = dialog.progress_bars.get(*index) {
+                            spans.push(Span::styled(pb.text.clone(), normal));
+                        }
+                    }
+                }
+            }
+            lines.push(Line::from(spans));
+        }
+    }
+    // Footer links (skin/search/grip/...).
+    if !dialog.links.is_empty() {
+        let mut spans = vec![Span::raw(" ")];
+        for (i, link) in dialog.links.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled(link.label.clone(), normal));
+        }
+        lines.push(Line::from(spans));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::raw(" waiting for panel data… ")));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(crossterm_bridge::to_ratatui_color(theme.menu_border)))
+        .style(Style::default().bg(crossterm_bridge::to_ratatui_color(theme.menu_background)));
+    Paragraph::new(lines).block(block).render(area, buf);
 }
 
 /// Render a progress bar as a styled line for dialog display

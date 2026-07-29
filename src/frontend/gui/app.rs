@@ -287,6 +287,7 @@ pub struct VellumGuiApp {
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
+    known_windows_editor: Option<editors::KnownWindowsEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
     /// settings command (`.controller`, `.settings`, …) is re-issued while
@@ -593,6 +594,7 @@ impl VellumGuiApp {
             indicator_templates_editor: None,
             window_editor: None,
             custom_windows_editor: None,
+            known_windows_editor: None,
             doll_calibration: None,
             pending_editor_raise: None,
             search_bar_needs_focus: false,
@@ -2251,34 +2253,14 @@ impl VellumGuiApp {
         }
 
         // Post-processing the TUI runtime also performs after server data:
-        // content-driven resizes, container discovery windows, and windows
-        // queued by openDialog events (stance, inventory, experience, ...).
+        // content-driven resizes, plus realizing game-offered windows
+        // (containers whose offer the user has Shown, openDialog-templated
+        // widgets like stance/inventory/experience).
         if received_text {
             self.app_core.adjust_content_driven_windows();
             let (layout_width, layout_height) = self.core_layout_size;
-            if self.app_core.ui_state.container_discovery_mode {
-                if let Some((id, title)) = self
-                    .app_core
-                    .message_processor
-                    .newly_registered_container
-                    .take()
-                {
-                    tracing::info!(
-                        "Container discovery: creating window for '{}' (id={})",
-                        title,
-                        id
-                    );
-                    self.app_core.create_ephemeral_container_window(
-                        &title,
-                        layout_width,
-                        layout_height,
-                    );
-                }
-            } else {
-                self.app_core.message_processor.newly_registered_container = None;
-            }
             self.app_core
-                .process_pending_window_additions(layout_width, layout_height);
+                .realize_offered_windows(layout_width, layout_height);
 
             // A `;ui handshake` reply arrived on the game stream: connect
             // (or reconnect) the WebUI bridge with the fresh port + token.
@@ -2297,6 +2279,14 @@ impl VellumGuiApp {
         // Flush coalesced state deltas to web clients once per batch
         // (no-op unless [web] is enabled)
         self.app_core.flush_remote_state();
+
+        // Send commands queued by dialog-panel widgets this frame
+        // (they render from an immutable AppCore borrow).
+        let panel_commands: Vec<String> =
+            self.app_core.ui_state.pending_panel_commands.borrow_mut().drain(..).collect();
+        for command in panel_commands {
+            self.dispatch_raw_command(command);
+        }
 
         // Play sounds queued by highlight processing.
         for sound in self.app_core.game_state.drain_sound_queue() {
@@ -3741,10 +3731,11 @@ impl VellumGuiApp {
                 match self
                     .app_core
                     .game_state
-                    .container_cache
-                    .find_by_title(container_title)
+                    .objects
+                    .find_container(container_title)
                 {
-                    Some(container) => format!("#{}", container.id),
+                    // command_target is stow-correct (plain id = "#stow").
+                    Some(container) => format!("#{}", container.command_target()),
                     None => "drop".to_string(),
                 }
             }
@@ -4021,11 +4012,23 @@ impl VellumGuiApp {
             self.open_custom_windows_editor();
             return true;
         }
+        if action == "action:knownwindows" {
+            self.open_known_windows_editor();
+            return true;
+        }
         if action == "action:addwindow" {
             let mut items = self.app_core.build_add_window_menu();
-            // Surface the custom-window authoring panel at the top of the Add
-            // Widget menu so creating a stream-fed window is discoverable
-            // (GUI-local; the shared core menu builder stays untouched).
+            // Surface the custom-window authoring panel + the known-windows
+            // list at the top of the Add Widget menu (GUI-local; the shared
+            // core menu builder stays untouched).
+            items.insert(
+                0,
+                PopupMenuItem {
+                    text: "Known Windows (game dialogs)…".to_string(),
+                    command: "action:knownwindows".to_string(),
+                    disabled: false,
+                },
+            );
             items.insert(
                 0,
                 PopupMenuItem {
