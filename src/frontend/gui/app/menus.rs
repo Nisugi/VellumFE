@@ -770,10 +770,16 @@ impl VellumGuiApp {
             return;
         }
 
-        // Known-windows list: flip this offer's show/hide and close the
-        // menu like any other menu action (re-opening as a child layer
-        // stacked a fresh copy of the list on every activation). Bulk
-        // toggling lives in the known-windows checkbox panel.
+        // Windows list: flip this window's show/hide and close the menu
+        // like any other menu action. (U3: keyed on window name.)
+        if let Some(name) = command.strip_prefix("__TOGGLE_WINDOW__") {
+            let name = name.to_string();
+            self.app_core.toggle_known_window(&name);
+            self.close_menus_restore();
+            self.app_core.needs_render = true;
+            return;
+        }
+        // Legacy offer toggle (kept until the offer registry is removed).
         if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
             let offer_id = offer_id.to_string();
             self.app_core.toggle_window_offer(&offer_id);

@@ -1342,10 +1342,20 @@ impl TuiFrontend {
                             } else {
                                 tracing::warn!("No items for menu submenu: {}", submenu_name);
                             }
+                        } else if let Some(name) = command.strip_prefix("__TOGGLE_WINDOW__") {
+                            // Windows list: flip this window's show/hide and
+                            // close the menu (U3, keyed on window name).
+                            let name = name.to_string();
+                            app_core.toggle_known_window(&name);
+                            app_core.ui_state.popup_menu = None;
+                            app_core.ui_state.submenu = None;
+                            app_core.ui_state.nested_submenu = None;
+                            app_core.ui_state.deep_submenu = None;
+                            app_core.ui_state.input_mode = InputMode::Normal;
+                            app_core.needs_render = true;
+                            return Ok((true, None));
                         } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-                            // Known-windows list: flip this offer's show/hide
-                            // and close the menu like any other menu action —
-                            // bulk toggling lives in the GUI checkbox panel.
+                            // Legacy offer toggle (kept until offer removal).
                             let offer_id = offer_id.to_string();
                             app_core.toggle_window_offer(&offer_id);
                             app_core.ui_state.popup_menu = None;
@@ -4504,11 +4514,19 @@ impl TuiFrontend {
                 app_core.hide_window(window_name);
             }
             app_core.needs_render = true;
+        } else if let Some(name) = command.strip_prefix("__TOGGLE_WINDOW__") {
+            // Windows list (keyboard Enter): flip this window's show/hide
+            // and close the menu (U3, keyed on window name).
+            let name = name.to_string();
+            app_core.toggle_known_window(&name);
+            app_core.ui_state.popup_menu = None;
+            app_core.ui_state.submenu = None;
+            app_core.ui_state.nested_submenu = None;
+            app_core.ui_state.deep_submenu = None;
+            app_core.ui_state.input_mode = InputMode::Normal;
+            app_core.needs_render = true;
         } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-            // Known-windows list (keyboard Enter): flip the offer's
-            // show/hide and close the menu like any other menu action —
-            // bulk toggling lives in the GUI checkbox panel. (The mouse
-            // path has its own copy.)
+            // Legacy offer toggle (kept until offer removal).
             let offer_id = offer_id.to_string();
             app_core.toggle_window_offer(&offer_id);
             app_core.ui_state.popup_menu = None;

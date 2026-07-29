@@ -5751,34 +5751,53 @@ impl AppCore {
         out
     }
 
+    /// Build the unified Windows list menu: every known window (from the
+    /// layout + ephemeral runtime), each row `[x]`/`[ ]` for its shown
+    /// state, grouped by kind. Selecting a row emits `__TOGGLE_WINDOW__<name>`
+    /// to flip it. U3: reads enumerate_known_windows — no offer registry.
     pub fn build_known_windows_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        use crate::core::window_offers::OfferKind;
-        let offers = &self.game_state.window_offers;
-        if offers.is_empty() {
+        use crate::core::known_windows::KnownWindowKind;
+        let known = self.enumerate_known_windows();
+        if known.is_empty() {
             return vec![crate::data::ui_state::PopupMenuItem {
-                text: "(no windows offered yet)".to_string(),
+                text: "(no windows known yet)".to_string(),
                 command: String::new(),
                 disabled: true,
             }];
         }
-        // Grouped by kind for a stable, readable list.
         let mut items = Vec::new();
-        for kind in [OfferKind::Container, OfferKind::Dialog, OfferKind::Stream] {
-            let mut group: Vec<_> = offers.all().filter(|o| o.kind == kind).collect();
+        for kind in KnownWindowKind::MENU_ORDER {
+            let mut group: Vec<_> = known.iter().filter(|k| k.kind == kind).collect();
             if group.is_empty() {
                 continue;
             }
             group.sort_by(|a, b| a.title.cmp(&b.title));
-            for offer in group {
-                let mark = if offer.should_show() { "[x]" } else { "[ ]" };
+            for k in group {
+                let mark = if k.shown { "[x]" } else { "[ ]" };
                 items.push(crate::data::ui_state::PopupMenuItem {
-                    text: format!("{} {} ({})", mark, offer.title, kind.label()),
-                    command: format!("__TOGGLE_OFFER__{}", offer.id),
+                    text: format!("{} {} ({})", mark, k.title, kind.label()),
+                    command: format!("__TOGGLE_WINDOW__{}", k.name),
                     disabled: false,
                 });
             }
         }
         items
+    }
+
+    /// U3: toggle a known window's shown state by NAME (from the unified
+    /// Windows list). Flips shown↔hidden via set_known_window_shown.
+    pub fn toggle_known_window(&mut self, name: &str) {
+        let currently_shown = self
+            .enumerate_known_windows()
+            .iter()
+            .find(|k| k.name == name)
+            .map(|k| k.shown)
+            .unwrap_or(false);
+        let (w, h) = (
+            self.layout.terminal_width.unwrap_or(80),
+            self.layout.terminal_height.unwrap_or(24),
+        );
+        self.set_known_window_shown(name, !currently_shown, w, h);
     }
 
     /// Toggle an offered window's show/hide policy (from the known-windows
@@ -6548,30 +6567,43 @@ mod tests {
 
     #[test]
     fn known_windows_menu_reflects_state_and_toggle_flips_it() {
-        use crate::core::window_offers::OfferKind;
-        let mut core = AppCore::new_for_test();
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        let mut core = core_with_layout(vec![]);
         core.layout.terminal_width = Some(80);
         core.layout.terminal_height = Some(24);
-        core.game_state.window_offers.offer(
-            "77", "Backpack", OfferKind::Container, None, false, false,
-        );
 
-        // Fresh offer: unshown → "[ ]" and a toggle command.
+        // Discover a stream → bound, Hidden layout entry named "thoughts".
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "thoughts".to_string(),
+            title: "Thoughts".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+            blocklisted: false,
+        });
+        core.realize_offered_windows(80, 24);
+
+        // Fresh discovery: hidden → "[ ]" and a __TOGGLE_WINDOW__ command.
         let menu = core.build_known_windows_menu();
-        let row = menu.iter().find(|i| i.command == "__TOGGLE_OFFER__77").unwrap();
+        let row = menu
+            .iter()
+            .find(|i| i.command == "__TOGGLE_WINDOW__thoughts")
+            .unwrap();
         assert!(row.text.starts_with("[ ]"), "row: {}", row.text);
-        assert!(row.text.contains("Backpack"));
+        assert!(row.text.contains("Thoughts"));
 
-        // Toggle shows it (and creates the window).
-        core.toggle_window_offer("77");
-        assert!(core.ui_state.windows.contains_key("backpack"));
+        // Toggle shows it (creates UI state).
+        core.toggle_known_window("thoughts");
+        assert!(core.ui_state.windows.contains_key("thoughts"));
         let menu = core.build_known_windows_menu();
-        let row = menu.iter().find(|i| i.command == "__TOGGLE_OFFER__77").unwrap();
+        let row = menu
+            .iter()
+            .find(|i| i.command == "__TOGGLE_WINDOW__thoughts")
+            .unwrap();
         assert!(row.text.starts_with("[x]"), "row: {}", row.text);
 
         // Toggle again hides it.
-        core.toggle_window_offer("77");
-        assert!(!core.ui_state.windows.contains_key("backpack"));
+        core.toggle_known_window("thoughts");
+        assert!(!core.ui_state.windows.contains_key("thoughts"));
     }
 
     fn renamed_widget(display_name: &str, template_name: &str) -> WindowDef {
