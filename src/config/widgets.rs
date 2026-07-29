@@ -1069,3 +1069,61 @@ fn is_default_bar_order(order: &Vec<String>) -> bool {
     *order == default_minivitals_bar_order()
 }
 
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    // A minimal WindowBase TOML: only name (everything else defaults).
+    fn parse_base(extra: &str) -> WindowBase {
+        let toml = format!("name = \"w\"\n{}", extra);
+        toml::from_str(&toml).expect("valid WindowBase toml")
+    }
+
+    #[test]
+    fn legacy_visible_bool_still_loads() {
+        // Existing layout.toml files carry `visible = true|false`.
+        assert_eq!(parse_base("visible = true").visibility, WindowVisibility::Shown);
+        assert_eq!(parse_base("visible = false").visibility, WindowVisibility::Hidden);
+        // Absent → default Shown.
+        assert_eq!(parse_base("").visibility, WindowVisibility::Shown);
+    }
+
+    #[test]
+    fn new_visibility_string_loads_and_roundtrips() {
+        assert_eq!(parse_base("visibility = \"hidden\"").visibility, WindowVisibility::Hidden);
+        assert_eq!(parse_base("visibility = \"shown\"").visibility, WindowVisibility::Shown);
+        // Round-trip through TOML preserves it.
+        let mut base = parse_base("");
+        base.visibility = WindowVisibility::Hidden;
+        let s = toml::to_string(&base).unwrap();
+        assert!(s.contains("visibility = \"hidden\""), "serialized: {s}");
+        assert_eq!(toml::from_str::<WindowBase>(&s).unwrap().visibility, WindowVisibility::Hidden);
+    }
+
+    #[test]
+    fn visibility_semantics() {
+        assert!(WindowVisibility::Shown.is_shown());
+        assert!(WindowVisibility::Ephemeral.is_shown());
+        assert!(!WindowVisibility::Hidden.is_shown());
+        // Hidden is the ONLY state that blocks the game from auto-spawning.
+        assert!(WindowVisibility::Shown.allows_autospawn());
+        assert!(WindowVisibility::Ephemeral.allows_autospawn());
+        assert!(!WindowVisibility::Hidden.allows_autospawn());
+        // Ephemeral is the only non-persistent state.
+        assert!(WindowVisibility::Shown.is_persistent());
+        assert!(WindowVisibility::Hidden.is_persistent());
+        assert!(!WindowVisibility::Ephemeral.is_persistent());
+    }
+
+    #[test]
+    fn binding_roundtrips_and_is_omitted_when_none() {
+        let base = parse_base("binding = { kind = \"dialog\", id = \"expr\" }");
+        assert_eq!(base.binding, Some(WindowBinding::Dialog("expr".to_string())));
+        assert_eq!(base.binding.as_ref().unwrap().id(), "expr");
+        // None binding is skip-serialized (keeps layout.toml clean).
+        let none = parse_base("");
+        assert!(none.binding.is_none());
+        assert!(!toml::to_string(&none).unwrap().contains("binding"));
+    }
+}
