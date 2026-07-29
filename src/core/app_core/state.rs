@@ -3438,11 +3438,54 @@ impl AppCore {
 
     /// Process pending window additions from openDialog events.
     /// Called by the frontend each frame with terminal dimensions.
+    /// Whether a layout window equivalent to `template_name` already exists,
+    /// regardless of its display name. Dialog-driven singleton widgets
+    /// (experience/stance/encum/minivitals/injuries/buffs/…) get placed by
+    /// the user under an auto-generated `custom-*` name, so a bare
+    /// `w.name() == template_name` check misses them and the game re-adds a
+    /// duplicate on every dialog re-send. Match on the template's WIDGET
+    /// TYPE instead — plus the distinguishing data field for the two types
+    /// that legitimately allow multiple instances (Progress `id`,
+    /// ActiveEffects `category`), so a Buffs window doesn't shadow Debuffs
+    /// and a stance bar doesn't shadow an unrelated progress bar.
+    fn layout_has_equivalent_window(&self, template_name: &str) -> bool {
+        use crate::config::WindowDef;
+        let Some(template) = crate::config::Config::get_window_template(template_name) else {
+            return false;
+        };
+        let tmpl_type = template.widget_type();
+        self.layout.windows.iter().any(|w| {
+            if w.widget_type() != tmpl_type {
+                return false;
+            }
+            match (&template, w) {
+                // Disambiguate the shared types by their identity field.
+                (WindowDef::Progress { data: t, .. }, WindowDef::Progress { data: w, .. }) => {
+                    t.id == w.id
+                }
+                (
+                    WindowDef::ActiveEffects { data: t, .. },
+                    WindowDef::ActiveEffects { data: w, .. },
+                ) => t.category.eq_ignore_ascii_case(&w.category),
+                // All other singleton types: one per layout, type match is enough.
+                _ => true,
+            }
+        })
+    }
+
     pub fn process_pending_window_additions(&mut self, terminal_width: u16, terminal_height: u16) {
         // Drain pending additions
         let pending: Vec<String> = self.ui_state.pending_window_additions.drain(..).collect();
 
         for name in pending {
+            // If an equivalent window already exists (even under a renamed
+            // custom-* name), don't spawn a duplicate — refresh happens via
+            // the widget's normal data path. This is the fix for popups on
+            // every dialog re-send.
+            if self.layout_has_equivalent_window(&name) {
+                continue;
+            }
+
             // Check if window already exists and is visible
             let already_visible = self
                 .layout
@@ -6298,6 +6341,72 @@ mod tests {
         // Toggle again hides it.
         core.toggle_window_offer("77");
         assert!(!core.ui_state.windows.contains_key("backpack"));
+    }
+
+    fn renamed_widget(display_name: &str, template_name: &str) -> WindowDef {
+        // A widget the user placed via the Windows list: built from a
+        // template (so category/id fields are set) but the editor renamed
+        // it to a custom-* display name, losing the template name.
+        let mut def = crate::config::Config::get_window_template(template_name)
+            .unwrap_or_else(|| panic!("no template '{}'", template_name));
+        def.base_mut().name = display_name.to_string();
+        def
+    }
+
+    #[test]
+    fn dialog_readd_does_not_duplicate_a_renamed_singleton_widget() {
+        // The bug: game re-sends the expr dialog -> queues template name
+        // "gs4_experience"; the user's placed widget is "custom-gs4_experience-1",
+        // so the old exact-name check missed it and spawned a duplicate on
+        // every re-send. U0: match by widget type (+ id/category for the
+        // shared types) so the equivalent window is recognized.
+        let mut core = core_with_layout(vec![renamed_widget(
+            "custom-gs4_experience-1",
+            "gs4_experience",
+        )]);
+        assert_eq!(core.layout.windows.len(), 1);
+
+        // Simulate several dialog re-sends.
+        for _ in 0..3 {
+            core.ui_state
+                .pending_window_additions
+                .push("gs4_experience".to_string());
+            core.process_pending_window_additions(80, 24);
+        }
+
+        // Still exactly one gs4_experience window — no duplicate spawned.
+        let count = core
+            .layout
+            .windows
+            .iter()
+            .filter(|w| w.widget_type() == "gs4_experience")
+            .count();
+        assert_eq!(count, 1, "duplicate gs4_experience window spawned");
+    }
+
+    #[test]
+    fn dialog_readd_disambiguates_active_effects_by_category() {
+        // Buffs and Debuffs share the ActiveEffects widget type. Having a
+        // Buffs window must NOT suppress auto-adding Debuffs.
+        let buffs = renamed_widget("custom-buffs", "buffs");
+        let mut core = core_with_layout(vec![buffs]);
+
+        // Buffs re-send: recognized, no add.
+        core.ui_state.pending_window_additions.push("buffs".to_string());
+        core.process_pending_window_additions(80, 24);
+        assert_eq!(
+            core.layout.windows.iter().filter(|w| w.widget_type() == "active_effects").count(),
+            1
+        );
+
+        // Debuffs first sight: NOT shadowed by Buffs → added.
+        core.ui_state.pending_window_additions.push("debuffs".to_string());
+        core.process_pending_window_additions(80, 24);
+        assert_eq!(
+            core.layout.windows.iter().filter(|w| w.widget_type() == "active_effects").count(),
+            2,
+            "debuffs was wrongly suppressed by the buffs window"
+        );
     }
 
     #[test]
