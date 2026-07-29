@@ -630,14 +630,13 @@ impl AppCore {
                         "[jinx] gameobj classifier reloaded ({types} types)"
                     ));
                 }
-                // effect-list.xml is parsed once from the bundled copy into a
-                // OnceLock (spell_table.rs); there's no disk-reload yet, so a
-                // fresh install needs a restart. Say so rather than imply it
-                // took effect.
+                // effect-list.xml re-reads live: spell_table prefers the
+                // freshly installed global/data copy and swaps its table.
                 "effect-list.xml" => {
-                    self.add_system_message(
-                        "[jinx] effect-list.xml installed — restart VellumFE to apply",
-                    );
+                    let count = crate::core::spell_table::reload();
+                    self.add_system_message(&format!(
+                        "[jinx] spell table reloaded ({count} spells)"
+                    ));
                 }
                 // mapdb.json landed in the map dir, but the map loader looks
                 // for the versioned mapdb-<tag>.json names the updater writes;

@@ -1,18 +1,21 @@
-//! Bundled GemStone spell reference table (the no-Lich path).
+//! GemStone spell reference table (the no-Lich path).
 //!
-//! Parsed once, lazily, from `defaults/globals/effect-list.xml` — the same
-//! spell database Lich ships (`lich-5/data/effect-list.xml`). Only the
-//! statically-usable parts are extracted: identity (number/name/type),
-//! plain-integer costs, and the start/end message regex strings. Durations
-//! are deliberately skipped: most are Ruby formulas needing Lich to
-//! evaluate, and the live feed sends real expiry times anyway.
+//! Parsed lazily from `effect-list.xml` — the same spell database Lich ships
+//! (`lich-5/data/effect-list.xml`). Only the statically-usable parts are
+//! extracted: identity (number/name/type), plain-integer costs, and the
+//! start/end message regex strings. Durations are deliberately skipped: most
+//! are Ruby formulas needing Lich to evaluate, and the live feed sends real
+//! expiry times anyway.
 //!
-//! Refresh flow (mapdb-style): replace the XML with a newer copy from the
-//! lich-5 repo at release time. The parser ignores unknown elements, so
-//! schema additions degrade gracefully.
+//! Source resolution (like the data pack): a user-installed
+//! `~/.vellum-fe/global/data/effect-list.xml` (dropped in, or downloaded by
+//! `.jinx install effect-list.xml`) is preferred over the bundled default.
+//! [`reload`] re-reads from disk and swaps the table in place, so a fresh
+//! install takes effect without a restart. The parser ignores unknown
+//! elements, so schema additions degrade gracefully.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, RwLock};
 
 const EFFECT_LIST_XML: &str = include_str!("../../defaults/globals/effect-list.xml");
 
@@ -35,15 +38,50 @@ pub struct SpellInfo {
     pub end_messages: Vec<String>,
 }
 
-/// number -> spell, parsed on first use.
-pub fn table() -> &'static HashMap<u16, SpellInfo> {
-    static TABLE: OnceLock<HashMap<u16, SpellInfo>> = OnceLock::new();
-    TABLE.get_or_init(|| parse_effect_list(EFFECT_LIST_XML))
+/// The live table, behind an `RwLock` so `.jinx install effect-list.xml` can
+/// swap in a newer copy without a restart. An `Arc` inside lets `table()`
+/// hand out a cheap snapshot without holding the lock.
+static TABLE: RwLock<Option<Arc<HashMap<u16, SpellInfo>>>> = RwLock::new(None);
+
+/// The effect-list XML to parse: a user copy in `global/data/` if present,
+/// else the bundled default. Mirrors the data pack's local-store-over-bundled
+/// preference (`core/data_pack.rs`).
+fn resolve_xml() -> std::borrow::Cow<'static, str> {
+    if let Ok(dir) = crate::config::Config::global_data_dir() {
+        let path = dir.join("effect-list.xml");
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            return std::borrow::Cow::Owned(contents);
+        }
+    }
+    std::borrow::Cow::Borrowed(EFFECT_LIST_XML)
 }
 
-/// Lookup by spell number.
-pub fn spell(number: u16) -> Option<&'static SpellInfo> {
-    table().get(&number)
+/// The whole table, parsed on first use from the resolved source.
+pub fn table() -> Arc<HashMap<u16, SpellInfo>> {
+    if let Some(table) = TABLE.read().unwrap().as_ref() {
+        return Arc::clone(table);
+    }
+    // First access: parse and cache. A racing thread may parse too; last
+    // writer wins and both see an identical table.
+    let parsed = Arc::new(parse_effect_list(&resolve_xml()));
+    *TABLE.write().unwrap() = Some(Arc::clone(&parsed));
+    parsed
+}
+
+/// Re-read effect-list.xml from disk (preferring the installed copy) and swap
+/// the table. Called after `.jinx install effect-list.xml`. Returns the spell
+/// count for reporting.
+pub fn reload() -> usize {
+    let parsed = Arc::new(parse_effect_list(&resolve_xml()));
+    let count = parsed.len();
+    *TABLE.write().unwrap() = Some(parsed);
+    count
+}
+
+/// Lookup by spell number. Returns an owned copy so callers don't hold the
+/// table lock; `SpellInfo` is small and clones cheaply.
+pub fn spell(number: u16) -> Option<SpellInfo> {
+    table().get(&number).cloned()
 }
 
 fn parse_effect_list(xml: &str) -> HashMap<u16, SpellInfo> {
@@ -163,5 +201,40 @@ mod tests {
         // Song of Luck (1006): bard cost formula -> dynamic_cost.
         let song = spell(1006).expect("spell 1006");
         assert!(song.dynamic_cost);
+    }
+
+    #[test]
+    fn reload_prefers_installed_copy_then_falls_back() {
+        use std::sync::Mutex;
+        // VELLUM_FE_DIR is process-global; serialize against other env tests.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        // With no installed copy, reload uses the bundled default (full db).
+        let bundled = reload();
+        assert!(bundled > 450, "bundled db should be full, got {bundled}");
+
+        // Install a tiny effect-list.xml into global/data/; reload prefers it.
+        let data_dir = crate::config::Config::global_data_dir().unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::write(
+            data_dir.join("effect-list.xml"),
+            r#"<spells><spell number="999" name="Test Spell"><type>utility</type></spell></spells>"#,
+        )
+        .unwrap();
+        let installed = reload();
+        assert_eq!(installed, 1, "should read the 1-spell installed copy");
+        assert_eq!(spell(999).unwrap().name, "Test Spell");
+        assert!(spell(101).is_none(), "bundled spells gone after swap");
+
+        // Removing the installed copy and reloading falls back to bundled.
+        std::fs::remove_file(data_dir.join("effect-list.xml")).unwrap();
+        let back = reload();
+        assert_eq!(back, bundled);
+
+        std::env::remove_var("VELLUM_FE_DIR");
     }
 }
