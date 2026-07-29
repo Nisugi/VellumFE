@@ -13,7 +13,11 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::config::Config;
+
+use super::metadata::{InstalledAsset, InstalledDb};
 use super::protocol::{digest_b64, Asset};
+use super::repo::RepoSource;
 
 /// Hard cap on any single asset download. Skins/layouts are small; game-data
 /// XML is a few MB. 64 MB is far above anything legitimate and bounds a
@@ -76,6 +80,106 @@ pub fn download_verified(
         ));
     }
     Ok(bytes)
+}
+
+/// What an install did, for user-facing reporting.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InstallOutcome {
+    /// Freshly installed or updated to `path`.
+    Installed { path: PathBuf },
+    /// Already present with the same digest; nothing changed.
+    AlreadyCurrent,
+}
+
+/// Install one resolved asset: download, verify, and land it by kind. Records
+/// the install in `db` (the caller persists `db` afterward). `overwrite`
+/// governs replacing an existing, differing local copy.
+///
+/// J1 implements the **plain-file** kinds fully (`data`, `iconmap`, `image`);
+/// composed `skin`/`layout` bundle extraction lands next and returns a clear
+/// error until then. `script`/`engine` are refused outright — not VellumFE's
+/// domain.
+pub fn install_asset(
+    agent: &ureq::Agent,
+    repo: &RepoSource,
+    asset: &Asset,
+    db: &mut InstalledDb,
+    overwrite: bool,
+) -> Result<InstallOutcome, String> {
+    let name = asset.basename().to_string();
+    let kind = asset.kind();
+
+    // Refuse code assets up front — no execution path exists or should.
+    if matches!(kind, "script" | "engine") {
+        return Err(format!(
+            "'{name}' is a {kind}; VellumFE installs data and interface assets only \
+             (scripts stay in Lich)"
+        ));
+    }
+
+    let dest = plain_file_dest(kind, &name)?;
+
+    if let Some(dest) = &dest {
+        // Idempotence: an on-disk file whose digest already matches is a no-op,
+        // regardless of overwrite.
+        if dest.is_file() {
+            if let Ok(existing) = std::fs::read(dest) {
+                if digest_b64(&existing) == asset.md5 {
+                    record(db, &name, repo, asset);
+                    return Ok(InstallOutcome::AlreadyCurrent);
+                }
+            }
+            if !overwrite {
+                return Err(format!(
+                    "{} already exists and differs; re-run with --force to overwrite",
+                    dest.display()
+                ));
+            }
+        }
+    }
+
+    let bytes = download_verified(agent, &repo.url, asset)?;
+
+    match dest {
+        Some(dest) => {
+            write_atomic(&dest, &bytes)?;
+            record(db, &name, repo, asset);
+            Ok(InstallOutcome::Installed { path: dest })
+        }
+        // Composed bundles (skin/layout) are extracted, not written whole.
+        None => Err(format!(
+            "installing '{kind}' assets (composed bundles) is not implemented yet"
+        )),
+    }
+}
+
+/// Destination path for a plain single-file asset, or `None` for a kind that is
+/// a composed bundle needing extraction (`skin`, `layout`, `uipack`).
+fn plain_file_dest(kind: &str, name: &str) -> Result<Option<PathBuf>, String> {
+    let dir = match kind {
+        // Game data resolves through the data-pack local-store tier.
+        "data" => Config::global_data_dir(),
+        // Individual icon maps / images drop into the shared icon pool next to
+        // the ones already there (config/skins.rs load_global_sheets reads it).
+        "iconmap" | "image" | "icon" => Config::global_icons_dir(),
+        // Composed bundles: extracted elsewhere, not a plain write.
+        "skin" | "layout" | "uipack" => return Ok(None),
+        other => return Err(format!("unknown asset kind '{other}' for '{name}'")),
+    };
+    let dir = dir.map_err(|e| format!("cannot resolve install dir: {e}"))?;
+    Ok(Some(dir.join(name)))
+}
+
+fn record(db: &mut InstalledDb, name: &str, repo: &RepoSource, asset: &Asset) {
+    db.record(
+        name,
+        InstalledAsset {
+            repo: repo.name.clone(),
+            digest: asset.md5.clone(),
+            version: asset.vellum.as_ref().and_then(|v| v.version.clone()),
+            kind: asset.kind().to_string(),
+        },
+    );
 }
 
 /// Write verified bytes to `dest` atomically: a sibling `.part` file, flushed,
@@ -206,5 +310,115 @@ mod tests {
         let a = asset("/data/gameobj-data.xml", "7qt1tdPIzApVUQB0BpOKxeV3X4w=");
         let err = download_verified(&agent, &base, &a).unwrap_err();
         assert!(err.contains("digest mismatch"), "{err}");
+    }
+
+    // --- install_asset dispatch (env-dependent: serialize VELLUM_FE_DIR) ---
+
+    use crate::core::jinx::metadata::InstalledDb;
+    use crate::core::jinx::repo::RepoSource;
+    use std::sync::Mutex;
+
+    // Guards the process-global VELLUM_FE_DIR against parallel test races.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn repo(url: &str) -> RepoSource {
+        RepoSource { name: "test-repo".into(), url: url.into() }
+    }
+
+    #[test]
+    fn install_plain_data_file_then_idempotent_then_update() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+
+        // Round 1: fresh install of a plain data file into global/data/.
+        let body_v1 = b"<xml>gameobj</xml>".to_vec();
+        let base = spawn_stub(body_v1.clone());
+        let a1 = asset("/data/gameobj-data.xml", "7qt1tdPIzApVUQB0BpOKxeV3X4w=");
+        let out = install_asset(&ag, &repo(&base), &a1, &mut db, false).unwrap();
+        let dest = match out {
+            InstallOutcome::Installed { path } => path,
+            other => panic!("expected Installed, got {other:?}"),
+        };
+        assert_eq!(std::fs::read(&dest).unwrap(), body_v1);
+        assert!(dest.ends_with("global/data/gameobj-data.xml") ||
+                dest.ends_with("global\\data\\gameobj-data.xml"));
+        // Metadata recorded with the delivered digest.
+        assert_eq!(db.get("gameobj-data.xml").unwrap().digest, a1.md5);
+        assert_eq!(db.get("gameobj-data.xml").unwrap().kind, "data");
+
+        // Round 2: same digest is a no-op even without --force.
+        let base = spawn_stub(body_v1.clone());
+        let out = install_asset(&ag, &repo(&base), &a1, &mut db, false).unwrap();
+        assert_eq!(out, InstallOutcome::AlreadyCurrent);
+
+        // Round 3: a differing remote without overwrite is refused...
+        let body_v2 = b"<xml>gameobj v2</xml>".to_vec();
+        let a2 = asset("/data/gameobj-data.xml", &digest_b64(&body_v2));
+        let base = spawn_stub(body_v2.clone());
+        let err = install_asset(&ag, &repo(&base), &a2, &mut db, false).unwrap_err();
+        assert!(err.contains("already exists") && err.contains("--force"), "{err}");
+
+        // ...and applied with overwrite.
+        let base = spawn_stub(body_v2.clone());
+        let out = install_asset(&ag, &repo(&base), &a2, &mut db, true).unwrap();
+        assert!(matches!(out, InstallOutcome::Installed { .. }));
+        assert_eq!(std::fs::read(&dest).unwrap(), body_v2);
+        assert_eq!(db.get("gameobj-data.xml").unwrap().digest, a2.md5);
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn install_iconmap_lands_in_shared_icon_pool() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+        let body = b"PNGDATA".to_vec();
+        let base = spawn_stub(body.clone());
+        let mut a = asset("/icons/runes.png", &digest_b64(&body));
+        a.kind = Some("iconmap".into());
+
+        let out = install_asset(&ag, &repo(&base), &a, &mut db, false).unwrap();
+        let dest = match out {
+            InstallOutcome::Installed { path } => path,
+            other => panic!("expected Installed, got {other:?}"),
+        };
+        assert!(dest.ends_with("global/icons/runes.png") ||
+                dest.ends_with("global\\icons\\runes.png"), "{}", dest.display());
+        assert_eq!(db.get("runes.png").unwrap().kind, "iconmap");
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn refuses_script_and_defers_bundle_kinds() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+
+        // A script asset is refused outright — no download attempted.
+        let mut script = asset("/go2.lic", "z=");
+        script.kind = Some("script".into());
+        let err = install_asset(&ag, &repo("http://unused"), &script, &mut db, false).unwrap_err();
+        assert!(err.contains("scripts stay in Lich"), "{err}");
+
+        // A composed skin verifies then reports not-yet-implemented (J1 scope).
+        let body = b"zipbytes".to_vec();
+        let base = spawn_stub(body.clone());
+        let mut skin = asset("/skins/parchment.vellumpack", &digest_b64(&body));
+        skin.kind = Some("skin".into());
+        let err = install_asset(&ag, &repo(&base), &skin, &mut db, false).unwrap_err();
+        assert!(err.contains("not implemented yet"), "{err}");
+
+        std::env::remove_var("VELLUM_FE_DIR");
     }
 }

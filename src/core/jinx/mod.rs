@@ -16,4 +16,8 @@
 //! Design and phasing live in `.claude/work-units/jinx-native-client-plan.md`.
 
 pub mod installer;
+pub mod manifest;
+pub mod metadata;
 pub mod protocol;
+pub mod repo;
+pub mod resolve;
