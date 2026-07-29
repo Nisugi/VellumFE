@@ -1007,6 +1007,27 @@ impl XmlParser {
                     break;
                 }
             }
+            // Also feed the dialog store so a shown dialog (e.g. combat's
+            // stance bar) can render it — additive alongside the widget
+            // ProgressBar elements above, and skipped for quickbars.
+            if let Some(id) = Self::extract_dialog_data_id(tag_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(tag_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let progress_bars = Self::parse_dialog_progress_bars(tag);
+                    if !progress_bars.is_empty() {
+                        elements.push(ParsedElement::DialogProgressBars {
+                            id,
+                            clear,
+                            progress_bars,
+                        });
+                    }
+                }
+            }
         }
 
         // Extract label elements (encumbrance blurb, experience level, ...)

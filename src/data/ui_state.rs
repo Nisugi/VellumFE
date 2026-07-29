@@ -80,8 +80,18 @@ pub struct UiState {
     /// Currently active quickbar id
     pub active_quickbar_id: Option<String>,
 
-    /// Active dialog popup (dynamic openDialog payloads)
+    /// Active dialog popup (dynamic openDialog payloads). This is the
+    /// currently-DISPLAYED dialog; its full state also lives in
+    /// `dialog_store` so it can be re-shown intact.
     pub active_dialog: Option<DialogState>,
+
+    /// Every dialog the game has described this session, keyed by id,
+    /// accumulated from dialogData regardless of show/hide policy. The
+    /// game sends a dialog's full definition once (typically at login)
+    /// then only deltas; ingesting into this store means enabling a
+    /// dialog mid-session shows it fully formed rather than from whatever
+    /// deltas happened to arrive after the user opted in.
+    pub dialog_store: HashMap<String, DialogState>,
 
     /// Active injuries popup (viewing another player's injuries)
     pub injuries_popup: Option<InjuriesPopupState>,
@@ -263,6 +273,26 @@ pub struct DialogState {
 }
 
 impl DialogState {
+    /// An empty dialog with the given id/title, ready to accumulate
+    /// controls from dialogData. `save_position` and geometry default off.
+    pub fn empty(id: String, title: Option<String>) -> Self {
+        DialogState {
+            id,
+            title,
+            buttons: Vec::new(),
+            selected: 0,
+            fields: Vec::new(),
+            labels: Vec::new(),
+            focused_field: None,
+            progress_bars: Vec::new(),
+            display_labels: Vec::new(),
+            dropdowns: Vec::new(),
+            position: None,
+            size: None,
+            save_position: false,
+        }
+    }
+
     /// Substitute `%id%` placeholders in a control command with the
     /// current field values and dropdown selections (the game's commands
     /// reference sibling controls: `cmd='prep %dDBSpell0%'`).
@@ -665,10 +695,42 @@ impl UiState {
             quickbar_order: Vec::new(),
             active_quickbar_id: None,
             active_dialog: None,
+            dialog_store: HashMap::new(),
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
         }
+    }
+
+    /// Get (creating if absent) the store entry for a dialog id. All
+    /// dialogData ingestion writes here so a dialog can be re-shown intact.
+    pub fn dialog_slot_mut(&mut self, id: &str) -> &mut DialogState {
+        self.dialog_store
+            .entry(id.to_string())
+            .or_insert_with(|| DialogState::empty(id.to_string(), None))
+    }
+
+    /// Mirror a stored dialog into the visible `active_dialog` slot,
+    /// preserving the live position/size/save flag if the same dialog is
+    /// already showing (so an incoming delta doesn't yank a moved popup
+    /// back to center). Switches input mode to Dialog and closes menus.
+    pub fn show_dialog_from_store(&mut self, id: &str) {
+        let Some(mut dialog) = self.dialog_store.get(id).cloned() else {
+            return;
+        };
+        if let Some(current) = self.active_dialog.as_ref().filter(|d| d.id == id) {
+            dialog.position = current.position;
+            dialog.size = current.size;
+            dialog.save_position = current.save_position;
+            dialog.selected = current.selected.min(dialog.buttons.len().saturating_sub(1));
+            dialog.focused_field = current.focused_field;
+        }
+        self.active_dialog = Some(dialog);
+        self.input_mode = InputMode::Dialog;
+        self.popup_menu = None;
+        self.submenu = None;
+        self.nested_submenu = None;
+        self.deep_submenu = None;
     }
 
     /// Get a window by name

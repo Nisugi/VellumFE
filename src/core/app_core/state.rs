@@ -3597,23 +3597,39 @@ impl AppCore {
                 }
                 Policy::Unset => {}
             },
-            OfferKind::Dialog => {
-                // Hiding a dialog also dismisses its live popup; Shown
-                // can't conjure one — the game has to send it again.
-                if policy == Policy::Hidden
-                    && self
+            OfferKind::Dialog => match policy {
+                Policy::Shown => {
+                    // Materialize the dialog from the accumulated store —
+                    // its full definition (sent once at login) is there
+                    // even though the user only just opted in.
+                    if self.ui_state.dialog_store.contains_key(offer_id) {
+                        self.ui_state.show_dialog_from_store(offer_id);
+                        self.needs_render = true;
+                    } else {
+                        self.add_system_message(
+                            "Nothing received for that dialog yet — trigger it in-game once.",
+                        );
+                    }
+                }
+                Policy::Hidden => {
+                    // Hiding dismisses the live popup; the store keeps its
+                    // state so re-showing is instant.
+                    if self
                         .ui_state
                         .active_dialog
                         .as_ref()
                         .is_some_and(|dialog| dialog.id == *offer_id)
-                {
-                    self.ui_state.active_dialog = None;
-                    if self.ui_state.input_mode == crate::data::ui_state::InputMode::Dialog {
-                        self.ui_state.input_mode = crate::data::ui_state::InputMode::Normal;
+                    {
+                        self.ui_state.active_dialog = None;
+                        if self.ui_state.input_mode == crate::data::ui_state::InputMode::Dialog {
+                            self.ui_state.input_mode =
+                                crate::data::ui_state::InputMode::Normal;
+                        }
+                        self.needs_render = true;
                     }
-                    self.needs_render = true;
                 }
-            }
+                Policy::Unset => {}
+            },
             // Stream offers record policy only for now; their windows are
             // managed through the stream-routing/custom-windows system.
             OfferKind::Stream => {}

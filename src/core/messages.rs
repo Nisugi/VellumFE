@@ -1445,154 +1445,64 @@ impl MessageProcessor {
                     (None, None)
                 };
 
-                // No template - show as popup dialog
-                ui_state.active_dialog = Some(DialogState {
-                    id: id.clone(),
-                    title: title.clone(),
-                    buttons: Vec::new(),
-                    selected: 0,
-                    fields: Vec::new(),
-                    labels: Vec::new(),
-                    focused_field: None,
-                    progress_bars: Vec::new(),
-                    display_labels: Vec::new(),
-                    dropdowns: Vec::new(),
-                    position,
-                    size,
-                    save_position: *save,
-                });
-                ui_state.input_mode = InputMode::Dialog;
-                ui_state.popup_menu = None;
-                ui_state.submenu = None;
-                ui_state.nested_submenu = None;
-                ui_state.deep_submenu = None;
+                // No template - show as popup dialog. Seed the store (so
+                // re-showing after hide works) preserving any controls the
+                // dialog already accumulated, then set the title/geometry.
+                {
+                    let dialog = ui_state.dialog_slot_mut(id);
+                    dialog.title = title.clone();
+                    dialog.position = position;
+                    dialog.size = size;
+                    dialog.save_position = *save;
+                }
+                ui_state.show_dialog_from_store(id);
+                if let Some(dialog) = ui_state.active_dialog.as_mut() {
+                    dialog.position = position;
+                    dialog.size = size;
+                    dialog.save_position = *save;
+                }
             }
             ParsedElement::DialogButtons { id, clear, buttons } => {
                 self.chunk_has_silent_updates = true;
-                if !self.dialog_offer_allows(game_state, id) {
-                    return;
+                // Always INGEST into the store (even for hidden dialogs);
+                // policy only gates DISPLAY, synced below.
+                let show = self.dialog_offer_allows(game_state, id);
+                let dialog = ui_state.dialog_slot_mut(id);
+                if *clear {
+                    dialog.buttons.clear();
                 }
-
-                let needs_new_dialog = ui_state
-                    .active_dialog
-                    .as_ref()
-                    .map(|dialog| dialog.id != *id)
-                    .unwrap_or(true);
-                if needs_new_dialog {
-                    // Try to load saved position for this dialog
-                    let saved = self.saved_dialog_positions.dialogs.get(id);
-                    let (position, size, save_position) = if let Some(p) = saved {
-                        (Some((p.x, p.y)), p.width.zip(p.height), true)
-                    } else {
-                        (None, None, false)
-                    };
-                    ui_state.active_dialog = Some(DialogState {
-                        id: id.clone(),
-                        title: None,
-                        buttons: Vec::new(),
-                        selected: 0,
-                        fields: Vec::new(),
-                        labels: Vec::new(),
-                        focused_field: None,
-                        progress_bars: Vec::new(),
-                        display_labels: Vec::new(),
-                        dropdowns: Vec::new(),
-                        position,
-                        size,
-                        save_position,
-                    });
-                    ui_state.input_mode = InputMode::Dialog;
-                    ui_state.popup_menu = None;
-                    ui_state.submenu = None;
-                    ui_state.nested_submenu = None;
-                    ui_state.deep_submenu = None;
-                }
-
-                if let Some(dialog) = ui_state.active_dialog.as_mut() {
-                    if dialog.id == *id {
-                        if *clear {
-                            dialog.buttons.clear();
-                        }
-                        // Re-sent controls REPLACE their same-id entry —
-                        // blind extend piled up duplicate buttons on every
-                        // dialogData refresh (seen live: combat's target/
-                        // attack repeating). Id-less buttons still append.
-                        for button in buttons {
-                            let existing = (!button.id.is_empty())
-                                .then(|| {
-                                    dialog.buttons.iter_mut().find(|b| b.id == button.id)
-                                })
-                                .flatten();
-                            match existing {
-                                Some(slot) => *slot = button.clone(),
-                                None => dialog.buttons.push(button.clone()),
-                            }
-                        }
-                        if dialog.selected >= dialog.buttons.len() {
-                            dialog.selected = 0;
-                        }
+                // Re-sent controls REPLACE their same-id entry — blind
+                // extend piled up duplicate buttons on every dialogData
+                // refresh (seen live: combat's target/attack repeating).
+                // Id-less buttons still append.
+                for button in buttons {
+                    let existing = (!button.id.is_empty())
+                        .then(|| dialog.buttons.iter_mut().find(|b| b.id == button.id))
+                        .flatten();
+                    match existing {
+                        Some(slot) => *slot = button.clone(),
+                        None => dialog.buttons.push(button.clone()),
                     }
                 }
+                if dialog.selected >= dialog.buttons.len() {
+                    dialog.selected = 0;
+                }
+                self.sync_shown_dialog(ui_state, id, show);
             }
             ParsedElement::DialogDropDowns { id, clear, dropdowns } => {
                 self.chunk_has_silent_updates = true;
-                if !self.dialog_offer_allows(game_state, id) {
-                    return;
+                let show = self.dialog_offer_allows(game_state, id);
+                let dialog = ui_state.dialog_slot_mut(id);
+                if *clear {
+                    dialog.dropdowns.clear();
                 }
-
-                // Same open-if-needed behavior as buttons/fields: a
-                // dropdown-only chunk for a shown dialog materializes it.
-                let needs_new_dialog = ui_state
-                    .active_dialog
-                    .as_ref()
-                    .map(|dialog| dialog.id != *id)
-                    .unwrap_or(true);
-                if needs_new_dialog {
-                    let saved = self.saved_dialog_positions.dialogs.get(id);
-                    let (position, size, save_position) = if let Some(p) = saved {
-                        (Some((p.x, p.y)), p.width.zip(p.height), true)
-                    } else {
-                        (None, None, false)
-                    };
-                    ui_state.active_dialog = Some(DialogState {
-                        id: id.clone(),
-                        title: None,
-                        buttons: Vec::new(),
-                        selected: 0,
-                        fields: Vec::new(),
-                        labels: Vec::new(),
-                        focused_field: None,
-                        progress_bars: Vec::new(),
-                        display_labels: Vec::new(),
-                        dropdowns: Vec::new(),
-                        position,
-                        size,
-                        save_position,
-                    });
-                    ui_state.input_mode = InputMode::Dialog;
-                    ui_state.popup_menu = None;
-                    ui_state.submenu = None;
-                    ui_state.nested_submenu = None;
-                    ui_state.deep_submenu = None;
-                }
-
-                if let Some(dialog) = ui_state.active_dialog.as_mut() {
-                    if dialog.id == *id {
-                        if *clear {
-                            dialog.dropdowns.clear();
-                        }
-                        for dropdown in dropdowns {
-                            match dialog
-                                .dropdowns
-                                .iter_mut()
-                                .find(|d| d.id == dropdown.id)
-                            {
-                                Some(slot) => *slot = dropdown.clone(),
-                                None => dialog.dropdowns.push(dropdown.clone()),
-                            }
-                        }
+                for dropdown in dropdowns {
+                    match dialog.dropdowns.iter_mut().find(|d| d.id == dropdown.id) {
+                        Some(slot) => *slot = dropdown.clone(),
+                        None => dialog.dropdowns.push(dropdown.clone()),
                     }
                 }
+                self.sync_shown_dialog(ui_state, id, show);
             }
             ParsedElement::DialogFields {
                 id,
@@ -1601,129 +1511,88 @@ impl MessageProcessor {
                 labels,
             } => {
                 self.chunk_has_silent_updates = true;
-                if !self.dialog_offer_allows(game_state, id) {
-                    return;
+                let show = self.dialog_offer_allows(game_state, id);
+                let dialog = ui_state.dialog_slot_mut(id);
+                if *clear {
+                    dialog.fields.clear();
+                    dialog.labels.clear();
+                    dialog.focused_field = None;
                 }
 
-                let needs_new_dialog = ui_state
-                    .active_dialog
-                    .as_ref()
-                    .map(|dialog| dialog.id != *id)
-                    .unwrap_or(true);
-                if needs_new_dialog {
-                    // Try to load saved position for this dialog
-                    let saved = self.saved_dialog_positions.dialogs.get(id);
-                    let (position, size, save_position) = if let Some(p) = saved {
-                        (Some((p.x, p.y)), p.width.zip(p.height), true)
-                    } else {
-                        (None, None, false)
-                    };
-                    ui_state.active_dialog = Some(DialogState {
-                        id: id.clone(),
-                        title: None,
-                        buttons: Vec::new(),
-                        selected: 0,
-                        fields: Vec::new(),
-                        labels: Vec::new(),
-                        focused_field: None,
-                        progress_bars: Vec::new(),
-                        display_labels: Vec::new(),
-                        dropdowns: Vec::new(),
-                        position,
-                        size,
-                        save_position,
-                    });
-                    ui_state.input_mode = InputMode::Dialog;
-                    ui_state.popup_menu = None;
-                    ui_state.submenu = None;
-                    ui_state.nested_submenu = None;
-                    ui_state.deep_submenu = None;
-                }
+                if !labels.is_empty() {
+                    // Separate labels into:
+                    // - display_labels: standalone labels (not paired with any field)
+                    // - labels: labels that are paired with input fields
+                    //
+                    // A label is "paired" if its ID is a prefix of a field ID
+                    // e.g., "deposit" is paired with "depositAmount"
+                    let mut paired_labels = Vec::new();
+                    let mut standalone_labels = Vec::new();
 
-                if let Some(dialog) = ui_state.active_dialog.as_mut() {
-                    if dialog.id == *id {
-                        if *clear {
-                            dialog.fields.clear();
-                            dialog.labels.clear();
-                            dialog.focused_field = None;
-                        }
-
-                        if !labels.is_empty() {
-                            // Separate labels into:
-                            // - display_labels: standalone labels (not paired with any field)
-                            // - labels: labels that are paired with input fields
-                            //
-                            // A label is "paired" if its ID is a prefix of a field ID
-                            // e.g., "deposit" is paired with "depositAmount"
-                            let mut paired_labels = Vec::new();
-                            let mut standalone_labels = Vec::new();
-
-                            for label in labels.iter() {
-                                let is_paired = fields.iter().any(|field| {
-                                    field
-                                        .id
-                                        .to_lowercase()
-                                        .starts_with(&label.id.to_lowercase())
-                                });
-
-                                let dialog_label = crate::data::DialogLabel {
-                                    id: label.id.clone(),
-                                    value: label.value.clone(),
-                                };
-
-                                if is_paired {
-                                    paired_labels.push(dialog_label);
-                                } else {
-                                    standalone_labels.push(dialog_label);
-                                }
-                            }
-
-                            dialog.labels = paired_labels;
-                            dialog.display_labels = standalone_labels;
-                        }
-
-                        let mut focused_index = None;
-                        let mut new_fields = Vec::new();
-                        for (idx, field) in fields.iter().enumerate() {
-                            if field.focused {
-                                focused_index = Some(idx);
-                            }
-                            let existing = dialog.fields.iter().find(|f| f.id == field.id);
-                            let cursor = existing
-                                .map(|f| f.cursor.min(field.value.len()))
-                                .unwrap_or_else(|| field.value.len());
-                            new_fields.push(crate::data::DialogField {
-                                id: field.id.clone(),
-                                value: field.value.clone(),
-                                cursor,
-                                enter_button: field.enter_button.clone(),
-                                focused: field.focused,
-                            });
-                        }
-                        if !new_fields.is_empty() {
-                            dialog.fields = new_fields;
-                        }
-
-                        let fallback_focus = dialog
-                            .focused_field
-                            .filter(|idx| *idx < dialog.fields.len());
-                        let focused_field = focused_index.or(fallback_focus).or_else(|| {
-                            if dialog.fields.is_empty() {
-                                None
-                            } else {
-                                Some(0)
-                            }
+                    for label in labels.iter() {
+                        let is_paired = fields.iter().any(|field| {
+                            field
+                                .id
+                                .to_lowercase()
+                                .starts_with(&label.id.to_lowercase())
                         });
 
-                        dialog.focused_field = focused_field;
-                        for (idx, field) in dialog.fields.iter_mut().enumerate() {
-                            field.focused = dialog.focused_field == Some(idx);
-                            if field.cursor > field.value.len() {
-                                field.cursor = field.value.len();
-                            }
+                        let dialog_label = crate::data::DialogLabel {
+                            id: label.id.clone(),
+                            value: label.value.clone(),
+                        };
+
+                        if is_paired {
+                            paired_labels.push(dialog_label);
+                        } else {
+                            standalone_labels.push(dialog_label);
                         }
                     }
+
+                    dialog.labels = paired_labels;
+                    dialog.display_labels = standalone_labels;
                 }
+
+                let mut focused_index = None;
+                let mut new_fields = Vec::new();
+                for (idx, field) in fields.iter().enumerate() {
+                    if field.focused {
+                        focused_index = Some(idx);
+                    }
+                    let existing = dialog.fields.iter().find(|f| f.id == field.id);
+                    let cursor = existing
+                        .map(|f| f.cursor.min(field.value.len()))
+                        .unwrap_or_else(|| field.value.len());
+                    new_fields.push(crate::data::DialogField {
+                        id: field.id.clone(),
+                        value: field.value.clone(),
+                        cursor,
+                        enter_button: field.enter_button.clone(),
+                        focused: field.focused,
+                    });
+                }
+                if !new_fields.is_empty() {
+                    dialog.fields = new_fields;
+                }
+
+                let fallback_focus =
+                    dialog.focused_field.filter(|idx| *idx < dialog.fields.len());
+                let focused_field = focused_index.or(fallback_focus).or_else(|| {
+                    if dialog.fields.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    }
+                });
+
+                dialog.focused_field = focused_field;
+                for (idx, field) in dialog.fields.iter_mut().enumerate() {
+                    field.focused = dialog.focused_field == Some(idx);
+                    if field.cursor > field.value.len() {
+                        field.cursor = field.value.len();
+                    }
+                }
+                self.sync_shown_dialog(ui_state, id, show);
             }
             ParsedElement::DialogProgressBars {
                 id,
@@ -1731,28 +1600,23 @@ impl MessageProcessor {
                 progress_bars,
             } => {
                 self.chunk_has_silent_updates = true;
-                if !self.dialog_offer_allows(game_state, id) {
-                    return;
+                let show = self.dialog_offer_allows(game_state, id);
+                let dialog = ui_state.dialog_slot_mut(id);
+                if *clear {
+                    dialog.progress_bars.clear();
                 }
-
-                if let Some(dialog) = ui_state.active_dialog.as_mut() {
-                    if dialog.id == *id {
-                        if *clear {
-                            dialog.progress_bars.clear();
-                        }
-                        for pb in progress_bars {
-                            let bar = crate::data::DialogProgressBar {
-                                id: pb.id.clone(),
-                                value: pb.value,
-                                text: pb.text.clone(),
-                            };
-                            match dialog.progress_bars.iter_mut().find(|b| b.id == pb.id) {
-                                Some(slot) => *slot = bar,
-                                None => dialog.progress_bars.push(bar),
-                            }
-                        }
+                for pb in progress_bars {
+                    let bar = crate::data::DialogProgressBar {
+                        id: pb.id.clone(),
+                        value: pb.value,
+                        text: pb.text.clone(),
+                    };
+                    match dialog.progress_bars.iter_mut().find(|b| b.id == pb.id) {
+                        Some(slot) => *slot = bar,
+                        None => dialog.progress_bars.push(bar),
                     }
                 }
+                self.sync_shown_dialog(ui_state, id, show);
             }
             ParsedElement::DialogLabelList { id, clear, labels } => {
                 self.chunk_has_silent_updates = true;
@@ -2135,6 +1999,40 @@ impl MessageProcessor {
     /// make sure the dialog id is offered (seeding a Hidden policy from
     /// the config blocklist the first time it's seen, so dialogData-first
     /// ids are still suppressed) and return whether it may be shown.
+    /// After ingesting a dialogData delta into the store, reflect it into
+    /// the visible `active_dialog` if this dialog should be shown. When
+    /// first materializing a shown dialog, seed its saved position/size.
+    /// Hidden dialogs stay in the store only. If the currently-shown
+    /// dialog is a *different* id, leave it be (one popup at a time).
+    fn sync_shown_dialog(&self, ui_state: &mut UiState, id: &str, show: bool) {
+        if !show {
+            return;
+        }
+        // Don't steal the screen from a different open dialog.
+        if ui_state
+            .active_dialog
+            .as_ref()
+            .is_some_and(|d| d.id != id)
+        {
+            return;
+        }
+        let first_show = ui_state
+            .active_dialog
+            .as_ref()
+            .map(|d| d.id != id)
+            .unwrap_or(true);
+        ui_state.show_dialog_from_store(id);
+        if first_show {
+            if let Some(dialog) = ui_state.active_dialog.as_mut() {
+                if let Some(p) = self.saved_dialog_positions.dialogs.get(id) {
+                    dialog.position = Some((p.x, p.y));
+                    dialog.size = p.width.zip(p.height);
+                    dialog.save_position = true;
+                }
+            }
+        }
+    }
+
     fn dialog_offer_allows(&self, game_state: &mut GameState, id: &str) -> bool {
         if game_state.window_offers.get(id).is_none() {
             game_state.window_offers.offer(
@@ -4747,6 +4645,57 @@ mod tests {
             "combat offer should exist and be hidden, got {:?}",
             offer
         );
+        // Even hidden, its full state accumulated in the store, so opting
+        // in mid-session shows it fully formed rather than from deltas.
+        let stored = ui_state.dialog_store.get("combat").expect("combat stored");
+        assert_eq!(stored.progress_bars.len(), 1, "stance bar stored");
+        assert_eq!(stored.buttons.len(), 2, "both stance/target buttons stored");
+    }
+
+    #[test]
+    fn opting_in_materializes_dialog_from_store() {
+        // The core fix: the game sends combat's definition once (here as a
+        // batch), then the user opts in later — the popup must appear fully
+        // formed from the store, not empty.
+        use crate::core::window_offers::Policy;
+        let mut parser = crate::parser::XmlParser::new();
+        let mut processor = create_test_processor();
+        let mut app = crate::core::AppCore::new_for_test();
+
+        let lines = [
+            "<dialogData id='combat' clear='t'><progressBar id='pbarStance' value='100' text='defensive (100%)' top='51'/></dialogData>",
+            "<dialogData id='combat'><cmdButton id='cmdDefStance' value='defense' cmd='_stance defensive' top='70' left='0' align='nw'/><cmdButton id='cmdAttack' value='attack' cmd='attack' top='93' left='55' align='ne'/><dropDownBox id='dDBStance' value='defensive' cmd='_stance %dDBStance%' content_text='offensive,defensive' content_value='offensive,defensive' top='70'/></dialogData>",
+        ];
+        for line in &lines {
+            for element in parser.parse_line(line) {
+                processor.process_element(
+                    &element,
+                    &mut app.game_state,
+                    &mut app.ui_state,
+                    &mut std::collections::HashMap::new(),
+                    &mut None,
+                    &mut false,
+                    &mut None,
+                    &mut None,
+                    &mut None,
+                    None,
+                );
+            }
+        }
+
+        // Blocklisted → not shown yet, but fully stored.
+        assert!(app.ui_state.active_dialog.is_none());
+        assert_eq!(app.ui_state.dialog_store.get("combat").unwrap().buttons.len(), 2);
+
+        // User ticks it in the known-windows list.
+        app.set_window_offer_policy("combat", Policy::Shown, 80, 24);
+
+        // Now it's on screen, fully formed from the store.
+        let shown = app.ui_state.active_dialog.as_ref().expect("materialized");
+        assert_eq!(shown.id, "combat");
+        assert_eq!(shown.buttons.len(), 2);
+        assert_eq!(shown.dropdowns.len(), 1);
+        assert_eq!(shown.progress_bars.len(), 1);
     }
 
     #[test]
