@@ -55,6 +55,40 @@ struct Entry {
 
 /// Build the replacement lines for a container-look line, or None when
 /// the line isn't one (or has no item links to categorize).
+/// Extract (container_id, container_noun, items) from a main-stream
+/// container-look line's segments — the container is the first `<a>` link,
+/// its contents are the rest. This lets the GameObjects registry ingest
+/// from the *visible look* (main stream), not only from `<inv>` paired
+/// tags (the inventory-window feed) — needed because a plain `look in`
+/// (and especially with Lich's `;sorter` reformatting) may deliver
+/// contents only as this prose line. `None` when the line isn't a
+/// container look or carries no item links.
+pub fn extract_container_items(
+    segments: &[TextSegment],
+    full_text: &str,
+) -> Option<(String, Vec<crate::core::game_objects::GameItem>)> {
+    if !is_container_look(full_text) {
+        return None;
+    }
+    let mut links = segments.iter().filter(|seg| seg.link_data.is_some());
+    let container = links.next()?;
+    let container_id = container.link_data.as_ref()?.exist_id.clone();
+    let items: Vec<crate::core::game_objects::GameItem> = links
+        .filter_map(|seg| {
+            let link = seg.link_data.as_ref()?;
+            Some(crate::core::game_objects::GameItem::new(
+                link.exist_id.clone(),
+                link.noun.clone(),
+                seg.text.trim().to_string(),
+            ))
+        })
+        .collect();
+    if items.is_empty() {
+        return None;
+    }
+    Some((container_id, items))
+}
+
 pub fn transform(
     segments: &[TextSegment],
     full_text: &str,
@@ -184,6 +218,25 @@ mod tests {
         ];
         let text: String = segments.iter().map(|s| s.text.as_str()).collect();
         (segments, text)
+    }
+
+    #[test]
+    fn extract_container_items_from_look_line() {
+        let (segments, text) = look_line();
+        let (id, items) = extract_container_items(&segments, &text).unwrap();
+        // First link is the container (backpack), rest are items.
+        assert_eq!(id, "77");
+        // 4 item links in look_line() (sapphire, crystal, sapphire, lockpick).
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].id, "1");
+        assert_eq!(items[0].name, "blue sapphire");
+        assert_eq!(items[3].name, "copper lockpick");
+        // A non-look line yields nothing.
+        assert!(extract_container_items(
+            &[TextSegment::plain("You pick up a rock.")],
+            "You pick up a rock."
+        )
+        .is_none());
     }
 
     #[test]

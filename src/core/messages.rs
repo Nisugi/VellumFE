@@ -95,6 +95,11 @@ pub struct MessageProcessor {
     /// While capturing, reply lines are squelched and parsed; the prompt
     /// finalizes it into `game_state.objects`.
     inv_scan: crate::core::game_objects::inv_scan::InvScan,
+    /// Container contents extracted from a main-stream look line during
+    /// flush (which lacks `game_state`); drained into the registry by the
+    /// caller in `process_element`. (container_id, items)
+    pending_container_ingest:
+        Option<(String, Vec<crate::core::game_objects::GameItem>)>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -266,6 +271,7 @@ impl MessageProcessor {
             injected_lines: std::collections::VecDeque::new(),
             sorter_gameobj: None,
             inv_scan: Default::default(),
+            pending_container_ingest: None,
             remote: None,
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
@@ -714,6 +720,10 @@ impl MessageProcessor {
                         game_state.objects.set_status(id, status);
                     }
                 }
+
+                // Container contents extracted from a main-stream look line
+                // during flush (which lacks game_state) land here.
+                self.drain_pending_container_ingest(game_state);
 
                 // Flush perception buffer on prompt (after all entries have accumulated)
                 if !self.perception_buffer.is_empty() {
@@ -2685,6 +2695,31 @@ impl MessageProcessor {
         self.config.ui.sorter_enabled = enabled;
     }
 
+    /// Apply container contents captured from a main-stream look line into
+    /// the registry. A look is a full snapshot, so replace (clear + refill).
+    /// Registers the container if the `<container>` tag wasn't seen (the
+    /// visible look carries the container as its first link; we don't have
+    /// its title/target here, so a later `<container>` tag refines those).
+    fn drain_pending_container_ingest(
+        &mut self,
+        game_state: &mut crate::core::state::GameState,
+    ) {
+        let Some((container_id, items)) = self.pending_container_ingest.take() else {
+            return;
+        };
+        if game_state.objects.container(&container_id).is_none() {
+            game_state.objects.register_container(
+                container_id.clone(),
+                String::new(),
+                None,
+            );
+        }
+        game_state.objects.clear_container(&container_id);
+        for item in items {
+            game_state.objects.add_container_item(&container_id, item);
+        }
+    }
+
     /// Begin an INVENTORY FULL scan: the caller must send the returned
     /// command to the game. Reply lines are then squelched and parsed into
     /// per-item mark/register status, finalized at the next prompt. Returns
@@ -2783,16 +2818,32 @@ impl MessageProcessor {
         // Sorter: replace a container-look line with categorized lines.
         // The flush wrapper drains the extras; generated lines can't
         // re-trigger (no " you see ").
-        if self.config.ui.sorter_enabled
-            && self.current_stream == "main"
+        if self.current_stream == "main"
             && crate::core::sorter::is_container_look(&full_text)
         {
-            let data = self.sorter_gameobj();
-            if let Some(mut lines) =
-                crate::core::sorter::transform(&self.current_segments, &full_text, &data)
-            {
-                self.current_segments = lines.remove(0);
-                self.injected_lines.extend(lines);
+            // Ingest the container's contents into the registry from the
+            // VISIBLE look line — a plain `look in` (and Lich's ;sorter
+            // reformat) can deliver contents only as this main-stream
+            // prose, not as <inv> paired tags. Buffered here; the caller
+            // drains it into game_state.objects (this fn lacks game_state).
+            if let Some(pending) = crate::core::sorter::extract_container_items(
+                &self.current_segments,
+                &full_text,
+            ) {
+                self.pending_container_ingest = Some(pending);
+            }
+
+            // Categorized display transform (only when .sorter is on).
+            if self.config.ui.sorter_enabled {
+                let data = self.sorter_gameobj();
+                if let Some(mut lines) = crate::core::sorter::transform(
+                    &self.current_segments,
+                    &full_text,
+                    &data,
+                ) {
+                    self.current_segments = lines.remove(0);
+                    self.injected_lines.extend(lines);
+                }
             }
         }
 
