@@ -1412,13 +1412,15 @@ impl MessageProcessor {
                 // Map dialog ID to template name (they may differ, e.g., "expr" -> "gs4_experience")
                 let template_name = Config::dialog_id_to_template(id);
 
-                // If a widget template exists for this dialog, add it to layout instead of popup
+                // If a widget template exists for this dialog, add it to layout
+                // instead of a popup. Queue the DIALOG ID (not the template
+                // name) so process_pending_window_additions can tag the created
+                // window with its binding — the U2 identity that ties the feed
+                // to the placed window regardless of its display name.
                 if Config::get_window_template(template_name).is_some() {
                     tracing::debug!("DialogOpen redirected to widget: id={} -> template={}", id, template_name);
-                    // Queue the window to be added to layout (use template name, not dialog ID)
-                    let template_owned = template_name.to_string();
-                    if !ui_state.pending_window_additions.contains(&template_owned) {
-                        ui_state.pending_window_additions.push(template_owned);
+                    if !ui_state.pending_window_additions.contains(id) {
+                        ui_state.pending_window_additions.push(id.clone());
                     }
                     return;
                 }

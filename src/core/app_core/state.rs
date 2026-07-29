@@ -3449,58 +3449,101 @@ impl AppCore {
     /// ActiveEffects `category`), so a Buffs window doesn't shadow Debuffs
     /// and a stance bar doesn't shadow an unrelated progress bar.
     fn layout_has_equivalent_window(&self, template_name: &str) -> bool {
+        self.layout_equivalent_window_name(template_name).is_some()
+    }
+
+    /// The NAME of an existing layout window equivalent to `template_name`
+    /// (see layout_has_equivalent_window for the identity rules), or None.
+    fn layout_equivalent_window_name(&self, template_name: &str) -> Option<String> {
         use crate::config::WindowDef;
-        let Some(template) = crate::config::Config::get_window_template(template_name) else {
-            return false;
-        };
+        let template = crate::config::Config::get_window_template(template_name)?;
         let tmpl_type = template.widget_type();
-        self.layout.windows.iter().any(|w| {
-            if w.widget_type() != tmpl_type {
-                return false;
-            }
-            match (&template, w) {
-                // Disambiguate the shared types by their identity field.
-                (WindowDef::Progress { data: t, .. }, WindowDef::Progress { data: w, .. }) => {
-                    t.id == w.id
+        self.layout
+            .windows
+            .iter()
+            .find(|w| {
+                if w.widget_type() != tmpl_type {
+                    return false;
                 }
-                (
-                    WindowDef::ActiveEffects { data: t, .. },
-                    WindowDef::ActiveEffects { data: w, .. },
-                ) => t.category.eq_ignore_ascii_case(&w.category),
-                // All other singleton types: one per layout, type match is enough.
-                _ => true,
-            }
-        })
+                match (&template, *w) {
+                    // Disambiguate the shared types by their identity field.
+                    (WindowDef::Progress { data: t, .. }, WindowDef::Progress { data: w, .. }) => {
+                        t.id == w.id
+                    }
+                    (
+                        WindowDef::ActiveEffects { data: t, .. },
+                        WindowDef::ActiveEffects { data: w, .. },
+                    ) => t.category.eq_ignore_ascii_case(&w.category),
+                    // All other singleton types: one per layout, type is enough.
+                    _ => true,
+                }
+            })
+            .map(|w| w.name().to_string())
     }
 
     pub fn process_pending_window_additions(&mut self, terminal_width: u16, terminal_height: u16) {
-        // Drain pending additions
+        use crate::config::WindowBinding;
+        // Drain pending additions. As of U2 these are DIALOG IDS (e.g.
+        // "expr", "stance"), not template names — so we can bind the created
+        // window to its game feed.
         let pending: Vec<String> = self.ui_state.pending_window_additions.drain(..).collect();
 
-        for name in pending {
-            // If an equivalent window already exists (even under a renamed
-            // custom-* name), don't spawn a duplicate — refresh happens via
-            // the widget's normal data path. This is the fix for popups on
-            // every dialog re-send.
-            if self.layout_has_equivalent_window(&name) {
+        for dialog_id in pending {
+            let template_name = crate::config::Config::dialog_id_to_template(&dialog_id).to_string();
+
+            // Already have a window bound to this feed? The game only ever
+            // needs one home per feed to create — refresh flows to all bound
+            // windows via the normal data path, so just ensure UI state
+            // exists for any shown bound window and move on (no duplicate).
+            if self.layout.has_window_bound_to(&dialog_id) {
+                let bound_shown: Vec<String> = self
+                    .layout
+                    .windows
+                    .iter()
+                    .filter(|w| {
+                        w.base().binding.as_ref().is_some_and(|b| b.id() == dialog_id)
+                            && w.base().visibility.is_shown()
+                    })
+                    .map(|w| w.name().to_string())
+                    .collect();
+                for name in bound_shown {
+                    if !self.ui_state.windows.contains_key(&name) {
+                        if let Some(def) = self.layout.windows.iter().find(|w| w.name() == name) {
+                            let def = def.clone();
+                            self.add_new_window(&def, terminal_width, terminal_height);
+                            self.needs_render = true;
+                            self.ui_state.needs_widget_reset = true;
+                        }
+                    }
+                }
                 continue;
             }
 
-            // Check if window already exists and is visible
-            let already_visible = self
-                .layout
-                .windows
-                .iter()
-                .any(|w| w.name() == name && w.base().visibility.is_shown());
-
-            if already_visible {
-                // Window exists in layout - just make sure it's in UI state
-                if !self.ui_state.windows.contains_key(&name) {
-                    // Create UI state for existing layout window
-                    if let Some(window_def) = self.layout.windows.iter().find(|w| w.name() == name) {
-                        let window_def_clone = window_def.clone();
-                        self.add_new_window(&window_def_clone, terminal_width, terminal_height);
-                        tracing::info!("Created UI state for existing layout window '{}'", name);
+            // No bound window yet. A user may have an EQUIVALENT widget placed
+            // under a renamed custom-* name (U0) — adopt it by tagging the
+            // binding, so future feeds resolve by id and we never duplicate.
+            if let Some(existing_name) = self.layout_equivalent_window_name(&template_name) {
+                if let Some(def) = self
+                    .layout
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.name() == existing_name)
+                {
+                    def.base_mut().binding = Some(WindowBinding::Dialog(dialog_id.clone()));
+                }
+                // Ensure UI state if it's shown.
+                let shown = self
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|w| w.name() == existing_name)
+                    .map(|w| w.base().visibility.is_shown())
+                    .unwrap_or(false);
+                if shown && !self.ui_state.windows.contains_key(&existing_name) {
+                    if let Some(def) = self.layout.windows.iter().find(|w| w.name() == existing_name)
+                    {
+                        let def = def.clone();
+                        self.add_new_window(&def, terminal_width, terminal_height);
                         self.needs_render = true;
                         self.ui_state.needs_widget_reset = true;
                     }
@@ -3508,28 +3551,32 @@ impl AppCore {
                 continue;
             }
 
-            // Add window to layout from template
-            if let Err(e) = self.layout.add_window(&name) {
-                tracing::warn!("Failed to auto-add window '{}' from dialog: {}", name, e);
+            // Genuinely new: add the templated window, bound to this feed.
+            // (U2a keeps the current visible-spawn behavior; U2b gates on
+            // visibility so a hidden binding suppresses the auto-spawn.)
+            if let Err(e) = self.layout.add_window(&template_name) {
+                tracing::warn!("Failed to auto-add window '{}': {}", template_name, e);
                 continue;
             }
-
-            // Get the window definition and create UI state. Templates with
-            // auto-generated names (spacers, `*_custom` blanks) don't match
-            // the template name; the window just added is the last entry.
-            let window_def = self
+            let created = self
                 .layout
                 .windows
                 .iter()
-                .find(|w| w.name() == name)
-                .or_else(|| self.layout.windows.last());
-            if let Some(window_def) = window_def {
-                let window_def_clone = window_def.clone();
-                self.add_new_window(&window_def_clone, terminal_width, terminal_height);
-                tracing::info!("Auto-added window '{}' from openDialog", name);
-                self.needs_render = true;
-                // Signal frontend to rebuild widget caches so new window is rendered
-                self.ui_state.needs_widget_reset = true;
+                .rev()
+                .find(|w| w.widget_type() == template_name || w.name() == template_name)
+                .or_else(|| self.layout.windows.last())
+                .map(|w| w.name().to_string());
+            if let Some(name) = created {
+                if let Some(def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
+                    def.base_mut().binding = Some(WindowBinding::Dialog(dialog_id.clone()));
+                }
+                if let Some(def) = self.layout.windows.iter().find(|w| w.name() == name) {
+                    let def = def.clone();
+                    self.add_new_window(&def, terminal_width, terminal_height);
+                    tracing::info!("Auto-added bound window '{}' from openDialog '{}'", name, dialog_id);
+                    self.needs_render = true;
+                    self.ui_state.needs_widget_reset = true;
+                }
             }
         }
     }
@@ -6358,26 +6405,24 @@ mod tests {
 
     #[test]
     fn dialog_readd_does_not_duplicate_a_renamed_singleton_widget() {
-        // The bug: game re-sends the expr dialog -> queues template name
-        // "gs4_experience"; the user's placed widget is "custom-gs4_experience-1",
-        // so the old exact-name check missed it and spawned a duplicate on
-        // every re-send. U0: match by widget type (+ id/category for the
-        // shared types) so the equivalent window is recognized.
+        // The bug: game re-sends the expr dialog; the user's placed widget
+        // is "custom-gs4_experience-1", so the old exact-name check missed
+        // it and spawned a duplicate on every re-send. U2: the pending
+        // queue carries the DIALOG ID ("expr"); the equivalent renamed
+        // widget gets ADOPTED (binding tagged) so re-sends resolve by id.
         let mut core = core_with_layout(vec![renamed_widget(
             "custom-gs4_experience-1",
             "gs4_experience",
         )]);
         assert_eq!(core.layout.windows.len(), 1);
 
-        // Simulate several dialog re-sends.
+        // Simulate several dialog re-sends (expr -> gs4_experience template).
         for _ in 0..3 {
-            core.ui_state
-                .pending_window_additions
-                .push("gs4_experience".to_string());
+            core.ui_state.pending_window_additions.push("expr".to_string());
             core.process_pending_window_additions(80, 24);
         }
 
-        // Still exactly one gs4_experience window — no duplicate spawned.
+        // Still exactly one gs4_experience window — no duplicate spawned...
         let count = core
             .layout
             .windows
@@ -6385,6 +6430,54 @@ mod tests {
             .filter(|w| w.widget_type() == "gs4_experience")
             .count();
         assert_eq!(count, 1, "duplicate gs4_experience window spawned");
+        // ...and it was adopted: now bound to "expr".
+        assert!(
+            core.layout.has_window_bound_to("expr"),
+            "the renamed widget should have been adopted and bound to expr"
+        );
+    }
+
+    #[test]
+    fn first_sight_creates_a_bound_window() {
+        // No existing widget: the first expr feed creates a gs4_experience
+        // window bound to "expr", and a re-send doesn't duplicate it.
+        let mut core = core_with_layout(vec![]);
+        core.ui_state.pending_window_additions.push("expr".to_string());
+        core.process_pending_window_additions(80, 24);
+
+        assert!(core.layout.has_window_bound_to("expr"));
+        assert_eq!(
+            core.layout.windows.iter().filter(|w| w.widget_type() == "gs4_experience").count(),
+            1
+        );
+
+        // Re-send: still one.
+        core.ui_state.pending_window_additions.push("expr".to_string());
+        core.process_pending_window_additions(80, 24);
+        assert_eq!(
+            core.layout.windows.iter().filter(|w| w.widget_type() == "gs4_experience").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn one_feed_delivers_to_multiple_bound_windows() {
+        // Nisugi's rule: 3 windows bound to "expr" all count as "exists"
+        // (no new spawn) and windows_bound_to lists all of them for delivery.
+        let mut core = core_with_layout(vec![]);
+        for i in 0..3 {
+            let mut def = crate::config::Config::get_window_template("gs4_experience").unwrap();
+            def.base_mut().name = format!("xp{}", i);
+            def.base_mut().binding =
+                Some(crate::config::WindowBinding::Dialog("expr".to_string()));
+            core.layout.windows.push(def);
+        }
+        // A feed for expr must NOT spawn a 4th window.
+        core.ui_state.pending_window_additions.push("expr".to_string());
+        core.process_pending_window_additions(80, 24);
+        assert_eq!(core.layout.windows.len(), 3, "should not create a 4th");
+        // All three are addressable for delivery.
+        assert_eq!(core.layout.windows_bound_to("expr").len(), 3);
     }
 
     #[test]

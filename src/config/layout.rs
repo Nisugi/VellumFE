@@ -691,6 +691,54 @@ impl Layout {
         Ok(())
     }
 
+    /// Whether any layout window is bound to `id` (regardless of source
+    /// kind or visibility). This is the U2 "does the game already have a
+    /// home for this feed?" check that replaces name-matching.
+    pub fn has_window_bound_to(&self, id: &str) -> bool {
+        self.windows
+            .iter()
+            .any(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+    }
+
+    /// Names of all layout windows bound to `id` (1-to-many: several
+    /// windows may share one game feed).
+    pub fn windows_bound_to(&self, id: &str) -> Vec<String> {
+        self.windows
+            .iter()
+            .filter(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+            .map(|w| w.name().to_string())
+            .collect()
+    }
+
+    /// Register a window the game just announced (dialog/stream/container)
+    /// as a persistent, HIDDEN, bound layout entry — so it's known forever
+    /// and appears in the Windows list, but doesn't render or auto-spawn
+    /// until the user shows it. No-op if a window already bound to this id
+    /// exists (the game only ever has one home per feed to create). The
+    /// `template_name` is the widget template to instantiate; the window is
+    /// renamed to a stable `binding-derived` name and tagged with `binding`.
+    /// Returns the window name if one was created.
+    pub fn register_discovered_window(
+        &mut self,
+        binding: crate::config::WindowBinding,
+        template_name: &str,
+    ) -> Option<String> {
+        if self.has_window_bound_to(binding.id()) {
+            return None;
+        }
+        let mut window_def = Config::get_window_template(template_name)?;
+        // Stable name from the binding so re-discovery is idempotent and
+        // the layout entry is recognizable (e.g. "combat", "expr").
+        let name = binding.id().to_string();
+        window_def.base_mut().name = name.clone();
+        window_def.base_mut().binding = Some(binding);
+        // Discovered windows start Hidden: known but not shown/auto-spawned.
+        window_def.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        self.windows.push(window_def);
+        tracing::info!("Registered discovered window '{}' (hidden)", name);
+        Some(name)
+    }
+
     /// Hide a window (set visible = false)
     pub fn hide_window(&mut self, name: &str) -> Result<()> {
         let window = self
