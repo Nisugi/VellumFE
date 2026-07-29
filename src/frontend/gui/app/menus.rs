@@ -770,13 +770,15 @@ impl VellumGuiApp {
             return;
         }
 
-        // Known-windows list: flip this offer's show/hide, then re-open the
-        // list (refreshed marks) so several toggle in one pass.
+        // Known-windows list: flip this offer's show/hide and close the
+        // menu like any other menu action (re-opening as a child layer
+        // stacked a fresh copy of the list on every activation). Bulk
+        // toggling lives in the known-windows checkbox panel.
         if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
             let offer_id = offer_id.to_string();
             self.app_core.toggle_window_offer(&offer_id);
-            let items = self.app_core.build_known_windows_menu();
-            self.open_child_menu_for_layer(menu_command.layer, items);
+            self.close_menus_restore();
+            self.app_core.needs_render = true;
             return;
         }
 
@@ -794,11 +796,15 @@ impl VellumGuiApp {
         // verb. This is why the .menu tree was dead in the GUI: its leaves
         // are dot-commands and they were being sent to the network.
         if command.starts_with('.') {
+            // Close the menu stack BEFORE dispatching: a dot-command may
+            // itself open a menu (.knownwindows) and closing afterwards
+            // wipes what it just opened.
+            self.close_menus_restore();
             self.dispatch_command(command);
         } else {
             self.dispatch_raw_command(command);
+            self.close_menus_restore();
         }
-        self.close_menus_restore();
     }
 
     /// Render the four popup-menu layers against `ctx`'s current viewport.
