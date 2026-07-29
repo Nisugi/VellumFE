@@ -167,10 +167,10 @@ impl AppCore {
                 });
             }
 
-            // Add the command text (in default color)
+            // Add the command text in the configured echo color
             segments.push(TextSegment {
                 text: command.clone(),
-                fg: Some("#ffffff".to_string()), // White text for command
+                fg: Some(self.config.colors.ui.command_echo_color.clone()),
                 bg: None,
                 bold: false,
                 mono: false,
@@ -1815,6 +1815,66 @@ impl AppCore {
 
         // Don't send anything to server
         Ok(String::new())
+    }
+}
+
+#[cfg(test)]
+mod command_echo_tests {
+    use super::*;
+    use crate::config::PromptColor;
+    use crate::data::{WindowContent, WindowState};
+
+    #[test]
+    fn sent_command_echo_uses_configured_color_and_respects_prompt_styles_and_toggle() {
+        let mut core = AppCore::new_for_test();
+        core.config.colors.ui.command_echo_color = "#123456".to_string();
+        core.config.colors.prompt_colors = vec![
+            PromptColor {
+                character: "R".to_string(),
+                fg: Some("#aa0000".to_string()),
+                bg: None,
+                color: None,
+            },
+            PromptColor {
+                character: ">".to_string(),
+                fg: Some("#00aa00".to_string()),
+                bg: None,
+                color: None,
+            },
+        ];
+        core.message_processor.apply_config(core.config.clone());
+        core.game_state.last_prompt = "R>".to_string();
+
+        let mut main_window = WindowState::new_text("main", 100);
+        if let WindowContent::Text(content) = &mut main_window.content {
+            content.streams = vec!["main".to_string()];
+        }
+        core.ui_state.windows.insert("main".to_string(), main_window);
+        core.message_processor
+            .update_text_stream_subscribers(&core.ui_state);
+
+        core.send_command("look".to_string()).unwrap();
+
+        let WindowContent::Text(content) = &core.ui_state.windows["main"].content else {
+            panic!("main should be a text window");
+        };
+        assert_eq!(content.lines.len(), 1);
+        let segments = &content.lines[0].segments;
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].text, "R");
+        assert_eq!(segments[0].fg.as_deref(), Some("#aa0000"));
+        assert_eq!(segments[1].text, ">");
+        assert_eq!(segments[1].fg.as_deref(), Some("#00aa00"));
+        assert_eq!(segments[2].text, "look");
+        assert_eq!(segments[2].fg.as_deref(), Some("#123456"));
+
+        core.config.ui.command_echo = false;
+        core.send_command("glance".to_string()).unwrap();
+
+        let WindowContent::Text(content) = &core.ui_state.windows["main"].content else {
+            panic!("main should be a text window");
+        };
+        assert_eq!(content.lines.len(), 1);
     }
 }
 
