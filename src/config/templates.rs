@@ -114,7 +114,8 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: crate::config::WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,
@@ -1785,7 +1786,7 @@ impl Config {
                         !layout
                             .windows
                             .iter()
-                            .any(|w| w.name() == *name && w.base().visible)
+                            .any(|w| w.name() == *name && w.base().visibility.is_shown())
                     })
                     .collect();
                 (category, available)
@@ -1814,7 +1815,7 @@ impl Config {
         include_hidden: bool,
     ) -> HashMap<WidgetCategory, Vec<String>> {
         let all_by_category = Self::get_templates_by_category();
-        let included = |w: &crate::config::WindowDef| include_hidden || w.base().visible;
+        let included = |w: &crate::config::WindowDef| include_hidden || w.base().visibility.is_shown();
 
         let mut visible_by_category: HashMap<WidgetCategory, Vec<String>> = all_by_category
             .into_iter()
@@ -1901,7 +1902,7 @@ impl Config {
         layout
             .windows
             .iter()
-            .filter(|w| w.base().visible)
+            .filter(|w| w.base().visibility.is_shown())
             .map(|w| w.name().to_string())
             .collect()
     }

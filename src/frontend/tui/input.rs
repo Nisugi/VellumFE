@@ -4326,7 +4326,7 @@ impl TuiFrontend {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible && matches!(w.widget_type(), "indicator"))
+                .filter(|w| w.base().visibility.is_shown() && matches!(w.widget_type(), "indicator"))
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_hide_menu(&indicators);

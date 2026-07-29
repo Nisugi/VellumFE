@@ -58,7 +58,7 @@ use crate::data::geometry::{Col, Height, Row, Width};
             assert!(!base.transparent_background);
 
             // Should be visible
-            assert!(base.visible);
+            assert!(base.visibility.is_shown());
         } else {
             panic!("Expected WindowDef::Spacer variant");
         }
@@ -134,7 +134,8 @@ use crate::data::geometry::{Col, Height, Row, Width};
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -209,7 +210,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -252,7 +254,7 @@ visible = true
         assert!(!base.show_border);
         assert!(!base.show_title);
         assert!(!base.transparent_background);
-        assert!(base.visible);
+        assert!(base.visibility.is_shown());
     }
 
     #[test]
@@ -279,7 +281,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -310,7 +313,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -365,7 +369,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -396,7 +401,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: false,
+                visibility: crate::config::WindowVisibility::Hidden,
+                binding: None,
                 content_align: None,  // Hidden!
                 tts_speak: false,
                 text_size: None,
@@ -425,8 +431,8 @@ visible = true
         assert_eq!(restored_layout.windows[1].name(), "spacer_2");
 
         // Verify visibility state is preserved
-        assert!(restored_layout.windows[0].base().visible);
-        assert!(!restored_layout.windows[1].base().visible);
+        assert!(restored_layout.windows[0].base().visibility.is_shown());
+        assert!(!restored_layout.windows[1].base().visibility.is_shown());
     }
 
     #[test]
@@ -454,7 +460,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -492,7 +499,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -523,7 +531,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -585,7 +594,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -623,7 +633,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -654,7 +665,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -729,7 +741,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -767,7 +780,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,
@@ -798,7 +812,8 @@ visible = true
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,

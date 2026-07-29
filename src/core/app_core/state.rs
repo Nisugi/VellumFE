@@ -1209,7 +1209,7 @@ impl AppCore {
             }
         } else {
             for window_def in &self.layout.windows {
-                if !window_def.base().visible {
+                if !window_def.base().visibility.is_shown() {
                     continue;
                 }
                 let name = window_def.name();
@@ -1811,7 +1811,7 @@ impl AppCore {
         // Create windows based on layout (only visible ones)
         for window_def in &self.layout.windows {
             // Skip hidden windows
-            if !window_def.base().visible {
+            if !window_def.base().visibility.is_shown() {
                 tracing::debug!("Skipping hidden window '{}' during init", window_def.name());
                 continue;
             }
@@ -3377,8 +3377,8 @@ impl AppCore {
         // Find ALL windows with this name and mark as hidden (handles duplicates)
         let mut found_count = 0;
         for window_def in self.layout.windows.iter_mut() {
-            if window_def.name() == name && window_def.base().visible {
-                window_def.base_mut().visible = false;
+            if window_def.name() == name && window_def.base().visibility.is_shown() {
+                window_def.base_mut().visibility = crate::config::WindowVisibility::Hidden;
                 found_count += 1;
             }
         }
@@ -3491,7 +3491,7 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .any(|w| w.name() == name && w.base().visible);
+                .any(|w| w.name() == name && w.base().visibility.is_shown());
 
             if already_visible {
                 // Window exists in layout - just make sure it's in UI state
@@ -4018,7 +4018,8 @@ impl AppCore {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: crate::config::WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,
@@ -4145,7 +4146,8 @@ impl AppCore {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: crate::config::WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,
@@ -5421,7 +5423,7 @@ impl AppCore {
                     .filter(|name| {
                         self.layout
                             .get_window(name)
-                            .map(|w| !w.base().visible)
+                            .map(|w| !w.base().visibility.is_shown())
                             .unwrap_or(true)
                     })
                     .map(|name| {
@@ -5450,7 +5452,7 @@ impl AppCore {
                 .filter(|name| {
                     self.layout
                         .get_window(name)
-                        .map(|w| !w.base().visible)
+                        .map(|w| !w.base().visibility.is_shown())
                         .unwrap_or(true)
                 })
                 .collect();
@@ -5876,7 +5878,7 @@ impl AppCore {
         let hidden = self
             .layout
             .get_window(name)
-            .is_some_and(|w| !w.base().visible);
+            .is_some_and(|w| !w.base().visibility.is_shown());
         if hidden {
             format!("{} (hidden)", display)
         } else {
@@ -5985,7 +5987,8 @@ mod tests {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: crate::config::WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,
@@ -5999,7 +6002,7 @@ mod tests {
         // A hidden spacer must appear in the edit picker's template map when
         // include_hidden is set, and stay out of the visible-only map.
         let mut base = test_window_base("spacer_1");
-        base.visible = false;
+        base.visibility = crate::config::WindowVisibility::Hidden;
         let layout = Layout {
             windows: vec![WindowDef::Spacer {
                 base,
@@ -6163,10 +6166,10 @@ mod tests {
     fn test_generate_spacer_name_with_hidden_spacers() {
         // RED: Hidden spacers should be considered (widgets can be hidden, not deleted)
         let mut visible_base = test_window_base("spacer_1");
-        visible_base.visible = true;
+        visible_base.visibility = crate::config::WindowVisibility::Shown;
 
         let mut hidden_base = test_window_base("spacer_2");
-        hidden_base.visible = false;
+        hidden_base.visibility = crate::config::WindowVisibility::Hidden;
 
         let visible_spacer = WindowDef::Spacer {
             base: visible_base,

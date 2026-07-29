@@ -661,7 +661,7 @@ impl Layout {
         // Check if window already exists in layout
         if let Some(existing) = self.windows.iter_mut().find(|w| w.name() == name) {
             // Just make it visible
-            existing.base_mut().visible = true;
+            existing.base_mut().visibility = crate::config::WindowVisibility::Shown;
             tracing::info!("Window '{}' already exists, setting visible=true", name);
             return Ok(());
         }
@@ -683,7 +683,7 @@ impl Layout {
         }
 
         // Set visible
-        window_def.base_mut().visible = true;
+        window_def.base_mut().visibility = crate::config::WindowVisibility::Shown;
 
         // Add to layout
         self.windows.push(window_def);
@@ -699,7 +699,7 @@ impl Layout {
             .find(|w| w.name() == name)
             .ok_or_else(|| anyhow::anyhow!("Window not found: {}", name))?;
 
-        window.base_mut().visible = false;
+        window.base_mut().visibility = crate::config::WindowVisibility::Hidden;
         tracing::info!("Window '{}' hidden (visible=false)", name);
         Ok(())
     }
@@ -922,7 +922,8 @@ zoom = 3
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,

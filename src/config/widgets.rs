@@ -7,6 +7,100 @@
 use super::*;
 use crate::data::geometry::{Height, Width};
 
+/// A window's persisted show/hide state. Replaces the old `visible: bool`.
+/// `Hidden` means BOTH "don't render" AND "suppress the game from
+/// auto-spawning it" — the unified-windows rule. `Ephemeral` marks a
+/// session-only window (containers) that is never persisted and is wiped
+/// on relog; it renders like `Shown` while alive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowVisibility {
+    #[default]
+    Shown,
+    Hidden,
+    Ephemeral,
+}
+
+impl WindowVisibility {
+    /// Whether the window should render.
+    pub fn is_shown(&self) -> bool {
+        matches!(self, WindowVisibility::Shown | WindowVisibility::Ephemeral)
+    }
+    /// Whether the game may auto-(re)spawn this window. Hidden suppresses it.
+    pub fn allows_autospawn(&self) -> bool {
+        !matches!(self, WindowVisibility::Hidden)
+    }
+    /// Whether this window persists to layout.toml. Ephemeral does not.
+    pub fn is_persistent(&self) -> bool {
+        !matches!(self, WindowVisibility::Ephemeral)
+    }
+}
+
+// Serde: persist as a lowercase string ("shown"/"hidden"/"ephemeral"), but
+// ALSO accept the legacy `visible = true|false` bool so old layout.toml
+// files keep loading. Ephemeral is never written (those windows aren't
+// persisted), so it only appears at runtime.
+impl serde::Serialize for WindowVisibility {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            WindowVisibility::Shown => "shown",
+            WindowVisibility::Hidden => "hidden",
+            WindowVisibility::Ephemeral => "ephemeral",
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WindowVisibility {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Compat {
+            Bool(bool),
+            Str(String),
+        }
+        match Compat::deserialize(d)? {
+            // Legacy layout.toml: visible = true|false.
+            Compat::Bool(true) => Ok(WindowVisibility::Shown),
+            Compat::Bool(false) => Ok(WindowVisibility::Hidden),
+            Compat::Str(s) => match s.to_ascii_lowercase().as_str() {
+                "shown" | "visible" | "true" => Ok(WindowVisibility::Shown),
+                "hidden" | "false" => Ok(WindowVisibility::Hidden),
+                "ephemeral" => Ok(WindowVisibility::Ephemeral),
+                other => Err(D::Error::custom(format!(
+                    "invalid window visibility '{}'",
+                    other
+                ))),
+            },
+        }
+    }
+}
+
+/// What game source a window is bound to, so the client can find the ONE
+/// (or several) windows a dialog/stream/container feed belongs to by id,
+/// independent of the user's display name. This is the identity that
+/// prevents duplicate auto-spawns and lets multiple windows share a feed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "lowercase")]
+pub enum WindowBinding {
+    /// A game dialog id (expr, stance, combat, encum, ...).
+    Dialog(String),
+    /// A game stream id (thoughts, loot, bounty, ...).
+    Stream(String),
+    /// A container id (session-only; not persisted).
+    Container(String),
+}
+
+impl WindowBinding {
+    /// The bound game id, whatever the source kind.
+    pub fn id(&self) -> &str {
+        match self {
+            WindowBinding::Dialog(id)
+            | WindowBinding::Stream(id)
+            | WindowBinding::Container(id) => id,
+        }
+    }
+}
+
 /// Border sides configuration - which borders to show
 /// Serializes to/from array of strings in TOML: ["left", "right", "top", "bottom"]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -253,9 +347,17 @@ pub struct WindowBase {
     pub min_cols: Option<u16>,
     #[serde(default)]
     pub max_cols: Option<u16>,
-    /// Whether this window is currently visible (defaults to true for backwards compatibility)
-    #[serde(default = "default_true")]
-    pub visible: bool,
+    /// Persisted show/hide state. Replaces the legacy `visible: bool`;
+    /// serde reads either the new `visibility = "shown"|"hidden"` string
+    /// or the old `visible = true|false` bool (via the alias + the enum's
+    /// Deserialize compat), defaulting to Shown.
+    #[serde(default, alias = "visible")]
+    pub visibility: WindowVisibility,
+    /// Game source this window is bound to (dialog/stream/container id), so
+    /// feeds resolve to the right window(s) regardless of display name.
+    /// None for hand-placed/custom windows with no game binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<WindowBinding>,
     /// Content alignment within widget area
     #[serde(default)]
     pub content_align: Option<String>,
