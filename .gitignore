@@ -101,3 +101,4 @@ __pycache__/
 .moai/sessions/
 .moai/state.json
 nul
+stack.txt
