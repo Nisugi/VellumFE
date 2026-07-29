@@ -161,10 +161,43 @@ pub fn install_asset(
             record(db, &name, repo, asset);
             Ok(InstallOutcome::Installed { path: dest })
         }
-        // Composed bundles (skin/layout) are extracted, not written whole.
-        None => Err(format!(
-            "installing '{kind}' assets (composed bundles) is not implemented yet"
-        )),
+        // Composed bundles are extracted from the verified zip, not written
+        // whole (§3A: a skin/layout is a directory).
+        None => {
+            let path = install_bundle(kind, &name, &bytes)?;
+            record(db, &name, repo, asset);
+            Ok(InstallOutcome::Installed { path })
+        }
+    }
+}
+
+/// Extract a verified bundle zip by kind. Skins get a jinx-owned whitelisted
+/// extraction into `skins/<name>/`; layouts/UI-packs go through the existing
+/// whitelisted, backed-up `uipack::apply`. Returns a representative path.
+fn install_bundle(kind: &str, name: &str, zip_bytes: &[u8]) -> Result<PathBuf, String> {
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    match kind {
+        "skin" => {
+            let skin_name = super::bundle::install_skin(stem, zip_bytes)?;
+            Config::skins_dir()
+                .map(|d| d.join(skin_name))
+                .map_err(|e| format!("cannot resolve skins dir: {e}"))
+        }
+        "layout" | "uipack" => {
+            // uipack::apply reads a file on disk; stage the verified zip in a
+            // temp file, apply, then drop it.
+            let base = Config::base_dir().map_err(|e| format!("cannot resolve base dir: {e}"))?;
+            let tmp = base.join(format!(".jinx-{stem}.vellumpack.part"));
+            write_atomic(&tmp, zip_bytes)?;
+            let result = crate::core::uipack::apply(&base, &tmp, None)
+                .map_err(|e| format!("applying '{name}': {e:#}"));
+            let _ = std::fs::remove_file(&tmp);
+            result?;
+            // The pack landed via uipack::apply (which owns its layered
+            // destinations); return the config base as a representative path.
+            Ok(base.join("layouts"))
+        }
+        other => Err(format!("no bundle installer for kind '{other}'")),
     }
 }
 
@@ -423,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_script_and_defers_bundle_kinds() {
+    fn refuses_script_and_extracts_skin_bundle() {
         let _guard = ENV_LOCK.lock().unwrap();
         let cfg = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", cfg.path());
@@ -436,13 +469,29 @@ mod tests {
         let err = install_asset(&ag, &repo("http://unused"), &script, &mut db, false).unwrap_err();
         assert!(err.contains("scripts stay in Lich"), "{err}");
 
-        // A composed skin verifies then reports not-yet-implemented (J1 scope).
-        let body = b"zipbytes".to_vec();
-        let base = spawn_stub(body.clone());
-        let mut skin = asset("/skins/parchment.vellumpack", &digest_b64(&body));
+        // A composed skin now extracts. Build a real (verified) skin zip.
+        let zip = {
+            use std::io::Write as _;
+            let mut buf = Vec::new();
+            {
+                let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+                w.start_file("skin.toml", zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                w.write_all(b"[meta]\nname=\"P\"\n").unwrap();
+                w.finish().unwrap();
+            }
+            buf
+        };
+        let base = spawn_stub(zip.clone());
+        let mut skin = asset("/skins/parchment.vellumpack", &digest_b64(&zip));
         skin.kind = Some("skin".into());
-        let err = install_asset(&ag, &repo(&base), &skin, &mut db, false).unwrap_err();
-        assert!(err.contains("not implemented yet"), "{err}");
+        let out = install_asset(&ag, &repo(&base), &skin, &mut db, false).unwrap();
+        assert!(matches!(out, InstallOutcome::Installed { .. }));
+        assert!(crate::config::Config::skins_dir()
+            .unwrap()
+            .join("parchment/skin.toml")
+            .is_file());
+        assert_eq!(db.get("parchment.vellumpack").unwrap().kind, "skin");
 
         std::env::remove_var("VELLUM_FE_DIR");
     }
