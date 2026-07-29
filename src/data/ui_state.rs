@@ -76,6 +76,12 @@ pub struct UiState {
     /// Set of ephemeral window names (session-only, not saved to layout)
     pub ephemeral_windows: std::collections::HashSet<String>,
 
+    /// Container titles the user has opted to show this session (U3). A
+    /// sighted container auto-(re)opens only if its title is in here;
+    /// showing one via the Windows list adds it, hiding removes it.
+    /// Session-only — never persisted (containers wipe on relog).
+    pub shown_container_titles: std::collections::HashSet<String>,
+
     /// Quickbar data keyed by id (e.g., "quick", "quick-combat")
     pub quickbars: HashMap<String, crate::data::QuickbarData>,
 
@@ -777,6 +783,7 @@ impl UiState {
             needs_widget_reset: false,
             widgets_to_reset: Vec::new(),
             ephemeral_windows: std::collections::HashSet::new(),
+            shown_container_titles: std::collections::HashSet::new(),
             quickbars: HashMap::new(),
             quickbar_order: Vec::new(),
             active_quickbar_id: None,

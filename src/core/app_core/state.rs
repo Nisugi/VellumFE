@@ -3738,113 +3738,48 @@ impl AppCore {
 
         // Ephemeral runtime window already present (container/panel): just
         // toggle its presence.
-        if self.ui_state.windows.contains_key(name) {
+        if let Some(win) = self.ui_state.windows.get(name) {
+            // A container also drops out of the session "shown" set so it
+            // doesn't re-open on the next sighting.
+            let container_title = match &win.content {
+                crate::data::WindowContent::Container { container_title } => {
+                    Some(container_title.clone())
+                }
+                _ => None,
+            };
             if !shown {
                 self.ui_state.remove_window(name);
                 self.ui_state.ephemeral_windows.remove(name);
+                if let Some(t) = container_title {
+                    self.ui_state.shown_container_titles.remove(&t);
+                }
                 self.needs_render = true;
             }
             // (Re-showing an already-present ephemeral window is a no-op.)
             return;
         }
 
-        // Not yet materialized. A dialog-store entry means it's a
-        // dialog/panel we can conjure; otherwise nothing to do until the
-        // game sends it.
-        if shown && self.ui_state.dialog_store.contains_key(name) {
-            self.create_dialog_panel_window(name, name, terminal_width, terminal_height);
-            self.needs_render = true;
-        }
-    }
-
-    pub fn set_window_offer_policy(
-        &mut self,
-        offer_id: &str,
-        policy: crate::core::window_offers::Policy,
-        terminal_width: u16,
-        terminal_height: u16,
-    ) {
-        use crate::core::window_offers::{OfferKind, Policy};
-        self.game_state.window_offers.set_policy(offer_id, policy);
-
-        let Some(offer) = self.game_state.window_offers.get(offer_id) else {
-            return;
-        };
-        let (kind, title, resident) = (offer.kind, offer.title.clone(), offer.resident);
-        match kind {
-            OfferKind::Container => match policy {
-                Policy::Shown => {
-                    self.create_ephemeral_container_window(
-                        &title,
-                        terminal_width,
-                        terminal_height,
-                    );
-                }
-                Policy::Hidden => {
-                    self.close_ephemeral_window_by_title(&title);
-                }
-                Policy::Unset => {}
-            },
-            // Resident dialogs (combat, befriend, ...) are dockable PANELS,
-            // not transient popups: enabling creates a panel window that
-            // renders from the store; disabling closes it.
-            OfferKind::Dialog if resident => match policy {
-                Policy::Shown => {
-                    if self.ui_state.dialog_store.contains_key(offer_id) {
-                        self.create_dialog_panel_window(
-                            offer_id,
-                            &title,
-                            terminal_width,
-                            terminal_height,
-                        );
-                        self.needs_render = true;
-                    } else {
-                        self.add_system_message(
-                            "Nothing received for that panel yet — it fills in on the next update.",
-                        );
-                    }
-                }
-                Policy::Hidden => {
-                    let window_name =
-                        format!("panel_{}", offer_id.replace(' ', "_").to_lowercase());
-                    self.ui_state.remove_window(&window_name);
-                    self.ui_state.ephemeral_windows.remove(&window_name);
-                    self.needs_render = true;
-                }
-                Policy::Unset => {}
-            },
-            OfferKind::Dialog => match policy {
-                Policy::Shown => {
-                    // Non-resident: transient popup materialized from store.
-                    if self.ui_state.dialog_store.contains_key(offer_id) {
-                        self.ui_state.show_dialog_from_store(offer_id);
-                        self.needs_render = true;
-                    } else {
-                        self.add_system_message(
-                            "Nothing received for that dialog yet — trigger it in-game once.",
-                        );
-                    }
-                }
-                Policy::Hidden => {
-                    if self
-                        .ui_state
-                        .active_dialog
-                        .as_ref()
-                        .is_some_and(|dialog| dialog.id == *offer_id)
-                    {
-                        self.ui_state.active_dialog = None;
-                        if self.ui_state.input_mode == crate::data::ui_state::InputMode::Dialog {
-                            self.ui_state.input_mode =
-                                crate::data::ui_state::InputMode::Normal;
-                        }
-                        self.needs_render = true;
-                    }
-                }
-                Policy::Unset => {}
-            },
-            // Stream offers record policy only for now; their windows are
-            // managed through the stream-routing/custom-windows system.
-            OfferKind::Stream => {}
+        // Not yet materialized. Three possibilities to conjure when shown:
+        if shown {
+            // A dialog-store entry → a dialog/panel we can show.
+            if self.ui_state.dialog_store.contains_key(name) {
+                self.create_dialog_panel_window(name, name, terminal_width, terminal_height);
+                self.needs_render = true;
+                return;
+            }
+            // A sighted registry container (window name is title-derived) →
+            // remember the opt-in and open it.
+            let container_title = self
+                .game_state
+                .objects
+                .containers()
+                .find(|c| c.title.replace(' ', "_").to_lowercase() == name)
+                .map(|c| c.title.clone());
+            if let Some(title) = container_title {
+                self.ui_state.shown_container_titles.insert(title.clone());
+                self.create_ephemeral_container_window(&title, terminal_width, terminal_height);
+                self.needs_render = true;
+            }
         }
     }
 
@@ -3865,13 +3800,10 @@ impl AppCore {
             self.register_window_discovery(d);
         }
 
-        if let Some((id, title)) = self.message_processor.newly_registered_container.take() {
-            let show = self
-                .game_state
-                .window_offers
-                .get(&id)
-                .is_some_and(|offer| offer.should_show());
-            if show {
+        if let Some((_id, title)) = self.message_processor.newly_registered_container.take() {
+            // U3: a sighted container (re)opens only if the user opted it in
+            // this session (via the Windows list). Ephemeral, wiped on relog.
+            if self.ui_state.shown_container_titles.contains(&title) {
                 self.create_ephemeral_container_window(&title, terminal_width, terminal_height);
             }
         }
@@ -5682,12 +5614,6 @@ impl AppCore {
         }
     }
 
-    /// Build "Hide Window" menu showing widget categories (only categories with visible windows)
-    /// Build the "Known Windows" menu: every window the game has offered,
-    /// each row prefixed `[x]`/`[ ]` for its current shown state. Selecting
-    /// a row emits `__TOGGLE_OFFER__<id>` to flip it. Frontend-agnostic —
-    /// the TUI drives its known-windows list off this; the GUI has its own
-    /// richer checkbox panel.
     /// U3: the unified list of every window the client knows about, from
     /// the layout (persistent, possibly game-bound) plus session-only
     /// ephemeral windows (containers, dialog panels). This replaces the
@@ -5748,6 +5674,26 @@ impl AppCore {
             });
         }
 
+        // Sighted-but-not-open containers from the GameObjects registry, so
+        // the user can opt one in the first time. The toggle key is the
+        // ephemeral window name a container would get.
+        for container in self.game_state.objects.containers() {
+            if container.title.is_empty() {
+                continue;
+            }
+            let win_name = container.title.replace(' ', "_").to_lowercase();
+            if self.ui_state.windows.contains_key(&win_name) {
+                continue; // already listed above as an open ephemeral window
+            }
+            out.push(KnownWindow {
+                name: win_name,
+                title: container.title.clone(),
+                kind: KnownWindowKind::Container,
+                shown: false,
+                ephemeral: true,
+            });
+        }
+
         out
     }
 
@@ -5800,26 +5746,6 @@ impl AppCore {
         self.set_known_window_shown(name, !currently_shown, w, h);
     }
 
-    /// Toggle an offered window's show/hide policy (from the known-windows
-    /// menu). Flips shown→Hidden / not-shown→Shown and applies it.
-    pub fn toggle_window_offer(&mut self, offer_id: &str) {
-        use crate::core::window_offers::Policy;
-        let currently_shown = self
-            .game_state
-            .window_offers
-            .get(offer_id)
-            .is_some_and(|o| o.should_show());
-        let (w, h) = (
-            self.layout.terminal_width.unwrap_or(80),
-            self.layout.terminal_height.unwrap_or(24),
-        );
-        let new_policy = if currently_shown {
-            Policy::Hidden
-        } else {
-            Policy::Shown
-        };
-        self.set_window_offer_policy(offer_id, new_policy, w, h);
-    }
 
     pub fn build_hide_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         let categories_map = crate::config::Config::get_visible_templates_by_category(&self.layout, true);
@@ -6848,94 +6774,42 @@ mod tests {
     }
 
     #[test]
-    fn set_window_offer_policy_shows_and_hides_container_window() {
-        use crate::core::window_offers::{OfferKind, Policy};
+    fn container_show_hide_and_sighting_via_session_set() {
+        // U3: containers are ephemeral session windows. A sighted container
+        // auto-(re)opens only if the user opted it in (shown_container_titles);
+        // showing/hiding by name adds/removes it. Multi-word titles work.
         let mut core = AppCore::new_for_test();
-        // The game offered a container.
-        core.game_state.window_offers.offer(
-            "77",
-            "Backpack",
-            OfferKind::Container,
-            None,
-            false,
-            false,
-        );
-        // Default: not shown, no window yet.
-        assert!(!core.game_state.window_offers.get("77").unwrap().should_show());
-        assert!(!core.ui_state.windows.contains_key("backpack"));
-
-        // Ticking Shown records the policy AND creates the window.
-        core.set_window_offer_policy("77", Policy::Shown, 80, 24);
-        assert_eq!(
-            core.game_state.window_offers.get("77").unwrap().policy,
-            Policy::Shown
-        );
-        assert!(core.ui_state.windows.contains_key("backpack"));
-
-        // Unticking Hidden records the policy AND closes the window.
-        core.set_window_offer_policy("77", Policy::Hidden, 80, 24);
-        assert_eq!(
-            core.game_state.window_offers.get("77").unwrap().policy,
-            Policy::Hidden
-        );
-        assert!(!core.ui_state.windows.contains_key("backpack"));
-    }
-
-    #[test]
-    fn toggle_closes_multi_word_container_titles() {
-        // Regression: window names are lowercase-with-underscores
-        // ("my_pack") but close-by-title searched with the space intact
-        // ("my pack"), so multi-word containers could be shown but
-        // never hidden again.
-        use crate::core::window_offers::{OfferKind, Policy};
-        let mut core = AppCore::new_for_test();
-        core.game_state.window_offers.offer(
-            "268435466",
-            "My Pack",
-            OfferKind::Container,
-            None,
-            false,
-            false,
+        core.layout.terminal_width = Some(80);
+        core.layout.terminal_height = Some(24);
+        // The registry knows the container (so it's listable), title has a space.
+        core.game_state.objects.register_container(
+            "268435466".to_string(),
+            "My Pack".to_string(),
+            Some("#268435466".to_string()),
         );
 
-        core.set_window_offer_policy("268435466", Policy::Shown, 80, 24);
+        // Sighted while not opted in → no window.
+        core.message_processor.newly_registered_container =
+            Some(("268435466".to_string(), "My Pack".to_string()));
+        core.realize_offered_windows(80, 24);
+        assert!(!core.ui_state.windows.contains_key("my_pack"));
+
+        // Show it by (window) name → opted in + window created.
+        core.set_known_window_shown("my_pack", true, 80, 24);
         assert!(core.ui_state.windows.contains_key("my_pack"));
+        assert!(core.ui_state.shown_container_titles.contains("My Pack"));
 
-        core.set_window_offer_policy("268435466", Policy::Hidden, 80, 24);
-        assert!(
-            !core.ui_state.windows.contains_key("my_pack"),
-            "multi-word title failed to close its window"
-        );
-    }
+        // Hide it → window closes, opt-in cleared (multi-word title works).
+        core.set_known_window_shown("my_pack", false, 80, 24);
+        assert!(!core.ui_state.windows.contains_key("my_pack"));
+        assert!(!core.ui_state.shown_container_titles.contains("My Pack"));
 
-    #[test]
-    fn realize_offered_windows_honors_container_policy() {
-        // Replaces the all-or-nothing container discovery mode: a sighted
-        // container only auto-opens when its offer policy says Shown.
-        use crate::core::window_offers::{OfferKind, Policy};
-        let mut core = AppCore::new_for_test();
-        core.game_state.window_offers.offer(
-            "77",
-            "Backpack",
-            OfferKind::Container,
-            None,
-            false,
-            false,
-        );
-
-        // Sighted but Unset → no auto-open; the signal is still consumed.
+        // Opt in, then a re-sight re-opens it automatically.
+        core.ui_state.shown_container_titles.insert("My Pack".to_string());
         core.message_processor.newly_registered_container =
-            Some(("77".to_string(), "Backpack".to_string()));
+            Some(("268435466".to_string(), "My Pack".to_string()));
         core.realize_offered_windows(80, 24);
-        assert!(!core.ui_state.windows.contains_key("backpack"));
-        assert!(core.message_processor.newly_registered_container.is_none());
-
-        // Shown → the next sighting auto-opens the window.
-        core.game_state.window_offers.set_policy("77", Policy::Shown);
-        core.message_processor.newly_registered_container =
-            Some(("77".to_string(), "Backpack".to_string()));
-        core.realize_offered_windows(80, 24);
-        assert!(core.ui_state.windows.contains_key("backpack"));
+        assert!(core.ui_state.windows.contains_key("my_pack"));
     }
 }
 

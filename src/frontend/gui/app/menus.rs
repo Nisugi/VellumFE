@@ -779,14 +779,6 @@ impl VellumGuiApp {
             self.app_core.needs_render = true;
             return;
         }
-        // Legacy offer toggle (kept until the offer registry is removed).
-        if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-            let offer_id = offer_id.to_string();
-            self.app_core.toggle_window_offer(&offer_id);
-            self.close_menus_restore();
-            self.app_core.needs_render = true;
-            return;
-        }
 
         // Internal (double-underscore) menu commands must never reach the server.
         if command.starts_with("__") {

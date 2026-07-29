@@ -2697,7 +2697,7 @@ mod foreach_tests {
             ".windows",
             "", // empty-menu placeholder command
             "__SUBMENU__windows",
-            "__TOGGLE_OFFER__stow",
+            "__TOGGLE_WINDOW__stow",
             "menu:windows",
         ] {
             let _ = core.send_command(cmd.to_string());

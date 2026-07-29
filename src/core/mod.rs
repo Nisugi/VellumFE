@@ -26,7 +26,6 @@ pub mod messages;
 pub mod pathing;
 pub mod remote;
 pub mod sorter;
-pub mod window_offers;
 pub mod spell_table;
 pub mod travel;
 pub mod state;
