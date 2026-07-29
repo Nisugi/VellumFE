@@ -287,6 +287,7 @@ pub struct VellumGuiApp {
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     window_editor: Option<editors::WindowEditorState>,
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
+    known_windows_editor: Option<editors::KnownWindowsEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
     /// settings command (`.controller`, `.settings`, …) is re-issued while
@@ -593,6 +594,7 @@ impl VellumGuiApp {
             indicator_templates_editor: None,
             window_editor: None,
             custom_windows_editor: None,
+            known_windows_editor: None,
             doll_calibration: None,
             pending_editor_raise: None,
             search_bar_needs_focus: false,
@@ -4022,11 +4024,23 @@ impl VellumGuiApp {
             self.open_custom_windows_editor();
             return true;
         }
+        if action == "action:knownwindows" {
+            self.open_known_windows_editor();
+            return true;
+        }
         if action == "action:addwindow" {
             let mut items = self.app_core.build_add_window_menu();
-            // Surface the custom-window authoring panel at the top of the Add
-            // Widget menu so creating a stream-fed window is discoverable
-            // (GUI-local; the shared core menu builder stays untouched).
+            // Surface the custom-window authoring panel + the known-windows
+            // list at the top of the Add Widget menu (GUI-local; the shared
+            // core menu builder stays untouched).
+            items.insert(
+                0,
+                PopupMenuItem {
+                    text: "Known Windows (game dialogs)…".to_string(),
+                    command: "action:knownwindows".to_string(),
+                    disabled: false,
+                },
+            );
             items.insert(
                 0,
                 PopupMenuItem {

@@ -3563,6 +3563,45 @@ impl AppCore {
         );
     }
 
+    /// Apply a user show/hide choice from the "known windows" list: record
+    /// the policy on the offer and create or close the corresponding
+    /// window. Currently wires container offers to ephemeral container
+    /// windows; dialog/stream offers record policy for now (their window
+    /// wiring lands as those consumption paths migrate).
+    pub fn set_window_offer_policy(
+        &mut self,
+        offer_id: &str,
+        policy: crate::core::window_offers::Policy,
+        terminal_width: u16,
+        terminal_height: u16,
+    ) {
+        use crate::core::window_offers::{OfferKind, Policy};
+        self.game_state.window_offers.set_policy(offer_id, policy);
+
+        let Some(offer) = self.game_state.window_offers.get(offer_id) else {
+            return;
+        };
+        let (kind, title) = (offer.kind, offer.title.clone());
+        match kind {
+            OfferKind::Container => match policy {
+                Policy::Shown => {
+                    self.create_ephemeral_container_window(
+                        &title,
+                        terminal_width,
+                        terminal_height,
+                    );
+                }
+                Policy::Hidden => {
+                    self.close_ephemeral_window_by_title(&title);
+                }
+                Policy::Unset => {}
+            },
+            // Dialog/Stream window wiring arrives as those paths migrate;
+            // for now the policy is remembered on the offer.
+            OfferKind::Dialog | OfferKind::Stream => {}
+        }
+    }
+
     /// Close all ephemeral container windows
     pub fn close_all_ephemeral_windows(&mut self) {
         let names: Vec<_> = self.ui_state.ephemeral_windows.iter().cloned().collect();
@@ -6038,6 +6077,40 @@ mod tests {
         assert_eq!(p.y.get(), 0);
         assert_eq!(p.width.get(), 10); // 4 raised to min_cols
         assert_eq!(p.height.get(), 20); // 30 capped at max_rows
+    }
+
+    #[test]
+    fn set_window_offer_policy_shows_and_hides_container_window() {
+        use crate::core::window_offers::{OfferKind, Policy};
+        let mut core = AppCore::new_for_test();
+        // The game offered a container.
+        core.game_state.window_offers.offer(
+            "77",
+            "Backpack",
+            OfferKind::Container,
+            None,
+            false,
+            false,
+        );
+        // Default: not shown, no window yet.
+        assert!(!core.game_state.window_offers.get("77").unwrap().should_show());
+        assert!(!core.ui_state.windows.contains_key("backpack"));
+
+        // Ticking Shown records the policy AND creates the window.
+        core.set_window_offer_policy("77", Policy::Shown, 80, 24);
+        assert_eq!(
+            core.game_state.window_offers.get("77").unwrap().policy,
+            Policy::Shown
+        );
+        assert!(core.ui_state.windows.contains_key("backpack"));
+
+        // Unticking Hidden records the policy AND closes the window.
+        core.set_window_offer_policy("77", Policy::Hidden, 80, 24);
+        assert_eq!(
+            core.game_state.window_offers.get("77").unwrap().policy,
+            Policy::Hidden
+        );
+        assert!(!core.ui_state.windows.contains_key("backpack"));
     }
 }
 
