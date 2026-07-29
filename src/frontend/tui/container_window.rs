@@ -1,12 +1,16 @@
 //! Container window widget for displaying contents of bags, backpacks, etc.
 //!
-//! Similar to inventory_window but displays contents from a specific container
-//! tracked in GameState.container_cache. Each container window is configured
-//! with a container_id that links it to a specific container in the cache.
+//! Similar to inventory_window but displays contents from a specific
+//! container in the GameObjects registry (`game_state.objects`). Each
+//! container window is bound to a container title; the frontend resolves
+//! it to a `Container` each frame and feeds it here.
 //!
-//! Now uses ListWidget instead of custom Vec<Vec<TextSegment>> for proper text rendering.
+//! Uses ListWidget for rendering. Items arrive pre-parsed as `GameItem`s
+//! from the registry's single anchor parser — this widget no longer parses
+//! `<a>` tags itself (that duplicate parser was deleted in the registry
+//! migration).
 
-use crate::core::state::ContainerData;
+use crate::core::game_objects::Container;
 use crate::data::widget::TextSegment;
 use ratatui::{buffer::Buffer, layout::Rect};
 
@@ -46,9 +50,13 @@ impl ContainerWindow {
         self.widget.set_replace_enabled(enabled);
     }
 
-    /// Update from ContainerData if generation changed.
+    /// Update from a registry `Container` if its generation changed.
     /// Returns true if content was updated.
-    pub fn update_from_cache(&mut self, container: &ContainerData) -> bool {
+    ///
+    /// Items are already parsed (`GameItem { id, noun, name }`) — one
+    /// clickable line each, styled with the link color. The header line is
+    /// already excluded upstream by the registry's ingest.
+    pub fn update_from_cache(&mut self, container: &Container) -> bool {
         // Skip if generation hasn't changed
         if container.generation == self.last_generation {
             return false;
@@ -65,136 +73,30 @@ impl ContainerWindow {
         // Clear existing lines
         self.widget.clear();
 
-        // Parse each item line from the container
-        for item_content in &container.items {
-            // Skip header lines like "In the bandolier:" and empty/nothing lines
-            let trimmed = item_content.trim().to_lowercase();
-            if trimmed.starts_with("in the ") || trimmed == "nothing" || trimmed.is_empty() {
-                continue;
-            }
-
-            let segments = self.parse_container_item(item_content);
-            if !segments.is_empty() {
-                // ListWidget handles highlights internally during add_line
-                self.widget.add_line(segments);
-            }
+        // One clickable line per registry item.
+        for item in &container.items {
+            let segment = TextSegment {
+                text: item.name.clone(),
+                fg: self
+                    .link_color
+                    .clone()
+                    .or_else(|| Some("#00FFFF".to_string())),
+                bg: None,
+                bold: false,
+                mono: false,
+                span_type: crate::data::SpanType::Link,
+                link_data: Some(crate::data::LinkData {
+                    exist_id: item.id.clone(),
+                    noun: item.noun.clone(),
+                    text: item.name.clone(),
+                    coord: None,
+                }),
+            };
+            // ListWidget handles highlights internally during add_line.
+            self.widget.add_line(vec![segment]);
         }
 
         true
-    }
-
-    /// Parse a container item string (with potential XML/links) into TextSegments
-    fn parse_container_item(&mut self, content: &str) -> Vec<TextSegment> {
-        let mut segments = Vec::new();
-        let mut current_pos = 0;
-        let content_len = content.len();
-
-        while current_pos < content_len {
-            // Look for <a tag
-            if let Some(a_start) = content[current_pos..].find("<a ") {
-                let a_start_abs = current_pos + a_start;
-
-                // Add text before the link
-                if a_start > 0 {
-                    let text = &content[current_pos..a_start_abs];
-                    if !text.is_empty() {
-                        segments.push(TextSegment {
-                            text: text.to_string(),
-                            fg: None,
-                            bg: None,
-                            bold: false,
-                            mono: false,
-                            span_type: crate::data::SpanType::Normal,
-                            link_data: None,
-                        });
-                    }
-                }
-
-                // Parse the <a> tag
-                if let Some(tag_end) = content[a_start_abs..].find('>') {
-                    let tag_end_abs = a_start_abs + tag_end;
-                    let tag = &content[a_start_abs..=tag_end_abs];
-
-                    // Extract attributes
-                    let exist_id = Self::extract_attribute(tag, "exist").unwrap_or_default();
-                    let noun = Self::extract_attribute(tag, "noun").unwrap_or_default();
-
-                    // Find closing </a>
-                    if let Some(close_start) = content[tag_end_abs + 1..].find("</a>") {
-                        let close_start_abs = tag_end_abs + 1 + close_start;
-                        let link_text = &content[tag_end_abs + 1..close_start_abs];
-
-                        // Create link data
-                        let link_data = crate::data::LinkData {
-                            exist_id,
-                            noun,
-                            text: link_text.to_string(),
-                            coord: None,
-                        };
-
-                        // Add link segment - use theme link color or default to cyan
-                        segments.push(TextSegment {
-                            text: link_text.to_string(),
-                            fg: self
-                                .link_color
-                                .clone()
-                                .or_else(|| Some("#00FFFF".to_string())),
-                            bg: None,
-                            bold: false,
-                            mono: false,
-                            span_type: crate::data::SpanType::Link,
-                            link_data: Some(link_data),
-                        });
-
-                        current_pos = close_start_abs + 4; // Skip past </a>
-                        continue;
-                    }
-                }
-
-                // If we couldn't parse the link, skip the <a and continue
-                current_pos = a_start_abs + 2;
-            } else {
-                // No more links - add remaining text
-                let text = &content[current_pos..];
-                if !text.is_empty() {
-                    segments.push(TextSegment {
-                        text: text.to_string(),
-                        fg: None,
-                        bg: None,
-                        bold: false,
-                        mono: false,
-                        span_type: crate::data::SpanType::Normal,
-                        link_data: None,
-                    });
-                }
-                break;
-            }
-        }
-
-        segments
-    }
-
-    /// Extract an attribute value from an XML tag
-    fn extract_attribute(tag: &str, attr_name: &str) -> Option<String> {
-        // Look for attr="value" or attr='value'
-        let pattern1 = format!("{}=\"", attr_name);
-        let pattern2 = format!("{}='", attr_name);
-
-        if let Some(start) = tag.find(&pattern1) {
-            let value_start = start + pattern1.len();
-            if let Some(end) = tag[value_start..].find('"') {
-                return Some(tag[value_start..value_start + end].to_string());
-            }
-        }
-
-        if let Some(start) = tag.find(&pattern2) {
-            let value_start = start + pattern2.len();
-            if let Some(end) = tag[value_start..].find('\'') {
-                return Some(tag[value_start..value_start + end].to_string());
-            }
-        }
-
-        None
     }
 
     /// Scroll up by N lines
@@ -377,149 +279,63 @@ mod tests {
     // ===========================================
 
     // ===========================================
-    // Inner size tests
+    // Update-from-registry tests
+    // (anchor parsing now lives in game_objects::parse, tested there)
     // ===========================================
 
-    // ===========================================
-    // Extract attribute tests
-    // ===========================================
+    use crate::core::game_objects::{Container, GameItem};
 
-    #[test]
-    fn test_extract_attribute_double_quotes() {
-        let tag = r#"<a exist="12345" noun="sword">"#;
-        let result = ContainerWindow::extract_attribute(tag, "exist");
-        assert_eq!(result, Some("12345".to_string()));
+    fn container(id: &str, title: &str, gen: u64, items: Vec<GameItem>) -> Container {
+        Container {
+            id: id.to_string(),
+            title: title.to_string(),
+            title_lower: title.to_lowercase(),
+            items,
+            generation: gen,
+            ..Default::default()
+        }
     }
-
-    #[test]
-    fn test_extract_attribute_single_quotes() {
-        let tag = r#"<a exist='67890' noun='dagger'>"#;
-        let result = ContainerWindow::extract_attribute(tag, "noun");
-        assert_eq!(result, Some("dagger".to_string()));
-    }
-
-    #[test]
-    fn test_extract_attribute_missing() {
-        let tag = r#"<a exist="12345">"#;
-        let result = ContainerWindow::extract_attribute(tag, "noun");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_extract_attribute_empty_value() {
-        let tag = r#"<a exist="" noun="test">"#;
-        let result = ContainerWindow::extract_attribute(tag, "exist");
-        assert_eq!(result, Some("".to_string()));
-    }
-
-    // ===========================================
-    // Parse container item tests
-    // ===========================================
-
-    #[test]
-    fn test_parse_container_item_plain_text() {
-        let mut cw = ContainerWindow::new("Bag".to_string());
-        let segments = cw.parse_container_item("a simple sword");
-
-        assert_eq!(segments.len(), 1);
-        assert_eq!(segments[0].text, "a simple sword");
-        assert!(segments[0].link_data.is_none());
-    }
-
-    #[test]
-    fn test_parse_container_item_with_link() {
-        let mut cw = ContainerWindow::new("Bag".to_string());
-        let segments =
-            cw.parse_container_item(r#"a <a exist="123" noun="sword">gleaming sword</a>"#);
-
-        assert_eq!(segments.len(), 2);
-        assert_eq!(segments[0].text, "a ");
-        assert!(segments[0].link_data.is_none());
-
-        assert_eq!(segments[1].text, "gleaming sword");
-        assert!(segments[1].link_data.is_some());
-        let link = segments[1].link_data.as_ref().unwrap();
-        assert_eq!(link.exist_id, "123");
-        assert_eq!(link.noun, "sword");
-    }
-
-    #[test]
-    fn test_parse_container_item_multiple_links() {
-        let mut cw = ContainerWindow::new("Bag".to_string());
-        let segments = cw.parse_container_item(
-            r#"<a exist="1" noun="sword">sword</a> and <a exist="2" noun="shield">shield</a>"#,
-        );
-
-        assert_eq!(segments.len(), 3);
-        assert_eq!(segments[0].text, "sword");
-        assert!(segments[0].link_data.is_some());
-
-        assert_eq!(segments[1].text, " and ");
-        assert!(segments[1].link_data.is_none());
-
-        assert_eq!(segments[2].text, "shield");
-        assert!(segments[2].link_data.is_some());
-    }
-
-    #[test]
-    fn test_parse_container_item_empty_string() {
-        let mut cw = ContainerWindow::new("Bag".to_string());
-        let segments = cw.parse_container_item("");
-        assert!(segments.is_empty());
-    }
-
-    // ===========================================
-    // Update from cache tests
-    // ===========================================
 
     #[test]
     fn test_update_from_cache_no_change() {
         let mut cw = ContainerWindow::new("Bag".to_string());
-        let container = ContainerData {
-            id: "1".to_string(),
-            title: "Bag".to_string(),
-            title_lower: "bag".to_string(),
-            items: vec![],
-            generation: 0,
-            target: None,
-        };
-
-        // First call with generation 0 should return false (matches default)
-        let changed = cw.update_from_cache(&container);
-        assert!(!changed);
+        // generation 0 matches the widget default -> no update.
+        let c = container("1", "Bag", 0, vec![]);
+        assert!(!cw.update_from_cache(&c));
     }
 
     #[test]
-    fn test_update_from_cache_with_change() {
+    fn test_update_from_cache_builds_clickable_items() {
         let mut cw = ContainerWindow::new("".to_string());
-        let container = ContainerData {
-            id: "2".to_string(),
-            title: "My Bag".to_string(),
-            title_lower: "my bag".to_string(),
-            items: vec!["an item".to_string()],
-            generation: 1,
-            target: None,
-        };
-
-        let changed = cw.update_from_cache(&container);
-        assert!(changed);
+        let c = container(
+            "2",
+            "My Bag",
+            1,
+            vec![
+                GameItem::new("101", "sword", "gleaming sword"),
+                GameItem::new("102", "shield", "battered shield"),
+            ],
+        );
+        assert!(cw.update_from_cache(&c));
         assert_eq!(cw.last_generation, 1);
+
+        // One clickable line per registry item, name + link intact.
+        let lines = cw.widget.get_lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0][0].text, "gleaming sword");
+        let link = lines[0][0].link_data.as_ref().unwrap();
+        assert_eq!(link.exist_id, "101");
+        assert_eq!(link.noun, "sword");
+        assert_eq!(lines[1][0].link_data.as_ref().unwrap().exist_id, "102");
     }
 
     #[test]
     fn test_update_from_cache_preserves_custom_title() {
         let mut cw = ContainerWindow::new("Custom Title".to_string());
-        let container = ContainerData {
-            id: "3".to_string(),
-            title: "Container Title".to_string(),
-            title_lower: "container title".to_string(),
-            items: vec![],
-            generation: 1,
-            target: None,
-        };
-
-        cw.update_from_cache(&container);
-        // Custom title preservation logic is in update_from_cache
+        let c = container("3", "Container Title", 1, vec![]);
+        cw.update_from_cache(&c);
+        // A non-empty custom title is not overwritten by the container's.
+        assert_eq!(cw.widget.get_title(), "Custom Title");
     }
 
     // ===========================================

@@ -2279,7 +2279,7 @@ impl VellumGuiApp {
         container_title: &str,
         wrap: bool,
     ) {
-        let Some(container) = app_core.game_state.container_cache.find_by_title(container_title)
+        let Some(container) = app_core.game_state.objects.find_container(container_title)
         else {
             ui.weak(format!("No contents cached for \"{}\".", container_title));
             return;
@@ -2305,8 +2305,11 @@ impl VellumGuiApp {
                 if !wrap {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 }
+                // Registry items are structured; render the clean name.
+                // (Clickable container-item links in the GUI are a
+                // follow-up — this renderer is display-only today.)
                 for item in &container.items {
-                    ui.label(item);
+                    ui.label(&item.name);
                 }
             });
     }

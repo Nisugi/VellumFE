@@ -1889,9 +1889,11 @@ impl TuiFrontend {
                                     if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
                                         drop_target_id = Some(target_link.exist_id);
                                     } else {
-                                        // Fallback: use the window's container ID
-                                        if let Some(container_data) = app_core.game_state.container_cache.find_by_title(container_title) {
-                                            drop_target_id = Some(container_data.id.clone());
+                                        // Fallback: the window's container as a
+                                        // game-command target (command_target is
+                                        // stow-correct; plain id would be "#stow").
+                                        if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
+                                            drop_target_id = Some(container_data.command_target());
                                         }
                                     }
                                     break;  // Container window handled

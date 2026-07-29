@@ -3741,10 +3741,11 @@ impl VellumGuiApp {
                 match self
                     .app_core
                     .game_state
-                    .container_cache
-                    .find_by_title(container_title)
+                    .objects
+                    .find_container(container_title)
                 {
-                    Some(container) => format!("#{}", container.id),
+                    // command_target is stow-correct (plain id = "#stow").
+                    Some(container) => format!("#{}", container.command_target()),
                     None => "drop".to_string(),
                 }
             }
