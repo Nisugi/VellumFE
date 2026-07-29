@@ -5115,6 +5115,7 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "sha1",
  "skrifa",
  "sysinfo",
  "tempfile",
