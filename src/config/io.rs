@@ -43,14 +43,16 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
-        config.controller_binds = Self::load_controller_binds().unwrap_or_default();
-        config.controller_shift_binds = Self::load_controller_binds_layer(true).unwrap_or_default();
-        config.controller_wheel = Self::load_controller_wheel().unwrap_or_default();
-        config.controller_wheels = Self::load_controller_wheels().unwrap_or_default();
-        config.controller_wheels_meta = Self::load_controller_wheels_meta().unwrap_or_default();
-        config.controller_overlay = Self::load_controller_overlay().unwrap_or_default();
-        config.controller_rumble = Self::load_controller_rumble().unwrap_or_default();
-        config.controller_tuning = Self::load_controller_tuning().unwrap_or_default();
+        config.controller_binds = Self::load_controller_binds(character).unwrap_or_default();
+        config.controller_shift_binds =
+            Self::load_controller_binds_layer(true, character).unwrap_or_default();
+        config.controller_wheel = Self::load_controller_wheel(character).unwrap_or_default();
+        config.controller_wheels = Self::load_controller_wheels(character).unwrap_or_default();
+        config.controller_wheels_meta =
+            Self::load_controller_wheels_meta(character).unwrap_or_default();
+        config.controller_overlay = Self::load_controller_overlay(character).unwrap_or_default();
+        config.controller_rumble = Self::load_controller_rumble(character).unwrap_or_default();
+        config.controller_tuning = Self::load_controller_tuning(character).unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.macros = MacrosConfig::load(character).unwrap_or_default();
@@ -489,14 +491,16 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
-        config.controller_binds = Self::load_controller_binds().unwrap_or_default();
-        config.controller_shift_binds = Self::load_controller_binds_layer(true).unwrap_or_default();
-        config.controller_wheel = Self::load_controller_wheel().unwrap_or_default();
-        config.controller_wheels = Self::load_controller_wheels().unwrap_or_default();
-        config.controller_wheels_meta = Self::load_controller_wheels_meta().unwrap_or_default();
-        config.controller_overlay = Self::load_controller_overlay().unwrap_or_default();
-        config.controller_rumble = Self::load_controller_rumble().unwrap_or_default();
-        config.controller_tuning = Self::load_controller_tuning().unwrap_or_default();
+        config.controller_binds = Self::load_controller_binds(character).unwrap_or_default();
+        config.controller_shift_binds =
+            Self::load_controller_binds_layer(true, character).unwrap_or_default();
+        config.controller_wheel = Self::load_controller_wheel(character).unwrap_or_default();
+        config.controller_wheels = Self::load_controller_wheels(character).unwrap_or_default();
+        config.controller_wheels_meta =
+            Self::load_controller_wheels_meta(character).unwrap_or_default();
+        config.controller_overlay = Self::load_controller_overlay(character).unwrap_or_default();
+        config.controller_rumble = Self::load_controller_rumble(character).unwrap_or_default();
+        config.controller_tuning = Self::load_controller_tuning(character).unwrap_or_default();
         config.hotbars = Self::load_hotbars(character)?;
         config.app_keybinds = Self::load_app_keybinds(character)?;
         config.menu_keybinds = Self::load_menu_keybinds(character)?;

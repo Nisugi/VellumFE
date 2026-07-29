@@ -1,23 +1,43 @@
 # controller.toml
 
 Controller (GUI gamepad) configuration lives in its own
-`global/controller.toml` — separate from [keybinds.toml](keybinds-toml.md)
+`controller.toml` — separate from [keybinds.toml](keybinds-toml.md)
 so a controller setup can be shared or version-controlled as one file,
 and a malformed edit here cannot take keyboard input down with it.
-Controller binds are **global** (pads are per-desk, not per-character).
 Everything below is edited in the `.controller` editor (GUI) — hand-editing
 is never required.
 
-Installs that predate this split are migrated automatically on first run:
-the `[controller*]` tables are moved out of `keybinds.toml` into
-`controller.toml` (both files backed up), so existing controller setups
-carry over untouched.
+## Global and per-character layers
+
+There are two layers, base first:
+
+- `global/controller.toml` — the shared setup, used by every character.
+- `profiles/<character>/controller.toml` — that character's overrides.
+
+At load time the two are **merged, character over global**: binds override
+per button, named wheels override per name, and the whole-value sections
+(the default wheel ring, the overlay list, `[controller_rumble]`,
+`[controller_tuning]`) are replaced wholesale by the character's copy when
+present. A character file therefore holds only the diffs — a swashbuckler
+and a wizard can drive the same pad differently while sharing a global base,
+and a character with no override file just uses global.
+
+In the `.controller` editor a **Save to:** switch at the top picks where
+edits land — *Global (all characters)* or *This character*. It
+routes every save (binds, wheels, rumble, tuning, overlay); loading always
+merges, so switching scope changes only where new edits are written. The
+character option is disabled until a character is active.
+
+Installs that predate the keybinds/controller split are migrated
+automatically on first run: the `[controller*]` tables are moved out of
+`keybinds.toml` into `global/controller.toml` (both files backed up), so
+existing controller setups carry over untouched.
 
 ## Bindings
 
-The `[controller]` table (global file only — pads are per-desk, not
-per-character) maps gamepad buttons to the same actions and macros as
-`[user]`. Edit with `.controller` in the GUI. Buttons: `south`, `east`,
+The `[controller]` table maps gamepad buttons to the same actions and
+macros as `[user]`. Edit with `.controller` in the GUI. Buttons: `south`,
+`east`,
 `north`, `west`, `dpad_up`/`down`/`left`/`right`, `l1`, `r1`, `l2`,
 `r2`, `l3`, `r3`, `select`, `start`, `guide`.
 

@@ -78,6 +78,11 @@ pub(in super::super) struct ControllerEditorState {
     wheel_selected_slice: Option<usize>,
     /// Designer: drag in progress on the canvas.
     wheel_drag: WheelDesignerDrag,
+    /// Save scope for every write in this editor: `true` = the shared global
+    /// controller.toml, `false` = the active character's override file. Load
+    /// always merges character over global; this only picks where edits land,
+    /// so a class can build its own pad profile without a global pad.
+    is_global: bool,
 }
 
 impl ControllerEditorState {
@@ -94,6 +99,7 @@ impl ControllerEditorState {
             wheel_designer_path: Vec::new(),
             wheel_selected_slice: None,
             wheel_drag: WheelDesignerDrag::None,
+            is_global: true,
         }
     }
 
@@ -288,28 +294,49 @@ impl VellumGuiApp {
         &mut self,
         form: &ControllerFormState,
         shift: bool,
+        is_global: bool,
     ) -> Result<(), String> {
         let (button, action) = form.build_binding()?;
+        let character = self.app_core.config.character.clone();
+        let character = character.as_deref();
 
         if let Some(original) = &form.original_button {
-            if *original != button {
-                if let Err(err) = Config::delete_single_controller_bind(original, shift) {
+            // Remove the old entry when the button changed, or when its
+            // scope flipped (the edit lands in the other file, so the
+            // original copy must go).
+            let was_char_override = self.controller_bind_is_character_override(original, shift);
+            let scope_changed = was_char_override == is_global; // override != global
+            if *original != button || scope_changed {
+                let orig_global = !was_char_override;
+                if let Err(err) =
+                    Config::delete_single_controller_bind(original, shift, orig_global, character)
+                {
                     tracing::warn!("Failed to remove old controller bind '{}': {}", original, err);
                 }
             }
         }
 
-        Config::save_single_controller_bind(&button, &action, shift)
+        Config::save_single_controller_bind(&button, &action, shift, is_global, character)
             .map_err(|err| format!("Failed to save controller bind: {}", err))?;
         self.reload_controller_binds();
         Ok(())
     }
 
+    /// Whether `button` currently lives in the active character's controller
+    /// file (as opposed to global) for the given layer — used to tag rows and
+    /// route a re-save/delete at the right scope.
+    fn controller_bind_is_character_override(&self, button: &str, shift: bool) -> bool {
+        Config::load_character_controller_binds_only(shift, self.app_core.config.character.as_deref())
+            .map(|binds| binds.contains_key(button))
+            .unwrap_or(false)
+    }
+
     fn reload_controller_binds(&mut self) {
+        let character = self.app_core.config.character.as_deref();
         self.app_core.config.controller_binds =
-            Config::load_controller_binds().unwrap_or_default();
+            Config::load_controller_binds(character).unwrap_or_default();
         self.app_core.config.controller_shift_binds =
-            Config::load_controller_binds_layer(true).unwrap_or_default();
+            Config::load_controller_binds_layer(true, character).unwrap_or_default();
     }
 
     pub(in super::super) fn render_controller_editor(&mut self, ctx: &egui::Context) {
@@ -342,6 +369,34 @@ impl VellumGuiApp {
                     ui.weak("Controller connected. D-pad / South / East are fixed navigation inside interact mode and menus; bindings apply outside them.");
                 } else {
                     ui.weak("No controller detected — connect one and it will announce itself.");
+                }
+                // Save scope: Global (shared) vs this character's override
+                // file. Loading always merges character over global, so a
+                // class can keep only its diffs here. Character is disabled
+                // when no character is active (e.g. pre-login).
+                let character = self.app_core.config.character.clone();
+                ui.horizontal(|ui| {
+                    ui.label("Save to:");
+                    ui.selectable_value(&mut state.is_global, true, "Global (all characters)");
+                    let char_label = match &character {
+                        Some(name) => format!("This character ({name})"),
+                        None => "This character".to_string(),
+                    };
+                    ui.add_enabled_ui(character.is_some(), |ui| {
+                        if ui
+                            .selectable_label(!state.is_global, char_label)
+                            .on_hover_text(
+                                "Save edits to this character's controller.toml. \
+                                 They override the global file for this character only.",
+                            )
+                            .clicked()
+                        {
+                            state.is_global = false;
+                        }
+                    });
+                });
+                if character.is_none() {
+                    state.is_global = true;
                 }
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut state.tab, ControllerTab::Base, "Base");
@@ -777,8 +832,14 @@ impl VellumGuiApp {
                     });
             });
 
+        // Every write in this editor targets the same scope the user picked
+        // (Global vs the active character); load-time merge is unchanged.
+        let scope_global = state.is_global;
+        let scope_char = self.app_core.config.character.clone();
+        let scope_char = scope_char.as_deref();
+
         if let Some(rumble) = rumble_save {
-            match Config::save_controller_rumble(&rumble) {
+            match Config::save_controller_rumble(&rumble, scope_global, scope_char) {
                 Ok(()) => self.app_core.config.controller_rumble = rumble,
                 Err(err) => self
                     .app_core
@@ -791,7 +852,7 @@ impl VellumGuiApp {
         }
 
         if let Some(tuning) = tuning_save {
-            match Config::save_controller_tuning(&tuning) {
+            match Config::save_controller_tuning(&tuning, scope_global, scope_char) {
                 Ok(()) => self.app_core.config.controller_tuning = tuning,
                 Err(err) => self
                     .app_core
@@ -804,7 +865,7 @@ impl VellumGuiApp {
             let mut map = self.app_core.config.controller_wheels_meta.clone();
             map.insert(name.clone(), meta.clone());
             let mut ok = true;
-            if let Err(err) = Config::save_controller_wheels_meta(&map) {
+            if let Err(err) = Config::save_controller_wheels_meta(&map, scope_global, scope_char) {
                 self.app_core
                     .add_system_message(&format!("Failed to save wheel meta: {}", err));
                 ok = false;
@@ -822,6 +883,8 @@ impl VellumGuiApp {
                         button,
                         &KeyBindAction::Action(action),
                         false,
+                        scope_global,
+                        scope_char,
                     ) {
                         self.app_core
                             .add_system_message(&format!("Failed to bind wheel button: {}", err));
@@ -844,7 +907,7 @@ impl VellumGuiApp {
                 }
                 None => list.push(entry),
             }
-            match Config::save_controller_overlay(&list) {
+            match Config::save_controller_overlay(&list, scope_global, scope_char) {
                 Ok(()) => self.app_core.config.controller_overlay = list,
                 Err(err) => self
                     .app_core
@@ -856,12 +919,13 @@ impl VellumGuiApp {
             if let Some(buffer) = state.wheel_buffer.clone() {
                 let name = (!state.wheel_selected.is_empty())
                     .then_some(state.wheel_selected.as_str());
-                match Config::save_controller_wheel_named(name, &buffer) {
+                match Config::save_controller_wheel_named(name, &buffer, scope_global, scope_char) {
                     Ok(()) => {
+                        let ch = self.app_core.config.character.as_deref();
                         self.app_core.config.controller_wheel =
-                            Config::load_controller_wheel().unwrap_or_default();
+                            Config::load_controller_wheel(ch).unwrap_or_default();
                         self.app_core.config.controller_wheels =
-                            Config::load_controller_wheels().unwrap_or_default();
+                            Config::load_controller_wheels(ch).unwrap_or_default();
                         self.app_core.push_remote_wheels();
                         // Surface any span problems in what was just saved
                         // (advisory — the runtime still produces a usable
@@ -879,7 +943,11 @@ impl VellumGuiApp {
         }
 
         if let Some(button) = delete_request {
-            match Config::delete_single_controller_bind(&button, state.shift_layer()) {
+            // Delete from whichever file the bind actually lives in, so a
+            // per-row Delete works whether it's a global or character bind.
+            let shift = state.shift_layer();
+            let is_char = self.controller_bind_is_character_override(&button, shift);
+            match Config::delete_single_controller_bind(&button, shift, !is_char, scope_char) {
                 Ok(()) => {
                     self.reload_controller_binds();
                     self.app_core
@@ -994,7 +1062,8 @@ impl VellumGuiApp {
                 });
 
             if submitted {
-                match self.save_controller_bind_from_form(&form, state.shift_layer()) {
+                match self.save_controller_bind_from_form(&form, state.shift_layer(), state.is_global)
+                {
                     Ok(()) => {
                         self.app_core.add_system_message(&format!(
                             "Controller bind '{}' saved.",

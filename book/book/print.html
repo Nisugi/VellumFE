@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-0adf8b02.js";
+            window.path_to_searchindex_js = "searchindex-f875b337.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-ba9683ee.js"></script>
@@ -687,9 +687,11 @@ the ring is on. Toggle the mode off from its Start bind.</li>
 <p>Everything else is yours to bind with <strong><code>.controller</code></strong>: each button
 maps to a keybind action or macro, with a “press a button” capture in
 the editor (<code>look</code> on South and interact mode on Start ship as
-defaults). Bindings live in the <code>[controller]</code> table of the global
-<a href="#controllertoml">controller.toml</a> and apply to all
-characters.</p>
+defaults). Bindings live in the <code>[controller]</code> table of
+<a href="#controllertoml">controller.toml</a>. A <strong>Save to:</strong>
+switch at the top of the editor picks global (all characters) or the
+active character’s own override file; loading merges character over
+global, so a class can keep only its own diffs.</p>
 <p>Beyond plain bindings:</p>
 <ul>
 <li><strong>Shift layer</strong> — hold the button bound to <code>controller_shift</code> (l2 by
@@ -1135,7 +1137,7 @@ relogging all night.</p>
 <tr><td><a href="#configtoml">config.toml</a></td><td>General settings (connection, UI, sound, TTS, web server)</td></tr>
 <tr><td><a href="#layouttoml">layout.toml</a></td><td>Window positions, sizes, and properties (TUI)</td></tr>
 <tr><td><a href="#keybindstoml">keybinds.toml</a></td><td>Keyboard shortcuts</td></tr>
-<tr><td><a href="#controllertoml">controller.toml</a></td><td>Gamepad binds, wheels, rumble, tuning (global)</td></tr>
+<tr><td><a href="#controllertoml">controller.toml</a></td><td>Gamepad binds, wheels, rumble, tuning (global + per-character)</td></tr>
 <tr><td><a href="#highlightstoml">highlights.toml</a></td><td>Text highlighting, sounds, squelch rules</td></tr>
 <tr><td><a href="#colorstoml">colors.toml</a></td><td>Color palette, stream presets, spell colors</td></tr>
 <tr><td><a href="#hotbarstoml">hotbars.toml</a></td><td>Hotkey bars (command buttons)</td></tr>
@@ -1149,7 +1151,7 @@ relogging all night.</p>
 ├── global/               # Shared settings for all characters
 │   ├── config.toml
 │   ├── keybinds.toml
-│   ├── controller.toml    # Gamepad binds/wheels/rumble/tuning
+│   ├── controller.toml    # Gamepad binds/wheels/rumble/tuning (per-char override in profiles/)
 │   ├── highlights.toml
 │   ├── colors.toml
 │   ├── hotbars.toml
@@ -1770,20 +1772,37 @@ message) rather than sent literally. Exits have no exist id.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="controllertoml"><a class="header" href="#controllertoml">controller.toml</a></h1>
 <p>Controller (GUI gamepad) configuration lives in its own
-<code>global/controller.toml</code> — separate from <a href="#keybindstoml">keybinds.toml</a>
+<code>controller.toml</code> — separate from <a href="#keybindstoml">keybinds.toml</a>
 so a controller setup can be shared or version-controlled as one file,
 and a malformed edit here cannot take keyboard input down with it.
-Controller binds are <strong>global</strong> (pads are per-desk, not per-character).
 Everything below is edited in the <code>.controller</code> editor (GUI) — hand-editing
 is never required.</p>
-<p>Installs that predate this split are migrated automatically on first run:
-the <code>[controller*]</code> tables are moved out of <code>keybinds.toml</code> into
-<code>controller.toml</code> (both files backed up), so existing controller setups
-carry over untouched.</p>
+<h2 id="global-and-per-character-layers"><a class="header" href="#global-and-per-character-layers">Global and per-character layers</a></h2>
+<p>There are two layers, base first:</p>
+<ul>
+<li><code>global/controller.toml</code> — the shared setup, used by every character.</li>
+<li><code>profiles/&lt;character&gt;/controller.toml</code> — that character’s overrides.</li>
+</ul>
+<p>At load time the two are <strong>merged, character over global</strong>: binds override
+per button, named wheels override per name, and the whole-value sections
+(the default wheel ring, the overlay list, <code>[controller_rumble]</code>,
+<code>[controller_tuning]</code>) are replaced wholesale by the character’s copy when
+present. A character file therefore holds only the diffs — a swashbuckler
+and a wizard can drive the same pad differently while sharing a global base,
+and a character with no override file just uses global.</p>
+<p>In the <code>.controller</code> editor a <strong>Save to:</strong> switch at the top picks where
+edits land — <em>Global (all characters)</em> or <em>This character</em>. It
+routes every save (binds, wheels, rumble, tuning, overlay); loading always
+merges, so switching scope changes only where new edits are written. The
+character option is disabled until a character is active.</p>
+<p>Installs that predate the keybinds/controller split are migrated
+automatically on first run: the <code>[controller*]</code> tables are moved out of
+<code>keybinds.toml</code> into <code>global/controller.toml</code> (both files backed up), so
+existing controller setups carry over untouched.</p>
 <h2 id="bindings"><a class="header" href="#bindings">Bindings</a></h2>
-<p>The <code>[controller]</code> table (global file only — pads are per-desk, not
-per-character) maps gamepad buttons to the same actions and macros as
-<code>[user]</code>. Edit with <code>.controller</code> in the GUI. Buttons: <code>south</code>, <code>east</code>,
+<p>The <code>[controller]</code> table maps gamepad buttons to the same actions and
+macros as <code>[user]</code>. Edit with <code>.controller</code> in the GUI. Buttons: <code>south</code>,
+<code>east</code>,
 <code>north</code>, <code>west</code>, <code>dpad_up</code>/<code>down</code>/<code>left</code>/<code>right</code>, <code>l1</code>, <code>r1</code>, <code>l2</code>,
 <code>r2</code>, <code>l3</code>, <code>r3</code>, <code>select</code>, <code>start</code>, <code>guide</code>.</p>
 <pre><code class="language-toml">[controller]

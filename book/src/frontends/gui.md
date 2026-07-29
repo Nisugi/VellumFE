@@ -171,9 +171,11 @@ avoid doubled inputs).
 Everything else is yours to bind with **`.controller`**: each button
 maps to a keybind action or macro, with a "press a button" capture in
 the editor (`look` on South and interact mode on Start ship as
-defaults). Bindings live in the `[controller]` table of the global
-[controller.toml](../configuration/controller-toml.md) and apply to all
-characters.
+defaults). Bindings live in the `[controller]` table of
+[controller.toml](../configuration/controller-toml.md). A **Save to:**
+switch at the top of the editor picks global (all characters) or the
+active character's own override file; loading merges character over
+global, so a class can keep only its own diffs.
 
 Beyond plain bindings:
 

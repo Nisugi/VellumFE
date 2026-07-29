@@ -5136,22 +5136,26 @@ impl AppCore {
         match crate::config::Config::load_keybinds(self.config.character.as_deref()) {
             Ok(keybinds) => {
                 self.config.keybinds = keybinds;
+                let character = self.config.character.clone();
+                let character = character.as_deref();
                 self.config.controller_binds =
-                    crate::config::Config::load_controller_binds().unwrap_or_default();
+                    crate::config::Config::load_controller_binds(character).unwrap_or_default();
                 self.config.controller_shift_binds =
-                    crate::config::Config::load_controller_binds_layer(true).unwrap_or_default();
+                    crate::config::Config::load_controller_binds_layer(true, character)
+                        .unwrap_or_default();
                 self.config.controller_wheel =
-                    crate::config::Config::load_controller_wheel().unwrap_or_default();
+                    crate::config::Config::load_controller_wheel(character).unwrap_or_default();
                 self.config.controller_wheels =
-                    crate::config::Config::load_controller_wheels().unwrap_or_default();
+                    crate::config::Config::load_controller_wheels(character).unwrap_or_default();
                 self.config.controller_wheels_meta =
-                    crate::config::Config::load_controller_wheels_meta().unwrap_or_default();
+                    crate::config::Config::load_controller_wheels_meta(character)
+                        .unwrap_or_default();
                 self.config.controller_overlay =
-                    crate::config::Config::load_controller_overlay().unwrap_or_default();
+                    crate::config::Config::load_controller_overlay(character).unwrap_or_default();
                 self.config.controller_rumble =
-                    crate::config::Config::load_controller_rumble().unwrap_or_default();
+                    crate::config::Config::load_controller_rumble(character).unwrap_or_default();
                 self.config.controller_tuning =
-                    crate::config::Config::load_controller_tuning().unwrap_or_default();
+                    crate::config::Config::load_controller_tuning(character).unwrap_or_default();
                 // Rebuild keybind map for O(1) lookups (re-merges hotbar keys)
                 self.rebuild_keybind_map();
                 // Web clients render the wheel from a shipped copy.

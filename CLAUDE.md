@@ -116,7 +116,7 @@ Config files stored in `~/.vellum-fe/` (or `VELLUM_FE_DIR` env var):
 - `config.toml` - Main settings (connection, UI options)
 - `layout.toml` - Window positions and sizes
 - `keybinds.toml` - Key bindings
-- `controller.toml` - Gamepad binds, wheels, rumble, tuning (global only)
+- `controller.toml` - Gamepad binds, wheels, rumble, tuning (global base + per-character override)
 - `hotbars.toml` - Hotkey bar definitions (bars of command buttons)
 - `highlights.toml` - Text highlighting rules
 - `colors.toml` - Color palette

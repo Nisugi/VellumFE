@@ -153,13 +153,22 @@ impl Config {
         Ok(Self::global_dir()?.join("keybinds.toml"))
     }
 
-    /// Get path to common (global) controller file. Controller binds are
-    /// global-only (pads are per-desk, not per-character) and live in their
-    /// own file so a controller config can be shared/version-controlled as
-    /// one unit and a malformed edit can't take keyboard input down with it.
+    /// Get path to common (global) controller file. Controller config lives
+    /// in its own file so it can be shared/version-controlled as one unit and
+    /// a malformed edit can't take keyboard input down with it. The global
+    /// file is the base layer; a character can override entries in their own
+    /// `profiles/<name>/controller.toml` (see `controller_path`).
     /// Returns: ~/.vellum-fe/global/controller.toml
     pub fn common_controller_path() -> Result<PathBuf> {
         Ok(Self::global_dir()?.join("controller.toml"))
+    }
+
+    /// Get path to a character's controller override file. Missing = the
+    /// character just uses the global layer. A class/character that drives
+    /// the pad differently keeps only its diffs here.
+    /// Returns: ~/.vellum-fe/profiles/{character}/controller.toml
+    pub fn controller_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("controller.toml"))
     }
 
     /// Get path to common (global) hotbars file

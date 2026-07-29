@@ -1265,12 +1265,27 @@ impl Config {
         }
     }
 
-    /// Load the global controller.toml as a plain `toml::value::Table` for
-    /// the section savers (creating the parent dir when the file is absent).
-    /// A file that fails to parse yields an empty table rather than an error
-    /// so a single bad edit can't wedge every controller save.
-    fn load_controller_table() -> Result<(std::path::PathBuf, toml::value::Table)> {
-        let path = Self::common_controller_path()?;
+    /// Resolve which controller.toml a save targets: the global file, or a
+    /// character's override file. The single scope→path decision shared by
+    /// every controller saver.
+    fn controller_save_path(is_global: bool, character: Option<&str>) -> Result<std::path::PathBuf> {
+        if is_global {
+            Self::common_controller_path()
+        } else {
+            Self::controller_path(character)
+        }
+    }
+
+    /// Load a controller.toml (global or character) as a plain
+    /// `toml::value::Table` for the section savers (creating the parent dir
+    /// when the file is absent). A file that fails to parse yields an empty
+    /// table rather than an error so a single bad edit can't wedge every
+    /// controller save.
+    fn load_controller_table(
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<(std::path::PathBuf, toml::value::Table)> {
+        let path = Self::controller_save_path(is_global, character)?;
         let table = if path.exists() {
             let contents = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read controller file: {:?}", path))?;
@@ -1294,30 +1309,55 @@ impl Config {
         Ok(())
     }
 
-    /// Load the radial wheel slices from `[[controller_wheel]]` of the
-    /// global controller.toml, falling back to the shipped defaults when
-    /// absent.
-    pub fn load_controller_wheel() -> Result<Vec<WheelSlice>> {
-        let slices_from = |contents: &str| -> Option<Vec<WheelSlice>> {
-            let toml_value: toml::Value = toml::from_str(contents).ok()?;
-            let array = toml_value.get("controller_wheel")?;
-            array.clone().try_into().ok()
-        };
-        let path = Self::common_controller_path()?;
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
-            if let Some(slices) = slices_from(&contents) {
-                return Ok(slices);
+    /// The controller config layers as raw TOML text, base first: the global
+    /// layer (the on-disk `global/controller.toml`, or the shipped default
+    /// when it hasn't been extracted yet) followed by the character's
+    /// override file when one exists. Each loader delegates to the matching
+    /// pure `merge_*`/`last_*` helper below, which folds these layers so the
+    /// merge rules stay filesystem-free and unit-testable.
+    fn controller_layers(character: Option<&str>) -> Vec<String> {
+        let mut layers = Vec::with_capacity(2);
+        // Global base: prefer the extracted file, fall back to the shipped
+        // default so a fresh install still gets the built-in wheel/binds.
+        match Self::common_controller_path().ok().filter(|p| p.exists()) {
+            Some(path) => match fs::read_to_string(&path) {
+                Ok(text) => layers.push(text),
+                Err(err) => {
+                    tracing::warn!("Failed to read controller file {:?}: {}", path, err);
+                    layers.push(DEFAULT_CONTROLLER.to_string());
+                }
+            },
+            None => layers.push(DEFAULT_CONTROLLER.to_string()),
+        }
+        // Character override layer (optional).
+        if let Some(path) = Self::controller_path(character).ok().filter(|p| p.exists()) {
+            match fs::read_to_string(&path) {
+                Ok(text) => layers.push(text),
+                Err(err) => {
+                    tracing::warn!("Failed to read character controller {:?}: {}", path, err)
+                }
             }
         }
-        Ok(slices_from(DEFAULT_CONTROLLER).unwrap_or_default())
+        layers
+    }
+
+    /// Load the radial default-wheel slices from `[[controller_wheel]]`,
+    /// global base with the character's override winning wholesale (the ring
+    /// is one array, so a character that defines it replaces it entirely).
+    pub fn load_controller_wheel(character: Option<&str>) -> Result<Vec<WheelSlice>> {
+        let slices_from = |contents: &str| -> Option<Vec<WheelSlice>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            toml_value.get("controller_wheel")?.clone().try_into().ok()
+        };
+        // Last layer that defines the ring wins (character over global).
+        Ok(last_controller_value(&Self::controller_layers(character), slices_from).unwrap_or_default())
     }
 
     /// Load the overlay legend's curated entries from
-    /// `[controller_overlay] buttons` of the global keybinds.toml:
-    /// button names, with a `shift/` prefix for shift-layer entries.
-    pub fn load_controller_overlay() -> Result<Vec<String>> {
+    /// `[controller_overlay] buttons`: button names, with a `shift/` prefix
+    /// for shift-layer entries. The character's list, if present, replaces
+    /// the global one wholesale.
+    pub fn load_controller_overlay(character: Option<&str>) -> Result<Vec<String>> {
         let list_from = |contents: &str| -> Option<Vec<String>> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             toml_value
@@ -1327,20 +1367,16 @@ impl Config {
                 .try_into()
                 .ok()
         };
-        let path = Self::common_controller_path()?;
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
-            if let Some(list) = list_from(&contents) {
-                return Ok(list);
-            }
-        }
-        Ok(list_from(DEFAULT_CONTROLLER).unwrap_or_default())
+        Ok(last_controller_value(&Self::controller_layers(character), list_from).unwrap_or_default())
     }
 
     /// Replace the overlay legend's curated entry list.
-    pub fn save_controller_overlay(buttons: &[String]) -> Result<()> {
-        let (path, mut toml_table) = Self::load_controller_table()?;
+    pub fn save_controller_overlay(
+        buttons: &[String],
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut toml_table) = Self::load_controller_table(is_global, character)?;
         let section = toml_table
             .entry("controller_overlay".to_string())
             .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
@@ -1353,27 +1389,23 @@ impl Config {
         Self::write_controller_table(&path, &toml_table)
     }
 
-    /// Load the rumble event map from `[controller_rumble]` of the global
-    /// controller.toml (shipped defaults when absent).
-    pub fn load_controller_rumble() -> Result<RumbleConfig> {
+    /// Load the rumble event map from `[controller_rumble]`. The character's
+    /// section, if present, replaces the global one wholesale.
+    pub fn load_controller_rumble(character: Option<&str>) -> Result<RumbleConfig> {
         let section_from = |contents: &str| -> Option<RumbleConfig> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             toml_value.get("controller_rumble")?.clone().try_into().ok()
         };
-        let path = Self::common_controller_path()?;
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
-            if let Some(config) = section_from(&contents) {
-                return Ok(config);
-            }
-        }
-        Ok(section_from(DEFAULT_CONTROLLER).unwrap_or_default())
+        Ok(last_controller_value(&Self::controller_layers(character), section_from).unwrap_or_default())
     }
 
     /// Replace the `[controller_rumble]` section.
-    pub fn save_controller_rumble(rumble: &RumbleConfig) -> Result<()> {
-        let (path, mut toml_table) = Self::load_controller_table()?;
+    pub fn save_controller_rumble(
+        rumble: &RumbleConfig,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut toml_table) = Self::load_controller_table(is_global, character)?;
         toml_table.insert(
             "controller_rumble".to_string(),
             toml::Value::try_from(rumble).context("Failed to serialize rumble config")?,
@@ -1381,27 +1413,23 @@ impl Config {
         Self::write_controller_table(&path, &toml_table)
     }
 
-    /// Load the input-feel tuning from `[controller_tuning]` of the global
-    /// controller.toml (shipped defaults when absent).
-    pub fn load_controller_tuning() -> Result<TuningConfig> {
+    /// Load the input-feel tuning from `[controller_tuning]`. The character's
+    /// section, if present, replaces the global one wholesale.
+    pub fn load_controller_tuning(character: Option<&str>) -> Result<TuningConfig> {
         let section_from = |contents: &str| -> Option<TuningConfig> {
             let toml_value: toml::Value = toml::from_str(contents).ok()?;
             toml_value.get("controller_tuning")?.clone().try_into().ok()
         };
-        let path = Self::common_controller_path()?;
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
-            if let Some(config) = section_from(&contents) {
-                return Ok(config);
-            }
-        }
-        Ok(section_from(DEFAULT_CONTROLLER).unwrap_or_default())
+        Ok(last_controller_value(&Self::controller_layers(character), section_from).unwrap_or_default())
     }
 
     /// Replace the `[controller_tuning]` section.
-    pub fn save_controller_tuning(tuning: &TuningConfig) -> Result<()> {
-        let (path, mut toml_table) = Self::load_controller_table()?;
+    pub fn save_controller_tuning(
+        tuning: &TuningConfig,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut toml_table) = Self::load_controller_table(is_global, character)?;
         toml_table.insert(
             "controller_tuning".to_string(),
             toml::Value::try_from(tuning).context("Failed to serialize tuning config")?,
@@ -1409,48 +1437,39 @@ impl Config {
         Self::write_controller_table(&path, &toml_table)
     }
 
-    /// Load the named wheels from `[controller_wheels.<name>]` arrays of
-    /// the global controller.toml (bound via "controller_wheel:<name>").
-    pub fn load_controller_wheels() -> Result<HashMap<String, Vec<WheelSlice>>> {
-        let wheels_from = |contents: &str| -> Option<HashMap<String, Vec<WheelSlice>>> {
-            let toml_value: toml::Value = toml::from_str(contents).ok()?;
-            let table = toml_value.get("controller_wheels")?;
-            table.clone().try_into().ok()
-        };
-        let path = Self::common_controller_path()?;
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
-            if let Some(wheels) = wheels_from(&contents) {
-                return Ok(wheels);
-            }
-        }
-        Ok(wheels_from(DEFAULT_CONTROLLER).unwrap_or_default())
+    /// Load the named wheels from `[controller_wheels.<name>]` arrays
+    /// (bound via "controller_wheel:<name>"). Merged by name: a character's
+    /// wheel of a given name overrides the global one, other names fall
+    /// through to global.
+    pub fn load_controller_wheels(
+        character: Option<&str>,
+    ) -> Result<HashMap<String, Vec<WheelSlice>>> {
+        Ok(merge_controller_named_layers(
+            "controller_wheels",
+            &Self::controller_layers(character),
+        ))
     }
 
     /// Load per-wheel metadata from `[controller_wheels_meta.<name>]`
-    /// (button/stick). Absent = empty map = today's behavior.
-    pub fn load_controller_wheels_meta() -> Result<HashMap<String, WheelMeta>> {
-        let meta_from = |contents: &str| -> Option<HashMap<String, WheelMeta>> {
-            let toml_value: toml::Value = toml::from_str(contents).ok()?;
-            let table = toml_value.get("controller_wheels_meta")?;
-            table.clone().try_into().ok()
-        };
-        let path = Self::common_controller_path()?;
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
-            if let Some(meta) = meta_from(&contents) {
-                return Ok(meta);
-            }
-        }
-        Ok(meta_from(DEFAULT_CONTROLLER).unwrap_or_default())
+    /// (button/stick). Merged by name (character overrides global). Absent
+    /// in both = empty map = today's behavior.
+    pub fn load_controller_wheels_meta(
+        character: Option<&str>,
+    ) -> Result<HashMap<String, WheelMeta>> {
+        Ok(merge_controller_named_layers(
+            "controller_wheels_meta",
+            &Self::controller_layers(character),
+        ))
     }
 
     /// Replace the `[controller_wheels_meta]` section. Entries with both
     /// fields None are dropped so the section stays tidy.
-    pub fn save_controller_wheels_meta(meta: &HashMap<String, WheelMeta>) -> Result<()> {
-        let (path, mut toml_table) = Self::load_controller_table()?;
+    pub fn save_controller_wheels_meta(
+        meta: &HashMap<String, WheelMeta>,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut toml_table) = Self::load_controller_table(is_global, character)?;
         let pruned: HashMap<&String, &WheelMeta> = meta
             .iter()
             .filter(|(_, m)| m.button.is_some() || m.stick.is_some() || m.start.is_some())
@@ -1573,12 +1592,15 @@ impl Config {
             });
     }
 
-    /// Load the controller file as a comment-preserving `toml_edit` document
-    /// (empty doc when absent), ensuring the parent dir exists. Shared by
-    /// the wheel savers so they can splice wheel arrays with inline-table
-    /// slices without disturbing the rest of the file.
-    fn load_controller_document() -> Result<(std::path::PathBuf, toml_edit::DocumentMut)> {
-        let path = Self::common_controller_path()?;
+    /// Load a controller file (global or character) as a comment-preserving
+    /// `toml_edit` document (empty doc when absent), ensuring the parent dir
+    /// exists. Shared by the wheel savers so they can splice wheel arrays
+    /// with inline-table slices without disturbing the rest of the file.
+    fn load_controller_document(
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<(std::path::PathBuf, toml_edit::DocumentMut)> {
+        let path = Self::controller_save_path(is_global, character)?;
         let doc = if path.exists() {
             let contents = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read controller file: {:?}", path))?;
@@ -1595,8 +1617,13 @@ impl Config {
         Ok((path, doc))
     }
 
-    pub fn save_controller_wheel_named(name: Option<&str>, slices: &[WheelSlice]) -> Result<()> {
-        let (path, mut doc) = Self::load_controller_document()?;
+    pub fn save_controller_wheel_named(
+        name: Option<&str>,
+        slices: &[WheelSlice],
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut doc) = Self::load_controller_document(is_global, character)?;
         match name {
             None => {
                 Self::set_root_value_before_tables(
@@ -1634,8 +1661,12 @@ impl Config {
     /// controller.toml (the wheel editor saves the full slice list). Nested
     /// folder slices are written as inline tables so a folder's children
     /// can never re-bind to a later sibling on reload.
-    pub fn save_controller_wheel(slices: &[WheelSlice]) -> Result<()> {
-        let (path, mut doc) = Self::load_controller_document()?;
+    pub fn save_controller_wheel(
+        slices: &[WheelSlice],
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut doc) = Self::load_controller_document(is_global, character)?;
         Self::set_root_value_before_tables(
             &mut doc,
             "controller_wheel",
@@ -1655,32 +1686,46 @@ impl Config {
     }
 
     /// Load controller (gamepad) bindings from a `[controller]`-family
-    /// section of the global controller.toml. Controller binds are
-    /// global-only: pads are per-desk, not per-character. Falls back to
-    /// the shipped defaults when the file lacks the section
-    /// (pre-refresh installs).
-    pub fn load_controller_binds_layer(shift: bool) -> Result<HashMap<String, KeyBindAction>> {
+    /// section, merged by button: the global layer is the base and a
+    /// character's controller.toml overrides individual buttons, with unset
+    /// buttons falling through to global. Falls back to the shipped defaults
+    /// when neither layer has the section (pre-refresh installs).
+    pub fn load_controller_binds_layer(
+        shift: bool,
+        character: Option<&str>,
+    ) -> Result<HashMap<String, KeyBindAction>> {
         let section = Self::controller_section_name(shift);
-        let section_from = |contents: &str| -> Option<HashMap<String, KeyBindAction>> {
-            let toml_value: toml::Value = toml::from_str(contents).ok()?;
-            let table = toml_value.get(section)?;
-            table.clone().try_into().ok()
-        };
-
-        let path = Self::common_controller_path()?;
-        if path.exists() {
-            let contents = fs::read_to_string(&path)
-                .with_context(|| format!("Failed to read controller file: {:?}", path))?;
-            if let Some(binds) = section_from(&contents) {
-                return Ok(binds);
-            }
-        }
-        Ok(section_from(DEFAULT_CONTROLLER).unwrap_or_default())
+        Ok(merge_controller_bind_layers(
+            section,
+            &Self::controller_layers(character),
+        ))
     }
 
     /// Base-layer controller bindings (`[controller]`).
-    pub fn load_controller_binds() -> Result<HashMap<String, KeyBindAction>> {
-        Self::load_controller_binds_layer(false)
+    pub fn load_controller_binds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
+        Self::load_controller_binds_layer(false, character)
+    }
+
+    /// A character's own controller binds for one layer, NOT merged with
+    /// global — the editor uses this to tell whether a given button is a
+    /// character override (so it can tag the row and route the edit to the
+    /// right file). Empty when the character has no controller.toml.
+    pub fn load_character_controller_binds_only(
+        shift: bool,
+        character: Option<&str>,
+    ) -> Result<HashMap<String, KeyBindAction>> {
+        let path = Self::controller_path(character)?;
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read character controller: {:?}", path))?;
+        let binds = toml::from_str::<toml::Value>(&contents)
+            .ok()
+            .and_then(|v| v.get(Self::controller_section_name(shift)).cloned())
+            .and_then(|t| t.try_into().ok())
+            .unwrap_or_default();
+        Ok(binds)
     }
 
     /// Save one controller binding into a `[controller]`-family section of
@@ -1689,8 +1734,10 @@ impl Config {
         button: &str,
         action: &KeyBindAction,
         shift: bool,
+        is_global: bool,
+        character: Option<&str>,
     ) -> Result<()> {
-        let (path, mut toml_table) = Self::load_controller_table()?;
+        let (path, mut toml_table) = Self::load_controller_table(is_global, character)?;
         let section = toml_table
             .entry(Self::controller_section_name(shift).to_string())
             .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
@@ -1714,9 +1761,14 @@ impl Config {
     }
 
     /// Delete one controller binding from a `[controller]`-family section
-    /// of the global controller.toml.
-    pub fn delete_single_controller_bind(button: &str, shift: bool) -> Result<()> {
-        let path = Self::common_controller_path()?;
+    /// of the global or a character's controller.toml.
+    pub fn delete_single_controller_bind(
+        button: &str,
+        shift: bool,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let path = Self::controller_save_path(is_global, character)?;
         if !path.exists() {
             return Ok(());
         }
@@ -2255,6 +2307,59 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
     map
 }
 
+// ── Pure controller-layer merge helpers ────────────────────────────────
+// The controller loaders read one or two raw TOML layer strings (global
+// base, then optional character override) and fold them per the section's
+// merge rule. Factoring the fold out here keeps the rules filesystem-free
+// and unit-testable; the loaders in `impl Config` just supply the layers.
+
+/// Map-merge a `[table]` of `key = value` entries across layers: later
+/// layers (the character override) win per key, unset keys fall through to
+/// the base. A layer that doesn't parse or lacks the table contributes
+/// nothing. Used for `[controller]` / `[controller_shift]` binds.
+fn merge_controller_bind_layers(section: &str, layers: &[String]) -> HashMap<String, KeyBindAction> {
+    let mut merged: HashMap<String, KeyBindAction> = HashMap::new();
+    for text in layers {
+        let binds: HashMap<String, KeyBindAction> = toml::from_str::<toml::Value>(text)
+            .ok()
+            .and_then(|v| v.get(section).cloned())
+            .and_then(|t| t.try_into().ok())
+            .unwrap_or_default();
+        merged.extend(binds);
+    }
+    merged
+}
+
+/// Map-merge a named `[table.<name>]` collection across layers, where each
+/// value deserializes to `T`: later layers win per name. Used for
+/// `[controller_wheels]` and `[controller_wheels_meta]`.
+fn merge_controller_named_layers<T>(table: &str, layers: &[String]) -> HashMap<String, T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut merged: HashMap<String, T> = HashMap::new();
+    for text in layers {
+        let map: HashMap<String, T> = toml::from_str::<toml::Value>(text)
+            .ok()
+            .and_then(|v| v.get(table).cloned())
+            .and_then(|t| t.try_into().ok())
+            .unwrap_or_default();
+        merged.extend(map);
+    }
+    merged
+}
+
+/// Last-layer-wins for a whole value parsed by `extract`: the character's
+/// section replaces the global one wholesale (the value is one indivisible
+/// unit — a ring array, an overlay list, a tuning/rumble struct). Returns
+/// None only when no layer defines it (loaders then use the type default).
+fn last_controller_value<T>(
+    layers: &[String],
+    extract: impl Fn(&str) -> Option<T>,
+) -> Option<T> {
+    layers.iter().rev().find_map(|text| extract(text))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2296,6 +2401,92 @@ mod tests {
             gap_ms: 0,
         });
         assert_eq!(config.resolve_pattern("short"), Some((0.5, 160, 1, 120)));
+    }
+
+    // ── Per-character controller layering (pure merge helpers) ──────────
+
+    #[test]
+    fn controller_binds_merge_character_over_global_per_button() {
+        let global = "[controller]\nsouth = \"look\"\nstart = \"interact_mode\"\n".to_string();
+        // Character overrides `south`, adds `north`, leaves `start` alone.
+        let character =
+            "[controller]\nsouth = \"search\"\nnorth = { macro_text = \"n\\r\" }\n".to_string();
+        let merged = merge_controller_bind_layers("controller", &[global, character]);
+
+        assert_eq!(merged.get("south").unwrap().display_value(), "search"); // overridden
+        assert_eq!(merged.get("start").unwrap().display_value(), "interact_mode"); // inherited
+        assert_eq!(merged.get("north").unwrap().display_value(), "n\r"); // added
+        assert_eq!(merged.len(), 3);
+    }
+
+    #[test]
+    fn controller_binds_global_only_when_no_character_layer() {
+        let global = "[controller]\nsouth = \"look\"\n".to_string();
+        let merged = merge_controller_bind_layers("controller", &[global]);
+        assert_eq!(merged.get("south").unwrap().display_value(), "look");
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn controller_named_wheels_merge_by_name() {
+        let global = "\
+[[controller_wheels.combat]]
+label = \"cast\"
+command = \"cast\"
+
+[[controller_wheels.travel]]
+label = \"go\"
+command = \"go bank\"
+"
+        .to_string();
+        // Character replaces `combat` wholesale, keeps `travel` from global.
+        let character = "\
+[[controller_wheels.combat]]
+label = \"shoot\"
+command = \"fire\"
+"
+        .to_string();
+        let merged: HashMap<String, Vec<WheelSlice>> =
+            merge_controller_named_layers("controller_wheels", &[global, character]);
+
+        assert_eq!(merged.get("combat").unwrap()[0].label, "shoot"); // overridden
+        assert_eq!(merged.get("travel").unwrap()[0].label, "go"); // inherited
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn controller_tuning_last_layer_wins_wholesale() {
+        let extract = |text: &str| -> Option<TuningConfig> {
+            toml::from_str::<toml::Value>(text)
+                .ok()?
+                .get("controller_tuning")?
+                .clone()
+                .try_into()
+                .ok()
+        };
+        let global = "[controller_tuning]\ndeadzone = 50\nfire_mode = \"release\"\n".to_string();
+        let character = "[controller_tuning]\ndeadzone = 30\n".to_string();
+        // Character wins wholesale — its file omits fire_mode, so the field
+        // default (not the global value) applies. This is the documented
+        // whole-struct-override behavior.
+        let merged = last_controller_value(&[global, character], extract).unwrap();
+        assert_eq!(merged.deadzone, 30);
+        assert_eq!(merged.fire_mode, default_fire_mode());
+    }
+
+    #[test]
+    fn controller_last_value_none_when_no_layer_defines_it() {
+        let extract = |text: &str| -> Option<TuningConfig> {
+            toml::from_str::<toml::Value>(text)
+                .ok()?
+                .get("controller_tuning")?
+                .clone()
+                .try_into()
+                .ok()
+        };
+        // Neither layer has the section.
+        let layers = ["[controller]\nsouth = \"look\"\n".to_string()];
+        assert!(last_controller_value(&layers, extract).is_none());
     }
 
     fn wheel_config() -> crate::config::Config {
