@@ -79,6 +79,60 @@ impl TuiFrontend {
         }
     }
 
+    /// Apply a spell-color form result to the config and persist. Single
+    /// source for both spell-color-form dispatch paths (action-routed and
+    /// raw-key), so Save/Delete behave identically and can't drift. Save
+    /// resolves palette names to hex, then REPLACES the edited entry in place
+    /// (`edit_index`) or appends a new one — the old code always pushed, so
+    /// editing a range left a duplicate behind.
+    fn handle_spell_color_form_result(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        result: crate::frontend::tui::spell_color_form::SpellColorFormResult,
+    ) {
+        use crate::frontend::tui::spell_color_form::SpellColorFormResult;
+        match result {
+            SpellColorFormResult::Save { mut range, edit_index } => {
+                // Resolve palette color names to hex codes.
+                range.color = app_core.config.resolve_palette_color(&range.color);
+                if let Some(ref bar) = range.bar_color {
+                    range.bar_color = Some(app_core.config.resolve_palette_color(bar));
+                }
+                if let Some(ref text) = range.text_color {
+                    range.text_color = Some(app_core.config.resolve_palette_color(text));
+                }
+                if let Some(ref bg) = range.bg_color {
+                    range.bg_color = Some(app_core.config.resolve_palette_color(bg));
+                }
+
+                let spell_colors = &mut app_core.config.colors.spell_colors;
+                match edit_index {
+                    Some(index) if index < spell_colors.len() => {
+                        spell_colors[index] = range;
+                        tracing::info!("Updated spell color range {}", index);
+                    }
+                    // Missing/out-of-range edit index falls back to append so
+                    // the user's edit is never silently lost.
+                    _ => {
+                        spell_colors.push(range);
+                        tracing::info!("Saved spell color range");
+                    }
+                }
+                Self::persist_colors(app_core);
+            }
+            SpellColorFormResult::Delete(index) => {
+                if index < app_core.config.colors.spell_colors.len() {
+                    app_core.config.colors.spell_colors.remove(index);
+                    Self::persist_colors(app_core);
+                    tracing::info!("Deleted spell color range");
+                }
+            }
+            SpellColorFormResult::Cancel => {}
+        }
+        self.spell_color_form = None;
+        app_core.ui_state.input_mode = crate::data::ui_state::InputMode::Normal;
+    }
+
     /// Apply an inline `.uicolors` edit back onto the color config. Entries
     /// are addressed the same way the browser builds them: category "UI"
     /// (named UiColors fields), "PRESETS" (preset map key), or "PROMPT"
@@ -3588,44 +3642,7 @@ impl TuiFrontend {
                         | crate::core::menu_actions::MenuAction::Save
                         | crate::core::menu_actions::MenuAction::Delete => {
                             if let Some(result) = form.handle_action(action.clone()) {
-                                match result {
-                                    crate::frontend::tui::spell_color_form::SpellColorFormResult::Save(
-                                        mut spell_color,
-                                    ) => {
-                                        // Resolve palette color names to hex codes
-                                        spell_color.color = app_core.config.resolve_palette_color(&spell_color.color);
-                                        if let Some(ref bar) = spell_color.bar_color {
-                                            spell_color.bar_color = Some(app_core.config.resolve_palette_color(bar));
-                                        }
-                                        if let Some(ref text) = spell_color.text_color {
-                                            spell_color.text_color = Some(app_core.config.resolve_palette_color(text));
-                                        }
-                                        if let Some(ref bg) = spell_color.bg_color {
-                                            spell_color.bg_color = Some(app_core.config.resolve_palette_color(bg));
-                                        }
-
-                                        app_core.config.colors.spell_colors.push(spell_color);
-                                        Self::persist_colors(app_core);
-                                        self.spell_color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved spell color range");
-                                    }
-                                    crate::frontend::tui::spell_color_form::SpellColorFormResult::Delete(
-                                        index,
-                                    ) => {
-                                        if index < app_core.config.colors.spell_colors.len() {
-                                            app_core.config.colors.spell_colors.remove(index);
-                                            Self::persist_colors(app_core);
-                                            tracing::info!("Deleted spell color range");
-                                        }
-                                        self.spell_color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                    crate::frontend::tui::spell_color_form::SpellColorFormResult::Cancel => {
-                                        self.spell_color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                }
+                                self.handle_spell_color_form_result(app_core, result);
                             }
                         }
                         _ => {
@@ -3634,44 +3651,7 @@ impl TuiFrontend {
                             let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
                             let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
                             if let Some(result) = form.input(key) {
-                                match result {
-                                    crate::frontend::tui::spell_color_form::SpellColorFormResult::Save(
-                                        mut spell_color,
-                                    ) => {
-                                        // Resolve palette color names to hex codes
-                                        spell_color.color = app_core.config.resolve_palette_color(&spell_color.color);
-                                        if let Some(ref bar) = spell_color.bar_color {
-                                            spell_color.bar_color = Some(app_core.config.resolve_palette_color(bar));
-                                        }
-                                        if let Some(ref text) = spell_color.text_color {
-                                            spell_color.text_color = Some(app_core.config.resolve_palette_color(text));
-                                        }
-                                        if let Some(ref bg) = spell_color.bg_color {
-                                            spell_color.bg_color = Some(app_core.config.resolve_palette_color(bg));
-                                        }
-
-                                        app_core.config.colors.spell_colors.push(spell_color);
-                                        Self::persist_colors(app_core);
-                                        self.spell_color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved spell color range");
-                                    }
-                                    crate::frontend::tui::spell_color_form::SpellColorFormResult::Delete(
-                                        index,
-                                    ) => {
-                                        if index < app_core.config.colors.spell_colors.len() {
-                                            app_core.config.colors.spell_colors.remove(index);
-                                            Self::persist_colors(app_core);
-                                            tracing::info!("Deleted spell color range");
-                                        }
-                                        self.spell_color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                    crate::frontend::tui::spell_color_form::SpellColorFormResult::Cancel => {
-                                        self.spell_color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                }
+                                self.handle_spell_color_form_result(app_core, result);
                             }
                         }
                     }
