@@ -1922,15 +1922,8 @@ impl MessageProcessor {
             ParsedElement::Container { id, title, target } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Register container in cache (target is the game-command
-                // id, which differs from the stream id for stow).
-                game_state.container_cache.register_container(
-                    id.clone(),
-                    title.clone(),
-                    target.clone(),
-                );
-                // Dual-write to the registry (migration: consumers still
-                // read container_cache until step 3).
+                // Register the container in the registry (target is the
+                // game-command id, which differs from the stream id for stow).
                 game_state
                     .objects
                     .register_container(id.clone(), title.clone(), target.clone());
@@ -1952,19 +1945,15 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
                 // Clear container contents
-                game_state.container_cache.clear_container(id);
-                game_state.objects.clear_container(id); // dual-write
+                game_state.objects.clear_container(id);
 
                 tracing::debug!("Cleared container: id='{}'", id);
             }
             ParsedElement::ContainerItem { container_id, content } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Add item to container
-                game_state.container_cache.add_item(container_id, content.clone());
-                // Dual-write to the registry: parse the raw line into a
-                // GameItem, skipping the container's own header line. The
-                // registry stores structured items, not raw text.
+                // Parse the raw <inv> line into a structured GameItem,
+                // skipping the container's own header line.
                 if let Some(container) = game_state.objects.container(container_id) {
                     let target = container.command_target();
                     if !crate::core::game_objects::parse::is_header_line(content, &target) {
@@ -4521,11 +4510,6 @@ mod tests {
         assert_eq!(items[0].id, "101");
         assert_eq!(items[0].name, "quartz crystal");
         assert_eq!(items[1].id, "102");
-        // And it agrees with the legacy cache the consumers still read.
-        assert_eq!(
-            game_state.container_cache.get("77").unwrap().parsed_items().len(),
-            2
-        );
     }
 
     #[test]
