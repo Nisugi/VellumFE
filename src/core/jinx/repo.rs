@@ -50,21 +50,22 @@ const SEEDS: &[Seed] = &[
         url: "https://elanthia-online.github.io/mapdb-backup-dr",
         only: Some(GameType::DR),
     },
-    // NOTE: the VellumFE asset repos (vellum-skins/icons/layouts, served from
-    // the vellum-assets monorepo) are NOT seeded yet — the monorepo isn't
-    // built. Re-add them here in the commit that stands up the infrastructure,
-    // so `.jinx list` doesn't 404 on repos that don't exist. Until then they're
-    // in PRUNE below so any install that already seeded them self-heals.
+    // VellumFE asset repos: per-category sub-paths of the vellum-assets
+    // monorepo, served over GitHub Pages (live). Each category is its own
+    // Jinx repo (own manifest.json at its base URL).
+    Seed { name: "vellum-icons", url: "https://nisugi.github.io/vellum-assets/icons", only: None },
+    Seed { name: "vellum-dolls", url: "https://nisugi.github.io/vellum-assets/dolls", only: None },
+    Seed { name: "vellum-skins", url: "https://nisugi.github.io/vellum-assets/skins", only: None },
+    Seed { name: "vellum-layouts", url: "https://nisugi.github.io/vellum-assets/layouts", only: None },
 ];
 
-/// Repo names to remove on load if present — deprecated or not-yet-built seeds
-/// a past version wrote to a user's `repos.toml`. Mirrors Jinx's
-/// `Setup.apply` `repos_to_prune` (`jinx.lic:1244`): the list self-heals every
-/// existing install without the user doing anything. A user who *deliberately*
-/// re-adds one of these keeps it only until the next load — acceptable while
-/// these URLs don't exist yet. Move a name out of here (and into `SEEDS`) when
-/// its repo goes live.
-const PRUNE: &[&str] = &["vellum-skins", "vellum-icons", "vellum-layouts"];
+/// Repo names to remove on load if present — deprecated or superseded seeds a
+/// past version wrote to a user's `repos.toml`. Mirrors Jinx's `Setup.apply`
+/// `repos_to_prune` (`jinx.lic:1244`): the list self-heals every existing
+/// install without the user doing anything. Empty now that the vellum-assets
+/// monorepo is live and its repos are seeded above — add a name here if a
+/// seed's URL ever moves or is retired.
+const PRUNE: &[&str] = &[];
 
 impl RepoList {
     /// Load `repos.toml`, seeding and persisting the standard sources on first
@@ -181,8 +182,11 @@ mod tests {
         assert!(gs.find("mapdb-backup-gs").is_some());
         assert!(gs.find("mapdb-backup-dr").is_none());
         assert!(gs.find("elanthia-online").is_some());
-        // vellum-* repos are intentionally NOT seeded until the monorepo exists.
-        assert!(gs.find("vellum-skins").is_none());
+        // vellum-* repos are seeded (the vellum-assets monorepo is live).
+        assert!(gs.find("vellum-skins").is_some());
+        assert!(gs.find("vellum-icons").is_some());
+        assert!(gs.find("vellum-dolls").is_some());
+        assert!(gs.find("vellum-layouts").is_some());
 
         let mut dr = RepoList::default();
         dr.apply_seeds(GameType::DR);
@@ -202,23 +206,23 @@ mod tests {
     }
 
     #[test]
-    fn prune_removes_deprecated_seeds_and_self_heals() {
-        // Simulate a repos.toml an earlier version wrote with the now-unbuilt
-        // vellum-* repos plus a repo the user added themselves.
+    fn prune_removes_exactly_the_deprecated_names_and_preserves_others() {
+        // Drive the test off the real PRUNE list so it stays correct whether
+        // PRUNE is empty (all seeds live) or lists retired names.
         let mut list = RepoList::default();
-        for name in ["elanthia-online", "vellum-skins", "vellum-icons", "vellum-layouts"] {
-            list.repos.push(RepoSource { name: name.into(), url: "https://x".into() });
-        }
         list.add("myfriend", "https://example.com").unwrap();
+        for name in PRUNE {
+            list.repos.push(RepoSource { name: (*name).into(), url: "https://x".into() });
+        }
 
-        assert!(list.prune_deprecated(), "should report a change");
-        assert!(list.find("vellum-skins").is_none());
-        assert!(list.find("vellum-icons").is_none());
-        assert!(list.find("vellum-layouts").is_none());
-        // Non-pruned repos survive.
-        assert!(list.find("elanthia-online").is_some());
+        let changed = list.prune_deprecated();
+        assert_eq!(changed, !PRUNE.is_empty(), "changed iff there was something to prune");
+        for name in PRUNE {
+            assert!(list.find(name).is_none(), "{name} should be pruned");
+        }
+        // User-added repos always survive.
         assert!(list.find("myfriend").is_some());
-        // Idempotent: a second prune is a no-op.
+        // Idempotent: a second prune never changes anything.
         assert!(!list.prune_deprecated());
     }
 
