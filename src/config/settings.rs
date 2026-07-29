@@ -151,8 +151,6 @@ pub struct UiConfig {
     pub timestamp_position: TimestampPosition, // "start" or "end" (default: end)
     #[serde(default = "default_betrayer_active_color")]
     pub betrayer_active_color: Option<String>,
-    #[serde(default = "default_open_dialog_blocklist")]
-    pub open_dialog_blocklist: Vec<String>,
     #[serde(default)]
     pub focus: FocusConfig, // Tab focus behavior and order
     /// Terminal title template with variables: {character}, {room}, {health}, {mana}, {stamina}, {unread}
@@ -200,7 +198,6 @@ impl Default for UiConfig {
             color_mode: ColorMode::default(),
             timestamp_position: TimestampPosition::default(),
             betrayer_active_color: default_betrayer_active_color(),
-            open_dialog_blocklist: default_open_dialog_blocklist(),
             focus: FocusConfig::default(),
             terminal_title: String::new(),
         }

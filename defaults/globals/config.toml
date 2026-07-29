@@ -115,25 +115,6 @@ command_echo = true
 # Highlight color for active items in the Betrayer panel (leading "!" marker)
 betrayer_active_color = "#ff4040"
 
-# Prevent these openDialog windows from auto-opening (still parse their data).
-# (This list mirrors the built-in default; edit to taste.)
-open_dialog_blocklist = [
-  "combat",
-  "injuries",
-  "stance",
-  "befriend",
-  "espMasterDialog",
-  "espMasterData",
-  "Buffs",
-  "Debuffs",
-  "Cooldowns",
-  "mapMaster",
-  "encum",
-  "minivitals",
-  "expr",
-  "Active Spells",
-]
-
 # --- Performance Overlay (Debug) ---
 # Press F3 or use .perf command to toggle
 performance_stats_enabled = false

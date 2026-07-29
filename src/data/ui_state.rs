@@ -82,6 +82,12 @@ pub struct UiState {
     /// Session-only — never persisted (containers wipe on relog).
     pub shown_container_titles: std::collections::HashSet<String>,
 
+    /// Dialog ids the user has opted to show as popups (U6). A game
+    /// `openDialog` becomes a live popup only if its id is in here; empty by
+    /// default = nothing pops up unless shown (replacing the blocklist).
+    /// Kept in sync with layout visibility by AppCore.
+    pub shown_dialog_ids: std::collections::HashSet<String>,
+
     /// Quickbar data keyed by id (e.g., "quick", "quick-combat")
     pub quickbars: HashMap<String, crate::data::QuickbarData>,
 
@@ -123,7 +129,8 @@ pub struct UiState {
 
 /// A game window the client just saw announced, to be registered as a
 /// bound layout/ephemeral entry by AppCore (the message processor has no
-/// layout access). `blocklisted` seeds Hidden-by-default.
+/// layout access). All discoveries register Hidden-by-default (U6:
+/// hidden-until-shown is the universal rule; the old blocklist is gone).
 #[derive(Clone, Debug)]
 pub struct WindowDiscovery {
     /// The game id (dialog/stream/container id).
@@ -132,8 +139,6 @@ pub struct WindowDiscovery {
     pub kind: WindowDiscoveryKind,
     /// The game asked to persist position (save='t').
     pub save: bool,
-    /// In the config blocklist → register Hidden-by-default.
-    pub blocklisted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -784,6 +789,7 @@ impl UiState {
             widgets_to_reset: Vec::new(),
             ephemeral_windows: std::collections::HashSet::new(),
             shown_container_titles: std::collections::HashSet::new(),
+            shown_dialog_ids: std::collections::HashSet::new(),
             quickbars: HashMap::new(),
             quickbar_order: Vec::new(),
             active_quickbar_id: None,

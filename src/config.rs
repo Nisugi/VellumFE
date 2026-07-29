@@ -339,25 +339,6 @@ fn default_betrayer_active_color() -> Option<String> {
     Some("#ff4040".to_string())
 }
 
-fn default_open_dialog_blocklist() -> Vec<String> {
-    vec![
-        "combat".to_string(),
-        "injuries".to_string(),
-        "stance".to_string(),
-        "befriend".to_string(),
-        "espMasterDialog".to_string(),
-        "espMasterData".to_string(),
-        "Buffs".to_string(),
-        "Debuffs".to_string(),
-        "Cooldowns".to_string(),
-        "mapMaster".to_string(),
-        "encum".to_string(),
-        "minivitals".to_string(),
-        "expr".to_string(),
-        "Active Spells".to_string(),
-    ]
-}
-
 fn default_dashboard_layout() -> String {
     "horizontal".to_string()
 }

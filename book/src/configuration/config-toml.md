@@ -42,12 +42,12 @@ min_command_length = 3          # Min length to save in history
 
 # Drag modifier for moving windows
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
-
-# Prevent specific server dialogs from auto-opening windows
-# (default blocks combat, injuries, stance, minivitals, and other
-# dialogs that have dedicated widgets)
-open_dialog_blocklist = ["combat", "injuries", "stance"]
 ```
+
+> Every game window (dialogs, panels, streams, containers) is **hidden by
+> default** and never auto-opens until you show it in the Windows list
+> (**Windows → Show/Hide windows**). There is no dialog blocklist — hidden
+> windows simply stay hidden even when the game re-sends them.
 
 ### Color Modes
 

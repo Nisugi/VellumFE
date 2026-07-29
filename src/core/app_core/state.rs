@@ -3725,7 +3725,16 @@ impl AppCore {
         terminal_height: u16,
     ) {
         // Persistent layout window? (streams, dialog panels, plain widgets)
-        if self.layout.windows.iter().any(|w| w.name() == name) {
+        if let Some(win) = self.layout.windows.iter().find(|w| w.name() == name) {
+            // Keep the dialog-popup allow-set in sync: a dialog-bound window
+            // being shown/hidden decides whether its openDialog may pop up.
+            if let Some(crate::config::WindowBinding::Dialog(id)) = win.base().binding.clone() {
+                if shown {
+                    self.ui_state.shown_dialog_ids.insert(id);
+                } else {
+                    self.ui_state.shown_dialog_ids.remove(&id);
+                }
+            }
             if shown {
                 self.show_window(name, terminal_width, terminal_height);
             } else {
@@ -6506,7 +6515,6 @@ mod tests {
             title: "Thoughts".to_string(),
             kind: WindowDiscoveryKind::Stream,
             save: false,
-            blocklisted: false,
         });
         core.realize_offered_windows(80, 24);
 
@@ -6635,7 +6643,6 @@ mod tests {
             title: "Thoughts".to_string(),
             kind: WindowDiscoveryKind::Stream,
             save: false,
-            blocklisted: false,
         });
         core.realize_offered_windows(80, 24);
         let vis = |c: &AppCore| {
@@ -6661,6 +6668,27 @@ mod tests {
     }
 
     #[test]
+    fn showing_a_dialog_window_syncs_shown_dialog_ids() {
+        // U6: showing/hiding a dialog-bound window flips its id in
+        // shown_dialog_ids, which the message processor's popup gate reads.
+        use crate::config::WindowBinding;
+        let mut core = core_with_layout(vec![]);
+        core.layout.terminal_width = Some(80);
+        core.layout.terminal_height = Some(24);
+        let mut bank = crate::config::Config::get_window_template("stance").unwrap();
+        bank.base_mut().name = "bank".to_string();
+        bank.base_mut().binding = Some(WindowBinding::Dialog("bank".to_string()));
+        bank.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        core.layout.windows.push(bank);
+
+        assert!(!core.ui_state.shown_dialog_ids.contains("bank"));
+        core.set_known_window_shown("bank", true, 80, 24);
+        assert!(core.ui_state.shown_dialog_ids.contains("bank"));
+        core.set_known_window_shown("bank", false, 80, 24);
+        assert!(!core.ui_state.shown_dialog_ids.contains("bank"));
+    }
+
+    #[test]
     fn rediscovery_of_a_persisted_window_is_idempotent() {
         // U4: after a persisted discovered window reloads (simulated: a
         // bound Hidden layout entry already present), the game re-announcing
@@ -6682,7 +6710,6 @@ mod tests {
             title: "Combat".to_string(),
             kind: WindowDiscoveryKind::DialogPanel,
             save: false,
-            blocklisted: true,
         });
         core.realize_offered_windows(80, 24);
 
@@ -6706,14 +6733,12 @@ mod tests {
             title: "Thoughts".to_string(),
             kind: WindowDiscoveryKind::Stream,
             save: false,
-            blocklisted: false,
         });
         core.ui_state.pending_window_discoveries.push(WindowDiscovery {
             id: "combat".to_string(),
             title: "Combat".to_string(),
             kind: WindowDiscoveryKind::DialogPanel,
             save: false,
-            blocklisted: true,
         });
         core.realize_offered_windows(80, 24);
 
@@ -6748,7 +6773,6 @@ mod tests {
             title: "Thoughts".to_string(),
             kind: WindowDiscoveryKind::Stream,
             save: false,
-            blocklisted: false,
         });
         core.realize_offered_windows(80, 24);
         assert_eq!(core.layout.windows_bound_to("thoughts").len(), 1);

@@ -459,12 +459,6 @@ impl MessageProcessor {
                     title: title.clone().unwrap_or_else(|| id.clone()),
                     kind: crate::data::WindowDiscoveryKind::Stream,
                     save: false,
-                    blocklisted: self
-                        .config
-                        .ui
-                        .open_dialog_blocklist
-                        .iter()
-                        .any(|b| b.eq_ignore_ascii_case(id)),
                 });
                 self.handle_stream_window(
                     id,
@@ -1364,7 +1358,7 @@ impl MessageProcessor {
                 // are mined into panels). Blocklisted ones (bank-style that
                 // the user suppresses) don't pop up; the store still ingests
                 // their data so the window can be shown later.
-                if !self.dialog_should_popup(id) {
+                if !Self::dialog_should_popup(ui_state, id) {
                     tracing::debug!("DialogOpen suppressed (blocklisted): id={}", id);
                     return;
                 }
@@ -1447,7 +1441,7 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true;
                 // Always INGEST into the store (even for hidden dialogs);
                 // policy only gates DISPLAY, synced below.
-                let show = self.dialog_should_popup(id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.buttons.clear();
@@ -1472,7 +1466,7 @@ impl MessageProcessor {
             }
             ParsedElement::DialogDropDowns { id, clear, dropdowns } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_should_popup(id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.dropdowns.clear();
@@ -1504,12 +1498,6 @@ impl MessageProcessor {
                     title: title.clone().unwrap_or_else(|| id.clone()),
                     kind: crate::data::WindowDiscoveryKind::DialogPanel,
                     save: *save,
-                    blocklisted: self
-                        .config
-                        .ui
-                        .open_dialog_blocklist
-                        .iter()
-                        .any(|b| b.eq_ignore_ascii_case(id)),
                 });
                 let dialog = ui_state.dialog_slot_mut(id);
                 if dialog.title.is_none() {
@@ -1524,7 +1512,7 @@ impl MessageProcessor {
                 spinboxes,
             } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_should_popup(id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.links.clear();
@@ -1564,7 +1552,7 @@ impl MessageProcessor {
                 labels,
             } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_should_popup(id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.fields.clear();
@@ -1653,7 +1641,7 @@ impl MessageProcessor {
                 progress_bars,
             } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_should_popup(id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.progress_bars.clear();
@@ -2075,17 +2063,16 @@ impl MessageProcessor {
     }
 
     /// Whether a dialog's data may be shown as a transient popup. The
+    /// Whether a dialog's data may be shown as a transient popup. The
     /// always-ingest store keeps every dialog's state regardless; this only
-    /// gates the popup. Blocklisted dialogs (combat/injuries/… — which are
-    /// panels or otherwise suppressed by default) never pop up. U3: a pure
-    /// blocklist check; the offer registry is gone.
-    fn dialog_should_popup(&self, id: &str) -> bool {
-        !self
-            .config
-            .ui
-            .open_dialog_blocklist
+    /// gates the popup. U6: nothing pops up unless the user has SHOWN it via
+    /// the Windows list (its id is in `shown_dialog_ids`) — hidden-by-default,
+    /// replacing the old blocklist.
+    fn dialog_should_popup(ui_state: &UiState, id: &str) -> bool {
+        ui_state
+            .shown_dialog_ids
             .iter()
-            .any(|blocked| blocked.eq_ignore_ascii_case(id))
+            .any(|shown| shown.eq_ignore_ascii_case(id))
     }
 
     fn handle_stream_window(
@@ -4622,12 +4609,78 @@ mod tests {
             processor.newly_registered_container,
             Some(("77".to_string(), "Backpack".to_string()))
         );
-        // Bank (not blocklisted in the test config) → a live popup.
-        assert!(ui_state.active_dialog.as_ref().is_some_and(|d| d.id == "bank"));
+        // U6: bank does NOT pop up by default (hidden-until-shown; the
+        // blocklist is gone — nothing pops unless its id is in shown_dialog_ids).
+        assert!(ui_state.active_dialog.is_none());
         // Stream → a WindowDiscovery for AppCore to register.
         let disc = &ui_state.pending_window_discoveries;
         assert!(disc.iter().any(|d| d.id == "thoughts"
             && d.kind == crate::data::WindowDiscoveryKind::Stream));
+
+        // But once the user shows "bank", its re-sent openDialog pops up.
+        ui_state.shown_dialog_ids.insert("bank".to_string());
+        processor.process_element(
+            &ParsedElement::DialogOpen {
+                id: "bank".to_string(),
+                title: Some("Bank".to_string()),
+                save: true,
+            },
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert!(ui_state.active_dialog.as_ref().is_some_and(|d| d.id == "bank"));
+    }
+
+    #[test]
+    fn dialog_popup_gated_on_shown_dialog_ids() {
+        // U6: no blocklist — a dialog pops up ONLY if the user has shown it
+        // (its id in shown_dialog_ids). Empty set = nothing pops up.
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        let open = |id: &str| ParsedElement::DialogOpen {
+            id: id.to_string(),
+            title: Some(id.to_string()),
+            save: false,
+        };
+
+        // Not shown → no popup.
+        processor.process_element(
+            &open("shop"),
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert!(ui_state.active_dialog.is_none());
+
+        // Shown → pops up.
+        ui_state.shown_dialog_ids.insert("shop".to_string());
+        processor.process_element(
+            &open("shop"),
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert!(ui_state.active_dialog.as_ref().is_some_and(|d| d.id == "shop"));
     }
 
     #[test]
@@ -4668,15 +4721,14 @@ mod tests {
             "blocklisted combat dialogData opened the generic popup: {:?}",
             ui_state.active_dialog.as_ref().map(|d| &d.id)
         );
-        // It was recorded as a blocklisted DialogPanel discovery (hidden).
+        // It was recorded as a DialogPanel discovery (Hidden by default).
         let disc = ui_state
             .pending_window_discoveries
             .iter()
             .find(|d| d.id == "combat");
         assert!(
-            disc.is_some_and(|d| d.blocklisted
-                && d.kind == crate::data::WindowDiscoveryKind::DialogPanel),
-            "combat should be a blocklisted DialogPanel discovery"
+            disc.is_some_and(|d| d.kind == crate::data::WindowDiscoveryKind::DialogPanel),
+            "combat should be a DialogPanel discovery"
         );
         // Even hidden, its full state accumulated in the store, so showing
         // it later renders fully formed rather than from deltas.
@@ -4721,15 +4773,14 @@ mod tests {
             }
         }
 
-        // U3: combat is recorded as a DialogPanel discovery (blocklisted),
-        // not a resident offer, and never popped up.
+        // Combat is recorded as a DialogPanel discovery (Hidden by default)
+        // and never pops up as a transient dialog.
         let disc = ui_state
             .pending_window_discoveries
             .iter()
             .find(|d| d.id == "combat")
             .expect("combat discovery");
         assert_eq!(disc.kind, crate::data::WindowDiscoveryKind::DialogPanel);
-        assert!(disc.blocklisted, "combat is in the default blocklist");
         assert!(ui_state.active_dialog.is_none(), "no transient popup");
 
         // Store accumulated the whole panel.

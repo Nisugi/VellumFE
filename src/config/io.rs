@@ -688,7 +688,6 @@ impl Default for Config {
                 timestamp_position: TimestampPosition::default(),
                 command_echo: default_command_echo(),
                 betrayer_active_color: default_betrayer_active_color(),
-                open_dialog_blocklist: default_open_dialog_blocklist(),
                 focus: FocusConfig::default(),
                 terminal_title: String::new(),
             },
@@ -743,7 +742,6 @@ mod tests {
         let code = Config::default();
         assert_eq!(shipped.connection.port, code.connection.port);
         assert_eq!(shipped.ui.buffer_size, code.ui.buffer_size);
-        assert_eq!(shipped.ui.open_dialog_blocklist, code.ui.open_dialog_blocklist);
         // The [ui.focus] section must actually land in ui.focus (regression
         // guard for the commented-header bug).
         assert_eq!(shipped.ui.focus.types, code.ui.focus.types);
