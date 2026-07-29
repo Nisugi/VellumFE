@@ -1341,6 +1341,80 @@ pub fn render_dialog(
     paragraph.render(layout.area, buf);
 }
 
+/// Render a resident dialog as a DOCKED panel filling `area` (no popup
+/// centering/sizing): title border plus the banded control rows. Reuses
+/// the banded cell layout so combat's rows read defense|stance ▼|offense.
+pub fn render_dialog_panel(
+    dialog: &DialogState,
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &crate::theme::AppTheme,
+) {
+    let title = dialog.title.as_deref().unwrap_or("Panel");
+    let normal = Style::default()
+        .fg(crossterm_bridge::to_ratatui_color(theme.menu_item_normal))
+        .bg(crossterm_bridge::to_ratatui_color(theme.menu_background));
+    let selected = Style::default()
+        .fg(crossterm_bridge::to_ratatui_color(theme.menu_item_selected))
+        .bg(crossterm_bridge::to_ratatui_color(theme.menu_item_focused));
+
+    let inner_width = area.width.saturating_sub(2) as usize;
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(bands) = positioned_band_cells(dialog) {
+        for band in &bands {
+            if let [BandCell::Progress { index }] = band.as_slice() {
+                if let Some(pb) = dialog.progress_bars.get(*index) {
+                    lines.push(render_progress_bar_line(pb, inner_width, theme));
+                    continue;
+                }
+            }
+            let mut spans = vec![Span::raw(" ")];
+            for (i, cell) in band.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::raw("  "));
+                }
+                match cell {
+                    BandCell::Button { index, text } => {
+                        let style = if *index == dialog.selected { selected } else { normal };
+                        spans.push(Span::styled(text.clone(), style));
+                    }
+                    BandCell::DropDown { text, .. } => {
+                        spans.push(Span::styled(text.clone(), normal));
+                    }
+                    BandCell::Progress { index } => {
+                        if let Some(pb) = dialog.progress_bars.get(*index) {
+                            spans.push(Span::styled(pb.text.clone(), normal));
+                        }
+                    }
+                }
+            }
+            lines.push(Line::from(spans));
+        }
+    }
+    // Footer links (skin/search/grip/...).
+    if !dialog.links.is_empty() {
+        let mut spans = vec![Span::raw(" ")];
+        for (i, link) in dialog.links.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw("  "));
+            }
+            spans.push(Span::styled(link.label.clone(), normal));
+        }
+        lines.push(Line::from(spans));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::raw(" waiting for panel data… ")));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::default().fg(crossterm_bridge::to_ratatui_color(theme.menu_border)))
+        .style(Style::default().bg(crossterm_bridge::to_ratatui_color(theme.menu_background)));
+    Paragraph::new(lines).block(block).render(area, buf);
+}
+
 /// Render a progress bar as a styled line for dialog display
 fn render_progress_bar_line(
     pb: &crate::data::DialogProgressBar,

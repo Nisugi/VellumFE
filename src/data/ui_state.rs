@@ -61,6 +61,11 @@ pub struct UiState {
     /// Pending link click (released without drag = send _menu)
     pub pending_link_click: Option<PendingLinkClick>,
 
+    /// Commands queued by dialog-panel widgets (rendered from an immutable
+    /// AppCore borrow) for the app loop to send after rendering. Interior
+    /// mutability so the panel renderer can push without a &mut AppCore.
+    pub pending_panel_commands: std::cell::RefCell<Vec<String>>,
+
     /// Set true after layout reload to signal frontend to reset widget caches
     pub needs_widget_reset: bool,
 
@@ -735,6 +740,7 @@ impl UiState {
             selection_drag_start: None,
             link_drag_state: None,
             pending_link_click: None,
+            pending_panel_commands: std::cell::RefCell::new(Vec::new()),
             needs_widget_reset: false,
             widgets_to_reset: Vec::new(),
             ephemeral_windows: std::collections::HashSet::new(),

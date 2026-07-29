@@ -2280,6 +2280,14 @@ impl VellumGuiApp {
         // (no-op unless [web] is enabled)
         self.app_core.flush_remote_state();
 
+        // Send commands queued by dialog-panel widgets this frame
+        // (they render from an immutable AppCore borrow).
+        let panel_commands: Vec<String> =
+            self.app_core.ui_state.pending_panel_commands.borrow_mut().drain(..).collect();
+        for command in panel_commands {
+            self.dispatch_raw_command(command);
+        }
+
         // Play sounds queued by highlight processing.
         for sound in self.app_core.game_state.drain_sound_queue() {
             if let Some(ref player) = self.app_core.sound_player {

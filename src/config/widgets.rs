@@ -621,6 +621,15 @@ pub struct ContainerWidgetData {
     pub container_title: String,
 }
 
+/// Dialog panel widget specific data
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DialogPanelWidgetData {
+    /// Dialog id this panel renders (e.g. "combat"). Its content comes
+    /// from ui_state.dialog_store, accumulated from the game's dialogData.
+    #[serde(default)]
+    pub dialog_id: String,
+}
+
 /// Spacer widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpacerWidgetData {

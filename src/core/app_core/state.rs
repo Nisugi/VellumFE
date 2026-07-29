@@ -1281,6 +1281,7 @@ impl AppCore {
             crate::data::WidgetType::Betrayer => "betrayer",
             crate::data::WidgetType::Items => "items",
             crate::data::WidgetType::WebUi => "webui",
+            crate::data::WidgetType::DialogPanel => "dialogpanel",
         };
         focusable.contains(kind)
     }
@@ -3564,6 +3565,58 @@ impl AppCore {
         );
     }
 
+    /// Create an ephemeral dockable panel window for a resident dialog
+    /// (combat, befriend, ...). Positioned like an ephemeral container
+    /// window; content renders from ui_state.dialog_store by `dialog_id`.
+    pub fn create_dialog_panel_window(
+        &mut self,
+        dialog_id: &str,
+        title: &str,
+        terminal_width: u16,
+        terminal_height: u16,
+    ) {
+        use crate::data::{WidgetType, WindowContent, WindowPosition, WindowState};
+
+        let window_name = format!("panel_{}", dialog_id.replace(' ', "_").to_lowercase());
+        if self.ui_state.windows.contains_key(&window_name) {
+            return;
+        }
+
+        // Panels are tall and narrow (combat is ~190x288 px → ~24x18 cells).
+        let (w, h) = (26u16, 20u16);
+        let (x, y) = if let Some(saved) = self.saved_dialog_positions.dialogs.get(dialog_id) {
+            (
+                saved.x.min(terminal_width.saturating_sub(w)),
+                saved.y.min(terminal_height.saturating_sub(h)),
+            )
+        } else {
+            // Default toward the right edge, the game's usual hint.
+            (terminal_width.saturating_sub(w + 1), 1)
+        };
+
+        let window = WindowState {
+            name: window_name.clone(),
+            widget_type: WidgetType::DialogPanel,
+            content: WindowContent::DialogPanel {
+                dialog_id: dialog_id.to_string(),
+            },
+            position: WindowPosition {
+                x: crate::data::geometry::Col::new(x),
+                y: crate::data::geometry::Row::new(y),
+                width: crate::data::geometry::Width::new(w),
+                height: crate::data::geometry::Height::new(h),
+            },
+            visible: true,
+            focused: false,
+            content_align: None,
+            ephemeral: true,
+        };
+        self.ui_state.set_window(window_name.clone(), window);
+        self.ui_state.ephemeral_windows.insert(window_name);
+        self.add_system_message(&format!("Opened {} panel", title));
+        self.needs_render = true;
+    }
+
     /// Apply a user show/hide choice from the "known windows" list: record
     /// the policy on the offer and create or close the corresponding
     /// window. Currently wires container offers to ephemeral container
@@ -3582,7 +3635,7 @@ impl AppCore {
         let Some(offer) = self.game_state.window_offers.get(offer_id) else {
             return;
         };
-        let (kind, title) = (offer.kind, offer.title.clone());
+        let (kind, title, resident) = (offer.kind, offer.title.clone(), offer.resident);
         match kind {
             OfferKind::Container => match policy {
                 Policy::Shown => {
@@ -3597,11 +3650,37 @@ impl AppCore {
                 }
                 Policy::Unset => {}
             },
+            // Resident dialogs (combat, befriend, ...) are dockable PANELS,
+            // not transient popups: enabling creates a panel window that
+            // renders from the store; disabling closes it.
+            OfferKind::Dialog if resident => match policy {
+                Policy::Shown => {
+                    if self.ui_state.dialog_store.contains_key(offer_id) {
+                        self.create_dialog_panel_window(
+                            offer_id,
+                            &title,
+                            terminal_width,
+                            terminal_height,
+                        );
+                        self.needs_render = true;
+                    } else {
+                        self.add_system_message(
+                            "Nothing received for that panel yet — it fills in on the next update.",
+                        );
+                    }
+                }
+                Policy::Hidden => {
+                    let window_name =
+                        format!("panel_{}", offer_id.replace(' ', "_").to_lowercase());
+                    self.ui_state.remove_window(&window_name);
+                    self.ui_state.ephemeral_windows.remove(&window_name);
+                    self.needs_render = true;
+                }
+                Policy::Unset => {}
+            },
             OfferKind::Dialog => match policy {
                 Policy::Shown => {
-                    // Materialize the dialog from the accumulated store —
-                    // its full definition (sent once at login) is there
-                    // even though the user only just opted in.
+                    // Non-resident: transient popup materialized from store.
                     if self.ui_state.dialog_store.contains_key(offer_id) {
                         self.ui_state.show_dialog_from_store(offer_id);
                         self.needs_render = true;
@@ -3612,8 +3691,6 @@ impl AppCore {
                     }
                 }
                 Policy::Hidden => {
-                    // Hiding dismisses the live popup; the store keeps its
-                    // state so re-showing is instant.
                     if self
                         .ui_state
                         .active_dialog
