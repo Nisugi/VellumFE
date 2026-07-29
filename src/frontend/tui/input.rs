@@ -2191,36 +2191,6 @@ impl TuiFrontend {
         use crate::data::input::{KeyCode, KeyModifiers};
         use crate::core::input_router;
 
-        // Outermost re-entrancy backstop: no keypress should recurse into
-        // key handling deeply. If it does (the .menu-Enter stack overflow),
-        // log the code + mode that looped and bail before the stack blows.
-        thread_local!(static KEY_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) });
-        struct KeyDepthGuard;
-        impl Drop for KeyDepthGuard {
-            fn drop(&mut self) {
-                KEY_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-            }
-        }
-        let key_depth = KEY_DEPTH.with(|d| {
-            let n = d.get() + 1;
-            d.set(n);
-            n
-        });
-        let _key_depth_guard = KeyDepthGuard;
-        if key_depth > 40 {
-            tracing::error!(
-                "KEY RECURSION GUARD: depth {} on code={:?} mode={:?} - bailing",
-                key_depth,
-                code,
-                app_core.ui_state.input_mode
-            );
-            app_core.add_system_message(&format!(
-                "[input] key-handling loop (code={:?}, mode={:?}) - aborted",
-                code, app_core.ui_state.input_mode
-            ));
-            return Ok(None);
-        }
-
         tracing::debug!(
             "Key event: code={:?}, modifiers={:?}, input_mode={:?}",
             code,
@@ -4133,43 +4103,6 @@ impl TuiFrontend {
     ) -> Result<Option<String>> {
 
         use crate::data::ui_state::{InputMode, PopupMenu};
-
-        // Re-entrancy backstop: a menu command must never (transitively)
-        // re-invoke menu-command handling deeply. If it does, log the
-        // offending command and bail instead of overflowing the stack.
-        // The RAII guard decrements on every return path.
-        use std::cell::Cell;
-        thread_local!(static MENU_DEPTH: Cell<u32> = const { Cell::new(0) });
-        struct DepthGuard;
-        impl Drop for DepthGuard {
-            fn drop(&mut self) {
-                MENU_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-            }
-        }
-        let depth = MENU_DEPTH.with(|d| {
-            let n = d.get() + 1;
-            d.set(n);
-            n
-        });
-        let _depth_guard = DepthGuard;
-        if depth > 32 {
-            tracing::error!(
-                "menu-command recursion guard tripped on '{}' (depth {}; \
-                 bailing to avoid stack overflow)",
-                command,
-                depth
-            );
-            app_core.add_system_message(&format!(
-                "[menu] internal loop on '{}' - aborted (see log).",
-                command
-            ));
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
-            app_core.ui_state.deep_submenu = None;
-            app_core.ui_state.input_mode = InputMode::Normal;
-            return Ok(None);
-        }
 
         if let Some(submenu_name) = command.strip_prefix("menu:") {
             let items = match submenu_name {

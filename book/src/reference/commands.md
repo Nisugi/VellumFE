@@ -132,7 +132,7 @@ layout.toml).
 | Command | Aliases | Description |
 |---------|---------|-------------|
 | `.transparent` | | Toggle transparent window backgrounds (TUI) |
-| `.containers` | | Toggle container discovery (LOOK IN a container spawns a window for it) |
+| `.knownwindows` | `.containers` | Known windows list: every game-offered window (containers/dialogs/streams) with a show/hide checkbox per row |
 | `.hidecontainers [title]` | | Close container windows (all, or one by title) |
 | `.reloadmacros` | | Reload macros.toml and push to connected phones |
 | `.webinfo` | | Show the phone pairing URL / app link and open their QR codes |

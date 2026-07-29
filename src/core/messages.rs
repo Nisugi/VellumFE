@@ -1354,18 +1354,13 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true;
                 tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
 
-                let blocked = self
-                    .config
-                    .ui
-                    .open_dialog_blocklist
-                    .iter()
-                    .any(|b| b.eq_ignore_ascii_case(id));
-
-                // Register as a window offer FIRST (unified list; P1) — even
-                // blocklisted dialogs, so they appear in the known-windows
-                // list and can be un-hidden. Blocklist = a remembered
-                // Hidden policy in the unified model. Dialogs reaching here
-                // are non-resident (resident ones are mined into panels).
+                // Register as a window offer — even suppressed dialogs, so
+                // they appear in the known-windows list and can be
+                // un-hidden. The config blocklist only SEEDS a Hidden
+                // policy the first time an id is offered; after that the
+                // user's checkbox choice wins. Dialogs reaching here are
+                // non-resident (resident ones are mined into panels).
+                let is_new = game_state.window_offers.get(id).is_none();
                 game_state.window_offers.offer(
                     id.clone(),
                     title.clone().unwrap_or_else(|| id.clone()),
@@ -1374,13 +1369,24 @@ impl MessageProcessor {
                     *save,
                     false,
                 );
-                if blocked {
+                if is_new
+                    && self
+                        .config
+                        .ui
+                        .open_dialog_blocklist
+                        .iter()
+                        .any(|b| b.eq_ignore_ascii_case(id))
+                {
                     game_state
                         .window_offers
                         .set_policy(id, crate::core::window_offers::Policy::Hidden);
-                    // Old popup path still suppresses blocklisted dialogs
-                    // (behavior unchanged until that path is retired in P2b).
-                    tracing::debug!("DialogOpen blocked (offer hidden): id={}", id);
+                }
+                if !game_state
+                    .window_offers
+                    .get(id)
+                    .is_some_and(|offer| offer.should_show())
+                {
+                    tracing::debug!("DialogOpen suppressed (offer hidden): id={}", id);
                     return;
                 }
 
@@ -1462,13 +1468,7 @@ impl MessageProcessor {
             }
             ParsedElement::DialogButtons { id, clear, buttons } => {
                 self.chunk_has_silent_updates = true;
-                if self
-                    .config
-                    .ui
-                    .open_dialog_blocklist
-                    .iter()
-                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
-                {
+                if !self.dialog_offer_allows(game_state, id) {
                     return;
                 }
 
@@ -1525,13 +1525,7 @@ impl MessageProcessor {
                 labels,
             } => {
                 self.chunk_has_silent_updates = true;
-                if self
-                    .config
-                    .ui
-                    .open_dialog_blocklist
-                    .iter()
-                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
-                {
+                if !self.dialog_offer_allows(game_state, id) {
                     return;
                 }
 
@@ -1660,13 +1654,7 @@ impl MessageProcessor {
                 progress_bars,
             } => {
                 self.chunk_has_silent_updates = true;
-                if self
-                    .config
-                    .ui
-                    .open_dialog_blocklist
-                    .iter()
-                    .any(|blocked| blocked.eq_ignore_ascii_case(id))
-                {
+                if !self.dialog_offer_allows(game_state, id) {
                     return;
                 }
 
@@ -1979,15 +1967,13 @@ impl MessageProcessor {
                     );
                 }
 
-                // Signal container for discovery mode (every LOOK IN triggers this)
-                // The runtime will check if a window already exists before creating
+                // Signal the sighting for the realize pass (every LOOK IN
+                // triggers this): the frontend tick auto-(re)opens the
+                // window only if this container's offer policy says Shown,
+                // and window creation itself skips already-open windows.
                 if !title.is_empty() {
                     self.newly_registered_container = Some((id.clone(), title.clone()));
-                    tracing::info!(
-                        "Container seen: id='{}', title='{}' (signaling for discovery)",
-                        id,
-                        title
-                    );
+                    tracing::debug!("Container seen: id='{}', title='{}'", id, title);
                 } else {
                     tracing::debug!("Registered container: id='{}', title='{}'", id, title);
                 }
@@ -2064,6 +2050,38 @@ impl MessageProcessor {
     /// stream to "room", causing room text to be discarded. The stream is reset on prompt.
     ///
     /// DragonRealms-specific - GemStone IV doesn't use streamWindow room.
+    /// Gate a `dialogData` element through the window-offer registry:
+    /// make sure the dialog id is offered (seeding a Hidden policy from
+    /// the config blocklist the first time it's seen, so dialogData-first
+    /// ids are still suppressed) and return whether it may be shown.
+    fn dialog_offer_allows(&self, game_state: &mut GameState, id: &str) -> bool {
+        if game_state.window_offers.get(id).is_none() {
+            game_state.window_offers.offer(
+                id.to_string(),
+                id.to_string(),
+                crate::core::window_offers::OfferKind::Dialog,
+                None,
+                false,
+                false,
+            );
+            if self
+                .config
+                .ui
+                .open_dialog_blocklist
+                .iter()
+                .any(|blocked| blocked.eq_ignore_ascii_case(id))
+            {
+                game_state
+                    .window_offers
+                    .set_policy(id, crate::core::window_offers::Policy::Hidden);
+            }
+        }
+        game_state
+            .window_offers
+            .get(id)
+            .is_some_and(|offer| offer.should_show())
+    }
+
     fn handle_stream_window(
         &mut self,
         id: &str,

@@ -13,9 +13,12 @@
 //! "known windows" checkbox manager) — same data on every frontend, so
 //! TUI/GUI/web stay in parity.
 //!
-//! P1 (this module) stands up the model + registration, populated
-//! alongside the existing spawn paths (no behavior change yet). P2 points
-//! the UI at it and retires the old paths.
+//! As of P2 this registry IS the gate: dialog popups check their offer's
+//! policy (the config blocklist only seeds a Hidden policy on first
+//! sight), container windows auto-open only for offers the user has
+//! Shown (replacing the all-or-nothing discovery toggle), and the
+//! openDialog→widget queue is realized through
+//! `AppCore::realize_offered_windows` on every frontend.
 
 use std::collections::BTreeMap;
 
@@ -74,13 +77,20 @@ pub struct WindowOffer {
 }
 
 impl WindowOffer {
-    /// Whether the frontend should show this window: an explicit Shown, or
-    /// Unset for a resident window (the game intends those to persist).
+    /// Whether the frontend should show this window. An explicit policy
+    /// always wins; Unset falls back to the kind-appropriate default,
+    /// mirroring how the game paths always behaved: dialogs pop up unless
+    /// the user hides them (opt-out), containers wait to be opted in, and
+    /// resident windows are meant to persist.
     pub fn should_show(&self) -> bool {
         match self.policy {
             Policy::Shown => true,
             Policy::Hidden => false,
-            Policy::Unset => self.resident,
+            Policy::Unset => match self.kind {
+                OfferKind::Dialog => true,
+                OfferKind::Container => false,
+                OfferKind::Stream => self.resident,
+            },
         }
     }
 }
@@ -205,20 +215,26 @@ mod tests {
     }
 
     #[test]
-    fn should_show_reflects_policy_and_residency() {
+    fn should_show_reflects_policy_and_kind_defaults() {
         let mut offers = WindowOffers::default();
-        // Non-resident, Unset → not shown (frontend opts in).
+        // Dialog, Unset → shown (dialogs pop up unless hidden; opt-out).
         offers.offer("bank", "Bank", OfferKind::Dialog, None, true, false);
-        assert!(!offers.get("bank").unwrap().should_show());
-        // Resident, Unset → shown (game intends persistence).
-        offers.offer("Buffs", "Buffs", OfferKind::Dialog, Some("right".into()), false, true);
-        assert!(offers.get("Buffs").unwrap().should_show());
-        // Explicit Shown wins.
-        offers.set_policy("bank", Policy::Shown);
         assert!(offers.get("bank").unwrap().should_show());
+        // Container, Unset → not shown (user opts in via the list).
+        offers.offer("77", "Backpack", OfferKind::Container, None, false, false);
+        assert!(!offers.get("77").unwrap().should_show());
+        // Resident stream, Unset → shown (game intends persistence).
+        offers.offer("thoughts", "Thoughts", OfferKind::Stream, None, false, true);
+        assert!(offers.get("thoughts").unwrap().should_show());
+        // Explicit Hidden beats the dialog default.
+        offers.set_policy("bank", Policy::Hidden);
+        assert!(!offers.get("bank").unwrap().should_show());
+        // Explicit Shown beats the container default.
+        offers.set_policy("77", Policy::Shown);
+        assert!(offers.get("77").unwrap().should_show());
         // Explicit Hidden hides a resident one.
-        offers.set_policy("Buffs", Policy::Hidden);
-        assert!(!offers.get("Buffs").unwrap().should_show());
+        offers.set_policy("thoughts", Policy::Hidden);
+        assert!(!offers.get("thoughts").unwrap().should_show());
     }
 
     #[test]

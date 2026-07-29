@@ -2253,34 +2253,14 @@ impl VellumGuiApp {
         }
 
         // Post-processing the TUI runtime also performs after server data:
-        // content-driven resizes, container discovery windows, and windows
-        // queued by openDialog events (stance, inventory, experience, ...).
+        // content-driven resizes, plus realizing game-offered windows
+        // (containers whose offer the user has Shown, openDialog-templated
+        // widgets like stance/inventory/experience).
         if received_text {
             self.app_core.adjust_content_driven_windows();
             let (layout_width, layout_height) = self.core_layout_size;
-            if self.app_core.ui_state.container_discovery_mode {
-                if let Some((id, title)) = self
-                    .app_core
-                    .message_processor
-                    .newly_registered_container
-                    .take()
-                {
-                    tracing::info!(
-                        "Container discovery: creating window for '{}' (id={})",
-                        title,
-                        id
-                    );
-                    self.app_core.create_ephemeral_container_window(
-                        &title,
-                        layout_width,
-                        layout_height,
-                    );
-                }
-            } else {
-                self.app_core.message_processor.newly_registered_container = None;
-            }
             self.app_core
-                .process_pending_window_additions(layout_width, layout_height);
+                .realize_offered_windows(layout_width, layout_height);
 
             // A `;ui handshake` reply arrived on the game stream: connect
             // (or reconnect) the WebUI bridge with the fresh port + token.

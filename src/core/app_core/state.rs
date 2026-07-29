@@ -3597,10 +3597,47 @@ impl AppCore {
                 }
                 Policy::Unset => {}
             },
-            // Dialog/Stream window wiring arrives as those paths migrate;
-            // for now the policy is remembered on the offer.
-            OfferKind::Dialog | OfferKind::Stream => {}
+            OfferKind::Dialog => {
+                // Hiding a dialog also dismisses its live popup; Shown
+                // can't conjure one — the game has to send it again.
+                if policy == Policy::Hidden
+                    && self
+                        .ui_state
+                        .active_dialog
+                        .as_ref()
+                        .is_some_and(|dialog| dialog.id == *offer_id)
+                {
+                    self.ui_state.active_dialog = None;
+                    if self.ui_state.input_mode == crate::data::ui_state::InputMode::Dialog {
+                        self.ui_state.input_mode = crate::data::ui_state::InputMode::Normal;
+                    }
+                    self.needs_render = true;
+                }
+            }
+            // Stream offers record policy only for now; their windows are
+            // managed through the stream-routing/custom-windows system.
+            OfferKind::Stream => {}
         }
+    }
+
+    /// Realize game-offered windows after a batch of server messages, once
+    /// terminal dimensions are known (called from every frontend's tick).
+    /// Replaces the old all-or-nothing container discovery mode: a sighted
+    /// container auto-(re)opens only if its offer policy says Shown, and
+    /// openDialog-templated widgets queued by the message processor get
+    /// added to the layout.
+    pub fn realize_offered_windows(&mut self, terminal_width: u16, terminal_height: u16) {
+        if let Some((id, title)) = self.message_processor.newly_registered_container.take() {
+            let show = self
+                .game_state
+                .window_offers
+                .get(&id)
+                .is_some_and(|offer| offer.should_show());
+            if show {
+                self.create_ephemeral_container_window(&title, terminal_width, terminal_height);
+            }
+        }
+        self.process_pending_window_additions(terminal_width, terminal_height);
     }
 
     /// Close all ephemeral container windows
@@ -6226,6 +6263,36 @@ mod tests {
             !core.ui_state.windows.contains_key("my_pack"),
             "multi-word title failed to close its window"
         );
+    }
+
+    #[test]
+    fn realize_offered_windows_honors_container_policy() {
+        // Replaces the all-or-nothing container discovery mode: a sighted
+        // container only auto-opens when its offer policy says Shown.
+        use crate::core::window_offers::{OfferKind, Policy};
+        let mut core = AppCore::new_for_test();
+        core.game_state.window_offers.offer(
+            "77",
+            "Backpack",
+            OfferKind::Container,
+            None,
+            false,
+            false,
+        );
+
+        // Sighted but Unset → no auto-open; the signal is still consumed.
+        core.message_processor.newly_registered_container =
+            Some(("77".to_string(), "Backpack".to_string()));
+        core.realize_offered_windows(80, 24);
+        assert!(!core.ui_state.windows.contains_key("backpack"));
+        assert!(core.message_processor.newly_registered_container.is_none());
+
+        // Shown → the next sighting auto-opens the window.
+        core.game_state.window_offers.set_policy("77", Policy::Shown);
+        core.message_processor.newly_registered_container =
+            Some(("77".to_string(), "Backpack".to_string()));
+        core.realize_offered_windows(80, 24);
+        assert!(core.ui_state.windows.contains_key("backpack"));
     }
 }
 

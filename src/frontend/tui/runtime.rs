@@ -790,31 +790,10 @@ async fn async_run(
                         }
                     }
 
-                    // Container discovery: auto-create window for new containers
-                    if app_core.ui_state.container_discovery_mode {
-                        if let Some((id, title)) =
-                            app_core.message_processor.newly_registered_container.take()
-                        {
-                            tracing::info!(
-                                "Container discovery: creating window for '{}' (id={})",
-                                title,
-                                id
-                            );
-                            let (term_width, term_height) = frontend.size();
-                            app_core.create_ephemeral_container_window(
-                                &title,
-                                term_width,
-                                term_height,
-                            );
-                        }
-                    } else {
-                        // Clear any pending signal if discovery mode is off
-                        app_core.message_processor.newly_registered_container = None;
-                    }
-
-                    // Process pending window additions from openDialog events
+                    // Realize game-offered windows (containers whose offer
+                    // the user has Shown, openDialog-templated widgets).
                     let (term_width, term_height) = frontend.size();
-                    app_core.process_pending_window_additions(term_width, term_height);
+                    app_core.realize_offered_windows(term_width, term_height);
                 }
                 ServerMessage::Connected => {
                     tracing::info!("Connected to game server");

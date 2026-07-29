@@ -1771,18 +1771,20 @@ impl AppCore {
                 self.needs_render = true;
             }
 
-            // Container discovery mode
+            // The old all-or-nothing container discovery toggle is retired:
+            // container windows are now per-container choices in the
+            // known-windows list, so alias .containers to that.
             "containers" => {
-                self.ui_state.container_discovery_mode = !self.ui_state.container_discovery_mode;
-                let status = if self.ui_state.container_discovery_mode {
-                    "ON"
-                } else {
-                    "OFF"
-                };
-                self.add_system_message(&format!("Container discovery {}", status));
-                if self.ui_state.container_discovery_mode {
-                    self.add_system_message("LOOK IN containers to create windows for them");
-                }
+                self.add_system_message(
+                    "Container windows are now per-container: tick them in the known-windows list.",
+                );
+                let items = self.build_known_windows_menu();
+                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
+                    items,
+                    (40, 12),
+                ));
+                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
+                self.needs_render = true;
             }
             "hidecontainers" => {
                 // No args = close all, with arg = close matching container

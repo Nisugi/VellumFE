@@ -68,9 +68,6 @@ pub struct UiState {
     /// More targeted than needs_widget_reset which clears ALL caches
     pub widgets_to_reset: Vec<String>,
 
-    /// Container discovery mode - when ON, auto-creates windows for LOOK IN containers
-    pub container_discovery_mode: bool,
-
     /// Set of ephemeral window names (session-only, not saved to layout)
     pub ephemeral_windows: std::collections::HashSet<String>,
 
@@ -430,7 +427,6 @@ impl UiState {
             pending_link_click: None,
             needs_widget_reset: false,
             widgets_to_reset: Vec::new(),
-            container_discovery_mode: false,
             ephemeral_windows: std::collections::HashSet::new(),
             quickbars: HashMap::new(),
             quickbar_order: Vec::new(),
