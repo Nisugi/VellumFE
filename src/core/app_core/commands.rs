@@ -1814,6 +1814,19 @@ impl AppCore {
                 self.needs_render = true;
             }
 
+            // Known-windows list: the windows the game has offered
+            // (containers/dialogs/streams), each togglable show/hide. On the
+            // GUI this opens its checkbox panel; on the TUI it's a popup menu.
+            "knownwindows" | "windows" => {
+                let items = self.build_known_windows_menu();
+                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
+                    items,
+                    (40, 12),
+                ));
+                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
+                self.needs_render = true;
+            }
+
             _ => {
                 self.add_system_message(&format!("Unknown command: {}", command));
                 self.add_system_message("Type .help for list of commands");

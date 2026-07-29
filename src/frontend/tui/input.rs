@@ -1283,6 +1283,24 @@ impl TuiFrontend {
                             } else {
                                 tracing::warn!("No items for menu submenu: {}", submenu_name);
                             }
+                        } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
+                            // Known-windows list: flip this offer's show/hide,
+                            // then re-open the list (with refreshed [x]/[ ]
+                            // marks) so several can be toggled in one pass.
+                            let offer_id = offer_id.to_string();
+                            app_core.toggle_window_offer(&offer_id);
+                            let items = app_core.build_known_windows_menu();
+                            let position = app_core
+                                .ui_state
+                                .popup_menu
+                                .as_ref()
+                                .map(|m| m.position)
+                                .unwrap_or((8, 4));
+                            app_core.ui_state.popup_menu =
+                                Some(crate::data::ui_state::PopupMenu::new(items, position));
+                            app_core.ui_state.input_mode = InputMode::Menu;
+                            app_core.needs_render = true;
+                            return Ok((true, None));
                         } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
                             // Context menu or .menu submenu
                             // Try build_submenu first (for .menu categories)

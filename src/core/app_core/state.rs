@@ -3051,6 +3051,7 @@ impl AppCore {
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
+        self.add_system_message("  .knownwindows           - List windows the game has offered (containers/dialogs); toggle show/hide");
         self.add_system_message("  .sorter [on|off]        - Categorize 'look in container' output by item type");
         self.add_system_message("  .foreach ... in <bag>; cmd; cmd - Batch commands over matching container items (.foreach for usage)");
         self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, foreach run)");
@@ -5336,6 +5337,62 @@ impl AppCore {
     }
 
     /// Build "Hide Window" menu showing widget categories (only categories with visible windows)
+    /// Build the "Known Windows" menu: every window the game has offered,
+    /// each row prefixed `[x]`/`[ ]` for its current shown state. Selecting
+    /// a row emits `__TOGGLE_OFFER__<id>` to flip it. Frontend-agnostic —
+    /// the TUI drives its known-windows list off this; the GUI has its own
+    /// richer checkbox panel.
+    pub fn build_known_windows_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
+        use crate::core::window_offers::OfferKind;
+        let offers = &self.game_state.window_offers;
+        if offers.is_empty() {
+            return vec![crate::data::ui_state::PopupMenuItem {
+                text: "(no windows offered yet)".to_string(),
+                command: String::new(),
+                disabled: true,
+            }];
+        }
+        // Grouped by kind for a stable, readable list.
+        let mut items = Vec::new();
+        for kind in [OfferKind::Container, OfferKind::Dialog, OfferKind::Stream] {
+            let mut group: Vec<_> = offers.all().filter(|o| o.kind == kind).collect();
+            if group.is_empty() {
+                continue;
+            }
+            group.sort_by(|a, b| a.title.cmp(&b.title));
+            for offer in group {
+                let mark = if offer.should_show() { "[x]" } else { "[ ]" };
+                items.push(crate::data::ui_state::PopupMenuItem {
+                    text: format!("{} {} ({})", mark, offer.title, kind.label()),
+                    command: format!("__TOGGLE_OFFER__{}", offer.id),
+                    disabled: false,
+                });
+            }
+        }
+        items
+    }
+
+    /// Toggle an offered window's show/hide policy (from the known-windows
+    /// menu). Flips shown→Hidden / not-shown→Shown and applies it.
+    pub fn toggle_window_offer(&mut self, offer_id: &str) {
+        use crate::core::window_offers::Policy;
+        let currently_shown = self
+            .game_state
+            .window_offers
+            .get(offer_id)
+            .is_some_and(|o| o.should_show());
+        let (w, h) = (
+            self.layout.terminal_width.unwrap_or(80),
+            self.layout.terminal_height.unwrap_or(24),
+        );
+        let new_policy = if currently_shown {
+            Policy::Hidden
+        } else {
+            Policy::Shown
+        };
+        self.set_window_offer_policy(offer_id, new_policy, w, h);
+    }
+
     pub fn build_hide_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         let categories_map = crate::config::Config::get_visible_templates_by_category(&self.layout, true);
 
@@ -6077,6 +6134,34 @@ mod tests {
         assert_eq!(p.y.get(), 0);
         assert_eq!(p.width.get(), 10); // 4 raised to min_cols
         assert_eq!(p.height.get(), 20); // 30 capped at max_rows
+    }
+
+    #[test]
+    fn known_windows_menu_reflects_state_and_toggle_flips_it() {
+        use crate::core::window_offers::OfferKind;
+        let mut core = AppCore::new_for_test();
+        core.layout.terminal_width = Some(80);
+        core.layout.terminal_height = Some(24);
+        core.game_state.window_offers.offer(
+            "77", "Backpack", OfferKind::Container, None, false, false,
+        );
+
+        // Fresh offer: unshown → "[ ]" and a toggle command.
+        let menu = core.build_known_windows_menu();
+        let row = menu.iter().find(|i| i.command == "__TOGGLE_OFFER__77").unwrap();
+        assert!(row.text.starts_with("[ ]"), "row: {}", row.text);
+        assert!(row.text.contains("Backpack"));
+
+        // Toggle shows it (and creates the window).
+        core.toggle_window_offer("77");
+        assert!(core.ui_state.windows.contains_key("backpack"));
+        let menu = core.build_known_windows_menu();
+        let row = menu.iter().find(|i| i.command == "__TOGGLE_OFFER__77").unwrap();
+        assert!(row.text.starts_with("[x]"), "row: {}", row.text);
+
+        // Toggle again hides it.
+        core.toggle_window_offer("77");
+        assert!(!core.ui_state.windows.contains_key("backpack"));
     }
 
     #[test]
