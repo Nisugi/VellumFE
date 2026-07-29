@@ -3839,6 +3839,9 @@ impl AppCore {
         };
 
         if let Some(name) = self.layout.register_discovered_window(binding, template) {
+            // A new discovery changes the layout — mark it so the autosave
+            // (or .savelayout) persists it, making the window known forever.
+            self.mark_layout_modified();
             // Set a friendly title + Shown/Hidden default.
             if let Some(def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
                 if !d.title.is_empty() {
@@ -6656,6 +6659,40 @@ mod tests {
         core.set_known_window_shown("thoughts", false, 80, 24);
         assert_eq!(vis(&core), WindowVisibility::Hidden);
         assert!(!core.ui_state.windows.contains_key("thoughts"));
+    }
+
+    #[test]
+    fn rediscovery_of_a_persisted_window_is_idempotent() {
+        // U4: after a persisted discovered window reloads (simulated: a
+        // bound Hidden layout entry already present), the game re-announcing
+        // it must NOT create a duplicate, and must NOT force it visible.
+        use crate::config::{WindowBinding, WindowVisibility};
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        let mut core = core_with_layout(vec![]);
+        // Simulate a reloaded layout: combat already bound + Hidden.
+        let mut combat = crate::config::Config::get_window_template("stance").unwrap();
+        combat.base_mut().name = "combat".to_string();
+        combat.base_mut().binding = Some(WindowBinding::Dialog("combat".to_string()));
+        combat.base_mut().visibility = WindowVisibility::Hidden;
+        core.layout.windows.push(combat);
+        assert_eq!(core.layout.windows.len(), 1);
+
+        // The game re-announces combat this session.
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "combat".to_string(),
+            title: "Combat".to_string(),
+            kind: WindowDiscoveryKind::DialogPanel,
+            save: false,
+            blocklisted: true,
+        });
+        core.realize_offered_windows(80, 24);
+
+        // No duplicate; still Hidden.
+        assert_eq!(core.layout.windows_bound_to("combat").len(), 1);
+        assert_eq!(
+            core.layout.windows.iter().find(|w| w.name() == "combat").unwrap().base().visibility,
+            WindowVisibility::Hidden
+        );
     }
 
     #[test]

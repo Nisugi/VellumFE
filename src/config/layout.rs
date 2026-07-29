@@ -807,6 +807,67 @@ zoom = 3
 "#;
 
     #[test]
+    fn discovered_windows_persist_binding_and_visibility() {
+        // U4: a discovered stream + dialog panel become bound Hidden layout
+        // entries; they must survive a save→reload round-trip with their
+        // binding, visibility, and feed wiring intact.
+        use crate::config::{WindowBinding, WindowVisibility};
+        let mut layout = Layout {
+            windows: Vec::new(),
+            terminal_width: Some(80),
+            terminal_height: Some(24),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        layout
+            .register_discovered_window(WindowBinding::Stream("thoughts".into()), "text_custom");
+        layout
+            .register_discovered_window(WindowBinding::Dialog("combat".into()), "dialogpanel");
+        // Wire the feeds the way register_window_discovery does.
+        for w in layout.windows.iter_mut() {
+            match w {
+                WindowDef::Text { base, data } if base.name == "thoughts" => {
+                    data.streams.push("thoughts".into());
+                }
+                WindowDef::DialogPanel { base, data } if base.name == "combat" => {
+                    data.dialog_id = "combat".into();
+                }
+                _ => {}
+            }
+        }
+
+        // Round-trip through TOML.
+        let toml = toml::to_string_pretty(&layout).expect("serialize");
+        let reloaded = Layout::parse_tolerant(&toml, "roundtrip").expect("reload");
+
+        // Both windows survived, bound + hidden.
+        assert!(reloaded.has_window_bound_to("thoughts"));
+        assert!(reloaded.has_window_bound_to("combat"));
+        for id in ["thoughts", "combat"] {
+            let w = reloaded
+                .windows
+                .iter()
+                .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+                .unwrap();
+            assert_eq!(w.base().visibility, WindowVisibility::Hidden, "{id}");
+        }
+        // Feed wiring survived.
+        let thoughts = reloaded.windows.iter().find(|w| w.name() == "thoughts").unwrap();
+        if let WindowDef::Text { data, .. } = thoughts {
+            assert!(data.streams.contains(&"thoughts".to_string()));
+        } else {
+            panic!("thoughts should be a text window");
+        }
+        let combat = reloaded.windows.iter().find(|w| w.name() == "combat").unwrap();
+        if let WindowDef::DialogPanel { data, .. } = combat {
+            assert_eq!(data.dialog_id, "combat");
+        } else {
+            panic!("combat should be a dialog panel");
+        }
+    }
+
+    #[test]
     fn tolerant_parse_skips_unknown_widget_types() {
         let layout = Layout::parse_tolerant(MIXED_LAYOUT, "test").expect("parse");
         assert_eq!(layout.windows.len(), 1);
