@@ -131,6 +131,10 @@ pub struct GameState {
     /// see `core::game_objects`.
     pub objects: crate::core::game_objects::GameObjects,
 
+    /// Windows the game has offered to show (containers/dialogs/streams),
+    /// with per-window user show/hide policy. See `core::window_offers`.
+    pub window_offers: crate::core::window_offers::WindowOffers,
+
     /// DragonRealms experience/skill component state
     pub dr_experience: DRExperienceState,
 
@@ -887,6 +891,7 @@ impl GameState {
             room_players_generation: 0,
             room_meta: RoomMetaState::default(),
             objects: crate::core::game_objects::GameObjects::default(),
+            window_offers: crate::core::window_offers::WindowOffers::default(),
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),

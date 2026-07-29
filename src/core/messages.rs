@@ -444,6 +444,16 @@ impl MessageProcessor {
         match element {
             ParsedElement::StreamWindow { id, subtitle, title } => {
                 self.note_seen_stream(id, title.as_deref());
+                // Register as a window offer too (unified list; P1). Streams
+                // are the persistent named windows, so mark resident.
+                game_state.window_offers.offer(
+                    id.clone(),
+                    title.clone().unwrap_or_else(|| id.clone()),
+                    crate::core::window_offers::OfferKind::Stream,
+                    None,
+                    false,
+                    true,
+                );
                 self.handle_stream_window(
                     id,
                     subtitle.as_deref(),
@@ -1346,6 +1356,18 @@ impl MessageProcessor {
                     return;
                 }
 
+                // Register as a window offer (unified list; P1). Dialogs
+                // reaching here are non-resident (the parser mines resident
+                // ones into panels). save='t' asks to persist position.
+                game_state.window_offers.offer(
+                    id.clone(),
+                    title.clone().unwrap_or_else(|| id.clone()),
+                    crate::core::window_offers::OfferKind::Dialog,
+                    None,
+                    *save,
+                    false,
+                );
+
                 // Handle injuries popup for viewing another player's injuries
                 // Dialog ID format: "injuries-PLAYERID" (e.g., "injuries-10154507")
                 // Title format: "Zoleta's Injuries"
@@ -1927,6 +1949,19 @@ impl MessageProcessor {
                 game_state
                     .objects
                     .register_container(id.clone(), title.clone(), target.clone());
+
+                // Register it as a window offer too (unified list; P1 —
+                // populated alongside the existing discovery path).
+                if !title.is_empty() {
+                    game_state.window_offers.offer(
+                        id.clone(),
+                        title.clone(),
+                        crate::core::window_offers::OfferKind::Container,
+                        None,
+                        false,
+                        false,
+                    );
+                }
 
                 // Signal container for discovery mode (every LOOK IN triggers this)
                 // The runtime will check if a window already exists before creating
@@ -4457,6 +4492,58 @@ mod tests {
         let s2 = game_state.objects.status_of("2").unwrap();
         assert_eq!(s2.registered, Some(false), "in reply, no marker = false");
         assert_eq!(s2.marked, Some(false));
+    }
+
+    #[test]
+    fn window_offers_registered_from_all_three_tag_families() {
+        use crate::core::window_offers::OfferKind;
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        let feed = [
+            ParsedElement::Container {
+                id: "77".to_string(),
+                title: "Backpack".to_string(),
+                target: Some("#77".to_string()),
+            },
+            ParsedElement::DialogOpen {
+                id: "bank".to_string(),
+                title: Some("Bank".to_string()),
+                save: true,
+            },
+            ParsedElement::StreamWindow {
+                id: "thoughts".to_string(),
+                subtitle: None,
+                title: Some("Thoughts".to_string()),
+            },
+        ];
+        for element in &feed {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        let offers = &game_state.window_offers;
+        assert_eq!(offers.len(), 3);
+        assert_eq!(offers.get("77").unwrap().kind, OfferKind::Container);
+        assert_eq!(offers.get("bank").unwrap().kind, OfferKind::Dialog);
+        assert!(offers.get("bank").unwrap().save, "save='t' captured");
+        let stream = offers.get("thoughts").unwrap();
+        assert_eq!(stream.kind, OfferKind::Stream);
+        assert!(stream.resident, "streams are resident");
+        assert!(stream.should_show(), "resident+unset shows");
+        // Container non-resident + unset = not auto-shown.
+        assert!(!offers.get("77").unwrap().should_show());
     }
 
     #[test]
