@@ -4936,6 +4936,75 @@ function colorsSection(title) {
   return el;
 }
 
+// A row with a single color picker bound to a string field (UI colors are
+// plain hex strings, not fg/bg objects). Reuses the same picker affordance as
+// colorRow so the whole sheet reads consistently.
+function singleColorRow(label, obj, key) {
+  const row = document.createElement("div");
+  row.className = "color-row";
+  const name = document.createElement("span");
+  name.className = "color-row-name";
+  name.textContent = label;
+  row.appendChild(name);
+
+  const wrap = document.createElement("span");
+  wrap.className = "color-cell";
+  const pick = document.createElement("input");
+  pick.type = "color";
+  const current = obj[key];
+  const isHex = current && /^#[0-9a-f]{6}$/i.test(current);
+  if (isHex) pick.value = current;
+  pick.classList.toggle("hl-inactive", !current);
+  const none = document.createElement("button");
+  none.type = "button";
+  none.textContent = "✕";
+  none.className = "color-none";
+  none.classList.toggle("hl-none-active", !current);
+  const setVal = (v) => {
+    if (v) obj[key] = v; else obj[key] = "";
+    pick.classList.toggle("hl-inactive", !v);
+    none.classList.toggle("hl-none-active", !v);
+  };
+  pick.addEventListener("click", () => setVal(pick.value));
+  pick.addEventListener("input", () => setVal(pick.value));
+  none.addEventListener("click", () => setVal(null));
+  wrap.append(pick, none);
+  row.appendChild(wrap);
+  return row;
+}
+
+// A labeled section header with a "+ Add" button on the right.
+function colorsSectionWithAdd(title, addLabel, onAdd) {
+  const wrap = document.createElement("div");
+  wrap.className = "color-section-head";
+  const t = document.createElement("span");
+  t.className = "status-title";
+  t.textContent = title;
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "color-add";
+  add.textContent = addLabel;
+  add.addEventListener("click", onAdd);
+  wrap.append(t, add);
+  return wrap;
+}
+
+// A deletable row wrapper: appends a small remove button that splices `arr`
+// at `index` and re-renders.
+function withDelete(row, arr, index) {
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "color-del";
+  del.textContent = "🗑"; // wastebasket
+  del.setAttribute("aria-label", "Delete");
+  del.addEventListener("click", () => {
+    arr.splice(index, 1);
+    renderColorsList();
+  });
+  row.appendChild(del);
+  return row;
+}
+
 function renderColorsList() {
   colorsList.replaceChildren();
   const doc = colorsDoc || {};
@@ -4949,26 +5018,103 @@ function renderColorsList() {
     }
   }
 
-  const prompts = doc.prompt_colors || [];
-  if (prompts.length) {
-    colorsList.appendChild(colorsSection("Prompt characters"));
-    for (const p of prompts) {
-      colorsList.appendChild(colorRow('"' + p.character + '"', p, "fg", "bg"));
+  const prompts = (doc.prompt_colors = doc.prompt_colors || []);
+  colorsList.appendChild(
+    colorsSectionWithAdd("Prompt characters", "+ Add", () => {
+      prompts.push({ character: ">", fg: null, bg: null });
+      renderColorsList();
+    }),
+  );
+  prompts.forEach((p, i) => {
+    const label = document.createElement("input");
+    label.className = "color-key-input";
+    label.value = p.character || "";
+    label.maxLength = 4;
+    label.setAttribute("aria-label", "Prompt character");
+    label.addEventListener("input", () => { p.character = label.value; });
+    const row = colorRow("", p, "fg", "bg");
+    row.querySelector(".color-row-name").replaceWith(label);
+    colorsList.appendChild(withDelete(row, prompts, i));
+  });
+
+  // UI chrome colors (plain hex strings on doc.ui). One picker each.
+  const ui = doc.ui;
+  if (ui) {
+    colorsList.appendChild(colorsSection("Interface colors"));
+    const UI_FIELDS = [
+      ["command_echo_color", "Command echo"],
+      ["border_color", "Border"],
+      ["focused_border_color", "Focused border"],
+      ["text_color", "Text"],
+      ["background_color", "Background"],
+      ["selection_bg_color", "Selection background"],
+      ["textarea_background", "Textarea background"],
+    ];
+    for (const [key, label] of UI_FIELDS) {
+      colorsList.appendChild(singleColorRow(label, ui, key));
     }
   }
 
-  if (!names.length && !prompts.length) {
-    colorsList.appendChild(Object.assign(document.createElement("p"), {
-      className: "hl-empty",
-      textContent: "No presets or prompt colors in this file.",
-    }));
-  }
+  // Spell color ranges: spell ids + bar/text/bg pickers.
+  const spells = (doc.spell_colors = doc.spell_colors || []);
+  colorsList.appendChild(
+    colorsSectionWithAdd("Spell colors (bar · text · background)", "+ Add", () => {
+      spells.push({ spells: [], color: "", bar_color: null, text_color: null, bg_color: null });
+      renderColorsList();
+    }),
+  );
+  spells.forEach((s, i) => {
+    const ids = document.createElement("input");
+    ids.className = "color-key-input color-ids-input";
+    ids.value = (s.spells || []).join(", ");
+    ids.setAttribute("aria-label", "Spell IDs (comma-separated)");
+    ids.placeholder = "101, 107";
+    ids.addEventListener("input", () => {
+      s.spells = ids.value
+        .split(",")
+        .map((t) => parseInt(t.trim(), 10))
+        .filter((n) => Number.isFinite(n));
+    });
+    // Three pickers: bar_color, text_color, bg_color.
+    const row = document.createElement("div");
+    row.className = "color-row";
+    row.appendChild(ids);
+    for (const key of ["bar_color", "text_color", "bg_color"]) {
+      const cell = colorRow("", s, key, null);
+      row.appendChild(cell.querySelector(".color-cell"));
+    }
+    colorsList.appendChild(withDelete(row, spells, i));
+  });
 
-  const note = document.createElement("p");
-  note.className = "hl-empty";
-  note.textContent =
-    "Other sections (TUI chrome, spell colors, palette) are preserved as-is; edit them under Advanced.";
-  colorsList.appendChild(note);
+  // Palette entries: name + single color + category.
+  const palette = (doc.color_palette = doc.color_palette || []);
+  colorsList.appendChild(
+    colorsSectionWithAdd("Palette", "+ Add", () => {
+      palette.push({ name: "", color: "#ffffff", category: "", favorite: false });
+      renderColorsList();
+    }),
+  );
+  palette.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "color-row";
+    const nameInput = document.createElement("input");
+    nameInput.className = "color-key-input";
+    nameInput.value = c.name || "";
+    nameInput.placeholder = "name";
+    nameInput.setAttribute("aria-label", "Palette color name");
+    nameInput.addEventListener("input", () => { c.name = nameInput.value; });
+    const catInput = document.createElement("input");
+    catInput.className = "color-key-input color-cat-input";
+    catInput.value = c.category || "";
+    catInput.placeholder = "category";
+    catInput.setAttribute("aria-label", "Palette color category");
+    catInput.addEventListener("input", () => { c.category = catInput.value; });
+    row.append(nameInput);
+    const picker = singleColorRow("", c, "color");
+    row.appendChild(picker.querySelector(".color-cell"));
+    row.append(catInput);
+    colorsList.appendChild(withDelete(row, palette, i));
+  });
 }
 
 document.getElementById("colors-save").addEventListener("click", () => {

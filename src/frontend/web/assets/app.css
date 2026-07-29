@@ -2155,6 +2155,54 @@ body.hide-compass #compass { display: none !important; }
   border-color: var(--st);
 }
 
+/* Section header with an inline add button (spell/palette/prompt sections). */
+.color-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+.color-section-head .status-title { margin: 0; }
+
+.color-add {
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.color-add:active { background: var(--bg-panel); }
+
+/* Small delete button at the end of a deletable color row. */
+.color-del {
+  padding: 0 8px;
+  min-height: 34px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+/* Free-text inputs embedded in a color row (prompt char, spell ids, palette
+   name/category) — sized to sit alongside the pickers without dominating. */
+.color-key-input {
+  flex: 1;
+  min-width: 40px;
+  padding: 6px 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.color-ids-input { flex: 2; }
+.color-cat-input { flex: 1; }
+
 #colors-actions { display: flex; }
 
 #colors-save {
