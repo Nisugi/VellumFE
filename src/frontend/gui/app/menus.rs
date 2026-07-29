@@ -657,10 +657,21 @@ impl VellumGuiApp {
         let command = menu_command.command;
 
         if let Some(category) = command.strip_prefix("__SUBMENU__") {
-            if let Some(items) = self.app_core.menu_categories.get(category).cloned() {
-                self.open_child_menu_for_layer(menu_command.layer, items);
-            } else {
+            // Right-click context menus stash their children in
+            // menu_categories; the .menu main-menu submenus (colors/
+            // highlights/keybinds/layouts/windows) are built on demand by
+            // build_submenu. Try the cache first, then fall back — without
+            // the fallback the whole .menu tree is dead in the GUI.
+            let items = self
+                .app_core
+                .menu_categories
+                .get(category)
+                .cloned()
+                .unwrap_or_else(|| self.app_core.build_submenu(category));
+            if items.is_empty() {
                 tracing::warn!("Missing GUI menu category: {}", category);
+            } else {
+                self.open_child_menu_for_layer(menu_command.layer, items);
             }
             return;
         }
@@ -777,9 +788,16 @@ impl VellumGuiApp {
             return;
         }
 
-        // A real command (context-menu verb) executed: return to interact
-        // mode if the menu was opened from it.
-        self.dispatch_raw_command(command);
+        // A menu leaf command. Dot-commands (.settings, .colors, ...) are
+        // CLIENT commands — process them locally (open the editor), never
+        // send them to the game. Everything else is a context-menu game
+        // verb. This is why the .menu tree was dead in the GUI: its leaves
+        // are dot-commands and they were being sent to the network.
+        if command.starts_with('.') {
+            self.dispatch_command(command);
+        } else {
+            self.dispatch_raw_command(command);
+        }
         self.close_menus_restore();
     }
 
