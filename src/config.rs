@@ -32,7 +32,10 @@ mod templates;
 mod widgets;
 mod window_def;
 
-pub use colors::{ColorConfig, PaletteColor, SpellColorRange, SpellColorStyle, UiColors};
+pub use colors::{
+    ColorConfig, PaletteColor, PresetColor, PromptColor, SpellColorRange, SpellColorStyle,
+    UiColors,
+};
 pub use highlights::{
     highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
 };

@@ -3,13 +3,15 @@
 //! hot-reloads via `AppCore::reload_colors`.
 
 use super::super::{theme, VellumGuiApp};
-use crate::config::{ColorConfig, PaletteColor, SpellColorRange};
+use crate::config::{ColorConfig, PaletteColor, PresetColor, PromptColor, SpellColorRange};
 use eframe::egui;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ColorsTab {
     Palette,
     Ui,
+    Presets,
+    Prompts,
     Spells,
 }
 
@@ -19,6 +21,8 @@ pub(in super::super) struct ColorsEditorState {
     palette_form: Option<PaletteFormState>,
     spell_form: Option<SpellFormState>,
     ui_buffer: Option<UiColorsBuffer>,
+    presets_buffer: Option<PresetsBuffer>,
+    prompts_buffer: Option<PromptsBuffer>,
 }
 
 impl ColorsEditorState {
@@ -29,6 +33,8 @@ impl ColorsEditorState {
             palette_form: None,
             spell_form: None,
             ui_buffer: None,
+            presets_buffer: None,
+            prompts_buffer: None,
         }
     }
 }
@@ -204,6 +210,108 @@ impl UiColorsBuffer {
     }
 }
 
+/// One editable preset row: a name plus fg/bg as free text (empty = None).
+struct PresetRow {
+    name: String,
+    fg: String,
+    bg: String,
+}
+
+/// Live edit buffer for named preset colors (`ColorConfig.presets`). Edited as
+/// an ordered Vec so rows have stable identity while typing; applied back to
+/// the map wholesale on Save (last write wins on duplicate names, flagged in
+/// the UI before save).
+struct PresetsBuffer {
+    rows: Vec<PresetRow>,
+}
+
+impl PresetsBuffer {
+    fn from_config(colors: &ColorConfig) -> Self {
+        let mut rows: Vec<PresetRow> = colors
+            .presets
+            .iter()
+            .map(|(name, p)| PresetRow {
+                name: name.clone(),
+                fg: p.fg.clone().unwrap_or_default(),
+                bg: p.bg.clone().unwrap_or_default(),
+            })
+            .collect();
+        rows.sort_by(|a, b| a.name.cmp(&b.name));
+        Self { rows }
+    }
+
+    fn apply(&self, colors: &mut ColorConfig) {
+        let mut map = std::collections::HashMap::new();
+        for row in &self.rows {
+            let name = row.name.trim();
+            if name.is_empty() {
+                continue; // unnamed rows are dropped
+            }
+            map.insert(
+                name.to_string(),
+                PresetColor {
+                    fg: opt(&row.fg),
+                    bg: opt(&row.bg),
+                },
+            );
+        }
+        colors.presets = map;
+    }
+}
+
+/// One editable prompt row: the matched character plus fg/bg as free text.
+struct PromptRow {
+    character: String,
+    fg: String,
+    bg: String,
+}
+
+/// Live edit buffer for prompt colors (`ColorConfig.prompt_colors`).
+struct PromptsBuffer {
+    rows: Vec<PromptRow>,
+}
+
+impl PromptsBuffer {
+    fn from_config(colors: &ColorConfig) -> Self {
+        // Fold the legacy `color` field into fg up front so the editor only
+        // ever presents/writes canonical fg + bg (legacy stays cleared).
+        let rows = colors
+            .prompt_colors
+            .iter()
+            .map(|p| PromptRow {
+                character: p.character.clone(),
+                fg: p.fg.clone().or_else(|| p.color.clone()).unwrap_or_default(),
+                bg: p.bg.clone().unwrap_or_default(),
+            })
+            .collect();
+        Self { rows }
+    }
+
+    fn apply(&self, colors: &mut ColorConfig) {
+        colors.prompt_colors = self
+            .rows
+            .iter()
+            .filter(|row| !row.character.trim().is_empty())
+            .map(|row| PromptColor {
+                character: row.character.trim().to_string(),
+                fg: opt(&row.fg),
+                bg: opt(&row.bg),
+                color: None,
+            })
+            .collect();
+    }
+}
+
+/// Trim a color text field to `Option<String>` (empty → None).
+fn opt(value: &str) -> Option<String> {
+    let t = value.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
 use super::color_field;
 
 impl VellumGuiApp {
@@ -273,12 +381,16 @@ impl VellumGuiApp {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut state.tab, ColorsTab::Palette, "Palette");
                     ui.selectable_value(&mut state.tab, ColorsTab::Ui, "UI Colors");
+                    ui.selectable_value(&mut state.tab, ColorsTab::Presets, "Presets");
+                    ui.selectable_value(&mut state.tab, ColorsTab::Prompts, "Prompts");
                     ui.selectable_value(&mut state.tab, ColorsTab::Spells, "Spell Colors");
                 });
                 ui.separator();
                 match state.tab {
                     ColorsTab::Palette => self.render_palette_tab(ui, &mut state),
                     ColorsTab::Ui => self.render_ui_colors_tab(ui, &mut state),
+                    ColorsTab::Presets => self.render_presets_tab(ui, &mut state),
+                    ColorsTab::Prompts => self.render_prompts_tab(ui, &mut state),
                     ColorsTab::Spells => self.render_spell_colors_tab(ui, &mut state),
                 }
             });
@@ -521,6 +633,154 @@ impl VellumGuiApp {
         });
     }
 
+    fn render_presets_tab(&mut self, ui: &mut egui::Ui, state: &mut ColorsEditorState) {
+        let buffer = state
+            .presets_buffer
+            .get_or_insert_with(|| PresetsBuffer::from_config(&self.app_core.config.colors));
+
+        ui.label(
+            "Named color presets. Games reference these by name; each maps to \
+             a foreground and/or background color.",
+        );
+        if ui.button("Add preset").clicked() {
+            buffer.rows.push(PresetRow {
+                name: String::new(),
+                fg: String::new(),
+                bg: String::new(),
+            });
+        }
+        ui.separator();
+
+        let mut delete_row: Option<usize> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("presets_scroll")
+            .auto_shrink([false, false])
+            .max_height(300.0)
+            .show(ui, |ui| {
+                egui::Grid::new("presets_grid")
+                    .num_columns(4)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong("Name");
+                        ui.strong("Foreground");
+                        ui.strong("Background");
+                        ui.label("");
+                        ui.end_row();
+                        for (i, row) in buffer.rows.iter_mut().enumerate() {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut row.name)
+                                    .desired_width(120.0)
+                                    .hint_text("preset name"),
+                            );
+                            color_field(ui, &mut row.fg);
+                            color_field(ui, &mut row.bg);
+                            if ui.small_button("Delete").clicked() {
+                                delete_row = Some(i);
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+        if let Some(i) = delete_row {
+            buffer.rows.remove(i);
+        }
+
+        // Duplicate names would collide on save (last wins) — warn first.
+        let mut seen = std::collections::HashSet::new();
+        let dup = buffer
+            .rows
+            .iter()
+            .filter(|r| !r.name.trim().is_empty())
+            .find(|r| !seen.insert(r.name.trim().to_string()));
+        if let Some(r) = dup {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                format!("Duplicate preset name '{}' — only the last is kept.", r.name.trim()),
+            );
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                if let Some(buffer) = state.presets_buffer.take() {
+                    buffer.apply(&mut self.app_core.config.colors);
+                    self.persist_color_config();
+                    self.app_core.add_system_message("Preset colors saved.");
+                }
+            }
+            if ui.button("Reset").clicked() {
+                state.presets_buffer = None;
+            }
+        });
+    }
+
+    fn render_prompts_tab(&mut self, ui: &mut egui::Ui, state: &mut ColorsEditorState) {
+        let buffer = state
+            .prompts_buffer
+            .get_or_insert_with(|| PromptsBuffer::from_config(&self.app_core.config.colors));
+
+        ui.label(
+            "Per-character prompt colors. The character is the prompt glyph to \
+             match (e.g. >, R, S).",
+        );
+        if ui.button("Add prompt color").clicked() {
+            buffer.rows.push(PromptRow {
+                character: String::new(),
+                fg: String::new(),
+                bg: String::new(),
+            });
+        }
+        ui.separator();
+
+        let mut delete_row: Option<usize> = None;
+        egui::ScrollArea::vertical()
+            .id_salt("prompts_scroll")
+            .auto_shrink([false, false])
+            .max_height(300.0)
+            .show(ui, |ui| {
+                egui::Grid::new("prompts_grid")
+                    .num_columns(4)
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong("Character");
+                        ui.strong("Foreground");
+                        ui.strong("Background");
+                        ui.label("");
+                        ui.end_row();
+                        for (i, row) in buffer.rows.iter_mut().enumerate() {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut row.character)
+                                    .desired_width(80.0)
+                                    .hint_text("e.g. >"),
+                            );
+                            color_field(ui, &mut row.fg);
+                            color_field(ui, &mut row.bg);
+                            if ui.small_button("Delete").clicked() {
+                                delete_row = Some(i);
+                            }
+                            ui.end_row();
+                        }
+                    });
+            });
+        if let Some(i) = delete_row {
+            buffer.rows.remove(i);
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("Save").clicked() {
+                if let Some(buffer) = state.prompts_buffer.take() {
+                    buffer.apply(&mut self.app_core.config.colors);
+                    self.persist_color_config();
+                    self.app_core.add_system_message("Prompt colors saved.");
+                }
+            }
+            if ui.button("Reset").clicked() {
+                state.prompts_buffer = None;
+            }
+        });
+    }
+
     fn render_spell_colors_tab(&mut self, ui: &mut egui::Ui, state: &mut ColorsEditorState) {
         let mut delete_request: Option<usize> = None;
         if ui.button("Add spell color range").clicked() {
@@ -639,5 +899,79 @@ impl VellumGuiApp {
         } else if form_open && !cancelled {
             state.spell_form = Some(form);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presets_buffer_round_trips_and_drops_blanks() {
+        // Start from an empty preset map so the assertion isn't perturbed by
+        // the built-in defaults ColorConfig::default() ships.
+        let mut colors = ColorConfig::default();
+        colors.presets.clear();
+        colors.presets.insert(
+            "combat".to_string(),
+            PresetColor { fg: Some("#ff0000".into()), bg: None },
+        );
+        let mut buf = PresetsBuffer::from_config(&colors);
+        assert_eq!(buf.rows.len(), 1);
+        // Add a bg, and add a blank-named row that must be dropped on save.
+        buf.rows[0].bg = "#111111".into();
+        buf.rows.push(PresetRow { name: "  ".into(), fg: "#abc".into(), bg: String::new() });
+
+        let mut out = ColorConfig::default();
+        buf.apply(&mut out);
+        assert_eq!(out.presets.len(), 1, "blank-named row dropped, combat kept");
+        let p = out.presets.get("combat").expect("combat preset kept");
+        assert_eq!(p.fg.as_deref(), Some("#ff0000"));
+        assert_eq!(p.bg.as_deref(), Some("#111111"));
+    }
+
+    #[test]
+    fn presets_duplicate_name_last_wins() {
+        let mut colors = ColorConfig::default();
+        let mut buf = PresetsBuffer { rows: vec![
+            PresetRow { name: "x".into(), fg: "#111111".into(), bg: String::new() },
+            PresetRow { name: "x".into(), fg: "#222222".into(), bg: String::new() },
+        ] };
+        buf.rows[0].name = "x".into(); // ensure identical
+        let mut out = ColorConfig::default();
+        buf.apply(&mut out);
+        assert_eq!(out.presets.len(), 1);
+        assert_eq!(out.presets["x"].fg.as_deref(), Some("#222222"), "last row wins");
+    }
+
+    #[test]
+    fn prompts_buffer_folds_legacy_color_into_fg() {
+        let mut colors = ColorConfig::default();
+        colors.prompt_colors = vec![PromptColor {
+            character: ">".into(),
+            fg: None,
+            bg: None,
+            color: Some("#00ff00".into()), // legacy-only value
+        }];
+        let buf = PromptsBuffer::from_config(&colors);
+        assert_eq!(buf.rows[0].fg, "#00ff00", "legacy color surfaces as fg");
+
+        let mut out = ColorConfig::default();
+        buf.apply(&mut out);
+        assert_eq!(out.prompt_colors.len(), 1);
+        assert_eq!(out.prompt_colors[0].fg.as_deref(), Some("#00ff00"));
+        assert!(out.prompt_colors[0].color.is_none(), "legacy field cleared on save");
+    }
+
+    #[test]
+    fn prompts_buffer_drops_blank_character_rows() {
+        let buf = PromptsBuffer { rows: vec![
+            PromptRow { character: ">".into(), fg: "#fff".into(), bg: String::new() },
+            PromptRow { character: "   ".into(), fg: "#000".into(), bg: String::new() },
+        ] };
+        let mut out = ColorConfig::default();
+        buf.apply(&mut out);
+        assert_eq!(out.prompt_colors.len(), 1, "blank-character row dropped");
+        assert_eq!(out.prompt_colors[0].character, ">");
     }
 }
