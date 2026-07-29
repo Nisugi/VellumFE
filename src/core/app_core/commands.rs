@@ -1504,8 +1504,27 @@ impl AppCore {
                              ({types} types)."
                         ));
                     }
+                    // `.data update <name>` is a domain-specific alias over the
+                    // asset manager: download the named game-data file from a
+                    // repo (off-thread), landing it in the local-store tier the
+                    // data pack already reads. The post-install effect reloads.
+                    "update" => match parts.get(2) {
+                        Some(name) => {
+                            self.jinx_worker.set_game(self.game_type());
+                            let ack = self.jinx_worker.start(
+                                crate::core::jinx::worker::Request::Install {
+                                    name: name.to_string(),
+                                    only_repo: None,
+                                    overwrite: true,
+                                },
+                            );
+                            self.add_system_message(&ack);
+                        }
+                        None => self
+                            .add_system_message("Usage: .data update <name> (e.g. gameobj-data.xml)"),
+                    },
                     _ => {
-                        self.add_system_message("Usage: .data [status|reload]");
+                        self.add_system_message("Usage: .data [status|reload|update <name>]");
                     }
                 }
             }

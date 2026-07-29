@@ -615,14 +615,51 @@ impl AppCore {
     }
 
     /// Apply a post-install side effect on the main thread (reloads touch
-    /// `AppCore` and can't run on the worker). J3 fills in the live reloads;
-    /// for now installs are acknowledged by the worker's line.
+    /// `AppCore` and can't run on the worker). Reloads that already exist run
+    /// live; kinds whose reload plumbing isn't built yet say so plainly rather
+    /// than silently leaving a stale in-memory copy.
     fn apply_jinx_effect(&mut self, effect: crate::core::jinx::worker::Effect) {
         use crate::core::jinx::worker::Effect;
         match effect {
-            Effect::Installed { name, kind } => {
-                tracing::info!("jinx installed {name} ({kind}); reloads land in J3");
-            }
+            Effect::Installed { name, kind } => match name.as_str() {
+                // gameobj-data.xml re-resolves live: drop the cache and the
+                // next classify() reads the freshly installed global/data copy.
+                "gameobj-data.xml" => {
+                    let types = self.reload_data_pack();
+                    self.add_system_message(&format!(
+                        "[jinx] gameobj classifier reloaded ({types} types)"
+                    ));
+                }
+                // effect-list.xml is parsed once from the bundled copy into a
+                // OnceLock (spell_table.rs); there's no disk-reload yet, so a
+                // fresh install needs a restart. Say so rather than imply it
+                // took effect.
+                "effect-list.xml" => {
+                    self.add_system_message(
+                        "[jinx] effect-list.xml installed — restart VellumFE to apply",
+                    );
+                }
+                // mapdb.json landed in the map dir, but the map loader looks
+                // for the versioned mapdb-<tag>.json names the updater writes;
+                // unifying that is a follow-up. Restart picks it up via the
+                // configured source resolution.
+                "mapdb.json" => {
+                    self.add_system_message(
+                        "[jinx] mapdb.json installed — use .mapdb or restart to load it",
+                    );
+                }
+                _ => match kind.as_str() {
+                    "skin" => self.add_system_message(&format!(
+                        "[jinx] skin '{name}' installed — activate with .setskin"
+                    )),
+                    "iconmap" | "image" | "icon" => self.add_system_message(&format!(
+                        "[jinx] {name} installed to the icon pool"
+                    )),
+                    _ => {
+                        tracing::info!("jinx installed {name} ({kind}); no reload hook");
+                    }
+                },
+            },
         }
     }
 
