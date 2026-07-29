@@ -36,8 +36,13 @@ center, and right sidebar. Toggle zones from the top toolbar.
 - **Move a window**: drag its title bar (free placement in the center), or
   **Alt+drag** the window body to move it between zones.
 - **Resize**: drag any window edge or corner.
-- **Add/hide windows**: the **Windows** menu in the toolbar — add from
-  categorized templates, toggle visibility, or reassign a window's zone.
+- **The Windows manager**: the **Windows** button in the toolbar opens one
+  window listing everything the client knows about — layout widgets, game
+  dialogs, streams, and containers — grouped by category and collapsible.
+  Each row has a **show/hide checkbox** and a **Zone** selector; **➕ Add
+  window…** creates a new one (custom windows open the editor). Hidden
+  windows stay hidden even when the game re-sends them (there is no dialog
+  blocklist — hiding is the control).
 - **Right-click** a window body for its context menu — including **Edit
   Window…**, which opens the window editor; title bars can be hidden
   per-window. Overlapping windows in the center area offer **Send to

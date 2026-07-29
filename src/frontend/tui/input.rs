@@ -1342,12 +1342,11 @@ impl TuiFrontend {
                             } else {
                                 tracing::warn!("No items for menu submenu: {}", submenu_name);
                             }
-                        } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-                            // Known-windows list: flip this offer's show/hide
-                            // and close the menu like any other menu action —
-                            // bulk toggling lives in the GUI checkbox panel.
-                            let offer_id = offer_id.to_string();
-                            app_core.toggle_window_offer(&offer_id);
+                        } else if let Some(name) = command.strip_prefix("__TOGGLE_WINDOW__") {
+                            // Windows list: flip this window's show/hide and
+                            // close the menu (U3, keyed on window name).
+                            let name = name.to_string();
+                            app_core.toggle_known_window(&name);
                             app_core.ui_state.popup_menu = None;
                             app_core.ui_state.submenu = None;
                             app_core.ui_state.nested_submenu = None;
@@ -4184,6 +4183,7 @@ impl TuiFrontend {
                 "widgetpicker" | "addwindow" => app_core.build_add_window_menu(),
                 "hidewindow" => app_core.build_hide_window_menu(),
                 "editwindow" => app_core.build_edit_window_menu(),
+                "knownwindows" => app_core.build_known_windows_menu(),
                 _ => {
                     app_core.ui_state.popup_menu = None;
                     app_core.ui_state.input_mode = InputMode::Normal;
@@ -4326,7 +4326,7 @@ impl TuiFrontend {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible && matches!(w.widget_type(), "indicator"))
+                .filter(|w| w.base().visibility.is_shown() && matches!(w.widget_type(), "indicator"))
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_hide_menu(&indicators);
@@ -4504,13 +4504,11 @@ impl TuiFrontend {
                 app_core.hide_window(window_name);
             }
             app_core.needs_render = true;
-        } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-            // Known-windows list (keyboard Enter): flip the offer's
-            // show/hide and close the menu like any other menu action —
-            // bulk toggling lives in the GUI checkbox panel. (The mouse
-            // path has its own copy.)
-            let offer_id = offer_id.to_string();
-            app_core.toggle_window_offer(&offer_id);
+        } else if let Some(name) = command.strip_prefix("__TOGGLE_WINDOW__") {
+            // Windows list (keyboard Enter): flip this window's show/hide
+            // and close the menu (U3, keyed on window name).
+            let name = name.to_string();
+            app_core.toggle_known_window(&name);
             app_core.ui_state.popup_menu = None;
             app_core.ui_state.submenu = None;
             app_core.ui_state.nested_submenu = None;

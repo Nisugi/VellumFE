@@ -70,7 +70,7 @@ pub use widgets::{
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
     QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,
     SpacerWidgetData, SpellsWidgetData, TabbedTextTab, TabbedTextWidgetData, TargetsWidgetData,
-    TextReplacement, TextWidgetData, WebUiWidgetData, WindowBase,
+    TextReplacement, TextWidgetData, WebUiWidgetData, WindowBase, WindowBinding, WindowVisibility,
 };
 pub use window_def::WindowDef;
 
@@ -109,6 +109,18 @@ pub enum WidgetCategory {
 }
 
 impl WidgetCategory {
+    /// All categories in a stable display order.
+    pub const ALL: [WidgetCategory; 8] = [
+        WidgetCategory::Status,
+        WidgetCategory::ProgressBar,
+        WidgetCategory::Countdown,
+        WidgetCategory::ActiveEffects,
+        WidgetCategory::Entity,
+        WidgetCategory::Hand,
+        WidgetCategory::TextWindow,
+        WidgetCategory::Other,
+    ];
+
     pub fn display_name(&self) -> &str {
         match self {
             Self::ActiveEffects => "Active Effects",
@@ -337,25 +349,6 @@ fn default_focus_exclude() -> Vec<String> {
 
 fn default_betrayer_active_color() -> Option<String> {
     Some("#ff4040".to_string())
-}
-
-fn default_open_dialog_blocklist() -> Vec<String> {
-    vec![
-        "combat".to_string(),
-        "injuries".to_string(),
-        "stance".to_string(),
-        "befriend".to_string(),
-        "espMasterDialog".to_string(),
-        "espMasterData".to_string(),
-        "Buffs".to_string(),
-        "Debuffs".to_string(),
-        "Cooldowns".to_string(),
-        "mapMaster".to_string(),
-        "encum".to_string(),
-        "minivitals".to_string(),
-        "expr".to_string(),
-        "Active Spells".to_string(),
-    ]
 }
 
 fn default_dashboard_layout() -> String {

@@ -994,21 +994,16 @@ impl VellumGuiApp {
         }
     }
 
-    fn windows_for_menu(&self) -> Vec<(TabKey, String, bool, bool, GuiShellZone)> {
-        let detached_tabs = self.detached_tab_keys();
-        let mut entries: Vec<(TabKey, String, bool, bool, GuiShellZone)> = self
-            .available_tabs
+    /// Find the live tab whose window matches `window_name` (bridges the
+    /// core known-windows list, keyed by name, to the GUI zone system,
+    /// keyed by TabKey). None for windows that aren't currently a live tab.
+    pub(super) fn find_tab_key_by_name(&self, window_name: &str) -> Option<TabKey> {
+        self.available_tabs
             .iter()
-            .map(|(key, tab)| {
-                let hidden = self.hidden_tabs.contains(key);
-                let detached = detached_tabs.contains(key);
-                let zone = self.zone_for_tab(key);
-                (key.clone(), tab.id.title.clone(), hidden, detached, zone)
-            })
-            .collect();
-        entries.sort_by_key(|(_, title, _, _, _)| title.to_ascii_lowercase());
-        entries
+            .find(|(_, tab)| tab.window_name == window_name)
+            .map(|(key, _)| key.clone())
     }
+
 
     /// Drop group members that no longer exist, groups that shrink below
     /// two members, and duplicate memberships (first group wins).
@@ -4024,17 +4019,9 @@ impl VellumGuiApp {
         }
         if action == "action:addwindow" {
             let mut items = self.app_core.build_add_window_menu();
-            // Surface the custom-window authoring panel + the known-windows
-            // list at the top of the Add Widget menu (GUI-local; the shared
-            // core menu builder stays untouched).
-            items.insert(
-                0,
-                PopupMenuItem {
-                    text: "Known Windows (game dialogs)…".to_string(),
-                    command: "action:knownwindows".to_string(),
-                    disabled: false,
-                },
-            );
+            // Surface the custom-window authoring panel at the top of the
+            // Add Widget menu (GUI-local; the shared core menu builder stays
+            // untouched). The show/hide list lives under Windows > Show/Hide.
             items.insert(
                 0,
                 PopupMenuItem {
@@ -4282,9 +4269,7 @@ impl eframe::App for VellumGuiApp {
         }
 
         let detached_before_frame = self.detached_tab_keys();
-        let mut visibility_toggles: Vec<TabKey> = Vec::new();
-        let mut window_additions: Vec<String> = Vec::new();
-        let mut zone_assignments: Vec<(TabKey, GuiShellZone)> = Vec::new();
+        let mut open_windows_manager = false;
         let mut zone_actions = GuiWindowActions::default();
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
         let mut zone_window_rects: Vec<GuiZoneWindowRect> = Vec::new();
@@ -4358,60 +4343,12 @@ impl eframe::App for VellumGuiApp {
                         self.layout_dirty = true;
                     }
 
-                    ui.menu_button("Windows", |ui| {
-                        ui.menu_button("Add Window", |ui| {
-                            let groups = self.app_core.addable_window_templates();
-                            if groups.is_empty() {
-                                ui.label("All windows already added");
-                                return;
-                            }
-                            for (category, entries) in groups {
-                                ui.menu_button(category, |ui| {
-                                    for (template_name, display_name) in entries {
-                                        if ui.button(display_name).clicked() {
-                                            window_additions.push(template_name.clone());
-                                            ui.close();
-                                        }
-                                    }
-                                });
-                            }
-                        });
-                        ui.separator();
-
-                        let windows = self.windows_for_menu();
-                        if windows.is_empty() {
-                            ui.label("No windows available");
-                            return;
-                        }
-
-                        for (key, title, is_hidden, is_detached, zone) in windows {
-                            ui.horizontal(|ui| {
-                                let mut visible = !is_hidden;
-                                let mut label = title.clone();
-                                if is_detached {
-                                    label.push_str(" (detached)");
-                                }
-                                if ui.checkbox(&mut visible, label).changed() {
-                                    visibility_toggles.push(key.clone());
-                                }
-
-                                ui.menu_button(format!("Zone: {}", zone.label()), |ui| {
-                                    for target in GuiShellZone::all() {
-                                        let is_current = target == zone;
-                                        let target_label = if is_current {
-                                            format!("{} (current)", target.label())
-                                        } else {
-                                            target.label().to_string()
-                                        };
-                                        if ui.selectable_label(is_current, target_label).clicked() {
-                                            zone_assignments.push((key.clone(), target));
-                                            ui.close();
-                                        }
-                                    }
-                                });
-                            });
-                        }
-                    });
+                    // U6: the "Windows" button opens the single Windows
+                    // manager (show/hide + zone + add-window, grouped by
+                    // category) instead of an inline menu.
+                    if ui.button("Windows").clicked() {
+                        open_windows_manager = true;
+                    }
                 });
             });
 
@@ -4706,22 +4643,8 @@ impl eframe::App for VellumGuiApp {
         self.render_window_move_overlay(&ctx, &visible_zone_rects, &zone_window_rects);
         self.handle_link_drag_drop(&ctx, &zone_window_rects);
 
-        for key in visibility_toggles {
-            if self.hidden_tabs.contains(&key) {
-                self.restore_tab(key);
-            } else {
-                self.hide_tab(key);
-            }
-        }
-        // Same path as the popup menu's add-window items: it resolves the
-        // auto-generated names custom templates get (the core pending-queue
-        // lookup misses those and silently adds nothing) and drops blank
-        // `*_custom` widgets straight into the window editor.
-        for name in window_additions {
-            self.add_window_from_template(&name);
-        }
-        for (key, zone) in zone_assignments {
-            self.set_tab_zone(key, zone);
+        if open_windows_manager {
+            self.open_known_windows_editor();
         }
         if let Some(drop_result) = zone_drop_result {
             self.apply_zone_drop(drop_result);
@@ -5444,7 +5367,8 @@ mod tests {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: crate::config::WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,

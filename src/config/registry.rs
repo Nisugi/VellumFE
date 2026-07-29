@@ -357,8 +357,6 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             ui.terminal_title),
         opt_text_entry!("ui.betrayer_active_color", "Betrayer Active Color", "UI",
             "Highlight color for active Betrayer panel items", ui.betrayer_active_color),
-        list_entry!("ui.open_dialog_blocklist", "Dialog Blocklist", "UI",
-            "openDialog windows prevented from auto-opening", ui.open_dialog_blocklist),
         // ---- Appearance ---------------------------------------------
         text_entry!("active_theme", "Active Theme", "Appearance",
             "Currently active theme name", active_theme),

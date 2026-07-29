@@ -661,7 +661,7 @@ impl Layout {
         // Check if window already exists in layout
         if let Some(existing) = self.windows.iter_mut().find(|w| w.name() == name) {
             // Just make it visible
-            existing.base_mut().visible = true;
+            existing.base_mut().visibility = crate::config::WindowVisibility::Shown;
             tracing::info!("Window '{}' already exists, setting visible=true", name);
             return Ok(());
         }
@@ -683,12 +683,69 @@ impl Layout {
         }
 
         // Set visible
-        window_def.base_mut().visible = true;
+        window_def.base_mut().visibility = crate::config::WindowVisibility::Shown;
 
         // Add to layout
         self.windows.push(window_def);
         tracing::info!("Added window '{}' from template", name);
         Ok(())
+    }
+
+    /// Whether any layout window is bound to `id` (regardless of source
+    /// kind or visibility). This is the U2 "does the game already have a
+    /// home for this feed?" check that replaces name-matching.
+    pub fn has_window_bound_to(&self, id: &str) -> bool {
+        self.windows
+            .iter()
+            .any(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+    }
+
+    /// Names of all layout windows bound to `id` (1-to-many: several
+    /// windows may share one game feed).
+    pub fn windows_bound_to(&self, id: &str) -> Vec<String> {
+        self.windows
+            .iter()
+            .filter(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+            .map(|w| w.name().to_string())
+            .collect()
+    }
+
+    /// Register a window the game just announced (dialog/stream/container)
+    /// as a persistent, HIDDEN, bound layout entry — so it's known forever
+    /// and appears in the Windows list, but doesn't render or auto-spawn
+    /// until the user shows it. No-op if a window already bound to this id
+    /// exists (the game only ever has one home per feed to create). The
+    /// `template_name` is the widget template to instantiate; the window is
+    /// renamed to a stable `binding-derived` name and tagged with `binding`.
+    /// Returns the window name if one was created.
+    pub fn register_discovered_window(
+        &mut self,
+        binding: crate::config::WindowBinding,
+        template_name: &str,
+    ) -> Option<String> {
+        if self.has_window_bound_to(binding.id()) {
+            return None;
+        }
+        // Prefer a registered template; fall back to a blank widget of the
+        // type (e.g. "dialogpanel" has no template entry but is a valid
+        // widget type built via WindowDef::blank). Borrow a default base
+        // from a always-present template for the blank path.
+        let name = binding.id().to_string();
+        let mut window_def = match Config::get_window_template(template_name) {
+            Some(def) => def,
+            None => {
+                let base = Config::get_window_template("text_custom")
+                    .map(|d| d.base().clone())?;
+                crate::config::WindowDef::blank(template_name, base)?
+            }
+        };
+        window_def.base_mut().name = name.clone();
+        window_def.base_mut().binding = Some(binding);
+        // Discovered windows start Hidden: known but not shown/auto-spawned.
+        window_def.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        self.windows.push(window_def);
+        tracing::info!("Registered discovered window '{}' (hidden)", name);
+        Some(name)
     }
 
     /// Hide a window (set visible = false)
@@ -699,7 +756,7 @@ impl Layout {
             .find(|w| w.name() == name)
             .ok_or_else(|| anyhow::anyhow!("Window not found: {}", name))?;
 
-        window.base_mut().visible = false;
+        window.base_mut().visibility = crate::config::WindowVisibility::Hidden;
         tracing::info!("Window '{}' hidden (visible=false)", name);
         Ok(())
     }
@@ -748,6 +805,67 @@ rows = 10
 cols = 120
 zoom = 3
 "#;
+
+    #[test]
+    fn discovered_windows_persist_binding_and_visibility() {
+        // U4: a discovered stream + dialog panel become bound Hidden layout
+        // entries; they must survive a save→reload round-trip with their
+        // binding, visibility, and feed wiring intact.
+        use crate::config::{WindowBinding, WindowVisibility};
+        let mut layout = Layout {
+            windows: Vec::new(),
+            terminal_width: Some(80),
+            terminal_height: Some(24),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        layout
+            .register_discovered_window(WindowBinding::Stream("thoughts".into()), "text_custom");
+        layout
+            .register_discovered_window(WindowBinding::Dialog("combat".into()), "dialogpanel");
+        // Wire the feeds the way register_window_discovery does.
+        for w in layout.windows.iter_mut() {
+            match w {
+                WindowDef::Text { base, data } if base.name == "thoughts" => {
+                    data.streams.push("thoughts".into());
+                }
+                WindowDef::DialogPanel { base, data } if base.name == "combat" => {
+                    data.dialog_id = "combat".into();
+                }
+                _ => {}
+            }
+        }
+
+        // Round-trip through TOML.
+        let toml = toml::to_string_pretty(&layout).expect("serialize");
+        let reloaded = Layout::parse_tolerant(&toml, "roundtrip").expect("reload");
+
+        // Both windows survived, bound + hidden.
+        assert!(reloaded.has_window_bound_to("thoughts"));
+        assert!(reloaded.has_window_bound_to("combat"));
+        for id in ["thoughts", "combat"] {
+            let w = reloaded
+                .windows
+                .iter()
+                .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+                .unwrap();
+            assert_eq!(w.base().visibility, WindowVisibility::Hidden, "{id}");
+        }
+        // Feed wiring survived.
+        let thoughts = reloaded.windows.iter().find(|w| w.name() == "thoughts").unwrap();
+        if let WindowDef::Text { data, .. } = thoughts {
+            assert!(data.streams.contains(&"thoughts".to_string()));
+        } else {
+            panic!("thoughts should be a text window");
+        }
+        let combat = reloaded.windows.iter().find(|w| w.name() == "combat").unwrap();
+        if let WindowDef::DialogPanel { data, .. } = combat {
+            assert_eq!(data.dialog_id, "combat");
+        } else {
+            panic!("combat should be a dialog panel");
+        }
+    }
 
     #[test]
     fn tolerant_parse_skips_unknown_widget_types() {
@@ -922,7 +1040,8 @@ zoom = 3
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,

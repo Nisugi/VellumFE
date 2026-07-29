@@ -76,6 +76,18 @@ pub struct UiState {
     /// Set of ephemeral window names (session-only, not saved to layout)
     pub ephemeral_windows: std::collections::HashSet<String>,
 
+    /// Container titles the user has opted to show this session (U3). A
+    /// sighted container auto-(re)opens only if its title is in here;
+    /// showing one via the Windows list adds it, hiding removes it.
+    /// Session-only — never persisted (containers wipe on relog).
+    pub shown_container_titles: std::collections::HashSet<String>,
+
+    /// Dialog ids the user has opted to show as popups (U6). A game
+    /// `openDialog` becomes a live popup only if its id is in here; empty by
+    /// default = nothing pops up unless shown (replacing the blocklist).
+    /// Kept in sync with layout visibility by AppCore.
+    pub shown_dialog_ids: std::collections::HashSet<String>,
+
     /// Quickbar data keyed by id (e.g., "quick", "quick-combat")
     pub quickbars: HashMap<String, crate::data::QuickbarData>,
 
@@ -107,6 +119,36 @@ pub struct UiState {
     /// Pending window additions (template names to add to layout)
     /// Set by message processor when openDialog has a matching template
     pub pending_window_additions: Vec<String>,
+
+    /// Game-window discoveries the message processor observed (streamWindow,
+    /// resident dialog panels, containers) that AppCore drains against the
+    /// layout — the processor can't reach the layout itself. U3's unified
+    /// discovery path, replacing the window_offers registry.
+    pub pending_window_discoveries: Vec<WindowDiscovery>,
+}
+
+/// A game window the client just saw announced, to be registered as a
+/// bound layout/ephemeral entry by AppCore (the message processor has no
+/// layout access). All discoveries register Hidden-by-default (U6:
+/// hidden-until-shown is the universal rule; the old blocklist is gone).
+#[derive(Clone, Debug)]
+pub struct WindowDiscovery {
+    /// The game id (dialog/stream/container id).
+    pub id: String,
+    pub title: String,
+    pub kind: WindowDiscoveryKind,
+    /// The game asked to persist position (save='t').
+    pub save: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowDiscoveryKind {
+    /// A named text stream (thoughts/loot/bounty/…).
+    Stream,
+    /// A resident dialog panel with no dedicated widget (combat/befriend).
+    DialogPanel,
+    /// A non-resident dialog that pops up (bank).
+    DialogPopup,
 }
 
 /// Mouse drag state for window operations
@@ -746,6 +788,8 @@ impl UiState {
             needs_widget_reset: false,
             widgets_to_reset: Vec::new(),
             ephemeral_windows: std::collections::HashSet::new(),
+            shown_container_titles: std::collections::HashSet::new(),
+            shown_dialog_ids: std::collections::HashSet::new(),
             quickbars: HashMap::new(),
             quickbar_order: Vec::new(),
             active_quickbar_id: None,
@@ -754,6 +798,7 @@ impl UiState {
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
+            pending_window_discoveries: Vec::new(),
         }
     }
 

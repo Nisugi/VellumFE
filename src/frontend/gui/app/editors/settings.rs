@@ -1079,12 +1079,12 @@ mod tests {
         );
         drafts.insert("sound.enabled", DraftValue::Bool(!config.sound.enabled));
         drafts.insert(
-            "ui.open_dialog_blocklist",
+            "ui.focus.types",
             DraftValue::List("alpha\n beta \n".to_string()),
         );
         assert_eq!(
             changed_keys(&config, &drafts),
-            ["sound.enabled", "ui.buffer_size", "ui.open_dialog_blocklist"]
+            ["sound.enabled", "ui.buffer_size", "ui.focus.types"]
         );
     }
 
