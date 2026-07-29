@@ -646,9 +646,18 @@ impl AppCore {
                     self.add_system_message("[jinx] map database reloaded");
                 }
                 _ => match kind.as_str() {
-                    "skin" => self.add_system_message(&format!(
-                        "[jinx] skin '{name}' installed — activate with .setskin"
-                    )),
+                    // A skin's files land under skins/<name>/; list_skins and
+                    // load_manifest read that dir live, so the new skin is
+                    // immediately selectable. Activation stays user-driven
+                    // (accessibility-first: never auto-restyle). Suggest the
+                    // exact .setskin command, using the skin's dir name (the
+                    // archive extension stripped).
+                    "skin" => {
+                        let skin_name = name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s);
+                        self.add_system_message(&format!(
+                            "[jinx] skin installed — activate with .setskin {skin_name}"
+                        ));
+                    }
                     "iconmap" | "image" | "icon" => self.add_system_message(&format!(
                         "[jinx] {name} installed to the icon pool"
                     )),
