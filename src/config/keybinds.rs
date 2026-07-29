@@ -190,6 +190,152 @@ pub enum KeyAction {
     SendMacro(String),
 }
 
+/// Where a bindable action is meaningful — drives which editors offer it.
+///
+/// `Keyboard` actions are text-input / widget-level and would no-op from a
+/// controller button, so the controller editor never offers them.
+/// `Controller` actions execute fully inside AppCore and are offerable from a
+/// gamepad button as well as the keyboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionScope {
+    Keyboard,
+    Controller,
+}
+
+/// One canonical bindable action. This table is THE single source of truth for
+/// keybind actions: [`KeyAction::from_str`] resolves against it, the controller
+/// editor's dropdown is generated from its `Controller`-scoped rows
+/// ([`KeyAction::controller_action_names`]), and the TUI keybind form offers
+/// exactly [`KeyAction::offered_action_names`]. A parity test
+/// (`keybind_action_table_is_the_single_source_of_truth`) fails the build if any
+/// consumer drifts from this table or a `KeyAction` variant is neither listed
+/// here nor on `EXEMPT_ACTIONS`.
+///
+/// Order is meaningful — dropdowns render in table order, so keep related
+/// actions grouped and do not sort.
+pub struct ActionDef {
+    /// Wire name written to keybinds.toml (e.g. "cursor_word_left").
+    pub name: &'static str,
+    /// The variant `name` parses to.
+    pub action: KeyAction,
+    /// Human-facing label for editor dropdowns.
+    pub label: &'static str,
+    /// Dropdown grouping.
+    pub category: &'static str,
+    pub scope: ActionScope,
+}
+
+impl KeyAction {
+    /// THE canonical action catalog. Every exact-match name `from_str` accepts
+    /// lives here (the only exceptions are the `controller_wheel:` prefix form
+    /// and the `tts_pause_resume` legacy alias, both handled explicitly in
+    /// `from_str` and listed in `EXEMPT_ACTIONS`).
+    pub const ACTIONS: &'static [ActionDef] = &[
+        // ---- Command input ----
+        ActionDef { name: "send_command", action: KeyAction::SendCommand, label: "Send Command", category: "Command", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_left", action: KeyAction::CursorLeft, label: "Cursor Left", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_right", action: KeyAction::CursorRight, label: "Cursor Right", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_word_left", action: KeyAction::CursorWordLeft, label: "Cursor Word Left", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_word_right", action: KeyAction::CursorWordRight, label: "Cursor Word Right", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_home", action: KeyAction::CursorHome, label: "Cursor Home", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_end", action: KeyAction::CursorEnd, label: "Cursor End", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_backspace", action: KeyAction::CursorBackspace, label: "Backspace", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_delete", action: KeyAction::CursorDelete, label: "Delete", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_delete_word", action: KeyAction::CursorDeleteWord, label: "Delete Word", category: "Cursor", scope: ActionScope::Keyboard },
+        ActionDef { name: "cursor_clear_line", action: KeyAction::CursorClearLine, label: "Clear Line", category: "Cursor", scope: ActionScope::Keyboard },
+        // ---- History ----
+        ActionDef { name: "previous_command", action: KeyAction::PreviousCommand, label: "Previous Command", category: "History", scope: ActionScope::Keyboard },
+        ActionDef { name: "next_command", action: KeyAction::NextCommand, label: "Next Command", category: "History", scope: ActionScope::Keyboard },
+        ActionDef { name: "send_last_command", action: KeyAction::SendLastCommand, label: "Send Last Command", category: "History", scope: ActionScope::Keyboard },
+        ActionDef { name: "send_second_last_command", action: KeyAction::SendSecondLastCommand, label: "Send Second-Last Command", category: "History", scope: ActionScope::Keyboard },
+        // ---- Windows / scrolling ----
+        ActionDef { name: "switch_current_window", action: KeyAction::SwitchCurrentWindow, label: "Switch Current Window", category: "Window", scope: ActionScope::Keyboard },
+        ActionDef { name: "scroll_current_window_up_one", action: KeyAction::ScrollCurrentWindowUpOne, label: "Scroll Up One", category: "Scroll", scope: ActionScope::Controller },
+        ActionDef { name: "scroll_current_window_down_one", action: KeyAction::ScrollCurrentWindowDownOne, label: "Scroll Down One", category: "Scroll", scope: ActionScope::Controller },
+        ActionDef { name: "scroll_current_window_up_page", action: KeyAction::ScrollCurrentWindowUpPage, label: "Scroll Up Page", category: "Scroll", scope: ActionScope::Controller },
+        ActionDef { name: "scroll_current_window_down_page", action: KeyAction::ScrollCurrentWindowDownPage, label: "Scroll Down Page", category: "Scroll", scope: ActionScope::Controller },
+        ActionDef { name: "scroll_current_window_home", action: KeyAction::ScrollCurrentWindowHome, label: "Scroll To Top", category: "Scroll", scope: ActionScope::Controller },
+        ActionDef { name: "scroll_current_window_end", action: KeyAction::ScrollCurrentWindowEnd, label: "Scroll To Bottom", category: "Scroll", scope: ActionScope::Controller },
+        // ---- Search ----
+        ActionDef { name: "start_search", action: KeyAction::StartSearch, label: "Start Search", category: "Search", scope: ActionScope::Keyboard },
+        ActionDef { name: "next_search_match", action: KeyAction::NextSearchMatch, label: "Next Match", category: "Search", scope: ActionScope::Keyboard },
+        ActionDef { name: "prev_search_match", action: KeyAction::PrevSearchMatch, label: "Previous Match", category: "Search", scope: ActionScope::Keyboard },
+        ActionDef { name: "clear_search", action: KeyAction::ClearSearch, label: "Clear Search", category: "Search", scope: ActionScope::Keyboard },
+        // ---- Tabs ----
+        ActionDef { name: "next_tab", action: KeyAction::NextTab, label: "Next Tab", category: "Tabs", scope: ActionScope::Keyboard },
+        ActionDef { name: "prev_tab", action: KeyAction::PrevTab, label: "Previous Tab", category: "Tabs", scope: ActionScope::Keyboard },
+        ActionDef { name: "next_unread_tab", action: KeyAction::NextUnreadTab, label: "Next Unread Tab", category: "Tabs", scope: ActionScope::Keyboard },
+        // ---- Clipboard ----
+        ActionDef { name: "copy", action: KeyAction::Copy, label: "Copy", category: "Clipboard", scope: ActionScope::Keyboard },
+        ActionDef { name: "paste", action: KeyAction::Paste, label: "Paste", category: "Clipboard", scope: ActionScope::Keyboard },
+        ActionDef { name: "select_all", action: KeyAction::SelectAll, label: "Select All", category: "Clipboard", scope: ActionScope::Keyboard },
+        // ---- System toggles ----
+        ActionDef { name: "toggle_performance_stats", action: KeyAction::TogglePerformanceStats, label: "Toggle Performance Stats", category: "System", scope: ActionScope::Controller },
+        ActionDef { name: "toggle_sounds", action: KeyAction::ToggleSounds, label: "Toggle Sounds", category: "System", scope: ActionScope::Controller },
+        // ---- Travel ----
+        ActionDef { name: "stop_travel", action: KeyAction::StopTravel, label: "Stop Travel", category: "Travel", scope: ActionScope::Controller },
+        // ---- Interact / menu navigation (controller-friendly) ----
+        ActionDef { name: "interact_mode", action: KeyAction::InteractMode, label: "Toggle Interact Mode", category: "Interact", scope: ActionScope::Controller },
+        ActionDef { name: "interact_select", action: KeyAction::InteractSelect, label: "Interact Select", category: "Interact", scope: ActionScope::Controller },
+        ActionDef { name: "menu_up", action: KeyAction::MenuUp, label: "Menu Up", category: "Menu", scope: ActionScope::Controller },
+        ActionDef { name: "menu_down", action: KeyAction::MenuDown, label: "Menu Down", category: "Menu", scope: ActionScope::Controller },
+        ActionDef { name: "menu_left", action: KeyAction::MenuLeft, label: "Menu Left", category: "Menu", scope: ActionScope::Controller },
+        ActionDef { name: "menu_right", action: KeyAction::MenuRight, label: "Menu Right", category: "Menu", scope: ActionScope::Controller },
+        ActionDef { name: "menu_cancel", action: KeyAction::MenuCancel, label: "Menu Cancel", category: "Menu", scope: ActionScope::Controller },
+        // ---- Controller layers ----
+        // controller_wheel is configured per-wheel in the Wheels tab, so it is
+        // intentionally NOT offered in the generic action dropdown (see
+        // controller_action_names); it still parses via from_str's prefix arm.
+        ActionDef { name: "controller_shift", action: KeyAction::ControllerShift, label: "Controller Shift Layer", category: "Controller", scope: ActionScope::Controller },
+        ActionDef { name: "controller_overlay", action: KeyAction::ControllerOverlay, label: "Toggle Binding Overlay", category: "Controller", scope: ActionScope::Controller },
+        // ---- TTS / accessibility ----
+        ActionDef { name: "tts_next", action: KeyAction::TtsNext, label: "TTS: Next Message", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_previous", action: KeyAction::TtsPrevious, label: "TTS: Previous Message", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_next_unread", action: KeyAction::TtsNextUnread, label: "TTS: Next Unread", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_stop", action: KeyAction::TtsStop, label: "TTS: Stop", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_mute_toggle", action: KeyAction::TtsMuteToggle, label: "TTS: Mute Toggle", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_increase_rate", action: KeyAction::TtsIncreaseRate, label: "TTS: Increase Rate", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_decrease_rate", action: KeyAction::TtsDecreaseRate, label: "TTS: Decrease Rate", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_increase_volume", action: KeyAction::TtsIncreaseVolume, label: "TTS: Increase Volume", category: "Speech", scope: ActionScope::Controller },
+        ActionDef { name: "tts_decrease_volume", action: KeyAction::TtsDecreaseVolume, label: "TTS: Decrease Volume", category: "Speech", scope: ActionScope::Controller },
+    ];
+
+    /// Names offered by the TUI keybind form's action dropdown — every
+    /// exact-match action a keyboard key can bind (i.e. the whole table; the
+    /// keyboard editor can bind controller-scoped actions too, they simply
+    /// no-op from a keyboard key). Returned in table order.
+    pub fn offered_action_names() -> impl Iterator<Item = &'static str> {
+        Self::ACTIONS.iter().map(|d| d.name)
+    }
+
+    /// Names offered by the controller editor's action dropdown: the
+    /// `Controller`-scoped subset, in table order. Replaces the former
+    /// hand-maintained `CONTROLLER_ACTION_NAMES` const.
+    pub fn controller_action_names() -> impl Iterator<Item = &'static str> {
+        Self::ACTIONS
+            .iter()
+            .filter(|d| d.scope == ActionScope::Controller)
+            .map(|d| d.name)
+    }
+}
+
+/// Wire names `from_str` accepts that are deliberately NOT rows in the
+/// [`ACTIONS`](KeyAction::ACTIONS) table, each with a reason. The parity test
+/// (`keybind_action_table_is_the_single_source_of_truth`) proves each still
+/// parses; nothing may fall outside `ACTIONS ∪ EXEMPT_ACTIONS` by accident.
+/// Mirror of `registry.rs::EXEMPT_PREFIXES` — an explicit, reviewed escape hatch.
+pub const EXEMPT_ACTIONS: &[(&str, &str)] = &[
+    (
+        "controller_wheel",
+        "prefix form 'controller_wheel:<name>' can't be an exact table row; \
+         configured per-wheel in the Wheels tab, not the action dropdown",
+    ),
+    (
+        "tts_pause_resume",
+        "legacy alias of tts_stop kept for old configs; never offered in editors",
+    ),
+];
+
 /// One slice of the controller radial wheel: a label drawn on the wheel
 /// and either a command to fire (game text or dot-command) or a child
 /// ring of slices (a folder — opened with South while the wheel is held).
@@ -953,107 +1099,25 @@ impl MenuKeybinds {
 }
 
 impl KeyAction {
-    /// Action names that execute fully inside AppCore — the set that does
-    /// something useful from a controller button (everything else is
-    /// keyboard-widget-level and would no-op). Drives the controller
-    /// editor's action dropdown; a test keeps every entry parseable.
-    pub const CONTROLLER_ACTION_NAMES: &'static [&'static str] = &[
-        "interact_mode",
-        "interact_select",
-        "menu_up",
-        "menu_down",
-        "menu_left",
-        "menu_right",
-        "menu_cancel",
-        "controller_shift",
-        // controller_wheel / controller_wheel:<name> are configured in the
-        // Wheels tab (each wheel's "Opens with" button writes the matching
-        // [controller] entry), so they are intentionally NOT offered here —
-        // that keeps a single source of truth for wheel buttons.
-        "controller_overlay",
-        "stop_travel",
-        "scroll_current_window_up_page",
-        "scroll_current_window_down_page",
-        "scroll_current_window_up_one",
-        "scroll_current_window_down_one",
-        "scroll_current_window_home",
-        "scroll_current_window_end",
-        "toggle_sounds",
-        "toggle_performance_stats",
-        "tts_next",
-        "tts_previous",
-        "tts_next_unread",
-        "tts_stop",
-        "tts_mute_toggle",
-        "tts_increase_rate",
-        "tts_decrease_rate",
-        "tts_increase_volume",
-        "tts_decrease_volume",
-    ];
-
+    /// Resolve a wire name to its action. Exact matches come from the canonical
+    /// [`ACTIONS`](Self::ACTIONS) table; the only names handled outside the
+    /// table are the `controller_wheel:<name>` prefix form and the
+    /// `tts_pause_resume` legacy alias (both listed in `EXEMPT_ACTIONS`).
     pub fn from_str(action: &str) -> Option<Self> {
-        match action {
-            "send_command" => Some(Self::SendCommand),
-            "cursor_left" => Some(Self::CursorLeft),
-            "cursor_right" => Some(Self::CursorRight),
-            "cursor_word_left" => Some(Self::CursorWordLeft),
-            "cursor_word_right" => Some(Self::CursorWordRight),
-            "cursor_home" => Some(Self::CursorHome),
-            "cursor_end" => Some(Self::CursorEnd),
-            "cursor_backspace" => Some(Self::CursorBackspace),
-            "cursor_delete" => Some(Self::CursorDelete),
-            "cursor_delete_word" => Some(Self::CursorDeleteWord),
-            "cursor_clear_line" => Some(Self::CursorClearLine),
-            "previous_command" => Some(Self::PreviousCommand),
-            "next_command" => Some(Self::NextCommand),
-            "send_last_command" => Some(Self::SendLastCommand),
-            "send_second_last_command" => Some(Self::SendSecondLastCommand),
-            "switch_current_window" => Some(Self::SwitchCurrentWindow),
-            "scroll_current_window_up_one" => Some(Self::ScrollCurrentWindowUpOne),
-            "scroll_current_window_down_one" => Some(Self::ScrollCurrentWindowDownOne),
-            "scroll_current_window_up_page" => Some(Self::ScrollCurrentWindowUpPage),
-            "scroll_current_window_down_page" => Some(Self::ScrollCurrentWindowDownPage),
-            "scroll_current_window_home" => Some(Self::ScrollCurrentWindowHome),
-            "scroll_current_window_end" => Some(Self::ScrollCurrentWindowEnd),
-            "start_search" => Some(Self::StartSearch),
-            "next_search_match" => Some(Self::NextSearchMatch),
-            "prev_search_match" => Some(Self::PrevSearchMatch),
-            "clear_search" => Some(Self::ClearSearch),
-            "next_tab" => Some(Self::NextTab),
-            "prev_tab" => Some(Self::PrevTab),
-            "next_unread_tab" => Some(Self::NextUnreadTab),
-            "copy" => Some(Self::Copy),
-            "paste" => Some(Self::Paste),
-            "select_all" => Some(Self::SelectAll),
-            "toggle_performance_stats" => Some(Self::TogglePerformanceStats),
-            "toggle_sounds" => Some(Self::ToggleSounds),
-            "stop_travel" => Some(Self::StopTravel),
-            "interact_mode" => Some(Self::InteractMode),
-            "interact_select" => Some(Self::InteractSelect),
-            "menu_up" => Some(Self::MenuUp),
-            "menu_down" => Some(Self::MenuDown),
-            "menu_left" => Some(Self::MenuLeft),
-            "menu_right" => Some(Self::MenuRight),
-            "menu_cancel" => Some(Self::MenuCancel),
-            "controller_shift" => Some(Self::ControllerShift),
-            // "controller_wheel" opens the default wheel;
-            // "controller_wheel:<name>" opens a named [controller_wheels.<name>].
-            s if s == "controller_wheel" || s.starts_with("controller_wheel:") => {
-                Some(Self::ControllerWheel)
-            }
-            "controller_overlay" => Some(Self::ControllerOverlay),
-            "tts_next" => Some(Self::TtsNext),
-            "tts_previous" => Some(Self::TtsPrevious),
-            "tts_next_unread" => Some(Self::TtsNextUnread),
-            "tts_stop" => Some(Self::TtsStop),
-            "tts_pause_resume" => Some(Self::TtsStop), // Legacy support
-            "tts_mute_toggle" => Some(Self::TtsMuteToggle),
-            "tts_increase_rate" => Some(Self::TtsIncreaseRate),
-            "tts_decrease_rate" => Some(Self::TtsDecreaseRate),
-            "tts_increase_volume" => Some(Self::TtsIncreaseVolume),
-            "tts_decrease_volume" => Some(Self::TtsDecreaseVolume),
-            _ => None,
+        // "controller_wheel" opens the default wheel;
+        // "controller_wheel:<name>" opens a named [controller_wheels.<name>].
+        // Prefix form can't be an exact table row, so match it first.
+        if action == "controller_wheel" || action.starts_with("controller_wheel:") {
+            return Some(Self::ControllerWheel);
         }
+        // Legacy alias: kept for old configs, never offered in any editor.
+        if action == "tts_pause_resume" {
+            return Some(Self::TtsStop);
+        }
+        Self::ACTIONS
+            .iter()
+            .find(|d| d.name == action)
+            .map(|d| d.action.clone())
     }
 }
 
@@ -2570,10 +2634,10 @@ command = \"fire\"
 
     #[test]
     fn controller_action_names_all_parse() {
-        for name in KeyAction::CONTROLLER_ACTION_NAMES {
+        for name in KeyAction::controller_action_names() {
             assert!(
                 KeyAction::from_str(name).is_some(),
-                "'{name}' in CONTROLLER_ACTION_NAMES does not parse"
+                "'{name}' in controller_action_names() does not parse"
             );
         }
     }
@@ -2589,9 +2653,68 @@ command = \"fire\"
         assert_eq!(KeyAction::from_str("menu_right"), Some(KeyAction::MenuRight));
         assert_eq!(KeyAction::from_str("menu_cancel"), Some(KeyAction::MenuCancel));
         // And they're all offered in the controller editor dropdown.
+        let controller: Vec<&str> = KeyAction::controller_action_names().collect();
         for n in ["interact_select","menu_up","menu_down","menu_left","menu_right","menu_cancel"] {
-            assert!(KeyAction::CONTROLLER_ACTION_NAMES.contains(&n), "{n} missing from dropdown list");
+            assert!(controller.contains(&n), "{n} missing from dropdown list");
         }
+    }
+
+    /// THE parity guard for keybind actions — the keybind-domain analogue of
+    /// registry.rs's leaf-coverage test. Fails the build if any consumer drifts
+    /// from the canonical ACTIONS table. This is the test that would have
+    /// blocked the shipped TUI clobber bug (an action `from_str` accepted but
+    /// the dropdown didn't offer).
+    #[test]
+    fn keybind_action_table_is_the_single_source_of_truth() {
+        // (a) Every table row round-trips: its name parses back to its variant.
+        for def in KeyAction::ACTIONS {
+            assert_eq!(
+                KeyAction::from_str(def.name),
+                Some(def.action.clone()),
+                "ACTIONS row '{}' does not from_str back to its own variant",
+                def.name
+            );
+        }
+
+        // (b) No duplicate names in the table (a copy-paste slip would let one
+        // action silently shadow another in every dropdown).
+        let mut seen = std::collections::HashSet::new();
+        for def in KeyAction::ACTIONS {
+            assert!(seen.insert(def.name), "duplicate action name '{}'", def.name);
+        }
+
+        // (c) Every exempt name still parses (the non-table escape hatches must
+        // keep working) and is NOT also a table row (no redundant exemption).
+        for (name, _reason) in EXEMPT_ACTIONS {
+            assert!(
+                KeyAction::from_str(name).is_some(),
+                "EXEMPT_ACTIONS name '{name}' no longer parses"
+            );
+            assert!(
+                !KeyAction::ACTIONS.iter().any(|d| d.name == *name),
+                "'{name}' is exempt AND a table row — drop one"
+            );
+        }
+        // The wheel prefix form resolves via the exempt path, not a table row.
+        assert_eq!(KeyAction::from_str("controller_wheel:portals"), Some(KeyAction::ControllerWheel));
+
+        // (d) The two generated dropdown sets are exactly the table's slices,
+        // in table order — the TUI form and controller editor cannot offer a
+        // set that drifts from the table (the clobber bug's root cause).
+        let offered: Vec<&str> = KeyAction::offered_action_names().collect();
+        let table_all: Vec<&str> = KeyAction::ACTIONS.iter().map(|d| d.name).collect();
+        assert_eq!(offered, table_all, "TUI offered set drifted from ACTIONS");
+
+        let controller: Vec<&str> = KeyAction::controller_action_names().collect();
+        let table_controller: Vec<&str> = KeyAction::ACTIONS
+            .iter()
+            .filter(|d| d.scope == ActionScope::Controller)
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(
+            controller, table_controller,
+            "controller offered set drifted from ACTIONS controller-scoped rows"
+        );
     }
 
     #[test]
