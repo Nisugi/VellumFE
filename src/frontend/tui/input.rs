@@ -1140,6 +1140,11 @@ impl TuiFrontend {
                         let (cmd, should_close) = dialog_state.activate_button(index);
                         command_to_send = cmd;
                         close_dialog = should_close;
+                    } else if let Some(index) = dialog::hit_test_dropdown(&layout, *x, *y) {
+                        // Click-to-cycle: advance the dropdown and fire its
+                        // command (resolved through %id% substitution).
+                        Self::set_dialog_focus(dialog_state, None);
+                        command_to_send = dialog_state.cycle_dropdown(index);
                     }
                     app_core.needs_render = true;
                 }

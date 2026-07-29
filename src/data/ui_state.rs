@@ -279,6 +279,32 @@ impl DialogState {
         resolved
     }
 
+    /// Advance a dropdown to its next option (wrapping) and return the
+    /// resolved command to send, if the dropdown carries one. The TUI's
+    /// click-to-cycle interaction; the GUI uses a real combo box.
+    pub fn cycle_dropdown(&mut self, index: usize) -> Option<String> {
+        let dropdown = self.dropdowns.get_mut(index)?;
+        if dropdown.options.is_empty() {
+            return None;
+        }
+        let current = dropdown
+            .options
+            .iter()
+            .position(|(_, value)| *value == dropdown.value)
+            .unwrap_or(usize::MAX);
+        let next = if current == usize::MAX {
+            0
+        } else {
+            (current + 1) % dropdown.options.len()
+        };
+        dropdown.value = dropdown.options[next].1.clone();
+        let command = dropdown.command.clone();
+        if command.trim().is_empty() {
+            return None;
+        }
+        Some(format!("{}\n", self.command_with_placeholders(&command)))
+    }
+
     /// Activate a button by index, applying close/radio-group/autosend
     /// semantics. Returns (command to send, whether to close the dialog).
     pub fn activate_button(&mut self, index: usize) -> (Option<String>, bool) {
@@ -1403,6 +1429,35 @@ mod tests {
         assert_eq!(defense.1, 70.0);
         assert_eq!(stance.1, 70.0);
         assert!(w >= 190.0 && h >= 90.0);
+    }
+
+    #[test]
+    fn cycle_dropdown_advances_and_resolves_command() {
+        let stance = DialogDropDown {
+            id: "dDBStance".to_string(),
+            value: "defensive".to_string(),
+            options: vec![
+                ("offensive".into(), "offensive".into()),
+                ("defensive".into(), "defensive".into()),
+            ],
+            command: "_stance %dDBStance%".to_string(),
+            tooltip: None,
+            layout: None,
+        };
+        let mut dialog = dialog_with(Vec::new(), vec![stance]);
+
+        // defensive (index 1) wraps to offensive (index 0).
+        let cmd = dialog.cycle_dropdown(0);
+        assert_eq!(dialog.dropdowns[0].value, "offensive");
+        assert_eq!(cmd.as_deref(), Some("_stance offensive\n"));
+
+        // And back again.
+        let cmd = dialog.cycle_dropdown(0);
+        assert_eq!(dialog.dropdowns[0].value, "defensive");
+        assert_eq!(cmd.as_deref(), Some("_stance defensive\n"));
+
+        // Out-of-range index is a no-op.
+        assert!(dialog.cycle_dropdown(5).is_none());
     }
 
     #[test]
