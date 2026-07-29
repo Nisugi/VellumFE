@@ -234,13 +234,15 @@ impl VellumGuiApp {
     }
 
     fn target_docked_height(&self, zone: GuiShellZone) -> Option<f32> {
+        // Fill the zone's full height; render-time clamping (max_window_height)
+        // keeps it within the zone, and filling avoids a bottom-edge gap.
         match zone {
-            GuiShellZone::Header => Some(
-                (self.shell_layout.header_height - 12.0).max(MIN_DOCKED_WINDOW_HEIGHT),
-            ),
-            GuiShellZone::Footer => Some(
-                (self.shell_layout.footer_height - 12.0).max(MIN_DOCKED_WINDOW_HEIGHT),
-            ),
+            GuiShellZone::Header => {
+                Some(self.shell_layout.header_height.max(MIN_DOCKED_WINDOW_HEIGHT))
+            }
+            GuiShellZone::Footer => {
+                Some(self.shell_layout.footer_height.max(MIN_DOCKED_WINDOW_HEIGHT))
+            }
             _ => None,
         }
     }
@@ -1254,13 +1256,9 @@ impl VellumGuiApp {
                 120.0_f32.min(window_bounds.width().max(1.0)),
                 min_window_height.min(window_bounds.height().max(1.0)),
             );
-            // Keep a little vertical headroom in header/footer so windows can be repositioned
-            // instead of filling the entire zone and snapping back to the top.
-            let max_window_height = if matches!(zone, GuiShellZone::Header | GuiShellZone::Footer) {
-                (window_bounds.height() - 12.0).max(min_window_size.y)
-            } else {
-                window_bounds.height().max(min_window_size.y)
-            };
+            // Docked header/footer windows fill their zone's full height — no
+            // reserved headroom, which otherwise left a gap at the bottom edge.
+            let max_window_height = window_bounds.height().max(min_window_size.y);
             let max_window_size = Vec2::new(
                 window_bounds.width().max(min_window_size.x),
                 max_window_height,

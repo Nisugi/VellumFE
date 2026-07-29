@@ -396,13 +396,40 @@ impl DirectConnection {
 
         let (host, port) = fix_game_host_port(&ticket.game_host, ticket.game_port);
         info!("Connecting directly to {}:{}...", host, port);
-        let mut stream = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            TcpStream::connect(format!("{}:{}", host, port)),
-        )
-        .await
-        .context("Timed out connecting to game server")?
-        .context("Failed to connect to game server")?;
+        // Resolve the game host and try each address with its own short
+        // timeout, taking the first that connects. tokio's
+        // TcpStream::connect(hostname) tries resolved addresses sequentially
+        // with no per-address bound, so a single slow or black-holed IP would
+        // stall the whole login until the outer timeout; a per-address bound
+        // fails over to the next address quickly instead.
+        let mut stream = {
+            use tokio::net::lookup_host;
+            const PER_ADDR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+            let addrs: Vec<std::net::SocketAddr> = lookup_host(format!("{host}:{port}"))
+                .await
+                .context("Failed to resolve game host")?
+                .collect();
+            let mut connected = None;
+            let mut last_err = None;
+            for addr in &addrs {
+                match tokio::time::timeout(PER_ADDR_TIMEOUT, TcpStream::connect(addr)).await {
+                    Ok(Ok(s)) => {
+                        connected = Some(s);
+                        break;
+                    }
+                    Ok(Err(e)) => last_err = Some(anyhow::Error::from(e)),
+                    Err(_) => {
+                        last_err = Some(anyhow::anyhow!("connect to {addr} timed out"))
+                    }
+                }
+            }
+            connected
+                .ok_or_else(|| {
+                    last_err
+                        .unwrap_or_else(|| anyhow::anyhow!("no game-server addresses reachable"))
+                })
+                .context("Failed to connect to game server")?
+        };
 
         send_direct_handshake(&mut stream, &ticket).await?;
 
