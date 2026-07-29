@@ -5570,6 +5570,69 @@ impl AppCore {
     /// a row emits `__TOGGLE_OFFER__<id>` to flip it. Frontend-agnostic —
     /// the TUI drives its known-windows list off this; the GUI has its own
     /// richer checkbox panel.
+    /// U3: the unified list of every window the client knows about, from
+    /// the layout (persistent, possibly game-bound) plus session-only
+    /// ephemeral windows (containers, dialog panels). This replaces the
+    /// separate offer registry as the source for the Windows list.
+    pub fn enumerate_known_windows(&self) -> Vec<crate::core::known_windows::KnownWindow> {
+        use crate::config::WindowBinding;
+        use crate::core::known_windows::{KnownWindow, KnownWindowKind};
+
+        let mut out: Vec<KnownWindow> = Vec::new();
+
+        // Persistent layout windows. Bound ones are game-discovered
+        // dialogs/streams; unbound ones are template/custom widgets. Skip
+        // the essentials that can't be hidden (main stream, command input).
+        for w in &self.layout.windows {
+            let base = w.base();
+            let name = base.name.clone();
+            if name == "main" || w.widget_type() == "command_input" {
+                continue;
+            }
+            let kind = match &base.binding {
+                Some(WindowBinding::Stream(_)) => KnownWindowKind::Stream,
+                Some(WindowBinding::Dialog(_)) => KnownWindowKind::Dialog,
+                Some(WindowBinding::Container(_)) => KnownWindowKind::Container,
+                None => KnownWindowKind::Layout,
+            };
+            out.push(KnownWindow {
+                name: name.clone(),
+                title: base.title.clone().unwrap_or(name),
+                kind,
+                shown: base.visibility.is_shown(),
+                ephemeral: false,
+            });
+        }
+
+        // Session-only ephemeral windows (containers, dialog panels) —
+        // these live in ui_state, not the layout.
+        for name in &self.ui_state.ephemeral_windows {
+            let Some(win) = self.ui_state.windows.get(name) else {
+                continue;
+            };
+            let kind = match win.widget_type {
+                crate::data::WidgetType::Container => KnownWindowKind::Container,
+                crate::data::WidgetType::DialogPanel => KnownWindowKind::Dialog,
+                _ => KnownWindowKind::Layout,
+            };
+            let title = match &win.content {
+                crate::data::WindowContent::Container { container_title } => {
+                    container_title.clone()
+                }
+                _ => name.clone(),
+            };
+            out.push(KnownWindow {
+                name: name.clone(),
+                title,
+                kind,
+                shown: win.visible,
+                ephemeral: true,
+            });
+        }
+
+        out
+    }
+
     pub fn build_known_windows_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         use crate::core::window_offers::OfferKind;
         let offers = &self.game_state.window_offers;
@@ -6478,6 +6541,36 @@ mod tests {
         assert_eq!(core.layout.windows.len(), 3, "should not create a 4th");
         // All three are addressable for delivery.
         assert_eq!(core.layout.windows_bound_to("expr").len(), 3);
+    }
+
+    #[test]
+    fn enumerate_known_windows_covers_layout_and_ephemeral() {
+        use crate::core::known_windows::KnownWindowKind;
+        // A bound (discovered) hidden dialog window, an unbound plain
+        // widget, and the un-hideable essentials.
+        let mut core = core_with_layout(vec![]);
+        let mut combat = crate::config::Config::get_window_template("stance").unwrap();
+        combat.base_mut().name = "combat".to_string();
+        combat.base_mut().title = Some("Combat".to_string());
+        combat.base_mut().binding =
+            Some(crate::config::WindowBinding::Dialog("combat".to_string()));
+        combat.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        core.layout.windows.push(combat);
+        core.layout.windows.push(positioned_text_def("main", 0, 0, 40, 10)); // essential
+        core.layout.windows.push(positioned_text_def("my_notes", 0, 0, 20, 5)); // plain
+
+        let known = core.enumerate_known_windows();
+        // "main" is filtered out (essential).
+        assert!(!known.iter().any(|k| k.name == "main"));
+        // The bound combat window is classified as a Dialog, hidden.
+        let combat = known.iter().find(|k| k.name == "combat").expect("combat listed");
+        assert_eq!(combat.kind, KnownWindowKind::Dialog);
+        assert!(!combat.shown);
+        assert_eq!(combat.title, "Combat");
+        // The unbound widget is a plain Layout window.
+        let notes = known.iter().find(|k| k.name == "my_notes").expect("notes listed");
+        assert_eq!(notes.kind, KnownWindowKind::Layout);
+        assert!(notes.shown);
     }
 
     #[test]
