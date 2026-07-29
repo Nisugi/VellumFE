@@ -21,3 +21,4 @@ pub mod metadata;
 pub mod protocol;
 pub mod repo;
 pub mod resolve;
+pub mod worker;

@@ -104,6 +104,9 @@ pub struct AppCore {
     pub map: crate::core::map_service::MapService,
     /// Downloads released mapdbs from GitHub (Settings > Map).
     pub map_updater: crate::core::mapdb_update::MapDbUpdater,
+    /// The asset manager (`.jinx`): off-thread install/update against
+    /// federated repos, polled each frame like `map_updater`.
+    pub jinx_worker: crate::core::jinx::worker::JinxWorker,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
     /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
@@ -253,6 +256,7 @@ impl AppCore {
                 temp.join("map_overrides.json"),
             ),
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(temp.join("mapdb")),
+            jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             travel: Default::default(),
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -381,6 +385,7 @@ impl AppCore {
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(
                 crate::core::mapdb_update::download_dir(&map_base),
             ),
+            jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             travel: Default::default(),
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -583,6 +588,7 @@ impl AppCore {
         }
         self.tick_travel();
         self.tick_foreach();
+        self.poll_jinx();
         // Browse replies waiting on the layout worker.
         self.service_pending_map_views();
         // A layout that finished generating between game lines still needs
@@ -592,6 +598,31 @@ impl AppCore {
         {
             self.last_remote_map_revision = self.map.revision;
             self.flush_remote_state();
+        }
+    }
+
+    /// Drain the asset-manager worker: print each line to the game text and
+    /// apply any post-install effect. Called once per frame from `poll_map`,
+    /// alongside the map worker it mirrors.
+    pub fn poll_jinx(&mut self) {
+        let updates = self.jinx_worker.poll();
+        for update in updates {
+            self.add_system_message(&update.line);
+            if let Some(effect) = update.effect {
+                self.apply_jinx_effect(effect);
+            }
+        }
+    }
+
+    /// Apply a post-install side effect on the main thread (reloads touch
+    /// `AppCore` and can't run on the worker). J3 fills in the live reloads;
+    /// for now installs are acknowledged by the worker's line.
+    fn apply_jinx_effect(&mut self, effect: crate::core::jinx::worker::Effect) {
+        use crate::core::jinx::worker::Effect;
+        match effect {
+            Effect::Installed { name, kind } => {
+                tracing::info!("jinx installed {name} ({kind}); reloads land in J3");
+            }
         }
     }
 

@@ -765,6 +765,167 @@ impl AppCore {
 
     /// `.mapdb` — map data management from any frontend. Subcommands:
     /// `status` (default), `download`, `remove`, `repo <owner/repo>`.
+    /// The `.jinx` asset-manager command. Network operations run off-thread
+    /// (`jinx_worker`); `repo` list/add/rm/change edit `repos.toml` inline.
+    fn handle_jinx(&mut self, args: &[String]) {
+        use crate::core::jinx::worker::Request;
+
+        // Keep the worker's repo-seed gate current with the character's game.
+        // (parse_jinx_flags is a free fn below so it can be unit-tested.)
+        let game = self.game_type();
+        self.jinx_worker.set_game(game);
+
+        // Split flags (--repo=NAME, --force, --dry-run) from positional args.
+        let (flags, pos) = match parse_jinx_flags(args) {
+            Ok(parsed) => parsed,
+            Err(bad) => {
+                self.add_system_message(&format!("[jinx] unknown flag '{bad}'"));
+                return;
+            }
+        };
+        let JinxFlags { only_repo, force, dry_run } = flags;
+
+        let sub = pos.first().copied().unwrap_or("help");
+        match sub {
+            "help" | "?" => self.jinx_help(),
+
+            // --- repo management: inline, no network ---
+            "repo" => self.handle_jinx_repo(&pos[1..]),
+
+            // --- network commands: off-thread ---
+            "list" => {
+                let ack = self.jinx_worker.start(Request::List { only_repo });
+                self.add_system_message(&ack);
+            }
+            "search" => match pos.get(1) {
+                Some(pattern) => {
+                    let ack = self
+                        .jinx_worker
+                        .start(Request::Search { pattern: pattern.to_string() });
+                    self.add_system_message(&ack);
+                }
+                None => self.add_system_message("[jinx] usage: .jinx search <pattern>"),
+            },
+            "info" => match pos.get(1) {
+                Some(name) => {
+                    let ack = self.jinx_worker.start(Request::Info {
+                        name: name.to_string(),
+                        only_repo,
+                    });
+                    self.add_system_message(&ack);
+                }
+                None => self.add_system_message("[jinx] usage: .jinx info <name>"),
+            },
+            "install" => match pos.get(1) {
+                Some(name) => {
+                    let ack = self.jinx_worker.start(Request::Install {
+                        name: name.to_string(),
+                        only_repo,
+                        overwrite: force,
+                    });
+                    self.add_system_message(&ack);
+                }
+                None => self.add_system_message("[jinx] usage: .jinx install <name> [--repo=<r>]"),
+            },
+            "update" => match pos.get(1) {
+                // Update is install with overwrite; a bare `.jinx update`
+                // updates everything (auto-update).
+                Some(name) => {
+                    let ack = self.jinx_worker.start(Request::Install {
+                        name: name.to_string(),
+                        only_repo,
+                        overwrite: true,
+                    });
+                    self.add_system_message(&ack);
+                }
+                None => {
+                    let ack = self.jinx_worker.start(Request::AutoUpdate { dry_run });
+                    self.add_system_message(&ack);
+                }
+            },
+            "auto-update" => {
+                let ack = self.jinx_worker.start(Request::AutoUpdate { dry_run });
+                self.add_system_message(&ack);
+            }
+
+            other => {
+                self.add_system_message(&format!("[jinx] unknown command '{other}'"));
+                self.jinx_help();
+            }
+        }
+    }
+
+    /// `.jinx repo ...` — list/add/rm/change repository sources, edited inline
+    /// on `repos.toml` (no network). Seeding uses the character's game.
+    fn handle_jinx_repo(&mut self, args: &[&str]) {
+        let game = self.game_type();
+        let mut list = match crate::core::jinx::repo::RepoList::load_or_seed(game) {
+            Ok(l) => l,
+            Err(e) => {
+                self.add_system_message(&format!("[jinx] cannot load repos: {e}"));
+                return;
+            }
+        };
+        match args.first().copied().unwrap_or("list") {
+            "list" => {
+                for repo in &list.repos {
+                    self.add_system_message(&format!("  {} — {}", repo.name, repo.url));
+                }
+                if list.repos.is_empty() {
+                    self.add_system_message("[jinx] no repositories configured");
+                }
+            }
+            "add" => match (args.get(1), args.get(2)) {
+                (Some(name), Some(url)) => match list.add(name, url) {
+                    Ok(()) => match list.save() {
+                        Ok(()) => self.add_system_message(&format!("[jinx] added repo '{name}'")),
+                        Err(e) => self.add_system_message(&format!("[jinx] save failed: {e}")),
+                    },
+                    Err(e) => self.add_system_message(&format!("[jinx] {e}")),
+                },
+                _ => self.add_system_message("[jinx] usage: .jinx repo add <name> <https-url>"),
+            },
+            "rm" | "remove" => match args.get(1) {
+                Some(name) => match list.remove(name) {
+                    Ok(()) => match list.save() {
+                        Ok(()) => self.add_system_message(&format!("[jinx] removed repo '{name}'")),
+                        Err(e) => self.add_system_message(&format!("[jinx] save failed: {e}")),
+                    },
+                    Err(e) => self.add_system_message(&format!("[jinx] {e}")),
+                },
+                None => self.add_system_message("[jinx] usage: .jinx repo rm <name>"),
+            },
+            "change" => match (args.get(1), args.get(2)) {
+                (Some(name), Some(url)) => match list.change(name, url) {
+                    Ok(()) => match list.save() {
+                        Ok(()) => self.add_system_message(&format!("[jinx] repo '{name}' -> {url}")),
+                        Err(e) => self.add_system_message(&format!("[jinx] save failed: {e}")),
+                    },
+                    Err(e) => self.add_system_message(&format!("[jinx] {e}")),
+                },
+                _ => self.add_system_message("[jinx] usage: .jinx repo change <name> <https-url>"),
+            },
+            other => self.add_system_message(&format!(
+                "[jinx] unknown repo command '{other}' (list|add|rm|change)"
+            )),
+        }
+    }
+
+    fn jinx_help(&mut self) {
+        for line in [
+            "[jinx] asset manager — download skins, icons, layouts, game data",
+            "  .jinx list [--repo=<r>]        list available assets",
+            "  .jinx search <pattern>         search asset names",
+            "  .jinx info <name>              show details",
+            "  .jinx install <name> [--force] install an asset",
+            "  .jinx update [<name>]          update one asset, or all if omitted",
+            "  .jinx auto-update [--dry-run]  update every installed asset",
+            "  .jinx repo list|add|rm|change  manage repositories",
+        ] {
+            self.add_system_message(line);
+        }
+    }
+
     fn handle_mapdb(&mut self, args: &[String]) {
         use crate::core::mapdb_update::UpdateStatus;
         match args.first().map(String::as_str).unwrap_or("status") {
@@ -1299,6 +1460,15 @@ impl AppCore {
                 self.handle_mapdb(&args);
             }
 
+            // Asset manager (the native jinx client): download and update
+            // skins, icon maps, layouts, and game data from federated repos.
+            // Network work runs off-thread (see jinx_worker); repo edits are
+            // instant and inline.
+            "jinx" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                self.handle_jinx(&args);
+            }
+
             // Data-pack assets (gameobj-data.xml, ...): source tier + age.
             // `.data reload` re-resolves mid-session, e.g. after Lich's
             // `;repo` refreshed its copy. Settings panel surface is owed;
@@ -1815,6 +1985,79 @@ impl AppCore {
 
         // Don't send anything to server
         Ok(String::new())
+    }
+}
+
+/// Parsed `.jinx` flags, split from the positional args.
+#[derive(Debug)]
+struct JinxFlags {
+    only_repo: Option<String>,
+    force: bool,
+    dry_run: bool,
+}
+
+/// Split `.jinx` args into flags and positionals. Returns `Err(flag)` for an
+/// unrecognized `--flag`. A free function so it's unit-testable without an
+/// `AppCore`.
+fn parse_jinx_flags(args: &[String]) -> Result<(JinxFlags, Vec<&str>), String> {
+    let mut flags = JinxFlags {
+        only_repo: None,
+        force: false,
+        dry_run: false,
+    };
+    let mut pos: Vec<&str> = Vec::new();
+    for arg in args {
+        if let Some(rest) = arg.strip_prefix("--repo=") {
+            flags.only_repo = Some(rest.to_string());
+        } else if arg == "--force" {
+            flags.force = true;
+        } else if arg == "--dry-run" {
+            flags.dry_run = true;
+        } else if arg.starts_with("--") {
+            return Err(arg.clone());
+        } else {
+            pos.push(arg);
+        }
+    }
+    Ok((flags, pos))
+}
+
+#[cfg(test)]
+mod jinx_command_tests {
+    use super::*;
+
+    fn args(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn flags_split_from_positionals() {
+        let a = args("install parchment --repo=skins --force");
+        let (flags, pos) = parse_jinx_flags(&a).unwrap();
+        assert_eq!(pos, ["install", "parchment"]);
+        assert_eq!(flags.only_repo.as_deref(), Some("skins"));
+        assert!(flags.force);
+        assert!(!flags.dry_run);
+    }
+
+    #[test]
+    fn dry_run_and_bare_positionals() {
+        let a = args("auto-update --dry-run");
+        let (flags, pos) = parse_jinx_flags(&a).unwrap();
+        assert_eq!(pos, ["auto-update"]);
+        assert!(flags.dry_run);
+        assert!(flags.only_repo.is_none());
+
+        let b = args("list");
+        let (_, pos) = parse_jinx_flags(&b).unwrap();
+        assert_eq!(pos, ["list"]);
+    }
+
+    #[test]
+    fn unknown_flag_is_rejected() {
+        let a = args("install x --bogus");
+        let err = parse_jinx_flags(&a).unwrap_err();
+        assert_eq!(err, "--bogus");
     }
 }
 
