@@ -116,6 +116,21 @@ pub fn install_asset(
              (scripts stay in Lich)"
         ));
     }
+    // Refuse anything VellumFE has no home for: map tiles (the map subsystem's
+    // job) and Lich-only data files (sloot.ui, lockpicks.yaml, …). The same
+    // gate list/search use, so what installs is exactly what's listed.
+    if !asset.is_installable() {
+        if kind == "data" {
+            return Err(format!(
+                "'{name}' is a data file VellumFE doesn't use; \
+                 game data is gameobj-data.xml / effect-list.xml"
+            ));
+        }
+        return Err(format!(
+            "'{name}' ({kind}) isn't a VellumFE-installable asset \
+             (maps are managed with .mapdb)"
+        ));
+    }
 
     let dest = plain_file_dest(kind, &name)?;
 
@@ -156,6 +171,16 @@ pub fn install_asset(
 /// Destination path for a plain single-file asset, or `None` for a kind that is
 /// a composed bundle needing extraction (`skin`, `layout`, `uipack`).
 fn plain_file_dest(kind: &str, name: &str) -> Result<Option<PathBuf>, String> {
+    // mapdb.json is `data`-typed but belongs in the map dir the map subsystem
+    // reads, not the game-data store. The mapdb downloader versions its own
+    // filenames; a direct .jinx install lands the plain name there and J3's
+    // reload hands it to the map service.
+    if name.eq_ignore_ascii_case("mapdb.json") {
+        let base = Config::base_dir().map_err(|e| format!("cannot resolve base dir: {e}"))?;
+        return Ok(Some(
+            crate::core::mapdb_update::download_dir(&base).join(name),
+        ));
+    }
     let dir = match kind {
         // Game data resolves through the data-pack local-store tier.
         "data" => Config::global_data_dir(),

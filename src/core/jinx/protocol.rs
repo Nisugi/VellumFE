@@ -87,6 +87,39 @@ impl Asset {
     pub fn kind(&self) -> &str {
         self.kind.as_deref().unwrap_or("script")
     }
+
+    /// Whether VellumFE can actually install and use this asset. The federated
+    /// repos carry far more than VellumFE consumes — Lich scripts, hundreds of
+    /// map image tiles, Lich-only data files — so `.jinx` surfaces only what
+    /// has a real home here. The single gate for list, search, and install.
+    pub fn is_installable(&self) -> bool {
+        // mapdb.json is the map database VellumFE uses — installable, even
+        // though it lives in the map-backup repo alongside hundreds of image
+        // tiles we don't use. (Its type tag is `data`; the allowlist below
+        // catches it.)
+        match self.kind() {
+            // Game data + the mapdb: only the specific files a VellumFE
+            // subsystem loads. Other `data`-typed files in shared repos are
+            // Lich's (sloot.ui, lockpicks.yaml, …) and would sit unused.
+            "data" => is_known_game_data(self.basename()),
+            // Interface assets we own.
+            "iconmap" | "image" | "icon" | "skin" | "layout" | "uipack" => true,
+            // Map IMAGE tiles (kind `map`) are not used by VellumFE. The map
+            // database itself is `mapdb.json` (kind `data`, allowed above).
+            // Scripts/engines are Lich's.
+            _ => false,
+        }
+    }
+}
+
+/// The `data`-typed files VellumFE actually consumes: gameobj-data.xml
+/// (`data_pack`), effect-list.xml (`spell_table`), and mapdb.json (the map
+/// database — image tiles beside it in the repo are excluded). spell-list.xml
+/// is the deprecated predecessor of effect-list.xml and is left out. Kept in
+/// sync with those consumers.
+pub fn is_known_game_data(basename: &str) -> bool {
+    basename.eq_ignore_ascii_case("mapdb.json")
+        || matches!(basename, "gameobj-data.xml" | "effect-list.xml")
 }
 
 /// `base64(SHA1(bytes))` — byte-for-byte identical to Ruby's
@@ -160,6 +193,38 @@ mod tests {
         assert_eq!(v.version.as_deref(), Some("1.2.0"));
         assert_eq!(v.tags, ["warm", "fantasy"]);
         assert_eq!(v.category.as_deref(), Some("skin"));
+    }
+
+    #[test]
+    fn installable_gate_matches_vellum_consumers() {
+        let mk = |file: &str, kind: &str| Asset {
+            file: file.into(),
+            kind: Some(kind.into()),
+            md5: "x".into(),
+            last_commit: 0,
+            header: None,
+            vellum: None,
+        };
+        // Game data VellumFE actually loads.
+        assert!(mk("/data/gameobj-data.xml", "data").is_installable());
+        assert!(mk("/data/effect-list.xml", "data").is_installable());
+        // The map database itself is installable (goes to the map dir).
+        assert!(mk("/mapdb.json", "data").is_installable());
+        assert!(mk("/MapDb.JSON", "data").is_installable()); // case-insensitive
+        // Deprecated / not-consumed data files: hidden.
+        assert!(!mk("/data/spell-list.xml", "data").is_installable());
+        assert!(!mk("/sloot.ui", "data").is_installable());
+        assert!(!mk("/lockpicks.yaml", "data").is_installable());
+        // Map IMAGE tiles (kind `map`) are hidden — we don't use them.
+        assert!(!mk("/wl-wizard_guild.png", "map").is_installable());
+        assert!(!mk("/moonsedge.png", "map").is_installable());
+        // Interface assets: installable.
+        assert!(mk("/icons/runes.png", "iconmap").is_installable());
+        assert!(mk("/skins/parchment.vellumpack", "skin").is_installable());
+        assert!(mk("/layouts/hud.vellumpack", "layout").is_installable());
+        // Code stays Lich's.
+        assert!(!mk("/go2.lic", "script").is_installable());
+        assert!(!mk("/lich.rb", "engine").is_installable());
     }
 
     #[test]

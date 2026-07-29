@@ -165,11 +165,13 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
                         if manifest.available.is_empty() {
                             continue;
                         }
+                        let installable: Vec<_> =
+                            manifest.available.iter().filter(|a| a.is_installable()).collect();
+                        if installable.is_empty() {
+                            continue;
+                        }
                         send(format!("[jinx] {}:", repo.name), None);
-                        for asset in &manifest.available {
-                            if matches!(asset.kind(), "script" | "engine") {
-                                continue; // not installable by VellumFE
-                            }
+                        for asset in installable {
                             any = true;
                             send(format!("  {} ({})", asset.basename(), asset.kind()), None);
                         }
@@ -188,7 +190,7 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
             for repo in &repos.repos {
                 let Ok(manifest) = cache.get(&agent, repo) else { continue };
                 for asset in &manifest.available {
-                    if matches!(asset.kind(), "script" | "engine") {
+                    if !asset.is_installable() {
                         continue;
                     }
                     if asset.basename().to_lowercase().contains(&needle) {

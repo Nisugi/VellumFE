@@ -39,10 +39,6 @@ struct Seed {
 const SEEDS: &[Seed] = &[
     // Game data + community assets, all games.
     Seed { name: "elanthia-online", url: "https://extras.repo.elanthia.online", only: None },
-    // VellumFE assets (single vellum-assets monorepo, per-category sub-paths).
-    Seed { name: "vellum-skins", url: "https://nisugi.github.io/vellum-assets/skins", only: None },
-    Seed { name: "vellum-icons", url: "https://nisugi.github.io/vellum-assets/icons", only: None },
-    Seed { name: "vellum-layouts", url: "https://nisugi.github.io/vellum-assets/layouts", only: None },
     // Map backups, game-specific.
     Seed {
         name: "mapdb-backup-gs",
@@ -54,6 +50,10 @@ const SEEDS: &[Seed] = &[
         url: "https://elanthia-online.github.io/mapdb-backup-dr",
         only: Some(GameType::DR),
     },
+    // NOTE: the VellumFE asset repos (vellum-skins/icons/layouts, served from
+    // the vellum-assets monorepo) are NOT seeded yet — the monorepo isn't
+    // built. Re-add them here in the commit that stands up the infrastructure,
+    // so `.jinx list` doesn't 404 on repos that don't exist.
 ];
 
 impl RepoList {
@@ -159,8 +159,9 @@ mod tests {
         assert!(gs.apply_seeds(GameType::GS4));
         assert!(gs.find("mapdb-backup-gs").is_some());
         assert!(gs.find("mapdb-backup-dr").is_none());
-        assert!(gs.find("vellum-skins").is_some());
         assert!(gs.find("elanthia-online").is_some());
+        // vellum-* repos are intentionally NOT seeded until the monorepo exists.
+        assert!(gs.find("vellum-skins").is_none());
 
         let mut dr = RepoList::default();
         dr.apply_seeds(GameType::DR);
