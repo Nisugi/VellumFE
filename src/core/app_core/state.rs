@@ -3044,7 +3044,11 @@ impl AppCore {
                 fg: Some("#00ff00".to_string()),
                 bg: None,
                 bold: true,
-                mono: false,
+                // Client output (.jinx tables, .layouts, errors) renders in
+                // the window's mono font so structured info reads aligned
+                // and stands apart from the game feed. The TUI is mono
+                // regardless; the GUI switches fonts per segment.
+                mono: true,
                 span_type: SpanType::System, // system echo; skip highlight transforms
                 link_data: None,
             }],
