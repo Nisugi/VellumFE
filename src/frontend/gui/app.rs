@@ -33,6 +33,7 @@ mod editors;
 mod gamepad;
 mod interact;
 mod menus;
+mod snap;
 mod status_icons;
 mod theme;
 mod webui_panel;
@@ -363,6 +364,11 @@ pub struct VellumGuiApp {
     /// press origin, so re-testing the origin against the current rect
     /// every frame would re-pin the size mid-drag and stall the resize.
     center_engaged_tab: Option<TabKey>,
+    /// Pointer-true rect of the Center window being dragged/resized, so
+    /// snapping stays escapable (see `snap.rs`); None outside a drag.
+    center_snap_drag: Option<snap::CenterSnapDrag>,
+    /// Snaps engaged this frame, drawn as guides by the Center zone pass.
+    center_snap_guides: Vec<snap::SnapGuide>,
     last_monitor_bounds: Option<[f32; 4]>,
     /// Latest main OS window geometry, persisted so the next launch opens
     /// at the same size (per-window rects are saved against this geometry).
@@ -668,6 +674,8 @@ impl VellumGuiApp {
             zone_drag_state: None,
             hand_resize_tab: None,
             center_engaged_tab: None,
+            center_snap_drag: None,
+            center_snap_guides: Vec::new(),
             last_monitor_bounds: None,
             main_viewport_state,
             webui_bridge: None,
@@ -2306,6 +2314,8 @@ impl VellumGuiApp {
         self.main_window_rects = restored.main_window_rects;
         self.sidebar_gap_above = restored.sidebar_gap_above;
         self.last_center_window_rects.clear();
+        self.center_snap_drag = None;
+        self.center_snap_guides.clear();
         self.tab_zones = restored.tab_zones;
         self.no_title_tabs = restored.no_title_tabs;
         self.shell_layout = restored.shell_layout;

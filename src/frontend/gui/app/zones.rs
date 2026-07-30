@@ -1354,6 +1354,7 @@ impl VellumGuiApp {
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         if !pointer_down {
             self.center_engaged_tab = None;
+            self.center_snap_drag = None;
         }
 
         // Center windows render at *display* rects computed from their
@@ -1403,6 +1404,26 @@ impl VellumGuiApp {
         } else {
             HashMap::new()
         };
+
+        // Snap candidates: every center window's on-screen (display) rect
+        // and title — snapping matches what the user sees. Guides live for
+        // one frame; an active drag repopulates them below.
+        if zone == GuiShellZone::Center {
+            self.center_snap_guides.clear();
+        }
+        let snap_suspended = ctx.input(|i| i.modifiers.shift);
+        let snap_siblings: Vec<(TabKey, String, Rect)> =
+            if zone == GuiShellZone::Center && self.ui_settings.snap_enabled {
+                tabs.iter()
+                    .filter_map(|tab| {
+                        center_displays.get(&tab.id.key).map(|rect| {
+                            (tab.id.key.clone(), self.window_display_title(tab), *rect)
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
         let mut occupied_rects: Vec<Rect> = Vec::new();
         for tab in tabs {
@@ -1638,7 +1659,31 @@ impl VellumGuiApp {
                 // so windows never sprang back when the zone closed and a
                 // loaded layout was overwritten by the on-screen geometry.
                 let should_track_rect = rect_changed && user_engaging_window;
-                if should_track_rect {
+                // While a snap drag is live, keep running the snap hook even
+                // on frames where the pointer holds still (rect unchanged),
+                // so the guides stay up instead of flickering off mid-drag.
+                let snap_drag_live = self
+                    .center_snap_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.tab_key == tab.id.key);
+                if zone == GuiShellZone::Center
+                    && !is_hand_widget
+                    && !being_moved
+                    && user_engaging_window
+                    && (rect_changed || snap_drag_live)
+                {
+                    let tracked = self.apply_center_snap(
+                        &tab.id.key,
+                        initial_rect,
+                        inner.response.rect,
+                        &snap_siblings,
+                        window_bounds,
+                        min_window_size,
+                        max_window_size,
+                        snap_suspended,
+                    );
+                    self.track_main_window_rect(&tab.id.key, tracked, window_bounds);
+                } else if should_track_rect {
                     self.track_main_window_rect(&tab.id.key, inner.response.rect, window_bounds);
                 }
                 if zone == GuiShellZone::Center && pointer_interacting {
@@ -1716,6 +1761,10 @@ impl VellumGuiApp {
             if let Some(click) = clicked_link {
                 actions.link_clicks.push(click);
             }
+        }
+
+        if zone == GuiShellZone::Center && self.ui_settings.snap_show_guides {
+            self.paint_snap_guides(ctx, window_bounds);
         }
 
         actions

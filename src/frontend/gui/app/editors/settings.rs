@@ -539,6 +539,53 @@ fn render_gui_section(
                 );
         }
         ui.end_row();
+        ui.label("Window snapping");
+        ui.checkbox(&mut gui_settings.snap_enabled, "Snap windows to edges")
+            .on_hover_text(
+                "Center-pane windows snap to each other and to the pane \
+                 edges while you drag or resize them. Hold Shift during a \
+                 drag to place a window freely.",
+            );
+        ui.end_row();
+        if gui_settings.snap_enabled {
+            ui.label("Snap distance");
+            ui.add(egui::Slider::new(&mut gui_settings.snap_radius, 0.0..=24.0).step_by(1.0))
+                .on_hover_text(
+                    "How close an edge must get, in points, before it \
+                     snaps. Trackpads and high-DPI displays usually want \
+                     more than a mouse. 0 disables snapping.",
+                );
+            ui.end_row();
+            ui.label("Snap targets");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut gui_settings.snap_to_siblings, "Other windows")
+                    .on_hover_text(
+                        "Butt two windows together or align them flush \
+                         along the same edge.",
+                    );
+                ui.checkbox(&mut gui_settings.snap_to_bounds, "Pane edges");
+                ui.checkbox(&mut gui_settings.snap_to_centers, "Centers")
+                    .on_hover_text(
+                        "The pane's and other windows' horizontal and \
+                         vertical center lines.",
+                    );
+            });
+            ui.end_row();
+            ui.label("Snap grid");
+            ui.add(egui::Slider::new(&mut gui_settings.snap_grid, 0.0..=48.0).step_by(4.0))
+                .on_hover_text(
+                    "Also snap edges to a grid of this pitch in points, \
+                     anchored at the pane's top-left. 0 = no grid.",
+                );
+            ui.end_row();
+            ui.label("Snap guides");
+            ui.checkbox(&mut gui_settings.snap_show_guides, "Show alignment guides")
+                .on_hover_text(
+                    "Draw a dashed line with the matched coordinate while \
+                     a snap is engaged.",
+                );
+            ui.end_row();
+        }
     });
     ui.weak(
         "Vitals bar options (layout, height, text, bars shown) moved to the \

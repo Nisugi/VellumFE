@@ -378,6 +378,37 @@ pub struct GuiUiSettings {
     /// through the invisible drag strips.
     #[serde(default)]
     pub zone_separators: ZoneSeparatorStyle,
+
+    /// Snap-to-edge docking for freely placed Center windows: while a
+    /// window is dragged or resized, its moving edges snap to pane bounds,
+    /// sibling edges, and center lines. Shift suspends it for one drag.
+    #[serde(default = "default_true")]
+    pub snap_enabled: bool,
+
+    /// Snap engage distance in points; 0 also disables snapping.
+    #[serde(default = "default_snap_radius")]
+    pub snap_radius: f32,
+
+    /// Snap to sibling window edges (butt together / align flush).
+    #[serde(default = "default_true")]
+    pub snap_to_siblings: bool,
+
+    /// Snap to the center pane's four edges.
+    #[serde(default = "default_true")]
+    pub snap_to_bounds: bool,
+
+    /// Snap to the pane's and siblings' horizontal/vertical center lines.
+    #[serde(default = "default_true")]
+    pub snap_to_centers: bool,
+
+    /// Grid pitch in points, relative to the pane origin; 0 = no grid.
+    #[serde(default)]
+    pub snap_grid: f32,
+
+    /// Draw a dashed guide line with the matched coordinate while a snap
+    /// is engaged.
+    #[serde(default = "default_true")]
+    pub snap_show_guides: bool,
 }
 
 /// How the shell draws the boundary between zones.
@@ -449,6 +480,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_snap_radius() -> f32 {
+    8.0
+}
+
 impl Default for GuiUiSettings {
     fn default() -> Self {
         Self {
@@ -469,6 +504,13 @@ impl Default for GuiUiSettings {
             compass_set: None,
             doll_grayscale: false,
             zone_separators: ZoneSeparatorStyle::default(),
+            snap_enabled: default_true(),
+            snap_radius: default_snap_radius(),
+            snap_to_siblings: default_true(),
+            snap_to_bounds: default_true(),
+            snap_to_centers: default_true(),
+            snap_grid: 0.0,
+            snap_show_guides: default_true(),
         }
     }
 }
