@@ -4739,6 +4739,11 @@ impl TuiFrontend {
                                         app_core.ui_state.needs_widget_reset = true;
                                     }
                                 }
+                                // Text windows: push streams/compact/timestamps
+                                // onto the live content so the change (e.g. the
+                                // bounty condense toggle) applies immediately
+                                // instead of on window recreation.
+                                app_core.apply_text_content_settings(&window_def);
                             }
                         }
                         app_core.mark_layout_modified();

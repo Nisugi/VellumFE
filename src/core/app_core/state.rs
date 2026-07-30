@@ -3446,6 +3446,67 @@ impl AppCore {
         }
     }
 
+    /// Push a Text def's content settings (streams, buffer, compact,
+    /// timestamps) onto the live window, rebuild stream routing, and re-feed
+    /// bounty data. Editors that only replace the layout def otherwise leave
+    /// the live window on its old settings until it is recreated.
+    pub fn apply_text_content_settings(&mut self, def: &crate::config::WindowDef) {
+        let crate::config::WindowDef::Text { data, .. } = def else {
+            return;
+        };
+        let Some(window) = self.ui_state.windows.get_mut(def.name()) else {
+            return;
+        };
+        let WindowContent::Text(text) = &mut window.content else {
+            return;
+        };
+        text.streams = data.streams.clone();
+        text.max_lines = data.buffer_size;
+        text.compact = data.compact;
+        text.show_timestamps = data.show_timestamps;
+        if let Some(pos) = data.timestamp_position {
+            text.timestamp_position = pos;
+        }
+        self.message_processor
+            .update_text_stream_subscribers(&self.ui_state);
+        self.refresh_bounty_window(def.name());
+    }
+
+    /// Rebuild a bounty-fed text window's lines from the cached bounty data,
+    /// honoring its current compact flag. Compaction is applied at line
+    /// ingestion, so toggling the flag otherwise only affects the NEXT
+    /// bounty update — which made the editor's condense checkbox look inert
+    /// until the window was closed and reopened.
+    pub fn refresh_bounty_window(&mut self, name: &str) {
+        if !self.game_state.bounty.has_data() {
+            return;
+        }
+        let Some(window) = self.ui_state.windows.get_mut(name) else {
+            return;
+        };
+        let WindowContent::Text(text) = &mut window.content else {
+            return;
+        };
+        // Only rebuild windows fed solely by the bounty stream: mixed-stream
+        // history can't be reconstructed from the bounty cache.
+        let bounty_only = text.streams.len() == 1
+            && text.streams[0].eq_ignore_ascii_case("bounty");
+        if !bounty_only {
+            return;
+        }
+        let lines: Vec<String> = if text.compact {
+            self.game_state.bounty.compact_lines.clone()
+        } else {
+            vec![self.game_state.bounty.raw_text.clone()]
+        };
+        text.lines.clear();
+        for line_text in lines {
+            text.add_line(crate::data::widget::StyledLine::from_text_with_stream(
+                line_text, "bounty",
+            ));
+        }
+    }
+
     /// Hide a window (keep in layout for persistence, remove from UI)
     pub fn hide_window(&mut self, name: &str) {
         if name == "main" {

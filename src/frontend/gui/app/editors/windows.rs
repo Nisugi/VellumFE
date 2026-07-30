@@ -474,6 +474,10 @@ impl VellumGuiApp {
             self.app_core
                 .message_processor
                 .update_text_stream_subscribers(&self.app_core.ui_state);
+            // Compaction happens at ingestion; re-feed a bounty window from
+            // the cached bounty data so the condense toggle applies now
+            // instead of on the next bounty update.
+            self.app_core.refresh_bounty_window(name);
             // Persist content settings to the layout definition too (streams
             // previously mutated live state only and were lost on restart).
             match self
