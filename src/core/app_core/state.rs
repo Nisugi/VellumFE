@@ -3375,6 +3375,10 @@ impl AppCore {
                 // Clear modified flag and update base layout name
                 self.layout_modified_since_save = false;
                 self.base_layout_name = Some(name.to_string());
+                // Mirror the just-saved arrangement into the auto-save slot
+                // startup reads, so the save sticks even if this session
+                // ends without a clean quit.
+                self.autosave_layout();
             }
             Err(e) => {
                 tracing::error!("Failed to save layout '{}': {}", name, e);
