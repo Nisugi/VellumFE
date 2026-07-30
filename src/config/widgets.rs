@@ -652,7 +652,7 @@ pub struct HandWidgetData {
 /// One condition-driven hand icon state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandIconState {
-    pub when: super::HotbarCondition,
+    pub when: super::Condition,
     /// GUI icon while the state holds (pool image / sheet cell /
     /// `IconRef::None` for no art). None = keep the resolved default.
     #[serde(default, skip_serializing_if = "Option::is_none")]

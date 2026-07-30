@@ -77,6 +77,114 @@ impl VellumGuiApp {
     }
 }
 
+/// A pick made in the shared [`icon_ref_picker`].
+pub(super) enum IconRefPick {
+    /// The caller's "unset/inherit" row (maps to `Option::None` refs).
+    Unset,
+    /// A concrete reference (pool image, sheet cell, `Default`, `None`).
+    Ref(crate::data::IconRef),
+}
+
+/// Display label for an `IconRef` choice against a pool listing.
+pub(super) fn icon_ref_label(
+    current: Option<&crate::data::IconRef>,
+    pool_images: &[(String, String)],
+    unset_label: &str,
+) -> String {
+    match current {
+        None => unset_label.to_string(),
+        Some(crate::data::IconRef::Default) => "Default".to_string(),
+        Some(crate::data::IconRef::None) => "None (no art)".to_string(),
+        Some(crate::data::IconRef::Image { path }) => pool_images
+            .iter()
+            .find(|(pool_path, _)| pool_path == path)
+            .map(|(_, stem)| stem.clone())
+            // Stale reference (image removed): show the raw path.
+            .unwrap_or_else(|| path.clone()),
+        Some(crate::data::IconRef::SheetCell { sheet, cell }) => format!("{sheet} #{cell}"),
+    }
+}
+
+/// Shared IconRef source picker: one combo offering the caller's semantic
+/// rows (unset/default/none, each present only when labeled), standalone
+/// pool images, and the active skin's sheets (picked at cell 1 — callers
+/// show a cell spinner/grid for refinement). Returns the pick on the frame
+/// a row is clicked; the caller applies it to its own storage.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn icon_ref_picker(
+    ui: &mut egui::Ui,
+    id_salt: String,
+    current: Option<&crate::data::IconRef>,
+    pool_images: &[(String, String)],
+    sheet_names: &[String],
+    unset_label: Option<&str>,
+    default_label: Option<&str>,
+    none_label: Option<&str>,
+) -> Option<IconRefPick> {
+    let mut picked = None;
+    let selected = icon_ref_label(current, pool_images, unset_label.unwrap_or("(unset)"));
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            if let Some(label) = unset_label {
+                if ui.selectable_label(current.is_none(), label).clicked() {
+                    picked = Some(IconRefPick::Unset);
+                }
+            }
+            if let Some(label) = default_label {
+                let is = matches!(current, Some(crate::data::IconRef::Default));
+                if ui.selectable_label(is, label).clicked() {
+                    picked = Some(IconRefPick::Ref(crate::data::IconRef::Default));
+                }
+            }
+            if let Some(label) = none_label {
+                let is = matches!(current, Some(crate::data::IconRef::None));
+                if ui.selectable_label(is, label).clicked() {
+                    picked = Some(IconRefPick::Ref(crate::data::IconRef::None));
+                }
+            }
+            for (path, stem) in pool_images {
+                let is = matches!(
+                    current,
+                    Some(crate::data::IconRef::Image { path: p }) if p == path
+                );
+                if ui.selectable_label(is, stem).clicked() {
+                    picked = Some(IconRefPick::Ref(crate::data::IconRef::Image {
+                        path: path.clone(),
+                    }));
+                }
+            }
+            for sheet in sheet_names {
+                let is = matches!(
+                    current,
+                    Some(crate::data::IconRef::SheetCell { sheet: s, .. }) if s == sheet
+                );
+                if ui
+                    .selectable_label(is, format!("sheet: {sheet}"))
+                    .clicked()
+                {
+                    picked = Some(IconRefPick::Ref(crate::data::IconRef::SheetCell {
+                        sheet: sheet.clone(),
+                        cell: 1,
+                    }));
+                }
+            }
+            if pool_images.is_empty() && sheet_names.is_empty() {
+                ui.weak("no pool images or sheets available");
+            }
+        });
+    picked
+}
+
+/// Pool images of one category as (pool-relative path, display stem) rows
+/// for [`icon_ref_picker`].
+pub(super) fn pool_picker_rows(category: &str) -> Vec<(String, String)> {
+    crate::config::pool::list_category(category)
+        .into_iter()
+        .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+        .collect()
+}
+
 /// Click-to-pick color swatch plus a hex/name text field. The swatch is
 /// always shown — even when the field is empty — so picking a color never
 /// requires typing a code; the picker writes hex back into the field.

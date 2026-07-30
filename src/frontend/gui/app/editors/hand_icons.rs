@@ -5,7 +5,7 @@
 //! and persist through the debounced layout autosave.
 
 use super::super::VellumGuiApp;
-use crate::config::{EffectCategory, HandIconState, HandSlot, HotbarCondition, NameMatch};
+use crate::config::{EffectCategory, HandIconState, HandSlot, Condition, NameMatch};
 use eframe::egui;
 
 pub(in super::super) struct HandIconsEditorState {
@@ -18,7 +18,7 @@ pub(in super::super) struct HandIconsEditorState {
 
 fn default_state() -> HandIconState {
     HandIconState {
-        when: HotbarCondition::HandHolds {
+        when: Condition::HandHolds {
             hand: HandSlot::Right,
             item_type: Some("weapon".to_string()),
             name: None,
@@ -27,21 +27,6 @@ fn default_state() -> HandIconState {
         icon: None,
         text: None,
         icon_color: None,
-    }
-}
-
-/// Picker label for a state's icon choice.
-fn icon_label(icon: &Option<crate::data::IconRef>, pool: &[(String, String)]) -> String {
-    match icon {
-        None => "Static icon".to_string(),
-        Some(crate::data::IconRef::Default) => "Static icon".to_string(),
-        Some(crate::data::IconRef::None) => "None (no art)".to_string(),
-        Some(crate::data::IconRef::Image { path }) => pool
-            .iter()
-            .find(|(pool_path, _)| pool_path == path)
-            .map(|(_, stem)| stem.clone())
-            .unwrap_or_else(|| path.clone()),
-        Some(crate::data::IconRef::SheetCell { sheet, cell }) => format!("{sheet} #{cell}"),
     }
 }
 
@@ -81,10 +66,12 @@ impl VellumGuiApp {
         let mut open = true;
         let mut save_request = false;
 
-        let pool_images: Vec<(String, String)> = crate::config::pool::list_category("hands")
-            .into_iter()
-            .map(|image| (image.pool_path.clone(), image.stem().to_string()))
-            .collect();
+        let pool_images = super::pool_picker_rows("hands");
+        let sheet_names = self
+            .skin_state
+            .widget_art()
+            .map(|art| art.sheet_names())
+            .unwrap_or_default();
         // Effect-name suggestions for the shared condition builder.
         let suggestions: std::collections::HashMap<&'static str, Vec<String>> =
             EffectCategory::ALL
@@ -151,47 +138,37 @@ impl VellumGuiApp {
                     }
                     ui.horizontal(|ui| {
                         ui.label("Icon");
-                        egui::ComboBox::from_id_salt(("hand_state_icon", idx))
-                            .selected_text(icon_label(&st.icon, &pool_images))
-                            .show_ui(ui, |ui| {
-                                if ui
-                                    .selectable_label(
-                                        matches!(
-                                            st.icon,
-                                            None | Some(crate::data::IconRef::Default)
-                                        ),
-                                        "Static icon",
-                                    )
-                                    .on_hover_text("Keep whatever the hand shows normally")
-                                    .clicked()
-                                {
-                                    st.icon = None;
-                                    state.dirty = true;
-                                }
-                                if ui
-                                    .selectable_label(
-                                        matches!(st.icon, Some(crate::data::IconRef::None)),
-                                        "None (no art)",
-                                    )
-                                    .clicked()
-                                {
-                                    st.icon = Some(crate::data::IconRef::None);
-                                    state.dirty = true;
-                                }
-                                for (path, stem) in &pool_images {
-                                    let selected = matches!(
-                                        &st.icon,
-                                        Some(crate::data::IconRef::Image { path: current })
-                                            if current == path
-                                    );
-                                    if ui.selectable_label(selected, stem).clicked() {
-                                        st.icon = Some(crate::data::IconRef::Image {
-                                            path: path.clone(),
-                                        });
-                                        state.dirty = true;
-                                    }
-                                }
-                            });
+                        match super::icon_ref_picker(
+                            ui,
+                            format!("hand_state_icon_{idx}"),
+                            st.icon.as_ref(),
+                            &pool_images,
+                            &sheet_names,
+                            Some("Static icon"),
+                            None,
+                            Some("None (no art)"),
+                        ) {
+                            Some(super::IconRefPick::Unset) => {
+                                st.icon = None;
+                                state.dirty = true;
+                            }
+                            Some(super::IconRefPick::Ref(picked)) => {
+                                st.icon = Some(picked);
+                                state.dirty = true;
+                            }
+                            None => {}
+                        }
+                        if let Some(crate::data::IconRef::SheetCell { cell, .. }) = &mut st.icon
+                        {
+                            let mut value = (*cell).max(1);
+                            if ui
+                                .add(egui::DragValue::new(&mut value).range(1..=9999).prefix("#"))
+                                .changed()
+                            {
+                                *cell = value;
+                                state.dirty = true;
+                            }
+                        }
                         ui.label("Text");
                         let mut text = st.text.clone().unwrap_or_default();
                         if ui
@@ -245,7 +222,7 @@ impl VellumGuiApp {
                 };
                 let now_server = chrono::Utc::now().timestamp()
                     + self.app_core.message_processor.server_time_offset;
-                let resolved = crate::core::hotbar::resolve_hand(
+                let resolved = crate::core::conditions::resolve_hand(
                     &preview_data,
                     &self.app_core.game_state,
                     now_server,
@@ -253,7 +230,11 @@ impl VellumGuiApp {
                 );
                 ui.horizontal(|ui| {
                     ui.weak("Right now this hand would show:");
-                    ui.monospace(icon_label(&resolved.icon, &pool_images));
+                    ui.monospace(super::icon_ref_label(
+                        resolved.icon.as_ref(),
+                        &pool_images,
+                        "Static icon",
+                    ));
                     if let Some(text) = &resolved.text {
                         ui.monospace(format!("text '{text}'"));
                     }

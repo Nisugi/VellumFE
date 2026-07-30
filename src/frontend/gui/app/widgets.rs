@@ -1919,7 +1919,7 @@ impl VellumGuiApp {
         item: &Option<String>,
         link: &Option<LinkData>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
-        resolved: &crate::core::hotbar::ResolvedHand,
+        resolved: &crate::core::conditions::ResolvedHand,
     ) -> Option<GuiLinkClick> {
         let empty_text = if hand_prefix == "S" { "None" } else { "Empty" };
         let item_text = item
@@ -2782,9 +2782,8 @@ impl VellumGuiApp {
                         button.icon.as_ref().and_then(|icon| {
                             skin_art.and_then(|art| {
                                 // Dim states reuse the grayscale twin, barbar-style.
-                                art.sheet_cell(
-                                    &icon.sheet,
-                                    icon.cell,
+                                art.icon_ref_texture(
+                                    &icon.icon,
                                     icon.grayscale || button.dim,
                                 )
                             })
@@ -4530,7 +4529,7 @@ impl VellumGuiApp {
                     .map(|data| {
                         let now_server = chrono::Utc::now().timestamp()
                             + app_core.message_processor.server_time_offset;
-                        crate::core::hotbar::resolve_hand(
+                        crate::core::conditions::resolve_hand(
                             data,
                             &app_core.game_state,
                             now_server,

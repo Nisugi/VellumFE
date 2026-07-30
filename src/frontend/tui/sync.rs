@@ -1967,11 +1967,11 @@ impl TuiFrontend {
                         let (data_icon, data_icon_color, data_text_color, state) =
                             if let crate::config::WindowDef::Hand { data, .. } = window_def {
                                 let state = if data.states.is_empty() {
-                                    crate::core::hotbar::ResolvedHand::default()
+                                    crate::core::conditions::ResolvedHand::default()
                                 } else {
                                     let now_server = chrono::Utc::now().timestamp()
                                         + app_core.message_processor.server_time_offset;
-                                    crate::core::hotbar::resolve_hand(
+                                    crate::core::conditions::resolve_hand(
                                         data,
                                         &app_core.game_state,
                                         now_server,

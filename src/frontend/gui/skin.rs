@@ -65,7 +65,7 @@ pub struct SkinWidgetArt {
     icons_gray: HashMap<String, IconSlot>,
     /// Pool images referenced by hand-widget icon states, keyed by
     /// lowercase pool-relative path.
-    hand_state_icons: HashMap<String, SkinTexture>,
+    pool_icons: HashMap<String, SkinTexture>,
     /// Grayscale doll art; populated only while "grayscale doll" is on.
     pub doll_base_gray: Option<SkinTexture>,
     doll_parts_gray: HashMap<String, HashMap<u8, SkinTexture>>,
@@ -157,7 +157,7 @@ impl SkinWidgetArt {
             crate::data::IconRef::Default => self.icon(own_id),
             crate::data::IconRef::None => None,
             crate::data::IconRef::Image { path } => self
-                .hand_state_icons
+                .pool_icons
                 .get(&path.to_ascii_lowercase())
                 .map(|texture| ResolvedIcon {
                     texture: texture.texture,
@@ -176,6 +176,32 @@ impl SkinWidgetArt {
                     uv,
                 })
             }
+        }
+    }
+
+    /// Texture + uv for an `IconRef`, `sheet_cell`-style, for button-face
+    /// painting (hotbar icons). Sheet cells honor `gray`; pool images fall
+    /// back to color. `Default`/`None` resolve to nothing here — button
+    /// faces have no "own id" to follow.
+    pub fn icon_ref_texture(
+        &self,
+        icon: &crate::data::IconRef,
+        gray: bool,
+    ) -> Option<(SkinTexture, egui::Rect)> {
+        match icon {
+            crate::data::IconRef::SheetCell { sheet, cell } => {
+                self.sheet_cell(&sheet.to_ascii_lowercase(), *cell, gray)
+            }
+            crate::data::IconRef::Image { path } => self
+                .pool_icons
+                .get(&path.to_ascii_lowercase())
+                .map(|texture| {
+                    (
+                        *texture,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    )
+                }),
+            crate::data::IconRef::Default | crate::data::IconRef::None => None,
         }
     }
 
@@ -241,7 +267,7 @@ impl SkinWidgetArt {
             && self.doll_base.is_none()
             && self.doll_parts.is_empty()
             && self.sheets.is_empty()
-            && self.hand_state_icons.is_empty()
+            && self.pool_icons.is_empty()
     }
 
     /// Registered hotbar sheet names (lowercased), sorted for editor lists.
@@ -339,7 +365,7 @@ pub struct SkinState {
     needed_pool_backgrounds: Vec<String>,
     /// Pool images referenced by hand-widget icon states (pool-relative
     /// paths); like backgrounds, only referenced ones load.
-    needed_hand_icons: Vec<String>,
+    needed_pool_icons: Vec<String>,
     /// Active statusicons pool set (lowercase `<set>_` prefix).
     statusicon_set: Option<String>,
     /// Compass pool set override (lowercase prefix); replaces the skin's
@@ -489,12 +515,12 @@ impl SkinState {
 
     /// Declare which pool images hand-widget icon states reference. Call
     /// before `apply_if_changed`; a change triggers a reload.
-    pub fn set_needed_hand_icons(&mut self, paths: impl IntoIterator<Item = String>) {
+    pub fn set_needed_pool_icons(&mut self, paths: impl IntoIterator<Item = String>) {
         let mut paths: Vec<String> = paths.into_iter().collect();
         paths.sort();
         paths.dedup();
-        if paths != self.needed_hand_icons {
-            self.needed_hand_icons = paths;
+        if paths != self.needed_pool_icons {
+            self.needed_pool_icons = paths;
             self.applied = false;
         }
     }
@@ -646,9 +672,9 @@ impl SkinState {
             }
         }
         // Hand-widget icon-state images (pre-declared pool loads).
-        for path in &self.needed_hand_icons {
+        for path in &self.needed_pool_icons {
             if let Some(texture) = tex(path) {
-                art.hand_state_icons
+                art.pool_icons
                     .insert(path.to_ascii_lowercase(), texture);
             }
         }
@@ -842,7 +868,7 @@ impl SkinState {
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.needed_pool_backgrounds.iter().cloned());
-        images.extend(self.needed_hand_icons.iter().cloned());
+        images.extend(self.needed_pool_icons.iter().cloned());
         images.extend(self.doll_override.iter().cloned());
         images.extend(self.pool_status_icons.values().cloned());
         images.extend(self.pool_compass.values().cloned());

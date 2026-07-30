@@ -4834,22 +4834,43 @@ impl eframe::App for VellumGuiApp {
                 .values()
                 .filter_map(|settings| settings.background_image.clone()),
         );
-        // Pool images named by hand-widget icon states load with the skin.
-        self.skin_state.set_needed_hand_icons(
-            self.app_core
-                .layout
-                .windows
-                .iter()
-                .filter_map(|def| match def {
-                    crate::config::WindowDef::Hand { data, .. } => Some(&data.states),
-                    _ => None,
-                })
-                .flatten()
-                .filter_map(|state| match &state.icon {
-                    Some(crate::data::IconRef::Image { path }) => Some(path.clone()),
-                    _ => None,
-                }),
-        );
+        // Pool images named by hand-widget icon states and hotbar button
+        // icons load with the skin (declared loads, like frames).
+        let hand_state_images = self
+            .app_core
+            .layout
+            .windows
+            .iter()
+            .filter_map(|def| match def {
+                crate::config::WindowDef::Hand { data, .. } => Some(&data.states),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|state| match &state.icon {
+                Some(crate::data::IconRef::Image { path }) => Some(path.clone()),
+                _ => None,
+            });
+        let hotbar_images = self
+            .app_core
+            .config
+            .hotbars
+            .bars
+            .iter()
+            .flat_map(|bar| &bar.buttons)
+            .flat_map(|button| {
+                button
+                    .icon
+                    .iter()
+                    .chain(button.default_style.iter().filter_map(|s| s.icon.as_ref()))
+                    .chain(button.states.iter().filter_map(|s| s.style.icon.as_ref()))
+            })
+            .filter_map(|icon| match &icon.icon {
+                crate::data::IconRef::Image { path } => Some(path.clone()),
+                _ => None,
+            });
+        let needed_pool_icons: Vec<String> =
+            hand_state_images.chain(hotbar_images).collect();
+        self.skin_state.set_needed_pool_icons(needed_pool_icons);
         self.skin_state.set_grayscale(
             self.ui_settings.status_icons.gray_inactive,
             self.ui_settings.doll_grayscale,
