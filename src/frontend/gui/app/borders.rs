@@ -82,7 +82,14 @@ impl VellumGuiApp {
     pub(super) fn window_border_plan_for_tab(&self, key: &TabKey) -> WindowBorderPlan {
         if let Some(tab) = self.available_tabs.get(key) {
             if self.skin_state.border_for(&tab.window_name).is_some() {
-                return WindowBorderPlan::frame_default();
+                // The skin's nine-slice art owns the frame, but the def's
+                // Border toggle still means "no border": hide the egui
+                // stroke too, or it reappears where the art doesn't draw.
+                return if self.skin_border_sides_for_tab(key) == [false; 4] {
+                    WindowBorderPlan::hidden()
+                } else {
+                    WindowBorderPlan::frame_default()
+                };
             }
         }
         let Some(def) = self.layout_def_for_tab(key) else {

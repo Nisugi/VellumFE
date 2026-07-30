@@ -260,47 +260,63 @@ impl VellumGuiApp {
         )
     }
 
-    /// Hard height cap for single-row widgets in the center zone. Their
+    /// Hard height cap for single-row widgets in any docked zone. Their
     /// content never grows past one row (or one row per bar for a vertical
     /// vitals stack), so letting the frame stretch taller only manufactures
-    /// empty space — and, with a skin background, a slab of art under one
-    /// row of content. Grouped windows stack members and manage their own
-    /// height; header/footer windows must keep filling their zone; text-like
-    /// widgets (effects, entities, targets, ...) legitimately grow. None = no cap.
-    fn max_window_height_for_widget(
+    /// empty space — and, with a skin background or border, a slab of art
+    /// around one row of content. The chrome allowance is measured from the
+    /// same frame the render path builds, because hand-drawn border plans
+    /// and skin nine-slice art both widen the inner margin and a fixed
+    /// constant would clip the row. Grouped windows stack members and
+    /// manage their own height; text-like widgets (effects, entities,
+    /// targets, ...) legitimately grow. None = no cap.
+    fn compact_height_cap(
         &self,
-        zone: GuiShellZone,
+        ctx: &egui::Context,
+        tab_key: &TabKey,
+        window_name: &str,
         window: &WindowState,
         title_bar_hidden: bool,
-        grouped: bool,
     ) -> Option<f32> {
         use crate::frontend::gui::persistence::VitalsOrientation;
-        if zone != GuiShellZone::Center || grouped {
-            return None;
-        }
-        // Whole-window chrome around the content row: title bar (when shown)
-        // + frame padding. Slightly generous so the row never clips; a few
-        // spare pixels are invisible.
-        let chrome = if title_bar_hidden { 16.0 } else { 44.0 };
-        match window.widget_type {
+        let row = match window.widget_type {
             WidgetType::Hand
             | WidgetType::Countdown
             | WidgetType::Progress
             | WidgetType::Indicator
-            | WidgetType::CommandInput => Some(28.0 + chrome),
+            | WidgetType::CommandInput => 28.0,
             WidgetType::MiniVitals => {
                 let vitals = &self.ui_settings.vitals;
                 let bar = vitals.bar_height.clamp(8.0, 60.0);
                 match vitals.orientation {
-                    VitalsOrientation::Horizontal => Some(bar + chrome),
+                    VitalsOrientation::Horizontal => bar,
                     VitalsOrientation::Vertical => {
                         let rows = vitals.bars.len().max(1) as f32;
-                        Some(rows * bar + (rows - 1.0) * 6.0 + chrome)
+                        rows * bar + (rows - 1.0) * 6.0
                     }
                 }
             }
-            _ => None,
-        }
+            _ => return None,
+        };
+        let mut frame = egui::Frame::window(ctx.global_style().as_ref());
+        self.apply_border_plan_to_frame(&self.window_border_plan_for_tab(tab_key), &mut frame);
+        self.apply_skin_border_to_frame(
+            window_name,
+            self.skin_border_sides_for_tab(tab_key),
+            &mut frame,
+        );
+        let margins = f32::from(frame.inner_margin.top) + f32::from(frame.inner_margin.bottom);
+        let title_bar = if title_bar_hidden {
+            0.0
+        } else {
+            // None/0 = "derive from the title font"; 22 is a generous stand-in.
+            self.title_bar_height_for_tab(tab_key)
+                .filter(|height| *height > 0.0)
+                .unwrap_or(22.0)
+                + 6.0
+        };
+        // A few spare pixels so the row never clips; they are invisible.
+        Some(row + margins + title_bar + 6.0)
     }
 
     fn min_window_height_for_zone(zone: GuiShellZone, window: &WindowState) -> f32 {
@@ -898,16 +914,14 @@ impl VellumGuiApp {
             let slot_width = (root_rect.width() - margin * 2.0).max(120.0);
             let mut y = root_rect.min.y + margin;
 
-            // Prepass: per-widget minimum/default heights so a one-line bar
-            // (encumbrance, stance) does not reserve a text-window-sized slot.
-            let tab_metrics: Vec<(GuiTab, f32, f32)> = tabs
+            // Prepass: per-widget minimum/default/maximum heights so a
+            // one-line bar (encumbrance, stance) does not reserve a
+            // text-window-sized slot — and cannot be stretched into one.
+            let tab_metrics: Vec<(GuiTab, f32, f32, Option<f32>)> = tabs
                 .into_iter()
                 .map(|tab| {
-                    let compact = self
-                        .app_core
-                        .ui_state
-                        .windows
-                        .get(&tab.window_name)
+                    let window = self.app_core.ui_state.windows.get(&tab.window_name);
+                    let compact = window
                         .map(|window| {
                             Self::is_compact_center_widget(&window.widget_type)
                                 || matches!(
@@ -918,13 +932,26 @@ impl VellumGuiApp {
                         .unwrap_or(false);
                     let min_height = if compact { 40.0 } else { 120.0 };
                     let default_height = if compact { 72.0 } else { 240.0 };
+                    let height_cap = window.and_then(|window| {
+                        self.compact_height_cap(
+                            ctx,
+                            &tab.id.key,
+                            &tab.window_name,
+                            window,
+                            self.title_bar_hidden(&tab.id.key),
+                        )
+                    });
                     let desired_height = self
                         .main_window_rects
                         .get(&tab.id.key)
                         .map(|rect| rect[3])
                         .filter(|v| v.is_finite())
                         .unwrap_or(default_height);
-                    (tab, min_height, desired_height)
+                    let desired_height = match height_cap {
+                        Some(cap) => desired_height.min(cap.max(min_height)),
+                        None => desired_height,
+                    };
+                    (tab, min_height, desired_height, height_cap)
                 })
                 .collect();
             // Each entry is "separator gap + min height"; the running total is
@@ -933,7 +960,7 @@ impl VellumGuiApp {
             // bottom flush.
             let mut remaining_min: f32 = tab_metrics
                 .iter()
-                .map(|(_, min_height, _)| min_height + gap)
+                .map(|(_, min_height, _, _)| min_height + gap)
                 .sum();
 
             // Free vertical placement: each tab can carry a persisted gap
@@ -944,7 +971,7 @@ impl VellumGuiApp {
             let stack_items: Vec<(f32, f32)> = tab_metrics
                 .iter()
                 .enumerate()
-                .map(|(index, (tab, min_height, desired_height))| {
+                .map(|(index, (tab, min_height, desired_height, _))| {
                     let desired_gap = self
                         .sidebar_gap_above
                         .get(&tab.id.key)
@@ -965,12 +992,12 @@ impl VellumGuiApp {
                 .collect();
             let stack_keys: Vec<TabKey> = tab_metrics
                 .iter()
-                .map(|(tab, _, _)| tab.id.key.clone())
+                .map(|(tab, _, _, _)| tab.id.key.clone())
                 .collect();
             let effective_gaps = effective_sidebar_gaps(zone_inner_height, &stack_items);
             let mut gap_drag: Option<(usize, f32)> = None;
 
-            for (stack_index, (tab, min_slot_height, desired_height)) in
+            for (stack_index, (tab, min_slot_height, desired_height, height_cap)) in
                 tab_metrics.into_iter().enumerate()
             {
                 remaining_min -= min_slot_height + gap;
@@ -980,6 +1007,12 @@ impl VellumGuiApp {
                 }
                 let max_height_here =
                     (root_rect.max.y - margin - y - remaining_min).max(min_slot_height);
+                // Single-row widgets cannot be resized past one row of
+                // content plus chrome (same cap as the docked zones).
+                let max_height_here = match height_cap {
+                    Some(cap) => max_height_here.min(cap.max(min_slot_height)),
+                    None => max_height_here,
+                };
                 let slot_height = desired_height.clamp(min_slot_height, max_height_here);
                 let slot_bottom = (y + slot_height).min(root_rect.max.y - margin - remaining_min);
                 let slot_rect = Rect::from_min_max(
@@ -1010,7 +1043,8 @@ impl VellumGuiApp {
                 }
                 let border_plan = self.window_border_plan_for_tab(&tab.id.key);
                 self.apply_border_plan_to_frame(&border_plan, &mut window_frame);
-                self.apply_skin_border_to_frame(&tab.window_name, &mut window_frame);
+                let skin_sides = self.skin_border_sides_for_tab(&tab.id.key);
+                self.apply_skin_border_to_frame(&tab.window_name, skin_sides, &mut window_frame);
                 // Advance by what actually rendered, not by the intended slot:
                 // any disagreement between our chrome math and egui's real
                 // window chrome then shows up as a slightly different next-y
@@ -1181,7 +1215,7 @@ impl VellumGuiApp {
                         .inner
                     })
                 {
-                    self.paint_skin_border(ctx, &tab.window_name, &inner.response);
+                    self.paint_skin_border(ctx, &tab.window_name, skin_sides, &inner.response);
                     self.paint_border_plan(ctx, &border_plan, &inner.response);
                     clicked_link = inner.inner.flatten();
                     let rendered_bottom = inner.response.rect.max.y;
@@ -1316,13 +1350,24 @@ impl VellumGuiApp {
             );
             let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
             let grouped = group_shape.is_some_and(|(count, _)| count > 1);
-            // Docked header/footer windows fill their zone's full height — no
+            // Docked text-like windows fill their zone's full height — no
             // reserved headroom, which otherwise left a gap at the bottom edge.
-            // Single-row center widgets are capped so they can't be stretched
-            // into empty space below their one row of content.
+            // Single-row widgets are capped in every zone so they can't be
+            // stretched into empty space around their one row of content.
             let max_window_height = {
                 let zone_max = window_bounds.height().max(min_window_size.y);
-                match self.max_window_height_for_widget(zone, window, title_bar_hidden, grouped) {
+                let cap = if grouped {
+                    None
+                } else {
+                    self.compact_height_cap(
+                        ctx,
+                        &tab.id.key,
+                        &tab.window_name,
+                        window,
+                        title_bar_hidden,
+                    )
+                };
+                match cap {
                     Some(cap) => cap.clamp(min_window_size.y, zone_max),
                     None => zone_max,
                 }
@@ -1403,7 +1448,8 @@ impl VellumGuiApp {
             }
             let border_plan = self.window_border_plan_for_tab(&tab.id.key);
             self.apply_border_plan_to_frame(&border_plan, &mut docked_window_frame);
-            self.apply_skin_border_to_frame(&tab.window_name, &mut docked_window_frame);
+            let skin_sides = self.skin_border_sides_for_tab(&tab.id.key);
+            self.apply_skin_border_to_frame(&tab.window_name, skin_sides, &mut docked_window_frame);
             // `default_size` (like `fixed_size`) is the whole window rect in
             // this egui fork, so every zone passes the outer size directly.
             // Declared before the builder so the close-button borrow
@@ -1456,7 +1502,7 @@ impl VellumGuiApp {
                     })
                     .inner
                 }) {
-                self.paint_skin_border(ctx, &tab.window_name, &inner.response);
+                self.paint_skin_border(ctx, &tab.window_name, skin_sides, &inner.response);
                 self.paint_border_plan(ctx, &border_plan, &inner.response);
                 if is_hand_widget {
                     let handle_rect = Rect::from_min_max(

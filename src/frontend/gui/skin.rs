@@ -954,22 +954,36 @@ fn register_sheet_impl(
 
 /// Paint a nine-slice border into `rect`: corners at fixed size, edges
 /// stretched along their axis, center left empty so the window fill or
-/// background image shows through.
-pub fn paint_nine_slice(painter: &egui::Painter, rect: egui::Rect, border: &ResolvedBorder) {
+/// background image shows through. `sides` is [top, right, bottom, left]
+/// (matching the slice order): hidden sides draw nothing — their corners
+/// vanish with them, and the surviving perpendicular rails extend to the
+/// window edge.
+pub fn paint_nine_slice(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    border: &ResolvedBorder,
+    sides: [bool; 4],
+) {
     let full_alpha = egui::Color32::WHITE;
-    for (dest, uv) in nine_slice_patches(border.tex_size, border.slice, border.scale, rect) {
+    for (dest, uv) in nine_slice_patches(border.tex_size, border.slice, border.scale, rect, sides)
+    {
         painter.image(border.texture, dest, uv, full_alpha);
     }
 }
 
 /// The eight border patches as (destination rect, UV rect) pairs. Slice
 /// insets larger than the destination shrink proportionally so opposite
-/// borders never overlap. Degenerate patches (zero-size) are skipped.
+/// borders never overlap. Degenerate patches (zero-size) are skipped —
+/// which is also how hidden sides work: zeroing a side's on-screen inset
+/// collapses its edge and both its corners to zero-size rects, while the
+/// perpendicular edges (which span between the insets) automatically
+/// stretch into the freed space.
 fn nine_slice_patches(
     tex: egui::Vec2,
     slice: [f32; 4],
     scale: f32,
     rect: egui::Rect,
+    sides: [bool; 4],
 ) -> Vec<(egui::Rect, egui::Rect)> {
     if tex.x <= 0.0 || tex.y <= 0.0 || !rect.is_positive() {
         return Vec::new();
@@ -977,15 +991,15 @@ fn nine_slice_patches(
     let [top, right, bottom, left] = slice.map(|inset| inset.max(0.0));
 
     // On-screen border thicknesses, shrunk if the rect is too small.
-    let mut dt = top * scale;
-    let mut db = bottom * scale;
+    let mut dt = if sides[0] { top * scale } else { 0.0 };
+    let mut db = if sides[2] { bottom * scale } else { 0.0 };
     if dt + db > rect.height() {
         let shrink = rect.height() / (dt + db);
         dt *= shrink;
         db *= shrink;
     }
-    let mut dl = left * scale;
-    let mut dr = right * scale;
+    let mut dl = if sides[3] { left * scale } else { 0.0 };
+    let mut dr = if sides[1] { right * scale } else { 0.0 };
     if dl + dr > rect.width() {
         let shrink = rect.width() / (dl + dr);
         dl *= shrink;
@@ -1140,7 +1154,8 @@ mod tests {
     #[test]
     fn nine_slice_patches_cover_border_not_center() {
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
-        let patches = nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect);
+        let patches =
+            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect, [true; 4]);
         assert_eq!(patches.len(), 8);
 
         // Top-left corner: fixed 8x8 at the origin, UV = top-left quarter.
@@ -1158,7 +1173,8 @@ mod tests {
         // 8px insets at scale 1 into a 10px-tall rect: top+bottom shrink to
         // 5px each instead of overlapping.
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 10.0));
-        let patches = nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect);
+        let patches =
+            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect, [true; 4]);
         let max_bottom_of_top_row = patches
             .iter()
             .filter(|(dest, _)| dest.min.y == 0.0)
@@ -1168,11 +1184,45 @@ mod tests {
     }
 
     #[test]
+    fn nine_slice_patches_hidden_side_drops_edge_and_corners_and_extends_rails() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
+        // Hide the top: [top, right, bottom, left].
+        let patches = nine_slice_patches(
+            egui::vec2(32.0, 32.0),
+            [8.0, 8.0, 8.0, 8.0],
+            1.0,
+            rect,
+            [false, true, true, true],
+        );
+        // Top edge + both top corners gone.
+        assert_eq!(patches.len(), 5);
+        assert!(patches.iter().all(|(dest, _)| dest.min.y == 0.0 || dest.min.y >= 72.0));
+        // The left rail now runs from the very top of the window.
+        let left_rail = patches
+            .iter()
+            .find(|(dest, _)| dest.min.x == 0.0 && dest.min.y == 0.0 && dest.height() > 8.0)
+            .expect("left rail present");
+        assert_eq!(left_rail.0.height(), 72.0);
+        // All sides hidden = nothing drawn.
+        assert!(nine_slice_patches(
+            egui::vec2(32.0, 32.0),
+            [8.0; 4],
+            1.0,
+            rect,
+            [false; 4]
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn nine_slice_patches_empty_on_degenerate_input() {
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
-        assert!(nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect).is_empty());
+        assert!(nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect, [true; 4]).is_empty());
         let empty_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0));
-        assert!(nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, empty_rect).is_empty());
+        assert!(
+            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, empty_rect, [true; 4])
+                .is_empty()
+        );
     }
 
     #[test]

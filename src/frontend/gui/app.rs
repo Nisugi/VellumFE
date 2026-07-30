@@ -1113,6 +1113,7 @@ impl VellumGuiApp {
         for group in &mut self.tab_groups {
             group.members.retain(|member| member != key);
             group.merged.retain(|member| member != key);
+            group.end_anchored.retain(|member| member != key);
         }
         self.tab_groups.retain(|group| group.members.len() >= 2);
         self.layout_dirty = true;
@@ -1137,6 +1138,7 @@ impl VellumGuiApp {
                 members: vec![leader.clone(), other.clone()],
                 horizontal: false,
                 merged: Vec::new(),
+                end_anchored: Vec::new(),
             });
         }
         self.tab_zones.insert(other, leader_zone);
@@ -1372,95 +1374,67 @@ impl VellumGuiApp {
                 self.widget_render_settings(&tab.id.key),
             );
         }
-        let horizontal = self
+        let (horizontal, merged, end_anchored) = self
             .group_for_tab(&tab.id.key)
-            .map(|group| group.horizontal)
-            .unwrap_or(false);
+            .map(|group| {
+                (
+                    group.horizontal,
+                    group.merged.clone(),
+                    group.end_anchored.clone(),
+                )
+            })
+            .unwrap_or_default();
+
+        // Partition members into slots along the group axis: a merged
+        // member joins its predecessor's slot and stacks along the
+        // perpendicular axis (a column of a side-by-side group holds a
+        // vertical stack; a row of a stacked group holds a side-by-side
+        // run). The first member always opens a slot.
+        let mut slots: Vec<Vec<GuiTab>> = Vec::new();
+        for member in members {
+            if !slots.is_empty() && merged.contains(&member.id.key) {
+                slots.last_mut().expect("slots checked non-empty").push(member);
+            } else {
+                slots.push(vec![member]);
+            }
+        }
 
         let mut clicked = None;
         // Each member's screen rect, recorded so window-level drag-and-drop
         // can resolve drops to the member under the pointer instead of the
         // whole group window (e.g. left vs right hand in a hand group).
-        let mut member_rects: Vec<(String, Rect)> = Vec::with_capacity(members.len());
+        let mut member_rects: Vec<(String, Rect)> = Vec::new();
         if horizontal {
-            ui.columns(members.len(), |columns| {
-                for (column, member) in columns.iter_mut().zip(members.iter()) {
-                    member_rects.push((member.window_name.clone(), column.max_rect()));
-                    column.push_id(&member.id.key, |ui| {
-                        if let Some(click) = Self::render_window_content(
-                            &self.app_core,
-                            ui,
-                            member,
-                            self.widget_render_settings(&member.id.key),
-                        ) {
-                            clicked = Some(click);
-                        }
-                    });
+            ui.columns(slots.len(), |columns| {
+                for (column, slot) in columns.iter_mut().zip(slots.iter()) {
+                    let anchored = end_anchored.contains(&slot[0].id.key);
+                    self.render_group_stack(
+                        column,
+                        slot,
+                        anchored,
+                        &mut member_rects,
+                        &mut clicked,
+                    );
                 }
             });
         } else {
             let gap = ui.spacing().item_spacing.y;
-            // Compact widgets (bars, timers, hands) only ever draw one row,
-            // so they get exactly that; the leftover splits among flexible
-            // members (doll, text, ...) instead of equal N-way shares that
-            // leave dead space under each bar.
             let bar_height = ui.spacing().interact_size.y.max(16.0);
-            let natural_heights: Vec<Option<f32>> = members
+            // A row slot is as tall as its tallest fixed member; any
+            // flexible member makes the whole row flexible.
+            let slot_heights: Vec<Option<f32>> = slots
                 .iter()
-                .map(|member| {
-                    match self
-                        .app_core
-                        .ui_state
-                        .windows
-                        .get(&member.window_name)
-                        .map(|window| &window.content)
-                    {
-                        Some(
-                            WindowContent::Progress(_)
-                            | WindowContent::Countdown(_)
-                            | WindowContent::Hand { .. },
-                        ) => Some(bar_height),
-                        Some(WindowContent::Betrayer)
-                            if self.app_core.game_state.betrayer.items.is_empty() =>
-                        {
-                            Some(bar_height)
-                        }
-                        Some(WindowContent::Encumbrance) => {
-                            let (show_bar, show_label) =
-                                Self::encumbrance_flags(&self.app_core, &member.window_name);
-                            let rows = (show_bar as u32 + show_label as u32).max(1) as f32;
-                            Some(bar_height * rows + gap * (rows - 1.0))
-                        }
-                        Some(WindowContent::GS4Experience) => {
-                            let (level, mind, exp_bar, total, ascension) =
-                                Self::gs4_experience_flags(&self.app_core, &member.window_name);
-                            let rows = ([level, mind, exp_bar, total, ascension]
-                                .into_iter()
-                                .filter(|on| *on)
-                                .count()
-                                .max(1)) as f32;
-                            Some(bar_height * rows + gap * (rows - 1.0))
-                        }
-                        Some(WindowContent::MiniVitals) => {
-                            use crate::frontend::gui::persistence::VitalsOrientation;
-                            let vitals = &self.ui_settings.vitals;
-                            let row = vitals.bar_height.clamp(8.0, 60.0);
-                            match vitals.orientation {
-                                VitalsOrientation::Horizontal => Some(row),
-                                VitalsOrientation::Vertical => {
-                                    let count = vitals.bars.len().max(1) as f32;
-                                    Some(row * count + gap * (count - 1.0))
-                                }
-                            }
-                        }
-                        _ => None,
-                    }
+                .map(|slot| {
+                    slot.iter()
+                        .map(|member| self.member_natural_height(gap, bar_height, member))
+                        .try_fold(0.0f32, |tallest, natural| {
+                            natural.map(|height| tallest.max(height))
+                        })
                 })
                 .collect();
-            let fixed_total: f32 = natural_heights.iter().flatten().sum();
-            let flexible_count =
-                natural_heights.iter().filter(|h| h.is_none()).count() as f32;
-            let total_gap = gap * (members.len() as f32 - 1.0);
+            let fixed_total: f32 = slot_heights.iter().flatten().sum();
+            let flexible_count = slot_heights.iter().filter(|h| h.is_none()).count() as f32;
+            let total_gap = gap * (slots.len() as f32 - 1.0);
             let flex_height = if flexible_count > 0.0 {
                 ((ui.available_height() - total_gap - fixed_total) / flexible_count)
                     .max(24.0)
@@ -1468,23 +1442,46 @@ impl VellumGuiApp {
                 0.0
             };
             let width = ui.available_width().max(1.0);
-            for (member, natural) in members.iter().zip(&natural_heights) {
+            for (slot, natural) in slots.iter().zip(&slot_heights) {
                 let each_height = natural.unwrap_or(flex_height);
-                let block = ui.push_id(&member.id.key, |ui| {
+                if let [member] = slot.as_slice() {
+                    let block = ui.push_id(&member.id.key, |ui| {
+                        ui.allocate_ui(Vec2::new(width, each_height), |ui| {
+                            ui.set_min_size(Vec2::new(width, each_height));
+                            ui.set_max_height(each_height);
+                            if let Some(click) = Self::render_window_content(
+                                &self.app_core,
+                                ui,
+                                member,
+                                self.widget_render_settings(&member.id.key),
+                            ) {
+                                clicked = Some(click);
+                            }
+                        })
+                    });
+                    member_rects.push((member.window_name.clone(), block.inner.response.rect));
+                } else {
                     ui.allocate_ui(Vec2::new(width, each_height), |ui| {
                         ui.set_min_size(Vec2::new(width, each_height));
                         ui.set_max_height(each_height);
-                        if let Some(click) = Self::render_window_content(
-                            &self.app_core,
-                            ui,
-                            member,
-                            self.widget_render_settings(&member.id.key),
-                        ) {
-                            clicked = Some(click);
-                        }
-                    })
-                });
-                member_rects.push((member.window_name.clone(), block.inner.response.rect));
+                        ui.columns(slot.len(), |columns| {
+                            for (column, member) in columns.iter_mut().zip(slot.iter()) {
+                                member_rects
+                                    .push((member.window_name.clone(), column.max_rect()));
+                                column.push_id(&member.id.key, |ui| {
+                                    if let Some(click) = Self::render_window_content(
+                                        &self.app_core,
+                                        ui,
+                                        member,
+                                        self.widget_render_settings(&member.id.key),
+                                    ) {
+                                        clicked = Some(click);
+                                    }
+                                });
+                            }
+                        });
+                    });
+                }
             }
         }
         ui.ctx().data_mut(|data| {
@@ -1497,6 +1494,116 @@ impl VellumGuiApp {
     /// refreshed every frame the group renders.
     fn group_member_rects_id(leader: &TabKey) -> egui::Id {
         egui::Id::new("gui_group_member_rects").with(leader)
+    }
+
+    /// Natural (fixed) height of a group member, when it has one. Compact
+    /// widgets (bars, timers, hands) only ever draw one row, so they get
+    /// exactly that; the leftover splits among flexible members (doll,
+    /// text, ...) instead of equal N-way shares that leave dead space
+    /// under each bar. None = flexible.
+    fn member_natural_height(&self, gap: f32, bar_height: f32, member: &GuiTab) -> Option<f32> {
+        match self
+            .app_core
+            .ui_state
+            .windows
+            .get(&member.window_name)
+            .map(|window| &window.content)
+        {
+            Some(
+                WindowContent::Progress(_)
+                | WindowContent::Countdown(_)
+                | WindowContent::Hand { .. },
+            ) => Some(bar_height),
+            Some(WindowContent::Betrayer)
+                if self.app_core.game_state.betrayer.items.is_empty() =>
+            {
+                Some(bar_height)
+            }
+            Some(WindowContent::Encumbrance) => {
+                let (show_bar, show_label) =
+                    Self::encumbrance_flags(&self.app_core, &member.window_name);
+                let rows = (show_bar as u32 + show_label as u32).max(1) as f32;
+                Some(bar_height * rows + gap * (rows - 1.0))
+            }
+            Some(WindowContent::GS4Experience) => {
+                let (level, mind, exp_bar, total, ascension) =
+                    Self::gs4_experience_flags(&self.app_core, &member.window_name);
+                let rows = ([level, mind, exp_bar, total, ascension]
+                    .into_iter()
+                    .filter(|on| *on)
+                    .count()
+                    .max(1)) as f32;
+                Some(bar_height * rows + gap * (rows - 1.0))
+            }
+            Some(WindowContent::MiniVitals) => {
+                use crate::frontend::gui::persistence::VitalsOrientation;
+                let vitals = &self.ui_settings.vitals;
+                let row = vitals.bar_height.clamp(8.0, 60.0);
+                match vitals.orientation {
+                    VitalsOrientation::Horizontal => Some(row),
+                    VitalsOrientation::Vertical => {
+                        let count = vitals.bars.len().max(1) as f32;
+                        Some(row * count + gap * (count - 1.0))
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Render one group slot's members stacked vertically (a column of a
+    /// side-by-side group, or the whole body of a stacked group's slot).
+    /// Fixed members get their natural height and the leftover splits
+    /// among flexible ones; when every member is fixed, the leftover pads
+    /// the bottom — or the top when the slot is end-anchored, so a bar
+    /// stack can hug the column's bottom edge.
+    fn render_group_stack(
+        &self,
+        ui: &mut egui::Ui,
+        members: &[GuiTab],
+        end_anchored: bool,
+        member_rects: &mut Vec<(String, Rect)>,
+        clicked: &mut Option<GuiLinkClick>,
+    ) {
+        let gap = ui.spacing().item_spacing.y;
+        let bar_height = ui.spacing().interact_size.y.max(16.0);
+        let natural_heights: Vec<Option<f32>> = members
+            .iter()
+            .map(|member| self.member_natural_height(gap, bar_height, member))
+            .collect();
+        let fixed_total: f32 = natural_heights.iter().flatten().sum();
+        let flexible_count = natural_heights.iter().filter(|h| h.is_none()).count() as f32;
+        let total_gap = gap * (members.len() as f32 - 1.0);
+        let flex_height = if flexible_count > 0.0 {
+            ((ui.available_height() - total_gap - fixed_total) / flexible_count).max(24.0)
+        } else {
+            0.0
+        };
+        if end_anchored && flexible_count == 0.0 {
+            let leftover = ui.available_height() - total_gap - fixed_total;
+            if leftover > 0.0 {
+                ui.add_space(leftover);
+            }
+        }
+        let width = ui.available_width().max(1.0);
+        for (member, natural) in members.iter().zip(&natural_heights) {
+            let each_height = natural.unwrap_or(flex_height);
+            let block = ui.push_id(&member.id.key, |ui| {
+                ui.allocate_ui(Vec2::new(width, each_height), |ui| {
+                    ui.set_min_size(Vec2::new(width, each_height));
+                    ui.set_max_height(each_height);
+                    if let Some(click) = Self::render_window_content(
+                        &self.app_core,
+                        ui,
+                        member,
+                        self.widget_render_settings(&member.id.key),
+                    ) {
+                        *clicked = Some(click);
+                    }
+                })
+            });
+            member_rects.push((member.window_name.clone(), block.inner.response.rect));
+        }
     }
 
     /// Set the active skin in the layout (its home — checkpoints carry it)
@@ -1604,20 +1711,54 @@ impl VellumGuiApp {
     /// Adjust a docked window's frame when the active skin draws this
     /// window's border: drop the stroke (the nine-slice replaces it) and
     /// widen the inner margin so content clears the border art.
-    fn apply_skin_border_to_frame(&self, window_name: &str, frame: &mut egui::Frame) {
+    /// Which sides of the skin's nine-slice frame draw for this window,
+    /// as [top, right, bottom, left]. The layout def's border settings
+    /// drive it — Border off (or style "none") hides the whole frame,
+    /// per-side toggles hide individual rails (their corners collapse and
+    /// the surviving rails extend to the window edge). Windows without a
+    /// layout def draw all four.
+    pub(super) fn skin_border_sides_for_tab(&self, key: &TabKey) -> [bool; 4] {
+        let Some(def) = self.layout_def_for_tab(key) else {
+            return [true; 4];
+        };
+        let base = def.base();
+        if !base.show_border || base.border_style.eq_ignore_ascii_case("none") {
+            return [false; 4];
+        }
+        let sides = &base.border_sides;
+        [sides.top, sides.right, sides.bottom, sides.left]
+    }
+
+    fn apply_skin_border_to_frame(
+        &self,
+        window_name: &str,
+        sides: [bool; 4],
+        frame: &mut egui::Frame,
+    ) {
         let Some(border) = self.skin_state.border_for(window_name) else {
             return;
         };
+        if sides == [false; 4] {
+            return;
+        }
         frame.stroke = egui::Stroke::NONE;
         // Square corners whenever skin art frames the window: a rounded
         // background fill would show through (or clip) the art's corners.
         frame.corner_radius = egui::CornerRadius::ZERO;
         let side = |inset: f32| (inset * border.scale).ceil().clamp(0.0, 127.0) as i8;
         let margin = &mut frame.inner_margin;
-        margin.top = margin.top.max(side(border.slice[0]));
-        margin.right = margin.right.max(side(border.slice[1]));
-        margin.bottom = margin.bottom.max(side(border.slice[2]));
-        margin.left = margin.left.max(side(border.slice[3]));
+        if sides[0] {
+            margin.top = margin.top.max(side(border.slice[0]));
+        }
+        if sides[1] {
+            margin.right = margin.right.max(side(border.slice[1]));
+        }
+        if sides[2] {
+            margin.bottom = margin.bottom.max(side(border.slice[2]));
+        }
+        if sides[3] {
+            margin.left = margin.left.max(side(border.slice[3]));
+        }
     }
 
     /// Paint the skin's nine-slice border over a rendered window, on the
@@ -1626,13 +1767,18 @@ impl VellumGuiApp {
         &self,
         ctx: &egui::Context,
         window_name: &str,
+        sides: [bool; 4],
         response: &egui::Response,
     ) {
+        if sides == [false; 4] {
+            return;
+        }
         if let Some(border) = self.skin_state.border_for(window_name) {
             skin::paint_nine_slice(
                 &ctx.layer_painter(response.layer_id),
                 response.rect,
                 &border,
+                sides,
             );
         }
     }

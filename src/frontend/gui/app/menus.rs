@@ -91,6 +91,12 @@ pub(super) enum GuiWindowMenuCommand {
     SetGroupOrientation(bool),
     /// Move a group member one step up/down in the group's render order.
     MoveGroupMember { member: TabKey, up: bool },
+    /// Toggle whether a member shares its predecessor's slot (stacking
+    /// along the perpendicular axis) instead of opening its own.
+    ToggleMemberMerge(TabKey),
+    /// Toggle whether the slot this member opens anchors its content to
+    /// the end of the perpendicular axis (bottom of a column).
+    ToggleSlotAnchor(TabKey),
 }
 
 /// Everything the window context menu needs to render, resolved up front so
@@ -103,6 +109,10 @@ struct WindowMenuView<'a> {
     group_horizontal: Option<bool>,
     /// Members of this window's group in render order (empty when ungrouped).
     group_members: &'a [(TabKey, String)],
+    /// Members sharing their predecessor's slot (subset of group_members).
+    group_merged: &'a [TabKey],
+    /// Slot-opening members whose slot content anchors to the end.
+    group_end_anchored: &'a [TabKey],
     /// Windows this one could be grouped with (visible, ungrouped).
     group_candidates: &'a [(TabKey, String)],
 }
@@ -377,6 +387,36 @@ impl VellumGuiApp {
                     }
                 }
             }
+            GuiWindowMenuCommand::ToggleMemberMerge(member) => {
+                if let Some(group) = self
+                    .tab_groups
+                    .iter_mut()
+                    .find(|group| group.members.contains(&member))
+                {
+                    if let Some(index) = group.merged.iter().position(|key| *key == member) {
+                        group.merged.remove(index);
+                    } else {
+                        group.merged.push(member);
+                    }
+                    self.layout_dirty = true;
+                }
+            }
+            GuiWindowMenuCommand::ToggleSlotAnchor(member) => {
+                if let Some(group) = self
+                    .tab_groups
+                    .iter_mut()
+                    .find(|group| group.members.contains(&member))
+                {
+                    if let Some(index) =
+                        group.end_anchored.iter().position(|key| *key == member)
+                    {
+                        group.end_anchored.remove(index);
+                    } else {
+                        group.end_anchored.push(member);
+                    }
+                    self.layout_dirty = true;
+                }
+            }
         }
     }
 
@@ -587,6 +627,10 @@ impl VellumGuiApp {
                     .collect()
             })
             .unwrap_or_default();
+        let (group_merged, group_end_anchored) = self
+            .group_for_tab(&request.tab_key)
+            .map(|group| (group.merged.clone(), group.end_anchored.clone()))
+            .unwrap_or_default();
         let view = WindowMenuView {
             zone: request.zone,
             allow_reorder: request.allow_reorder,
@@ -595,6 +639,8 @@ impl VellumGuiApp {
                 .group_for_tab(&request.tab_key)
                 .map(|group| group.horizontal),
             group_members: &group_members,
+            group_merged: &group_merged,
+            group_end_anchored: &group_end_anchored,
             group_candidates: &group_candidates,
         };
 
@@ -623,12 +669,26 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetGroupOrientation(_)
                     | GuiWindowMenuCommand::MoveGroupMember { .. }
                     | GuiWindowMenuCommand::UngroupMember(_)
+                    | GuiWindowMenuCommand::ToggleMemberMerge(_)
+                    | GuiWindowMenuCommand::ToggleSlotAnchor(_)
+                    | GuiWindowMenuCommand::SetCornerRadius(_)
+                    | GuiWindowMenuCommand::SetTitleBarHeight(_)
+                    | GuiWindowMenuCommand::SetTitleBarAlign(_)
+                    | GuiWindowMenuCommand::SetShowBorder(_)
+                    | GuiWindowMenuCommand::SetBorderStyle(_)
+                    | GuiWindowMenuCommand::SetBorderSides(_)
+                    | GuiWindowMenuCommand::SetContentAlign(_)
+                    | GuiWindowMenuCommand::SetFont(_)
             );
             self.apply_window_menu_command(ctx, &request, command);
             if !keep_open {
                 self.window_context_menu = None;
-                return;
             }
+            // Either way this frame's click has been consumed by a control;
+            // skip the click-outside check so picking from a combo popup
+            // (whose options render outside the menu rect) doesn't also
+            // count as a click-outside and close the menu.
+            return;
         }
 
         // The click that opened the menu is still visible in this frame's
@@ -1126,6 +1186,7 @@ impl VellumGuiApp {
                         ui.label("Order");
                         let last = view.group_members.len() - 1;
                         for (index, (key, title)) in view.group_members.iter().enumerate() {
+                            let merged = index > 0 && view.group_merged.contains(key);
                             ui.horizontal(|ui| {
                                 if ui
                                     .add_enabled(index > 0, egui::Button::new("⬆").small())
@@ -1153,7 +1214,42 @@ impl VellumGuiApp {
                                     command =
                                         Some(GuiWindowMenuCommand::UngroupMember(key.clone()));
                                 }
+                                if merged {
+                                    // Visual cue: this member lives in the
+                                    // slot opened by the member above it.
+                                    ui.label("└");
+                                }
                                 ui.label(title);
+                            });
+                            ui.indent((key, "group_slot_controls"), |ui| {
+                                if index > 0 {
+                                    let label = if horizontal {
+                                        "Share column with the window above"
+                                    } else {
+                                        "Share row with the window above"
+                                    };
+                                    let mut flag = merged;
+                                    if ui.checkbox(&mut flag, label).changed() {
+                                        command = Some(
+                                            GuiWindowMenuCommand::ToggleMemberMerge(key.clone()),
+                                        );
+                                    }
+                                }
+                                if horizontal && !merged {
+                                    let mut anchored = view.group_end_anchored.contains(key);
+                                    if ui
+                                        .checkbox(&mut anchored, "Anchor column to bottom")
+                                        .on_hover_text(
+                                            "Leftover column space goes above these \
+                                             windows instead of below them.",
+                                        )
+                                        .changed()
+                                    {
+                                        command = Some(
+                                            GuiWindowMenuCommand::ToggleSlotAnchor(key.clone()),
+                                        );
+                                    }
+                                }
                             });
                         }
                     }

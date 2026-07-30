@@ -242,13 +242,30 @@ impl Default for VitalsConfig {
 /// A group of windows locked together and rendered as one window.
 ///
 /// The first member is the leader: the group renders in the leader's slot
-/// and zone. Members split the content area along `orientation`.
+/// and zone. Members split the content area along `orientation` into
+/// slots; a member listed in `merged` shares its predecessor's slot,
+/// stacking along the perpendicular axis (side-by-side group → merged
+/// members stack vertically inside their column, and vice versa). An
+/// empty `merged` reproduces the old flat one-member-per-slot layout, so
+/// existing saved groups load unchanged.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabGroup {
     pub members: Vec<TabKey>,
-    /// true = members side by side; false = stacked vertically
+    /// true = slots side by side; false = slots stacked vertically
     #[serde(default)]
     pub horizontal: bool,
+    /// Members that render in the same slot as the member before them.
+    /// Stale keys (no longer members) are ignored; the first member is
+    /// never merged (it has no predecessor).
+    #[serde(default)]
+    pub merged: Vec<TabKey>,
+    /// Slots (keyed by their first member) whose content anchors to the
+    /// END of the perpendicular axis: leftover space goes above a column's
+    /// members (bottom-anchored) / left of a row's members (right-anchored)
+    /// instead of after them. Only matters for slots with no flexible
+    /// member to absorb the leftover. Stale keys are ignored.
+    #[serde(default)]
+    pub end_anchored: Vec<TabKey>,
 }
 
 /// Application-wide GUI sizing/accessibility settings.
