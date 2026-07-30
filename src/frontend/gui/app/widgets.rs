@@ -1195,6 +1195,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         injuries: &HashMap<String, u8>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        grayscale: bool,
     ) {
         // Sprite mode: skin-supplied base body, then per part either a
         // hand-drawn severity overlay (authored on the base's canvas so it
@@ -1202,6 +1203,13 @@ impl VellumGuiApp {
         // anchor point.
         if let Some(base) = skin_art.and_then(|art| art.doll_base) {
             let art = skin_art.unwrap();
+            // Grayscale twins exist only while the checkbox demands them;
+            // the generated dots keep their colors regardless.
+            let base = if grayscale {
+                art.doll_base_gray.unwrap_or(base)
+            } else {
+                base
+            };
             let avail = ui.available_size();
             let (outer, response) = ui.allocate_exact_size(
                 Vec2::new(avail.x.max(40.0), avail.y.max(60.0)),
@@ -1217,7 +1225,13 @@ impl VellumGuiApp {
                 if *level == 0 {
                     continue;
                 }
-                if let Some(overlay) = art.doll_overlay(part, *level) {
+                let overlay = if grayscale {
+                    art.doll_overlay_gray(part, *level)
+                        .or_else(|| art.doll_overlay(part, *level))
+                } else {
+                    art.doll_overlay(part, *level)
+                };
+                if let Some(overlay) = overlay {
                     crate::frontend::gui::skin::paint_sprite(
                         &painter,
                         dest,
@@ -1359,6 +1373,7 @@ impl VellumGuiApp {
                         ui,
                         &popup.injuries,
                         self.skin_state.widget_art().as_deref(),
+                        self.ui_settings.doll_grayscale,
                     );
                 });
             });
@@ -1372,6 +1387,7 @@ impl VellumGuiApp {
         label: &str,
         indicator: &crate::data::IndicatorData,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        gray_inactive: bool,
     ) {
         let text = if label.is_empty() {
             &indicator.indicator_id
@@ -1390,7 +1406,18 @@ impl VellumGuiApp {
         };
         // Skin sprite first, then the built-in pictogram (dimmed when
         // inactive, Wrayth-style); custom ids without art keep the text.
-        let sprite = skin_art.and_then(|art| art.icon(&indicator.indicator_id));
+        // "Gray when inactive" swaps the inactive sprite for its grayscale
+        // twin at full strength instead of the alpha dim.
+        let mut grayed = false;
+        let sprite = skin_art.and_then(|art| {
+            if !indicator.active && gray_inactive {
+                if let Some(icon) = art.icon_gray(&indicator.indicator_id) {
+                    grayed = true;
+                    return Some(icon);
+                }
+            }
+            art.icon(&indicator.indicator_id)
+        });
         if sprite.is_some() || super::status_icons::supported(&indicator.indicator_id) {
             let side = ui
                 .available_width()
@@ -1401,8 +1428,9 @@ impl VellumGuiApp {
                     ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
                 if let Some(sprite) = sprite {
                     // Sprites carry their own colors: full-color when
-                    // active, dimmed toward gray when inactive.
-                    let tint = if indicator.active {
+                    // active, dimmed toward gray when inactive (or the
+                    // full-strength gray twin when that setting is on).
+                    let tint = if indicator.active || grayed {
                         Color32::WHITE
                     } else {
                         Color32::from_rgba_unmultiplied(255, 255, 255, 70)
@@ -4551,11 +4579,17 @@ impl VellumGuiApp {
                     &tab.id.title,
                     indicator,
                     settings.skin_art.as_deref(),
+                    settings.gray_inactive_icons,
                 );
                 None
             }
             WindowContent::InjuryDoll(doll) => {
-                Self::render_injury_doll(ui, &doll.injuries, settings.skin_art.as_deref());
+                Self::render_injury_doll(
+                    ui,
+                    &doll.injuries,
+                    settings.skin_art.as_deref(),
+                    settings.doll_grayscale,
+                );
                 None
             }
             WindowContent::Dashboard { indicators } => {

@@ -93,6 +93,11 @@ pub(super) struct WidgetRenderSettings {
     /// Current command-input buffer, only for command-input windows. Render
     /// paths are `&self`; edits flow back via `CommandInputEcho`.
     command_input_seed: Option<String>,
+    /// Inactive status icons render their grayscale twin instead of the
+    /// alpha dim (ui_settings.status_icons.gray_inactive).
+    gray_inactive_icons: bool,
+    /// Doll art renders its grayscale twins (ui_settings.doll_grayscale).
+    doll_grayscale: bool,
 }
 
 /// Stable widget id for the command-input TextEdit, wherever it renders
@@ -1335,6 +1340,8 @@ impl VellumGuiApp {
                 .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
                 .filter(|window| window.widget_type == WidgetType::CommandInput)
                 .map(|_| self.command_input.clone()),
+            gray_inactive_icons: self.ui_settings.status_icons.gray_inactive,
+            doll_grayscale: self.ui_settings.doll_grayscale,
         }
     }
 
@@ -4592,6 +4599,10 @@ impl eframe::App for VellumGuiApp {
             self.tab_settings
                 .values()
                 .filter_map(|settings| settings.background_image.clone()),
+        );
+        self.skin_state.set_grayscale(
+            self.ui_settings.status_icons.gray_inactive,
+            self.ui_settings.doll_grayscale,
         );
         self.skin_state.apply_if_changed(
             &ctx,

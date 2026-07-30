@@ -126,6 +126,8 @@ impl VellumGuiApp {
         let mut set_change: Option<Option<String>> = None;
         // (id, Some(new)) = upsert; (id, None) = remove.
         let mut override_changes: Vec<(String, Option<crate::data::IconRef>)> = Vec::new();
+        let current_gray = self.ui_settings.status_icons.gray_inactive;
+        let mut gray_change: Option<bool> = None;
 
         egui::Window::new("Indicator Templates")
             .id(egui::Id::new("gui_indicator_templates"))
@@ -210,6 +212,17 @@ impl VellumGuiApp {
                         ui.weak("(no sets in the pool — install with .jinx)");
                     }
                 });
+                let mut gray = current_gray;
+                if ui
+                    .checkbox(&mut gray, "Grayscale when inactive")
+                    .on_hover_text(
+                        "Inactive statuses show a desaturated copy of their icon instead of \
+                         fading it. Grayscale copies are built only while this is on.",
+                    )
+                    .changed()
+                {
+                    gray_change = Some(gray);
+                }
                 for (id, icon) in &sorted_overrides {
                     ui.horizontal(|ui| {
                         ui.monospace(id);
@@ -301,6 +314,10 @@ impl VellumGuiApp {
 
         if let Some(set) = set_change {
             self.ui_settings.status_icons.set = set;
+            self.layout_dirty = true;
+        }
+        if let Some(gray) = gray_change {
+            self.ui_settings.status_icons.gray_inactive = gray;
             self.layout_dirty = true;
         }
         for (id, change) in override_changes {

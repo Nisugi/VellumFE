@@ -364,6 +364,12 @@ pub struct GuiUiSettings {
     /// rose/n/ne/.../out); None follows the active skin's `[compass]`.
     #[serde(default)]
     pub compass_set: Option<String>,
+
+    /// Render the injury doll's art (base + overlays) in grayscale; the
+    /// generated wound/scar dots keep their colors. Off = no gray twins
+    /// are ever built.
+    #[serde(default)]
+    pub doll_grayscale: bool,
 }
 
 /// Which art status indicators use, resolved ahead of the built-in vector
@@ -379,6 +385,10 @@ pub struct StatusIconSettings {
     /// dropped on save; absence means "no override".
     #[serde(default)]
     pub overrides: std::collections::HashMap<String, crate::data::IconRef>,
+    /// Inactive statuses render their icon in grayscale (instead of the
+    /// default alpha dim). Off = no gray twins are ever built.
+    #[serde(default)]
+    pub gray_inactive: bool,
 }
 
 fn default_zoom_factor() -> f32 {
@@ -435,6 +445,7 @@ impl Default for GuiUiSettings {
             doll_image: None,
             status_icons: StatusIconSettings::default(),
             compass_set: None,
+            doll_grayscale: false,
         }
     }
 }

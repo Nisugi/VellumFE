@@ -60,6 +60,12 @@ pub struct SkinWidgetArt {
     /// Indicator id (stored UPPERCASE) -> icon slot (skin `[icons]`, pool
     /// set art, and per-indicator overrides, pre-merged at build).
     icons: HashMap<String, IconSlot>,
+    /// Grayscale icon twins; populated only while "gray when inactive" is
+    /// on (lazy — no setting, no twins).
+    icons_gray: HashMap<String, IconSlot>,
+    /// Grayscale doll art; populated only while "grayscale doll" is on.
+    pub doll_base_gray: Option<SkinTexture>,
+    doll_parts_gray: HashMap<String, HashMap<u8, SkinTexture>>,
     pub compass_rose: Option<SkinTexture>,
     /// Direction key (lowercase "n".."nw", "up", ...) -> lit overlay.
     compass_dirs: HashMap<String, SkinTexture>,
@@ -141,6 +147,37 @@ impl SkinWidgetArt {
 
     pub fn doll_overlay(&self, part: &str, level: u8) -> Option<SkinTexture> {
         self.doll_parts
+            .get(&part.to_ascii_lowercase())
+            .and_then(|levels| levels.get(&level))
+            .copied()
+    }
+
+    /// Grayscale icon twin; None unless "gray when inactive" is enabled
+    /// (callers fall back to the color icon).
+    pub fn icon_gray(&self, id: &str) -> Option<ResolvedIcon> {
+        match self.icons_gray.get(&id.to_ascii_uppercase())? {
+            IconSlot::Sprite(texture) => Some(ResolvedIcon {
+                texture: texture.texture,
+                size: texture.size,
+                uv: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            }),
+            IconSlot::Sheet { sheet, cell } => {
+                let (texture, uv) = self.sheet_cell(sheet, *cell, true)?;
+                Some(ResolvedIcon {
+                    texture: texture.texture,
+                    size: egui::vec2(
+                        texture.size.x * uv.width(),
+                        texture.size.y * uv.height(),
+                    ),
+                    uv,
+                })
+            }
+        }
+    }
+
+    /// Grayscale doll overlay twin; None unless "grayscale doll" is on.
+    pub fn doll_overlay_gray(&self, part: &str, level: u8) -> Option<SkinTexture> {
+        self.doll_parts_gray
             .get(&part.to_ascii_lowercase())
             .and_then(|levels| levels.get(&level))
             .copied()
@@ -266,6 +303,10 @@ pub struct SkinState {
     /// Compass pool set override (lowercase prefix); replaces the skin's
     /// `[compass]` when its rose is present.
     compass_set: Option<String>,
+    /// Build grayscale twins for status icons ("gray when inactive").
+    gray_status_icons: bool,
+    /// Build grayscale twins for doll art ("grayscale doll").
+    gray_doll: bool,
     /// Resolved compass set: lowercase role ("rose", "n", ...) -> pool path.
     pool_compass: HashMap<String, String>,
     /// Per-indicator icon overrides (UPPERCASE id; `Default` never stored).
@@ -400,6 +441,17 @@ impl SkinState {
         paths.dedup();
         if paths != self.needed_pool_backgrounds {
             self.needed_pool_backgrounds = paths;
+            self.applied = false;
+        }
+    }
+
+    /// Declare which grayscale twins settings demand. Twins are built only
+    /// while a checkbox asks for them (checked + saved -> next frame) and
+    /// dropped when it clears — nobody pays for gray they don't use.
+    pub fn set_grayscale(&mut self, status_icons: bool, doll: bool) {
+        if status_icons != self.gray_status_icons || doll != self.gray_doll {
+            self.gray_status_icons = status_icons;
+            self.gray_doll = doll;
             self.applied = false;
         }
     }
@@ -622,6 +674,68 @@ impl SkinState {
             }
         }
 
+        // Grayscale twins mirror whatever resolved above, keyed by the same
+        // ids; sheet-cell slots resolve their gray at lookup (sheets keep
+        // their own twins).
+        if self.gray_status_icons {
+            for (id, slot) in art.icons.clone() {
+                match slot {
+                    IconSlot::Sprite(_) => {
+                        // Find the color slot's source path back through the
+                        // same precedence and fetch its twin.
+                        let path = self
+                            .statusicon_overrides
+                            .get(&id)
+                            .and_then(|icon| match icon {
+                                crate::data::IconRef::Image { path } => Some(path.clone()),
+                                _ => None,
+                            })
+                            .or_else(|| {
+                                self.manifest
+                                    .icons
+                                    .iter()
+                                    .find(|(icon_id, _)| icon_id.eq_ignore_ascii_case(&id))
+                                    .map(|(_, path)| path.clone())
+                            })
+                            .or_else(|| {
+                                self.pool_status_icons
+                                    .iter()
+                                    .find(|(glyph, _)| glyph.eq_ignore_ascii_case(&id))
+                                    .map(|(_, path)| path.clone())
+                            });
+                        if let Some(texture) = path.and_then(|p| tex(&format!("{p}#gray"))) {
+                            art.icons_gray.insert(id, IconSlot::Sprite(texture));
+                        }
+                    }
+                    IconSlot::Sheet { .. } => {
+                        art.icons_gray.insert(id, slot);
+                    }
+                }
+            }
+        }
+        if self.gray_doll {
+            let base_path = self
+                .doll_override
+                .clone()
+                .or_else(|| self.manifest.injury_doll.base.clone());
+            art.doll_base_gray = base_path.and_then(|p| tex(&format!("{p}#gray")));
+            if self.doll_override.is_none() {
+                for (part, levels) in &self.manifest.injury_doll.parts {
+                    for (key, path) in levels {
+                        let Some(level) = skins::severity_level_from_key(key) else {
+                            continue;
+                        };
+                        if let Some(texture) = tex(&format!("{path}#gray")) {
+                            art.doll_parts_gray
+                                .entry(part.to_ascii_lowercase())
+                                .or_default()
+                                .insert(level, texture);
+                        }
+                    }
+                }
+            }
+        }
+
         if art.is_empty() {
             None
         } else {
@@ -687,6 +801,49 @@ impl SkinState {
             // is enough).
             let handle = if matches!(self.textures.get(&spec.path), Some(Some(_))) {
                 load_texture_desaturated(ctx, &self.root, &spec.path, skin_name)
+            } else {
+                None
+            };
+            self.textures.insert(key, handle);
+        }
+        // Lazy grayscale twins: built only for what the checkboxes demand
+        // (status icons when "gray inactive" is on, doll art when
+        // "grayscale doll" is on). Unchecking rebuilds without them.
+        let mut gray_paths: Vec<String> = Vec::new();
+        if self.gray_status_icons {
+            gray_paths.extend(self.manifest.icons.values().cloned());
+            gray_paths.extend(self.pool_status_icons.values().cloned());
+            gray_paths.extend(
+                self.statusicon_overrides
+                    .values()
+                    .filter_map(|icon| match icon {
+                        crate::data::IconRef::Image { path } => Some(path.clone()),
+                        _ => None,
+                    }),
+            );
+        }
+        if self.gray_doll {
+            match &self.doll_override {
+                Some(path) => gray_paths.push(path.clone()),
+                None => {
+                    gray_paths.extend(self.manifest.injury_doll.base.iter().cloned());
+                    gray_paths.extend(
+                        self.manifest
+                            .injury_doll
+                            .parts
+                            .values()
+                            .flat_map(|levels| levels.values().cloned()),
+                    );
+                }
+            }
+        }
+        for path in gray_paths {
+            let key = format!("{path}#gray");
+            if self.textures.contains_key(&key) {
+                continue;
+            }
+            let handle = if matches!(self.textures.get(&path), Some(Some(_))) {
+                load_texture_desaturated(ctx, &self.root, &path, skin_name)
             } else {
                 None
             };

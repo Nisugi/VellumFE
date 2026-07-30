@@ -69,6 +69,8 @@ pub(super) enum GuiWindowMenuCommand {
     SetDollImage(Option<String>),
     /// Open the doll calibrator (injury doll windows).
     CalibrateDoll,
+    /// Render doll art in grayscale (dots keep their colors).
+    SetDollGrayscale(bool),
     /// Global compass art set from the pool; None reverts to the skin's.
     SetCompassSet(Option<String>),
     /// Per-window background: pool image path, "none" for no background,
@@ -162,6 +164,8 @@ pub(super) struct WindowAppearanceView {
     doll_images: Vec<(String, String)>,
     /// Global doll override (pool-relative path); None = skin default.
     doll_override: Option<String>,
+    /// Grayscale doll art toggle (global).
+    doll_grayscale: bool,
     /// Compass widget: offer the pool compass-set picker.
     is_compass: bool,
     /// Pool compass sets.
@@ -371,6 +375,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetSkinFrame(_)
             | GuiWindowMenuCommand::SetDollImage(_)
             | GuiWindowMenuCommand::CalibrateDoll
+            | GuiWindowMenuCommand::SetDollGrayscale(_)
             | GuiWindowMenuCommand::SetCompassSet(_)
             | GuiWindowMenuCommand::SetBackground(_)
             | GuiWindowMenuCommand::SetTitleBarHeight(_)
@@ -534,6 +539,10 @@ impl VellumGuiApp {
             GuiWindowMenuCommand::CalibrateDoll => {
                 self.open_doll_calibration();
             }
+            GuiWindowMenuCommand::SetDollGrayscale(gray) => {
+                self.ui_settings.doll_grayscale = gray;
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::SetCompassSet(set) => {
                 self.ui_settings.compass_set = set;
                 self.layout_dirty = true;
@@ -670,6 +679,7 @@ impl VellumGuiApp {
             is_doll,
             doll_images,
             doll_override: self.ui_settings.doll_image.clone(),
+            doll_grayscale: self.ui_settings.doll_grayscale,
             is_compass,
             compass_sets,
             compass_override: self.ui_settings.compass_set.clone(),
@@ -787,6 +797,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetCornerRadius(_)
                     | GuiWindowMenuCommand::SetSkinFrame(_)
                     | GuiWindowMenuCommand::SetDollImage(_)
+                    | GuiWindowMenuCommand::SetDollGrayscale(_)
                     | GuiWindowMenuCommand::SetCompassSet(_)
                     | GuiWindowMenuCommand::SetBackground(_)
                     | GuiWindowMenuCommand::SetTitleBarHeight(_)
@@ -1559,6 +1570,17 @@ impl VellumGuiApp {
             });
             if view.doll_images.is_empty() {
                 ui.weak("No dolls in the pool — install some with .jinx list / .jinx install");
+            }
+            let mut gray = view.doll_grayscale;
+            if ui
+                .checkbox(&mut gray, "Grayscale doll art")
+                .on_hover_text(
+                    "Render the doll's base and overlays desaturated; wound/scar dots keep \
+                     their colors. The grayscale copy is built only while this is on.",
+                )
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetDollGrayscale(gray));
             }
             if ui.button("Calibrate doll…").clicked() {
                 command = Some(GuiWindowMenuCommand::CalibrateDoll);
