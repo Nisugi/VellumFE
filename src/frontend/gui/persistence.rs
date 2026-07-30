@@ -80,6 +80,13 @@ pub struct TabSettings {
     #[serde(default)]
     pub corner_radius: Option<f32>,
 
+    /// Skin frame override: None follows the skin's own per-window
+    /// mapping, "none" disables the frame for this window, anything else
+    /// names a `[frames.*]` entry in the active skin (unknown names fall
+    /// back to the skin's mapping).
+    #[serde(default)]
+    pub skin_frame: Option<String>,
+
     /// Title bar height override in points; None follows the global
     /// `GuiUiSettings::title_bar_height` (where 0 = derive from the font).
     #[serde(default)]
@@ -115,6 +122,7 @@ impl Default for TabSettings {
             text_size: None,
             accent_color: None,
             corner_radius: None,
+            skin_frame: None,
             title_bar_height: None,
             title_bar_align: None,
             wrap_text: true,
@@ -943,6 +951,7 @@ mod tests {
             text_size: None,
             accent_color: None,
             corner_radius: None,
+            skin_frame: None,
             title_bar_height: None,
             title_bar_align: None,
             wrap_text: false,
@@ -1165,6 +1174,7 @@ mod tests {
                 text_size: Some(16.0),
                 accent_color: Some("#4784d9".to_string()),
                 corner_radius: None,
+                skin_frame: None,
                 title_bar_height: None,
                 title_bar_align: None,
                 wrap_text: true,

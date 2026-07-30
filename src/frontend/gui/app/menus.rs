@@ -61,6 +61,9 @@ pub(super) enum GuiWindowMenuCommand {
     /// Per-window frame corner radius; None reverts to the global setting.
     /// Keeps the menu open like SetTextSize.
     SetCornerRadius(Option<f32>),
+    /// Per-window skin frame: a named `[frames.*]` entry, "none" for no
+    /// frame, or None to revert to the skin's own per-window mapping.
+    SetSkinFrame(Option<String>),
     /// Per-window title bar height; None reverts to the global setting.
     /// Keeps the menu open like SetTextSize.
     SetTitleBarHeight(Option<f32>),
@@ -135,6 +138,14 @@ pub(super) struct WindowAppearanceView {
     /// Per-window frame corner radius override; None follows the global.
     corner_radius_override: Option<f32>,
     global_corner_radius: f32,
+    /// Named frames the active skin offers; the picker hides when the skin
+    /// neither names frames nor draws a border on this window.
+    skin_frames: Vec<String>,
+    /// Per-window skin frame override; None follows the skin's mapping.
+    skin_frame_override: Option<String>,
+    /// Whether the skin resolves a border for this window by default (so
+    /// "None" is worth offering even without named frames).
+    has_skin_border: bool,
     /// Per-window title bar height override; None follows the global.
     title_bar_height_override: Option<f32>,
     /// Global title bar height; 0 = derived from the title font.
@@ -329,6 +340,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetFont(_)
             | GuiWindowMenuCommand::SetAccent(_)
             | GuiWindowMenuCommand::SetCornerRadius(_)
+            | GuiWindowMenuCommand::SetSkinFrame(_)
             | GuiWindowMenuCommand::SetTitleBarHeight(_)
             | GuiWindowMenuCommand::SetTitleBarAlign(_)
             | GuiWindowMenuCommand::SetShowBorder(_)
@@ -477,6 +489,13 @@ impl VellumGuiApp {
                     .corner_radius = radius;
                 self.layout_dirty = true;
             }
+            GuiWindowMenuCommand::SetSkinFrame(frame) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .skin_frame = frame;
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::SetTitleBarHeight(height) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -573,6 +592,16 @@ impl VellumGuiApp {
             accent_color: self.accent_color_for_tab(tab_key),
             corner_radius_override: self.corner_radius_override_for_tab(tab_key),
             global_corner_radius: self.ui_settings.window_corner_radius,
+            skin_frames: self.skin_state.frame_names(),
+            skin_frame_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.skin_frame.clone()),
+            has_skin_border: self
+                .available_tabs
+                .get(tab_key)
+                .and_then(|tab| self.skin_state.border_for(&tab.window_name))
+                .is_some(),
             title_bar_height_override: self
                 .tab_settings
                 .get(tab_key)
@@ -672,6 +701,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::ToggleMemberMerge(_)
                     | GuiWindowMenuCommand::ToggleSlotAnchor(_)
                     | GuiWindowMenuCommand::SetCornerRadius(_)
+                    | GuiWindowMenuCommand::SetSkinFrame(_)
                     | GuiWindowMenuCommand::SetTitleBarHeight(_)
                     | GuiWindowMenuCommand::SetTitleBarAlign(_)
                     | GuiWindowMenuCommand::SetShowBorder(_)
@@ -1408,6 +1438,43 @@ impl VellumGuiApp {
             {
                 command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
             }
+        }
+        if !view.skin_frames.is_empty() || view.has_skin_border {
+            const NO_FRAME: &str = crate::config::skins::NO_FRAME;
+            ui.horizontal(|ui| {
+                ui.label("Skin frame");
+                let current = view.skin_frame_override.as_deref();
+                let selected_label = match current {
+                    None => "Skin default",
+                    Some(name) if name.eq_ignore_ascii_case(NO_FRAME) => "None",
+                    Some(name) => name,
+                };
+                egui::ComboBox::from_id_salt("gui_window_skin_frame")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(current.is_none(), "Skin default")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetSkinFrame(None));
+                        }
+                        let none_selected = current
+                            .is_some_and(|name| name.eq_ignore_ascii_case(NO_FRAME));
+                        if ui.selectable_label(none_selected, "None").clicked() {
+                            command = Some(GuiWindowMenuCommand::SetSkinFrame(Some(
+                                NO_FRAME.to_string(),
+                            )));
+                        }
+                        for name in &view.skin_frames {
+                            let selected =
+                                current.is_some_and(|value| value.eq_ignore_ascii_case(name));
+                            if ui.selectable_label(selected, name).clicked() {
+                                command =
+                                    Some(GuiWindowMenuCommand::SetSkinFrame(Some(name.clone())));
+                            }
+                        }
+                    });
+            });
         }
         if view.supports_wrap {
             ui.horizontal(|ui| {

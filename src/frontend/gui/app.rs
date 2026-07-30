@@ -1729,13 +1729,25 @@ impl VellumGuiApp {
         [sides.top, sides.right, sides.bottom, sides.left]
     }
 
+    /// The skin border this tab draws, honoring the per-window frame
+    /// override (Appearance > Skin frame) stored in its tab settings.
+    pub(super) fn skin_border_for_tab(&self, key: &TabKey) -> Option<skin::ResolvedBorder> {
+        let tab = self.available_tabs.get(key)?;
+        let frame_override = self
+            .tab_settings
+            .get(key)
+            .and_then(|settings| settings.skin_frame.as_deref());
+        self.skin_state
+            .border_for_with_override(&tab.window_name, frame_override)
+    }
+
     fn apply_skin_border_to_frame(
         &self,
-        window_name: &str,
+        key: &TabKey,
         sides: [bool; 4],
         frame: &mut egui::Frame,
     ) {
-        let Some(border) = self.skin_state.border_for(window_name) else {
+        let Some(border) = self.skin_border_for_tab(key) else {
             return;
         };
         if sides == [false; 4] {
@@ -1766,14 +1778,14 @@ impl VellumGuiApp {
     fn paint_skin_border(
         &self,
         ctx: &egui::Context,
-        window_name: &str,
+        key: &TabKey,
         sides: [bool; 4],
         response: &egui::Response,
     ) {
         if sides == [false; 4] {
             return;
         }
-        if let Some(border) = self.skin_state.border_for(window_name) {
+        if let Some(border) = self.skin_border_for_tab(key) {
             skin::paint_nine_slice(
                 &ctx.layer_painter(response.layer_id),
                 response.rect,

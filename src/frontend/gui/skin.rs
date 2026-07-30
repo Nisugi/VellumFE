@@ -425,6 +425,7 @@ impl SkinState {
                     .chain(window.border.as_ref().map(|border| border.image.clone()))
             })
             .collect();
+        images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
         images.extend(self.manifest.icons.values().cloned());
         images.extend(self.manifest.sheets.values().map(|s| s.path.clone()));
         images.extend(self.manifest.compass.rose.iter().cloned());
@@ -488,8 +489,30 @@ impl SkinState {
     /// manifest's "default" entry (independently of the background, so a
     /// window can override one without losing the other).
     pub fn border_for(&self, window_name: &str) -> Option<ResolvedBorder> {
-        let spec =
-            skins::window_field(&self.manifest, window_name, |window| window.border.as_ref())?;
+        self.resolve_border(skins::window_field(&self.manifest, window_name, |window| {
+            window.border.as_ref()
+        })?)
+    }
+
+    /// Border resolution honoring a per-window user override: "none" kills
+    /// the frame, a named `[frames.*]` entry replaces it, and an unknown
+    /// name (stale layout, switched skin) falls back to the skin's own
+    /// per-window mapping — as does no override at all.
+    pub fn border_for_with_override(
+        &self,
+        window_name: &str,
+        frame_override: Option<&str>,
+    ) -> Option<ResolvedBorder> {
+        match frame_override {
+            Some(name) if name.eq_ignore_ascii_case(skins::NO_FRAME) => None,
+            Some(name) => skins::named_frame(&self.manifest, name)
+                .and_then(|spec| self.resolve_border(spec))
+                .or_else(|| self.border_for(window_name)),
+            None => self.border_for(window_name),
+        }
+    }
+
+    fn resolve_border(&self, spec: &skins::BorderSpec) -> Option<ResolvedBorder> {
         let texture = self.textures.get(&spec.image)?.as_ref()?;
         Some(ResolvedBorder {
             texture: texture.id(),
@@ -497,6 +520,20 @@ impl SkinState {
             slice: spec.slice,
             scale: spec.scale.max(0.05),
         })
+    }
+
+    /// Named frames the active skin offers, sorted for the Appearance
+    /// picker. Empty when no skin is active or it defines none.
+    pub fn frame_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .manifest
+            .frames
+            .keys()
+            .filter(|name| !name.eq_ignore_ascii_case(skins::NO_FRAME))
+            .cloned()
+            .collect();
+        names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        names
     }
 }
 

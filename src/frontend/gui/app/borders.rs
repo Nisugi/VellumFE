@@ -80,8 +80,8 @@ impl VellumGuiApp {
     /// keep the plain egui frame; skin border art collapses the plan to the
     /// default so the skin path owns the frame instead.
     pub(super) fn window_border_plan_for_tab(&self, key: &TabKey) -> WindowBorderPlan {
-        if let Some(tab) = self.available_tabs.get(key) {
-            if self.skin_state.border_for(&tab.window_name).is_some() {
+        if self.available_tabs.contains_key(key) {
+            if self.skin_border_for_tab(key).is_some() {
                 // The skin's nine-slice art owns the frame, but the def's
                 // Border toggle still means "no border": hide the egui
                 // stroke too, or it reappears where the art doesn't draw.

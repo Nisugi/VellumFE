@@ -94,6 +94,33 @@ slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
 scale = 1.0                # source pixels -> screen points
 ```
 
+## Named Frames (Per-Window Picker)
+
+`[window.<name>.border]` bakes the frame choice into the skin. To let
+players mix frames themselves, name them under `[frames.*]`:
+
+```toml
+[frames.ornate]
+image = "borders/ornate.png"
+slice = [16, 16, 16, 16]
+scale = 0.75
+
+[frames.plain]
+image = "borders/plain.png"
+slice = [6, 6, 6, 6]
+```
+
+Every named frame shows up in each window's right-click menu under
+**Appearance → Skin frame** (also in the Window Editor's Appearance
+section), alongside **Skin default** (follow the skin's own
+`[window.*]` mapping) and **None** (no frame on this window). The
+choice is saved per window in the GUI layout, so it survives restarts
+and travels with `.savelayout` checkpoints. If a layout names a frame
+the active skin doesn't define, the window falls back to the skin's
+default mapping.
+
+The name `none` is reserved — a `[frames.none]` entry is ignored.
+
 ## Status Icons
 
 Replace the built-in vector pictograms in the dashboard and indicator

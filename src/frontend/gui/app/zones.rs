@@ -274,7 +274,6 @@ impl VellumGuiApp {
         &self,
         ctx: &egui::Context,
         tab_key: &TabKey,
-        window_name: &str,
         window: &WindowState,
         title_bar_hidden: bool,
     ) -> Option<f32> {
@@ -301,7 +300,7 @@ impl VellumGuiApp {
         let mut frame = egui::Frame::window(ctx.global_style().as_ref());
         self.apply_border_plan_to_frame(&self.window_border_plan_for_tab(tab_key), &mut frame);
         self.apply_skin_border_to_frame(
-            window_name,
+            tab_key,
             self.skin_border_sides_for_tab(tab_key),
             &mut frame,
         );
@@ -936,7 +935,6 @@ impl VellumGuiApp {
                         self.compact_height_cap(
                             ctx,
                             &tab.id.key,
-                            &tab.window_name,
                             window,
                             self.title_bar_hidden(&tab.id.key),
                         )
@@ -1044,7 +1042,7 @@ impl VellumGuiApp {
                 let border_plan = self.window_border_plan_for_tab(&tab.id.key);
                 self.apply_border_plan_to_frame(&border_plan, &mut window_frame);
                 let skin_sides = self.skin_border_sides_for_tab(&tab.id.key);
-                self.apply_skin_border_to_frame(&tab.window_name, skin_sides, &mut window_frame);
+                self.apply_skin_border_to_frame(&tab.id.key, skin_sides, &mut window_frame);
                 // Advance by what actually rendered, not by the intended slot:
                 // any disagreement between our chrome math and egui's real
                 // window chrome then shows up as a slightly different next-y
@@ -1215,7 +1213,7 @@ impl VellumGuiApp {
                         .inner
                     })
                 {
-                    self.paint_skin_border(ctx, &tab.window_name, skin_sides, &inner.response);
+                    self.paint_skin_border(ctx, &tab.id.key, skin_sides, &inner.response);
                     self.paint_border_plan(ctx, &border_plan, &inner.response);
                     clicked_link = inner.inner.flatten();
                     let rendered_bottom = inner.response.rect.max.y;
@@ -1359,13 +1357,7 @@ impl VellumGuiApp {
                 let cap = if grouped {
                     None
                 } else {
-                    self.compact_height_cap(
-                        ctx,
-                        &tab.id.key,
-                        &tab.window_name,
-                        window,
-                        title_bar_hidden,
-                    )
+                    self.compact_height_cap(ctx, &tab.id.key, window, title_bar_hidden)
                 };
                 match cap {
                     Some(cap) => cap.clamp(min_window_size.y, zone_max),
@@ -1449,7 +1441,7 @@ impl VellumGuiApp {
             let border_plan = self.window_border_plan_for_tab(&tab.id.key);
             self.apply_border_plan_to_frame(&border_plan, &mut docked_window_frame);
             let skin_sides = self.skin_border_sides_for_tab(&tab.id.key);
-            self.apply_skin_border_to_frame(&tab.window_name, skin_sides, &mut docked_window_frame);
+            self.apply_skin_border_to_frame(&tab.id.key, skin_sides, &mut docked_window_frame);
             // `default_size` (like `fixed_size`) is the whole window rect in
             // this egui fork, so every zone passes the outer size directly.
             // Declared before the builder so the close-button borrow
@@ -1502,7 +1494,7 @@ impl VellumGuiApp {
                     })
                     .inner
                 }) {
-                self.paint_skin_border(ctx, &tab.window_name, skin_sides, &inner.response);
+                self.paint_skin_border(ctx, &tab.id.key, skin_sides, &inner.response);
                 self.paint_border_plan(ctx, &border_plan, &inner.response);
                 if is_hand_widget {
                     let handle_rect = Rect::from_min_max(
