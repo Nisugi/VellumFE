@@ -486,19 +486,22 @@ impl VellumGuiApp {
         egui::Id::new(("gui_zone_window", zone.id_fragment(), tab_key))
     }
 
-    /// Send the Center-zone window for `tab_key` behind the windows it
-    /// overlaps. egui has no move-to-bottom, so instead we raise every *other*
-    /// Center window above it, preserving their existing relative order —
-    /// which leaves this one at the bottom of the stack. Live-session only.
+    /// Send the window for `tab_key` behind the windows it overlaps within
+    /// its zone. egui has no move-to-bottom, so instead we raise every
+    /// *other* window of that zone above it, preserving their existing
+    /// relative order — which leaves this one at the bottom of the stack.
+    /// Works in every free-placement zone (Center, Header, Footer); the
+    /// packed sidebars never overlap. Live-session only.
     pub(super) fn send_window_to_back(&mut self, ctx: &egui::Context, tab_key: &TabKey) {
-        let target = Self::zone_window_id(GuiShellZone::Center, tab_key);
-        // Every Center window's layer id, keyed for a quick membership test;
-        // header/footer/sidebar windows are docked and never overlap, so they
-        // stay out of it.
+        let zone = self.zone_for_tab(tab_key);
+        let target = Self::zone_window_id(zone, tab_key);
+        // Layer ids of this zone's windows, keyed for a quick membership
+        // test; windows in other zones can't overlap this one and stay out.
         let center_layers: std::collections::HashSet<egui::Id> = self
             .available_tabs
             .keys()
-            .map(|key| Self::zone_window_id(GuiShellZone::Center, key))
+            .filter(|key| self.zone_for_tab(key) == zone)
+            .map(|key| Self::zone_window_id(zone, key))
             .collect();
         // layer_ids() is back-to-front (top is last).
         let ordered_middle: Vec<egui::Id> = ctx.memory(|mem| {
@@ -1326,6 +1329,63 @@ impl VellumGuiApp {
             return actions;
         }
 
+        // Clicks anywhere count as "interacting"; used both for rect
+        // tracking (only user actions persist geometry) and for relaxing
+        // the per-window size forcing below.
+        let pointer_interacting =
+            ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
+        // Where the current press started, for telling "user is engaging
+        // this window" apart from "user clicked a toolbar toggle".
+        let press_origin = ctx.input(|i| i.pointer.press_origin());
+
+        // Center windows render at *display* rects computed from their
+        // canonical rects and the current bounds: shell zones claiming
+        // space displace windows for the frame (story window shrinks,
+        // others push) and everything springs back when the zone closes,
+        // because `main_window_rects` itself is never touched.
+        let center_displays: HashMap<TabKey, Rect> = if zone == GuiShellZone::Center {
+            let mut infos: Vec<super::dock::CenterWindowInfo> = Vec::new();
+            for tab in &tabs {
+                let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
+                    continue;
+                };
+                let group = self.group_for_tab(&tab.id.key);
+                // Mirrors the min-size computation in the render loop below.
+                let min_height = {
+                    let base = Self::min_window_height_for_zone(zone, window);
+                    match group.map(|g| (g.members.len(), g.horizontal)) {
+                        Some((count, false)) => base * count as f32,
+                        _ => base,
+                    }
+                };
+                let min_size = Vec2::new(
+                    120.0_f32.min(window_bounds.width().max(1.0)),
+                    min_height.min(window_bounds.height().max(1.0)),
+                );
+                let Some(stored) = self
+                    .main_window_rects
+                    .get(&tab.id.key)
+                    .copied()
+                    .and_then(Self::rect_from_snapshot)
+                else {
+                    // No canonical rect yet: the loop's fallback placement
+                    // already lives inside the current bounds.
+                    continue;
+                };
+                let is_main = tab.id.key == TabKey::TextMain
+                    || group.is_some_and(|g| g.members.contains(&TabKey::TextMain));
+                infos.push(super::dock::CenterWindowInfo {
+                    key: tab.id.key.clone(),
+                    stored,
+                    min_size,
+                    is_main,
+                });
+            }
+            Self::compute_center_display_rects(&infos, window_bounds)
+        } else {
+            HashMap::new()
+        };
+
         let mut occupied_rects: Vec<Rect> = Vec::new();
         for tab in tabs {
             let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
@@ -1378,13 +1438,19 @@ impl VellumGuiApp {
                         ),
                     )
                 });
-            let initial_rect = self
-                .main_window_rects
-                .get(&tab.id.key)
-                .copied()
-                .and_then(Self::rect_from_snapshot)
-                .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
-                .unwrap_or(fallback_rect);
+            let initial_rect = if zone == GuiShellZone::Center {
+                center_displays
+                    .get(&tab.id.key)
+                    .copied()
+                    .unwrap_or_else(|| Self::clamp_main_window_rect(fallback_rect, window_bounds))
+            } else {
+                self.main_window_rects
+                    .get(&tab.id.key)
+                    .copied()
+                    .and_then(Self::rect_from_snapshot)
+                    .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
+                    .unwrap_or(fallback_rect)
+            };
             if !initial_rect.is_finite() {
                 continue;
             }
@@ -1478,6 +1544,27 @@ impl VellumGuiApp {
                 // Prevent content-driven growth by making the window scroll instead of expanding.
                 window_builder = window_builder.scroll([true, true]);
             }
+            // Pin the window to its display size whenever the user is not
+            // engaging it: egui's Resize state clamps its remembered
+            // desired_size through min/max every frame, so this both makes
+            // the story window actually shrink while a zone is open and
+            // grows it (and any window egui clamped to a small center)
+            // right back afterwards. A press that started on or near this
+            // window (resize handles included) relaxes the pin so drags
+            // behave normally — and the drag's tracking then updates the
+            // canonical rect the display derives from.
+            let user_engaging_window = pointer_interacting
+                && press_origin.is_some_and(|pos| initial_rect.expand(12.0).contains(pos));
+            if zone == GuiShellZone::Center
+                && !is_compact_center_widget
+                && !is_hand_widget
+                && !being_moved
+                && !user_engaging_window
+            {
+                window_builder = window_builder
+                    .min_size(initial_rect.size())
+                    .max_size(initial_rect.size());
+            }
             // Header/footer windows normally let egui manage their position
             // (default_pos); during a move the stored rect drives it instead.
             window_builder = if zone == GuiShellZone::Center || being_moved {
@@ -1526,8 +1613,6 @@ impl VellumGuiApp {
                 // window reaches its restored size). Persisting those would
                 // clobber the saved geometry, so only track changes made while
                 // the user is actually interacting with the mouse.
-                let pointer_interacting =
-                    ctx.input(|i| i.pointer.any_down() || i.pointer.any_released());
                 let should_track_rect = if zone == GuiShellZone::Center {
                     center_rect_changed && pointer_interacting
                 } else {
@@ -1537,10 +1622,24 @@ impl VellumGuiApp {
                     self.track_main_window_rect(&tab.id.key, inner.response.rect, window_bounds);
                 }
                 if zone == GuiShellZone::Center && pointer_interacting {
-                    let clamped = Self::clamp_main_window_rect(inner.response.rect, window_bounds);
-                    if clamped.is_finite() {
+                    // Mirror the CANONICAL rect (post-tracking), not the
+                    // rendered one: while a shell zone is open the rendered
+                    // rect is displaced, and zone drag/drop restores from
+                    // this map — a displaced rect must not leak into the
+                    // canonical geometry via "move to a zone and back".
+                    let snapshot = self
+                        .main_window_rects
+                        .get(&tab.id.key)
+                        .copied()
+                        .unwrap_or_else(|| {
+                            Self::rect_to_snapshot(Self::clamp_main_window_rect(
+                                inner.response.rect,
+                                window_bounds,
+                            ))
+                        });
+                    if snapshot.iter().all(|value| value.is_finite()) {
                         self.last_center_window_rects
-                            .insert(tab.id.key.clone(), Self::rect_to_snapshot(clamped));
+                            .insert(tab.id.key.clone(), snapshot);
                     }
                 }
                 clicked_link = inner.inner.flatten();
