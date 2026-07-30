@@ -3692,7 +3692,28 @@ impl VellumGuiApp {
         search_query: Option<&str>,
         font_id: &egui::FontId,
         wrap: bool,
+        content_align: Option<&str>,
     ) -> Option<GuiLinkClick> {
+        // content_align (shared layout def, long honored by the TUI): the
+        // horizontal component offsets each line's galley; the vertical
+        // component pads above the block while the whole buffer is shorter
+        // than the viewport. Once content overflows, scrolling is unchanged.
+        use crate::config::ContentAlign;
+        let align = content_align.map(ContentAlign::from_str);
+        let h_align: u8 = match align {
+            Some(ContentAlign::Top | ContentAlign::Center | ContentAlign::Bottom) => 1,
+            Some(
+                ContentAlign::TopRight | ContentAlign::Right | ContentAlign::BottomRight,
+            ) => 2,
+            _ => 0,
+        };
+        let v_align: u8 = match align {
+            Some(ContentAlign::Left | ContentAlign::Center | ContentAlign::Right) => 1,
+            Some(
+                ContentAlign::BottomLeft | ContentAlign::Bottom | ContentAlign::BottomRight,
+            ) => 2,
+            _ => 0,
+        };
         // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
         let style = ui.style().clone();
         let visuals = &style.visuals;
@@ -3853,6 +3874,20 @@ impl VellumGuiApp {
                 let base_uid = content
                     .generation
                     .wrapping_sub(content.lines.len() as u64);
+                // Vertical alignment pad, from last frame's height cache (it
+                // settles within a frame). Applied before content_top is read
+                // so all selection/viewport math stays consistent.
+                if v_align != 0 {
+                    let cache = cache_handle.lock().expect("row height cache poisoned");
+                    if cache.heights.len() == rendered_count {
+                        let total: f32 =
+                            cache.heights.iter().map(|h| h + spacing_y).sum();
+                        let free = max_height - total;
+                        if free > 0.0 {
+                            ui.add_space(if v_align == 1 { free / 2.0 } else { free });
+                        }
+                    }
+                }
                 // Top of line 0 in ui coords; the height cache turns this
                 // into every line's y-band, on or off screen.
                 let content_left = ui.max_rect().left();
@@ -3927,8 +3962,19 @@ impl VellumGuiApp {
                                 timestamps,
                             );
                             let galley = ctx.fonts_mut(|fonts| fonts.layout_job(line_job.job));
-                            let local =
-                                egui::Vec2::new(pos.x - content_left, pos.y - slot_top);
+                            // Centered/right rows paint their galley offset
+                            // within the full-width row; mirror that offset
+                            // when mapping the pointer back to a character.
+                            let drag_h_offset = if h_align != 0 && wrap_width.is_finite() {
+                                let free = (wrap_width - galley.size().x).max(0.0);
+                                if h_align == 1 { free / 2.0 } else { free }
+                            } else {
+                                0.0
+                            };
+                            let local = egui::Vec2::new(
+                                pos.x - content_left - drag_h_offset,
+                                pos.y - slot_top,
+                            );
                             sel.head = (
                                 base_uid.wrapping_add(line_index as u64),
                                 galley.cursor_from_pos(local).index.0,
@@ -4051,7 +4097,12 @@ impl VellumGuiApp {
                     };
                     let (rect, response) =
                         ui.allocate_exact_size(Vec2::new(width, height), sense);
-                    let galley_pos = rect.left_top();
+                    let h_offset = match h_align {
+                        1 => ((rect.width() - galley_size.x) / 2.0).max(0.0),
+                        2 => (rect.width() - galley_size.x).max(0.0),
+                        _ => 0.0,
+                    };
+                    let galley_pos = rect.left_top() + Vec2::new(h_offset, 0.0);
                     if (cache.heights[slot] - height).abs() > 0.5 {
                         cache.heights[slot] = height;
                     }
@@ -4341,6 +4392,7 @@ impl VellumGuiApp {
                     query.as_deref(),
                     &font_id,
                     settings.wrap_text,
+                    window.content_align.as_deref(),
                 )
             }
             WindowContent::MiniVitals => {
@@ -4390,6 +4442,7 @@ impl VellumGuiApp {
                         query.as_deref(),
                         &font_id,
                         settings.wrap_text,
+                        window.content_align.as_deref(),
                     ) {
                         clicked_link.get_or_insert(link);
                     }

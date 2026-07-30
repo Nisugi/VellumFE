@@ -73,6 +73,9 @@ pub(super) enum GuiWindowMenuCommand {
     SetBorderStyle(String),
     /// Which edges draw a border, for the shared layout def.
     SetBorderSides(crate::config::BorderSides),
+    /// Content alignment for the shared layout def ("center", "bottom-left",
+    /// ...); None reverts to the default top-left flow.
+    SetContentAlign(Option<String>),
     /// Lock this window together with another one.
     GroupWith(TabKey),
     /// Remove one specific member from this window's group.
@@ -131,6 +134,8 @@ pub(super) struct WindowAppearanceView {
     /// Border fields from the shared layout def; None when the window has
     /// no def (border controls are hidden then).
     border: Option<BorderView>,
+    /// Content alignment from the shared layout def (text-list widgets).
+    content_align: Option<String>,
 }
 
 /// Snapshot of a layout def's border configuration.
@@ -319,6 +324,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetShowBorder(_)
             | GuiWindowMenuCommand::SetBorderStyle(_)
             | GuiWindowMenuCommand::SetBorderSides(_)
+            | GuiWindowMenuCommand::SetContentAlign(_)
             | GuiWindowMenuCommand::SetMapZoom(_) => {
                 let tab_key = request.tab_key.clone();
                 self.apply_appearance_command(&tab_key, command);
@@ -460,6 +466,24 @@ impl VellumGuiApp {
                     def.base_mut().border_sides = sides;
                 });
             }
+            GuiWindowMenuCommand::SetContentAlign(align) => {
+                self.with_layout_def_for_tab(tab_key, |def| {
+                    def.base_mut().content_align = align.clone();
+                });
+                // The renderer reads the live window state each frame; push
+                // the change there too so it applies without a recreate.
+                if let Some(window_name) = self
+                    .available_tabs
+                    .get(tab_key)
+                    .map(|tab| tab.window_name.clone())
+                {
+                    if let Some(window) =
+                        self.app_core.ui_state.windows.get_mut(&window_name)
+                    {
+                        window.content_align = align;
+                    }
+                }
+            }
             GuiWindowMenuCommand::SetMapZoom(zoom) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -526,6 +550,9 @@ impl VellumGuiApp {
                     sides: base.border_sides.clone(),
                 }
             }),
+            content_align: self
+                .layout_def_for_tab(tab_key)
+                .and_then(|def| def.base().content_align.clone()),
         }
     }
 
@@ -1285,6 +1312,40 @@ impl VellumGuiApp {
             {
                 command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
             }
+        }
+        if view.supports_wrap {
+            ui.horizontal(|ui| {
+                ui.label("Content alignment");
+                const ALIGNS: [(Option<&str>, &str); 10] = [
+                    (None, "Default (top left)"),
+                    (Some("top-left"), "Top left"),
+                    (Some("top"), "Top center"),
+                    (Some("top-right"), "Top right"),
+                    (Some("left"), "Middle left"),
+                    (Some("center"), "Center"),
+                    (Some("right"), "Middle right"),
+                    (Some("bottom-left"), "Bottom left"),
+                    (Some("bottom"), "Bottom center"),
+                    (Some("bottom-right"), "Bottom right"),
+                ];
+                let current = view.content_align.as_deref();
+                let selected_label = ALIGNS
+                    .iter()
+                    .find(|(value, _)| *value == current)
+                    .map(|(_, label)| *label)
+                    .unwrap_or("Default (top left)");
+                egui::ComboBox::from_id_salt("gui_window_content_align")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        for (value, label) in ALIGNS {
+                            if ui.selectable_label(current == value, label).clicked() {
+                                command = Some(GuiWindowMenuCommand::SetContentAlign(
+                                    value.map(str::to_string),
+                                ));
+                            }
+                        }
+                    });
+            });
         }
         let mut tb_enabled = view.title_bar_height_override.is_some();
         if ui
