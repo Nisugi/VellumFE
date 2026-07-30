@@ -67,13 +67,15 @@ Windows can overlap. Later windows in the file render on top.
 .resize                 # refit layout to the current terminal size
 ```
 
-Window positions also auto-save per character. `.savelayout` and
-`.loadlayout` update the per-character auto-save immediately, so a saved
-or loaded layout comes back on next launch even if the session ends
-without a clean `.quit` (closed terminal, crash). On startup the client
-loads the per-character auto-save first, falling back to your saved
-`default` layout (`.savelayout` with no name) if no auto-save exists.
-Use `.resize` to refit the current layout to the terminal, or
+Window positions also auto-save per character: any layout change (moving
+or resizing a window, editing its streams, adding or hiding windows) is
+written to the per-character auto-save a few seconds later, and
+`.savelayout` / `.loadlayout` update it immediately — so your layout
+comes back on next launch even if the session ends without a clean
+`.quit` (closed terminal, crash). On startup the client loads the
+per-character auto-save first, falling back to your saved `default`
+layout (`.savelayout` with no name) if no auto-save exists. Use
+`.resize` to refit the current layout to the terminal, or
 `.loadlayout <name>` to switch layouts.
 
 The same three commands work in the [Desktop GUI](../frontends/gui.md)
