@@ -51,6 +51,9 @@ Two consequences worth knowing:
 
 - If your image **already has real transparency** — you cleaned it up
   yourself in an editor — the robot detects that and leaves it alone.
+  (Detection requires meaningful transparency; a few stray transparent
+  pixels from an export won't disable keying. Filling in the threshold
+  field always forces a re-key either way.)
 - **Don't submit greyscale variants** of anything. VellumFE desaturates
   art at runtime when it needs to (the injury doll base, dormant
   states), so only the color version is ever stored.
