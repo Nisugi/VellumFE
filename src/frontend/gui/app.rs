@@ -321,6 +321,7 @@ pub struct VellumGuiApp {
     #[cfg(feature = "gamepad")]
     controller_editor: Option<editors::ControllerEditorState>,
     hotbar_editor: Option<editors::HotbarEditorState>,
+    hand_icons_editor: Option<editors::HandIconsEditorState>,
     colors_editor: Option<editors::ColorsEditorState>,
     theme_browser: Option<editors::ThemeBrowserState>,
     theme_editor: Option<editors::ThemeEditorState>,
@@ -640,6 +641,7 @@ impl VellumGuiApp {
             #[cfg(feature = "gamepad")]
             controller_editor: None,
             hotbar_editor: None,
+            hand_icons_editor: None,
             colors_editor: None,
             theme_browser: None,
             theme_editor: None,
@@ -4832,6 +4834,22 @@ impl eframe::App for VellumGuiApp {
                 .values()
                 .filter_map(|settings| settings.background_image.clone()),
         );
+        // Pool images named by hand-widget icon states load with the skin.
+        self.skin_state.set_needed_hand_icons(
+            self.app_core
+                .layout
+                .windows
+                .iter()
+                .filter_map(|def| match def {
+                    crate::config::WindowDef::Hand { data, .. } => Some(&data.states),
+                    _ => None,
+                })
+                .flatten()
+                .filter_map(|state| match &state.icon {
+                    Some(crate::data::IconRef::Image { path }) => Some(path.clone()),
+                    _ => None,
+                }),
+        );
         self.skin_state.set_grayscale(
             self.ui_settings.status_icons.gray_inactive,
             self.ui_settings.doll_grayscale,
@@ -4842,6 +4860,9 @@ impl eframe::App for VellumGuiApp {
             self.ui_settings.doll_image.as_deref(),
         );
         self.apply_ui_sizing(&ctx);
+        // Prime the item classifier while &mut self is available; render
+        // paths (hotbar/hand conditions) read the immutable cache.
+        let _ = self.app_core.gameobj_data();
         self.pump_server_messages();
         // Feed-injected dot-commands (<vellumCmd> from Lich scripts) run
         // through the same dispatch as typed commands.

@@ -238,6 +238,8 @@ fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
         "background" => Config::global_image_category_dir("backgrounds"),
         "compass" => Config::global_image_category_dir("compass"),
         "statusicon" => Config::global_image_category_dir("statusicons"),
+        // Hand-widget icons (static picker + status-driven states).
+        "hand" => Config::global_image_category_dir("hands"),
         // Composed bundles: extracted elsewhere, not a plain write.
         "skin" | "layout" | "uipack" => return Ok(None),
         // Anything else installs into the pool folder the manifest names
@@ -560,6 +562,7 @@ mod tests {
             ("background", "backgrounds"),
             ("compass", "compass"),
             ("statusicon", "statusicons"),
+            ("hand", "hands"),
         ] {
             let mut db = InstalledDb::default();
             let body = format!("PNG-{kind}").into_bytes();

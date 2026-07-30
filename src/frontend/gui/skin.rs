@@ -63,6 +63,9 @@ pub struct SkinWidgetArt {
     /// Grayscale icon twins; populated only while "gray when inactive" is
     /// on (lazy — no setting, no twins).
     icons_gray: HashMap<String, IconSlot>,
+    /// Pool images referenced by hand-widget icon states, keyed by
+    /// lowercase pool-relative path.
+    hand_state_icons: HashMap<String, SkinTexture>,
     /// Grayscale doll art; populated only while "grayscale doll" is on.
     pub doll_base_gray: Option<SkinTexture>,
     doll_parts_gray: HashMap<String, HashMap<u8, SkinTexture>>,
@@ -141,6 +144,41 @@ impl SkinWidgetArt {
         }
     }
 
+    /// Resolve an arbitrary `IconRef` (hand-widget icon states): `Default`
+    /// follows the widget's own icon id through the normal precedence,
+    /// `None` is explicitly artless, images come from the pre-declared
+    /// hand-state pool loads, sheet cells from the shared sheets.
+    pub fn resolve_icon_ref(
+        &self,
+        icon: &crate::data::IconRef,
+        own_id: &str,
+    ) -> Option<ResolvedIcon> {
+        match icon {
+            crate::data::IconRef::Default => self.icon(own_id),
+            crate::data::IconRef::None => None,
+            crate::data::IconRef::Image { path } => self
+                .hand_state_icons
+                .get(&path.to_ascii_lowercase())
+                .map(|texture| ResolvedIcon {
+                    texture: texture.texture,
+                    size: texture.size,
+                    uv: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                }),
+            crate::data::IconRef::SheetCell { sheet, cell } => {
+                let (texture, uv) =
+                    self.sheet_cell(&sheet.to_ascii_lowercase(), *cell, false)?;
+                Some(ResolvedIcon {
+                    texture: texture.texture,
+                    size: egui::vec2(
+                        texture.size.x * uv.width(),
+                        texture.size.y * uv.height(),
+                    ),
+                    uv,
+                })
+            }
+        }
+    }
+
     pub fn compass_dir(&self, direction: &str) -> Option<SkinTexture> {
         self.compass_dirs.get(direction).copied()
     }
@@ -203,6 +241,7 @@ impl SkinWidgetArt {
             && self.doll_base.is_none()
             && self.doll_parts.is_empty()
             && self.sheets.is_empty()
+            && self.hand_state_icons.is_empty()
     }
 
     /// Registered hotbar sheet names (lowercased), sorted for editor lists.
@@ -298,6 +337,9 @@ pub struct SkinState {
     /// Pool background images referenced by window overrides (pool-relative
     /// paths); like frames, only referenced ones load.
     needed_pool_backgrounds: Vec<String>,
+    /// Pool images referenced by hand-widget icon states (pool-relative
+    /// paths); like backgrounds, only referenced ones load.
+    needed_hand_icons: Vec<String>,
     /// Active statusicons pool set (lowercase `<set>_` prefix).
     statusicon_set: Option<String>,
     /// Compass pool set override (lowercase prefix); replaces the skin's
@@ -441,6 +483,18 @@ impl SkinState {
         paths.dedup();
         if paths != self.needed_pool_backgrounds {
             self.needed_pool_backgrounds = paths;
+            self.applied = false;
+        }
+    }
+
+    /// Declare which pool images hand-widget icon states reference. Call
+    /// before `apply_if_changed`; a change triggers a reload.
+    pub fn set_needed_hand_icons(&mut self, paths: impl IntoIterator<Item = String>) {
+        let mut paths: Vec<String> = paths.into_iter().collect();
+        paths.sort();
+        paths.dedup();
+        if paths != self.needed_hand_icons {
+            self.needed_hand_icons = paths;
             self.applied = false;
         }
     }
@@ -589,6 +643,13 @@ impl SkinState {
                         },
                     );
                 }
+            }
+        }
+        // Hand-widget icon-state images (pre-declared pool loads).
+        for path in &self.needed_hand_icons {
+            if let Some(texture) = tex(path) {
+                art.hand_state_icons
+                    .insert(path.to_ascii_lowercase(), texture);
             }
         }
         for (name, spec) in &self.manifest.sheets {
@@ -781,6 +842,7 @@ impl SkinState {
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.needed_pool_backgrounds.iter().cloned());
+        images.extend(self.needed_hand_icons.iter().cloned());
         images.extend(self.doll_override.iter().cloned());
         images.extend(self.pool_status_icons.values().cloned());
         images.extend(self.pool_compass.values().cloned());
@@ -1622,7 +1684,7 @@ fn contain_dest(tex: egui::Vec2, rect: egui::Rect) -> egui::Rect {
 }
 
 /// Parse "#rrggbb" (or "rrggbb") into an opaque color.
-fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
+pub fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
     let hex = input.trim().trim_start_matches('#');
     if hex.len() != 6 {
         return None;

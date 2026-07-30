@@ -71,6 +71,9 @@ const LEAF_KINDS: &[&str] = &[
     "Indicator",
     "Vital",
     "Spell affordable",
+    "Hand empty",
+    "Hand holds",
+    "Spell prepared",
 ];
 
 fn leaf_kind_index(cond: &HotbarCondition) -> usize {
@@ -83,6 +86,9 @@ fn leaf_kind_index(cond: &HotbarCondition) -> usize {
         HotbarCondition::Indicator { .. } => 5,
         HotbarCondition::Vital { .. } => 6,
         HotbarCondition::SpellAffordable { .. } => 7,
+        HotbarCondition::HandEmpty { .. } => 8,
+        HotbarCondition::HandHolds { .. } => 9,
+        HotbarCondition::SpellPrepared { .. } => 10,
         HotbarCondition::All { .. } | HotbarCondition::Any { .. } => 0,
     }
 }
@@ -118,7 +124,20 @@ fn default_leaf(kind: usize) -> HotbarCondition {
             value: 25,
             unit: VitalUnit::Percent,
         },
-        _ => HotbarCondition::SpellAffordable { number: 101 },
+        7 => HotbarCondition::SpellAffordable { number: 101 },
+        8 => HotbarCondition::HandEmpty {
+            hand: crate::config::HandSlot::Right,
+        },
+        9 => HotbarCondition::HandHolds {
+            hand: crate::config::HandSlot::Right,
+            item_type: Some("weapon".to_string()),
+            name: None,
+            name_match: NameMatch::Contains,
+        },
+        _ => HotbarCondition::SpellPrepared {
+            name: None,
+            name_match: NameMatch::Contains,
+        },
     }
 }
 
@@ -443,6 +462,7 @@ impl VellumGuiApp {
                         working,
                         &self.app_core.game_state,
                         now_server,
+                        self.app_core.gameobj_data_cached(),
                     );
                     let icon_px = working.icon_size;
                     if !preview.is_empty() {
@@ -1085,7 +1105,8 @@ fn render_states_editor(
 
 /// Condition group editor. Groups may nest one level deep (editors enforce);
 /// deeper hand-authored trees still render read-only as a summary.
-fn render_condition_group(
+/// Shared condition-tree builder (also used by the hand-icons editor).
+pub(super) fn render_condition_group(
     ui: &mut egui::Ui,
     id: &str,
     cond: &mut HotbarCondition,
@@ -1348,9 +1369,90 @@ fn render_leaf_condition(
                 }
             }
         }
+        HotbarCondition::HandEmpty { hand } => {
+            changed |= hand_slot_combo(ui, &format!("{}_hand", id), hand);
+        }
+        HotbarCondition::HandHolds {
+            hand,
+            item_type,
+            name,
+            name_match,
+        } => {
+            changed |= hand_slot_combo(ui, &format!("{}_hand", id), hand);
+            ui.label("type:");
+            let mut type_text = item_type.clone().unwrap_or_default();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut type_text)
+                        .hint_text("weapon")
+                        .desired_width(90.0),
+                )
+                .on_hover_text(
+                    "gameobj-data type tag (weapon, armor, gem, wand, ...). \
+                     Empty = any item. No 'shield' type exists — use armor \
+                     plus a name match.",
+                )
+                .changed()
+            {
+                let trimmed = type_text.trim();
+                *item_type = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                changed = true;
+            }
+            ui.label("name:");
+            let mut name_text = name.clone().unwrap_or_default();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut name_text)
+                        .hint_text("any")
+                        .desired_width(120.0),
+                )
+                .changed()
+            {
+                let trimmed = name_text.trim();
+                *name = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                changed = true;
+            }
+            changed |= match_combo(ui, &format!("{}_match", id), name_match);
+        }
+        HotbarCondition::SpellPrepared { name, name_match } => {
+            ui.label("spell:");
+            let mut name_text = name.clone().unwrap_or_default();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut name_text)
+                        .hint_text("any spell")
+                        .desired_width(140.0),
+                )
+                .changed()
+            {
+                let trimmed = name_text.trim();
+                *name = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                changed = true;
+            }
+            changed |= match_combo(ui, &format!("{}_match", id), name_match);
+        }
         HotbarCondition::RtActive | HotbarCondition::CtActive => {}
         HotbarCondition::All { .. } | HotbarCondition::Any { .. } => {}
     }
+    changed
+}
+
+fn hand_slot_combo(ui: &mut egui::Ui, id: &str, hand: &mut crate::config::HandSlot) -> bool {
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(id.to_string())
+        .selected_text(hand.label())
+        .width(110.0)
+        .show_ui(ui, |ui| {
+            for candidate in crate::config::HandSlot::ALL {
+                if ui
+                    .selectable_label(*hand == candidate, candidate.label())
+                    .clicked()
+                {
+                    *hand = candidate;
+                    changed = true;
+                }
+            }
+        });
     changed
 }
 

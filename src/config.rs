@@ -41,9 +41,9 @@ pub use highlights::{
     highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
 };
 pub use hotbars::{
-    EffectCategory, GradientDir, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
-    HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, HotbarsConfig, IconMode, NameMatch,
-    VitalKind, VitalUnit,
+    EffectCategory, GradientDir, HandSlot, HotbarButton, HotbarButtonState, HotbarCmp,
+    HotbarCondition, HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, HotbarsConfig,
+    IconMode, NameMatch, VitalKind, VitalUnit,
 };
 pub use keybinds::{
     parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,
@@ -67,7 +67,7 @@ pub use widgets::{
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
     DashboardIndicatorDef, DashboardWidgetData, DialogPanelWidgetData, EncumbranceWidgetData,
     ExperienceWidgetData,
-    GS4ExperienceWidgetData, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
+    GS4ExperienceWidgetData, HandIconState, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
     InjuryDollWidgetData, InventoryWidgetData, ItemsWidgetData, MapWidgetData,
     MiniVitalsWidgetData, PerceptionWidgetData,
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,

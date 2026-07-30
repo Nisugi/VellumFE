@@ -234,6 +234,59 @@ pub enum HotbarCondition {
     /// closed: unknown numbers, formula costs, and missing vitals data
     /// all evaluate false. No Lich required.
     SpellAffordable { number: u16 },
+    /// The hand holds nothing (spell hand: nothing prepared).
+    HandEmpty {
+        #[serde(default)]
+        hand: HandSlot,
+    },
+    /// The hand holds an item matching the given tests, ANDed when both
+    /// set: `item_type` is a gameobj-data type tag ("weapon", "armor",
+    /// "gem", ...) matched via GameObjData; `name` matches against the
+    /// held item's display name (stock gameobj-data has no `shield` type
+    /// — use type "armor" plus a name/noun match). Neither set = any item.
+    HandHolds {
+        #[serde(default)]
+        hand: HandSlot,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default)]
+        name_match: NameMatch,
+    },
+    /// A spell is prepared (spell hand). `name: None` = any spell.
+    SpellPrepared {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default)]
+        name_match: NameMatch,
+    },
+}
+
+/// Which hand a hand condition inspects.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandSlot {
+    #[default]
+    Right,
+    Left,
+    /// Left or right (never the spell hand).
+    Either,
+    /// The prepared-spell hand.
+    Spell,
+}
+
+impl HandSlot {
+    pub const ALL: [HandSlot; 4] = [Self::Right, Self::Left, Self::Either, Self::Spell];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Right => "Right hand",
+            Self::Left => "Left hand",
+            Self::Either => "Either hand",
+            Self::Spell => "Spell hand",
+        }
+    }
 }
 
 fn default_true() -> bool {

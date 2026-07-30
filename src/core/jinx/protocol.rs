@@ -126,11 +126,12 @@ impl Asset {
             // subsystem loads. Other `data`-typed files in shared repos are
             // Lich's (sloot.ui, lockpicks.yaml, …) and would sit unused.
             "data" => is_known_game_data(self.basename()),
-            // Interface assets we own. frame/background/compass/statusicon
-            // are the shared-image-pool categories the vellum-assets repos
-            // publish per-file (skins reference them by pool-relative path).
+            // Interface assets we own. frame/background/compass/statusicon/
+            // hand are the shared-image-pool categories the vellum-assets
+            // repos publish per-file (skins and widget overrides reference
+            // them by pool-relative path).
             "iconmap" | "image" | "icon" | "doll" | "skin" | "layout" | "uipack" | "frame"
-            | "background" | "compass" | "statusicon" => true,
+            | "background" | "compass" | "statusicon" | "hand" => true,
             // Never installable, pool tag or not: code is Lich's, and map
             // IMAGE tiles (kind `map`) are unused here. The map database
             // itself is `mapdb.json` (kind `data`, allowed above).
@@ -269,6 +270,7 @@ mod tests {
         assert!(mk("/parchment.png", "background").is_installable());
         assert!(mk("/brass_rose.png", "compass").is_installable());
         assert!(mk("/runic_stunned.png", "statusicon").is_installable());
+        assert!(mk("/leather_glove.png", "hand").is_installable());
         // Code stays Lich's.
         assert!(!mk("/go2.lic", "script").is_installable());
         assert!(!mk("/lich.rb", "engine").is_installable());
