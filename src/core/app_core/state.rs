@@ -3257,6 +3257,7 @@ impl AppCore {
         self.add_system_message("  .delwindow <name>       - Alias for .deletewindow");
         self.add_system_message("  .hidewindow [name]      - Hide window (or open picker)");
         self.add_system_message("  .hidewin [name]         - Alias for .hidewindow");
+        self.add_system_message("  .header / .footer / .leftbar / .rightbar [on|off|toggle] - Show/hide a GUI shell zone (default: toggle)");
         self.add_system_message("  .editwindow [name]      - Edit window (or open picker)");
         self.add_system_message("  .editwin [name]         - Alias for .editwindow");
         self.add_system_message("  .rename <win> <title>   - Rename window title");

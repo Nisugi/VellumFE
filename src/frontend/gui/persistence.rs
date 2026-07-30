@@ -371,6 +371,27 @@ pub struct GuiUiSettings {
     /// are ever built.
     #[serde(default)]
     pub doll_grayscale: bool,
+
+    /// Zone boundary lines (header/footer edges, sidebar dividers). They
+    /// clash with skin frames, so they can be shown only while a resize
+    /// strip is hovered, or hidden entirely — resizing works in every mode
+    /// through the invisible drag strips.
+    #[serde(default)]
+    pub zone_separators: ZoneSeparatorStyle,
+}
+
+/// How the shell draws the boundary between zones.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoneSeparatorStyle {
+    /// Always drawn in the theme's separator color (the classic look).
+    #[default]
+    Shown,
+    /// Invisible until the pointer hovers/drags a zone resize strip, then
+    /// drawn along that boundary so resize stays discoverable.
+    Hover,
+    /// Never drawn; the resize strips still work (cursor still changes).
+    Hidden,
 }
 
 /// Which art status indicators use, resolved ahead of the built-in vector
@@ -447,6 +468,7 @@ impl Default for GuiUiSettings {
             status_icons: StatusIconSettings::default(),
             compass_set: None,
             doll_grayscale: false,
+            zone_separators: ZoneSeparatorStyle::default(),
         }
     }
 }

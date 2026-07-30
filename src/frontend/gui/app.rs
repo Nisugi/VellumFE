@@ -1,7 +1,7 @@
 use super::persistence::{
     is_valid_layout_name, list_named_layouts, load_layout, load_named_layout, save_layout,
     save_named_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState, TabGroup,
-    TabSettings, TabSettingsEntry, ViewportState,
+    TabSettings, TabSettingsEntry, ViewportState, ZoneSeparatorStyle,
 };
 use super::skin;
 use super::{TabId, TabKey};
@@ -4382,6 +4382,39 @@ impl VellumGuiApp {
         self.app_core.add_system_message("No unread tabs.");
     }
 
+    /// Handle `action:zone:<zone>:<op>` from `.header`/`.footer`/`.leftbar`/
+    /// `.rightbar` — show, hide, or toggle a shell zone. Macroable via
+    /// keybinds and hotbar buttons like any other dot-command.
+    fn handle_zone_action(&mut self, rest: &str) -> bool {
+        let Some((zone, op)) = rest.split_once(':') else {
+            return false;
+        };
+        let shown_now = match zone {
+            "header" => self.shell_layout.header_visible,
+            "footer" => self.shell_layout.footer_visible,
+            "leftbar" => !self.shell_layout.left_sidebar_collapsed,
+            "rightbar" => !self.shell_layout.right_sidebar_collapsed,
+            _ => return false,
+        };
+        let shown = match op {
+            "on" => true,
+            "off" => false,
+            "toggle" => !shown_now,
+            _ => return false,
+        };
+        if shown != shown_now {
+            match zone {
+                "header" => self.shell_layout.header_visible = shown,
+                "footer" => self.shell_layout.footer_visible = shown,
+                "leftbar" => self.shell_layout.left_sidebar_collapsed = !shown,
+                "rightbar" => self.shell_layout.right_sidebar_collapsed = !shown,
+                _ => unreachable!(),
+            }
+            self.layout_dirty = true;
+        }
+        true
+    }
+
     /// Dispatch an `action:*` string from a dot-command or menu item.
     /// Returns false when the action has no GUI handler yet.
     fn handle_action_string(&mut self, action: &str) -> bool {
@@ -4534,6 +4567,9 @@ impl VellumGuiApp {
                     .add_system_message(&format!("Window '{}' not found.", name)),
             }
             return true;
+        }
+        if let Some(rest) = action.strip_prefix("action:zone:") {
+            return self.handle_zone_action(rest);
         }
         if action == "action:setpalette" || action == "action:resetpalette" {
             self.app_core.add_system_message(
@@ -4921,10 +4957,12 @@ impl eframe::App for VellumGuiApp {
                 });
             });
 
+        let separator_style = self.ui_settings.zone_separators;
         if self.shell_layout.header_visible {
             egui::Panel::top("gui_shell_header")
                 .resizable(false)
                 .exact_size(self.shell_layout.header_height)
+                .show_separator_line(separator_style == ZoneSeparatorStyle::Shown)
                 .frame(
                     egui::Frame::default()
                         .inner_margin(egui::Margin::ZERO)
@@ -4961,6 +4999,13 @@ impl eframe::App for VellumGuiApp {
                         );
                         if handle_response.hovered() || handle_response.dragged() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                            if separator_style == ZoneSeparatorStyle::Hover {
+                                ui.painter().hline(
+                                    header_zone_rect.x_range(),
+                                    header_zone_rect.max.y - 0.75,
+                                    egui::Stroke::new(1.5, ui.visuals().window_stroke.color),
+                                );
+                            }
                         }
                         if handle_response.dragged() {
                             let dy = ui.ctx().input(|i| i.pointer.delta().y);
@@ -4988,6 +5033,7 @@ impl eframe::App for VellumGuiApp {
             egui::Panel::bottom("gui_shell_footer")
                 .resizable(false)
                 .exact_size(self.shell_layout.footer_height)
+                .show_separator_line(separator_style == ZoneSeparatorStyle::Shown)
                 .frame(
                     egui::Frame::default()
                         .inner_margin(egui::Margin::ZERO)
@@ -5024,6 +5070,13 @@ impl eframe::App for VellumGuiApp {
                         );
                         if handle_response.hovered() || handle_response.dragged() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                            if separator_style == ZoneSeparatorStyle::Hover {
+                                ui.painter().hline(
+                                    footer_zone_rect.x_range(),
+                                    footer_zone_rect.min.y + 0.75,
+                                    egui::Stroke::new(1.5, ui.visuals().window_stroke.color),
+                                );
+                            }
                         }
                         if handle_response.dragged() {
                             let dy = ui.ctx().input(|i| i.pointer.delta().y);
@@ -5106,13 +5159,15 @@ impl eframe::App for VellumGuiApp {
                 1.5,
                 ui.visuals().window_stroke.color,
             );
-            if let Some(rect) = left_rect {
-                ui.painter()
-                    .vline(rect.max.x, root.y_range(), sidebar_divider_stroke);
-            }
-            if let Some(rect) = right_rect {
-                ui.painter()
-                    .vline(rect.min.x, root.y_range(), sidebar_divider_stroke);
+            if separator_style == ZoneSeparatorStyle::Shown {
+                if let Some(rect) = left_rect {
+                    ui.painter()
+                        .vline(rect.max.x, root.y_range(), sidebar_divider_stroke);
+                }
+                if let Some(rect) = right_rect {
+                    ui.painter()
+                        .vline(rect.min.x, root.y_range(), sidebar_divider_stroke);
+                }
             }
 
             zone_actions.merge(self.render_zone_surface(
@@ -5136,6 +5191,10 @@ impl eframe::App for VellumGuiApp {
                 );
                 if splitter_response.hovered() || splitter_response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                    if separator_style == ZoneSeparatorStyle::Hover {
+                        ui.painter()
+                            .vline(rect.max.x, root.y_range(), sidebar_divider_stroke);
+                    }
                 }
                 if splitter_response.dragged() {
                     let dx = ui.ctx().input(|i| i.pointer.delta().x);
@@ -5165,6 +5224,10 @@ impl eframe::App for VellumGuiApp {
                 );
                 if splitter_response.hovered() || splitter_response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                    if separator_style == ZoneSeparatorStyle::Hover {
+                        ui.painter()
+                            .vline(rect.min.x, root.y_range(), sidebar_divider_stroke);
+                    }
                 }
                 if splitter_response.dragged() {
                     let dx = ui.ctx().input(|i| i.pointer.delta().x);

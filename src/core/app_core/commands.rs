@@ -1927,6 +1927,30 @@ impl AppCore {
                 }
             }
 
+            // Shell zones (GUI): show/hide/toggle the header, footer, and
+            // sidebars. Plain `.header` toggles, so a single keybind or
+            // hotbar button can flip a zone; on/off variants let macros
+            // force a known state.
+            "header" | "footer" | "leftbar" | "rightbar" => {
+                match parts.get(1).map(|s| s.to_ascii_lowercase()).as_deref() {
+                    None | Some("toggle") => {
+                        return Ok(format!("action:zone:{}:toggle", cmd));
+                    }
+                    Some("on") | Some("show") => {
+                        return Ok(format!("action:zone:{}:on", cmd));
+                    }
+                    Some("off") | Some("hide") => {
+                        return Ok(format!("action:zone:{}:off", cmd));
+                    }
+                    Some(other) => {
+                        self.add_system_message(&format!(
+                            "Usage: .{} [on|off|toggle] (got '{}')",
+                            cmd, other
+                        ));
+                    }
+                }
+            }
+
             // Reload config from disk
             "reload" => {
                 tracing::debug!("handle_dot_command: reload args {:?}", parts.get(1));

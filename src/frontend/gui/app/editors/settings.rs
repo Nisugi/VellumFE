@@ -505,6 +505,40 @@ fn render_gui_section(
                  the bar fill.",
             );
         ui.end_row();
+        ui.label("Zone separators");
+        {
+            use crate::frontend::gui::persistence::ZoneSeparatorStyle;
+            const STYLES: [(ZoneSeparatorStyle, &str); 3] = [
+                (ZoneSeparatorStyle::Shown, "Shown"),
+                (ZoneSeparatorStyle::Hover, "On hover"),
+                (ZoneSeparatorStyle::Hidden, "Hidden"),
+            ];
+            let current_label = STYLES
+                .iter()
+                .find(|(style, _)| *style == gui_settings.zone_separators)
+                .map(|(_, label)| *label)
+                .unwrap_or("Shown");
+            egui::ComboBox::from_id_salt("settings_zone_separators")
+                .selected_text(current_label)
+                .show_ui(ui, |ui| {
+                    for (style, label) in STYLES {
+                        if ui
+                            .selectable_label(gui_settings.zone_separators == style, label)
+                            .clicked()
+                        {
+                            gui_settings.zone_separators = style;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Boundary lines between the header/footer/sidebar zones \
+                     and the center. Hidden or hover-only keeps the edges \
+                     draggable for resizing — handy when skin frames make \
+                     the lines look out of place.",
+                );
+        }
+        ui.end_row();
     });
     ui.weak(
         "Vitals bar options (layout, height, text, bars shown) moved to the \
@@ -571,6 +605,7 @@ impl VellumGuiApp {
         let saved_target_count = self.app_core.config.go2.saved.len();
         egui::Window::new("Settings")
             .id(egui::Id::new("gui_settings_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(440.0)
             .collapsible(false)
