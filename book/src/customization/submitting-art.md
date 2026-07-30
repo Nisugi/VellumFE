@@ -125,9 +125,13 @@ submission before it goes live.
   their neighbors. Sheets are used as-is — no background removal.
 - **Window frames** — uniform band thickness, ornament confined to the
   corners, continuous plain material along the straight runs (they get
-  stretched), pure-black center. The form asks for the **corner cap
-  size** in pixels — measure it in your editor — since the renderer
-  slices the frame at that inset.
+  stretched), pure-black center. The renderer slices the frame at the
+  **corner cap size** — the smallest square, anchored at a canvas
+  corner, that contains the corner ornament. **The robot measures this
+  automatically** from your image; the number it found is shown in the
+  pull request. If it looks wrong, measure the caps yourself in an
+  editor and put the pixel value in the form's cap-size field to
+  override.
 - **Compass overlays** — the lit pointers are stacked on top of the rose
   at runtime, so they must be registered pixel-perfect against it.
   Generate them from one master image; don't generate each separately.
