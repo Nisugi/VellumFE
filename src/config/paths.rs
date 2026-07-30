@@ -139,7 +139,7 @@ impl Config {
     /// the structure is visible; nothing enforces which category a file
     /// lives in (resolution is by relative path).
     pub const IMAGE_CATEGORIES: &'static [&'static str] =
-        &["icons", "frames", "dolls", "compass", "backgrounds"];
+        &["icons", "frames", "dolls", "compass", "backgrounds", "statusicons"];
 
     /// Get the shared image pool: one subfolder per category
     /// (see IMAGE_CATEGORIES). Skin manifests resolve relative image paths
@@ -171,6 +171,14 @@ impl Config {
     /// Returns: ~/.vellum-fe/global/images/dolls/
     pub fn global_dolls_dir() -> Result<PathBuf> {
         Ok(Self::global_images_dir()?.join("dolls"))
+    }
+
+    /// One shared-image-pool category folder (see IMAGE_CATEGORIES). Skins
+    /// reference pool art by relative path ("frames/iron.png"); `.jinx`
+    /// installs the per-file asset kinds here.
+    /// Returns: ~/.vellum-fe/global/images/<category>/
+    pub fn global_image_category_dir(category: &str) -> Result<PathBuf> {
+        Ok(Self::global_images_dir()?.join(category))
     }
 
     /// Get path to common (global) highlights file

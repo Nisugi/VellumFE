@@ -223,6 +223,13 @@ fn plain_file_dest(kind: &str, name: &str) -> Result<Option<PathBuf>, String> {
         // Standalone injury-doll base images drop into the doll pool; a skin's
         // [injury_doll] base references one by (absolute) path.
         "doll" => Config::global_dolls_dir(),
+        // Per-file shared-image-pool categories; skins (and the per-window
+        // frame picker's [frames.*] entries) reference them by pool-relative
+        // path ("frames/iron.png").
+        "frame" => Config::global_image_category_dir("frames"),
+        "background" => Config::global_image_category_dir("backgrounds"),
+        "compass" => Config::global_image_category_dir("compass"),
+        "statusicon" => Config::global_image_category_dir("statusicons"),
         // Composed bundles: extracted elsewhere, not a plain write.
         "skin" | "layout" | "uipack" => return Ok(None),
         other => return Err(format!("unknown asset kind '{other}' for '{name}'")),
@@ -483,6 +490,43 @@ mod tests {
         assert!(dest.ends_with("global/images/dolls/soldier.png") ||
                 dest.ends_with("global\\images\\dolls\\soldier.png"), "{}", dest.display());
         assert_eq!(db.get("soldier.png").unwrap().kind, "doll");
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn install_pool_kinds_land_in_their_category_dirs() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        for (kind, dir) in [
+            ("frame", "frames"),
+            ("background", "backgrounds"),
+            ("compass", "compass"),
+            ("statusicon", "statusicons"),
+        ] {
+            let mut db = InstalledDb::default();
+            let body = format!("PNG-{kind}").into_bytes();
+            let base = spawn_stub(body.clone());
+            let mut a = asset(&format!("/asset-{kind}.png"), &digest_b64(&body));
+            a.kind = Some(kind.into());
+
+            let out = install_asset(&ag, &repo(&base), &a, &mut db, false).unwrap();
+            let dest = match out {
+                InstallOutcome::Installed { path } => path,
+                other => panic!("expected Installed for {kind}, got {other:?}"),
+            };
+            let unix = format!("global/images/{dir}/asset-{kind}.png");
+            let win = unix.replace('/', "\\");
+            assert!(
+                dest.ends_with(&unix) || dest.ends_with(&win),
+                "{kind}: {}",
+                dest.display()
+            );
+            assert_eq!(db.get(&format!("asset-{kind}.png")).unwrap().kind, kind);
+        }
 
         std::env::remove_var("VELLUM_FE_DIR");
     }

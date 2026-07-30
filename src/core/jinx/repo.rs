@@ -57,6 +57,22 @@ const SEEDS: &[Seed] = &[
     Seed { name: "vellum-dolls", url: "https://nisugi.github.io/vellum-assets/dolls", only: None },
     Seed { name: "vellum-skins", url: "https://nisugi.github.io/vellum-assets/skins", only: None },
     Seed { name: "vellum-layouts", url: "https://nisugi.github.io/vellum-assets/layouts", only: None },
+    Seed { name: "vellum-frames", url: "https://nisugi.github.io/vellum-assets/frames", only: None },
+    Seed {
+        name: "vellum-backgrounds",
+        url: "https://nisugi.github.io/vellum-assets/backgrounds",
+        only: None,
+    },
+    Seed {
+        name: "vellum-compass",
+        url: "https://nisugi.github.io/vellum-assets/compass",
+        only: None,
+    },
+    Seed {
+        name: "vellum-statusicons",
+        url: "https://nisugi.github.io/vellum-assets/statusicons",
+        only: None,
+    },
 ];
 
 /// Repo names to remove on load if present — deprecated or superseded seeds a
@@ -187,6 +203,10 @@ mod tests {
         assert!(gs.find("vellum-icons").is_some());
         assert!(gs.find("vellum-dolls").is_some());
         assert!(gs.find("vellum-layouts").is_some());
+        assert!(gs.find("vellum-frames").is_some());
+        assert!(gs.find("vellum-backgrounds").is_some());
+        assert!(gs.find("vellum-compass").is_some());
+        assert!(gs.find("vellum-statusicons").is_some());
 
         let mut dr = RepoList::default();
         dr.apply_seeds(GameType::DR);
