@@ -61,12 +61,6 @@ pub(super) enum GuiWindowMenuCommand {
     /// Per-window frame corner radius; None reverts to the global setting.
     /// Keeps the menu open like SetTextSize.
     SetCornerRadius(Option<f32>),
-    /// Border on/off for the shared layout def (also drives the TUI).
-    SetShowBorder(bool),
-    /// Border style name for the shared layout def ("single", "double", ...).
-    SetBorderStyle(String),
-    /// Which edges draw a border, for the shared layout def.
-    SetBorderSides(crate::config::BorderSides),
     /// Lock this window together with another one.
     GroupWith(TabKey),
     /// Remove one specific member from this window's group.
@@ -116,16 +110,6 @@ pub(super) struct WindowAppearanceView {
     /// Per-window frame corner radius override; None follows the global.
     corner_radius_override: Option<f32>,
     global_corner_radius: f32,
-    /// Border fields from the shared layout def; None when the window has
-    /// no def (border controls are hidden then).
-    border: Option<BorderView>,
-}
-
-/// Snapshot of a layout def's border configuration.
-pub(super) struct BorderView {
-    show_border: bool,
-    style: String,
-    sides: crate::config::BorderSides,
 }
 
 /// Preset border accent colors offered in the window context menu.
@@ -302,9 +286,6 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetFont(_)
             | GuiWindowMenuCommand::SetAccent(_)
             | GuiWindowMenuCommand::SetCornerRadius(_)
-            | GuiWindowMenuCommand::SetShowBorder(_)
-            | GuiWindowMenuCommand::SetBorderStyle(_)
-            | GuiWindowMenuCommand::SetBorderSides(_)
             | GuiWindowMenuCommand::SetMapZoom(_) => {
                 let tab_key = request.tab_key.clone();
                 self.apply_appearance_command(&tab_key, command);
@@ -417,21 +398,6 @@ impl VellumGuiApp {
                     .corner_radius = radius;
                 self.layout_dirty = true;
             }
-            GuiWindowMenuCommand::SetShowBorder(show) => {
-                self.with_layout_def_for_tab(tab_key, |def| {
-                    def.base_mut().show_border = show;
-                });
-            }
-            GuiWindowMenuCommand::SetBorderStyle(style) => {
-                self.with_layout_def_for_tab(tab_key, |def| {
-                    def.base_mut().border_style = style;
-                });
-            }
-            GuiWindowMenuCommand::SetBorderSides(sides) => {
-                self.with_layout_def_for_tab(tab_key, |def| {
-                    def.base_mut().border_sides = sides;
-                });
-            }
             GuiWindowMenuCommand::SetMapZoom(zoom) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -481,14 +447,6 @@ impl VellumGuiApp {
             accent_color: self.accent_color_for_tab(tab_key),
             corner_radius_override: self.corner_radius_override_for_tab(tab_key),
             global_corner_radius: self.ui_settings.window_corner_radius,
-            border: self.layout_def_for_tab(tab_key).map(|def| {
-                let base = def.base();
-                BorderView {
-                    show_border: base.show_border,
-                    style: base.border_style.clone(),
-                    sides: base.border_sides.clone(),
-                }
-            }),
         }
     }
 
@@ -1247,50 +1205,6 @@ impl VellumGuiApp {
                 .changed()
             {
                 command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
-            }
-        }
-        if let Some(border) = &view.border {
-            let mut show_border = border.show_border;
-            if ui.checkbox(&mut show_border, "Border").changed() {
-                command = Some(GuiWindowMenuCommand::SetShowBorder(show_border));
-            }
-            if border.show_border {
-                const BORDER_STYLES: [(&str, &str); 6] = [
-                    ("single", "Single"),
-                    ("double", "Double"),
-                    ("thick", "Thick"),
-                    ("rounded", "Rounded"),
-                    ("quadrant_inside", "Quadrant inside"),
-                    ("quadrant_outside", "Quadrant outside"),
-                ];
-                let current = border.style.to_ascii_lowercase();
-                let current_label = BORDER_STYLES
-                    .iter()
-                    .find(|(key, _)| *key == current)
-                    .map(|(_, label)| *label)
-                    .unwrap_or("Single");
-                egui::ComboBox::from_id_salt("gui_window_border_style")
-                    .selected_text(current_label)
-                    .show_ui(ui, |ui| {
-                        for (key, label) in BORDER_STYLES {
-                            if ui.selectable_label(current == key, label).clicked() {
-                                command = Some(GuiWindowMenuCommand::SetBorderStyle(
-                                    key.to_string(),
-                                ));
-                            }
-                        }
-                    });
-                ui.horizontal(|ui| {
-                    let mut sides = border.sides.clone();
-                    let mut changed = false;
-                    changed |= ui.checkbox(&mut sides.top, "Top").changed();
-                    changed |= ui.checkbox(&mut sides.bottom, "Bottom").changed();
-                    changed |= ui.checkbox(&mut sides.left, "Left").changed();
-                    changed |= ui.checkbox(&mut sides.right, "Right").changed();
-                    if changed {
-                        command = Some(GuiWindowMenuCommand::SetBorderSides(sides));
-                    }
-                });
             }
         }
         command
