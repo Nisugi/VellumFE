@@ -23,7 +23,8 @@ needs:
 | **Window frame** | an ornamental nine-slice border drawn around windows | one image |
 | **Window background** | a flat texture that sits behind window text | one image |
 | **Compass art** | a compass rose and/or its lit direction overlays | a zip of images |
-| **Status icons** | the glyph set for hands, stance, and conditions | a zip of images |
+| **Status icons** | the glyph set for stance and conditions | a zip of images |
+| **Hand icons** | left, right, and spell hand icons for the hands widget | a zip of images |
 
 Full skins (complete graphics themes) and layouts aren't submitted
 through these forms — they're folders rather than single images, and go
@@ -88,9 +89,10 @@ their **role** so the client knows what each image is:
 
 - **Compass**: `rose` (the base), `n` `ne` `e` `se` `s` `sw` `w` `nw`
   (lit pointers), `up` `down` (chevrons), `out` (the hub)
-- **Status icons**: `lefthand` `righthand` `spellhand` `standing`
-  `kneeling` `sitting` `prone` `dead` `stunned` `bleeding` `hidden`
-  `invisible` `webbed` `poisoned` `diseased` `joined`
+- **Status icons**: `standing` `kneeling` `sitting` `prone` `dead`
+  `stunned` `bleeding` `hidden` `invisible` `webbed` `poisoned`
+  `diseased` `joined`
+- **Hand icons**: `lefthand` `righthand` `spellhand`
 
 Name each file either `<role>.png` or `<anything>_<role>.png` — both
 work. A partial set is fine (just a rose, say). Your set name from the
