@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
+mod borders;
 mod color_emoji;
 mod detached;
 mod map_explorer;
