@@ -534,11 +534,7 @@ impl VellumGuiApp {
             ui_settings,
             tab_settings,
             main_viewport: main_viewport_state,
-        } = Self::restore_layout_state(
-            persisted_layout.as_ref(),
-            &available_tabs,
-            initial_width,
-        );
+        } = Self::restore_layout_state(persisted_layout.as_ref(), &available_tabs);
 
         // The active skin lives in the layout now; GUI files from before
         // that (or fresh characters) seed it from the config mirror once.
@@ -2300,13 +2296,12 @@ impl VellumGuiApp {
     /// are dropped. The main OS window geometry is deliberately left alone:
     /// only the arrangement inside it (and detached windows) changes.
     fn apply_layout_snapshot(&mut self, layout: &GuiLayoutFileV1) {
-        let content_width = self
-            .main_viewport_state
-            .as_ref()
-            .map(|state| state.inner_size[0])
-            .unwrap_or(1280.0);
-        let restored =
-            Self::restore_layout_state(Some(layout), &self.available_tabs, content_width);
+        let restored = Self::restore_layout_state(Some(layout), &self.available_tabs);
+        tracing::info!(
+            "Applying GUI layout snapshot: {} window rects, {} zone assignments",
+            restored.main_window_rects.len(),
+            restored.tab_zones.len()
+        );
         self.hidden_tabs = restored.hidden_tabs;
         self.main_window_rects = restored.main_window_rects;
         self.sidebar_gap_above = restored.sidebar_gap_above;

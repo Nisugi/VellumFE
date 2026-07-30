@@ -933,6 +933,7 @@ pub fn load_named_layout(profile: &str, character: &str, name: &str) -> Result<G
     if !path.exists() {
         anyhow::bail!("No saved layout named '{name}'");
     }
+    tracing::info!("Loading named GUI layout from {:?}", path);
     load_from_path(&path)
 }
 

@@ -74,7 +74,6 @@ impl VellumGuiApp {
     pub(super) fn restore_layout_state(
         persisted_layout: Option<&GuiLayoutFileV1>,
         available_tabs: &HashMap<TabKey, GuiTab>,
-        content_width: f32,
     ) -> RestoredLayoutState {
         let ui_font = persisted_layout
             .map(|layout| layout.ui_font.clone())
@@ -150,7 +149,9 @@ impl VellumGuiApp {
             .as_ref()
             .map(|snapshot| snapshot.shell_layout.clone())
             .unwrap_or_default();
-        shell_layout.sanitize(content_width.max(1.0));
+        // Range clamps only: the width-aware sidebar guard runs per frame
+        // in the shell pass, against the real window width.
+        shell_layout.clamp_ranges();
 
         let tab_groups = Self::sanitize_tab_groups(
             snapshot

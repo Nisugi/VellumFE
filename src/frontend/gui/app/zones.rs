@@ -158,12 +158,25 @@ impl Default for ShellLayoutSnapshot {
 }
 
 impl ShellLayoutSnapshot {
-    pub(super) fn sanitize(&mut self, center_width: f32) {
+    /// Range-clamp persisted dimensions only. This is what layout restore
+    /// uses: at restore time the real window width is not knowable (the OS
+    /// window may not exist yet, or restores maximized to a size we can't
+    /// predict), and clamping against a guessed width permanently destroys
+    /// persisted sidebar widths — the constructor used to pass the TUI
+    /// cell-grid constant (160), which reset every sidebar to its minimum
+    /// on startup. The width-aware guard runs in [`Self::sanitize`] every
+    /// frame in the shell pass, where the true width is available.
+    pub(super) fn clamp_ranges(&mut self) {
         self.header_height = self.header_height.clamp(96.0, 360.0);
         self.footer_height = self.footer_height.clamp(96.0, 420.0);
         self.left_sidebar_width = self.left_sidebar_width.clamp(220.0, 700.0);
         self.right_sidebar_width = self.right_sidebar_width.clamp(220.0, 700.0);
+    }
 
+    /// Per-frame sanitize: range clamps plus the small-window guard that
+    /// keeps expanded sidebars from swallowing the center.
+    pub(super) fn sanitize(&mut self, center_width: f32) {
+        self.clamp_ranges();
         let max_sidebar_width = ((center_width - 220.0).max(220.0) * 0.45).max(220.0);
         self.left_sidebar_width = self.left_sidebar_width.min(max_sidebar_width);
         self.right_sidebar_width = self.right_sidebar_width.min(max_sidebar_width);
@@ -1543,9 +1556,8 @@ impl VellumGuiApp {
                     .fixed_size(initial_rect.size())
                     .resizable(false);
             }
-            let is_compact_center_widget =
-                zone == GuiShellZone::Center && Self::is_compact_center_widget(&window.widget_type);
-            if zone == GuiShellZone::Center && !is_compact_center_widget {
+            let is_compact_widget = Self::is_compact_center_widget(&window.widget_type);
+            if !is_compact_widget {
                 // Prevent content-driven growth by making the window scroll instead of expanding.
                 window_builder = window_builder.scroll([true, true]);
             }
@@ -1566,26 +1578,22 @@ impl VellumGuiApp {
                 && (self.center_engaged_tab.as_ref() == Some(&tab.id.key)
                     || press_origin
                         .is_some_and(|pos| initial_rect.expand(12.0).contains(pos)));
-            if user_engaging_window && pointer_down && zone == GuiShellZone::Center {
+            if user_engaging_window && pointer_down {
                 self.center_engaged_tab = Some(tab.id.key.clone());
             }
-            if zone == GuiShellZone::Center
-                && !is_compact_center_widget
-                && !is_hand_widget
-                && !being_moved
-                && !user_engaging_window
-            {
+            if !is_compact_widget && !is_hand_widget && !being_moved && !user_engaging_window {
                 window_builder = window_builder
                     .min_size(initial_rect.size())
                     .max_size(initial_rect.size());
             }
-            // Header/footer windows normally let egui manage their position
-            // (default_pos); during a move the stored rect drives it instead.
-            window_builder = if zone == GuiShellZone::Center || being_moved {
-                window_builder.current_pos(initial_rect.min)
-            } else {
-                window_builder.default_pos(initial_rect.min)
-            };
+            // The canonical rect drives the position every frame, in every
+            // zone: egui's remembered position must never win, or a
+            // `.loadlayout` restore leaves the window wherever it was
+            // (`default_pos` is ignored once a window exists). Drags still
+            // work — egui applies the drag delta after this, and the
+            // engagement-gated tracking below writes the result back into
+            // the canonical map, which this then follows next frame.
+            window_builder = window_builder.current_pos(initial_rect.min);
             if is_webui_window && !title_bar_hidden {
                 window_builder = window_builder.open(&mut webui_open);
             }
@@ -1619,19 +1627,17 @@ impl VellumGuiApp {
                         hand_resize_delta_x += ctx.input(|i| i.pointer.delta().x);
                     }
                 }
-                let center_rect_changed = zone == GuiShellZone::Center
-                    && ((inner.response.rect.min - initial_rect.min).length_sq() > 0.25
-                        || (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25);
-                // Center rects also change when clamping squeezes them into a
-                // not-yet-final viewport (e.g. the first frames before the OS
-                // window reaches its restored size). Persisting those would
-                // clobber the saved geometry, so only track changes made while
-                // the user is actually interacting with the mouse.
-                let should_track_rect = if zone == GuiShellZone::Center {
-                    center_rect_changed && pointer_interacting
-                } else {
-                    true
-                };
+                let rect_changed = (inner.response.rect.min - initial_rect.min).length_sq() > 0.25
+                    || (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25;
+                // Only geometry the user changed by grabbing THIS window may
+                // become canonical. Rendered rects also diverge when a shell
+                // zone displaces the window, when clamping squeezes it into a
+                // not-yet-final viewport, and right after `.loadlayout`
+                // replaces the canonical map — tracking those on a mere
+                // click-anywhere (the old gate) baked the displaced rect in,
+                // so windows never sprang back when the zone closed and a
+                // loaded layout was overwritten by the on-screen geometry.
+                let should_track_rect = rect_changed && user_engaging_window;
                 if should_track_rect {
                     self.track_main_window_rect(&tab.id.key, inner.response.rect, window_bounds);
                 }
