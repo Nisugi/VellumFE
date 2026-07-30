@@ -5285,6 +5285,45 @@ impl AppCore {
 
     /// Save settings (layout, session cache) without exiting.
     /// Called by quit() and when intercepting game "quit" command.
+    /// Write the current layout to the profile auto-save slot
+    /// (~/.vellum-fe/profiles/{character}/layout.toml) — the file startup
+    /// reads. Called on quit and after .savelayout/.loadlayout so an
+    /// explicit save or load sticks even if the session later ends
+    /// without reaching the quit path (console X, crash).
+    pub fn autosave_layout(&mut self) {
+        let profile = self
+            .config
+            .character
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+
+        let terminal_size = self
+            .layout
+            .terminal_width
+            .and_then(|w| self.layout.terminal_height.map(|h| (w, h)));
+
+        let base_layout_name = self
+            .base_layout_name
+            .clone()
+            .or_else(|| self.layout.base_layout.clone())
+            .unwrap_or_else(|| "default".to_string());
+
+        self.layout.theme = Some(self.config.active_theme.clone());
+        if let Err(e) = self
+            .layout
+            .save_auto(&profile, &base_layout_name, terminal_size)
+        {
+            tracing::warn!("Failed to autosave layout: {}", e);
+        } else {
+            tracing::info!(
+                "Layout autosaved to profile '{}' (base: {}, terminal: {:?})",
+                profile,
+                base_layout_name,
+                terminal_size
+            );
+        }
+    }
+
     pub fn save_on_quit(&mut self) {
         // Show reminder if layout was modified
         if self.layout_modified_since_save {
@@ -5293,60 +5332,8 @@ impl AppCore {
             );
         }
 
-        // Autosave to character-specific layout.toml (if character is set)
-        if let Some(ref character) = self.config.character {
-            let terminal_size = self
-                .layout
-                .terminal_width
-                .and_then(|w| self.layout.terminal_height.map(|h| (w, h)));
-
-            let base_layout_name = self
-                .base_layout_name
-                .clone()
-                .or_else(|| self.layout.base_layout.clone())
-                .unwrap_or_else(|| "default".to_string());
-
-            self.layout.theme = Some(self.config.active_theme.clone());
-            if let Err(e) = self
-                .layout
-                .save_auto(character, &base_layout_name, terminal_size)
-            {
-                tracing::warn!("Failed to autosave layout on quit: {}", e);
-            } else {
-                tracing::info!(
-                    "Layout autosaved to character profile '{}' (base: {}, terminal: {:?})",
-                    character,
-                    base_layout_name,
-                    terminal_size
-                );
-            }
-        } else {
-            // No character set - save to default profile: ~/.vellum-fe/default/layout.toml
-            let terminal_size = self
-                .layout
-                .terminal_width
-                .and_then(|w| self.layout.terminal_height.map(|h| (w, h)));
-
-            let base_layout_name = self
-                .base_layout_name
-                .clone()
-                .or_else(|| self.layout.base_layout.clone())
-                .unwrap_or_else(|| "default".to_string());
-
-            self.layout.theme = Some(self.config.active_theme.clone());
-            if let Err(e) = self
-                .layout
-                .save_auto("default", &base_layout_name, terminal_size)
-            {
-                tracing::warn!("Failed to autosave layout on quit: {}", e);
-            } else {
-                tracing::info!(
-                    "Layout autosaved to default profile (base: {}, terminal: {:?})",
-                    base_layout_name,
-                    terminal_size
-                );
-            }
-        }
+        // Autosave to profile layout.toml ("default" profile when no character is set)
+        self.autosave_layout();
 
         let allowed_ids = self.allowed_quickbar_ids();
         let quickbars: HashMap<String, QuickbarData> = self

@@ -268,6 +268,10 @@ impl AppCore {
                 // Clear modified flag and update base layout name
                 self.layout_modified_since_save = false;
                 self.base_layout_name = Some(name.to_string());
+                // Persist the loaded layout to the auto-save slot right away,
+                // so it comes back on next launch even if this session ends
+                // without a clean quit.
+                self.autosave_layout();
                 self.needs_render = true;
                 return theme_update;
             }
