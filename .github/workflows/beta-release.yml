@@ -517,8 +517,22 @@ jobs:
           mkdir -p work/dmgroot
           cp -R work/VellumFE.app work/dmgroot/
           ln -s /Applications work/dmgroot/Applications
-          hdiutil create -volname "VellumFE" -srcfolder work/dmgroot \
-            -ov -format UDZO dist/vellum-fe-macos.dmg
+          # hdiutil on hosted runners intermittently reports "No space left
+          # on device" with gigabytes free (actions/runner-images#4288, hit
+          # twice on v0.3.0-beta.19): stage its temp on RUNNER_TEMP and
+          # retry before giving up. df runs per attempt so a genuinely full
+          # disk is visible in the log.
+          export TMPDIR="$RUNNER_TEMP"
+          for attempt in 1 2 3; do
+            df -h
+            if hdiutil create -volname "VellumFE" -srcfolder work/dmgroot \
+              -ov -format UDZO dist/vellum-fe-macos.dmg; then
+              break
+            fi
+            echo "hdiutil attempt ${attempt} failed"
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            sleep 15
+          done
 
       - name: Notarize and staple
         if: steps.signing.outputs.enabled == 'true'
