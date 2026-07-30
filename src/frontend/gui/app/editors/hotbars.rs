@@ -7,7 +7,7 @@
 use super::super::VellumGuiApp;
 use super::color_field;
 use crate::config::{
-    Config, EffectCategory, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
+    Config, EffectCategory, HotbarButton, HotbarButtonState, Cmp, Condition,
     HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, IconMode, NameMatch, VitalKind,
     VitalUnit,
 };
@@ -29,11 +29,11 @@ const INDICATOR_IDS: &[&str] = &[
     "dead",
 ];
 
-const CMPS: &[HotbarCmp] = &[
-    HotbarCmp::Lt,
-    HotbarCmp::Le,
-    HotbarCmp::Gt,
-    HotbarCmp::Ge,
+const CMPS: &[Cmp] = &[
+    Cmp::Lt,
+    Cmp::Le,
+    Cmp::Gt,
+    Cmp::Ge,
 ];
 
 const VITALS: &[VitalKind] = &[
@@ -71,54 +71,73 @@ const LEAF_KINDS: &[&str] = &[
     "Indicator",
     "Vital",
     "Spell affordable",
+    "Hand empty",
+    "Hand holds",
+    "Spell prepared",
 ];
 
-fn leaf_kind_index(cond: &HotbarCondition) -> usize {
+fn leaf_kind_index(cond: &Condition) -> usize {
     match cond {
-        HotbarCondition::EffectActive { .. } => 0,
-        HotbarCondition::EffectInactive { .. } => 1,
-        HotbarCondition::EffectTime { .. } => 2,
-        HotbarCondition::RtActive => 3,
-        HotbarCondition::CtActive => 4,
-        HotbarCondition::Indicator { .. } => 5,
-        HotbarCondition::Vital { .. } => 6,
-        HotbarCondition::SpellAffordable { .. } => 7,
-        HotbarCondition::All { .. } | HotbarCondition::Any { .. } => 0,
+        Condition::EffectActive { .. } => 0,
+        Condition::EffectInactive { .. } => 1,
+        Condition::EffectTime { .. } => 2,
+        Condition::RtActive => 3,
+        Condition::CtActive => 4,
+        Condition::Indicator { .. } => 5,
+        Condition::Vital { .. } => 6,
+        Condition::SpellAffordable { .. } => 7,
+        Condition::HandEmpty { .. } => 8,
+        Condition::HandHolds { .. } => 9,
+        Condition::SpellPrepared { .. } => 10,
+        Condition::All { .. } | Condition::Any { .. } => 0,
     }
 }
 
-fn default_leaf(kind: usize) -> HotbarCondition {
+fn default_leaf(kind: usize) -> Condition {
     match kind {
-        0 => HotbarCondition::EffectActive {
+        0 => Condition::EffectActive {
             category: EffectCategory::Buffs,
             name: String::new(),
             name_match: NameMatch::Exact,
         },
-        1 => HotbarCondition::EffectInactive {
+        1 => Condition::EffectInactive {
             category: EffectCategory::Buffs,
             name: String::new(),
             name_match: NameMatch::Exact,
         },
-        2 => HotbarCondition::EffectTime {
+        2 => Condition::EffectTime {
             category: EffectCategory::Buffs,
             name: String::new(),
             name_match: NameMatch::Exact,
-            cmp: HotbarCmp::Lt,
+            cmp: Cmp::Lt,
             seconds: 60,
         },
-        3 => HotbarCondition::RtActive,
-        4 => HotbarCondition::CtActive,
-        5 => HotbarCondition::Indicator {
+        3 => Condition::RtActive,
+        4 => Condition::CtActive,
+        5 => Condition::Indicator {
             id: "hidden".to_string(),
             active: true,
         },
-        6 => HotbarCondition::Vital {
+        6 => Condition::Vital {
             vital: VitalKind::Stamina,
-            cmp: HotbarCmp::Lt,
+            cmp: Cmp::Lt,
             value: 25,
             unit: VitalUnit::Percent,
         },
-        _ => HotbarCondition::SpellAffordable { number: 101 },
+        7 => Condition::SpellAffordable { number: 101 },
+        8 => Condition::HandEmpty {
+            hand: crate::config::HandSlot::Right,
+        },
+        9 => Condition::HandHolds {
+            hand: crate::config::HandSlot::Right,
+            item_type: Some("weapon".to_string()),
+            name: None,
+            name_match: NameMatch::Contains,
+        },
+        _ => Condition::SpellPrepared {
+            name: None,
+            name_match: NameMatch::Contains,
+        },
     }
 }
 
@@ -443,6 +462,7 @@ impl VellumGuiApp {
                         working,
                         &self.app_core.game_state,
                         now_server,
+                        self.app_core.gameobj_data_cached(),
                     );
                     let icon_px = working.icon_size;
                     if !preview.is_empty() {
@@ -453,9 +473,8 @@ impl VellumGuiApp {
                                 let sprite = if b.icon_mode != IconMode::Text {
                                     b.icon.as_ref().and_then(|icon| {
                                         skin_art_arc.as_deref().and_then(|art| {
-                                            art.sheet_cell(
-                                                &icon.sheet,
-                                                icon.cell,
+                                            art.icon_ref_texture(
+                                                &icon.icon,
                                                 icon.grayscale || b.dim,
                                             )
                                         })
@@ -972,7 +991,7 @@ fn render_states_editor(
         ui.weak("(first matching state styles the button)");
         if ui.button("Add state").clicked() {
             button.states.push(HotbarButtonState {
-                when: HotbarCondition::All {
+                when: Condition::All {
                     conditions: vec![default_leaf(3)], // RT active
                 },
                 style: HotbarStyle {
@@ -1085,10 +1104,11 @@ fn render_states_editor(
 
 /// Condition group editor. Groups may nest one level deep (editors enforce);
 /// deeper hand-authored trees still render read-only as a summary.
-fn render_condition_group(
+/// Shared condition-tree builder (also used by the hand-icons editor).
+pub(super) fn render_condition_group(
     ui: &mut egui::Ui,
     id: &str,
-    cond: &mut HotbarCondition,
+    cond: &mut Condition,
     depth: usize,
     suggestions: &std::collections::HashMap<&'static str, Vec<String>>,
 ) -> bool {
@@ -1098,17 +1118,17 @@ fn render_condition_group(
     if depth == 0
         && !matches!(
             cond,
-            HotbarCondition::All { .. } | HotbarCondition::Any { .. }
+            Condition::All { .. } | Condition::Any { .. }
         )
     {
         let leaf = cond.clone();
-        *cond = HotbarCondition::All {
+        *cond = Condition::All {
             conditions: vec![leaf],
         };
         changed = true;
     }
 
-    let is_all = matches!(cond, HotbarCondition::All { .. });
+    let is_all = matches!(cond, Condition::All { .. });
     ui.horizontal(|ui| {
         ui.label(if depth == 0 { "When" } else { "Group:" });
         let mut all_selected = is_all;
@@ -1122,30 +1142,30 @@ fn render_condition_group(
                 {
                     if all_selected != is_all {
                         let conditions = match cond {
-                            HotbarCondition::All { conditions }
-                            | HotbarCondition::Any { conditions } => std::mem::take(conditions),
+                            Condition::All { conditions }
+                            | Condition::Any { conditions } => std::mem::take(conditions),
                             _ => vec![],
                         };
                         *cond = if all_selected {
-                            HotbarCondition::All { conditions }
+                            Condition::All { conditions }
                         } else {
-                            HotbarCondition::Any { conditions }
+                            Condition::Any { conditions }
                         };
                         changed = true;
                     }
                 }
             });
         if ui.small_button("+ condition").clicked() {
-            if let HotbarCondition::All { conditions } | HotbarCondition::Any { conditions } = cond
+            if let Condition::All { conditions } | Condition::Any { conditions } = cond
             {
                 conditions.push(default_leaf(3));
                 changed = true;
             }
         }
         if depth == 0 && ui.small_button("+ group").clicked() {
-            if let HotbarCondition::All { conditions } | HotbarCondition::Any { conditions } = cond
+            if let Condition::All { conditions } | Condition::Any { conditions } = cond
             {
-                conditions.push(HotbarCondition::Any {
+                conditions.push(Condition::Any {
                     conditions: vec![default_leaf(3)],
                 });
                 changed = true;
@@ -1153,7 +1173,7 @@ fn render_condition_group(
         }
     });
 
-    let (HotbarCondition::All { conditions } | HotbarCondition::Any { conditions }) = cond else {
+    let (Condition::All { conditions } | Condition::Any { conditions }) = cond else {
         return changed;
     };
 
@@ -1165,7 +1185,7 @@ fn render_condition_group(
                 delete_idx = Some(idx);
             }
             match child {
-                HotbarCondition::All { .. } | HotbarCondition::Any { .. } => {
+                Condition::All { .. } | Condition::Any { .. } => {
                     if depth == 0 {
                         ui.vertical(|ui| {
                             changed |= render_condition_group(
@@ -1203,7 +1223,7 @@ fn render_condition_group(
 fn render_leaf_condition(
     ui: &mut egui::Ui,
     id: &str,
-    cond: &mut HotbarCondition,
+    cond: &mut Condition,
     suggestions: &std::collections::HashMap<&'static str, Vec<String>>,
 ) -> bool {
     let mut changed = false;
@@ -1223,12 +1243,12 @@ fn render_leaf_condition(
         });
 
     match cond {
-        HotbarCondition::EffectActive {
+        Condition::EffectActive {
             category,
             name,
             name_match,
         }
-        | HotbarCondition::EffectInactive {
+        | Condition::EffectInactive {
             category,
             name,
             name_match,
@@ -1237,7 +1257,7 @@ fn render_leaf_condition(
             changed |= effect_name_field(ui, &format!("{}_name", id), name, category, suggestions);
             changed |= match_combo(ui, &format!("{}_match", id), name_match);
         }
-        HotbarCondition::EffectTime {
+        Condition::EffectTime {
             category,
             name,
             name_match,
@@ -1252,7 +1272,7 @@ fn render_leaf_condition(
                 .add(egui::DragValue::new(seconds).range(0..=86_400).suffix("s"))
                 .changed();
         }
-        HotbarCondition::Indicator { id: ind_id, active } => {
+        Condition::Indicator { id: ind_id, active } => {
             egui::ComboBox::from_id_salt(format!("{}_ind", id))
                 .selected_text(ind_id.as_str())
                 .show_ui(ui, |ui| {
@@ -1268,7 +1288,7 @@ fn render_leaf_condition(
                 });
             changed |= ui.checkbox(active, "active").changed();
         }
-        HotbarCondition::Vital {
+        Condition::Vital {
             vital,
             cmp,
             value,
@@ -1315,7 +1335,7 @@ fn render_leaf_condition(
                     }
                 });
         }
-        HotbarCondition::SpellAffordable { number } => {
+        Condition::SpellAffordable { number } => {
             ui.label("spell #:");
             changed |= ui
                 .add(egui::DragValue::new(number).range(1..=9999))
@@ -1348,9 +1368,90 @@ fn render_leaf_condition(
                 }
             }
         }
-        HotbarCondition::RtActive | HotbarCondition::CtActive => {}
-        HotbarCondition::All { .. } | HotbarCondition::Any { .. } => {}
+        Condition::HandEmpty { hand } => {
+            changed |= hand_slot_combo(ui, &format!("{}_hand", id), hand);
+        }
+        Condition::HandHolds {
+            hand,
+            item_type,
+            name,
+            name_match,
+        } => {
+            changed |= hand_slot_combo(ui, &format!("{}_hand", id), hand);
+            ui.label("type:");
+            let mut type_text = item_type.clone().unwrap_or_default();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut type_text)
+                        .hint_text("weapon")
+                        .desired_width(90.0),
+                )
+                .on_hover_text(
+                    "gameobj-data type tag (weapon, armor, gem, wand, ...). \
+                     Empty = any item. No 'shield' type exists — use armor \
+                     plus a name match.",
+                )
+                .changed()
+            {
+                let trimmed = type_text.trim();
+                *item_type = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                changed = true;
+            }
+            ui.label("name:");
+            let mut name_text = name.clone().unwrap_or_default();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut name_text)
+                        .hint_text("any")
+                        .desired_width(120.0),
+                )
+                .changed()
+            {
+                let trimmed = name_text.trim();
+                *name = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                changed = true;
+            }
+            changed |= match_combo(ui, &format!("{}_match", id), name_match);
+        }
+        Condition::SpellPrepared { name, name_match } => {
+            ui.label("spell:");
+            let mut name_text = name.clone().unwrap_or_default();
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut name_text)
+                        .hint_text("any spell")
+                        .desired_width(140.0),
+                )
+                .changed()
+            {
+                let trimmed = name_text.trim();
+                *name = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                changed = true;
+            }
+            changed |= match_combo(ui, &format!("{}_match", id), name_match);
+        }
+        Condition::RtActive | Condition::CtActive => {}
+        Condition::All { .. } | Condition::Any { .. } => {}
     }
+    changed
+}
+
+fn hand_slot_combo(ui: &mut egui::Ui, id: &str, hand: &mut crate::config::HandSlot) -> bool {
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(id.to_string())
+        .selected_text(hand.label())
+        .width(110.0)
+        .show_ui(ui, |ui| {
+            for candidate in crate::config::HandSlot::ALL {
+                if ui
+                    .selectable_label(*hand == candidate, candidate.label())
+                    .clicked()
+                {
+                    *hand = candidate;
+                    changed = true;
+                }
+            }
+        });
     changed
 }
 
@@ -1431,7 +1532,7 @@ fn match_combo(ui: &mut egui::Ui, id: &str, name_match: &mut NameMatch) -> bool 
     changed
 }
 
-fn cmp_combo(ui: &mut egui::Ui, id: &str, cmp: &mut HotbarCmp) -> bool {
+fn cmp_combo(ui: &mut egui::Ui, id: &str, cmp: &mut Cmp) -> bool {
     let mut changed = false;
     egui::ComboBox::from_id_salt(id.to_string())
         .selected_text(cmp.symbol())
@@ -1450,9 +1551,11 @@ fn cmp_combo(ui: &mut egui::Ui, id: &str, cmp: &mut HotbarCmp) -> bool {
     changed
 }
 
-/// Icon reference editor: enable checkbox, sheet picker, cell spinner with
-/// a clickable cell-grid, grayscale, and border controls. Shared by the
-/// button form and state style cards. Returns true when edited.
+/// Icon reference editor: enable checkbox, the shared IconRef source
+/// picker (sheets + standalone pool images), a cell spinner with a
+/// clickable cell-grid for sheet refs, grayscale, and border controls.
+/// Shared by the button form and state style cards. Returns true when
+/// edited.
 fn render_icon_editor(
     ui: &mut egui::Ui,
     id: &str,
@@ -1461,65 +1564,67 @@ fn render_icon_editor(
 ) -> bool {
     let mut changed = false;
     let sheet_names = skin_art.map(|art| art.sheet_names()).unwrap_or_default();
+    let pool_images = super::pool_picker_rows("icons");
 
     let mut enabled = icon.is_some();
     ui.horizontal(|ui| {
         if ui.checkbox(&mut enabled, "Icon").changed() {
             *icon = enabled.then(|| HotbarIcon {
-                sheet: sheet_names.first().cloned().unwrap_or_default(),
-                cell: 1,
+                icon: crate::data::IconRef::SheetCell {
+                    sheet: sheet_names.first().cloned().unwrap_or_default(),
+                    cell: 1,
+                },
                 ..Default::default()
             });
             changed = true;
         }
         let Some(icon) = icon.as_mut() else {
-            if sheet_names.is_empty() {
+            if sheet_names.is_empty() && pool_images.is_empty() {
                 ui.weak(
-                    "(no icon sheets registered - add one under 'Icon sheets' \
-                     at the top of this window)",
+                    "(no icon sheets or pool images - add a sheet under 'Icon \
+                     sheets' at the top of this window, or install images \
+                     with .jinx)",
                 );
             }
             return;
         };
 
-        egui::ComboBox::from_id_salt(format!("{id}_sheet"))
-            .selected_text(if icon.sheet.is_empty() {
-                "sheet...".to_string()
-            } else {
-                icon.sheet.clone()
-            })
-            .show_ui(ui, |ui| {
-                for name in &sheet_names {
-                    if ui
-                        .selectable_label(&icon.sheet == name, name)
-                        .clicked()
-                    {
-                        icon.sheet = name.clone();
-                        changed = true;
-                    }
-                }
-                if sheet_names.is_empty() {
-                    ui.weak("no sheets registered");
-                }
-            });
-
-        ui.label("cell:");
-        let max_cell = skin_art
-            .and_then(|art| art.sheet_cell_count(&icon.sheet))
-            .unwrap_or(u32::MAX)
-            .max(1);
-        let mut cell = icon.cell.max(1);
-        if ui
-            .add(egui::DragValue::new(&mut cell).range(1..=max_cell))
-            .changed()
-        {
-            icon.cell = cell;
+        if let Some(super::IconRefPick::Ref(picked)) = super::icon_ref_picker(
+            ui,
+            format!("{id}_source"),
+            Some(&icon.icon),
+            &pool_images,
+            &sheet_names,
+            None,
+            None,
+            None,
+        ) {
+            icon.icon = picked;
             changed = true;
+        }
+
+        if let crate::data::IconRef::SheetCell { sheet, cell } = &mut icon.icon {
+            ui.label("cell:");
+            let max_cell = skin_art
+                .and_then(|art| art.sheet_cell_count(sheet))
+                .unwrap_or(u32::MAX)
+                .max(1);
+            let mut value = (*cell).max(1);
+            if ui
+                .add(egui::DragValue::new(&mut value).range(1..=max_cell))
+                .changed()
+            {
+                *cell = value;
+                changed = true;
+            }
         }
 
         changed |= ui
             .checkbox(&mut icon.grayscale, "grayscale")
-            .on_hover_text("Desaturate the icon (e.g. a \"not ready\" look).")
+            .on_hover_text(
+                "Desaturate the icon (e.g. a \"not ready\" look). Sheet \
+                 cells only; pool images stay in color.",
+            )
             .changed();
 
         ui.label("border:");
@@ -1589,20 +1694,23 @@ fn render_icon_editor(
     }
 
     // Clickable cell grid: barbar's "Browse Icons", inline. Collapsed by
-    // default so long sheets don't dominate the form.
+    // default so long sheets don't dominate the form. Sheet refs only.
     if let (Some(icon), Some(art)) = (icon.as_mut(), skin_art) {
-        if let Some(count) = art.sheet_cell_count(&icon.sheet) {
-            egui::CollapsingHeader::new("Pick cell from sheet")
-                .id_salt(format!("{id}_grid"))
-                .show(ui, |ui| {
-                    changed |= cell_grid(ui, icon, art, count);
-                });
+        if let crate::data::IconRef::SheetCell { sheet, .. } = &icon.icon {
+            if let Some(count) = art.sheet_cell_count(sheet) {
+                egui::CollapsingHeader::new("Pick cell from sheet")
+                    .id_salt(format!("{id}_grid"))
+                    .show(ui, |ui| {
+                        changed |= cell_grid(ui, icon, art, count);
+                    });
+            }
         }
     }
     changed
 }
 
-/// The clickable cell grid for one sheet. Returns true when a cell is picked.
+/// The clickable cell grid for one sheet ref. Returns true when a cell is
+/// picked; no-op for non-sheet refs.
 fn cell_grid(
     ui: &mut egui::Ui,
     icon: &mut HotbarIcon,
@@ -1611,6 +1719,10 @@ fn cell_grid(
 ) -> bool {
     const THUMB: f32 = 36.0;
     const PER_ROW: u32 = 8;
+    let grayscale = icon.grayscale;
+    let crate::data::IconRef::SheetCell { sheet, cell: current_cell } = &mut icon.icon else {
+        return false;
+    };
     let mut changed = false;
     egui::ScrollArea::vertical()
         .id_salt("hotbar_cell_grid_scroll")
@@ -1624,8 +1736,7 @@ fn cell_grid(
                         if cell > count {
                             break;
                         }
-                        let Some((texture, uv)) =
-                            art.sheet_cell(&icon.sheet, cell, icon.grayscale)
+                        let Some((texture, uv)) = art.sheet_cell(sheet, cell, grayscale)
                         else {
                             continue;
                         };
@@ -1640,7 +1751,7 @@ fn cell_grid(
                                 uv,
                                 egui::Color32::WHITE,
                             );
-                            let selected = icon.cell == cell;
+                            let selected = *current_cell == cell;
                             if selected || response.hovered() {
                                 let stroke = if selected {
                                     egui::Stroke::new(
@@ -1660,8 +1771,8 @@ fn cell_grid(
                         }
                         let response =
                             response.on_hover_text(format!("cell {}", cell));
-                        if response.clicked() && icon.cell != cell {
-                            icon.cell = cell;
+                        if response.clicked() && *current_cell != cell {
+                            *current_cell = cell;
                             changed = true;
                         }
                     }

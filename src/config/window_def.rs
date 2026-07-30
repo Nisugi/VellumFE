@@ -427,6 +427,7 @@ impl WindowDef {
                     icon: None,
                     icon_color: None,
                     text_color: None,
+                    states: Vec::new(),
                 },
             },
             "active_effects" => WindowDef::ActiveEffects {

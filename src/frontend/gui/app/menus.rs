@@ -69,6 +69,9 @@ pub(super) enum GuiWindowMenuCommand {
     SetDollImage(Option<String>),
     /// Open the doll calibrator (injury doll windows).
     CalibrateDoll,
+    /// Open the hand-icons editor (hand windows): status-driven icon
+    /// states (empty hand, held weapon, prepared spell, ...).
+    EditHandIcons,
     /// Render doll art in grayscale (dots keep their colors).
     SetDollGrayscale(bool),
     /// Global compass art set from the pool; None reverts to the skin's.
@@ -351,6 +354,15 @@ impl VellumGuiApp {
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),
             GuiWindowMenuCommand::SendToBack => {
                 self.send_window_to_back(ctx, &request.tab_key);
+            }
+            GuiWindowMenuCommand::EditHandIcons => {
+                if let Some(name) = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone())
+                {
+                    self.open_hand_icons_editor(name);
+                }
             }
             GuiWindowMenuCommand::StartMove => {
                 // Windows that were never repositioned have no stored rect;
@@ -1310,6 +1322,16 @@ impl VellumGuiApp {
             && ui.selectable_label(false, "Calibrate doll…").clicked()
         {
             return Some(GuiWindowMenuCommand::CalibrateDoll);
+        }
+        if view.appearance.hand_id.is_some()
+            && ui
+                .selectable_label(false, "Hand icons…")
+                .on_hover_text(
+                    "Status-driven icons: empty hand, held weapon, prepared spell, ...",
+                )
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::EditHandIcons);
         }
         if ui.selectable_label(false, "Hide").clicked() {
             return Some(GuiWindowMenuCommand::Hide);

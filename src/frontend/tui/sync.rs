@@ -965,7 +965,12 @@ impl TuiFrontend {
                 let bar_def = app_core.config.hotbars.find_bar(bar);
                 let buttons = bar_def
                     .map(|def| {
-                        crate::core::hotbar::resolve_bar(def, &app_core.game_state, now_server)
+                        crate::core::hotbar::resolve_bar(
+                            def,
+                            &app_core.game_state,
+                            now_server,
+                            app_core.gameobj_data_cached(),
+                        )
                     })
                     .unwrap_or_default();
                 bar_widget.set_buttons(buttons);
@@ -1956,18 +1961,33 @@ impl TuiFrontend {
                         };
                         hand_widget.set_title(title_text);
 
-                        // Apply hand-specific icon/text colors
-                        let (data_icon, data_icon_color, data_text_color) =
+                        // Apply hand-specific icon/text colors; a matched
+                        // status-driven icon state (TUI = text/color swap)
+                        // overrides the static values while it holds.
+                        let (data_icon, data_icon_color, data_text_color, state) =
                             if let crate::config::WindowDef::Hand { data, .. } = window_def {
+                                let state = if data.states.is_empty() {
+                                    crate::core::conditions::ResolvedHand::default()
+                                } else {
+                                    let now_server = chrono::Utc::now().timestamp()
+                                        + app_core.message_processor.server_time_offset;
+                                    crate::core::conditions::resolve_hand(
+                                        data,
+                                        &app_core.game_state,
+                                        now_server,
+                                        app_core.gameobj_data_cached(),
+                                    )
+                                };
                                 (
                                     data.icon.clone(),
                                     data.icon_color.clone(),
                                     data.text_color.clone(),
+                                    state,
                                 )
                             } else {
-                                (None, None, None)
+                                (None, None, None, Default::default())
                             };
-                        if let Some(icon) = data_icon {
+                        if let Some(icon) = state.text.clone().or(data_icon) {
                             hand_widget.set_icon(icon);
                         }
 
@@ -1975,8 +1995,11 @@ impl TuiFrontend {
                             data_text_color.clone().or_else(|| colors.text.clone());
                         hand_widget.set_text_color(resolved_text_color.clone());
 
-                        let icon_color =
-                            data_icon_color.clone().or_else(|| resolved_text_color.clone());
+                        let icon_color = state
+                            .icon_color
+                            .clone()
+                            .or(data_icon_color)
+                            .or_else(|| resolved_text_color.clone());
                         hand_widget.set_icon_color(icon_color);
 
                         // Always keep link data for click/drag

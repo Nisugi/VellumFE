@@ -227,57 +227,21 @@ impl VellumGuiApp {
                 for (id, icon) in &sorted_overrides {
                     ui.horizontal(|ui| {
                         ui.monospace(id);
-                        let label = match icon {
-                            crate::data::IconRef::Default => "Default".to_string(),
-                            crate::data::IconRef::None => "None (hidden)".to_string(),
-                            crate::data::IconRef::Image { path } => path
-                                .rsplit_once('/')
-                                .map(|(_, file)| file.to_string())
-                                .unwrap_or_else(|| path.clone()),
-                            crate::data::IconRef::SheetCell { sheet, cell } => {
-                                format!("{sheet} #{cell}")
+                        match super::icon_ref_picker(
+                            ui,
+                            format!("statusicon_override_{id}"),
+                            Some(icon),
+                            &pool_images,
+                            &sheets,
+                            None,
+                            Some("Default"),
+                            Some("None (hidden)"),
+                        ) {
+                            Some(super::IconRefPick::Ref(picked)) => {
+                                override_changes.push((id.clone(), Some(picked)));
                             }
-                        };
-                        egui::ComboBox::from_id_salt(("statusicon_override", id))
-                            .selected_text(label)
-                            .show_ui(ui, |ui| {
-                                if ui.button("Default").clicked() {
-                                    override_changes
-                                        .push((id.clone(), Some(crate::data::IconRef::Default)));
-                                }
-                                if ui
-                                    .button("None (hidden)")
-                                    .on_hover_text(
-                                        "Suppress this icon's art; the widget shows its \
-                                         built-in fallback",
-                                    )
-                                    .clicked()
-                                {
-                                    override_changes
-                                        .push((id.clone(), Some(crate::data::IconRef::None)));
-                                }
-                                for (path, stem) in &pool_images {
-                                    if ui.button(stem).clicked() {
-                                        override_changes.push((
-                                            id.clone(),
-                                            Some(crate::data::IconRef::Image {
-                                                path: path.clone(),
-                                            }),
-                                        ));
-                                    }
-                                }
-                                for sheet in &sheets {
-                                    if ui.button(format!("sheet: {sheet}")).clicked() {
-                                        override_changes.push((
-                                            id.clone(),
-                                            Some(crate::data::IconRef::SheetCell {
-                                                sheet: sheet.clone(),
-                                                cell: 1,
-                                            }),
-                                        ));
-                                    }
-                                }
-                            });
+                            Some(super::IconRefPick::Unset) | None => {}
+                        }
                         if let crate::data::IconRef::SheetCell { sheet, cell } = icon {
                             let max = art
                                 .as_ref()

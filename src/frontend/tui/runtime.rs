@@ -455,6 +455,10 @@ async fn async_run(
         // of only a clean quit.
         app_core.tick_layout_autosave();
 
+        // Prime the item classifier while &mut is available; the render
+        // sync (hotbar/hand conditions) reads the immutable cache.
+        let _ = app_core.gameobj_data();
+
         // Drain the map worker + mapdb updater and tick the walk executor
         // (time-based waits like roundtime need a clock even when the game
         // is quiet), then send whatever travel queued through the same path

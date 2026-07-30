@@ -219,6 +219,22 @@ pub struct MessageProcessor {
 }
 
 impl MessageProcessor {
+    /// Registry entry for a held item from the `<left>`/`<right>` feed;
+    /// None for an empty hand (the game sends the literal "Empty").
+    fn hand_game_item(
+        item: &str,
+        link: Option<&crate::data::LinkData>,
+    ) -> Option<crate::core::game_objects::GameItem> {
+        if item.is_empty() || item.eq_ignore_ascii_case("empty") {
+            return None;
+        }
+        Some(crate::core::game_objects::GameItem::new(
+            link.map(|l| l.exist_id.clone()).unwrap_or_default(),
+            link.map(|l| l.noun.clone()).unwrap_or_default(),
+            item.to_string(),
+        ))
+    }
+
     /// Update any countdown windows whose id matches the provided id (case-sensitive).
     /// Falls back to window name for backward compatibility.
     fn update_countdown_by_id(
@@ -1002,6 +1018,10 @@ impl MessageProcessor {
                 } else {
                     Some(item.clone())
                 };
+                game_state.objects.set_hand(
+                    crate::core::game_objects::Hand::Left,
+                    Self::hand_game_item(item, link.as_ref()),
+                );
 
                 // Update left hand widget if it exists (support legacy and new names)
                 for name in ["left", "left_hand"] {
@@ -1035,6 +1055,10 @@ impl MessageProcessor {
                 } else {
                     Some(item.clone())
                 };
+                game_state.objects.set_hand(
+                    crate::core::game_objects::Hand::Right,
+                    Self::hand_game_item(item, link.as_ref()),
+                );
 
                 // Update right hand widget if it exists (support legacy and new names)
                 for name in ["right", "right_hand"] {

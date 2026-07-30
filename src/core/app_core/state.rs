@@ -225,6 +225,14 @@ impl AppCore {
             .expect("gameobj_data initialized above")
     }
 
+    /// Cached item classifier for immutable contexts (widget rendering).
+    /// None until `gameobj_data()` has built it — the frontends prime it
+    /// once per frame from their mutable phase, so render paths can rely
+    /// on it after the first frame.
+    pub fn gameobj_data_cached(&self) -> Option<&crate::core::gameobj_data::GameObjData> {
+        self.gameobj_data.as_deref()
+    }
+
     /// Drop and rebuild the item classifier from the data pack, in both
     /// AppCore and the message processor (the sorter's copy). Returns the
     /// reloaded type count. Shared by `.data reload` and Settings > Data.

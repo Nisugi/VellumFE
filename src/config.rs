@@ -15,6 +15,7 @@ use std::path::PathBuf;
 pub mod menu_keybind_validator;
 pub mod wrayth_import;
 mod colors;
+mod conditions;
 mod highlights;
 mod hotbars;
 mod io;
@@ -40,10 +41,10 @@ pub use colors::{
 pub use highlights::{
     highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
 };
+pub use conditions::{Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit};
 pub use hotbars::{
-    EffectCategory, GradientDir, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
-    HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, HotbarsConfig, IconMode, NameMatch,
-    VitalKind, VitalUnit,
+    GradientDir, HotbarButton, HotbarButtonState, HotbarCountdownSource, HotbarDef, HotbarIcon,
+    HotbarStyle, HotbarsConfig, IconMode,
 };
 pub use keybinds::{
     parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,
@@ -67,7 +68,7 @@ pub use widgets::{
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
     DashboardIndicatorDef, DashboardWidgetData, DialogPanelWidgetData, EncumbranceWidgetData,
     ExperienceWidgetData,
-    GS4ExperienceWidgetData, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
+    GS4ExperienceWidgetData, HandIconState, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
     InjuryDollWidgetData, InventoryWidgetData, ItemsWidgetData, MapWidgetData,
     MiniVitalsWidgetData, PerceptionWidgetData,
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,

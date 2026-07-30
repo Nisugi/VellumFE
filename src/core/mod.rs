@@ -6,6 +6,7 @@
 
 pub mod app_core;
 pub mod bounty_parser;
+pub mod conditions;
 pub mod data_pack;
 pub mod emoji;
 pub mod evidence;

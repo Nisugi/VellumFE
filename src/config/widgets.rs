@@ -642,6 +642,27 @@ pub struct HandWidgetData {
     /// Text color override (also overrides link color if set)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_color: Option<String>,
+    /// Status-driven icon states, first match wins (hotbar-style). A
+    /// matched state's icon/text replace the static icon while its
+    /// condition holds; no match falls through to the static settings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<HandIconState>,
+}
+
+/// One condition-driven hand icon state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HandIconState {
+    pub when: super::Condition,
+    /// GUI icon while the state holds (pool image / sheet cell /
+    /// `IconRef::None` for no art). None = keep the resolved default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<crate::data::IconRef>,
+    /// TUI text prefix while the state holds (the TUI renders no images).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Icon color override while the state holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
 }
 
 /// Active effects widget specific data

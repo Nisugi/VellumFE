@@ -73,6 +73,11 @@ const SEEDS: &[Seed] = &[
         url: "https://nisugi.github.io/vellum-assets/statusicons",
         only: None,
     },
+    Seed {
+        name: "vellum-hands",
+        url: "https://nisugi.github.io/vellum-assets/hands",
+        only: None,
+    },
 ];
 
 /// Root discovery index of the vellum-assets monorepo: a repos.json listing

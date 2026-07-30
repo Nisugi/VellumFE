@@ -1919,6 +1919,7 @@ impl VellumGuiApp {
         item: &Option<String>,
         link: &Option<LinkData>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        resolved: &crate::core::conditions::ResolvedHand,
     ) -> Option<GuiLinkClick> {
         let empty_text = if hand_prefix == "S" { "None" } else { "Empty" };
         let item_text = item
@@ -1926,20 +1927,30 @@ impl VellumGuiApp {
             .map(str::trim)
             .filter(|text| !text.is_empty())
             .unwrap_or(empty_text);
-        let icon_text = match hand_prefix {
+        // A matched icon state's text wins over the bracket fallback.
+        let icon_text = resolved.text.as_deref().unwrap_or(match hand_prefix {
             "L" => "[L]",
             "R" => "[R]",
             "S" => "[S]",
             _ => "[?]",
-        };
+        });
         // Skin sprite for this hand (icons table: lefthand/righthand/spellhand);
-        // without one the bracket text stays.
+        // a matched icon state overrides it (IconRef::None = force artless);
+        // without either the bracket text stays.
         let icon_id = match hand_prefix {
             "L" => "lefthand",
             "R" => "righthand",
             _ => "spellhand",
         };
-        let icon_sprite = skin_art.and_then(|art| art.icon(icon_id));
+        let icon_sprite = match &resolved.icon {
+            Some(icon) => skin_art.and_then(|art| art.resolve_icon_ref(icon, icon_id)),
+            None => skin_art.and_then(|art| art.icon(icon_id)),
+        };
+        let icon_tint = resolved
+            .icon_color
+            .as_deref()
+            .and_then(crate::frontend::gui::skin::parse_hex_rgb)
+            .unwrap_or(Color32::WHITE);
         // Keep hand rows compact and content-sized so they don't request full window width.
         let display_text = if item_text.chars().count() > 56 {
             let mut truncated: String = item_text.chars().take(53).collect();
@@ -1973,12 +1984,20 @@ impl VellumGuiApp {
                     ui.painter(),
                     dest,
                     &sprite,
-                    Color32::WHITE,
+                    icon_tint,
                 );
             } else {
+                let mut icon_rich = RichText::new(icon_text).monospace().strong();
+                if let Some(color) = resolved
+                    .icon_color
+                    .as_deref()
+                    .and_then(crate::frontend::gui::skin::parse_hex_rgb)
+                {
+                    icon_rich = icon_rich.color(color);
+                }
                 ui.add_sized(
                     [icon_width, row_height],
-                    egui::Label::new(RichText::new(icon_text).monospace().strong()),
+                    egui::Label::new(icon_rich),
                 );
             }
             ui.add_space(icon_gap);
@@ -2723,8 +2742,12 @@ impl VellumGuiApp {
 
         let now_server =
             chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
-        let buttons =
-            crate::core::hotbar::resolve_bar(bar_def, &app_core.game_state, now_server);
+        let buttons = crate::core::hotbar::resolve_bar(
+            bar_def,
+            &app_core.game_state,
+            now_server,
+            app_core.gameobj_data_cached(),
+        );
 
         // Countdown overlays tick between game events
         if buttons.iter().any(|b| b.countdown_secs.is_some()) {
@@ -2759,9 +2782,8 @@ impl VellumGuiApp {
                         button.icon.as_ref().and_then(|icon| {
                             skin_art.and_then(|art| {
                                 // Dim states reuse the grayscale twin, barbar-style.
-                                art.sheet_cell(
-                                    &icon.sheet,
-                                    icon.cell,
+                                art.icon_ref_texture(
+                                    &icon.icon,
                                     icon.grayscale || button.dim,
                                 )
                             })
@@ -4493,12 +4515,35 @@ impl VellumGuiApp {
                 } else {
                     "S"
                 };
+                // Status-driven icon states from the window's layout def.
+                let resolved = app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|def| def.name() == window.name)
+                    .and_then(|def| match def {
+                        crate::config::WindowDef::Hand { data, .. } => Some(data),
+                        _ => None,
+                    })
+                    .filter(|data| !data.states.is_empty())
+                    .map(|data| {
+                        let now_server = chrono::Utc::now().timestamp()
+                            + app_core.message_processor.server_time_offset;
+                        crate::core::conditions::resolve_hand(
+                            data,
+                            &app_core.game_state,
+                            now_server,
+                            app_core.gameobj_data_cached(),
+                        )
+                    })
+                    .unwrap_or_default();
                 Self::render_hand_content(
                     ui,
                     hand_prefix,
                     item,
                     link,
                     settings.skin_art.as_deref(),
+                    &resolved,
                 )
             }
             WindowContent::TabbedText(tabbed) => {
