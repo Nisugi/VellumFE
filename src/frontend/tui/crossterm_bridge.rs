@@ -57,6 +57,44 @@ pub fn convert_keycode(code: ct::KeyCode) -> Option<KeyCode> {
     }
 }
 
+/// Convert a crossterm KeyCode plus its event state. The kitty keyboard
+/// protocol reports keypad keys as their plain equivalents tagged with
+/// `KeyEventState::KEYPAD` (mainline crossterm semantics); promote those to
+/// the dedicated Keypad* codes so numpad keybinds work in VT terminals that
+/// speak the protocol (Alacritty, kitty, WezTerm, ...) exactly like they do
+/// under the Windows VK_NUMPAD path. Keypad navigation keys (NumLock off)
+/// deliberately stay on their plain codes — they should act as Home/arrows.
+pub fn convert_keycode_with_state(
+    code: ct::KeyCode,
+    state: ct::KeyEventState,
+) -> Option<KeyCode> {
+    if state.contains(ct::KeyEventState::KEYPAD) {
+        let promoted = match code {
+            ct::KeyCode::Char('0') => Some(KeyCode::Keypad0),
+            ct::KeyCode::Char('1') => Some(KeyCode::Keypad1),
+            ct::KeyCode::Char('2') => Some(KeyCode::Keypad2),
+            ct::KeyCode::Char('3') => Some(KeyCode::Keypad3),
+            ct::KeyCode::Char('4') => Some(KeyCode::Keypad4),
+            ct::KeyCode::Char('5') => Some(KeyCode::Keypad5),
+            ct::KeyCode::Char('6') => Some(KeyCode::Keypad6),
+            ct::KeyCode::Char('7') => Some(KeyCode::Keypad7),
+            ct::KeyCode::Char('8') => Some(KeyCode::Keypad8),
+            ct::KeyCode::Char('9') => Some(KeyCode::Keypad9),
+            ct::KeyCode::Char('.') => Some(KeyCode::KeypadPeriod),
+            ct::KeyCode::Char('+') => Some(KeyCode::KeypadPlus),
+            ct::KeyCode::Char('-') => Some(KeyCode::KeypadMinus),
+            ct::KeyCode::Char('*') => Some(KeyCode::KeypadMultiply),
+            ct::KeyCode::Char('/') => Some(KeyCode::KeypadDivide),
+            ct::KeyCode::Enter => Some(KeyCode::KeypadEnter),
+            _ => None,
+        };
+        if promoted.is_some() {
+            return promoted;
+        }
+    }
+    convert_keycode(code)
+}
+
 /// Convert crossterm KeyModifiers to frontend-agnostic KeyModifiers
 pub fn convert_modifiers(mods: ct::KeyModifiers) -> KeyModifiers {
     KeyModifiers {
@@ -68,7 +106,7 @@ pub fn convert_modifiers(mods: ct::KeyModifiers) -> KeyModifiers {
 
 /// Convert crossterm KeyEvent to frontend-agnostic KeyEvent
 pub fn convert_key_event(event: ct::KeyEvent) -> Option<KeyEvent> {
-    let code = convert_keycode(event.code)?;
+    let code = convert_keycode_with_state(event.code, event.state)?;
     let modifiers = convert_modifiers(event.modifiers);
     Some(KeyEvent { code, modifiers })
 }

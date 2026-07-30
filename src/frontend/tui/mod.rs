@@ -85,6 +85,9 @@ use widget_manager::WidgetManager;
 
 pub struct TuiFrontend {
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
+    /// Whether the kitty keyboard protocol was negotiated at startup (the
+    /// pushed enhancement flags must be popped again in cleanup).
+    kitty_keyboard: bool,
     /// Widget manager - handles all widget caches and synchronization
     widget_manager: WidgetManager,
     /// Active window editor (if any)
@@ -234,11 +237,36 @@ impl TuiFrontend {
             EnterAlternateScreen,
             crossterm::event::EnableMouseCapture
         )?;
+
+        // Kitty keyboard protocol, negotiated rather than assumed: terminals
+        // that answer the enhancement query (Alacritty, kitty, WezTerm, ...)
+        // report keypad keys distinctly, which is the only way numpad
+        // keybinds can work over a VT stream — the KEYPAD-tagged events are
+        // promoted to Keypad* codes in crossterm_bridge. Terminals that
+        // don't answer (and all Windows consoles, where
+        // supports_keyboard_enhancement is hardwired false and VK_NUMPAD
+        // records already carry keypad identity) keep today's input path
+        // untouched. Pushed after EnterAlternateScreen so the flags live on
+        // the alternate screen's stack and die with it even on a crash.
+        let kitty_keyboard =
+            crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+        if kitty_keyboard {
+            use crossterm::event::{KeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+            execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                )
+            )?;
+            tracing::info!("Kitty keyboard protocol enabled (numpad keybinds active)");
+        }
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
         Ok(Self {
             terminal,
+            kitty_keyboard,
             widget_manager: WidgetManager::new(),
             window_editor: None,
             indicator_template_editor: None,

@@ -25,7 +25,9 @@ impl Frontend for TuiFrontend {
                 Event::Key(key) => {
                     // Only process key press events, not release events
                     if key.kind == KeyEventKind::Press {
-                        if let Some(code) = crossterm_bridge::convert_keycode(key.code) {
+                        if let Some(code) =
+                            crossterm_bridge::convert_keycode_with_state(key.code, key.state)
+                        {
                             events.push(FrontendEvent::Key {
                                 code,
                                 modifiers: crossterm_bridge::convert_modifiers(key.modifiers),
@@ -708,6 +710,14 @@ impl Frontend for TuiFrontend {
     }
 
     fn cleanup(&mut self) -> Result<()> {
+        // Pop the kitty enhancement flags while still on the alternate
+        // screen (the stack is per-screen), before tearing the rest down.
+        if self.kitty_keyboard {
+            let _ = execute!(
+                self.terminal.backend_mut(),
+                crossterm::event::PopKeyboardEnhancementFlags
+            );
+        }
         disable_raw_mode()?;
         execute!(
             self.terminal.backend_mut(),

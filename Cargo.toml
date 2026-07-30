@@ -22,7 +22,9 @@ anyhow = "1"
 
 # Terminal UI
 ratatui = { version = "0.29", optional = true }
-crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"], optional = true }
+# Nisugi fork of justinpopa's keypad-aware fork; same content today, ours so
+# phase-2 work (Windows VT input for numpad under Alacritty/ConPTY) has a home.
+crossterm = { git = "https://github.com/Nisugi/crossterm.git", branch = "dev", features = ["event-stream"], optional = true }
 tui-textarea = { version = "0.7", optional = true }
 
 # GUI (numpad-aware fork)
