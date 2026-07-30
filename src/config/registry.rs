@@ -362,6 +362,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Currently active theme name", active_theme),
         opt_text_entry!("active_skin", "Active Skin", "Appearance",
             "GUI skin directory under ~/.vellum-fe/global/skins (empty = plain theme colors)", active_skin),
+        opt_text_entry!("doll_image", "Injury Doll Image", "Appearance",
+            "Injury doll override as a pool path (dolls/<file>.png); empty = the active skin's doll", doll_image),
         // ---- Terminal (TUI) -----------------------------------------
         SettingDef {
             key: "ui.color_mode",

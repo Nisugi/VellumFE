@@ -64,6 +64,11 @@ pub(super) enum GuiWindowMenuCommand {
     /// Per-window skin frame: a named `[frames.*]` entry, "none" for no
     /// frame, or None to revert to the skin's own per-window mapping.
     SetSkinFrame(Option<String>),
+    /// Global injury doll image override (pool-relative path); None reverts
+    /// to the active skin's doll.
+    SetDollImage(Option<String>),
+    /// Open the doll calibrator (injury doll windows).
+    CalibrateDoll,
     /// Per-window title bar height; None reverts to the global setting.
     /// Keeps the menu open like SetTextSize.
     SetTitleBarHeight(Option<f32>),
@@ -146,6 +151,12 @@ pub(super) struct WindowAppearanceView {
     /// Whether the skin resolves a border for this window by default (so
     /// "None" is worth offering even without named frames).
     has_skin_border: bool,
+    /// Injury doll widget: offer the pool doll picker + calibrator.
+    is_doll: bool,
+    /// Pool doll images as (pool-relative path, display stem).
+    doll_images: Vec<(String, String)>,
+    /// Global doll override (pool-relative path); None = skin default.
+    doll_override: Option<String>,
     /// Per-window title bar height override; None follows the global.
     title_bar_height_override: Option<f32>,
     /// Global title bar height; 0 = derived from the title font.
@@ -341,6 +352,8 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetAccent(_)
             | GuiWindowMenuCommand::SetCornerRadius(_)
             | GuiWindowMenuCommand::SetSkinFrame(_)
+            | GuiWindowMenuCommand::SetDollImage(_)
+            | GuiWindowMenuCommand::CalibrateDoll
             | GuiWindowMenuCommand::SetTitleBarHeight(_)
             | GuiWindowMenuCommand::SetTitleBarAlign(_)
             | GuiWindowMenuCommand::SetShowBorder(_)
@@ -496,6 +509,12 @@ impl VellumGuiApp {
                     .skin_frame = frame;
                 self.layout_dirty = true;
             }
+            GuiWindowMenuCommand::SetDollImage(image) => {
+                self.set_doll_image(image);
+            }
+            GuiWindowMenuCommand::CalibrateDoll => {
+                self.open_doll_calibration();
+            }
             GuiWindowMenuCommand::SetTitleBarHeight(height) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -577,6 +596,16 @@ impl VellumGuiApp {
                     | WidgetType::Container
             )
         );
+        let is_doll = widget_type == Some(WidgetType::InjuryDoll);
+        // Pool scan only for doll windows — no disk walk for every menu.
+        let doll_images = if is_doll {
+            crate::config::pool::list_category("dolls")
+                .iter()
+                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         WindowAppearanceView {
             title_bar_hidden: self.title_bar_hidden(tab_key),
             text_size_override: self.text_size_override_for_tab(tab_key),
@@ -602,6 +631,9 @@ impl VellumGuiApp {
                 .get(tab_key)
                 .and_then(|tab| self.skin_state.border_for(&tab.window_name))
                 .is_some(),
+            is_doll,
+            doll_images,
+            doll_override: self.ui_settings.doll_image.clone(),
             title_bar_height_override: self
                 .tab_settings
                 .get(tab_key)
@@ -702,6 +734,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::ToggleSlotAnchor(_)
                     | GuiWindowMenuCommand::SetCornerRadius(_)
                     | GuiWindowMenuCommand::SetSkinFrame(_)
+                    | GuiWindowMenuCommand::SetDollImage(_)
                     | GuiWindowMenuCommand::SetTitleBarHeight(_)
                     | GuiWindowMenuCommand::SetTitleBarAlign(_)
                     | GuiWindowMenuCommand::SetShowBorder(_)
@@ -1437,6 +1470,44 @@ impl VellumGuiApp {
                 .changed()
             {
                 command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
+            }
+        }
+        if view.is_doll {
+            ui.horizontal(|ui| {
+                ui.label("Doll image");
+                let selected_label = match view.doll_override.as_deref() {
+                    None => "Skin default",
+                    Some(path) => view
+                        .doll_images
+                        .iter()
+                        .find(|(pool_path, _)| pool_path == path)
+                        .map(|(_, stem)| stem.as_str())
+                        // Stale override (image removed): show the raw path.
+                        .unwrap_or(path),
+                };
+                egui::ComboBox::from_id_salt("gui_window_doll_image")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(view.doll_override.is_none(), "Skin default")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetDollImage(None));
+                        }
+                        for (path, stem) in &view.doll_images {
+                            let selected = view.doll_override.as_deref() == Some(path.as_str());
+                            if ui.selectable_label(selected, stem).clicked() {
+                                command =
+                                    Some(GuiWindowMenuCommand::SetDollImage(Some(path.clone())));
+                            }
+                        }
+                    });
+            });
+            if view.doll_images.is_empty() {
+                ui.weak("No dolls in the pool — install some with .jinx list / .jinx install");
+            }
+            if ui.button("Calibrate doll…").clicked() {
+                command = Some(GuiWindowMenuCommand::CalibrateDoll);
             }
         }
         if !view.skin_frames.is_empty() || view.has_skin_border {

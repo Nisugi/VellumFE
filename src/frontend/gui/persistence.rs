@@ -340,6 +340,14 @@ pub struct GuiUiSettings {
     /// web doll endpoint and the headless/TUI frontends.
     #[serde(default)]
     pub active_skin: Option<String>,
+
+    /// Injury doll image override as a pool-relative path
+    /// ("dolls/dwarf_ranger.png"); None follows the active skin's
+    /// `[injury_doll]` (or the vector doll with no skin). Calibration for a
+    /// pool doll lives in its sidecar toml. Mirrored to config.doll_image
+    /// for the web doll endpoint, like active_skin.
+    #[serde(default)]
+    pub doll_image: Option<String>,
 }
 
 fn default_zoom_factor() -> f32 {
@@ -393,6 +401,7 @@ impl Default for GuiUiSettings {
             auto_contrast_bar_text: default_true(),
             vitals: VitalsConfig::default(),
             active_skin: None,
+            doll_image: None,
         }
     }
 }

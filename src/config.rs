@@ -20,6 +20,7 @@ mod hotbars;
 mod io;
 mod macros;
 mod paths;
+pub mod pool;
 pub mod profiles;
 pub mod skins;
 mod defaults_refresh;
@@ -290,6 +291,8 @@ pub struct Config {
     pub active_theme: String, // Currently active theme name
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_skin: Option<String>, // Active GUI skin (dir name under ~/.vellum-fe/global/skins/); None = plain theme colors. In the GUI this mirrors ui_settings.active_skin in the layout file (web doll + non-GUI frontends read it here)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doll_image: Option<String>, // Injury doll image override (pool-relative, "dolls/x.png"); mirrors ui_settings.doll_image like active_skin (web doll endpoint reads it here)
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml

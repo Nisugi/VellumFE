@@ -214,6 +214,10 @@ pub struct SkinState {
     applied: bool,
     /// skin.toml mtime at load, for hot-reload detection.
     manifest_mtime: Option<std::time::SystemTime>,
+    /// Injury doll override as a pool-relative path (from
+    /// ui_settings.doll_image); replaces the skin's `[injury_doll]` when
+    /// set — its calibration comes from the image's sidecar toml.
+    doll_override: Option<String>,
     /// Lowercased names of sheets that came from the shared icon store
     /// (global/icons) rather than the skin itself.
     shared_sheet_names: std::collections::HashSet<String>,
@@ -224,11 +228,20 @@ pub struct SkinState {
 }
 
 impl SkinState {
-    /// Load or unload to match `active` (from config). Call once per frame;
-    /// does nothing when the active skin hasn't changed and its skin.toml
-    /// is untouched (edits to the manifest hot-reload within a second).
-    pub fn apply_if_changed(&mut self, ctx: &egui::Context, active: Option<&str>) {
-        if self.applied && self.loaded_id.as_deref() == active {
+    /// Load or unload to match `active` (from config) and the doll override
+    /// (from the layout's appearance settings). Call once per frame; does
+    /// nothing when neither changed and skin.toml is untouched (edits to
+    /// the manifest hot-reload within a second).
+    pub fn apply_if_changed(
+        &mut self,
+        ctx: &egui::Context,
+        active: Option<&str>,
+        doll_override: Option<&str>,
+    ) {
+        if self.applied
+            && self.loaded_id.as_deref() == active
+            && self.doll_override.as_deref() == doll_override
+        {
             if !self.manifest_changed_on_disk() {
                 return;
             }
@@ -236,6 +249,7 @@ impl SkinState {
         }
         self.applied = true;
         self.loaded_id = active.map(str::to_owned);
+        self.doll_override = doll_override.map(str::to_owned);
         self.manifest = SkinManifest::default();
         self.textures.clear();
         self.widget_art = None;
@@ -337,6 +351,19 @@ impl SkinState {
         &self.manifest.injury_doll
     }
 
+    /// The active doll override (pool-relative path), if one is set.
+    pub fn doll_override(&self) -> Option<&str> {
+        self.doll_override.as_deref()
+    }
+
+    /// Absolute path of the active doll override's image, for sidecar
+    /// reads/writes.
+    pub fn doll_override_abs_path(&self) -> Option<std::path::PathBuf> {
+        self.doll_override
+            .as_deref()
+            .map(|path| skins::resolve_image_path(&self.root, path))
+    }
+
     fn build_widget_art(&self) -> Option<std::sync::Arc<SkinWidgetArt>> {
         let tex = |path: &String| {
             self.textures
@@ -404,6 +431,31 @@ impl SkinState {
             }
         }
 
+        // A doll override replaces the skin's `[injury_doll]` wholesale:
+        // base from the pool image, anchors/dots from its sidecar, severity
+        // rendered as generated dots (pool dolls carry no overlay art).
+        if let Some(path) = &self.doll_override {
+            if let Some(texture) = tex(path) {
+                art.doll_base = Some(texture);
+                art.doll_parts.clear();
+                art.doll_anchors.clear();
+                let abs = skins::resolve_image_path(&self.root, path);
+                match crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(&abs)
+                {
+                    Some(sidecar) => {
+                        for (part, anchor) in &sidecar.anchors {
+                            art.doll_anchors.insert(
+                                part.to_ascii_lowercase(),
+                                egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
+                            );
+                        }
+                        art.doll_dots = ResolvedDotStyle::from_spec(&sidecar.dots);
+                    }
+                    None => art.doll_dots = ResolvedDotStyle::default(),
+                }
+            }
+        }
+
         if art.is_empty() {
             None
         } else {
@@ -426,6 +478,7 @@ impl SkinState {
             })
             .collect();
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
+        images.extend(self.doll_override.iter().cloned());
         images.extend(self.manifest.icons.values().cloned());
         images.extend(self.manifest.sheets.values().map(|s| s.path.clone()));
         images.extend(self.manifest.compass.rose.iter().cloned());

@@ -514,6 +514,9 @@ impl Config {
         // and the merge silently dropped it on the next load.
         self.active_skin = character_config.active_skin;
 
+        // Doll image override: same restart-amnesia trap as active_skin.
+        self.doll_image = character_config.doll_image;
+
         // Streams config: character overrides global
         self.streams = character_config.streams;
 
@@ -793,6 +796,7 @@ impl Default for Config {
             menu_keybinds: MenuKeybinds::default(),
             active_theme: default_theme_name(),
             active_skin: None,
+            doll_image: None,
         }
     }
 }

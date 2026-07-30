@@ -12,9 +12,29 @@ use crate::config::skins::{self, DollDotSpec, DOLL_PARTS};
 use crate::frontend::gui::skin::{self as gui_skin, ResolvedDotStyle};
 use eframe::egui;
 
+/// Where the calibration saves: a skin's skin.toml, or a pool doll's
+/// sidecar toml (calibration travels with the artwork).
+pub(in super::super) enum CalibrationTarget {
+    Skin(String),
+    Pool {
+        image_abs: std::path::PathBuf,
+        /// Display name (image stem) for the window title and messages.
+        label: String,
+    },
+}
+
+impl CalibrationTarget {
+    fn label(&self) -> &str {
+        match self {
+            CalibrationTarget::Skin(name) => name,
+            CalibrationTarget::Pool { label, .. } => label,
+        }
+    }
+}
+
 pub(in super::super) struct DollCalibrationState {
-    /// Directory name of the skin being calibrated.
-    skin: String,
+    /// Where Save writes.
+    target: CalibrationTarget,
     /// Working anchors keyed by lowercase protocol part name. Only parts
     /// the skin (or this session) has placed appear here; the rest render
     /// at built-in defaults and stay implicit in the saved file.
@@ -63,32 +83,59 @@ impl VellumGuiApp {
             self.raise_editor(egui::Id::new("gui_doll_calibration"));
             return;
         }
-        let Some(skin_name) = self.skin_state.loaded_skin().map(str::to_owned) else {
-            self.app_core.add_system_message(
-                "No skin active. Pick one in Settings > Appearance > Skin first.",
-            );
-            return;
+        // A doll override calibrates against its pool sidecar and needs no
+        // skin at all; otherwise calibration targets the active skin.
+        let (target, anchors, dots) = if let (Some(pool_path), Some(abs)) = (
+            self.skin_state.doll_override().map(str::to_owned),
+            self.skin_state.doll_override_abs_path(),
+        ) {
+            let sidecar: crate::config::pool::DollSidecar =
+                crate::config::pool::read_sidecar(&abs).unwrap_or_default();
+            let label = pool_path
+                .rsplit_once('/')
+                .map(|(_, file)| file)
+                .unwrap_or(&pool_path)
+                .rsplit_once('.')
+                .map(|(stem, _)| stem.to_owned())
+                .unwrap_or(pool_path.clone());
+            (
+                CalibrationTarget::Pool { image_abs: abs, label },
+                sidecar.anchors,
+                sidecar.dots,
+            )
+        } else {
+            let Some(skin_name) = self.skin_state.loaded_skin().map(str::to_owned) else {
+                self.app_core.add_system_message(
+                    "No doll image selected. Pick one in the injuries window's Appearance menu \
+                     (install some with .jinx), or activate a skin with a doll.",
+                );
+                return;
+            };
+            let has_base = self
+                .skin_state
+                .widget_art()
+                .is_some_and(|art| art.doll_base.is_some());
+            if !has_base {
+                self.app_core.add_system_message(&format!(
+                    "Skin '{}' has no injury doll base image; pick a doll in the injuries \
+                     window's Appearance menu or set base under [injury_doll] in its skin.toml.",
+                    skin_name
+                ));
+                return;
+            }
+            let doll = self.skin_state.doll_manifest();
+            (
+                CalibrationTarget::Skin(skin_name),
+                doll.anchors.clone(),
+                doll.dots.clone(),
+            )
         };
-        let has_base = self
-            .skin_state
-            .widget_art()
-            .is_some_and(|art| art.doll_base.is_some());
-        if !has_base {
-            self.app_core.add_system_message(&format!(
-                "Skin '{}' has no injury doll base image; set base under [injury_doll] in its skin.toml first.",
-                skin_name
-            ));
-            return;
-        }
-        let doll = self.skin_state.doll_manifest();
-        let anchors = doll
-            .anchors
+        let anchors = anchors
             .iter()
             .map(|(part, anchor)| (part.to_ascii_lowercase(), *anchor))
             .collect();
-        let dots = doll.dots.clone();
         self.doll_calibration = Some(DollCalibrationState {
-            skin: skin_name,
+            target,
             anchors,
             selected: 0,
             auto_advance: true,
@@ -106,11 +153,11 @@ impl VellumGuiApp {
         let Some(mut state) = self.doll_calibration.take() else {
             return;
         };
-        // The base can vanish mid-session (skin.toml edited on disk); close
-        // rather than calibrating against nothing.
+        // The base can vanish mid-session (skin.toml edited on disk, doll
+        // override cleared); close rather than calibrating against nothing.
         let Some(base) = self.skin_state.widget_art().and_then(|art| art.doll_base) else {
             self.app_core.add_system_message(
-                "Injury doll calibration closed: the active skin no longer has a doll base image.",
+                "Injury doll calibration closed: no doll base image is loaded any more.",
             );
             return;
         };
@@ -118,7 +165,7 @@ impl VellumGuiApp {
         let mut open = true;
         let mut save_request = false;
 
-        egui::Window::new(format!("Injury Doll Calibration - {}", state.skin))
+        egui::Window::new(format!("Injury Doll Calibration - {}", state.target.label()))
             .id(egui::Id::new("gui_doll_calibration"))
             .open(&mut open)
             .default_width(560.0)
@@ -271,11 +318,17 @@ impl VellumGuiApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui
-                        .button("Save to skin")
-                        .on_hover_text("Writes [injury_doll.anchors] and [injury_doll.dots] into the skin's skin.toml")
-                        .clicked()
-                    {
+                    let (save_label, save_hover) = match &state.target {
+                        CalibrationTarget::Skin(_) => (
+                            "Save to skin",
+                            "Writes [injury_doll.anchors] and [injury_doll.dots] into the skin's skin.toml",
+                        ),
+                        CalibrationTarget::Pool { .. } => (
+                            "Save",
+                            "Writes anchors and dot styling into the doll's sidecar toml, next to the image — the calibration travels with the artwork",
+                        ),
+                    };
+                    if ui.button(save_label).on_hover_text(save_hover).clicked() {
                         save_request = true;
                     }
                     if ui
@@ -296,15 +349,28 @@ impl VellumGuiApp {
             });
 
         if save_request {
-            match gui_skin::save_calibration(&state.skin, &state.anchors, &state.dot_spec()) {
+            let result = match &state.target {
+                CalibrationTarget::Skin(skin) => {
+                    gui_skin::save_calibration(skin, &state.anchors, &state.dot_spec())
+                }
+                CalibrationTarget::Pool { image_abs, .. } => {
+                    crate::config::pool::write_doll_sidecar(
+                        image_abs,
+                        &state.anchors,
+                        &state.dot_spec(),
+                    )
+                }
+            };
+            match result {
                 Ok(()) => {
                     state.error = None;
-                    // The mtime poll would catch this within a second; force
-                    // it so the live doll updates on the very next frame.
+                    // Sidecars aren't mtime-polled (and the skin poll takes a
+                    // second); force a reload so the live doll updates on the
+                    // very next frame.
                     self.skin_state.force_reload();
                     self.app_core.add_system_message(&format!(
-                        "Injury doll calibration saved to skin '{}'.",
-                        state.skin
+                        "Injury doll calibration saved to '{}'.",
+                        state.target.label()
                     ));
                 }
                 Err(err) => {

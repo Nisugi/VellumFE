@@ -1618,6 +1618,18 @@ impl VellumGuiApp {
         }
     }
 
+    /// Set the injury doll override (pool-relative path), persisted in the
+    /// layout and mirrored to config for the web doll endpoint. The doll
+    /// switches next frame via `SkinState::apply_if_changed`.
+    pub(super) fn set_doll_image(&mut self, image: Option<String>) {
+        self.ui_settings.doll_image = image.clone();
+        self.layout_dirty = true;
+        if self.app_core.config.doll_image != image {
+            self.app_core.config.doll_image = image;
+            self.save_config_after_skin_change();
+        }
+    }
+
     /// Handle `action:setskin:<name>` from dot-commands or menus. "none"
     /// (or "off") disables the active skin. The switch itself happens next
     /// frame via `SkinState::apply_if_changed`.
@@ -4559,8 +4571,11 @@ impl eframe::App for VellumGuiApp {
             ctx.request_repaint();
         }
         self.apply_theme_if_changed(&ctx);
-        self.skin_state
-            .apply_if_changed(&ctx, self.ui_settings.active_skin.as_deref());
+        self.skin_state.apply_if_changed(
+            &ctx,
+            self.ui_settings.active_skin.as_deref(),
+            self.ui_settings.doll_image.as_deref(),
+        );
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
         // Keep painting while the map worker, mapdb download, or walk
