@@ -1767,7 +1767,7 @@ impl VellumGuiApp {
                     slice.push(inset as f64);
                 }
                 entry.insert("slice", value(slice));
-                entry.insert("scale", value(sidecar.scale as f64));
+                entry.insert("scale", value(sidecar.effective_scale() as f64));
                 frames.insert(&stem, Item::Table(entry));
             }
             if !frames.is_empty() {

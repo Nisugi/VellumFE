@@ -1127,7 +1127,7 @@ fn load_pool_frames(needed: &[String]) -> HashMap<String, skins::BorderSpec> {
             skins::BorderSpec {
                 image: image.pool_path.clone(),
                 slice: sidecar.slice.insets(),
-                scale: sidecar.scale,
+                scale: sidecar.effective_scale(),
             },
         );
     }

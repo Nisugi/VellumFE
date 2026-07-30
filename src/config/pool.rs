@@ -114,12 +114,33 @@ pub struct DollSidecar {
 #[derive(Debug, Clone, Deserialize)]
 pub struct FrameSidecar {
     pub slice: SliceSpec,
-    #[serde(default = "default_frame_scale")]
-    pub scale: f32,
+    /// Source-pixels → screen-points multiplier. Optional: consumers use
+    /// [`FrameSidecar::effective_scale`], which derives a sane value when
+    /// the metadata omits one.
+    #[serde(default)]
+    pub scale: Option<f32>,
 }
 
-fn default_frame_scale() -> f32 {
-    1.0
+/// On-screen border thickness (points) a scale-less frame normalizes to —
+/// matches what frame authors pick by hand (~14-16pt).
+const DEFAULT_FRAME_BORDER_PT: f32 = 15.0;
+
+impl FrameSidecar {
+    /// The explicit scale, or one derived by normalizing the largest inset
+    /// to ~15 points when the metadata omits it. Slice insets are measured
+    /// in source pixels of 1-2K art; treating a missing scale as 1.0 turned
+    /// a 635px inset into a 635-POINT border that swallowed the window.
+    pub fn effective_scale(&self) -> f32 {
+        if let Some(scale) = self.scale {
+            return scale;
+        }
+        let max_inset = self.slice.insets().into_iter().fold(0.0_f32, f32::max);
+        if max_inset > 0.0 {
+            DEFAULT_FRAME_BORDER_PT / max_inset
+        } else {
+            1.0
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -210,12 +231,31 @@ mod tests {
         }
         let uniform: Doc = toml::from_str("[frame]\nslice = 310\n").unwrap();
         assert_eq!(uniform.frame.slice.insets(), [310.0; 4]);
-        assert_eq!(uniform.frame.scale, 1.0);
+        // No scale in the metadata: derived so the largest inset lands at
+        // ~15pt on screen instead of a window-swallowing 310pt.
+        assert!((uniform.frame.effective_scale() - 15.0 / 310.0).abs() < 1e-6);
 
         let per_side: Doc =
             toml::from_str("[frame]\nslice = [1.0, 2.0, 3.0, 4.0]\nscale = 0.5\n").unwrap();
         assert_eq!(per_side.frame.slice.insets(), [1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(per_side.frame.scale, 0.5);
+        // Explicit scale always wins.
+        assert_eq!(per_side.frame.effective_scale(), 0.5);
+    }
+
+    #[test]
+    fn frame_effective_scale_derives_from_largest_inset() {
+        #[derive(Deserialize)]
+        struct Doc {
+            frame: FrameSidecar,
+        }
+        // Per-side insets: the LARGEST side normalizes to 15pt so no side
+        // exceeds the target.
+        let doc: Doc = toml::from_str("[frame]\nslice = [100.0, 600.0, 100.0, 100.0]\n").unwrap();
+        assert!((doc.frame.effective_scale() - 15.0 / 600.0).abs() < 1e-6);
+
+        // Degenerate zero insets fall back to 1.0 (nothing to normalize).
+        let doc: Doc = toml::from_str("[frame]\nslice = 0\n").unwrap();
+        assert_eq!(doc.frame.effective_scale(), 1.0);
     }
 
     #[test]
