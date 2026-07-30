@@ -1031,10 +1031,16 @@ impl VellumGuiApp {
                 }
             }
 
-            // Side effects for the keys that just changed. Theme and skin
-            // need no explicit hook: apply_theme_if_changed and
-            // skin_state.apply_if_changed watch config.active_theme /
-            // active_skin every frame.
+            // Side effects for the keys that just changed. Theme needs no
+            // explicit hook: apply_theme_if_changed watches
+            // config.active_theme every frame. The skin's home is the GUI
+            // layout (ui_settings.active_skin); the registry draft wrote
+            // the config mirror, so copy it over — apply_if_changed then
+            // swaps the art next frame.
+            if applied.iter().any(|key| *key == "active_skin") {
+                self.ui_settings.active_skin = self.app_core.config.active_skin.clone();
+                self.layout_dirty = true;
+            }
             if applied
                 .iter()
                 .any(|key| key.starts_with("map.") || *key == "connection.game")
@@ -1050,12 +1056,14 @@ impl VellumGuiApp {
 
             // GUI sizing lives in the per-character layout file; force the
             // zoom/title-bar values to re-apply on the next frame. Vitals
-            // options are edited in the Window Editor now — preserve the
-            // live values rather than restoring this editor's stale
-            // open-time snapshot.
+            // options are edited in the Window Editor now, and the active
+            // skin was routed above — preserve the live values for both
+            // rather than restoring this editor's stale open-time snapshot.
             let vitals = self.ui_settings.vitals.clone();
+            let active_skin = self.ui_settings.active_skin.clone();
             self.ui_settings = state.gui_settings.clone();
             self.ui_settings.vitals = vitals;
+            self.ui_settings.active_skin = active_skin;
             self.zoom_applied = false;
             self.applied_title_font_size = None;
             self.applied_density = None;

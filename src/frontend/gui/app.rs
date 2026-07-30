@@ -231,7 +231,7 @@ pub struct VellumGuiApp {
     layout_dirty_since: Option<Instant>,
     applied_theme_id: Option<String>,
     current_theme: crate::theme::AppTheme,
-    /// Active skin graphics (config.active_skin); reloaded when it changes.
+    /// Active skin graphics (ui_settings.active_skin); reloaded when it changes.
     skin_state: skin::SkinState,
     ui_font: FontRef,
     fonts_applied: bool,
@@ -528,6 +528,15 @@ impl VellumGuiApp {
             initial_width,
         );
 
+        // The active skin lives in the layout now; GUI files from before
+        // that (or fresh characters) seed it from the config mirror once.
+        let mut ui_settings = ui_settings;
+        let mut seeded_active_skin = false;
+        if ui_settings.active_skin.is_none() && app_core.config.active_skin.is_some() {
+            ui_settings.active_skin = app_core.config.active_skin.clone();
+            seeded_active_skin = true;
+        }
+
         // Legacy GUI files stored per-window text size/font/wrap in
         // TabSettings; those now live on the shared layout defs. Migrate
         // once: marking both stores dirty persists the move on both sides.
@@ -577,9 +586,10 @@ impl VellumGuiApp {
             layout_profile,
             layout_character,
             core_layout_size,
-            // Migration emptied legacy TabSettings fields; rewrite the GUI
-            // file so they stay emptied.
-            layout_dirty: migrated_gui,
+            // Migration emptied legacy TabSettings fields (and may have
+            // seeded the layout's active_skin from config); rewrite the
+            // GUI file so both stick.
+            layout_dirty: migrated_gui || seeded_active_skin,
             layout_dirty_since: None,
             applied_theme_id: None,
             current_theme: crate::theme::AppTheme::default(),
@@ -1487,20 +1497,30 @@ impl VellumGuiApp {
         egui::Id::new("gui_group_member_rects").with(leader)
     }
 
+    /// Set the active skin in the layout (its home — checkpoints carry it)
+    /// and mirror it into config for the web doll endpoint and the
+    /// non-GUI frontends.
+    fn set_active_skin(&mut self, skin: Option<String>) {
+        self.ui_settings.active_skin = skin.clone();
+        self.layout_dirty = true;
+        if self.app_core.config.active_skin != skin {
+            self.app_core.config.active_skin = skin;
+            self.save_config_after_skin_change();
+        }
+    }
+
     /// Handle `action:setskin:<name>` from dot-commands or menus. "none"
     /// (or "off") disables the active skin. The switch itself happens next
     /// frame via `SkinState::apply_if_changed`.
     fn apply_skin_by_name(&mut self, name: &str) {
         if name.eq_ignore_ascii_case("none") || name.eq_ignore_ascii_case("off") {
-            self.app_core.config.active_skin = None;
-            self.save_config_after_skin_change();
+            self.set_active_skin(None);
             self.app_core.add_system_message("Skin disabled.");
             return;
         }
         match crate::config::skins::load_manifest(name) {
             Ok(_) => {
-                self.app_core.config.active_skin = Some(name.to_string());
-                self.save_config_after_skin_change();
+                self.set_active_skin(Some(name.to_string()));
                 self.app_core
                     .add_system_message(&format!("Skin switched to: {}", name));
             }
@@ -1532,7 +1552,7 @@ impl VellumGuiApp {
             );
             return;
         }
-        let active = self.app_core.config.active_skin.clone();
+        let active = self.ui_settings.active_skin.clone();
         self.app_core.add_system_message("Installed skins:");
         for name in available {
             let marker = if active.as_deref() == Some(name.as_str()) {
@@ -1934,7 +1954,19 @@ impl VellumGuiApp {
         self.tab_groups = restored.tab_groups;
         self.detached_tabs = restored.detached_tabs;
         self.ui_font = restored.ui_font;
+        let previous_skin = self.ui_settings.active_skin.take();
         self.ui_settings = restored.ui_settings;
+        // Skins ride with checkpoints. One without a skin recorded (incl.
+        // checkpoints from before skins lived in the layout) keeps the
+        // current skin instead of clearing it — .setskin none is the
+        // explicit off switch. apply_if_changed swaps the art next frame.
+        if self.ui_settings.active_skin.is_none() {
+            self.ui_settings.active_skin = previous_skin;
+        }
+        if self.app_core.config.active_skin != self.ui_settings.active_skin {
+            self.app_core.config.active_skin = self.ui_settings.active_skin.clone();
+            self.save_config_after_skin_change();
+        }
         self.tab_settings = restored.tab_settings;
         // Checkpoints can predate the move of per-window text size/font/wrap
         // onto the layout defs; migrate them the same way startup does.
@@ -3988,7 +4020,7 @@ impl VellumGuiApp {
             return true;
         }
         if action == "action:reloadskin" {
-            match self.app_core.config.active_skin.clone() {
+            match self.ui_settings.active_skin.clone() {
                 Some(name) => {
                     self.skin_state.force_reload();
                     self.app_core
@@ -4358,7 +4390,7 @@ impl eframe::App for VellumGuiApp {
         }
         self.apply_theme_if_changed(&ctx);
         self.skin_state
-            .apply_if_changed(&ctx, self.app_core.config.active_skin.as_deref());
+            .apply_if_changed(&ctx, self.ui_settings.active_skin.as_deref());
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
         // Keep painting while the map worker, mapdb download, or walk

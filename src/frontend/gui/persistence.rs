@@ -308,6 +308,13 @@ pub struct GuiUiSettings {
     /// Vitals window layout and bar selection.
     #[serde(default)]
     pub vitals: VitalsConfig,
+
+    /// Active skin (directory name under ~/.vellum-fe/global/skins/);
+    /// None = plain theme colors. Lives in the layout so checkpoints
+    /// carry their skin; config.active_skin is kept as a mirror for the
+    /// web doll endpoint and the headless/TUI frontends.
+    #[serde(default)]
+    pub active_skin: Option<String>,
 }
 
 fn default_zoom_factor() -> f32 {
@@ -360,6 +367,7 @@ impl Default for GuiUiSettings {
             window_corner_radius: default_window_corner_radius(),
             auto_contrast_bar_text: default_true(),
             vitals: VitalsConfig::default(),
+            active_skin: None,
         }
     }
 }
