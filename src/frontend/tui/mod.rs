@@ -257,6 +257,9 @@ impl TuiFrontend {
                 PushKeyboardEnhancementFlags(
                     KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
                         | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                        // Without alternate keys, shifted characters arrive
+                        // as their base key + SHIFT ('a' instead of 'A').
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
                 )
             )?;
             tracing::info!("Kitty keyboard protocol enabled (numpad keybinds active)");

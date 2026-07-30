@@ -1006,6 +1006,8 @@ impl VellumGuiApp {
                     window_frame.corner_radius =
                         egui::CornerRadius::same(radius.clamp(0.0, 12.0).round() as u8);
                 }
+                let border_plan = self.window_border_plan_for_tab(&tab.id.key);
+                self.apply_border_plan_to_frame(&border_plan, &mut window_frame);
                 self.apply_skin_border_to_frame(&tab.window_name, &mut window_frame);
                 // Advance by what actually rendered, not by the intended slot:
                 // any disagreement between our chrome math and egui's real
@@ -1176,6 +1178,7 @@ impl VellumGuiApp {
                     })
                 {
                     self.paint_skin_border(ctx, &tab.window_name, &inner.response);
+                    self.paint_border_plan(ctx, &border_plan, &inner.response);
                     clicked_link = inner.inner.flatten();
                     let rendered_bottom = inner.response.rect.max.y;
                     if rendered_bottom.is_finite() && rendered_bottom > slot_rect.min.y {
@@ -1389,6 +1392,8 @@ impl VellumGuiApp {
                 docked_window_frame.corner_radius =
                     egui::CornerRadius::same(radius.clamp(0.0, 12.0).round() as u8);
             }
+            let border_plan = self.window_border_plan_for_tab(&tab.id.key);
+            self.apply_border_plan_to_frame(&border_plan, &mut docked_window_frame);
             self.apply_skin_border_to_frame(&tab.window_name, &mut docked_window_frame);
             // `default_size` (like `fixed_size`) is the whole window rect in
             // this egui fork, so every zone passes the outer size directly.
@@ -1442,6 +1447,7 @@ impl VellumGuiApp {
                     .inner
                 }) {
                 self.paint_skin_border(ctx, &tab.window_name, &inner.response);
+                self.paint_border_plan(ctx, &border_plan, &inner.response);
                 if is_hand_widget {
                     let handle_rect = Rect::from_min_max(
                         Pos2::new(
