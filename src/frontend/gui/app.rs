@@ -1556,10 +1556,6 @@ impl VellumGuiApp {
         }
     }
 
-    /// Accent (border) color for a window. Precedence: the per-window GUI
-    /// accent (context menu), else the shared layout definition's
-    /// border_color — so a border color set in the window editor or the
-    /// TUI finally shows here too — else the theme frame (None).
     /// Per-window frame corner radius override (context menu); None follows
     /// the global `ui_settings.window_corner_radius` already baked into the
     /// window frame style.
@@ -1569,6 +1565,50 @@ impl VellumGuiApp {
             .and_then(|settings| settings.corner_radius)
     }
 
+    /// Effective title bar height for a game window: per-window override,
+    /// else the global setting. 0 means "auto" in both layers; None =
+    /// derive from the title font (egui's default behavior).
+    pub(super) fn title_bar_height_for_tab(&self, key: &TabKey) -> Option<f32> {
+        let height = self
+            .tab_settings
+            .get(key)
+            .and_then(|settings| settings.title_bar_height)
+            .unwrap_or(self.ui_settings.title_bar_height);
+        (height > 0.0).then(|| height.clamp(12.0, 32.0))
+    }
+
+    /// Effective title text alignment for a game window.
+    pub(super) fn title_align_for_tab(&self, key: &TabKey) -> egui::Align {
+        let align = self
+            .tab_settings
+            .get(key)
+            .and_then(|settings| settings.title_bar_align.as_deref())
+            .unwrap_or(&self.ui_settings.title_bar_align);
+        match align {
+            "left" => egui::Align::Min,
+            "right" => egui::Align::Max,
+            _ => egui::Align::Center,
+        }
+    }
+
+    /// Apply the resolved title bar height and alignment to a game-window
+    /// builder. Editor and dialog windows keep egui's standard chrome.
+    pub(super) fn style_window_title_bar<'a>(
+        &self,
+        key: &TabKey,
+        mut window: egui::Window<'a>,
+    ) -> egui::Window<'a> {
+        window = window.title_align(self.title_align_for_tab(key));
+        if let Some(height) = self.title_bar_height_for_tab(key) {
+            window = window.title_bar_height(height);
+        }
+        window
+    }
+
+    /// Accent (border) color for a window. Precedence: the per-window GUI
+    /// accent (context menu), else the shared layout definition's
+    /// border_color — so a border color set in the window editor or the
+    /// TUI finally shows here too — else the theme frame (None).
     fn accent_color_for_tab(&self, key: &TabKey) -> Option<Color32> {
         if let Some(accent) = self
             .tab_settings

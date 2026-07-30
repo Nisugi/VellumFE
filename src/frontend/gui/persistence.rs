@@ -80,6 +80,16 @@ pub struct TabSettings {
     #[serde(default)]
     pub corner_radius: Option<f32>,
 
+    /// Title bar height override in points; None follows the global
+    /// `GuiUiSettings::title_bar_height` (where 0 = derive from the font).
+    #[serde(default)]
+    pub title_bar_height: Option<f32>,
+
+    /// Title alignment override ("left" | "center" | "right"); None follows
+    /// the global setting.
+    #[serde(default)]
+    pub title_bar_align: Option<String>,
+
     /// Whether to wrap text at window boundary
     #[serde(default = "default_wrap_text")]
     pub wrap_text: bool,
@@ -105,6 +115,8 @@ impl Default for TabSettings {
             text_size: None,
             accent_color: None,
             corner_radius: None,
+            title_bar_height: None,
+            title_bar_align: None,
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
             map_zoom: None,
@@ -254,9 +266,19 @@ pub struct GuiUiSettings {
     #[serde(default = "default_text_size")]
     pub text_size: f32,
 
-    /// Title bar text size, in points; title bar height follows it.
+    /// Title bar text size, in points; by default the bar height follows it.
     #[serde(default = "default_title_font_size")]
     pub title_font_size: f32,
+
+    /// Exact title bar height in points for game windows, independent of
+    /// the title text size. 0 = derive the height from the title font.
+    #[serde(default)]
+    pub title_bar_height: f32,
+
+    /// Title text alignment in game-window title bars:
+    /// "left" | "center" | "right".
+    #[serde(default = "default_title_bar_align")]
+    pub title_bar_align: String,
 
     /// Height of one active-effect bar row, in points.
     #[serde(default = "default_effects_bar_height")]
@@ -300,6 +322,10 @@ fn default_title_font_size() -> f32 {
     13.0
 }
 
+fn default_title_bar_align() -> String {
+    "center".to_string()
+}
+
 fn default_effects_bar_height() -> f32 {
     18.0
 }
@@ -326,6 +352,8 @@ impl Default for GuiUiSettings {
             zoom_factor: default_zoom_factor(),
             text_size: default_text_size(),
             title_font_size: default_title_font_size(),
+            title_bar_height: 0.0,
+            title_bar_align: default_title_bar_align(),
             effects_bar_height: default_effects_bar_height(),
             density: default_density(),
             bar_corner_radius: default_bar_corner_radius(),
@@ -890,6 +918,8 @@ mod tests {
             text_size: None,
             accent_color: None,
             corner_radius: None,
+            title_bar_height: None,
+            title_bar_align: None,
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
             map_zoom: None,
@@ -1110,6 +1140,8 @@ mod tests {
                 text_size: Some(16.0),
                 accent_color: Some("#4784d9".to_string()),
                 corner_radius: None,
+                title_bar_height: None,
+                title_bar_align: None,
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
                 map_zoom: None,

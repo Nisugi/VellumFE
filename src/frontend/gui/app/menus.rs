@@ -61,6 +61,12 @@ pub(super) enum GuiWindowMenuCommand {
     /// Per-window frame corner radius; None reverts to the global setting.
     /// Keeps the menu open like SetTextSize.
     SetCornerRadius(Option<f32>),
+    /// Per-window title bar height; None reverts to the global setting.
+    /// Keeps the menu open like SetTextSize.
+    SetTitleBarHeight(Option<f32>),
+    /// Per-window title alignment ("left" | "center" | "right"); None
+    /// reverts to the global setting.
+    SetTitleBarAlign(Option<String>),
     /// Border on/off for the shared layout def (also drives the TUI).
     SetShowBorder(bool),
     /// Border style name for the shared layout def ("single", "double", ...).
@@ -116,6 +122,12 @@ pub(super) struct WindowAppearanceView {
     /// Per-window frame corner radius override; None follows the global.
     corner_radius_override: Option<f32>,
     global_corner_radius: f32,
+    /// Per-window title bar height override; None follows the global.
+    title_bar_height_override: Option<f32>,
+    /// Global title bar height; 0 = derived from the title font.
+    global_title_bar_height: f32,
+    /// Per-window title alignment override; None follows the global.
+    title_align_override: Option<String>,
     /// Border fields from the shared layout def; None when the window has
     /// no def (border controls are hidden then).
     border: Option<BorderView>,
@@ -302,6 +314,8 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetFont(_)
             | GuiWindowMenuCommand::SetAccent(_)
             | GuiWindowMenuCommand::SetCornerRadius(_)
+            | GuiWindowMenuCommand::SetTitleBarHeight(_)
+            | GuiWindowMenuCommand::SetTitleBarAlign(_)
             | GuiWindowMenuCommand::SetShowBorder(_)
             | GuiWindowMenuCommand::SetBorderStyle(_)
             | GuiWindowMenuCommand::SetBorderSides(_)
@@ -417,6 +431,20 @@ impl VellumGuiApp {
                     .corner_radius = radius;
                 self.layout_dirty = true;
             }
+            GuiWindowMenuCommand::SetTitleBarHeight(height) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .title_bar_height = height;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetTitleBarAlign(align) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .title_bar_align = align;
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::SetShowBorder(show) => {
                 self.with_layout_def_for_tab(tab_key, |def| {
                     def.base_mut().show_border = show;
@@ -481,6 +509,15 @@ impl VellumGuiApp {
             accent_color: self.accent_color_for_tab(tab_key),
             corner_radius_override: self.corner_radius_override_for_tab(tab_key),
             global_corner_radius: self.ui_settings.window_corner_radius,
+            title_bar_height_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.title_bar_height),
+            global_title_bar_height: self.ui_settings.title_bar_height,
+            title_align_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.title_bar_align.clone()),
             border: self.layout_def_for_tab(tab_key).map(|def| {
                 let base = def.base();
                 BorderView {
@@ -1249,6 +1286,57 @@ impl VellumGuiApp {
                 command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
             }
         }
+        let mut tb_enabled = view.title_bar_height_override.is_some();
+        if ui
+            .checkbox(&mut tb_enabled, "Custom title bar height")
+            .changed()
+        {
+            command = Some(GuiWindowMenuCommand::SetTitleBarHeight(if tb_enabled {
+                let seed = if view.global_title_bar_height > 0.0 {
+                    view.global_title_bar_height
+                } else {
+                    18.0
+                };
+                Some(view.title_bar_height_override.unwrap_or(seed))
+            } else {
+                None
+            }));
+        }
+        if let Some(current) = view.title_bar_height_override {
+            let mut value = current;
+            if ui
+                .add(egui::Slider::new(&mut value, 12.0..=32.0).step_by(1.0))
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetTitleBarHeight(Some(value)));
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.label("Title alignment");
+            let current = view.title_align_override.as_deref();
+            let selected_label = match current {
+                Some("left") => "Left",
+                Some("center") => "Center",
+                Some("right") => "Right",
+                _ => "Default",
+            };
+            egui::ComboBox::from_id_salt("gui_window_title_align")
+                .selected_text(selected_label)
+                .show_ui(ui, |ui| {
+                    for (value, label) in [
+                        (None, "Default"),
+                        (Some("left"), "Left"),
+                        (Some("center"), "Center"),
+                        (Some("right"), "Right"),
+                    ] {
+                        if ui.selectable_label(current == value, label).clicked() {
+                            command = Some(GuiWindowMenuCommand::SetTitleBarAlign(
+                                value.map(str::to_string),
+                            ));
+                        }
+                    }
+                });
+        });
         if let Some(border) = &view.border {
             let mut show_border = border.show_border;
             if ui.checkbox(&mut show_border, "Border").changed() {

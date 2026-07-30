@@ -441,7 +441,36 @@ fn render_gui_section(
         ui.add(egui::Slider::new(&mut gui_settings.text_size, 8.0..=32.0).step_by(0.5));
         ui.end_row();
         ui.label("Title bar size");
-        ui.add(egui::Slider::new(&mut gui_settings.title_font_size, 8.0..=40.0).step_by(0.5));
+        ui.add(egui::Slider::new(&mut gui_settings.title_font_size, 8.0..=40.0).step_by(0.5))
+            .on_hover_text("Title text size in points.");
+        ui.end_row();
+        ui.label("Title bar height");
+        ui.add(egui::Slider::new(&mut gui_settings.title_bar_height, 0.0..=32.0).step_by(1.0))
+            .on_hover_text(
+                "Exact title bar height for game windows; the title text \
+                 keeps its own size and is vertically centered. \
+                 0 = follow the title text size.",
+            );
+        ui.end_row();
+        ui.label("Title alignment");
+        egui::ComboBox::from_id_salt("settings_title_bar_align")
+            .selected_text(match gui_settings.title_bar_align.as_str() {
+                "left" => "Left",
+                "right" => "Right",
+                _ => "Center",
+            })
+            .show_ui(ui, |ui| {
+                for (value, label) in
+                    [("left", "Left"), ("center", "Center"), ("right", "Right")]
+                {
+                    if ui
+                        .selectable_label(gui_settings.title_bar_align == value, label)
+                        .clicked()
+                    {
+                        gui_settings.title_bar_align = value.to_string();
+                    }
+                }
+            });
         ui.end_row();
         ui.label("Effect bar height");
         ui.add(egui::Slider::new(&mut gui_settings.effects_bar_height, 10.0..=60.0).step_by(1.0));

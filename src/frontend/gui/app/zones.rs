@@ -1019,7 +1019,7 @@ impl VellumGuiApp {
                 // outer size is passed as-is; converting to an "inner" size
                 // here left every window a frame-margin short of the slot on
                 // the right and bottom.
-                if let Some(inner) = egui::Window::new(self.window_display_title(&tab))
+                let zone_window = egui::Window::new(self.window_display_title(&tab))
                     .id(window_id)
                     .fixed_pos(slot_rect.min)
                     .fixed_size(slot_rect.size())
@@ -1028,7 +1028,9 @@ impl VellumGuiApp {
                     .title_bar(!title_bar_hidden)
                     .collapsible(false)
                     .frame(window_frame)
-                    .constrain_to(root_rect)
+                    .constrain_to(root_rect);
+                let zone_window = self.style_window_title_bar(&tab.id.key, zone_window);
+                if let Some(inner) = zone_window
                     .show(ctx, |ui| {
                         ui.push_id(&tab.id.key, |ui| {
                             // Content fills the full inner height; the vertical
@@ -1411,6 +1413,7 @@ impl VellumGuiApp {
                 .collapsible(false)
                 .constrain_to(window_bounds)
                 .frame(docked_window_frame);
+            window_builder = self.style_window_title_bar(&tab.id.key, window_builder);
             let being_moved = self
                 .window_move_state
                 .as_ref()

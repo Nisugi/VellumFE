@@ -166,7 +166,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -177,7 +177,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -698,7 +698,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.2.0",
+ "unicode-width 0.1.14",
 ]
 
 [[package]]
@@ -1215,7 +1215,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "ecolor"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "bytemuck",
  "emath",
@@ -1224,7 +1224,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1259,7 +1259,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "accesskit",
  "ahash",
@@ -1277,7 +1277,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1296,7 +1296,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -1316,7 +1316,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1336,7 +1336,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "emath"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "bytemuck",
 ]
@@ -1372,7 +1372,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1396,7 +1396,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 
 [[package]]
 name = "equivalent"
@@ -1411,7 +1411,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1712,7 +1712,7 @@ dependencies = [
  "vec_map",
  "wasm-bindgen",
  "web-sys",
- "windows 0.62.0",
+ "windows 0.52.0",
 ]
 
 [[package]]
@@ -2044,7 +2044,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -2821,7 +2821,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3923,7 +3923,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4471,7 +4471,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.3",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5607,7 +5607,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
