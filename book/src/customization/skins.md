@@ -121,6 +121,37 @@ default mapping.
 
 The name `none` is reserved — a `[frames.none]` entry is ignored.
 
+## No Skin Required: the Image Pool
+
+Everything above describes skins, but **none of it requires one**. Art
+installed into the shared pool (`~/.vellum-fe/global/images/<category>/`,
+usually via `.jinx install`) is selectable straight from the GUI:
+
+- **Injury doll** — right-click the injuries window → Appearance →
+  *Doll image* lists every doll in the pool; *Calibrate doll…* places the
+  wound anchors, saved into the image's sidecar toml so the calibration
+  travels with the art (Jinx dolls can ship pre-calibrated). A
+  *Grayscale doll art* checkbox desaturates the art (dots keep their
+  colors); the grayscale copy is built only while it's checked.
+- **Frames** — the per-window *Skin frame* picker lists pool frames
+  (those with a slice/scale sidecar) alongside the skin's `[frames.*]`.
+- **Backgrounds** — every window's Appearance menu has a *Background*
+  picker over `backgrounds/` pool images.
+- **Compass** — the compass window's Appearance menu picks a pool set
+  (`compass/<set>_<role>.png`, roles `rose`, `n` … `nw`, `up`, `down`,
+  `out`).
+- **Status icons** — the Indicator Templates editor picks a pool set
+  (`statusicons/<set>_<glyph>.png`, glyph = indicator id) plus
+  per-indicator overrides: any pool image or a hotbar sheet cell. A
+  *Grayscale when inactive* checkbox shows the desaturated icon for
+  inactive statuses instead of fading it.
+
+All of these choices live in your GUI layout (checkpoints and
+`.uiexport` carry them). When an arrangement is worth sharing,
+**`.saveskin <name>`** compiles it into `global/skins/<name>/skin.toml`
+referencing the pool art — a publishable skin, without hand-writing any
+TOML.
+
 ## Status Icons
 
 Replace the built-in vector pictograms in the dashboard and indicator
