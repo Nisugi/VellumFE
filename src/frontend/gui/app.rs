@@ -1320,10 +1320,14 @@ impl VellumGuiApp {
             auto_contrast_bar_text: self.ui_settings.auto_contrast_bar_text,
             wrap_text: self.effective_wrap_text(key),
             vitals: self.ui_settings.vitals.clone(),
-            background: self
-                .available_tabs
-                .get(key)
-                .and_then(|tab| self.skin_state.background_for(&tab.window_name)),
+            background: self.available_tabs.get(key).and_then(|tab| {
+                self.skin_state.background_for_with_override(
+                    &tab.window_name,
+                    self.tab_settings
+                        .get(key)
+                        .and_then(|settings| settings.background_image.as_deref()),
+                )
+            }),
             skin_art: self.skin_state.widget_art(),
             command_input_seed: self
                 .available_tabs
@@ -4584,6 +4588,11 @@ impl eframe::App for VellumGuiApp {
         );
         self.skin_state
             .set_compass_set(self.ui_settings.compass_set.as_deref());
+        self.skin_state.set_needed_pool_backgrounds(
+            self.tab_settings
+                .values()
+                .filter_map(|settings| settings.background_image.clone()),
+        );
         self.skin_state.apply_if_changed(
             &ctx,
             self.ui_settings.active_skin.as_deref(),

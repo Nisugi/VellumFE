@@ -71,6 +71,9 @@ pub(super) enum GuiWindowMenuCommand {
     CalibrateDoll,
     /// Global compass art set from the pool; None reverts to the skin's.
     SetCompassSet(Option<String>),
+    /// Per-window background: pool image path, "none" for no background,
+    /// or None to revert to the skin's per-window mapping.
+    SetBackground(Option<String>),
     /// Per-window title bar height; None reverts to the global setting.
     /// Keeps the menu open like SetTextSize.
     SetTitleBarHeight(Option<f32>),
@@ -165,6 +168,12 @@ pub(super) struct WindowAppearanceView {
     compass_sets: Vec<String>,
     /// Global compass set override; None = skin default.
     compass_override: Option<String>,
+    /// Pool background images as (pool-relative path, display stem).
+    background_images: Vec<(String, String)>,
+    /// Per-window background override; None = skin default.
+    background_override: Option<String>,
+    /// Whether the skin resolves a background for this window by default.
+    has_skin_background: bool,
     /// Per-window title bar height override; None follows the global.
     title_bar_height_override: Option<f32>,
     /// Global title bar height; 0 = derived from the title font.
@@ -363,6 +372,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetDollImage(_)
             | GuiWindowMenuCommand::CalibrateDoll
             | GuiWindowMenuCommand::SetCompassSet(_)
+            | GuiWindowMenuCommand::SetBackground(_)
             | GuiWindowMenuCommand::SetTitleBarHeight(_)
             | GuiWindowMenuCommand::SetTitleBarAlign(_)
             | GuiWindowMenuCommand::SetShowBorder(_)
@@ -528,6 +538,13 @@ impl VellumGuiApp {
                 self.ui_settings.compass_set = set;
                 self.layout_dirty = true;
             }
+            GuiWindowMenuCommand::SetBackground(background) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .background_image = background;
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::SetTitleBarHeight(height) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -656,6 +673,19 @@ impl VellumGuiApp {
             is_compass,
             compass_sets,
             compass_override: self.ui_settings.compass_set.clone(),
+            background_images: crate::config::pool::list_category("backgrounds")
+                .iter()
+                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .collect(),
+            background_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.background_image.clone()),
+            has_skin_background: self
+                .available_tabs
+                .get(tab_key)
+                .and_then(|tab| self.skin_state.background_for(&tab.window_name))
+                .is_some(),
             title_bar_height_override: self
                 .tab_settings
                 .get(tab_key)
@@ -758,6 +788,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetSkinFrame(_)
                     | GuiWindowMenuCommand::SetDollImage(_)
                     | GuiWindowMenuCommand::SetCompassSet(_)
+                    | GuiWindowMenuCommand::SetBackground(_)
                     | GuiWindowMenuCommand::SetTitleBarHeight(_)
                     | GuiWindowMenuCommand::SetTitleBarAlign(_)
                     | GuiWindowMenuCommand::SetShowBorder(_)
@@ -1532,6 +1563,49 @@ impl VellumGuiApp {
             if ui.button("Calibrate doll…").clicked() {
                 command = Some(GuiWindowMenuCommand::CalibrateDoll);
             }
+        }
+        if !view.background_images.is_empty() || view.has_skin_background {
+            ui.horizontal(|ui| {
+                ui.label("Background");
+                let selected_label = match view.background_override.as_deref() {
+                    None => "Skin default",
+                    Some(path) if path.eq_ignore_ascii_case("none") => "None",
+                    Some(path) => view
+                        .background_images
+                        .iter()
+                        .find(|(pool_path, _)| pool_path == path)
+                        .map(|(_, stem)| stem.as_str())
+                        .unwrap_or(path),
+                };
+                egui::ComboBox::from_id_salt("gui_window_background")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(view.background_override.is_none(), "Skin default")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetBackground(None));
+                        }
+                        let none_selected = view
+                            .background_override
+                            .as_deref()
+                            .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                        if ui.selectable_label(none_selected, "None").clicked() {
+                            command = Some(GuiWindowMenuCommand::SetBackground(Some(
+                                "none".to_string(),
+                            )));
+                        }
+                        for (path, stem) in &view.background_images {
+                            let selected =
+                                view.background_override.as_deref() == Some(path.as_str());
+                            if ui.selectable_label(selected, stem).clicked() {
+                                command = Some(GuiWindowMenuCommand::SetBackground(Some(
+                                    path.clone(),
+                                )));
+                            }
+                        }
+                    });
+            });
         }
         if view.is_compass {
             ui.horizontal(|ui| {

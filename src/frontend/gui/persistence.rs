@@ -87,6 +87,12 @@ pub struct TabSettings {
     #[serde(default)]
     pub skin_frame: Option<String>,
 
+    /// Background override: None follows the skin's per-window mapping,
+    /// "none" disables the background, anything else is a pool-relative
+    /// image path ("backgrounds/parchment.png").
+    #[serde(default)]
+    pub background_image: Option<String>,
+
     /// Title bar height override in points; None follows the global
     /// `GuiUiSettings::title_bar_height` (where 0 = derive from the font).
     #[serde(default)]
@@ -123,6 +129,7 @@ impl Default for TabSettings {
             accent_color: None,
             corner_radius: None,
             skin_frame: None,
+            background_image: None,
             title_bar_height: None,
             title_bar_align: None,
             wrap_text: true,
@@ -987,6 +994,7 @@ mod tests {
             accent_color: None,
             corner_radius: None,
             skin_frame: None,
+            background_image: None,
             title_bar_height: None,
             title_bar_align: None,
             wrap_text: false,
@@ -1210,6 +1218,7 @@ mod tests {
                 accent_color: Some("#4784d9".to_string()),
                 corner_radius: None,
                 skin_frame: None,
+                background_image: None,
                 title_bar_height: None,
                 title_bar_align: None,
                 wrap_text: true,

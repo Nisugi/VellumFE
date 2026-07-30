@@ -258,6 +258,9 @@ pub struct SkinState {
     /// these load textures — pool frame art can be megabytes, so the
     /// picker lists names without loading (`frame_names`).
     needed_pool_frames: Vec<String>,
+    /// Pool background images referenced by window overrides (pool-relative
+    /// paths); like frames, only referenced ones load.
+    needed_pool_backgrounds: Vec<String>,
     /// Active statusicons pool set (lowercase `<set>_` prefix).
     statusicon_set: Option<String>,
     /// Compass pool set override (lowercase prefix); replaces the skin's
@@ -382,6 +385,21 @@ impl SkinState {
         if set != self.statusicon_set || overrides != self.statusicon_overrides {
             self.statusicon_set = set;
             self.statusicon_overrides = overrides;
+            self.applied = false;
+        }
+    }
+
+    /// Declare which pool backgrounds window overrides reference. Call
+    /// before `apply_if_changed`; a change triggers a reload.
+    pub fn set_needed_pool_backgrounds(&mut self, paths: impl IntoIterator<Item = String>) {
+        let mut paths: Vec<String> = paths
+            .into_iter()
+            .filter(|path| !path.eq_ignore_ascii_case("none"))
+            .collect();
+        paths.sort();
+        paths.dedup();
+        if paths != self.needed_pool_backgrounds {
+            self.needed_pool_backgrounds = paths;
             self.applied = false;
         }
     }
@@ -627,6 +645,7 @@ impl SkinState {
             .collect();
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
+        images.extend(self.needed_pool_backgrounds.iter().cloned());
         images.extend(self.doll_override.iter().cloned());
         images.extend(self.pool_status_icons.values().cloned());
         images.extend(self.pool_compass.values().cloned());
@@ -695,6 +714,33 @@ impl SkinState {
             tint,
             scrim_alpha: (spec.scrim.clamp(0.0, 1.0) * 255.0).round() as u8,
         })
+    }
+
+    /// Background resolution honoring a per-window override: "none" kills
+    /// the background, a pool-relative path renders that image with
+    /// readable defaults (cover fit, a light theme scrim), anything else
+    /// falls back to the skin's own per-window mapping.
+    pub fn background_for_with_override(
+        &self,
+        window_name: &str,
+        background_override: Option<&str>,
+    ) -> Option<ResolvedBackground> {
+        match background_override {
+            Some(path) if path.eq_ignore_ascii_case("none") => None,
+            Some(path) => {
+                let texture = self.textures.get(path)?.as_ref()?;
+                Some(ResolvedBackground {
+                    texture: texture.id(),
+                    tex_size: texture.size_vec2(),
+                    fit: BackgroundFit::Cover,
+                    tint: egui::Color32::WHITE,
+                    // Text stays readable over arbitrary pool art; skins
+                    // that want exact control keep using their manifest.
+                    scrim_alpha: (0.25 * 255.0) as u8,
+                })
+            }
+            None => self.background_for(window_name),
+        }
     }
 
     /// Resolve the nine-slice border for a window, falling back to the
