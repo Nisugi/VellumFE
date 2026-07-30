@@ -352,6 +352,11 @@ pub struct GuiUiSettings {
     /// Status icon art selection (pool set + per-indicator overrides).
     #[serde(default)]
     pub status_icons: StatusIconSettings,
+
+    /// Compass art set from the pool (`compass/<set>_<role>.png`, roles
+    /// rose/n/ne/.../out); None follows the active skin's `[compass]`.
+    #[serde(default)]
+    pub compass_set: Option<String>,
 }
 
 /// Which art status indicators use, resolved ahead of the built-in vector
@@ -422,6 +427,7 @@ impl Default for GuiUiSettings {
             active_skin: None,
             doll_image: None,
             status_icons: StatusIconSettings::default(),
+            compass_set: None,
         }
     }
 }

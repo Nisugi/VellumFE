@@ -69,6 +69,8 @@ pub(super) enum GuiWindowMenuCommand {
     SetDollImage(Option<String>),
     /// Open the doll calibrator (injury doll windows).
     CalibrateDoll,
+    /// Global compass art set from the pool; None reverts to the skin's.
+    SetCompassSet(Option<String>),
     /// Per-window title bar height; None reverts to the global setting.
     /// Keeps the menu open like SetTextSize.
     SetTitleBarHeight(Option<f32>),
@@ -157,6 +159,12 @@ pub(super) struct WindowAppearanceView {
     doll_images: Vec<(String, String)>,
     /// Global doll override (pool-relative path); None = skin default.
     doll_override: Option<String>,
+    /// Compass widget: offer the pool compass-set picker.
+    is_compass: bool,
+    /// Pool compass sets.
+    compass_sets: Vec<String>,
+    /// Global compass set override; None = skin default.
+    compass_override: Option<String>,
     /// Per-window title bar height override; None follows the global.
     title_bar_height_override: Option<f32>,
     /// Global title bar height; 0 = derived from the title font.
@@ -354,6 +362,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetSkinFrame(_)
             | GuiWindowMenuCommand::SetDollImage(_)
             | GuiWindowMenuCommand::CalibrateDoll
+            | GuiWindowMenuCommand::SetCompassSet(_)
             | GuiWindowMenuCommand::SetTitleBarHeight(_)
             | GuiWindowMenuCommand::SetTitleBarAlign(_)
             | GuiWindowMenuCommand::SetShowBorder(_)
@@ -515,6 +524,10 @@ impl VellumGuiApp {
             GuiWindowMenuCommand::CalibrateDoll => {
                 self.open_doll_calibration();
             }
+            GuiWindowMenuCommand::SetCompassSet(set) => {
+                self.ui_settings.compass_set = set;
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::SetTitleBarHeight(height) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -606,6 +619,12 @@ impl VellumGuiApp {
         } else {
             Vec::new()
         };
+        let is_compass = widget_type == Some(WidgetType::Compass);
+        let compass_sets = if is_compass {
+            crate::config::pool::set_names("compass")
+        } else {
+            Vec::new()
+        };
         WindowAppearanceView {
             title_bar_hidden: self.title_bar_hidden(tab_key),
             text_size_override: self.text_size_override_for_tab(tab_key),
@@ -634,6 +653,9 @@ impl VellumGuiApp {
             is_doll,
             doll_images,
             doll_override: self.ui_settings.doll_image.clone(),
+            is_compass,
+            compass_sets,
+            compass_override: self.ui_settings.compass_set.clone(),
             title_bar_height_override: self
                 .tab_settings
                 .get(tab_key)
@@ -735,6 +757,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetCornerRadius(_)
                     | GuiWindowMenuCommand::SetSkinFrame(_)
                     | GuiWindowMenuCommand::SetDollImage(_)
+                    | GuiWindowMenuCommand::SetCompassSet(_)
                     | GuiWindowMenuCommand::SetTitleBarHeight(_)
                     | GuiWindowMenuCommand::SetTitleBarAlign(_)
                     | GuiWindowMenuCommand::SetShowBorder(_)
@@ -1508,6 +1531,32 @@ impl VellumGuiApp {
             }
             if ui.button("Calibrate doll…").clicked() {
                 command = Some(GuiWindowMenuCommand::CalibrateDoll);
+            }
+        }
+        if view.is_compass {
+            ui.horizontal(|ui| {
+                ui.label("Compass art");
+                let selected_label = view.compass_override.as_deref().unwrap_or("Skin default");
+                egui::ComboBox::from_id_salt("gui_window_compass_set")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(view.compass_override.is_none(), "Skin default")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetCompassSet(None));
+                        }
+                        for set in &view.compass_sets {
+                            let selected = view.compass_override.as_deref() == Some(set.as_str());
+                            if ui.selectable_label(selected, set).clicked() {
+                                command =
+                                    Some(GuiWindowMenuCommand::SetCompassSet(Some(set.clone())));
+                            }
+                        }
+                    });
+            });
+            if view.compass_sets.is_empty() {
+                ui.weak("No compass sets in the pool — install with .jinx");
             }
         }
         if !view.skin_frames.is_empty() || view.has_skin_border {

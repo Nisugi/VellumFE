@@ -260,6 +260,11 @@ pub struct SkinState {
     needed_pool_frames: Vec<String>,
     /// Active statusicons pool set (lowercase `<set>_` prefix).
     statusicon_set: Option<String>,
+    /// Compass pool set override (lowercase prefix); replaces the skin's
+    /// `[compass]` when its rose is present.
+    compass_set: Option<String>,
+    /// Resolved compass set: lowercase role ("rose", "n", ...) -> pool path.
+    pool_compass: HashMap<String, String>,
     /// Per-indicator icon overrides (UPPERCASE id; `Default` never stored).
     statusicon_overrides: HashMap<String, crate::data::IconRef>,
     /// Resolved pool set art: UPPERCASE glyph id -> pool-relative path.
@@ -301,7 +306,8 @@ impl SkinState {
         self.doll_override = doll_override.map(str::to_owned);
         self.manifest = SkinManifest::default();
         self.pool_frames = load_pool_frames(&self.needed_pool_frames);
-        self.pool_status_icons = load_pool_status_icons(self.statusicon_set.as_deref());
+        self.pool_status_icons = load_pool_set("statusicons", self.statusicon_set.as_deref());
+        self.pool_compass = load_pool_set("compass", self.compass_set.as_deref());
         self.textures.clear();
         self.widget_art = None;
         self.manifest_mtime = None;
@@ -376,6 +382,16 @@ impl SkinState {
         if set != self.statusicon_set || overrides != self.statusicon_overrides {
             self.statusicon_set = set;
             self.statusicon_overrides = overrides;
+            self.applied = false;
+        }
+    }
+
+    /// Declare the compass pool set (from ui_settings.compass_set). Call
+    /// before `apply_if_changed`; a change triggers a reload.
+    pub fn set_compass_set(&mut self, set: Option<&str>) {
+        let set = set.map(|s| s.to_ascii_lowercase());
+        if set != self.compass_set {
+            self.compass_set = set;
             self.applied = false;
         }
     }
@@ -474,7 +490,7 @@ impl SkinState {
         for (id, path) in &self.pool_status_icons {
             if let Some(texture) = tex(path) {
                 art.icons
-                    .entry(id.clone())
+                    .entry(id.to_ascii_uppercase())
                     .or_insert(IconSlot::Sprite(texture));
             }
         }
@@ -519,6 +535,21 @@ impl SkinState {
             if let Some(texture) = tex(path) {
                 art.compass_dirs
                     .insert(direction.to_ascii_lowercase(), texture);
+            }
+        }
+        // A compass pool set with a rose replaces the skin's compass
+        // wholesale (rose + direction overlays are same-canvas art; mixing
+        // sources would misalign them).
+        if let Some(rose) = self.pool_compass.get("rose").and_then(tex) {
+            art.compass_rose = Some(rose);
+            art.compass_dirs.clear();
+            for (role, path) in &self.pool_compass {
+                if role == "rose" {
+                    continue;
+                }
+                if let Some(texture) = tex(path) {
+                    art.compass_dirs.insert(role.clone(), texture);
+                }
             }
         }
         art.doll_base = self.manifest.injury_doll.base.as_ref().and_then(tex);
@@ -598,6 +629,7 @@ impl SkinState {
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.doll_override.iter().cloned());
         images.extend(self.pool_status_icons.values().cloned());
+        images.extend(self.pool_compass.values().cloned());
         images.extend(
             self.statusicon_overrides
                 .values()
@@ -738,22 +770,22 @@ impl SkinState {
     }
 }
 
-/// Resolve the active statusicons set into UPPERCASE glyph id -> pool
-/// path: `<set>_<glyph>.png` contributes glyph. No set = no pool icons.
-fn load_pool_status_icons(set: Option<&str>) -> HashMap<String, String> {
-    let mut icons = HashMap::new();
+/// Resolve one pool set: `<set>_<suffix>.png` -> lowercase suffix -> pool
+/// path (glyph ids for statusicons, roles for compass). No set = empty.
+fn load_pool_set(category: &str, set: Option<&str>) -> HashMap<String, String> {
+    let mut entries = HashMap::new();
     let Some(set) = set else {
-        return icons;
+        return entries;
     };
-    for image in crate::config::pool::list_category("statusicons") {
-        let Some((prefix, glyph)) = image.stem().split_once('_') else {
+    for image in crate::config::pool::list_category(category) {
+        let Some((prefix, suffix)) = image.stem().split_once('_') else {
             continue;
         };
-        if prefix.eq_ignore_ascii_case(set) && !glyph.is_empty() {
-            icons.insert(glyph.to_ascii_uppercase(), image.pool_path.clone());
+        if prefix.eq_ignore_ascii_case(set) && !suffix.is_empty() {
+            entries.insert(suffix.to_ascii_lowercase(), image.pool_path.clone());
         }
     }
-    icons
+    entries
 }
 
 /// Load the specs (not textures) for the needed pool frames: match stems

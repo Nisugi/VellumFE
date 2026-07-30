@@ -4582,6 +4582,8 @@ impl eframe::App for VellumGuiApp {
             self.ui_settings.status_icons.set.as_deref(),
             &self.ui_settings.status_icons.overrides,
         );
+        self.skin_state
+            .set_compass_set(self.ui_settings.compass_set.as_deref());
         self.skin_state.apply_if_changed(
             &ctx,
             self.ui_settings.active_skin.as_deref(),
