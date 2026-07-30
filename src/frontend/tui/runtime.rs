@@ -474,6 +474,26 @@ async fn async_run(
             }
         }
 
+        // Feed-injected dot-commands (<vellumCmd> from Lich scripts) run
+        // through the same dispatch as typed dot-commands; action strings
+        // route into the menu-action handler like menu picks do.
+        for command in app_core.take_pending_client_commands() {
+            match app_core.send_command(command) {
+                Ok(action) if action.starts_with("action:") => {
+                    if let Err(e) = crate::frontend::tui::menu_actions::handle_menu_action(
+                        &mut app_core,
+                        &mut frontend,
+                        &action,
+                    ) {
+                        tracing::warn!("vellumCmd action failed: {e}");
+                    }
+                    app_core.needs_render = true;
+                }
+                Ok(_) => app_core.needs_render = true,
+                Err(e) => tracing::warn!("vellumCmd failed: {e}"),
+            }
+        }
+
         // Poll for frontend events (keyboard, mouse, resize)
         let events = frontend.poll_events()?;
         app_core

@@ -212,6 +212,10 @@ pub struct MessageProcessor {
     /// Remote client sink for the web frontend sidecar.
     /// None unless `[web] enabled = true` — see core/remote.rs.
     pub remote: Option<super::remote::RemoteSink>,
+
+    /// Dot-commands injected by the feed (`<vellumCmd cmd="..."/>`), waiting
+    /// for the frontend to drain them into its dot-command dispatch.
+    pub pending_client_commands: Vec<String>,
 }
 
 impl MessageProcessor {
@@ -275,6 +279,7 @@ impl MessageProcessor {
             inv_scan: Default::default(),
             pending_container_ingest: None,
             remote: None,
+            pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
             discard_current_stream: false,
@@ -975,6 +980,19 @@ impl MessageProcessor {
                 // value is the absolute epoch end time in the server clock
                 // domain, like RoundTime/CastTime; 0 or a past time clears.
                 self.update_countdown_by_id(ui_state, id, (*value).max(0));
+            }
+            ParsedElement::VellumCommand { command } => {
+                // Feed-driven client commands (Lich scripts). Dot-commands
+                // only: the frontends drain this queue into their normal
+                // dot-command dispatch, so anything else could round-trip
+                // back to the game — refuse it.
+                if command.starts_with('.') {
+                    self.pending_client_commands.push(command.clone());
+                } else {
+                    tracing::warn!(
+                        "vellumCmd rejected (only dot-commands are allowed): {command}"
+                    );
+                }
             }
             ParsedElement::LeftHand { item, link } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update

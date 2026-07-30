@@ -109,6 +109,13 @@ pub enum ParsedElement {
         id: String,
         value: i64,
     },
+    /// Client command injected by the feed (`<vellumCmd cmd=".header off"/>`,
+    /// typically emitted by a Lich script). Only dot-commands are honored
+    /// downstream, so the feed can drive client UI but never send game
+    /// commands.
+    VellumCommand {
+        command: String,
+    },
     ProgressBar {
         id: String,
         value: u32,
@@ -684,6 +691,8 @@ impl XmlParser {
             self.handle_casttime(tag, elements);
         } else if tag.starts_with("<vellumTimer ") {
             self.handle_vellum_timer(tag, elements);
+        } else if tag.starts_with("<vellumCmd ") || tag.starts_with("<vellum-cmd ") {
+            self.handle_vellum_cmd(tag, elements);
         } else if tag.starts_with("<spell") {
             self.handle_spell(tag, text_buffer, elements);
         } else if tag.starts_with("<left") {
@@ -2290,6 +2299,20 @@ impl XmlParser {
         }
     }
 
+    fn handle_vellum_cmd(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <vellumCmd cmd=".rightbar off"/> (also accepted: <vellum-cmd ...>)
+        // - script-facing client-command feed: Lich emits the tag, the game
+        // never does. The message processor only honors dot-commands, so a
+        // feed can toggle zones, hide windows, switch themes, etc., but can
+        // never send outbound game commands. The tag never renders as text.
+        if let Some(cmd) = Self::extract_attribute(tag, "cmd") {
+            let command = cmd.trim().to_string();
+            if !command.is_empty() {
+                elements.push(ParsedElement::VellumCommand { command });
+            }
+        }
+    }
+
     fn handle_nav(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <nav rm='7150105'/>
         // Extract room ID
@@ -3455,6 +3478,45 @@ mod tests {
                     .iter()
                     .any(|e| matches!(e, ParsedElement::VellumTimer { .. })),
                 "line {:?} should not produce a timer",
+                line
+            );
+        }
+    }
+
+    // ==================== VellumCmd Parsing ====================
+
+    #[test]
+    fn test_vellum_cmd_parsing() {
+        let mut parser = test_parser();
+        // Both spellings, self-closing; command carries spaces.
+        for line in [
+            "<vellumCmd cmd='.rightbar off'/>",
+            "<vellum-cmd cmd='.rightbar off'/>",
+        ] {
+            let elements = parser.parse_line(line);
+            let commands: Vec<_> = elements
+                .iter()
+                .filter(|e| matches!(e, ParsedElement::VellumCommand { .. }))
+                .collect();
+            assert_eq!(commands.len(), 1, "line {:?}", line);
+            let ParsedElement::VellumCommand { command } = commands[0] else {
+                panic!("Expected VellumCommand element, got {:?}", commands[0]);
+            };
+            assert_eq!(command, ".rightbar off");
+        }
+    }
+
+    #[test]
+    fn test_vellum_cmd_malformed_ignored() {
+        let mut parser = test_parser();
+        // Missing/empty cmd: no element, no text.
+        for line in ["<vellumCmd/>", "<vellumCmd cmd=''/>", "<vellumCmd cmd='  '/>"] {
+            let elements = parser.parse_line(line);
+            assert!(
+                !elements
+                    .iter()
+                    .any(|e| matches!(e, ParsedElement::VellumCommand { .. })),
+                "line {:?} should not produce a command",
                 line
             );
         }

@@ -655,6 +655,15 @@ pub async fn async_run(
             }
         }
 
+        // Feed-injected dot-commands (<vellumCmd> from Lich scripts):
+        // same core path as typed input; action strings need a local UI
+        // and are quietly skipped here.
+        for command in app_core.take_pending_client_commands() {
+            if let Err(e) = app_core.send_command(command) {
+                tracing::warn!("vellumCmd failed: {e}");
+            }
+        }
+
         // Apply session-control requests from web clients.
         for request in session_requests {
             match request {

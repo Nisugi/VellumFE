@@ -3126,6 +3126,13 @@ impl AppCore {
         format!("spacer_{}", max_number + 1)
     }
 
+    /// Feed-injected dot-commands (`<vellumCmd cmd=".."/>`, emitted by Lich
+    /// scripts) waiting for the frontend's normal dot-command dispatch.
+    /// Drained once per frame/tick by each frontend.
+    pub fn take_pending_client_commands(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.message_processor.pending_client_commands)
+    }
+
     /// Add a system message to a window that receives the "main" stream.
     /// First tries window named "main", then looks for any window subscribed to "main" stream.
     pub fn add_system_message(&mut self, message: &str) {

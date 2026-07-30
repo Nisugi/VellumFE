@@ -4843,6 +4843,11 @@ impl eframe::App for VellumGuiApp {
         );
         self.apply_ui_sizing(&ctx);
         self.pump_server_messages();
+        // Feed-injected dot-commands (<vellumCmd> from Lich scripts) run
+        // through the same dispatch as typed commands.
+        for command in self.app_core.take_pending_client_commands() {
+            self.dispatch_command(command);
+        }
         // Keep painting while the map worker, mapdb download, or walk
         // executor is busy so results and progress appear without waiting
         // for user input or game text (travel needs ticks for RT waits).
