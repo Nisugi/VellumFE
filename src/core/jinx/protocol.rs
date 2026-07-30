@@ -74,6 +74,14 @@ pub struct VellumMeta {
     /// its category layout, so a brand-new category needs no client change.
     #[serde(default)]
     pub pool: Option<String>,
+    /// Render metadata for single-file assets (frames, sheets). Installed
+    /// into the image's pool sidecar toml so the art arrives ready to use.
+    #[serde(default)]
+    pub slice: Option<crate::config::pool::SliceSpec>,
+    #[serde(default)]
+    pub scale: Option<f32>,
+    #[serde(default)]
+    pub cell: Option<u32>,
 }
 
 /// Directory-safe pool category name: lowercase alphanumerics plus `_`/`-`,

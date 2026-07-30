@@ -218,6 +218,13 @@ pub struct SkinState {
     /// ui_settings.doll_image); replaces the skin's `[injury_doll]` when
     /// set — its calibration comes from the image's sidecar toml.
     doll_override: Option<String>,
+    /// Pool frames referenced by window overrides (lowercase stems). Only
+    /// these load textures — pool frame art can be megabytes, so the
+    /// picker lists names without loading (`frame_names`).
+    needed_pool_frames: Vec<String>,
+    /// Loaded pool frames: lowercase stem -> spec whose `image` is the
+    /// pool-relative texture key.
+    pool_frames: HashMap<String, skins::BorderSpec>,
     /// Lowercased names of sheets that came from the shared icon store
     /// (global/icons) rather than the skin itself.
     shared_sheet_names: std::collections::HashSet<String>,
@@ -251,6 +258,7 @@ impl SkinState {
         self.loaded_id = active.map(str::to_owned);
         self.doll_override = doll_override.map(str::to_owned);
         self.manifest = SkinManifest::default();
+        self.pool_frames = load_pool_frames(&self.needed_pool_frames);
         self.textures.clear();
         self.widget_art = None;
         self.manifest_mtime = None;
@@ -306,6 +314,22 @@ impl SkinState {
     /// skin.toml.
     pub fn force_reload(&mut self) {
         self.applied = false;
+    }
+
+    /// Declare which pool frames window overrides reference (any case).
+    /// Call before `apply_if_changed`; a changed set triggers a reload so
+    /// the newly-needed textures come in (and dropped ones free up).
+    pub fn set_needed_pool_frames(&mut self, names: impl IntoIterator<Item = String>) {
+        let mut names: Vec<String> = names
+            .into_iter()
+            .map(|name| name.to_ascii_lowercase())
+            .collect();
+        names.sort();
+        names.dedup();
+        if names != self.needed_pool_frames {
+            self.needed_pool_frames = names;
+            self.applied = false;
+        }
     }
 
     /// True when the active skin's manifest or the shared icons.toml mtime
@@ -478,6 +502,7 @@ impl SkinState {
             })
             .collect();
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
+        images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.doll_override.iter().cloned());
         images.extend(self.manifest.icons.values().cloned());
         images.extend(self.manifest.sheets.values().map(|s| s.path.clone()));
@@ -560,6 +585,12 @@ impl SkinState {
             Some(name) if name.eq_ignore_ascii_case(skins::NO_FRAME) => None,
             Some(name) => skins::named_frame(&self.manifest, name)
                 .and_then(|spec| self.resolve_border(spec))
+                .or_else(|| {
+                    // Pool frame (skinless or supplementing the skin).
+                    self.pool_frames
+                        .get(&name.to_ascii_lowercase())
+                        .and_then(|spec| self.resolve_border(spec))
+                })
                 .or_else(|| self.border_for(window_name)),
             None => self.border_for(window_name),
         }
@@ -575,8 +606,9 @@ impl SkinState {
         })
     }
 
-    /// Named frames the active skin offers, sorted for the Appearance
-    /// picker. Empty when no skin is active or it defines none.
+    /// Frames the Appearance picker offers: the active skin's `[frames.*]`
+    /// plus every pool frame with a sidecar (names only — textures load
+    /// lazily for frames actually assigned). Skin names win collisions.
     pub fn frame_names(&self) -> Vec<String> {
         let mut names: Vec<String> = self
             .manifest
@@ -585,9 +617,57 @@ impl SkinState {
             .filter(|name| !name.eq_ignore_ascii_case(skins::NO_FRAME))
             .cloned()
             .collect();
+        for image in crate::config::pool::list_category("frames") {
+            let stem = image.stem();
+            if stem.eq_ignore_ascii_case(skins::NO_FRAME) {
+                continue;
+            }
+            // Without a slice/scale sidecar the frame can't nine-slice;
+            // leave it out rather than offering a dead entry.
+            if !image.sidecar_path().is_file() {
+                continue;
+            }
+            if !names.iter().any(|name| name.eq_ignore_ascii_case(stem)) {
+                names.push(stem.to_owned());
+            }
+        }
         names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
         names
     }
+}
+
+/// Load the specs (not textures) for the needed pool frames: match stems
+/// case-insensitively, take slice/scale from each image's sidecar. Frames
+/// without a usable sidecar are skipped with a warning.
+fn load_pool_frames(needed: &[String]) -> HashMap<String, skins::BorderSpec> {
+    let mut frames = HashMap::new();
+    if needed.is_empty() {
+        return frames;
+    }
+    for image in crate::config::pool::list_category("frames") {
+        let stem = image.stem().to_ascii_lowercase();
+        if !needed.contains(&stem) {
+            continue;
+        }
+        let Some(sidecar) =
+            crate::config::pool::read_sidecar::<crate::config::pool::FrameSidecar>(&image.abs_path)
+        else {
+            tracing::warn!(
+                "pool frame '{}' has no sidecar with slice/scale; skipping",
+                image.file_name
+            );
+            continue;
+        };
+        frames.insert(
+            stem,
+            skins::BorderSpec {
+                image: image.pool_path.clone(),
+                slice: sidecar.slice.insets(),
+                scale: sidecar.scale,
+            },
+        );
+    }
+    frames
 }
 
 /// mtime of the shared icon store's manifest, if it exists.

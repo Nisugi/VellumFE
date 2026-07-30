@@ -158,6 +158,12 @@ pub fn install_asset(
     match dest {
         Some(dest) => {
             write_atomic(&dest, &bytes)?;
+            // Render metadata (frame slice/scale, sheet cell) lands in the
+            // image's pool sidecar so the art arrives ready to use.
+            // Best-effort: a sidecar failure doesn't undo the install.
+            if let Err(e) = write_pool_sidecar(&dest, asset) {
+                tracing::warn!("installed {name} but couldn't write its sidecar: {e}");
+            }
             record(db, &name, repo, asset);
             Ok(InstallOutcome::Installed { path: dest })
         }
@@ -244,6 +250,46 @@ fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
     };
     let dir = dir.map_err(|e| format!("cannot resolve install dir: {e}"))?;
     Ok(Some(dir.join(name)))
+}
+
+/// Merge the asset's render metadata (slice/scale/cell) into the installed
+/// image's sidecar toml, preserving everything else — a locally-calibrated
+/// doll keeps its anchors when the image updates. No metadata = no write.
+fn write_pool_sidecar(dest: &Path, asset: &Asset) -> Result<(), String> {
+    use toml_edit::{value, Array, DocumentMut};
+
+    let Some(vellum) = &asset.vellum else {
+        return Ok(());
+    };
+    if vellum.slice.is_none() && vellum.scale.is_none() && vellum.cell.is_none() {
+        return Ok(());
+    }
+    let path = dest.with_extension("toml");
+    let contents = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut doc: DocumentMut = contents
+        .parse()
+        .map_err(|e| format!("{} is not valid TOML: {e}", path.display()))?;
+    if let Some(slice) = &vellum.slice {
+        match slice {
+            crate::config::pool::SliceSpec::Uniform(inset) => {
+                doc["slice"] = value(*inset as f64);
+            }
+            crate::config::pool::SliceSpec::PerSide(insets) => {
+                let mut array = Array::new();
+                for inset in insets {
+                    array.push(*inset as f64);
+                }
+                doc["slice"] = value(array);
+            }
+        }
+    }
+    if let Some(scale) = vellum.scale {
+        doc["scale"] = value(scale as f64);
+    }
+    if let Some(cell) = vellum.cell {
+        doc["cell"] = value(cell as i64);
+    }
+    write_atomic(&path, doc.to_string().as_bytes())
 }
 
 fn record(db: &mut InstalledDb, name: &str, repo: &RepoSource, asset: &Asset) {

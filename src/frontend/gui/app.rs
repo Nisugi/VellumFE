@@ -4571,6 +4571,13 @@ impl eframe::App for VellumGuiApp {
             ctx.request_repaint();
         }
         self.apply_theme_if_changed(&ctx);
+        // Pool frames referenced by per-window overrides load lazily; tell
+        // the skin state which ones are in use before it applies.
+        self.skin_state.set_needed_pool_frames(
+            self.tab_settings
+                .values()
+                .filter_map(|settings| settings.skin_frame.clone()),
+        );
         self.skin_state.apply_if_changed(
             &ctx,
             self.ui_settings.active_skin.as_deref(),
