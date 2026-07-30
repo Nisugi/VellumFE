@@ -455,8 +455,8 @@ mod tests {
             InstallOutcome::Installed { path } => path,
             other => panic!("expected Installed, got {other:?}"),
         };
-        assert!(dest.ends_with("global/icons/runes.png") ||
-                dest.ends_with("global\\icons\\runes.png"), "{}", dest.display());
+        assert!(dest.ends_with("global/images/icons/runes.png") ||
+                dest.ends_with("global\\images\\icons\\runes.png"), "{}", dest.display());
         assert_eq!(db.get("runes.png").unwrap().kind, "iconmap");
 
         std::env::remove_var("VELLUM_FE_DIR");
@@ -480,8 +480,8 @@ mod tests {
             InstallOutcome::Installed { path } => path,
             other => panic!("expected Installed, got {other:?}"),
         };
-        assert!(dest.ends_with("global/dolls/soldier.png") ||
-                dest.ends_with("global\\dolls\\soldier.png"), "{}", dest.display());
+        assert!(dest.ends_with("global/images/dolls/soldier.png") ||
+                dest.ends_with("global\\images\\dolls\\soldier.png"), "{}", dest.display());
         assert_eq!(db.get("soldier.png").unwrap().kind, "doll");
 
         std::env::remove_var("VELLUM_FE_DIR");

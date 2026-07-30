@@ -558,14 +558,8 @@ fn load_texture_impl(
     skin_name: &str,
     desaturate: bool,
 ) -> Option<egui::TextureHandle> {
-    let path = {
-        let raw = Path::new(image_path);
-        if raw.is_absolute() {
-            raw.to_path_buf()
-        } else {
-            root.join(raw)
-        }
-    };
+    // Skin folder first, then the shared image pool (global/images/).
+    let path = skins::resolve_image_path(root, image_path);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(err) => {

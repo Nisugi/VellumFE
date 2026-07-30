@@ -509,6 +509,31 @@ pub fn load_global_sheets() -> anyhow::Result<(HashMap<String, SheetSpec>, PathB
     Ok((manifest.sheets, root))
 }
 
+/// Resolve a manifest image path to a filesystem path. Absolute paths are
+/// taken as-is; relative paths resolve against the skin directory first,
+/// then the shared image pool (`~/.vellum-fe/global/images/`) — so a skin
+/// can reference pooled art ("icons/rogue.png", "frames/brass.png",
+/// "dolls/human.png", ...) without copying it. When neither location has
+/// the file, the skin-local path is returned so the caller's error names
+/// the natural spot.
+pub fn resolve_image_path(root: &Path, image: &str) -> PathBuf {
+    let raw = Path::new(image);
+    if raw.is_absolute() {
+        return raw.to_path_buf();
+    }
+    let local = root.join(raw);
+    if local.is_file() {
+        return local;
+    }
+    if let Ok(pool) = crate::config::Config::global_images_dir() {
+        let pooled = pool.join(raw);
+        if pooled.is_file() {
+            return pooled;
+        }
+    }
+    local
+}
+
 /// Skin directory names that contain a skin.toml, sorted.
 pub fn list_skins() -> Vec<String> {
     let Ok(dir) = crate::config::Config::skins_dir() else {

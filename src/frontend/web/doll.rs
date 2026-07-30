@@ -142,15 +142,10 @@ pub fn image_path(kind: &str, part: Option<&str>, level: Option<u8>) -> Option<P
     Some(resolve_image(&root, &relative))
 }
 
-/// Manifest image path -> filesystem path (absolute paths allowed, same
-/// rule as the GUI texture loader).
+/// Manifest image path -> filesystem path (absolute paths allowed, plus
+/// the shared image pool — same rule as the GUI texture loader).
 fn resolve_image(root: &Path, image: &str) -> PathBuf {
-    let raw = Path::new(image);
-    if raw.is_absolute() {
-        raw.to_path_buf()
-    } else {
-        root.join(raw)
-    }
+    skins::resolve_image_path(root, image)
 }
 
 fn load_active_manifest() -> Option<(skins::SkinManifest, PathBuf)> {

@@ -13,7 +13,9 @@
 //!   gui-layout.json          the GUI's live arrangement (GUI exports)
 //!   global/<file>.toml       ~/.vellum-fe/global/ layer
 //!   profile/<file>.toml      the exporting character's layer
-//!   skins/<name>/**          the active skin's directory
+//!   skins/<name>/**          the active skin's directory (extracted to
+//!                            global/skins/<name>/; the entry name is kept
+//!                            for compatibility with older packs)
 //!
 //! Import maps entries back to the same layers (profile entries land on
 //! the *importing* character), backs up anything it overwrites, and
@@ -176,7 +178,7 @@ pub fn export(
     let mut skin_included: Option<String> = None;
     if wants("skin") {
         if let Some(skin) = active_skin.filter(|s| !s.is_empty()) {
-            let skin_dir = base.join("skins").join(skin);
+            let skin_dir = base.join("global").join("skins").join(skin);
             if skin_dir.is_dir() {
                 let mut files = Vec::new();
                 collect_files(&skin_dir, &mut files)?;
@@ -304,7 +306,7 @@ fn entry_destination(
         {
             return None;
         }
-        let mut path = PathBuf::from("skins").join(skin);
+        let mut path = PathBuf::from("global").join("skins").join(skin);
         for part in tail {
             path.push(part);
         }
@@ -406,12 +408,16 @@ mod tests {
     fn seed(base: &Path) {
         std::fs::create_dir_all(base.join("global")).unwrap();
         std::fs::create_dir_all(base.join("Testy")).unwrap();
-        std::fs::create_dir_all(base.join("skins/parchment/icons")).unwrap();
+        std::fs::create_dir_all(base.join("global/skins/parchment/icons")).unwrap();
         std::fs::write(base.join("global/keybinds.toml"), "[controller]\n").unwrap();
         std::fs::write(base.join("global/highlights.toml"), "# hl\n").unwrap();
         std::fs::write(base.join("Testy/colors.toml"), "# colors\n").unwrap();
-        std::fs::write(base.join("skins/parchment/skin.toml"), "name = 'parchment'\n").unwrap();
-        std::fs::write(base.join("skins/parchment/icons/a.png"), b"png-bytes").unwrap();
+        std::fs::write(
+            base.join("global/skins/parchment/skin.toml"),
+            "name = 'parchment'\n",
+        )
+        .unwrap();
+        std::fs::write(base.join("global/skins/parchment/icons/a.png"), b"png-bytes").unwrap();
     }
 
     fn all_parts() -> Vec<String> {
@@ -467,7 +473,12 @@ mod tests {
             "# colors\n"
         );
         assert_eq!(
-            std::fs::read(target.path().join("skins/parchment/icons/a.png")).unwrap(),
+            std::fs::read(
+                target
+                    .path()
+                    .join("global/skins/parchment/icons/a.png")
+            )
+            .unwrap(),
             b"png-bytes"
         );
         // The overwritten global keybinds got backed up.
@@ -528,7 +539,7 @@ mod tests {
         assert!(!dir.path().join("global/config.toml").exists());
         assert!(!dir.path().join("Testy/passwords.toml").exists());
         assert!(!dir.path().parent().unwrap().join("outside.toml").exists());
-        assert!(!dir.path().join("skins/other").exists());
+        assert!(!dir.path().join("global/skins/other").exists());
     }
 
     #[test]

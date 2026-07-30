@@ -129,17 +129,32 @@ impl Config {
     }
 
     /// Get the shared skins directory (one subdirectory per skin, each with a
-    /// skin.toml manifest plus its image assets)
-    /// Returns: ~/.vellum-fe/skins/
+    /// skin.toml manifest plus any skin-local image assets)
+    /// Returns: ~/.vellum-fe/global/skins/
     pub fn skins_dir() -> Result<PathBuf> {
-        Ok(Self::config_dir()?.join("skins"))
+        Ok(Self::global_dir()?.join("skins"))
+    }
+
+    /// Category subfolders of the shared image pool. Created at startup so
+    /// the structure is visible; nothing enforces which category a file
+    /// lives in (resolution is by relative path).
+    pub const IMAGE_CATEGORIES: &'static [&'static str] =
+        &["icons", "frames", "dolls", "compass", "backgrounds"];
+
+    /// Get the shared image pool: one subfolder per category
+    /// (see IMAGE_CATEGORIES). Skin manifests resolve relative image paths
+    /// against the skin folder first, then this pool — so skins can share
+    /// art without copying it.
+    /// Returns: ~/.vellum-fe/global/images/
+    pub fn global_images_dir() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("images"))
     }
 
     /// Get the shared hotbar icon-sheet store: sheet images plus an
     /// icons.toml manifest, available to every skin (and with no skin active)
-    /// Returns: ~/.vellum-fe/global/icons/
+    /// Returns: ~/.vellum-fe/global/images/icons/
     pub fn global_icons_dir() -> Result<PathBuf> {
-        Ok(Self::global_dir()?.join("icons"))
+        Ok(Self::global_images_dir()?.join("icons"))
     }
 
     /// Get the data-pack local store (gameobj-data.xml and friends; see
@@ -151,11 +166,11 @@ impl Config {
 
     /// Get the shared injury-doll base-image pool. Standalone doll base
     /// images (installed by `.jinx`) drop in here; a skin's
-    /// `[injury_doll] base` can reference one by absolute path (skin art
-    /// paths may be absolute, so a doll from the pool works in any skin).
-    /// Returns: ~/.vellum-fe/global/dolls/
+    /// `[injury_doll] base` can reference one as `dolls/<file>` (resolved
+    /// through the shared image pool) or by absolute path.
+    /// Returns: ~/.vellum-fe/global/images/dolls/
     pub fn global_dolls_dir() -> Result<PathBuf> {
-        Ok(Self::global_dir()?.join("dolls"))
+        Ok(Self::global_images_dir()?.join("dolls"))
     }
 
     /// Get path to common (global) highlights file
