@@ -1337,6 +1337,11 @@ impl VellumGuiApp {
         // Where the current press started, for telling "user is engaging
         // this window" apart from "user clicked a toolbar toggle".
         let press_origin = ctx.input(|i| i.pointer.press_origin());
+        // The engagement latch lives for one press; release clears it.
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        if !pointer_down {
+            self.center_engaged_tab = None;
+        }
 
         // Center windows render at *display* rects computed from their
         // canonical rects and the current bounds: shell zones claiming
@@ -1552,9 +1557,18 @@ impl VellumGuiApp {
             // right back afterwards. A press that started on or near this
             // window (resize handles included) relaxes the pin so drags
             // behave normally — and the drag's tracking then updates the
-            // canonical rect the display derives from.
+            // canonical rect the display derives from. Engagement LATCHES
+            // for the whole press (center_engaged_tab): a shrink drag pulls
+            // the grabbed edge away from the press origin, and re-testing
+            // the origin against the shrinking rect would re-pin the size
+            // mid-drag, stalling the resize after ~12px per grab.
             let user_engaging_window = pointer_interacting
-                && press_origin.is_some_and(|pos| initial_rect.expand(12.0).contains(pos));
+                && (self.center_engaged_tab.as_ref() == Some(&tab.id.key)
+                    || press_origin
+                        .is_some_and(|pos| initial_rect.expand(12.0).contains(pos)));
+            if user_engaging_window && pointer_down && zone == GuiShellZone::Center {
+                self.center_engaged_tab = Some(tab.id.key.clone());
+            }
             if zone == GuiShellZone::Center
                 && !is_compact_center_widget
                 && !is_hand_widget

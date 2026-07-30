@@ -357,6 +357,12 @@ pub struct VellumGuiApp {
     window_context_menu_just_opened: bool,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
+    /// Center window whose size pin is relaxed for the CURRENT press.
+    /// Latched when a press starts on/near the window and held until the
+    /// mouse releases: a shrink drag moves the grabbed edge away from the
+    /// press origin, so re-testing the origin against the current rect
+    /// every frame would re-pin the size mid-drag and stall the resize.
+    center_engaged_tab: Option<TabKey>,
     last_monitor_bounds: Option<[f32; 4]>,
     /// Latest main OS window geometry, persisted so the next launch opens
     /// at the same size (per-window rects are saved against this geometry).
@@ -665,6 +671,7 @@ impl VellumGuiApp {
             window_context_menu_just_opened: false,
             zone_drag_state: None,
             hand_resize_tab: None,
+            center_engaged_tab: None,
             last_monitor_bounds: None,
             main_viewport_state,
             webui_bridge: None,
