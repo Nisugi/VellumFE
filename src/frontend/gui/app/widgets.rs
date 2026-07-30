@@ -1050,7 +1050,7 @@ impl VellumGuiApp {
             .collect();
 
         if bars.is_empty() {
-            ui.label("No vitals selected (Settings → GUI → Vitals).");
+            ui.label("No vitals selected (right-click this window, Edit Window…).");
             return;
         }
 

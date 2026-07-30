@@ -1071,24 +1071,56 @@ impl VellumGuiApp {
                                 });
                             ui.end_row();
                         });
-                    ui.label("Bars shown:");
+                    ui.label("Bars shown (in display order):");
                     let bars = &mut vitals.bars;
-                    for kind in VitalKind::all() {
-                        let mut enabled = bars.contains(&kind);
-                        if ui.checkbox(&mut enabled, kind.label()).changed() {
-                            if enabled {
-                                bars.push(kind);
-                                // Keep display order canonical regardless of
-                                // toggle order.
-                                bars.sort_by_key(|entry| {
-                                    VitalKind::all()
-                                        .iter()
-                                        .position(|k| k == entry)
-                                        .unwrap_or(usize::MAX)
-                                });
-                            } else {
-                                bars.retain(|entry| entry != &kind);
+                    // Enabled bars keep their stored order — it IS the
+                    // display order (top-to-bottom stacked, left-to-right
+                    // in one row). Moves/removes are deferred so the list
+                    // isn't mutated mid-iteration.
+                    let bar_count = bars.len();
+                    let mut move_op: Option<(usize, bool)> = None;
+                    let mut remove_index: Option<usize> = None;
+                    for (index, kind) in bars.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            let mut enabled = true;
+                            if ui.checkbox(&mut enabled, kind.label()).changed() {
+                                remove_index = Some(index);
                             }
+                            // Geometric triangles render in the bundled
+                            // fonts; the ↑/↓ arrow block is tofu.
+                            if ui
+                                .add_enabled(index > 0, egui::Button::new("▲").small())
+                                .on_hover_text("Move up")
+                                .clicked()
+                            {
+                                move_op = Some((index, true));
+                            }
+                            if ui
+                                .add_enabled(
+                                    index + 1 < bar_count,
+                                    egui::Button::new("▼").small(),
+                                )
+                                .on_hover_text("Move down")
+                                .clicked()
+                            {
+                                move_op = Some((index, false));
+                            }
+                        });
+                    }
+                    if let Some(index) = remove_index {
+                        bars.remove(index);
+                    } else if let Some((index, up)) = move_op {
+                        let target = if up { index - 1 } else { index + 1 };
+                        bars.swap(index, target);
+                    }
+                    // Disabled bars: enabling appends at the end of the order.
+                    for kind in VitalKind::all() {
+                        if bars.contains(&kind) {
+                            continue;
+                        }
+                        let mut enabled = false;
+                        if ui.checkbox(&mut enabled, kind.label()).changed() {
+                            bars.push(kind);
                         }
                     }
                 }
