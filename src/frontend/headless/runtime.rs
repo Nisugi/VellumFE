@@ -724,6 +724,8 @@ pub async fn async_run(
         }
 
         app_core.poll_tts_events();
+        // Debounced layout autosave (layout dot-commands from web clients).
+        app_core.tick_layout_autosave();
         // Flush coalesced state deltas to web clients once per batch.
         app_core.flush_remote_state();
     }

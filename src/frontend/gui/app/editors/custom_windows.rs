@@ -260,7 +260,7 @@ impl VellumGuiApp {
             super::super::INITIAL_LAYOUT_WIDTH,
             super::super::INITIAL_LAYOUT_HEIGHT,
         );
-        self.app_core.layout_modified_since_save = true;
+        self.app_core.schedule_layout_autosave();
 
         self.apply_streams_and_title(&name, title, streams, None)?;
         Ok(name)
@@ -329,7 +329,7 @@ impl VellumGuiApp {
             if let Some(buffer_size) = buffer_size {
                 data.buffer_size = buffer_size;
             }
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
     }
 
@@ -519,7 +519,7 @@ impl VellumGuiApp {
     pub(in super::super) fn delete_custom_window(&mut self, name: &str) {
         self.app_core.remove_window(name);
         self.app_core.layout.windows.retain(|w| w.name() != name);
-        self.app_core.layout_modified_since_save = true;
+        self.app_core.schedule_layout_autosave();
         self.app_core
             .add_system_message(&format!("Custom window '{}' deleted.", name));
     }

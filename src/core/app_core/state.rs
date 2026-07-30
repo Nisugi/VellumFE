@@ -165,6 +165,10 @@ pub struct AppCore {
     /// Track if layout has been modified since last .savelayout
     pub layout_modified_since_save: bool,
 
+    /// When the layout last changed; drives the debounced autosave
+    /// (tick_layout_autosave). None = nothing pending.
+    pub layout_autosave_pending: Option<std::time::Instant>,
+
     /// Track if save reminder has been shown this session
     pub save_reminder_shown: bool,
 
@@ -296,6 +300,7 @@ impl AppCore {
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
             layout_modified_since_save: false,
+            layout_autosave_pending: None,
             save_reminder_shown: false,
             base_layout_name: None,
             keybind_map,
@@ -425,6 +430,7 @@ impl AppCore {
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
             layout_modified_since_save: false,
+            layout_autosave_pending: None,
             save_reminder_shown: false,
             base_layout_name: None,
             keybind_map,
@@ -5223,9 +5229,32 @@ impl AppCore {
         format!("_menu #{} {}\n", exist_id, counter)
     }
 
+    /// How long the layout must be stable before the debounced autosave fires.
+    pub const LAYOUT_AUTOSAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_secs(3);
+
+    /// Mark the layout changed and (re)arm the debounced autosave. Every
+    /// mutation site routes through this or sets the flag via it, so window
+    /// moves/resizes/edits persist a few seconds later instead of only on a
+    /// clean quit.
+    pub fn schedule_layout_autosave(&mut self) {
+        self.layout_modified_since_save = true;
+        self.layout_autosave_pending = Some(std::time::Instant::now());
+    }
+
+    /// Debounce driver: frontends call this from their event loop. Writes the
+    /// profile auto-save slot once the layout has been stable for
+    /// LAYOUT_AUTOSAVE_DEBOUNCE.
+    pub fn tick_layout_autosave(&mut self) {
+        if let Some(changed_at) = self.layout_autosave_pending {
+            if changed_at.elapsed() >= Self::LAYOUT_AUTOSAVE_DEBOUNCE {
+                self.autosave_layout();
+            }
+        }
+    }
+
     /// Mark layout as modified and show reminder (once per session)
     pub fn mark_layout_modified(&mut self) {
-        self.layout_modified_since_save = true;
+        self.schedule_layout_autosave();
 
         // Show reminder once per session
         if !self.save_reminder_shown {
@@ -5282,19 +5311,18 @@ impl AppCore {
             }
 
             // Mark modified but don't show the save reminder for auto-resizes
-            self.layout_modified_since_save = true;
+            self.schedule_layout_autosave();
             self.needs_render = true;
         }
     }
 
-    /// Save settings (layout, session cache) without exiting.
-    /// Called by quit() and when intercepting game "quit" command.
     /// Write the current layout to the profile auto-save slot
     /// (~/.vellum-fe/profiles/{character}/layout.toml) — the file startup
-    /// reads. Called on quit and after .savelayout/.loadlayout so an
-    /// explicit save or load sticks even if the session later ends
-    /// without reaching the quit path (console X, crash).
+    /// reads. Called on quit, after .savelayout/.loadlayout, and by the
+    /// debounced tick_layout_autosave, so layout changes stick even if the
+    /// session ends without reaching the quit path (console X, crash).
     pub fn autosave_layout(&mut self) {
+        self.layout_autosave_pending = None;
         let profile = self
             .config
             .character
@@ -5328,6 +5356,8 @@ impl AppCore {
         }
     }
 
+    /// Save settings (layout, session cache) without exiting.
+    /// Called by quit() and when intercepting game "quit" command.
     pub fn save_on_quit(&mut self) {
         // Show reminder if layout was modified
         if self.layout_modified_since_save {

@@ -1903,6 +1903,7 @@ impl TuiFrontend {
                 }
 
                 // Sync UI state positions back to layout WindowDefs after mouse resize/move
+                let mut window_layout_changed = false;
                 if let Some(drag_state) = &app_core.ui_state.mouse_drag {
                     if let Some(window) =
                         app_core.ui_state.get_window(&drag_state.window_name)
@@ -1921,7 +1922,7 @@ impl TuiFrontend {
                             base.rows = window.position.height;
                             tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
                                 drag_state.window_name, base.col.get(), base.row.get(), base.cols.get(), base.rows.get());
-                            app_core.layout_modified_since_save = true;
+                            window_layout_changed = true;
                         }
 
                         // Save ephemeral container window positions to widget_state.toml
@@ -1948,6 +1949,10 @@ impl TuiFrontend {
                             tracing::debug!("Saved ephemeral container position for '{}'", drag_state.window_name);
                         }
                     }
+                }
+
+                if window_layout_changed {
+                    app_core.schedule_layout_autosave();
                 }
 
                 app_core.ui_state.mouse_drag = None;
@@ -4246,7 +4251,7 @@ impl TuiFrontend {
                     if let Some(window_def) = window_def {
                         let actual_name = window_def.name().to_string();
                         app_core.add_new_window(&window_def, width, height);
-                        app_core.layout_modified_since_save = true;
+                        app_core.schedule_layout_autosave();
                         app_core.add_system_message(&format!("Window '{}' added", actual_name));
                         tracing::info!("Added window: {}", actual_name);
 
@@ -4275,7 +4280,7 @@ impl TuiFrontend {
             match app_core.layout.hide_window(window_name) {
                 Ok(_) => {
                     app_core.ui_state.remove_window(window_name);
-                    app_core.layout_modified_since_save = true;
+                    app_core.schedule_layout_autosave();
                     app_core.add_system_message(&format!("Window '{}' hidden", window_name));
                     tracing::info!("Hidden window: {}", window_name);
                     app_core.layout.remove_window_if_default(window_name);

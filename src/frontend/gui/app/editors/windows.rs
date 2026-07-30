@@ -504,7 +504,7 @@ impl VellumGuiApp {
                 }
                 _ => {}
             }
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(feed) = &state.feed {
@@ -578,7 +578,7 @@ impl VellumGuiApp {
                     _ => {}
                 }
             }
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(category) = &state.effects_category {
@@ -606,7 +606,7 @@ impl VellumGuiApp {
             self.app_core
                 .message_processor
                 .update_text_stream_subscribers(&self.app_core.ui_state);
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(room) = &state.room {
@@ -621,7 +621,7 @@ impl VellumGuiApp {
                 data.show_objs = room.show_objs;
                 data.show_players = room.show_players;
                 data.show_exits = room.show_exits;
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -636,7 +636,7 @@ impl VellumGuiApp {
                 data.show_body_part_count = targets.show_appendages;
                 data.status_position = Some(targets.status_position.clone())
                     .filter(|position| !position.is_empty());
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -659,7 +659,7 @@ impl VellumGuiApp {
                 };
                 data.mind_bar_color = opt(&experience.mind_bar_color);
                 data.exp_bar_color = opt(&experience.exp_bar_color);
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -673,7 +673,7 @@ impl VellumGuiApp {
             {
                 data.show_bar = encum.show_bar;
                 data.show_label = encum.show_label;
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -688,7 +688,7 @@ impl VellumGuiApp {
                 if def.base().tts_speak != tts_speak {
                     def.base_mut().tts_speak = tts_speak;
                     self.app_core.refresh_tts_windows();
-                    self.app_core.layout_modified_since_save = true;
+                    self.app_core.schedule_layout_autosave();
                 }
             }
         }
@@ -703,7 +703,7 @@ impl VellumGuiApp {
             {
                 if def.base().locked != locked {
                     def.base_mut().locked = locked;
-                    self.app_core.layout_modified_since_save = true;
+                    self.app_core.schedule_layout_autosave();
                 }
             }
         }
@@ -732,7 +732,7 @@ impl VellumGuiApp {
             data.tabs = new_tabs;
             // Rebuild live tabs (and the stream routing index) from the def.
             self.app_core.sync_tabbed_window_tabs(name);
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(vitals) = &state.vitals {

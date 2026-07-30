@@ -538,7 +538,7 @@ impl VellumGuiApp {
             |key| available_tabs.get(key).map(|tab| tab.window_name.clone()),
         );
         if migrated_layout {
-            app_core.layout_modified_since_save = true;
+            app_core.schedule_layout_autosave();
         }
 
         let command_history =
@@ -1166,7 +1166,7 @@ impl VellumGuiApp {
             return false;
         };
         mutate(def);
-        self.app_core.layout_modified_since_save = true;
+        self.app_core.schedule_layout_autosave();
         true
     }
 
@@ -1945,7 +1945,7 @@ impl VellumGuiApp {
             |key| available_tabs.get(key).map(|tab| tab.window_name.clone()),
         );
         if migrated_layout {
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
         // Lazy appliers pick up the new font/zoom/density next frame.
         self.fonts_applied = false;
@@ -2636,7 +2636,7 @@ impl VellumGuiApp {
                                 self.app_core.remove_window(name);
                                 self.app_core.layout.windows.retain(|w| w.name() != *name);
                             }
-                            self.app_core.layout_modified_since_save = true;
+                            self.app_core.schedule_layout_autosave();
                             tracing::info!(
                                 "WebUI page '{}' ended; closed transient panel",
                                 page
@@ -2851,7 +2851,7 @@ impl VellumGuiApp {
         let Some(page_id) = page_id else { return };
         self.app_core.remove_window(name);
         self.app_core.layout.windows.retain(|w| w.name() != name);
-        self.app_core.layout_modified_since_save = true;
+        self.app_core.schedule_layout_autosave();
         self.layout_dirty = true;
         // Only unsubscribe when no other window still shows the page.
         let still_hosted = self.app_core.ui_state.windows.values().any(|w| {
@@ -3884,7 +3884,7 @@ impl VellumGuiApp {
                         INITIAL_LAYOUT_WIDTH,
                         INITIAL_LAYOUT_HEIGHT,
                     );
-                    self.app_core.layout_modified_since_save = true;
+                    self.app_core.schedule_layout_autosave();
                     self.app_core
                         .add_system_message(&format!("Window '{}' added.", actual_name));
                     // Blank custom widgets start unconfigured (e.g. a countdown
@@ -4842,6 +4842,10 @@ impl eframe::App for VellumGuiApp {
                 self.layout_dirty_since = None;
             }
         }
+        // Same debounce for the core TOML layout (WindowDef data: streams,
+        // added/removed windows). Previously only written on exit, so a
+        // crash lost window-def edits; this mirrors the TUI's autosave tick.
+        self.app_core.tick_layout_autosave();
 
         // Drain the command-input echo (see render_command_input_widget):
         // the widget renders inside &self paths, so buffer edits and

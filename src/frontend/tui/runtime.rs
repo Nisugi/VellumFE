@@ -449,6 +449,12 @@ async fn async_run(
             }
         }
 
+        // Debounced layout autosave: window moves/resizes/edits write the
+        // profile auto-save slot once the layout has been stable for a few
+        // seconds, so they survive the console X button and crashes instead
+        // of only a clean quit.
+        app_core.tick_layout_autosave();
+
         // Drain the map worker + mapdb updater and tick the walk executor
         // (time-based waits like roundtime need a clock even when the game
         // is quiet), then send whatever travel queued through the same path

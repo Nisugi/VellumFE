@@ -533,7 +533,7 @@ fn sync_text_streams_to_layout(app_core: &mut AppCore, name: &str, streams: Vec<
         .find(|w| w.name() == name)
     {
         data.streams = streams;
-        app_core.layout_modified_since_save = true;
+        app_core.schedule_layout_autosave();
     }
 }
 
