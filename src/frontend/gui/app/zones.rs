@@ -1192,7 +1192,12 @@ impl VellumGuiApp {
                         rect: inner.response.rect,
                     });
                     if let Some(pointer_pos) = secondary_click_pos {
-                        if inner.response.rect.contains(pointer_pos) {
+                        // Overlapping windows all contain the click point;
+                        // only the one egui says is on top may claim the
+                        // context menu, or the menu edits the wrong window.
+                        if inner.response.rect.contains(pointer_pos)
+                            && ctx.layer_id_at(pointer_pos) == Some(inner.response.layer_id)
+                        {
                             actions.window_menu_request = Some(GuiWindowMenuRequest {
                                 tab_key: tab.id.key.clone(),
                                 zone,
@@ -1505,7 +1510,11 @@ impl VellumGuiApp {
                     rect: inner.response.rect,
                 });
                 if let Some(pointer_pos) = secondary_click_pos {
-                    if inner.response.rect.contains(pointer_pos) {
+                    // Same top-layer gate as the sidebar path: overlapping
+                    // windows must not steal the menu from the one on top.
+                    if inner.response.rect.contains(pointer_pos)
+                        && ctx.layer_id_at(pointer_pos) == Some(inner.response.layer_id)
+                    {
                         actions.window_menu_request = Some(GuiWindowMenuRequest {
                             tab_key: tab.id.key.clone(),
                             zone,
