@@ -247,7 +247,7 @@ impl VellumGuiApp {
         }
     }
 
-    fn is_compact_center_widget(widget_type: &WidgetType) -> bool {
+    pub(super) fn is_compact_center_widget(widget_type: &WidgetType) -> bool {
         matches!(
             widget_type,
             WidgetType::Hand
@@ -257,6 +257,48 @@ impl VellumGuiApp {
                 | WidgetType::Indicator
                 | WidgetType::Countdown
         )
+    }
+
+    /// Hard height cap for single-row widgets in the center zone. Their
+    /// content never grows past one row (or one row per bar for a vertical
+    /// vitals stack), so letting the frame stretch taller only manufactures
+    /// empty space — and, with a skin background, a slab of art under one
+    /// row of content. Grouped windows stack members and manage their own
+    /// height; header/footer windows must keep filling their zone; text-like
+    /// widgets (effects, entities, targets, ...) legitimately grow. None = no cap.
+    fn max_window_height_for_widget(
+        &self,
+        zone: GuiShellZone,
+        window: &WindowState,
+        title_bar_hidden: bool,
+        grouped: bool,
+    ) -> Option<f32> {
+        use crate::frontend::gui::persistence::VitalsOrientation;
+        if zone != GuiShellZone::Center || grouped {
+            return None;
+        }
+        // Whole-window chrome around the content row: title bar (when shown)
+        // + frame padding. Slightly generous so the row never clips; a few
+        // spare pixels are invisible.
+        let chrome = if title_bar_hidden { 16.0 } else { 44.0 };
+        match window.widget_type {
+            WidgetType::Hand
+            | WidgetType::Countdown
+            | WidgetType::Progress
+            | WidgetType::Indicator => Some(28.0 + chrome),
+            WidgetType::MiniVitals => {
+                let vitals = &self.ui_settings.vitals;
+                let bar = vitals.bar_height.clamp(8.0, 60.0);
+                match vitals.orientation {
+                    VitalsOrientation::Horizontal => Some(bar + chrome),
+                    VitalsOrientation::Vertical => {
+                        let rows = vitals.bars.len().max(1) as f32;
+                        Some(rows * bar + (rows - 1.0) * 6.0 + chrome)
+                    }
+                }
+            }
+            _ => None,
+        }
     }
 
     fn min_window_height_for_zone(zone: GuiShellZone, window: &WindowState) -> f32 {
@@ -1256,9 +1298,19 @@ impl VellumGuiApp {
                 120.0_f32.min(window_bounds.width().max(1.0)),
                 min_window_height.min(window_bounds.height().max(1.0)),
             );
+            let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
+            let grouped = group_shape.is_some_and(|(count, _)| count > 1);
             // Docked header/footer windows fill their zone's full height — no
             // reserved headroom, which otherwise left a gap at the bottom edge.
-            let max_window_height = window_bounds.height().max(min_window_size.y);
+            // Single-row center widgets are capped so they can't be stretched
+            // into empty space below their one row of content.
+            let max_window_height = {
+                let zone_max = window_bounds.height().max(min_window_size.y);
+                match self.max_window_height_for_widget(zone, window, title_bar_hidden, grouped) {
+                    Some(cap) => cap.clamp(min_window_size.y, zone_max),
+                    None => zone_max,
+                }
+            };
             let max_window_size = Vec2::new(
                 window_bounds.width().max(min_window_size.x),
                 max_window_height,
@@ -1286,7 +1338,6 @@ impl VellumGuiApp {
 
             let mut clicked_link = None;
             let mut hand_resize_delta_x = 0.0f32;
-            let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
             // Grouped hands lose the fixed-size hand behavior; the group is a
             // normal resizable window sized for all members.
             let is_hand_widget =
