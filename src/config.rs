@@ -420,6 +420,10 @@ fn default_command_echo_color() -> String {
     "#ffffff".to_string()
 }
 
+fn default_system_message_color() -> String {
+    "#8fbc8f".to_string() // muted green; full #00ff00 reads as shouting
+}
+
 fn default_border_color_default() -> String {
     "#00ffff".to_string() // cyan
 }

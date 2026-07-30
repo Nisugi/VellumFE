@@ -115,6 +115,8 @@ impl SpellColorRange {
 pub struct UiColors {
     #[serde(default = "default_command_echo_color")]
     pub command_echo_color: String,
+    #[serde(default = "default_system_message_color")]
+    pub system_message_color: String, // Client feedback lines (.theme, [jinx], errors)
     #[serde(default = "default_border_color_default")]
     pub border_color: String, // Default border color for all widgets
     #[serde(default = "default_focused_border_color")]
@@ -184,6 +186,7 @@ impl Default for UiColors {
     fn default() -> Self {
         Self {
             command_echo_color: default_command_echo_color(),
+            system_message_color: default_system_message_color(),
             border_color: default_border_color_default(),
             focused_border_color: default_focused_border_color(),
             text_color: default_text_color_default(),

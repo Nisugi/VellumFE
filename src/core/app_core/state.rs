@@ -3134,7 +3134,7 @@ impl AppCore {
         let line = StyledLine {
             segments: vec![TextSegment {
                 text: message.to_string(),
-                fg: Some("#00ff00".to_string()),
+                fg: Some(self.config.colors.ui.system_message_color.clone()),
                 bg: None,
                 bold: true,
                 // Client output (.jinx tables, .layouts, errors) renders in

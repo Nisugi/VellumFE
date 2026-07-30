@@ -155,6 +155,7 @@ impl TuiFrontend {
                     "Border" => colors.ui.border_color = value,
                     "Command Echo" => colors.ui.command_echo_color = value,
                     "Focused Border" => colors.ui.focused_border_color = value,
+                    "System Messages" => colors.ui.system_message_color = value,
                     "Text" => colors.ui.text_color = value,
                     "Text Selection" => colors.ui.selection_bg_color = value,
                     "Textarea Background" => colors.ui.textarea_background = value,

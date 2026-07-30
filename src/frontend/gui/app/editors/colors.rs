@@ -177,6 +177,7 @@ impl SpellFormState {
 /// Live edit buffer for the global UI colors.
 struct UiColorsBuffer {
     command_echo_color: String,
+    system_message_color: String,
     border_color: String,
     focused_border_color: String,
     text_color: String,
@@ -190,6 +191,7 @@ impl UiColorsBuffer {
         let ui = &colors.ui;
         Self {
             command_echo_color: ui.command_echo_color.clone(),
+            system_message_color: ui.system_message_color.clone(),
             border_color: ui.border_color.clone(),
             focused_border_color: ui.focused_border_color.clone(),
             text_color: ui.text_color.clone(),
@@ -201,6 +203,7 @@ impl UiColorsBuffer {
 
     fn apply(&self, colors: &mut ColorConfig) {
         colors.ui.command_echo_color = self.command_echo_color.clone();
+        colors.ui.system_message_color = self.system_message_color.clone();
         colors.ui.border_color = self.border_color.clone();
         colors.ui.focused_border_color = self.focused_border_color.clone();
         colors.ui.text_color = self.text_color.clone();
@@ -596,6 +599,9 @@ impl VellumGuiApp {
         egui::Grid::new("ui_colors_grid").num_columns(2).show(ui, |ui| {
             ui.label("Command echo");
             color_field(ui, &mut buffer.command_echo_color);
+            ui.end_row();
+            ui.label("System messages");
+            color_field(ui, &mut buffer.system_message_color);
             ui.end_row();
             ui.label("Border");
             color_field(ui, &mut buffer.border_color);
