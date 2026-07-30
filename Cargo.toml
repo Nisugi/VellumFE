@@ -149,6 +149,13 @@ windows = { version = "0.58", features = [
     "Win32_Security",
 ]}
 
+# Optimize dependencies even in dev builds: our code stays opt-level 0 for
+# fast incremental compiles and clean debugging, but egui rendering and PNG
+# decoding (skin loads froze the debug build for ~15s unoptimized) run at
+# near-release speed.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 opt-level = 3
 lto = true
