@@ -107,7 +107,7 @@ fn default_windows() -> Vec<WindowDef> {
 
 impl Layout {
     /// Load layout from file using new profile-based structure
-    /// Priority: ~/.vellum-fe/{character}/layout.toml → ~/.vellum-fe/layouts/layout.toml → embedded
+    /// Priority: character auto-save → saved "default" checkpoint → default profile auto-save → embedded
     pub fn load(character: Option<&str>) -> Result<Self> {
         let (layout, _base_name) = Self::load_with_terminal_size(character, None)?;
         Ok(layout)
@@ -116,17 +116,17 @@ impl Layout {
     /// Load layout with terminal size for auto-selection
     /// Returns (layout, base_layout_name) where base_layout_name is the source layout file name (without .toml)
     ///
-    /// New structure:
-    /// 1. ~/.vellum-fe/{character}/layout.toml (auto-save from exit)
-    /// 2. ~/.vellum-fe/default/layouts/default.toml (shared default)
-    /// 3. Embedded default
+    /// Priority:
+    /// 1. ~/.vellum-fe/profiles/{character}/layout.toml (auto-save from exit)
+    /// 2. ~/.vellum-fe/layouts/default.toml (checkpoint written by .savelayout)
+    /// 3. ~/.vellum-fe/profiles/default/layout.toml (default profile auto-save)
+    /// 4. Embedded default
     pub fn load_with_terminal_size(
         character: Option<&str>,
         terminal_size: Option<(u16, u16)>,
     ) -> Result<(Self, Option<String>)> {
         let profile_dir = Config::profile_dir(character)?;
-        let default_profile_dir = Config::profile_dir(None)?; // ~/.vellum-fe/default/
-        let _shared_layouts_dir = Config::layouts_dir()?; // ~/.vellum-fe/layouts/ (templates only)
+        let default_profile_dir = Config::profile_dir(None)?; // ~/.vellum-fe/profiles/default/
 
         // 1. Try character auto-save layout: ~/.vellum-fe/{character}/layout.toml
         let auto_layout_path = profile_dir.join("layout.toml");
@@ -163,7 +163,41 @@ impl Layout {
             return Ok((layout, Some(base_name)));
         }
 
-        // 2. Try default profile auto-save layout: ~/.vellum-fe/default/layout.toml
+        // 2. No auto-save yet: fall back to the "default" checkpoint written by
+        //    .savelayout (~/.vellum-fe/layouts/default.toml). A parse failure
+        //    here falls through to the next candidate instead of aborting
+        //    startup — this file is user-shareable and may be hand-edited.
+        if let Ok(checkpoint_path) = Config::layout_path("default") {
+            if checkpoint_path.exists() {
+                match Self::load_from_file(&checkpoint_path) {
+                    Ok(mut layout) => {
+                        tracing::info!(
+                            "No auto-save layout; loading saved 'default' checkpoint from {:?}",
+                            checkpoint_path
+                        );
+                        if let Some((curr_width, curr_height)) = terminal_size {
+                            if let (Some(layout_width), Some(layout_height)) =
+                                (layout.terminal_width, layout.terminal_height)
+                            {
+                                if curr_width != layout_width || curr_height != layout_height {
+                                    layout.scale_to_terminal_size(curr_width, curr_height);
+                                }
+                            }
+                        }
+                        return Ok((layout, Some("default".to_string())));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Saved 'default' checkpoint at {:?} failed to load ({}); trying next fallback",
+                            checkpoint_path,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // 3. Try default profile auto-save layout: ~/.vellum-fe/profiles/default/layout.toml
         let default_path = default_profile_dir.join("layout.toml");
         if default_path.exists() {
             tracing::info!(
@@ -174,7 +208,7 @@ impl Layout {
             return Ok((layout, Some("layout".to_string())));
         }
 
-        // 3. Fall back to embedded default (should have been extracted by extract_defaults())
+        // 4. Fall back to embedded default (should have been extracted by extract_defaults())
         tracing::warn!(
             "No layout found, using embedded default (this should have been extracted!)"
         );
@@ -482,7 +516,7 @@ impl Layout {
         // Normalize windows before saving (convert None colors to "-")
         self.normalize_windows_for_save();
 
-        // Save to shared layouts directory: ~/.vellum-fe/default/layouts/{name}.toml
+        // Save to shared layouts directory: ~/.vellum-fe/layouts/{name}.toml
         let layouts_dir = Config::layouts_dir()?;
         fs::create_dir_all(&layouts_dir)?;
 
