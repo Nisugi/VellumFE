@@ -2162,7 +2162,17 @@ impl VellumGuiApp {
             return false;
         };
         let arg = parts.next();
-        match cmd.to_lowercase().as_str() {
+        let cmd = cmd.to_lowercase();
+        if !matches!(
+            cmd.as_str(),
+            "savelayout" | "loadlayout" | "layouts" | "uiexport" | "uiimport"
+        ) {
+            return false;
+        }
+        // These are intercepted before AppCore::send_command, so echo the
+        // typed command here to match every other command's behavior.
+        self.app_core.echo_command_to_main(command);
+        match cmd.as_str() {
             "savelayout" => {
                 let name = arg.unwrap_or("default");
                 if !is_valid_layout_name(name) {

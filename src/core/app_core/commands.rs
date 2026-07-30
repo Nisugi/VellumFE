@@ -93,8 +93,6 @@ fn split_sleep_macro(
 impl AppCore {
     /// Send command to server
     pub fn send_command(&mut self, command: String) -> Result<String> {
-        use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
-
         // Macro sleep segments: `look\rs2.5\rhide` pauses 2.5s between the
         // commands (paused segments go out via take_outbound when due).
         // Only strings containing a sleep segment take this path — plain
@@ -109,8 +107,11 @@ impl AppCore {
             };
         }
 
-        // Check for dot commands (local client commands)
+        // Check for dot commands (local client commands). They never reach
+        // the server, but they're still user input — echo them like any
+        // other command instead of executing silently.
         if command.starts_with('.') {
+            self.echo_command_to_main(&command);
             return self.handle_dot_command(&command);
         }
 
@@ -127,108 +128,119 @@ impl AppCore {
         }
 
         // Echo command to windows subscribed to "main" stream
-        if self.config.ui.command_echo && !command.is_empty() {
-            // Get windows subscribed to "main" stream
-            let subscribers: Vec<String> = self
+        self.echo_command_to_main(&command);
+
+        // Command history is now managed by the CommandInput widget
+
+        // Return command for network layer to send (network layer adds newline)
+        Ok(command)
+    }
+
+    /// Echo a user-entered command to every window subscribed to "main"
+    /// (prompt + command in the configured echo color), honoring the
+    /// `command_echo` setting. Shared by the server send path and dot
+    /// commands, which execute locally but should still show what was typed.
+    pub(crate) fn echo_command_to_main(&mut self, command: &str) {
+        use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
+
+        if !self.config.ui.command_echo || command.is_empty() {
+            return;
+        }
+        // Get windows subscribed to "main" stream
+        let subscribers: Vec<String> = self
+            .message_processor
+            .get_stream_subscribers("main")
+            .to_vec();
+
+        tracing::info!(
+            "[SEND_COMMAND] Echoing command to {} windows subscribed to 'main': {:?}",
+            subscribers.len(),
+            subscribers
+        );
+
+        // Build the styled line once
+        let mut segments = Vec::new();
+
+        // Add prompt with per-character coloring (same as prompt rendering)
+        tracing::debug!(
+            "[SEND_COMMAND] Building styled line with prompt: '{}'",
+            self.game_state.last_prompt
+        );
+        for ch in self.game_state.last_prompt.chars() {
+            // Prebuilt prompt color map (see MessageProcessor::build_prompt_color_map)
+            let color = self
                 .message_processor
-                .get_stream_subscribers("main")
-                .to_vec();
+                .prompt_char_color(ch)
+                .map(str::to_string)
+                .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
 
-            tracing::info!(
-                "[SEND_COMMAND] Echoing command to {} windows subscribed to 'main': {:?}",
-                subscribers.len(),
-                subscribers
-            );
-
-            // Build the styled line once
-            let mut segments = Vec::new();
-
-            // Add prompt with per-character coloring (same as prompt rendering)
-            tracing::debug!(
-                "[SEND_COMMAND] Building styled line with prompt: '{}'",
-                self.game_state.last_prompt
-            );
-            for ch in self.game_state.last_prompt.chars() {
-                // Prebuilt prompt color map (see MessageProcessor::build_prompt_color_map)
-                let color = self
-                    .message_processor
-                    .prompt_char_color(ch)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
-
-                segments.push(TextSegment {
-                    text: ch.to_string(),
-                    fg: Some(color),
-                    bg: None,
-                    bold: false,
-                    mono: false,
-                    span_type: SpanType::Normal,
-                    link_data: None,
-                });
-            }
-
-            // Add the command text in the configured echo color
             segments.push(TextSegment {
-                text: command.clone(),
-                fg: Some(self.config.colors.ui.command_echo_color.clone()),
+                text: ch.to_string(),
+                fg: Some(color),
                 bg: None,
                 bold: false,
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
             });
+        }
 
-            let styled_line = StyledLine {
-                segments,
-                stream: String::from("main"),
-                timestamp: None,
-            };
+        // Add the command text in the configured echo color
+        segments.push(TextSegment {
+            text: command.to_string(),
+            fg: Some(self.config.colors.ui.command_echo_color.clone()),
+            bg: None,
+            bold: false,
+            mono: false,
+            span_type: SpanType::Normal,
+            link_data: None,
+        });
 
-            // Echo bypasses the message pipeline, so mirror it to remote
-            // clients explicitly (they see the same echo as local windows)
-            if let Some(remote) = self.message_processor.remote.as_mut() {
-                remote.push_text("main", std::sync::Arc::new(styled_line.clone()));
-            }
+        let styled_line = StyledLine {
+            segments,
+            stream: String::from("main"),
+            timestamp: None,
+        };
 
-            // Add the styled line to each subscriber window
-            for window_name in subscribers {
-                if let Some(window) = self.ui_state.windows.get_mut(&window_name) {
-                    match &mut window.content {
-                        WindowContent::Text(ref mut content) => {
-                            content.add_line(styled_line.clone());
-                            tracing::info!(
-                                "[SEND_COMMAND] Added command echo to text window '{}'",
-                                window_name
-                            );
-                        }
-                        WindowContent::TabbedText(ref mut tabbed_content) => {
-                            // Find tab(s) subscribed to "main" stream and add the line
-                            for tab in tabbed_content.tabs.iter_mut() {
-                                if tab
-                                    .definition
-                                    .streams
-                                    .iter()
-                                    .any(|s| s.eq_ignore_ascii_case("main"))
-                                {
-                                    tab.content.add_line(styled_line.clone());
-                                    tracing::info!(
-                                        "[SEND_COMMAND] Added command echo to tabbed window '{}' tab '{}'",
-                                        window_name,
-                                        tab.definition.name
-                                    );
-                                }
+        // Echo bypasses the message pipeline, so mirror it to remote
+        // clients explicitly (they see the same echo as local windows)
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_text("main", std::sync::Arc::new(styled_line.clone()));
+        }
+
+        // Add the styled line to each subscriber window
+        for window_name in subscribers {
+            if let Some(window) = self.ui_state.windows.get_mut(&window_name) {
+                match &mut window.content {
+                    WindowContent::Text(ref mut content) => {
+                        content.add_line(styled_line.clone());
+                        tracing::info!(
+                            "[SEND_COMMAND] Added command echo to text window '{}'",
+                            window_name
+                        );
+                    }
+                    WindowContent::TabbedText(ref mut tabbed_content) => {
+                        // Find tab(s) subscribed to "main" stream and add the line
+                        for tab in tabbed_content.tabs.iter_mut() {
+                            if tab
+                                .definition
+                                .streams
+                                .iter()
+                                .any(|s| s.eq_ignore_ascii_case("main"))
+                            {
+                                tab.content.add_line(styled_line.clone());
+                                tracing::info!(
+                                    "[SEND_COMMAND] Added command echo to tabbed window '{}' tab '{}'",
+                                    window_name,
+                                    tab.definition.name
+                                );
                             }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
-
-        // Command history is now managed by the CommandInput widget
-
-        // Return command for network layer to send (network layer adds newline)
-        Ok(command)
     }
 
     /// `.webinfo`: the phone-onboarding pairing URL and QR code.
