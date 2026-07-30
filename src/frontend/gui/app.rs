@@ -1629,6 +1629,177 @@ impl VellumGuiApp {
         }
     }
 
+    /// Bake the current live appearance — doll, compass set, status icon
+    /// art, pool frames in use, per-window backgrounds — into
+    /// `global/skins/<name>/skin.toml`, referencing pool paths (the image
+    /// resolver falls back to the pool, so nothing is copied). The live
+    /// state doesn't change: skins are a publish format, not a
+    /// prerequisite. Sheet-cell icon overrides can't be expressed in a
+    /// skin manifest and stay as layout overrides.
+    fn compile_appearance_to_skin(&self, name: &str) -> anyhow::Result<()> {
+        use toml_edit::{value, Array, DocumentMut, Item, Table};
+
+        let mut doc = DocumentMut::new();
+        let mut meta = Table::new();
+        meta.insert("name", value(name));
+        meta.insert(
+            "description",
+            value("Compiled from the live appearance (.saveskin)"),
+        );
+        doc.insert("meta", Item::Table(meta));
+
+        // Status icons: the active pool set, then Image overrides on top.
+        let mut icon_entries: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        if let Some(set) = &self.ui_settings.status_icons.set {
+            for image in crate::config::pool::list_category("statusicons") {
+                if let Some((prefix, glyph)) = image.stem().split_once('_') {
+                    if prefix.eq_ignore_ascii_case(set) && !glyph.is_empty() {
+                        icon_entries
+                            .insert(glyph.to_ascii_lowercase(), image.pool_path.clone());
+                    }
+                }
+            }
+        }
+        for (id, icon) in &self.ui_settings.status_icons.overrides {
+            if let crate::data::IconRef::Image { path } = icon {
+                icon_entries.insert(id.to_ascii_lowercase(), path.clone());
+            }
+        }
+        if !icon_entries.is_empty() {
+            let mut icons = Table::new();
+            for (id, path) in &icon_entries {
+                icons.insert(id, value(path));
+            }
+            doc.insert("icons", Item::Table(icons));
+        }
+
+        // Compass set (only meaningful with a rose).
+        if let Some(set) = &self.ui_settings.compass_set {
+            let mut entries: std::collections::BTreeMap<String, String> =
+                std::collections::BTreeMap::new();
+            for image in crate::config::pool::list_category("compass") {
+                if let Some((prefix, role)) = image.stem().split_once('_') {
+                    if prefix.eq_ignore_ascii_case(set) && !role.is_empty() {
+                        entries.insert(role.to_ascii_lowercase(), image.pool_path.clone());
+                    }
+                }
+            }
+            if let Some(rose) = entries.get("rose").cloned() {
+                let mut compass = Table::new();
+                compass.insert("rose", value(rose));
+                for (role, path) in &entries {
+                    if role != "rose" {
+                        compass.insert(role, value(path));
+                    }
+                }
+                doc.insert("compass", Item::Table(compass));
+            }
+        }
+
+        // Injury doll: pool image + its sidecar calibration.
+        if let Some(image) = &self.ui_settings.doll_image {
+            let mut doll = Table::new();
+            doll.insert("base", value(image));
+            doc.insert("injury_doll", Item::Table(doll));
+            let abs = crate::config::Config::global_images_dir()?.join(image);
+            if let Some(sidecar) =
+                crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(&abs)
+            {
+                let rounded = |v: f32, places: f64| (v as f64 * places).round() / places;
+                let mut anchors = Table::new();
+                let mut keys: Vec<&String> = sidecar.anchors.keys().collect();
+                keys.sort();
+                for key in keys {
+                    let [x, y] = sidecar.anchors[key];
+                    let mut pair = Array::new();
+                    pair.push(rounded(x, 10_000.0));
+                    pair.push(rounded(y, 10_000.0));
+                    anchors.insert(key, value(pair));
+                }
+                let mut dots = Table::new();
+                dots.insert("wound_color", value(sidecar.dots.wound_color.as_str()));
+                dots.insert("scar_color", value(sidecar.dots.scar_color.as_str()));
+                dots.insert("opacity", value(rounded(sidecar.dots.opacity, 100.0)));
+                dots.insert("diameter", value(rounded(sidecar.dots.diameter, 1_000.0)));
+                let doll = doc["injury_doll"].as_table_mut().expect("just inserted");
+                doll.insert("anchors", Item::Table(anchors));
+                doll.insert("dots", Item::Table(dots));
+            }
+        }
+
+        // Pool frames any window override references -> [frames.<stem>].
+        let mut wanted_frames: Vec<String> = self
+            .tab_settings
+            .values()
+            .filter_map(|settings| settings.skin_frame.clone())
+            .map(|frame| frame.to_ascii_lowercase())
+            .filter(|frame| frame != "none")
+            .collect();
+        wanted_frames.sort();
+        wanted_frames.dedup();
+        if !wanted_frames.is_empty() {
+            let mut frames = Table::new();
+            frames.set_implicit(true);
+            for image in crate::config::pool::list_category("frames") {
+                let stem = image.stem().to_ascii_lowercase();
+                if !wanted_frames.contains(&stem) {
+                    continue;
+                }
+                let Some(sidecar) = crate::config::pool::read_sidecar::<
+                    crate::config::pool::FrameSidecar,
+                >(&image.abs_path) else {
+                    continue;
+                };
+                let mut entry = Table::new();
+                entry.insert("image", value(&image.pool_path));
+                let mut slice = Array::new();
+                for inset in sidecar.slice.insets() {
+                    slice.push(inset as f64);
+                }
+                entry.insert("slice", value(slice));
+                entry.insert("scale", value(sidecar.scale as f64));
+                frames.insert(&stem, Item::Table(entry));
+            }
+            if !frames.is_empty() {
+                doc.insert("frames", Item::Table(frames));
+            }
+        }
+
+        // Per-window backgrounds -> [window.<name>.background].
+        let mut backgrounds: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for (key, settings) in &self.tab_settings {
+            let Some(background) = &settings.background_image else {
+                continue;
+            };
+            if background.eq_ignore_ascii_case("none") {
+                continue;
+            }
+            if let Some(tab) = self.available_tabs.get(key) {
+                backgrounds.insert(tab.window_name.clone(), background.clone());
+            }
+        }
+        if !backgrounds.is_empty() {
+            let mut windows = Table::new();
+            windows.set_implicit(true);
+            for (window_name, path) in &backgrounds {
+                let mut background = Table::new();
+                background.insert("image", value(path));
+                let mut per_window = Table::new();
+                per_window.set_implicit(true);
+                per_window.insert("background", Item::Table(background));
+                windows.insert(window_name, Item::Table(per_window));
+            }
+            doc.insert("window", Item::Table(windows));
+        }
+
+        let root = crate::config::Config::skins_dir()?.join(name);
+        std::fs::create_dir_all(&root)?;
+        crate::config::write_atomic(&root.join("skin.toml"), doc.to_string())?;
+        Ok(())
+    }
+
     /// Set the injury doll override (pool-relative path), persisted in the
     /// layout and mirrored to config for the web doll endpoint. The doll
     /// switches next frame via `SkinState::apply_if_changed`.
@@ -2188,7 +2359,7 @@ impl VellumGuiApp {
         let cmd = cmd.to_lowercase();
         if !matches!(
             cmd.as_str(),
-            "savelayout" | "loadlayout" | "layouts" | "uiexport" | "uiimport"
+            "savelayout" | "loadlayout" | "layouts" | "uiexport" | "uiimport" | "saveskin"
         ) {
             return false;
         }
@@ -2196,6 +2367,31 @@ impl VellumGuiApp {
         // typed command here to match every other command's behavior.
         self.app_core.echo_command_to_main(command);
         match cmd.as_str() {
+            "saveskin" => {
+                let Some(name) = arg else {
+                    self.app_core.add_system_message(
+                        "Usage: .saveskin <name> — bakes the current appearance \
+                         (doll, compass, status icons, frames, backgrounds) into a skin.",
+                    );
+                    return true;
+                };
+                if !is_valid_layout_name(name) {
+                    self.app_core.add_system_message(
+                        "Skin names use letters, digits, '-' and '_' only.",
+                    );
+                    return true;
+                }
+                match self.compile_appearance_to_skin(name) {
+                    Ok(()) => self.app_core.add_system_message(&format!(
+                        "Saved skin '{}' from the current appearance. Activate it with .setskin {}",
+                        name, name
+                    )),
+                    Err(err) => self
+                        .app_core
+                        .add_system_message(&format!("Failed to save skin: {}", err)),
+                }
+                true
+            }
             "savelayout" => {
                 let name = arg.unwrap_or("default");
                 if !is_valid_layout_name(name) {
