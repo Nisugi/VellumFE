@@ -600,35 +600,42 @@ fn load_texture_impl(
     ))
 }
 
-/// Paint a window background into `rect`, clipped to it. `scrim_color`
-/// supplies the scrim's RGB (normally the theme's window fill) so the
-/// overlay darkens/lightens toward the theme rather than plain black.
-pub fn paint_background(
-    painter: &egui::Painter,
+/// Build the shapes that paint a window background into `rect`. The caller
+/// paints them through a painter clipped to `rect` — normally deferred via
+/// a reserved shape slot (`Painter::add(Noop)` + `Painter::set`) so the
+/// art lands behind the window's content yet is sized from the content's
+/// final extent, not the pre-layout available rect (which can overshoot an
+/// auto-sized window's frame). `scrim_color` supplies the scrim's RGB
+/// (normally the theme's window fill) so the overlay darkens/lightens
+/// toward the theme rather than plain black.
+pub fn background_shapes(
     rect: egui::Rect,
     bg: &ResolvedBackground,
     scrim_color: egui::Color32,
-) {
+) -> Vec<egui::Shape> {
+    let mut shapes = Vec::new();
     if !rect.is_positive() || bg.tex_size.x <= 0.0 || bg.tex_size.y <= 0.0 {
-        return;
+        return shapes;
     }
-    let painter = painter.with_clip_rect(rect);
     let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let image = |dest: egui::Rect, uv: egui::Rect| {
+        let mut mesh = egui::Mesh::with_texture(bg.texture);
+        mesh.add_rect_with_uv(dest, uv, bg.tint);
+        egui::Shape::mesh(mesh)
+    };
     match bg.fit {
         BackgroundFit::Stretch => {
-            painter.image(bg.texture, rect, full_uv, bg.tint);
+            shapes.push(image(rect, full_uv));
         }
         BackgroundFit::Cover => {
-            let uv = cover_uv(bg.tex_size, rect.size());
-            painter.image(bg.texture, rect, uv, bg.tint);
+            shapes.push(image(rect, cover_uv(bg.tex_size, rect.size())));
         }
         BackgroundFit::Contain => {
-            let dest = contain_dest(bg.tex_size, rect);
-            painter.image(bg.texture, dest, full_uv, bg.tint);
+            shapes.push(image(contain_dest(bg.tex_size, rect), full_uv));
         }
         BackgroundFit::Center => {
             let dest = egui::Rect::from_center_size(rect.center(), bg.tex_size);
-            painter.image(bg.texture, dest, full_uv, bg.tint);
+            shapes.push(image(dest, full_uv));
         }
         BackgroundFit::Tile => {
             // Cap the grid so a tiny tile in a huge window can't explode the
@@ -640,8 +647,7 @@ pub fn paint_background(
                 for col in 0..cols {
                     let min = rect.min
                         + egui::vec2(col as f32 * bg.tex_size.x, row as f32 * bg.tex_size.y);
-                    let dest = egui::Rect::from_min_size(min, bg.tex_size);
-                    painter.image(bg.texture, dest, full_uv, bg.tint);
+                    shapes.push(image(egui::Rect::from_min_size(min, bg.tex_size), full_uv));
                 }
             }
         }
@@ -653,8 +659,9 @@ pub fn paint_background(
             scrim_color.b(),
             bg.scrim_alpha,
         );
-        painter.rect_filled(rect, 0.0, scrim);
+        shapes.push(egui::Shape::rect_filled(rect, 0.0, scrim));
     }
+    shapes
 }
 
 /// Largest rect with the sprite's aspect ratio centered inside `rect`.

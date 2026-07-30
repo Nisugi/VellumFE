@@ -4296,14 +4296,18 @@ impl VellumGuiApp {
             return None;
         };
 
-        if let Some(background) = &settings.background {
-            crate::frontend::gui::skin::paint_background(
-                ui.painter(),
+        // Skin background: reserve a paint slot now (so the art stays behind
+        // the content), fill it after layout from the content's real extent.
+        // Compact one-row widgets live in auto-sized windows whose pre-layout
+        // available rect can be taller than the final frame; painting that
+        // rect up front spilled the art below the window.
+        let background_slot = settings.background.clone().map(|background| {
+            (
+                ui.painter().add(egui::Shape::Noop),
                 ui.available_rect_before_wrap(),
                 background,
-                ui.visuals().window_fill(),
-            );
-        }
+            )
+        });
 
         // Scale the label-driven text styles so list/grid widgets (targets,
         // players, dashboards, ...) follow the window's text size and font,
@@ -4324,7 +4328,7 @@ impl VellumGuiApp {
             }
         }
 
-        match &window.content {
+        let clicked_link = match &window.content {
             WindowContent::Text(content)
             | WindowContent::Inventory(content)
             | WindowContent::Reserve(content)
@@ -4505,7 +4509,26 @@ impl VellumGuiApp {
                 ui.allocate_space(ui.available_size());
                 None
             }
+        };
+
+        if let Some((slot, avail, background)) = background_slot {
+            let mut rect = avail;
+            if Self::is_compact_center_widget(&window.widget_type) {
+                // One-row widgets: hug the rendered content so the art can't
+                // run past an auto-shrunk frame.
+                rect.max.y = rect.max.y.min(ui.min_rect().max.y);
+            }
+            let shapes = crate::frontend::gui::skin::background_shapes(
+                rect,
+                &background,
+                ui.visuals().window_fill(),
+            );
+            ui.painter()
+                .with_clip_rect(rect)
+                .set(slot, egui::Shape::Vec(shapes));
         }
+
+        clicked_link
     }
 }
 
