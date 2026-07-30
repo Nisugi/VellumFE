@@ -7,32 +7,18 @@
 use crate::data::LinkData;
 use ratatui::{buffer::Buffer, layout::Rect};
 
-/// Check if a creature should be filtered from the targets list
-/// Based on Lich's filtering logic for dead/gone, animated, and body parts
-/// Returns (should_filter, is_body_part) tuple
-fn should_filter_creature(creature: &crate::core::state::Creature) -> (bool, bool) {
-    // Check if it's a body part first
+/// Whether a creature should be filtered from the targets list, and whether
+/// it is an appendage (for the "Appendages: N" footer count).
+/// Delegates the filter decision to the canonical `Creature::is_valid_target`
+/// so TUI/GUI/web stay in sync; `body_part` is reported separately because
+/// the footer counts appendages even though they are also filtered.
+/// Returns (should_filter, is_body_part).
+fn should_filter_creature(
+    creature: &crate::core::state::Creature,
+    excluded_nouns: &[String],
+) -> (bool, bool) {
     let body_part = creature.is_body_part();
-
-    // Filter dead or gone creatures (structured <crtrStatus> dead flag when
-    // available, legacy "(dead)"/"(gone)" text otherwise)
-    if creature.is_dead() {
-        return (true, body_part);
-    }
-
-    let name_lower = creature.name.to_lowercase();
-
-    // Filter "animated" creatures except "animated slush"
-    if name_lower.starts_with("animated") && !name_lower.starts_with("animated slush") {
-        return (true, body_part);
-    }
-
-    // Filter body parts
-    if body_part {
-        return (true, true);
-    }
-
-    (false, false)
+    (!creature.is_valid_target(excluded_nouns), body_part)
 }
 
 pub struct Targets {
@@ -90,7 +76,10 @@ impl Targets {
     }
 
     /// Update the widget from room creatures and current target.
-    /// Only shows creatures that appear in both room_creatures and target_ids.
+    /// Shows room creatures with the `<crtrStatus>` hostile flag set (Lich
+    /// `Creature.targets`), minus dead/animated/appendage noise. `target_ids`
+    /// no longer gates membership (the dropdown goes stale); it is retained
+    /// only for change detection, and `current_target` for highlighting.
     /// Returns true if the display changed.
     pub fn update_from_state(
         &mut self,
@@ -130,19 +119,24 @@ impl Targets {
         self.current_target = current_target.to_string();
 
         for creature in room_creatures.iter() {
-            // Intersect with target_ids: skip if creature not in targetable list
-            // (unless target_ids is empty - fallback to showing all room_creatures)
-            if !target_ids.is_empty() && !target_ids.contains(&creature.id) {
+            // Gate on the structured hostile flag, matching Lich's
+            // Creature.targets: the room roster AND crtrStatus hostile==1.
+            // A creature with no <crtrStatus> snapshot (flags: None) has
+            // unknown hostility and is excluded until one arrives. The stale
+            // dDBTarget dropdown is deliberately not used for membership.
+            if !creature.flags.as_ref().is_some_and(|f| f.hostile) {
                 tracing::trace!(
-                    "Skipping non-targetable creature: name='{}', id='{}'",
+                    "Skipping non-hostile creature: name='{}', id='{}'",
                     creature.name,
                     creature.id
                 );
                 continue;
             }
 
-            // Apply Lich-style filtering (dead/gone, animated, body parts)
-            let (should_filter, is_body_part) = should_filter_creature(creature);
+            // Apply Lich valid_target? filtering (dead/gone, animated, body
+            // parts, plus configured excluded nouns).
+            let (should_filter, is_body_part) =
+                should_filter_creature(creature, &config.excluded_nouns);
             if is_body_part {
                 self.body_part_count += 1;
             }
@@ -493,16 +487,25 @@ mod tests {
         assert_eq!(dt.generation, 0);
     }
 
+    /// A hostile creature with a `<crtrStatus>` snapshot — the only kind the
+    /// widget now shows. Test helper to keep the fixtures terse.
+    fn hostile(id: &str, name: &str, noun: &str) -> Creature {
+        Creature {
+            id: id.to_string(),
+            name: name.to_string(),
+            noun: Some(noun.to_string()),
+            status: None,
+            flags: Some(crate::core::state::CreatureFlags {
+                hostile: true,
+                ..Default::default()
+            }),
+        }
+    }
+
     #[test]
     fn test_generation_increments_on_update() {
         let mut dt = Targets::new("Targets");
-        let creatures = vec![Creature {
-            id: "123".to_string(),
-            name: "a goblin".to_string(),
-            noun: Some("goblin".to_string()),
-            status: None,
-            flags: None,
-        }];
+        let creatures = vec![hostile("123", "a goblin", "goblin")];
 
         let config = crate::config::TargetListConfig::default();
         let target_ids: Vec<String> = vec![];
@@ -531,20 +534,8 @@ mod tests {
     fn test_update_from_state_with_creatures() {
         let mut dt = Targets::new("Targets");
         let creatures = vec![
-            Creature {
-                id: "1".to_string(),
-                name: "a kobold".to_string(),
-                noun: Some("kobold".to_string()),
-                status: None,
-                flags: None,
-            },
-            Creature {
-                id: "2".to_string(),
-                name: "a goblin".to_string(),
-                noun: Some("goblin".to_string()),
-                status: None,
-                flags: None,
-            },
+            hostile("1", "a kobold", "kobold"),
+            hostile("2", "a goblin", "goblin"),
         ];
         let config = crate::config::TargetListConfig::default();
         let target_ids: Vec<String> = vec![];
@@ -556,15 +547,41 @@ mod tests {
     }
 
     #[test]
+    fn test_non_hostile_creature_excluded() {
+        // No <crtrStatus> snapshot (flags: None) => unknown hostility =>
+        // excluded, matching Lich Creature.targets.
+        let mut dt = Targets::new("Targets");
+        let creatures = vec![
+            hostile("1", "a sea nymph", "nymph"),
+            Creature {
+                id: "2".to_string(),
+                name: "a field rabbit".to_string(),
+                noun: Some("rabbit".to_string()),
+                status: None,
+                flags: Some(crate::core::state::CreatureFlags {
+                    hostile: false,
+                    ..Default::default()
+                }),
+            },
+            Creature {
+                id: "3".to_string(),
+                name: "a townsperson".to_string(),
+                noun: Some("townsperson".to_string()),
+                status: None,
+                flags: None, // no snapshot yet
+            },
+        ];
+        let config = crate::config::TargetListConfig::default();
+        let target_ids: Vec<String> = vec![];
+
+        dt.update_from_state(&creatures, "", &target_ids, &config, 30, None);
+        assert_eq!(dt.count, 1, "only the hostile sea nymph should show");
+    }
+
+    #[test]
     fn test_update_from_state_no_change() {
         let mut dt = Targets::new("Targets");
-        let creatures = vec![Creature {
-            id: "1".to_string(),
-            name: "a kobold".to_string(),
-            noun: Some("kobold".to_string()),
-            status: None,
-            flags: None,
-        }];
+        let creatures = vec![hostile("1", "a kobold", "kobold")];
         let config = crate::config::TargetListConfig::default();
         let target_ids: Vec<String> = vec![];
 
@@ -581,20 +598,8 @@ mod tests {
     fn test_update_from_state_current_target_change() {
         let mut dt = Targets::new("Targets");
         let creatures = vec![
-            Creature {
-                id: "1".to_string(),
-                name: "a kobold".to_string(),
-                noun: Some("kobold".to_string()),
-                status: None,
-                flags: None,
-            },
-            Creature {
-                id: "2".to_string(),
-                name: "a goblin".to_string(),
-                noun: Some("goblin".to_string()),
-                status: None,
-                flags: None,
-            },
+            hostile("1", "a kobold", "kobold"),
+            hostile("2", "a goblin", "goblin"),
         ];
         let config = crate::config::TargetListConfig::default();
         let target_ids: Vec<String> = vec![];
@@ -641,11 +646,12 @@ mod tests {
         config.status_position = "start".to_string();
 
         let creatures = vec![Creature {
-            id: "1".to_string(),
-            name: "a goblin".to_string(),
-            noun: Some("goblin".to_string()),
-            status: Some("stunned".to_string()),
-            flags: None,
+            flags: Some(crate::core::state::CreatureFlags {
+                hostile: true,
+                statuses: vec!["stunned".to_string()],
+                ..Default::default()
+            }),
+            ..hostile("1", "a goblin", "goblin")
         }];
         let target_ids: Vec<String> = vec![];
 
@@ -667,11 +673,12 @@ mod tests {
         config.status_position = "end".to_string();
 
         let creatures = vec![Creature {
-            id: "1".to_string(),
-            name: "a goblin".to_string(),
-            noun: Some("goblin".to_string()),
-            status: Some("prone".to_string()),
-            flags: None,
+            flags: Some(crate::core::state::CreatureFlags {
+                hostile: true,
+                statuses: vec!["prone".to_string()],
+                ..Default::default()
+            }),
+            ..hostile("1", "a goblin", "goblin")
         }];
         let target_ids: Vec<String> = vec![];
 
@@ -772,11 +779,12 @@ mod tests {
         config.truncation_mode = "noun".to_string();
 
         let creatures = vec![Creature {
-            id: "1".to_string(),
-            name: "a muddy hog".to_string(),
-            noun: Some("hog".to_string()),
-            status: Some("stunned".to_string()),
-            flags: None,
+            flags: Some(crate::core::state::CreatureFlags {
+                hostile: true,
+                statuses: vec!["stunned".to_string()],
+                ..Default::default()
+            }),
+            ..hostile("1", "a muddy hog", "hog")
         }];
         let target_ids: Vec<String> = vec![];
 

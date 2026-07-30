@@ -1618,8 +1618,10 @@ impl AppCore {
         if self.message_processor.remote.is_none() {
             return;
         }
-        let mut snap =
-            crate::core::remote::RemoteStateSnapshot::from_game_state(&self.game_state);
+        let mut snap = crate::core::remote::RemoteStateSnapshot::from_game_state(
+            &self.game_state,
+            &self.config.target_list.excluded_nouns,
+        );
         // Room number lives on AppCore (nav tag in direct mode; extracted
         // from the room name under Lich), not GameState.
         if snap.room_id.is_none() {

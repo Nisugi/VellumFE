@@ -3506,14 +3506,6 @@ impl VellumGuiApp {
             .unwrap_or(target_cfg.status_position.as_str());
         let current_target =
             Self::normalize_entity_id(&app_core.game_state.target_list.current_target);
-        let targetable_ids: HashSet<String> = app_core
-            .game_state
-            .target_list
-            .target_ids
-            .iter()
-            .map(|id| Self::normalize_entity_id(id))
-            .collect();
-
         let max_height = ui.available_height().max(1.0);
         egui::ScrollArea::vertical()
             .id_salt("targets_scroll")
@@ -3524,16 +3516,21 @@ impl VellumGuiApp {
                 let mut body_part_count: u32 = 0;
                 for creature in &app_core.game_state.room_creatures {
                     let creature_id = Self::normalize_entity_id(&creature.id);
-                    if !targetable_ids.is_empty() && !targetable_ids.contains(&creature_id) {
+                    // Hostile gate, matching Lich Creature.targets and the TUI
+                    // widget: require a <crtrStatus> snapshot with hostile==1.
+                    // Unknown hostility (flags: None) is excluded.
+                    if !creature.flags.as_ref().is_some_and(|f| f.hostile) {
                         continue;
                     }
-                    // Body parts (severed arms, tentacles, …) are filtered
-                    // from the list, Lich-style, matching the TUI widget.
+                    // Appendages are still counted for the footer even though
+                    // valid_target? also filters them.
                     if creature.is_body_part() {
                         body_part_count += 1;
-                        continue;
                     }
-                    if Self::should_filter_target_creature(creature, target_cfg) {
+                    // Lich valid_target? filtering (dead/animated/appendage +
+                    // configured excluded nouns), canonical on Creature so the
+                    // TUI/GUI/web lists stay in sync.
+                    if !creature.is_valid_target(&target_cfg.excluded_nouns) {
                         continue;
                     }
 
@@ -3580,33 +3577,6 @@ impl VellumGuiApp {
             });
 
         clicked_link
-    }
-
-    pub(super) fn should_filter_target_creature(
-        creature: &crate::core::state::Creature,
-        target_cfg: &TargetListConfig,
-    ) -> bool {
-        // Structured <crtrStatus> dead flag when available, legacy
-        // "(dead)"/"(gone)" text otherwise
-        if creature.is_dead() {
-            return true;
-        }
-
-        let name_lower = creature.name.to_ascii_lowercase();
-        if name_lower.starts_with("animated") && !name_lower.starts_with("animated slush") {
-            return true;
-        }
-
-        creature
-            .noun
-            .as_ref()
-            .map(|noun| noun.to_ascii_lowercase())
-            .is_some_and(|noun| {
-                target_cfg
-                    .excluded_nouns
-                    .iter()
-                    .any(|excluded| excluded == &noun)
-            })
     }
 
     pub(super) fn render_players_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {

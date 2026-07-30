@@ -359,13 +359,46 @@ impl Creature {
             )
             .unwrap()
         });
-        self.noun.as_deref().is_some_and(|noun| {
-            regex.is_match(noun)
-                && !self
-                    .name
-                    .to_lowercase()
-                    .contains("amaranthine kraken tentacle")
-        })
+        static KRAKEN_EXCEPTION: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        let kraken = KRAKEN_EXCEPTION.get_or_init(|| {
+            // Real creatures whose noun looks like an appendage; Lich excepts
+            // all four kraken-tentacle variants (gameobj.rb / creature.rb).
+            regex::Regex::new(r"(?i)(?:amaranthine|ghostly|grizzled|ancient) kraken tentacle")
+                .unwrap()
+        });
+        self.noun
+            .as_deref()
+            .is_some_and(|noun| regex.is_match(noun) && !kraken.is_match(&self.name))
+    }
+
+    /// Whether this creature should be shown as a target — Lich's
+    /// `valid_target?` (dead/animated/appendage exclusions), plus the
+    /// user-configured `excluded_nouns`. Hostility is a *separate* gate and
+    /// is deliberately not checked here. The single source of truth for the
+    /// TUI, GUI, and web targets lists; keep those callers routed through it.
+    pub fn is_valid_target(&self, excluded_nouns: &[String]) -> bool {
+        // Dead/gone: structured <crtrStatus> flag when present, legacy text
+        // status otherwise.
+        if self.is_dead() {
+            return false;
+        }
+        // Animated decoys, except "animated slush".
+        let name_lower = self.name.to_ascii_lowercase();
+        if name_lower.starts_with("animated") && !name_lower.starts_with("animated slush") {
+            return false;
+        }
+        // Severed appendages (arm, tentacle, …), except the kraken variants.
+        if self.is_body_part() {
+            return false;
+        }
+        // User-configured noun exclusions (case-insensitive).
+        if let Some(noun) = self.noun.as_deref() {
+            let noun_lower = noun.to_ascii_lowercase();
+            if excluded_nouns.iter().any(|e| e.eq_ignore_ascii_case(&noun_lower)) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Dead by the structured flag, or by the legacy text status
@@ -1025,14 +1058,58 @@ mod tests {
 
     #[test]
     fn test_is_body_part_kraken_tentacle_is_a_creature() {
-        let kraken = body_part_creature("an amaranthine kraken tentacle", Some("tentacle"));
-        assert!(!kraken.is_body_part());
+        // All four variants Lich excepts (gameobj.rb / creature.rb), not just
+        // amaranthine — these are real creatures despite the "tentacle" noun.
+        for variant in ["amaranthine", "ghostly", "grizzled", "ancient"] {
+            let name = format!("a {variant} kraken tentacle");
+            assert!(
+                !body_part_creature(&name, Some("tentacle")).is_body_part(),
+                "'{name}' should be a creature, not an appendage"
+            );
+        }
+        // A plain tentacle with no kraken qualifier is still an appendage.
+        assert!(body_part_creature("a severed tentacle", Some("tentacle")).is_body_part());
     }
 
     #[test]
     fn test_is_body_part_normal_creature_and_missing_noun() {
         assert!(!body_part_creature("a muddy hog", Some("hog")).is_body_part());
         assert!(!body_part_creature("a severed arm", None).is_body_part());
+    }
+
+    // ========== Creature::is_valid_target tests ==========
+
+    #[test]
+    fn test_is_valid_target_lich_valid_target_rules() {
+        let excluded = vec!["coal".to_string()];
+
+        // Creature.name holds the bold link text WITHOUT the article
+        // (the feed keeps "a"/"an" outside the <a> tag), so the animated
+        // check is anchored at "animated", matching Lich's /^animated\b/.
+
+        // Live hostile-eligible creature passes.
+        assert!(body_part_creature("muddy hog", Some("hog")).is_valid_target(&excluded));
+
+        // Animated decoy fails, but "animated slush" passes.
+        assert!(!body_part_creature("animated statue", Some("statue")).is_valid_target(&excluded));
+        assert!(body_part_creature("animated slush", Some("slush")).is_valid_target(&excluded));
+
+        // Appendage fails; kraken tentacle passes.
+        assert!(!body_part_creature("severed arm", Some("arm")).is_valid_target(&excluded));
+        assert!(
+            body_part_creature("ancient kraken tentacle", Some("tentacle"))
+                .is_valid_target(&excluded)
+        );
+
+        // Configured excluded noun fails (case-insensitive).
+        assert!(!body_part_creature("lump of coal", Some("Coal")).is_valid_target(&excluded));
+
+        // Dead fails.
+        let dead = Creature {
+            flags: Some(CreatureFlags { dead: true, ..Default::default() }),
+            ..body_part_creature("slain orc", Some("orc"))
+        };
+        assert!(!dead.is_valid_target(&excluded));
     }
 
     // ========== GameState tests ==========
