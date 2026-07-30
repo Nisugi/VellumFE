@@ -289,7 +289,7 @@ pub struct Config {
     #[serde(default = "default_theme_name")] // Default to "dark" theme
     pub active_theme: String, // Currently active theme name
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_skin: Option<String>, // Active GUI skin (directory name under ~/.vellum-fe/skins/); None = plain theme colors
+    pub active_skin: Option<String>, // Active GUI skin (dir name under ~/.vellum-fe/global/skins/); None = plain theme colors. In the GUI this mirrors ui_settings.active_skin in the layout file (web doll + non-GUI frontends read it here)
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml

@@ -1112,6 +1112,7 @@ impl VellumGuiApp {
         }
         for group in &mut self.tab_groups {
             group.members.retain(|member| member != key);
+            group.merged.retain(|member| member != key);
         }
         self.tab_groups.retain(|group| group.members.len() >= 2);
         self.layout_dirty = true;
@@ -1135,6 +1136,7 @@ impl VellumGuiApp {
             self.tab_groups.push(TabGroup {
                 members: vec![leader.clone(), other.clone()],
                 horizontal: false,
+                merged: Vec::new(),
             });
         }
         self.tab_zones.insert(other, leader_zone);
@@ -1528,7 +1530,7 @@ impl VellumGuiApp {
                 let available = crate::config::skins::list_skins();
                 if available.is_empty() {
                     self.app_core.add_system_message(&format!(
-                        "Cannot load skin '{}': {}. No skins installed; create one under ~/.vellum-fe/skins/<name>/skin.toml",
+                        "Cannot load skin '{}': {}. No skins installed; create one under ~/.vellum-fe/global/skins/<name>/skin.toml",
                         name, err
                     ));
                 } else {
@@ -1548,7 +1550,7 @@ impl VellumGuiApp {
         let available = crate::config::skins::list_skins();
         if available.is_empty() {
             self.app_core.add_system_message(
-                "No skins installed. Create one under ~/.vellum-fe/skins/<name>/skin.toml",
+                "No skins installed. Create one under ~/.vellum-fe/global/skins/<name>/skin.toml",
             );
             return;
         }

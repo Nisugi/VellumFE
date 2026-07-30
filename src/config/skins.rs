@@ -1,6 +1,6 @@
 //! Skin manifest parsing: the frontend-neutral half of the skin system.
 //!
-//! A skin is a directory under `~/.vellum-fe/skins/<name>/` containing a
+//! A skin is a directory under `~/.vellum-fe/global/skins/<name>/` containing a
 //! `skin.toml` manifest plus image assets. This module owns the manifest
 //! format, loading, and the canonical injury doll part table; textures,
 //! painting, and the calibrator's comment-preserving save live in
@@ -334,8 +334,10 @@ pub fn manifest_mtime(root: &Path) -> Option<std::time::SystemTime> {
 const SCAFFOLD_MANIFEST: &str = r##"# VellumFE skin manifest.
 # Full documentation: docs/SKINS.md in the VellumFE repository.
 #
-# Image paths are relative to this folder; absolute paths are allowed
-# (e.g. pointing at art from another install). Formats: PNG, JPEG, WebP, BMP.
+# Image paths are relative to this folder; anything not found here is
+# looked up in the shared pool at ~/.vellum-fe/global/images/ (e.g.
+# "frames/brass.png"), and absolute paths are allowed. Formats: PNG,
+# JPEG, WebP, BMP.
 # Activate with `.setskin <folder-name>`. Edits to this file reload
 # automatically; after editing images run `.reloadskin`.
 

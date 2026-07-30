@@ -856,8 +856,8 @@ pub fn register_sheet(
 }
 
 /// Register a hotbar icon sprite sheet into the shared store
-/// (`global\icons\`), where every skin — and a skinless setup — can use it.
-/// Creates the store and its icons.toml on first use.
+/// (`global/images/icons/`), where every skin — and a skinless setup —
+/// can use it. Creates the store and its icons.toml on first use.
 pub fn register_sheet_shared(
     sheet_name: &str,
     source: &Path,

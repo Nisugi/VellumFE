@@ -13,11 +13,12 @@ so nothing about accessibility or text-only setups changes.
 
 ## Installing a skin
 
-A skin is a directory under `~/.vellum-fe/skins/` (or `$VELLUM_FE_DIR/skins/`)
-containing a `skin.toml` manifest plus image assets:
+A skin is a directory under `~/.vellum-fe/global/skins/` (or
+`$VELLUM_FE_DIR/global/skins/`) containing a `skin.toml` manifest plus
+image assets:
 
 ```
-~/.vellum-fe/skins/
+~/.vellum-fe/global/skins/
 └── parchment/
     ├── skin.toml
     └── bg/
@@ -26,6 +27,15 @@ containing a `skin.toml` manifest plus image assets:
 ```
 
 Supported image formats: PNG, JPEG, WebP, BMP.
+
+Shared art lives in the image pool at `~/.vellum-fe/global/images/`, one
+subfolder per category (`icons/`, `frames/`, `dolls/`, `compass/`,
+`backgrounds/`). Relative manifest paths resolve against the skin folder
+first, then the pool — so `image = "frames/brass.png"` finds
+`global/images/frames/brass.png` without copying it into the skin.
+(Older installs are migrated automatically: `~/.vellum-fe/skins/`,
+`global/icons/`, and `global/dolls/` move to the new locations at
+startup.)
 
 ## Commands
 
@@ -38,9 +48,13 @@ Supported image formats: PNG, JPEG, WebP, BMP.
 | `.makeskin <name>` | Create a starter skin (commented-out skin.toml) to edit |
 | `.reloadskin` | Force-reload the active skin (needed after editing images) |
 
-The active skin is stored as `active_skin` in `config.toml`. The GUI
-settings editor (`.settings`) has a Skin section with the same picker, an
-"Open skins folder" button, and a "Create" button for new starter skins.
+The active skin is stored in the per-character GUI layout, so
+`.savelayout` checkpoints remember their skin and `.loadlayout` switches
+it (a checkpoint with no skin recorded keeps the current one).
+`config.toml`'s `active_skin` is kept as a mirror for the web frontend
+and non-GUI sessions. The GUI settings editor (`.settings`) has a Skin
+section with the same picker, an "Open skins folder" button, and a
+"Create" button for new starter skins.
 
 ## Manifest format (`skin.toml`)
 

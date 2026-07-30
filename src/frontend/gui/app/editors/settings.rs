@@ -600,7 +600,7 @@ impl VellumGuiApp {
                                             if ui
                                                 .button("Open skins folder")
                                                 .on_hover_text(
-                                                    "Skins live in ~/.vellum-fe/skins/<name>/",
+                                                    "Skins live in ~/.vellum-fe/global/skins/<name>/",
                                                 )
                                                 .clicked()
                                             {

@@ -34,8 +34,8 @@ native, `.`-prefixed equivalent, and you can use whichever you prefer.
 | Kind | Examples | Where it lands |
 |------|----------|----------------|
 | **Game data** | `gameobj-data.xml`, `effect-list.xml`, `spell-list.xml`, `mapdb.json` | shared data store; loaded live |
-| **Skins** | full GUI graphics themes (frames, colors, icons) | `skins/<name>/` |
-| **Icon sets** | shared icon sheets for hotbars / status / hands | `global/icons/` |
+| **Skins** | full GUI graphics themes (frames, colors, icons) | `global/skins/<name>/` |
+| **Icon sets** | shared icon sheets for hotbars / status / hands | `global/images/icons/` |
 | **Layouts / UI packs** | complete window arrangements shared as `.vellumpack` | your layouts folder |
 
 Game-data files are the same ones Lich maintains, so if you have a Lich

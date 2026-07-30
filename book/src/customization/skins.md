@@ -17,9 +17,10 @@ load) falls back to that.
 .setskin none     # back to plain theme rendering
 ```
 
-The active skin is remembered in your config. `.skin` is an alias. The
-GUI settings editor (`.settings`) has a Skin section with the same
-picker, an "Open skins folder" button, and a "Create" button.
+The active skin is remembered in your GUI layout, so layout checkpoints
+carry it (see below). `.skin` is an alias. The GUI settings editor
+(`.settings`) has a Skin section with the same picker, an "Open skins
+folder" button, and a "Create" button.
 
 ## Making a Skin
 
@@ -29,24 +30,33 @@ The quickest start:
 .makeskin myskin
 ```
 
-This creates `~/.vellum-fe/skins/myskin/skin.toml` with **every section
-present but commented out** — uncomment a line, point it at a PNG, done.
-It never overwrites an existing skin.
+This creates `~/.vellum-fe/global/skins/myskin/skin.toml` with **every
+section present but commented out** — uncomment a line, point it at a
+PNG, done. It never overwrites an existing skin.
 
 While a skin is active, edits to its `skin.toml` **hot-reload within a
 second**. Edited *images* don't touch the manifest, so after swapping an
 image file run `.reloadskin` to force a full reload.
 
-A skin is a folder under `~/.vellum-fe/skins/<name>/` containing a
+A skin is a folder under `~/.vellum-fe/global/skins/<name>/` containing a
 `skin.toml` manifest plus image files (PNG, JPEG, WebP, or BMP):
 
 ```
-~/.vellum-fe/skins/parchment/
+~/.vellum-fe/global/skins/parchment/
 ├── skin.toml
 └── bg/
     ├── paper.png
     └── vellum.png
 ```
+
+Art that several skins share belongs in the image pool at
+`~/.vellum-fe/global/images/` (subfolders: `icons/`, `frames/`,
+`dolls/`, `compass/`, `backgrounds/`). Relative manifest paths look in
+the skin folder first, then the pool, so
+`image = "backgrounds/paper.png"` works from any skin without copying
+the file. The applied skin is remembered in the GUI layout —
+`.savelayout` checkpoints carry their skin, and `.loadlayout` brings it
+back (a checkpoint saved without a skin keeps the current one).
 
 ```toml
 [meta]

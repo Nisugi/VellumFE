@@ -29,12 +29,13 @@ VellumFE uses TOML files for configuration, stored in `~/.vellum-fe/`
 │   ├── colors.toml
 │   ├── hotbars.toml
 │   ├── macros.toml
-│   └── sounds/           # Sound files for highlight alerts
+│   ├── sounds/           # Sound files for highlight alerts
+│   ├── skins/            # GUI skins (one folder per skin: skin.toml + images)
+│   └── images/           # Shared image pool (icons/, frames/, dolls/, compass/, backgrounds/)
 ├── layouts/              # Saved layouts (.savelayout / .loadlayout)
 ├── profiles/
 │   └── CharName/         # Per-character overrides + auto-saved layout.toml
 ├── themes/               # Custom themes (.edittheme saves here)
-├── skins/                # GUI skins (one folder per skin: skin.toml + images)
 └── vellum-fe.log
 ```
 

@@ -361,7 +361,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         text_entry!("active_theme", "Active Theme", "Appearance",
             "Currently active theme name", active_theme),
         opt_text_entry!("active_skin", "Active Skin", "Appearance",
-            "GUI skin directory under ~/.vellum-fe/skins (empty = plain theme colors)", active_skin),
+            "GUI skin directory under ~/.vellum-fe/global/skins (empty = plain theme colors)", active_skin),
         // ---- Terminal (TUI) -----------------------------------------
         SettingDef {
             key: "ui.color_mode",
