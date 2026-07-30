@@ -37,9 +37,9 @@ pub(super) enum GuiWindowMenuCommand {
     Edit,
     Hide,
     Detach,
-    /// Send this floating (Center-zone) window behind any windows it
-    /// overlaps, so a covered window can be reached. Live-session only,
-    /// like egui's built-in click-to-raise.
+    /// Send this floating window behind any windows it overlaps in its
+    /// zone (Center, Header, or Footer), so a covered window can be
+    /// reached. Live-session only, like egui's built-in click-to-raise.
     SendToBack,
     /// Start Move mode: the window follows the cursor (title bar stays as-is)
     /// until a click places it or Esc cancels.
@@ -139,8 +139,8 @@ struct WindowMenuView<'a> {
     group_candidates: &'a [(TabKey, String)],
 }
 
-/// Per-window appearance state, shared between the context menu's Appearance
-/// section and the Window Editor (see `appearance_view_for_tab`).
+/// Per-window appearance state for the context menu's Appearance section,
+/// attached and detached alike (see `appearance_view_for_tab`).
 pub(super) struct WindowAppearanceView {
     title_bar_hidden: bool,
     text_size_override: Option<f32>,
@@ -485,8 +485,8 @@ impl VellumGuiApp {
     }
 
     /// Apply an appearance-only command for `tab_key`. Split out from
-    /// `apply_window_menu_command` because the Window Editor's Appearance
-    /// section drives the same commands without a menu request.
+    /// `apply_window_menu_command` so callers without a menu request (the
+    /// detached-window dispatch) can drive the same commands.
     pub(super) fn apply_appearance_command(
         &mut self,
         tab_key: &TabKey,
@@ -641,8 +641,8 @@ impl VellumGuiApp {
         }
     }
 
-    /// Resolve the current appearance state for `tab_key`, shared by the
-    /// context menu and the Window Editor.
+    /// Resolve the current appearance state for `tab_key` for the window
+    /// context menu (attached and detached).
     pub(super) fn appearance_view_for_tab(&self, tab_key: &TabKey) -> WindowAppearanceView {
         let current_font = self.font_ref_for_tab(tab_key).and_then(|font| match font {
             FontRef::Named(name) => Some(name),
@@ -1299,19 +1299,35 @@ impl VellumGuiApp {
         if ui.selectable_label(false, "Edit Window…").clicked() {
             return Some(GuiWindowMenuCommand::Edit);
         }
+        // Widget tools sit next to Edit: they open something, unlike the
+        // settings grouped under Appearance.
+        if view.appearance.is_map
+            && ui.selectable_label(false, "Open Map Explorer").clicked()
+        {
+            return Some(GuiWindowMenuCommand::OpenMapExplorer);
+        }
+        if view.appearance.is_doll
+            && ui.selectable_label(false, "Calibrate doll…").clicked()
+        {
+            return Some(GuiWindowMenuCommand::CalibrateDoll);
+        }
         if ui.selectable_label(false, "Hide").clicked() {
             return Some(GuiWindowMenuCommand::Hide);
         }
         if ui.selectable_label(false, "Detach").clicked() {
             return Some(GuiWindowMenuCommand::Detach);
         }
-        if ui.selectable_label(false, "Move Window").clicked() {
-            return Some(GuiWindowMenuCommand::StartMove);
-        }
-        if view.appearance.is_map
-            && ui.selectable_label(false, "Open Map Explorer").clicked()
+        // Stacking matters wherever windows float freely and can overlap —
+        // every zone except the packed sidebars.
+        if matches!(
+            view.zone,
+            GuiShellZone::Center | GuiShellZone::Header | GuiShellZone::Footer
+        ) && ui
+            .selectable_label(false, "Send to Back")
+            .on_hover_text("Drop this window behind any it overlaps")
+            .clicked()
         {
-            return Some(GuiWindowMenuCommand::OpenMapExplorer);
+            return Some(GuiWindowMenuCommand::SendToBack);
         }
         ui.separator();
         // Everything below folds into sections so the menu opens short.
@@ -1319,6 +1335,9 @@ impl VellumGuiApp {
         // stays stable while a slider or palette inside a section is in use.
         let mut command = None;
         ui.collapsing("Arrange", |ui| {
+            if ui.selectable_label(false, "Move Window").clicked() {
+                command = Some(GuiWindowMenuCommand::StartMove);
+            }
             if view.allow_reorder {
                 if ui.selectable_label(false, "Move Up").clicked() {
                     command = Some(GuiWindowMenuCommand::MoveUp);
@@ -1326,17 +1345,6 @@ impl VellumGuiApp {
                 if ui.selectable_label(false, "Move Down").clicked() {
                     command = Some(GuiWindowMenuCommand::MoveDown);
                 }
-            }
-            // Stacking only matters where windows float and overlap — the
-            // Center zone. Docked strips (header/footer/sidebars) never
-            // overlap.
-            if view.zone == GuiShellZone::Center
-                && ui
-                    .selectable_label(false, "Send to Back")
-                    .on_hover_text("Drop this window behind any it overlaps")
-                    .clicked()
-            {
-                command = Some(GuiWindowMenuCommand::SendToBack);
             }
             ui.label("Move to");
             for target in GuiShellZone::all() {
@@ -1440,13 +1448,6 @@ impl VellumGuiApp {
                             });
                         }
                     }
-                    if ui
-                        .selectable_label(false, "Dissolve group")
-                        .on_hover_text("Ungroup all members; every window stands alone again")
-                        .clicked()
-                    {
-                        command = Some(GuiWindowMenuCommand::DissolveGroup);
-                    }
                 }
                 if !view.group_candidates.is_empty() {
                     ui.label("Group with");
@@ -1461,44 +1462,36 @@ impl VellumGuiApp {
                             }
                         });
                 }
+                // Destructive action last, set off from the rest.
+                if view.group_horizontal.is_some() {
+                    ui.separator();
+                    if ui
+                        .selectable_label(false, "Dissolve group")
+                        .on_hover_text("Ungroup all members; every window stands alone again")
+                        .clicked()
+                    {
+                        command = Some(GuiWindowMenuCommand::DissolveGroup);
+                    }
+                }
             });
         }
         command
     }
 
-    /// Per-window appearance controls, shared between the context menu's
-    /// Appearance section and the Window Editor. Returns a command to run
-    /// through `apply_appearance_command`; live controls (sliders, swatches)
-    /// emit one every frame their value changes.
+    /// Per-window appearance controls: widget-specific settings first (map
+    /// zoom, doll, compass, hand icon), then Text / Title bar / Frame
+    /// subsections. The context menu is their only home (attached and
+    /// detached windows both route here). Returns a command to run through
+    /// `apply_appearance_command`; live controls (sliders, swatches) emit
+    /// one every frame their value changes.
     pub(super) fn render_appearance_controls(
         ui: &mut egui::Ui,
         view: &WindowAppearanceView,
     ) -> Option<GuiWindowMenuCommand> {
         let mut command = None;
-        let mut show_title_bar = !view.title_bar_hidden;
-        if ui.checkbox(&mut show_title_bar, "Title bar").changed() {
-            command = Some(GuiWindowMenuCommand::ToggleTitleBar);
-        }
-        let mut override_enabled = view.text_size_override.is_some();
-        if ui
-            .checkbox(&mut override_enabled, "Custom text size")
-            .changed()
-        {
-            command = Some(GuiWindowMenuCommand::SetTextSize(if override_enabled {
-                Some(view.text_size_override.unwrap_or(view.global_text_size))
-            } else {
-                None
-            }));
-        }
-        if let Some(current) = view.text_size_override {
-            let mut value = current;
-            if ui
-                .add(egui::Slider::new(&mut value, 8.0..=32.0).step_by(0.5))
-                .changed()
-            {
-                command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
-            }
-        }
+        // Widget-specific settings surface first — for a map or doll window
+        // they are the reason the menu was opened. General settings follow,
+        // grouped into Text / Title bar / Frame subsections.
         if view.is_map {
             let mut has_override = view.map_zoom.is_some();
             if ui.checkbox(&mut has_override, "Custom map zoom").changed() {
@@ -1516,91 +1509,12 @@ impl VellumGuiApp {
                 }
             }
         }
-        if view.supports_wrap {
-            let mut wrap = view.wrap_text;
-            if ui.checkbox(&mut wrap, "Word wrap").changed() {
-                command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
-            }
-        }
-        ui.collapsing("Font", |ui| {
-            // Filter box: system font lists run to hundreds of families.
-            // Ids derive from ui.id() so the menu's and the editor's copies
-            // of this section don't share state.
-            let filter_id = ui.id().with("font_filter");
-            let mut filter: String =
-                ui.data_mut(|data| data.get_temp(filter_id).unwrap_or_default());
-            if ui
-                .add(egui::TextEdit::singleline(&mut filter).hint_text("Filter fonts"))
-                .changed()
-            {
-                ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
-            }
-            let filter_lower = filter.to_lowercase();
-            egui::ScrollArea::vertical()
-                .id_salt("font_list")
-                .max_height(180.0)
-                .show(ui, |ui| {
-                    if ui
-                        .selectable_label(view.current_font.is_none(), "Default")
-                        .clicked()
-                    {
-                        command = Some(GuiWindowMenuCommand::SetFont(None));
-                    }
-                    for family in theme::system_font_families() {
-                        if !filter_lower.is_empty()
-                            && !family.to_lowercase().contains(&filter_lower)
-                        {
-                            continue;
-                        }
-                        let selected = view.current_font.as_deref() == Some(family.as_str());
-                        if ui.selectable_label(selected, family).clicked() {
-                            command = Some(GuiWindowMenuCommand::SetFont(Some(family.clone())));
-                        }
-                    }
-                });
-        });
-        ui.label("Accent color");
-        ui.horizontal(|ui| {
-            for color in ACCENT_PALETTE {
-                let fill = Color32::from_rgb(color[0], color[1], color[2]);
-                let selected = view.accent_color == Some(fill);
-                let mut button = egui::Button::new("  ").fill(fill);
-                if selected {
-                    button = button.stroke(egui::Stroke::new(2.0, ui.visuals().text_color()));
-                }
-                if ui.add(button).clicked() {
-                    command = Some(GuiWindowMenuCommand::SetAccent(Some(color)));
-                }
-            }
-            if view.accent_color.is_some() && ui.small_button("✕").clicked() {
-                command = Some(GuiWindowMenuCommand::SetAccent(None));
-            }
-        });
-        let mut radius_enabled = view.corner_radius_override.is_some();
-        if ui
-            .checkbox(&mut radius_enabled, "Custom corner radius")
-            .changed()
-        {
-            command = Some(GuiWindowMenuCommand::SetCornerRadius(if radius_enabled {
-                Some(view.corner_radius_override.unwrap_or(view.global_corner_radius))
-            } else {
-                None
-            }));
-        }
-        if let Some(current) = view.corner_radius_override {
-            let mut value = current;
-            if ui
-                .add(egui::Slider::new(&mut value, 0.0..=12.0).step_by(0.5))
-                .changed()
-            {
-                command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
-            }
-        }
         if view.is_doll {
             ui.horizontal(|ui| {
                 ui.label("Doll image");
                 let selected_label = match view.doll_override.as_deref() {
                     None => "Skin default",
+                    Some(path) if path.eq_ignore_ascii_case("none") => "None",
                     Some(path) => view
                         .doll_images
                         .iter()
@@ -1617,6 +1531,19 @@ impl VellumGuiApp {
                             .clicked()
                         {
                             command = Some(GuiWindowMenuCommand::SetDollImage(None));
+                        }
+                        let none_selected = view
+                            .doll_override
+                            .as_deref()
+                            .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                        if ui
+                            .selectable_label(none_selected, "None")
+                            .on_hover_text("No doll art; draw the built-in vector body")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetDollImage(Some(
+                                "none".to_string(),
+                            )));
                         }
                         for (path, stem) in &view.doll_images {
                             let selected = view.doll_override.as_deref() == Some(path.as_str());
@@ -1641,57 +1568,15 @@ impl VellumGuiApp {
             {
                 command = Some(GuiWindowMenuCommand::SetDollGrayscale(gray));
             }
-            if ui.button("Calibrate doll…").clicked() {
-                command = Some(GuiWindowMenuCommand::CalibrateDoll);
-            }
-        }
-        if !view.background_images.is_empty() || view.has_skin_background {
-            ui.horizontal(|ui| {
-                ui.label("Background");
-                let selected_label = match view.background_override.as_deref() {
-                    None => "Skin default",
-                    Some(path) if path.eq_ignore_ascii_case("none") => "None",
-                    Some(path) => view
-                        .background_images
-                        .iter()
-                        .find(|(pool_path, _)| pool_path == path)
-                        .map(|(_, stem)| stem.as_str())
-                        .unwrap_or(path),
-                };
-                egui::ComboBox::from_id_salt("gui_window_background")
-                    .selected_text(selected_label)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(view.background_override.is_none(), "Skin default")
-                            .clicked()
-                        {
-                            command = Some(GuiWindowMenuCommand::SetBackground(None));
-                        }
-                        let none_selected = view
-                            .background_override
-                            .as_deref()
-                            .is_some_and(|path| path.eq_ignore_ascii_case("none"));
-                        if ui.selectable_label(none_selected, "None").clicked() {
-                            command = Some(GuiWindowMenuCommand::SetBackground(Some(
-                                "none".to_string(),
-                            )));
-                        }
-                        for (path, stem) in &view.background_images {
-                            let selected =
-                                view.background_override.as_deref() == Some(path.as_str());
-                            if ui.selectable_label(selected, stem).clicked() {
-                                command = Some(GuiWindowMenuCommand::SetBackground(Some(
-                                    path.clone(),
-                                )));
-                            }
-                        }
-                    });
-            });
         }
         if view.is_compass {
             ui.horizontal(|ui| {
                 ui.label("Compass art");
-                let selected_label = view.compass_override.as_deref().unwrap_or("Skin default");
+                let selected_label = match view.compass_override.as_deref() {
+                    None => "Skin default",
+                    Some(set) if set.eq_ignore_ascii_case("none") => "None",
+                    Some(set) => set,
+                };
                 egui::ComboBox::from_id_salt("gui_window_compass_set")
                     .selected_text(selected_label)
                     .show_ui(ui, |ui| {
@@ -1700,6 +1585,19 @@ impl VellumGuiApp {
                             .clicked()
                         {
                             command = Some(GuiWindowMenuCommand::SetCompassSet(None));
+                        }
+                        let none_selected = view
+                            .compass_override
+                            .as_deref()
+                            .is_some_and(|set| set.eq_ignore_ascii_case("none"));
+                        if ui
+                            .selectable_label(none_selected, "None")
+                            .on_hover_text("No compass art; draw the built-in vector rose")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetCompassSet(Some(
+                                "none".to_string(),
+                            )));
                         }
                         for set in &view.compass_sets {
                             let selected = view.compass_override.as_deref() == Some(set.as_str());
@@ -1720,6 +1618,7 @@ impl VellumGuiApp {
                 let selected_label = match &view.hand_icon_override {
                     None => "Skin default".to_string(),
                     Some(crate::data::IconRef::Default) => "Skin default".to_string(),
+                    Some(crate::data::IconRef::None) => "None".to_string(),
                     Some(crate::data::IconRef::Image { path }) => view
                         .hand_images
                         .iter()
@@ -1740,6 +1639,20 @@ impl VellumGuiApp {
                             command = Some(GuiWindowMenuCommand::SetHandIcon {
                                 hand_id: hand_id.clone(),
                                 icon: None,
+                            });
+                        }
+                        let none_selected = matches!(
+                            &view.hand_icon_override,
+                            Some(crate::data::IconRef::None)
+                        );
+                        if ui
+                            .selectable_label(none_selected, "None")
+                            .on_hover_text("No icon art; show the text fallback")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetHandIcon {
+                                hand_id: hand_id.clone(),
+                                icon: Some(crate::data::IconRef::None),
                             });
                         }
                         for (path, stem) in &view.hand_images {
@@ -1763,172 +1676,329 @@ impl VellumGuiApp {
                 ui.weak("No hand icons in the pool — install with .jinx");
             }
         }
-        if !view.skin_frames.is_empty() || view.has_skin_border {
-            const NO_FRAME: &str = crate::config::skins::NO_FRAME;
-            ui.horizontal(|ui| {
-                ui.label("Skin frame");
-                let current = view.skin_frame_override.as_deref();
-                let selected_label = match current {
-                    None => "Skin default",
-                    Some(name) if name.eq_ignore_ascii_case(NO_FRAME) => "None",
-                    Some(name) => name,
-                };
-                egui::ComboBox::from_id_salt("gui_window_skin_frame")
-                    .selected_text(selected_label)
-                    .show_ui(ui, |ui| {
+        ui.collapsing("Text", |ui| {
+            ui.collapsing("Font", |ui| {
+                // Filter box: system font lists run to hundreds of families.
+                // Ids derive from ui.id() so the menu's and the detached
+                // menu's copies of this section don't share state.
+                let filter_id = ui.id().with("font_filter");
+                let mut filter: String =
+                    ui.data_mut(|data| data.get_temp(filter_id).unwrap_or_default());
+                if ui
+                    .add(egui::TextEdit::singleline(&mut filter).hint_text("Filter fonts"))
+                    .changed()
+                {
+                    ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+                }
+                let filter_lower = filter.to_lowercase();
+                egui::ScrollArea::vertical()
+                    .id_salt("font_list")
+                    .max_height(180.0)
+                    .show(ui, |ui| {
                         if ui
-                            .selectable_label(current.is_none(), "Skin default")
+                            .selectable_label(view.current_font.is_none(), "Default")
                             .clicked()
                         {
-                            command = Some(GuiWindowMenuCommand::SetSkinFrame(None));
+                            command = Some(GuiWindowMenuCommand::SetFont(None));
                         }
-                        let none_selected = current
-                            .is_some_and(|name| name.eq_ignore_ascii_case(NO_FRAME));
-                        if ui.selectable_label(none_selected, "None").clicked() {
-                            command = Some(GuiWindowMenuCommand::SetSkinFrame(Some(
-                                NO_FRAME.to_string(),
-                            )));
-                        }
-                        for name in &view.skin_frames {
-                            let selected =
-                                current.is_some_and(|value| value.eq_ignore_ascii_case(name));
-                            if ui.selectable_label(selected, name).clicked() {
+                        for family in theme::system_font_families() {
+                            if !filter_lower.is_empty()
+                                && !family.to_lowercase().contains(&filter_lower)
+                            {
+                                continue;
+                            }
+                            let selected = view.current_font.as_deref() == Some(family.as_str());
+                            if ui.selectable_label(selected, family).clicked() {
                                 command =
-                                    Some(GuiWindowMenuCommand::SetSkinFrame(Some(name.clone())));
+                                    Some(GuiWindowMenuCommand::SetFont(Some(family.clone())));
                             }
                         }
                     });
             });
-        }
-        if view.supports_wrap {
+            let mut override_enabled = view.text_size_override.is_some();
+            if ui
+                .checkbox(&mut override_enabled, "Custom text size")
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetTextSize(if override_enabled {
+                    Some(view.text_size_override.unwrap_or(view.global_text_size))
+                } else {
+                    None
+                }));
+            }
+            if let Some(current) = view.text_size_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 8.0..=32.0).step_by(0.5))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
+                }
+            }
+            if view.supports_wrap {
+                let mut wrap = view.wrap_text;
+                if ui.checkbox(&mut wrap, "Word wrap").changed() {
+                    command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Content alignment");
+                    const ALIGNS: [(Option<&str>, &str); 10] = [
+                        (None, "Default (top left)"),
+                        (Some("top-left"), "Top left"),
+                        (Some("top"), "Top center"),
+                        (Some("top-right"), "Top right"),
+                        (Some("left"), "Middle left"),
+                        (Some("center"), "Center"),
+                        (Some("right"), "Middle right"),
+                        (Some("bottom-left"), "Bottom left"),
+                        (Some("bottom"), "Bottom center"),
+                        (Some("bottom-right"), "Bottom right"),
+                    ];
+                    let current = view.content_align.as_deref();
+                    let selected_label = ALIGNS
+                        .iter()
+                        .find(|(value, _)| *value == current)
+                        .map(|(_, label)| *label)
+                        .unwrap_or("Default (top left)");
+                    egui::ComboBox::from_id_salt("gui_window_content_align")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            for (value, label) in ALIGNS {
+                                if ui.selectable_label(current == value, label).clicked() {
+                                    command = Some(GuiWindowMenuCommand::SetContentAlign(
+                                        value.map(str::to_string),
+                                    ));
+                                }
+                            }
+                        });
+                });
+            }
+        });
+        ui.collapsing("Title bar", |ui| {
+            let mut show_title_bar = !view.title_bar_hidden;
+            if ui.checkbox(&mut show_title_bar, "Show title bar").changed() {
+                command = Some(GuiWindowMenuCommand::ToggleTitleBar);
+            }
             ui.horizontal(|ui| {
-                ui.label("Content alignment");
-                const ALIGNS: [(Option<&str>, &str); 10] = [
-                    (None, "Default (top left)"),
-                    (Some("top-left"), "Top left"),
-                    (Some("top"), "Top center"),
-                    (Some("top-right"), "Top right"),
-                    (Some("left"), "Middle left"),
-                    (Some("center"), "Center"),
-                    (Some("right"), "Middle right"),
-                    (Some("bottom-left"), "Bottom left"),
-                    (Some("bottom"), "Bottom center"),
-                    (Some("bottom-right"), "Bottom right"),
-                ];
-                let current = view.content_align.as_deref();
-                let selected_label = ALIGNS
-                    .iter()
-                    .find(|(value, _)| *value == current)
-                    .map(|(_, label)| *label)
-                    .unwrap_or("Default (top left)");
-                egui::ComboBox::from_id_salt("gui_window_content_align")
+                ui.label("Title alignment");
+                let current = view.title_align_override.as_deref();
+                let selected_label = match current {
+                    Some("left") => "Left",
+                    Some("center") => "Center",
+                    Some("right") => "Right",
+                    _ => "Default",
+                };
+                egui::ComboBox::from_id_salt("gui_window_title_align")
                     .selected_text(selected_label)
                     .show_ui(ui, |ui| {
-                        for (value, label) in ALIGNS {
+                        for (value, label) in [
+                            (None, "Default"),
+                            (Some("left"), "Left"),
+                            (Some("center"), "Center"),
+                            (Some("right"), "Right"),
+                        ] {
                             if ui.selectable_label(current == value, label).clicked() {
-                                command = Some(GuiWindowMenuCommand::SetContentAlign(
+                                command = Some(GuiWindowMenuCommand::SetTitleBarAlign(
                                     value.map(str::to_string),
                                 ));
                             }
                         }
                     });
             });
-        }
-        let mut tb_enabled = view.title_bar_height_override.is_some();
-        if ui
-            .checkbox(&mut tb_enabled, "Custom title bar height")
-            .changed()
-        {
-            command = Some(GuiWindowMenuCommand::SetTitleBarHeight(if tb_enabled {
-                let seed = if view.global_title_bar_height > 0.0 {
-                    view.global_title_bar_height
-                } else {
-                    18.0
-                };
-                Some(view.title_bar_height_override.unwrap_or(seed))
-            } else {
-                None
-            }));
-        }
-        if let Some(current) = view.title_bar_height_override {
-            let mut value = current;
+            let mut tb_enabled = view.title_bar_height_override.is_some();
             if ui
-                .add(egui::Slider::new(&mut value, 12.0..=32.0).step_by(1.0))
+                .checkbox(&mut tb_enabled, "Custom title bar height")
                 .changed()
             {
-                command = Some(GuiWindowMenuCommand::SetTitleBarHeight(Some(value)));
+                command = Some(GuiWindowMenuCommand::SetTitleBarHeight(if tb_enabled {
+                    let seed = if view.global_title_bar_height > 0.0 {
+                        view.global_title_bar_height
+                    } else {
+                        18.0
+                    };
+                    Some(view.title_bar_height_override.unwrap_or(seed))
+                } else {
+                    None
+                }));
             }
-        }
-        ui.horizontal(|ui| {
-            ui.label("Title alignment");
-            let current = view.title_align_override.as_deref();
-            let selected_label = match current {
-                Some("left") => "Left",
-                Some("center") => "Center",
-                Some("right") => "Right",
-                _ => "Default",
-            };
-            egui::ComboBox::from_id_salt("gui_window_title_align")
-                .selected_text(selected_label)
-                .show_ui(ui, |ui| {
-                    for (value, label) in [
-                        (None, "Default"),
-                        (Some("left"), "Left"),
-                        (Some("center"), "Center"),
-                        (Some("right"), "Right"),
-                    ] {
-                        if ui.selectable_label(current == value, label).clicked() {
-                            command = Some(GuiWindowMenuCommand::SetTitleBarAlign(
-                                value.map(str::to_string),
-                            ));
-                        }
-                    }
-                });
+            if let Some(current) = view.title_bar_height_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 12.0..=32.0).step_by(1.0))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetTitleBarHeight(Some(value)));
+                }
+            }
         });
-        if let Some(border) = &view.border {
-            let mut show_border = border.show_border;
-            if ui.checkbox(&mut show_border, "Border").changed() {
-                command = Some(GuiWindowMenuCommand::SetShowBorder(show_border));
-            }
-            if border.show_border {
-                const BORDER_STYLES: [(&str, &str); 6] = [
-                    ("single", "Single"),
-                    ("double", "Double"),
-                    ("thick", "Thick"),
-                    ("rounded", "Rounded"),
-                    ("quadrant_inside", "Quadrant inside"),
-                    ("quadrant_outside", "Quadrant outside"),
-                ];
-                let current = border.style.to_ascii_lowercase();
-                let current_label = BORDER_STYLES
-                    .iter()
-                    .find(|(key, _)| *key == current)
-                    .map(|(_, label)| *label)
-                    .unwrap_or("Single");
-                egui::ComboBox::from_id_salt("gui_window_border_style")
-                    .selected_text(current_label)
-                    .show_ui(ui, |ui| {
-                        for (key, label) in BORDER_STYLES {
-                            if ui.selectable_label(current == key, label).clicked() {
-                                command = Some(GuiWindowMenuCommand::SetBorderStyle(
-                                    key.to_string(),
-                                ));
+        ui.collapsing("Frame", |ui| {
+            if let Some(border) = &view.border {
+                let mut show_border = border.show_border;
+                if ui.checkbox(&mut show_border, "Border").changed() {
+                    command = Some(GuiWindowMenuCommand::SetShowBorder(show_border));
+                }
+                if border.show_border {
+                    const BORDER_STYLES: [(&str, &str); 6] = [
+                        ("single", "Single"),
+                        ("double", "Double"),
+                        ("thick", "Thick"),
+                        ("rounded", "Rounded"),
+                        ("quadrant_inside", "Quadrant inside"),
+                        ("quadrant_outside", "Quadrant outside"),
+                    ];
+                    let current = border.style.to_ascii_lowercase();
+                    let current_label = BORDER_STYLES
+                        .iter()
+                        .find(|(key, _)| *key == current)
+                        .map(|(_, label)| *label)
+                        .unwrap_or("Single");
+                    egui::ComboBox::from_id_salt("gui_window_border_style")
+                        .selected_text(current_label)
+                        .show_ui(ui, |ui| {
+                            for (key, label) in BORDER_STYLES {
+                                if ui.selectable_label(current == key, label).clicked() {
+                                    command = Some(GuiWindowMenuCommand::SetBorderStyle(
+                                        key.to_string(),
+                                    ));
+                                }
                             }
+                        });
+                    ui.horizontal(|ui| {
+                        let mut sides = border.sides.clone();
+                        let mut changed = false;
+                        changed |= ui.checkbox(&mut sides.top, "Top").changed();
+                        changed |= ui.checkbox(&mut sides.bottom, "Bottom").changed();
+                        changed |= ui.checkbox(&mut sides.left, "Left").changed();
+                        changed |= ui.checkbox(&mut sides.right, "Right").changed();
+                        if changed {
+                            command = Some(GuiWindowMenuCommand::SetBorderSides(sides));
                         }
                     });
-                ui.horizontal(|ui| {
-                    let mut sides = border.sides.clone();
-                    let mut changed = false;
-                    changed |= ui.checkbox(&mut sides.top, "Top").changed();
-                    changed |= ui.checkbox(&mut sides.bottom, "Bottom").changed();
-                    changed |= ui.checkbox(&mut sides.left, "Left").changed();
-                    changed |= ui.checkbox(&mut sides.right, "Right").changed();
-                    if changed {
-                        command = Some(GuiWindowMenuCommand::SetBorderSides(sides));
+                }
+            }
+            let mut radius_enabled = view.corner_radius_override.is_some();
+            if ui
+                .checkbox(&mut radius_enabled, "Custom corner radius")
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetCornerRadius(if radius_enabled {
+                    Some(view.corner_radius_override.unwrap_or(view.global_corner_radius))
+                } else {
+                    None
+                }));
+            }
+            if let Some(current) = view.corner_radius_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 0.0..=12.0).step_by(0.5))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
+                }
+            }
+            ui.label("Accent color");
+            ui.horizontal(|ui| {
+                for color in ACCENT_PALETTE {
+                    let fill = Color32::from_rgb(color[0], color[1], color[2]);
+                    let selected = view.accent_color == Some(fill);
+                    let mut button = egui::Button::new("  ").fill(fill);
+                    if selected {
+                        button =
+                            button.stroke(egui::Stroke::new(2.0, ui.visuals().text_color()));
                     }
+                    if ui.add(button).clicked() {
+                        command = Some(GuiWindowMenuCommand::SetAccent(Some(color)));
+                    }
+                }
+                if view.accent_color.is_some() && ui.small_button("✕").clicked() {
+                    command = Some(GuiWindowMenuCommand::SetAccent(None));
+                }
+            });
+            if !view.skin_frames.is_empty() || view.has_skin_border {
+                const NO_FRAME: &str = crate::config::skins::NO_FRAME;
+                ui.horizontal(|ui| {
+                    ui.label("Skin frame");
+                    let current = view.skin_frame_override.as_deref();
+                    let selected_label = match current {
+                        None => "Skin default",
+                        Some(name) if name.eq_ignore_ascii_case(NO_FRAME) => "None",
+                        Some(name) => name,
+                    };
+                    egui::ComboBox::from_id_salt("gui_window_skin_frame")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(current.is_none(), "Skin default")
+                                .clicked()
+                            {
+                                command = Some(GuiWindowMenuCommand::SetSkinFrame(None));
+                            }
+                            let none_selected = current
+                                .is_some_and(|name| name.eq_ignore_ascii_case(NO_FRAME));
+                            if ui.selectable_label(none_selected, "None").clicked() {
+                                command = Some(GuiWindowMenuCommand::SetSkinFrame(Some(
+                                    NO_FRAME.to_string(),
+                                )));
+                            }
+                            for name in &view.skin_frames {
+                                let selected =
+                                    current.is_some_and(|value| value.eq_ignore_ascii_case(name));
+                                if ui.selectable_label(selected, name).clicked() {
+                                    command = Some(GuiWindowMenuCommand::SetSkinFrame(Some(
+                                        name.clone(),
+                                    )));
+                                }
+                            }
+                        });
                 });
             }
-        }
+            if !view.background_images.is_empty() || view.has_skin_background {
+                ui.horizontal(|ui| {
+                    ui.label("Background");
+                    let selected_label = match view.background_override.as_deref() {
+                        None => "Skin default",
+                        Some(path) if path.eq_ignore_ascii_case("none") => "None",
+                        Some(path) => view
+                            .background_images
+                            .iter()
+                            .find(|(pool_path, _)| pool_path == path)
+                            .map(|(_, stem)| stem.as_str())
+                            .unwrap_or(path),
+                    };
+                    egui::ComboBox::from_id_salt("gui_window_background")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(
+                                    view.background_override.is_none(),
+                                    "Skin default",
+                                )
+                                .clicked()
+                            {
+                                command = Some(GuiWindowMenuCommand::SetBackground(None));
+                            }
+                            let none_selected = view
+                                .background_override
+                                .as_deref()
+                                .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                            if ui.selectable_label(none_selected, "None").clicked() {
+                                command = Some(GuiWindowMenuCommand::SetBackground(Some(
+                                    "none".to_string(),
+                                )));
+                            }
+                            for (path, stem) in &view.background_images {
+                                let selected =
+                                    view.background_override.as_deref() == Some(path.as_str());
+                                if ui.selectable_label(selected, stem).clicked() {
+                                    command = Some(GuiWindowMenuCommand::SetBackground(Some(
+                                        path.clone(),
+                                    )));
+                                }
+                            }
+                        });
+                });
+            }
+        });
         command
     }
 }

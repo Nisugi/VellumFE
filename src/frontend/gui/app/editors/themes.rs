@@ -57,6 +57,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Themes")
             .id(egui::Id::new("gui_theme_browser"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(420.0)
             .default_height(380.0)
@@ -129,6 +130,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Theme Editor")
             .id(egui::Id::new("gui_theme_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(420.0)
             .default_height(480.0)

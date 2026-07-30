@@ -377,6 +377,7 @@ impl VellumGuiApp {
         let mut open = true;
         egui::Window::new("Colors")
             .id(egui::Id::new("gui_colors_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(460.0)
             .default_height(420.0)
@@ -512,6 +513,7 @@ impl VellumGuiApp {
         };
         egui::Window::new(title)
             .id(egui::Id::new("gui_palette_form"))
+            .order(egui::Order::Foreground)
             .open(&mut form_open)
             .default_width(340.0)
             .show(ctx, |ui| {
@@ -852,6 +854,7 @@ impl VellumGuiApp {
         };
         egui::Window::new(title)
             .id(egui::Id::new("gui_spell_color_form"))
+            .order(egui::Order::Foreground)
             .open(&mut form_open)
             .default_width(340.0)
             .show(ctx, |ui| {

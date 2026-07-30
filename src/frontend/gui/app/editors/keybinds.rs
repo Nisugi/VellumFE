@@ -174,6 +174,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Keybinds")
             .id(egui::Id::new("gui_keybind_browser"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(440.0)
             .default_height(420.0)
@@ -287,6 +288,7 @@ impl VellumGuiApp {
             };
             egui::Window::new(title)
                 .id(egui::Id::new("gui_keybind_form"))
+                .order(egui::Order::Foreground)
                 .open(&mut form_open)
                 .default_width(380.0)
                 .show(ctx, |ui| {

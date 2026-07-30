@@ -49,10 +49,11 @@ impl VellumGuiApp {
     /// Render whichever editors are open. Called once per frame.
     pub(super) fn render_editors(&mut self, ctx: &eframe::egui::Context) {
         // Raise a re-requested editor before rendering it, so it draws on
-        // top this frame. A Window lives in the middle-order layer keyed by
-        // its `.id(...)`.
+        // top this frame. Editor windows render in the foreground order
+        // (above game windows, which stay in Middle), keyed by their
+        // `.id(...)`.
         if let Some(window_id) = self.pending_editor_raise.take() {
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Foreground, window_id));
             ctx.request_repaint();
         }
         self.render_settings_editor(ctx);

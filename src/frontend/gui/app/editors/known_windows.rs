@@ -73,6 +73,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Windows")
             .id(egui::Id::new("gui_known_windows"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(360.0)
             .default_height(480.0)

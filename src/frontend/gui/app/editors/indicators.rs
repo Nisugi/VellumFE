@@ -131,6 +131,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Indicator Templates")
             .id(egui::Id::new("gui_indicator_templates"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(520.0)
             .default_height(420.0)
@@ -228,6 +229,7 @@ impl VellumGuiApp {
                         ui.monospace(id);
                         let label = match icon {
                             crate::data::IconRef::Default => "Default".to_string(),
+                            crate::data::IconRef::None => "None (hidden)".to_string(),
                             crate::data::IconRef::Image { path } => path
                                 .rsplit_once('/')
                                 .map(|(_, file)| file.to_string())
@@ -242,6 +244,17 @@ impl VellumGuiApp {
                                 if ui.button("Default").clicked() {
                                     override_changes
                                         .push((id.clone(), Some(crate::data::IconRef::Default)));
+                                }
+                                if ui
+                                    .button("None (hidden)")
+                                    .on_hover_text(
+                                        "Suppress this icon's art; the widget shows its \
+                                         built-in fallback",
+                                    )
+                                    .clicked()
+                                {
+                                    override_changes
+                                        .push((id.clone(), Some(crate::data::IconRef::None)));
                                 }
                                 for (path, stem) in &pool_images {
                                     if ui.button(stem).clicked() {

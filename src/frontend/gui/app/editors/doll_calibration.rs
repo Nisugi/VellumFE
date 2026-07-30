@@ -167,6 +167,7 @@ impl VellumGuiApp {
 
         egui::Window::new(format!("Injury Doll Calibration - {}", state.target.label()))
             .id(egui::Id::new("gui_doll_calibration"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(560.0)
             .default_height(520.0)

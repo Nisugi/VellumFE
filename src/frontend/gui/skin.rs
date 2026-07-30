@@ -569,6 +569,12 @@ impl SkinState {
         for (id, icon) in &self.statusicon_overrides {
             match icon {
                 crate::data::IconRef::Default => {}
+                // Explicit "no art": drop whatever the skin/pool resolved so
+                // the widget falls back to its artless rendering. Gray twins
+                // mirror art.icons below, so the removal propagates.
+                crate::data::IconRef::None => {
+                    art.icons.remove(id);
+                }
                 crate::data::IconRef::Image { path } => {
                     if let Some(texture) = tex(path) {
                         art.icons.insert(id.clone(), IconSlot::Sprite(texture));
@@ -610,8 +616,16 @@ impl SkinState {
         }
         // A compass pool set with a rose replaces the skin's compass
         // wholesale (rose + direction overlays are same-canvas art; mixing
-        // sources would misalign them).
-        if let Some(rose) = self.pool_compass.get("rose").and_then(tex) {
+        // sources would misalign them). The "none" sentinel (picker "None")
+        // strips compass art entirely so the widget draws its vector rose.
+        if self
+            .compass_set
+            .as_deref()
+            .is_some_and(|set| set.eq_ignore_ascii_case("none"))
+        {
+            art.compass_rose = None;
+            art.compass_dirs.clear();
+        } else if let Some(rose) = self.pool_compass.get("rose").and_then(tex) {
             art.compass_rose = Some(rose);
             art.compass_dirs.clear();
             for (role, path) in &self.pool_compass {
@@ -653,8 +667,14 @@ impl SkinState {
         // A doll override replaces the skin's `[injury_doll]` wholesale:
         // base from the pool image, anchors/dots from its sidecar, severity
         // rendered as generated dots (pool dolls carry no overlay art).
+        // The "none" sentinel (picker "None") strips doll art entirely so
+        // the widget draws its built-in vector body.
         if let Some(path) = &self.doll_override {
-            if let Some(texture) = tex(path) {
+            if path.eq_ignore_ascii_case("none") {
+                art.doll_base = None;
+                art.doll_parts.clear();
+                art.doll_anchors.clear();
+            } else if let Some(texture) = tex(path) {
                 art.doll_base = Some(texture);
                 art.doll_parts.clear();
                 art.doll_anchors.clear();

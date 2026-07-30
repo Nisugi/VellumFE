@@ -74,6 +74,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Menu Keybinds")
             .id(egui::Id::new("gui_menu_keybind_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(420.0)
             .default_height(520.0)

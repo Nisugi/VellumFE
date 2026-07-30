@@ -552,6 +552,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Streams")
             .id(egui::Id::new("gui_custom_windows"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(460.0)
             .default_height(460.0)

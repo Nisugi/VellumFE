@@ -263,6 +263,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Highlights")
             .id(egui::Id::new("gui_highlight_browser"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(460.0)
             .default_height(420.0)
@@ -380,6 +381,7 @@ impl VellumGuiApp {
             };
             egui::Window::new(title)
                 .id(egui::Id::new("gui_highlight_form"))
+                .order(egui::Order::Foreground)
                 .open(&mut form_open)
                 .default_width(420.0)
                 .show(ctx, |ui| {

@@ -18,6 +18,9 @@ pub enum IconRef {
     /// statusicons pool set, then the built-in vector pictogram.
     #[default]
     Default,
+    /// Explicitly no art: suppress skin/pool icons for this id so the
+    /// widget renders its artless fallback (vector pictogram, text).
+    None,
     /// Explicit image: pool-relative ("statusicons/runic_stunned.png") or
     /// absolute path.
     Image { path: String },
