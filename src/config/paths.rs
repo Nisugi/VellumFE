@@ -138,8 +138,15 @@ impl Config {
     /// Category subfolders of the shared image pool. Created at startup so
     /// the structure is visible; nothing enforces which category a file
     /// lives in (resolution is by relative path).
-    pub const IMAGE_CATEGORIES: &'static [&'static str] =
-        &["icons", "frames", "dolls", "compass", "backgrounds", "statusicons"];
+    pub const IMAGE_CATEGORIES: &'static [&'static str] = &[
+        "icons",
+        "frames",
+        "dolls",
+        "compass",
+        "backgrounds",
+        "statusicons",
+        "hands",
+    ];
 
     /// Get the shared image pool: one subfolder per category
     /// (see IMAGE_CATEGORIES). Skin manifests resolve relative image paths
