@@ -8,6 +8,23 @@ use std::collections::VecDeque;
 
 use crate::config::TimestampPosition;
 
+/// Format-agnostic reference to icon art, resolved by frontends through
+/// the active skin/pool art tables. What a status stores: the picker can
+/// offer standalone pool images and hotbar-style sheet cells alike.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IconRef {
+    /// Resolve by the indicator's own id: skin `[icons]`, then the active
+    /// statusicons pool set, then the built-in vector pictogram.
+    #[default]
+    Default,
+    /// Explicit image: pool-relative ("statusicons/runic_stunned.png") or
+    /// absolute path.
+    Image { path: String },
+    /// One cell of a hotbar-style icon sheet (1-based, barbar order).
+    SheetCell { sheet: String, cell: u32 },
+}
+
 /// Styled text content for text-based widgets
 #[derive(Clone, Debug)]
 pub struct TextContent {

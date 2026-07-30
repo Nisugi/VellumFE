@@ -4578,6 +4578,10 @@ impl eframe::App for VellumGuiApp {
                 .values()
                 .filter_map(|settings| settings.skin_frame.clone()),
         );
+        self.skin_state.set_status_icon_config(
+            self.ui_settings.status_icons.set.as_deref(),
+            &self.ui_settings.status_icons.overrides,
+        );
         self.skin_state.apply_if_changed(
             &ctx,
             self.ui_settings.active_skin.as_deref(),

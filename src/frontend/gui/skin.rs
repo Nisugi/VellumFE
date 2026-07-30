@@ -34,13 +34,32 @@ pub struct SkinTexture {
     pub size: egui::Vec2,
 }
 
+/// One icon lookup as rendering needs it: a texture region (full image or
+/// a sheet cell) plus its source-pixel size for aspect fitting.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedIcon {
+    pub texture: egui::TextureId,
+    /// Source-pixel size of the drawn region (aspect fitting).
+    pub size: egui::Vec2,
+    pub uv: egui::Rect,
+}
+
+/// How one indicator id's icon resolves: a standalone sprite, or a sheet
+/// cell looked up at call time (so it tracks sheet hot-reloads).
+#[derive(Debug, Clone)]
+enum IconSlot {
+    Sprite(SkinTexture),
+    Sheet { sheet: String, cell: u32 },
+}
+
 /// Widget sprite art resolved from the active skin. Shared into
 /// `WidgetRenderSettings` behind an Arc so every render path (including
 /// detached viewports) reads the same lookup tables.
 #[derive(Debug, Default)]
 pub struct SkinWidgetArt {
-    /// Indicator id (stored UPPERCASE) -> icon sprite.
-    icons: HashMap<String, SkinTexture>,
+    /// Indicator id (stored UPPERCASE) -> icon slot (skin `[icons]`, pool
+    /// set art, and per-indicator overrides, pre-merged at build).
+    icons: HashMap<String, IconSlot>,
     pub compass_rose: Option<SkinTexture>,
     /// Direction key (lowercase "n".."nw", "up", ...) -> lit overlay.
     compass_dirs: HashMap<String, SkinTexture>,
@@ -95,8 +114,25 @@ impl ResolvedDotStyle {
 }
 
 impl SkinWidgetArt {
-    pub fn icon(&self, id: &str) -> Option<SkinTexture> {
-        self.icons.get(&id.to_ascii_uppercase()).copied()
+    pub fn icon(&self, id: &str) -> Option<ResolvedIcon> {
+        match self.icons.get(&id.to_ascii_uppercase())? {
+            IconSlot::Sprite(texture) => Some(ResolvedIcon {
+                texture: texture.texture,
+                size: texture.size,
+                uv: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            }),
+            IconSlot::Sheet { sheet, cell } => {
+                let (texture, uv) = self.sheet_cell(sheet, *cell, false)?;
+                Some(ResolvedIcon {
+                    texture: texture.texture,
+                    size: egui::vec2(
+                        texture.size.x * uv.width(),
+                        texture.size.y * uv.height(),
+                    ),
+                    uv,
+                })
+            }
+        }
     }
 
     pub fn compass_dir(&self, direction: &str) -> Option<SkinTexture> {
@@ -222,6 +258,12 @@ pub struct SkinState {
     /// these load textures — pool frame art can be megabytes, so the
     /// picker lists names without loading (`frame_names`).
     needed_pool_frames: Vec<String>,
+    /// Active statusicons pool set (lowercase `<set>_` prefix).
+    statusicon_set: Option<String>,
+    /// Per-indicator icon overrides (UPPERCASE id; `Default` never stored).
+    statusicon_overrides: HashMap<String, crate::data::IconRef>,
+    /// Resolved pool set art: UPPERCASE glyph id -> pool-relative path.
+    pool_status_icons: HashMap<String, String>,
     /// Loaded pool frames: lowercase stem -> spec whose `image` is the
     /// pool-relative texture key.
     pool_frames: HashMap<String, skins::BorderSpec>,
@@ -259,6 +301,7 @@ impl SkinState {
         self.doll_override = doll_override.map(str::to_owned);
         self.manifest = SkinManifest::default();
         self.pool_frames = load_pool_frames(&self.needed_pool_frames);
+        self.pool_status_icons = load_pool_status_icons(self.statusicon_set.as_deref());
         self.textures.clear();
         self.widget_art = None;
         self.manifest_mtime = None;
@@ -314,6 +357,27 @@ impl SkinState {
     /// skin.toml.
     pub fn force_reload(&mut self) {
         self.applied = false;
+    }
+
+    /// Declare the status-icon config (pool set + per-indicator overrides,
+    /// from ui_settings). Call before `apply_if_changed`; changes trigger a
+    /// reload so the needed textures come in.
+    pub fn set_status_icon_config(
+        &mut self,
+        set: Option<&str>,
+        overrides: &HashMap<String, crate::data::IconRef>,
+    ) {
+        let set = set.map(|s| s.to_ascii_lowercase());
+        let overrides: HashMap<String, crate::data::IconRef> = overrides
+            .iter()
+            .filter(|(_, icon)| **icon != crate::data::IconRef::Default)
+            .map(|(id, icon)| (id.to_ascii_uppercase(), icon.clone()))
+            .collect();
+        if set != self.statusicon_set || overrides != self.statusicon_overrides {
+            self.statusicon_set = set;
+            self.statusicon_overrides = overrides;
+            self.applied = false;
+        }
     }
 
     /// Declare which pool frames window overrides reference (any case).
@@ -402,7 +466,36 @@ impl SkinState {
         let mut art = SkinWidgetArt::default();
         for (id, path) in &self.manifest.icons {
             if let Some(texture) = tex(path) {
-                art.icons.insert(id.to_ascii_uppercase(), texture);
+                art.icons
+                    .insert(id.to_ascii_uppercase(), IconSlot::Sprite(texture));
+            }
+        }
+        // Pool set art fills ids the skin doesn't define (skin wins).
+        for (id, path) in &self.pool_status_icons {
+            if let Some(texture) = tex(path) {
+                art.icons
+                    .entry(id.clone())
+                    .or_insert(IconSlot::Sprite(texture));
+            }
+        }
+        // Per-indicator overrides beat both.
+        for (id, icon) in &self.statusicon_overrides {
+            match icon {
+                crate::data::IconRef::Default => {}
+                crate::data::IconRef::Image { path } => {
+                    if let Some(texture) = tex(path) {
+                        art.icons.insert(id.clone(), IconSlot::Sprite(texture));
+                    }
+                }
+                crate::data::IconRef::SheetCell { sheet, cell } => {
+                    art.icons.insert(
+                        id.clone(),
+                        IconSlot::Sheet {
+                            sheet: sheet.to_ascii_lowercase(),
+                            cell: *cell,
+                        },
+                    );
+                }
             }
         }
         for (name, spec) in &self.manifest.sheets {
@@ -504,6 +597,15 @@ impl SkinState {
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.doll_override.iter().cloned());
+        images.extend(self.pool_status_icons.values().cloned());
+        images.extend(
+            self.statusicon_overrides
+                .values()
+                .filter_map(|icon| match icon {
+                    crate::data::IconRef::Image { path } => Some(path.clone()),
+                    _ => None,
+                }),
+        );
         images.extend(self.manifest.icons.values().cloned());
         images.extend(self.manifest.sheets.values().map(|s| s.path.clone()));
         images.extend(self.manifest.compass.rose.iter().cloned());
@@ -634,6 +736,24 @@ impl SkinState {
         names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
         names
     }
+}
+
+/// Resolve the active statusicons set into UPPERCASE glyph id -> pool
+/// path: `<set>_<glyph>.png` contributes glyph. No set = no pool icons.
+fn load_pool_status_icons(set: Option<&str>) -> HashMap<String, String> {
+    let mut icons = HashMap::new();
+    let Some(set) = set else {
+        return icons;
+    };
+    for image in crate::config::pool::list_category("statusicons") {
+        let Some((prefix, glyph)) = image.stem().split_once('_') else {
+            continue;
+        };
+        if prefix.eq_ignore_ascii_case(set) && !glyph.is_empty() {
+            icons.insert(glyph.to_ascii_uppercase(), image.pool_path.clone());
+        }
+    }
+    icons
 }
 
 /// Load the specs (not textures) for the needed pool frames: match stems
@@ -834,6 +954,21 @@ pub fn background_shapes(
 /// same-canvas art stays aligned.
 pub fn sprite_dest(sprite: &SkinTexture, rect: egui::Rect) -> egui::Rect {
     contain_dest(sprite.size, rect)
+}
+
+/// Largest rect with the icon's aspect ratio centered inside `rect`.
+pub fn icon_dest(icon: &ResolvedIcon, rect: egui::Rect) -> egui::Rect {
+    contain_dest(icon.size, rect)
+}
+
+/// Paint a resolved icon (full image or sheet cell) into `dest`.
+pub fn paint_icon(
+    painter: &egui::Painter,
+    dest: egui::Rect,
+    icon: &ResolvedIcon,
+    tint: egui::Color32,
+) {
+    painter.image(icon.texture, dest, icon.uv, tint);
 }
 
 /// Paint a sprite stretched into `dest` (use `sprite_dest` for aspect fit).
@@ -1560,7 +1695,8 @@ cell = 32
             texture: egui::TextureId::default(),
             size: egui::vec2(16.0, 16.0),
         };
-        art.icons.insert("KNEELING".to_string(), texture);
+        art.icons
+            .insert("KNEELING".to_string(), IconSlot::Sprite(texture));
         art.compass_dirs.insert("ne".to_string(), texture);
         art.doll_parts
             .entry("leftarm".to_string())

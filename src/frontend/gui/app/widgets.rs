@@ -1407,8 +1407,8 @@ impl VellumGuiApp {
                     } else {
                         Color32::from_rgba_unmultiplied(255, 255, 255, 70)
                     };
-                    let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
-                    crate::frontend::gui::skin::paint_sprite(ui.painter(), dest, &sprite, tint);
+                    let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                    crate::frontend::gui::skin::paint_icon(ui.painter(), dest, &sprite, tint);
                 } else {
                     super::status_icons::paint(
                         ui.painter(),
@@ -1940,8 +1940,8 @@ impl VellumGuiApp {
                     Vec2::new(icon_width, row_height),
                     egui::Sense::hover(),
                 );
-                let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
-                crate::frontend::gui::skin::paint_sprite(
+                let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                crate::frontend::gui::skin::paint_icon(
                     ui.painter(),
                     dest,
                     &sprite,
@@ -3168,8 +3168,8 @@ impl VellumGuiApp {
                     let (rect, response) = ui
                         .allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
                     if let Some(sprite) = sprite {
-                        let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
-                        crate::frontend::gui::skin::paint_sprite(
+                        let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                        crate::frontend::gui::skin::paint_icon(
                             ui.painter(),
                             dest,
                             &sprite,

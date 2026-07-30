@@ -9,6 +9,8 @@ use eframe::egui;
 
 pub(in super::super) struct IndicatorTemplatesEditorState {
     entries: Vec<EntryBuffer>,
+    /// Indicator id being typed into the "add icon override" row.
+    new_override_id: String,
     error: Option<String>,
 }
 
@@ -88,6 +90,7 @@ impl VellumGuiApp {
             .collect();
         self.indicator_templates_editor = Some(IndicatorTemplatesEditorState {
             entries,
+            new_override_id: String::new(),
             error: None,
         });
     }
@@ -100,6 +103,29 @@ impl VellumGuiApp {
         let mut open = true;
         let mut save_request = false;
         let mut remove_index: Option<usize> = None;
+
+        // GUI icon art inputs, gathered up front; changes collected in the
+        // closure and applied to ui_settings afterwards.
+        let icon_sets = crate::config::pool::set_names("statusicons");
+        let pool_images: Vec<(String, String)> =
+            crate::config::pool::list_category("statusicons")
+                .iter()
+                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .collect();
+        let art = self.skin_state.widget_art();
+        let sheets: Vec<String> = art.as_ref().map(|a| a.sheet_names()).unwrap_or_default();
+        let current_set = self.ui_settings.status_icons.set.clone();
+        let mut sorted_overrides: Vec<(String, crate::data::IconRef)> = self
+            .ui_settings
+            .status_icons
+            .overrides
+            .iter()
+            .map(|(id, icon)| (id.clone(), icon.clone()))
+            .collect();
+        sorted_overrides.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut set_change: Option<Option<String>> = None;
+        // (id, Some(new)) = upsert; (id, None) = remove.
+        let mut override_changes: Vec<(String, Option<crate::data::IconRef>)> = Vec::new();
 
         egui::Window::new("Indicator Templates")
             .id(egui::Id::new("gui_indicator_templates"))
@@ -159,10 +185,135 @@ impl VellumGuiApp {
                             });
                     });
 
+                ui.separator();
+                ui.strong("GUI icon art");
+                ui.weak(
+                    "Pool sets and per-indicator icons; the Icon column above is the TUI glyph.",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Icon set");
+                    let selected = current_set.as_deref().unwrap_or("None");
+                    egui::ComboBox::from_id_salt("statusicon_set")
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(current_set.is_none(), "None").clicked() {
+                                set_change = Some(None);
+                            }
+                            for set in &icon_sets {
+                                let is_current = current_set.as_deref() == Some(set.as_str());
+                                if ui.selectable_label(is_current, set).clicked() {
+                                    set_change = Some(Some(set.clone()));
+                                }
+                            }
+                        });
+                    if icon_sets.is_empty() {
+                        ui.weak("(no sets in the pool — install with .jinx)");
+                    }
+                });
+                for (id, icon) in &sorted_overrides {
+                    ui.horizontal(|ui| {
+                        ui.monospace(id);
+                        let label = match icon {
+                            crate::data::IconRef::Default => "Default".to_string(),
+                            crate::data::IconRef::Image { path } => path
+                                .rsplit_once('/')
+                                .map(|(_, file)| file.to_string())
+                                .unwrap_or_else(|| path.clone()),
+                            crate::data::IconRef::SheetCell { sheet, cell } => {
+                                format!("{sheet} #{cell}")
+                            }
+                        };
+                        egui::ComboBox::from_id_salt(("statusicon_override", id))
+                            .selected_text(label)
+                            .show_ui(ui, |ui| {
+                                if ui.button("Default").clicked() {
+                                    override_changes
+                                        .push((id.clone(), Some(crate::data::IconRef::Default)));
+                                }
+                                for (path, stem) in &pool_images {
+                                    if ui.button(stem).clicked() {
+                                        override_changes.push((
+                                            id.clone(),
+                                            Some(crate::data::IconRef::Image {
+                                                path: path.clone(),
+                                            }),
+                                        ));
+                                    }
+                                }
+                                for sheet in &sheets {
+                                    if ui.button(format!("sheet: {sheet}")).clicked() {
+                                        override_changes.push((
+                                            id.clone(),
+                                            Some(crate::data::IconRef::SheetCell {
+                                                sheet: sheet.clone(),
+                                                cell: 1,
+                                            }),
+                                        ));
+                                    }
+                                }
+                            });
+                        if let crate::data::IconRef::SheetCell { sheet, cell } = icon {
+                            let max = art
+                                .as_ref()
+                                .and_then(|a| a.sheet_cell_count(sheet))
+                                .unwrap_or(u32::MAX)
+                                .max(1);
+                            let mut value = *cell;
+                            if ui
+                                .add(egui::DragValue::new(&mut value).range(1..=max).prefix("#"))
+                                .changed()
+                            {
+                                override_changes.push((
+                                    id.clone(),
+                                    Some(crate::data::IconRef::SheetCell {
+                                        sheet: sheet.clone(),
+                                        cell: value,
+                                    }),
+                                ));
+                            }
+                        }
+                        if ui.small_button("✕").clicked() {
+                            override_changes.push((id.clone(), None));
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.new_override_id)
+                            .hint_text("indicator id (e.g. STUNNED)")
+                            .desired_width(160.0),
+                    );
+                    if ui.button("Add icon override").clicked()
+                        && !state.new_override_id.trim().is_empty()
+                    {
+                        override_changes.push((
+                            state.new_override_id.trim().to_ascii_uppercase(),
+                            Some(crate::data::IconRef::Default),
+                        ));
+                        state.new_override_id.clear();
+                    }
+                });
+
                 if let Some(error) = &state.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
             });
+
+        if let Some(set) = set_change {
+            self.ui_settings.status_icons.set = set;
+            self.layout_dirty = true;
+        }
+        for (id, change) in override_changes {
+            match change {
+                Some(icon) => {
+                    self.ui_settings.status_icons.overrides.insert(id, icon);
+                }
+                None => {
+                    self.ui_settings.status_icons.overrides.remove(&id);
+                }
+            }
+            self.layout_dirty = true;
+        }
 
         if let Some(index) = remove_index {
             if index < state.entries.len() {

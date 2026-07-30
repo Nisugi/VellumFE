@@ -348,6 +348,25 @@ pub struct GuiUiSettings {
     /// for the web doll endpoint, like active_skin.
     #[serde(default)]
     pub doll_image: Option<String>,
+
+    /// Status icon art selection (pool set + per-indicator overrides).
+    #[serde(default)]
+    pub status_icons: StatusIconSettings,
+}
+
+/// Which art status indicators use, resolved ahead of the built-in vector
+/// pictograms: an optional statusicons pool set supplies defaults by glyph
+/// name, and per-indicator overrides pin any icon reference.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct StatusIconSettings {
+    /// Pool set (the `<set>_` filename prefix in global/images/statusicons);
+    /// None = no pool defaults (skin `[icons]` / vector only).
+    #[serde(default)]
+    pub set: Option<String>,
+    /// Indicator id (any case) -> icon override. `Default` entries are
+    /// dropped on save; absence means "no override".
+    #[serde(default)]
+    pub overrides: std::collections::HashMap<String, crate::data::IconRef>,
 }
 
 fn default_zoom_factor() -> f32 {
@@ -402,6 +421,7 @@ impl Default for GuiUiSettings {
             vitals: VitalsConfig::default(),
             active_skin: None,
             doll_image: None,
+            status_icons: StatusIconSettings::default(),
         }
     }
 }
