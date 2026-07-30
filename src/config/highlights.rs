@@ -53,6 +53,12 @@ pub struct HighlightPattern {
     pub stream: Option<String>, // If set, only apply this highlight to lines from this stream (e.g., "death", "thoughts")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub window: Option<String>, // If set with replace, only apply replacement in this window (colors apply everywhere)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_status: Option<String>, // Custom status id to activate on match (indicator/dashboard widgets with this id light up)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_duration: Option<f32>, // Seconds until the set status auto-clears; None = until cleared
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_status: Option<String>, // Custom status id to deactivate on match
 
     // Performance optimization: cache compiled regex (not serialized)
     #[serde(skip)]
@@ -157,6 +163,10 @@ pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
     HlFieldDef { name: "silent_prompt", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "redirect_to", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "redirect_mode", applies_to: &[Tui, Gui, Web] },
+    // Custom-status actions: GUI editor first; TUI/web forms follow.
+    HlFieldDef { name: "set_status", applies_to: &[Gui] },
+    HlFieldDef { name: "status_duration", applies_to: &[Gui] },
+    HlFieldDef { name: "clear_status", applies_to: &[Gui] },
     HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
@@ -208,6 +218,7 @@ pub const HL_GUI_COVERED: &[&str] = &[
     "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
     "sound_volume", "rumble", "category", "squelch", "silent_prompt",
     "redirect_to", "redirect_mode", "replace", "stream", "window",
+    "set_status", "status_duration", "clear_status",
 ];
 
 /// Fields edited by the web/phone highlight form
@@ -678,6 +689,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
 
@@ -707,6 +721,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
 
@@ -739,6 +756,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
 
@@ -765,6 +785,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
 
@@ -791,6 +814,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
 
@@ -956,6 +982,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
 
@@ -1003,6 +1032,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
         let toml_str = toml::to_string(&pattern).unwrap();
@@ -1057,6 +1089,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
 

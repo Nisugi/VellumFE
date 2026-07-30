@@ -683,6 +683,9 @@ impl HighlightFormWidget {
                 let text = self.window_filter.lines()[0].as_str().trim();
                 (!text.is_empty()).then(|| text.to_string())
             },
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -2011,6 +2014,9 @@ mod tests {
             replace: None,
             stream: Some("combat".to_string()),
             window: Some("combat_win".to_string()),
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }
     }

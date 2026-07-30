@@ -372,6 +372,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![
@@ -421,6 +424,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -461,6 +467,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -500,6 +509,9 @@ mod tests {
             replace: None,
             stream: Some("other".to_string()),
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -539,6 +551,9 @@ mod tests {
             replace: Some("Replaced$1".to_string()),
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {
@@ -579,6 +594,9 @@ mod tests {
             replace: Some("Replaced$1".to_string()),
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }]);
         window.set_replace_enabled(false);
@@ -620,6 +638,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }]);
         window.set_entries(vec![PerceptionEntry {

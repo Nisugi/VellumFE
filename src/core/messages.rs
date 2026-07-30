@@ -182,6 +182,8 @@ pub struct MessageProcessor {
 
     /// Pending sounds from highlight processing (to be transferred to GameState)
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
+    /// Custom-status changes from matched highlights, drained by AppCore.
+    pub pending_status_actions: Vec<super::highlight_engine::StatusAction>,
     /// Rumble pattern names from highlight matches, drained by AppCore
     /// into the haptic queue.
     pub pending_rumbles: Vec<String>,
@@ -299,6 +301,7 @@ impl MessageProcessor {
             newly_registered_container: None,
             pending_webui_handshake: None,
             pending_sounds: Vec::new(),
+            pending_status_actions: Vec::new(),
             pending_rumbles: Vec::new(),
             pending_evidence: Vec::new(),
             pending_pathcode: None,
@@ -2896,6 +2899,8 @@ impl MessageProcessor {
 
         // Queue sounds from highlight processing
         self.pending_sounds.extend(highlight_result.sounds);
+        self.pending_status_actions
+            .extend(highlight_result.status_actions);
         self.pending_rumbles.extend(highlight_result.rumbles);
 
         let mut line = StyledLine {
@@ -4489,6 +4494,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }
     }
