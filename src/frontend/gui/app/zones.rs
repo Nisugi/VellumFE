@@ -256,6 +256,7 @@ impl VellumGuiApp {
                 | WidgetType::Compass
                 | WidgetType::Indicator
                 | WidgetType::Countdown
+                | WidgetType::CommandInput
         )
     }
 
@@ -285,7 +286,8 @@ impl VellumGuiApp {
             WidgetType::Hand
             | WidgetType::Countdown
             | WidgetType::Progress
-            | WidgetType::Indicator => Some(28.0 + chrome),
+            | WidgetType::Indicator
+            | WidgetType::CommandInput => Some(28.0 + chrome),
             WidgetType::MiniVitals => {
                 let vitals = &self.ui_settings.vitals;
                 let bar = vitals.bar_height.clamp(8.0, 60.0);

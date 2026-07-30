@@ -90,6 +90,36 @@ pub(super) struct WidgetRenderSettings {
     /// Widget sprite art from the active skin (status icons, compass,
     /// injury doll); None = draw the built-in vector graphics.
     skin_art: Option<std::sync::Arc<skin::SkinWidgetArt>>,
+    /// Current command-input buffer, only for command-input windows. Render
+    /// paths are `&self`; edits flow back via `CommandInputEcho`.
+    command_input_seed: Option<String>,
+}
+
+/// Stable widget id for the command-input TextEdit, wherever it renders
+/// (docked window, detached viewport, or the fallback bottom panel). Focus
+/// routing and cursor placement key off this id.
+pub(super) const COMMAND_INPUT_EDIT_ID: &str = "gui_command_input_edit";
+
+/// Outcome of rendering the command-input widget inside a `&self` render
+/// path: buffer edits and key events are stashed in egui temp data and
+/// drained once per frame by the app update loop, which owns the state.
+#[derive(Clone, Default)]
+pub(super) struct CommandInputEcho {
+    /// New buffer contents, when edited this frame.
+    text: Option<String>,
+    submit: bool,
+    history_prev: bool,
+    history_next: bool,
+}
+
+impl CommandInputEcho {
+    pub(super) fn id() -> egui::Id {
+        egui::Id::new("gui_command_input_echo")
+    }
+
+    fn is_empty(&self) -> bool {
+        self.text.is_none() && !self.submit && !self.history_prev && !self.history_next
+    }
 }
 
 impl WidgetRenderSettings {
@@ -607,7 +637,9 @@ impl VellumGuiApp {
             search_bar_needs_focus: false,
             search_match_cache: None,
             available_tabs_fingerprint: None,
-            command_input_id: None,
+            // Fixed id: the TextEdit uses it wherever it renders, so focus
+            // routing and cursor placement survive docking moves.
+            command_input_id: Some(egui::Id::new(COMMAND_INPUT_EDIT_ID)),
             repaint_ctx,
             layout_save_tx: Some(layout_save_tx),
             layout_save_worker: Some(layout_save_worker),
@@ -685,7 +717,8 @@ impl VellumGuiApp {
 
     fn tab_key_for_window(name: &str, window: &WindowState) -> Option<TabKey> {
         let key = match window.widget_type {
-            WidgetType::CommandInput | WidgetType::Spacer => return None,
+            WidgetType::Spacer => return None,
+            WidgetType::CommandInput => TabKey::CommandInput,
             WidgetType::Text | WidgetType::TabbedText => {
                 if Self::is_main_stream_window(name, window) {
                     TabKey::TextMain
@@ -986,6 +1019,26 @@ impl VellumGuiApp {
         self.app_core.room_window_dirty = false;
     }
 
+    /// Will the command-input tab render somewhere this frame — a zone
+    /// surface or a detached viewport? When not, the shell shows the fixed
+    /// bottom panel instead so typing is always possible.
+    fn command_input_tab_rendered(&self) -> bool {
+        let key = TabKey::CommandInput;
+        if !self.available_tabs.contains_key(&key) || self.hidden_tabs.contains(&key) {
+            return false;
+        }
+        if self.detached_tabs.contains_key(&key) {
+            return true;
+        }
+        match self.zone_for_tab(&key) {
+            GuiShellZone::Header => self.shell_layout.header_visible,
+            GuiShellZone::Footer => self.shell_layout.footer_visible,
+            GuiShellZone::LeftSidebar => !self.shell_layout.left_sidebar_collapsed,
+            GuiShellZone::RightSidebar => !self.shell_layout.right_sidebar_collapsed,
+            _ => true,
+        }
+    }
+
     fn hide_tab(&mut self, key: TabKey) {
         if self.hidden_tabs.insert(key) {
             self.prune_detached_tabs();
@@ -1258,6 +1311,12 @@ impl VellumGuiApp {
                 .get(key)
                 .and_then(|tab| self.skin_state.background_for(&tab.window_name)),
             skin_art: self.skin_state.widget_art(),
+            command_input_seed: self
+                .available_tabs
+                .get(key)
+                .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
+                .filter(|window| window.widget_type == WidgetType::CommandInput)
+                .map(|_| self.command_input.clone()),
         }
     }
 
@@ -4467,39 +4526,17 @@ impl eframe::App for VellumGuiApp {
                 });
         }
 
-        egui::Panel::bottom("gui_command_input").show(ui, |ui| {
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.command_input)
-                    .hint_text("Enter command...")
-                    .desired_width(ui.available_width()),
-            );
-            self.command_input_id = Some(response.id);
-
-            let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if response.lost_focus() && pressed_enter {
-                self.submit_command();
-                response.request_focus();
-            }
-
-            // History browsing: up = older, down = newer / clear at the
-            // newest. consume_key keeps the arrows from reaching anything
-            // else while the input has focus.
-            if response.has_focus() {
-                let up = ui.input_mut(|i| {
-                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
-                });
-                let down = ui.input_mut(|i| {
-                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                });
-                if up {
-                    self.history_previous();
-                    self.command_cursor_to_end(ui.ctx());
-                } else if down {
-                    self.history_next();
-                    self.command_cursor_to_end(ui.ctx());
-                }
-            }
-        });
+        // The command input is a normal dockable window now
+        // (TabKey::CommandInput). This fixed panel appears only when no such
+        // tab actually renders this frame — missing window def, hidden tab,
+        // or the tab parked in a collapsed/hidden shell zone — so the input
+        // can never be lost.
+        if !self.command_input_tab_rendered() {
+            egui::Panel::bottom("gui_command_input").show(ui, |ui| {
+                let seed = self.command_input.clone();
+                Self::render_command_input_widget(ui, &seed);
+            });
+        }
 
         if self.shell_layout.footer_visible {
             egui::Panel::bottom("gui_shell_footer")
@@ -4803,6 +4840,32 @@ impl eframe::App for VellumGuiApp {
             if dirty_since.elapsed() >= LAYOUT_SAVE_DEBOUNCE {
                 self.save_layout_state();
                 self.layout_dirty_since = None;
+            }
+        }
+
+        // Drain the command-input echo (see render_command_input_widget):
+        // the widget renders inside &self paths, so buffer edits and
+        // history/submit events arrive here once per frame.
+        let echo: Option<CommandInputEcho> = ctx.data_mut(|data| {
+            let value = data.get_temp(CommandInputEcho::id());
+            if value.is_some() {
+                data.remove::<CommandInputEcho>(CommandInputEcho::id());
+            }
+            value
+        });
+        if let Some(echo) = echo {
+            if let Some(text) = echo.text {
+                self.command_input = text;
+            }
+            if echo.history_prev {
+                self.history_previous();
+                self.command_cursor_to_end(&ctx);
+            } else if echo.history_next {
+                self.history_next();
+                self.command_cursor_to_end(&ctx);
+            }
+            if echo.submit {
+                self.submit_command();
             }
         }
 

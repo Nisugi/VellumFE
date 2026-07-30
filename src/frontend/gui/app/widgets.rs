@@ -3685,6 +3685,54 @@ impl VellumGuiApp {
         debug_assert_eq!(cache.heights.len(), rendered_count);
     }
 
+    /// The command input line, rendered wherever its window is docked (or
+    /// in the fallback bottom panel). Render paths are `&self`, so buffer
+    /// edits and key events are stashed as a `CommandInputEcho` in egui
+    /// temp data and drained once per frame by the app update loop.
+    pub(super) fn render_command_input_widget(ui: &mut egui::Ui, seed: &str) {
+        let mut text = seed.to_string();
+        let mut echo = CommandInputEcho::default();
+        // Vertically center the single-line edit in whatever height the
+        // window gives it.
+        let edit_height = ui.text_style_height(&egui::TextStyle::Body) + 8.0;
+        let pad = ((ui.available_height() - edit_height) / 2.0).max(0.0);
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .id(egui::Id::new(COMMAND_INPUT_EDIT_ID))
+                .hint_text("Enter command...")
+                .desired_width(ui.available_width()),
+        );
+        let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if response.lost_focus() && pressed_enter {
+            echo.submit = true;
+            response.request_focus();
+        }
+        // History browsing: up = older, down = newer / clear at the newest.
+        // consume_key keeps the arrows from reaching anything else while
+        // the input has focus.
+        if response.has_focus() {
+            let up = ui
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
+            let down = ui
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+            if up {
+                echo.history_prev = true;
+            } else if down {
+                echo.history_next = true;
+            }
+        }
+        if text != seed {
+            echo.text = Some(text);
+        }
+        if !echo.is_empty() {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(CommandInputEcho::id(), echo));
+        }
+    }
+
     pub(super) fn render_text_content(
         ui: &mut egui::Ui,
         content: &TextContent,
@@ -4554,7 +4602,10 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::CommandInput { .. } => {
-                ui.weak("Command input is docked at the bottom of the GUI.");
+                Self::render_command_input_widget(
+                    ui,
+                    settings.command_input_seed.as_deref().unwrap_or(""),
+                );
                 None
             }
             WindowContent::Empty => {

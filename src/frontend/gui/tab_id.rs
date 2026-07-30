@@ -104,6 +104,11 @@ pub enum TabKey {
     /// Perception/awareness display
     Perception,
 
+    /// The command input line. A real dockable window like everything
+    /// else; when no such tab is rendered anywhere, the GUI shell falls
+    /// back to a fixed bottom panel so the input can never be lost.
+    CommandInput,
+
     /// Lich WebUI panel bound to a page ("script/page")
     WebUi {
         /// Page id, e.g. "creaturebar/main"
@@ -153,6 +158,7 @@ impl TabKey {
             TabKey::Dashboard => "Dashboard".to_string(),
             TabKey::Encumbrance => "Encumbrance".to_string(),
             TabKey::Perception => "Perception".to_string(),
+            TabKey::CommandInput => "Input".to_string(),
             TabKey::WebUi { page } => page.clone(),
             TabKey::WindowByName { id } => id.clone(),
         }
@@ -185,6 +191,7 @@ impl TabKey {
             TabKey::Dashboard => "dashboard".to_string(),
             TabKey::Encumbrance => "encumbrance".to_string(),
             TabKey::Perception => "perception".to_string(),
+            TabKey::CommandInput => "command_input".to_string(),
             TabKey::WebUi { page } => format!("webui:{}", page),
             TabKey::WindowByName { id } => format!("win:{}", id),
         }
