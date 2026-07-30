@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-76333e76.js";
+            window.path_to_searchindex_js = "searchindex-8a1a8f09.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-d148862c.js"></script>
+        <script src="toc-a6416afc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -4872,6 +4872,134 @@ than regenerating fresh.</li>
 command input, title bars, and scroll bars have no manifest slots
 today. Check <a href="#skins-gui-graphics">Skins</a> for the current surface before
 generating art for something.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="submitting-art-to-the-community-repo"><a class="header" href="#submitting-art-to-the-community-repo">Submitting Art to the Community Repo</a></h1>
+<p>Made a nice injury doll, window frame, or icon sheet? The community
+asset repository accepts submissions from anyone with a GitHub account —
+no git knowledge required. You fill out a short form, attach your image,
+and a robot does the rest: it cleans the image up, checks the name isn’t
+taken, and stages it for a quick human review. Once approved, it’s live
+for every VellumFE user.</p>
+<p>The whole thing runs on GitHub’s issue system:</p>
+<p><strong><a href="https://github.com/Nisugi/vellum-assets/issues/new/choose">Submit art here → github.com/Nisugi/vellum-assets/issues/new/choose</a></strong></p>
+<h2 id="what-can-be-submitted"><a class="header" href="#what-can-be-submitted">What can be submitted</a></h2>
+<p>Each kind of art has its own form, which asks only for what that kind
+needs:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>What it is</th><th>One submission is…</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Injury doll</strong></td><td>a full-body character image for the injury display</td><td>one image</td></tr>
+<tr><td><strong>Hotbar icon sheet</strong></td><td>a grid of square ability icons for hotbar buttons</td><td>one sheet image</td></tr>
+<tr><td><strong>Window frame</strong></td><td>an ornamental nine-slice border drawn around windows</td><td>one image</td></tr>
+<tr><td><strong>Window background</strong></td><td>a flat texture that sits behind window text</td><td>one image</td></tr>
+<tr><td><strong>Compass art</strong></td><td>a compass rose and/or its lit direction overlays</td><td>a zip of images</td></tr>
+<tr><td><strong>Status icons</strong></td><td>the glyph set for hands, stance, and conditions</td><td>a zip of images</td></tr>
+</tbody>
+</table>
+</div>
+<p>Full skins (complete graphics themes) and layouts aren’t submitted
+through these forms — they’re folders rather than single images, and go
+in by pull request instead; see the
+<a href="https://github.com/Nisugi/vellum-assets/blob/main/SUBMISSIONS.md">contributor notes in the asset repository</a>.</p>
+<h2 id="the-black-background-trick"><a class="header" href="#the-black-background-trick">The black-background trick</a></h2>
+<p>Game art needs transparency — a doll or a frame has to sit on top of
+whatever is behind it. But AI image generators <em>cannot</em> produce
+transparency; ask for it and you’ll get a fake checkerboard. So the
+pipeline uses a convention borrowed from film: <strong>paint your art on a
+solid pure-black background, and the submission robot turns the black
+into real transparency for you.</strong></p>
+<p>It’s smarter than “delete everything black.” The robot flood-fills
+inward from the edges of the canvas, so only background <em>connected to
+the border</em> is removed — black ink outlines, dark hair, and iron armor
+inside your artwork are untouched. (For window frames it also clears
+the enclosed center pocket, and treads gently around near-black
+metalwork.)</p>
+<p>Two consequences worth knowing:</p>
+<ul>
+<li>If your image <strong>already has real transparency</strong> — you cleaned it up
+yourself in an editor — the robot detects that and leaves it alone.</li>
+<li><strong>Don’t submit greyscale variants</strong> of anything. VellumFE desaturates
+art at runtime when it needs to (the injury doll base, dormant
+states), so only the color version is ever stored.</li>
+</ul>
+<p>Window backgrounds are the one exception to all of this: they must be
+<strong>fully opaque</strong>, and transparency in one gets a submission rejected.</p>
+<h3 id="if-the-cleanup-comes-out-wrong"><a class="header" href="#if-the-cleanup-comes-out-wrong">If the cleanup comes out wrong</a></h3>
+<p>The pull request the robot opens shows your processed images — look at
+them. Two failure modes, one knob:</p>
+<ul>
+<li>a <strong>dark halo</strong> clinging around your art means the cutoff was too
+strict — edit your issue and set <strong>Background threshold (advanced)</strong>
+to something higher, like <code>40</code>;</li>
+<li><strong>dark details getting erased</strong> where they touch the background means
+it was too loose — set it lower, like <code>15</code>.</li>
+</ul>
+<p>Every edit to the issue re-runs the robot and updates the pull request
+in place, so you can tune until it looks right. Leave the field blank
+to use the defaults, which are right for most art.</p>
+<p>For art direction — style, palette, and ready-to-use generation prompts
+that produce correctly black-keyed images — see
+<a href="#generating-skin-art-with-ai">Generating Skin Art with AI</a>.</p>
+<h2 id="names"><a class="header" href="#names">Names</a></h2>
+<p>Every asset needs a name: lowercase letters, numbers, <code>_</code> and <code>-</code> only
+(the form explains this too). Names are <strong>first come, first served</strong> —
+if <code>elf_wizard</code> is taken in the dolls category, the robot will tell you
+and you just pick another.</p>
+<p>For the two zip categories, files inside your zip must be named for
+their <strong>role</strong> so the client knows what each image is:</p>
+<ul>
+<li><strong>Compass</strong>: <code>rose</code> (the base), <code>n</code> <code>ne</code> <code>e</code> <code>se</code> <code>s</code> <code>sw</code> <code>w</code> <code>nw</code>
+(lit pointers), <code>up</code> <code>down</code> (chevrons), <code>out</code> (the hub)</li>
+<li><strong>Status icons</strong>: <code>lefthand</code> <code>righthand</code> <code>spellhand</code> <code>standing</code>
+<code>kneeling</code> <code>sitting</code> <code>prone</code> <code>dead</code> <code>stunned</code> <code>bleeding</code> <code>hidden</code>
+<code>invisible</code> <code>webbed</code> <code>poisoned</code> <code>diseased</code> <code>joined</code></li>
+</ul>
+<p>Name each file either <code>&lt;role&gt;.png</code> or <code>&lt;anything&gt;_&lt;role&gt;.png</code> — both
+work. A partial set is fine (just a rose, say). Your set name from the
+form becomes the prefix, so <code>emberiron</code> + <code>rose.png</code> is published as
+<code>emberiron_rose.png</code>.</p>
+<h2 id="what-happens-after-you-click-submit"><a class="header" href="#what-happens-after-you-click-submit">What happens after you click Submit</a></h2>
+<ol>
+<li>Within a minute or two, the robot processes your submission and
+comments on your issue with the result.</li>
+<li><strong>Accepted</strong> — it opens a pull request with your finished, cleaned-up
+files. A maintainer eyeballs the art (that’s the whole review) and
+merges. The site rebuilds itself, and your asset is live in the
+gallery and in everyone’s <code>.jinx list</code>, credited to you.</li>
+<li><strong>Rejected</strong> — the comment says exactly what’s wrong: name taken,
+file the wrong shape, no attachment found, a zip filename that
+doesn’t match a role. <strong>Edit your issue to fix it</strong> — don’t open a
+new one — and the robot automatically re-runs on the edit.</li>
+</ol>
+<p>Nothing is ever published automatically; a person approves every
+submission before it goes live.</p>
+<h2 id="per-category-fine-print"><a class="header" href="#per-category-fine-print">Per-category fine print</a></h2>
+<ul>
+<li><strong>Injury dolls</strong> — front-facing, standing straight, arms slightly away
+from the torso, both hands, both feet, and both eyes visible, full
+figure in frame, roughly 3:4 portrait. The
+<a href="#generating-skin-art-with-ai">prompt kit</a> bakes all of this in.</li>
+<li><strong>Hotbar icon sheets</strong> — square cells, no padding between them, and
+the form asks for your <strong>cell size</strong> in pixels. Cell boundaries must
+land exactly on multiples of that size, or buttons will bleed into
+their neighbors. Sheets are used as-is — no background removal.</li>
+<li><strong>Window frames</strong> — uniform band thickness, ornament confined to the
+corners, continuous plain material along the straight runs (they get
+stretched), pure-black center. The form asks for the <strong>corner cap
+size</strong> in pixels — measure it in your editor — since the renderer
+slices the frame at that inset.</li>
+<li><strong>Compass overlays</strong> — the lit pointers are stacked on top of the rose
+at runtime, so they must be registered pixel-perfect against it.
+Generate them from one master image; don’t generate each separately.</li>
+<li><strong>Status icons</strong> — one bold pictogram per glyph, readable at 20
+pixels.</li>
+<li><strong>Backgrounds</strong> — perfectly even lighting, no vignette, no focal
+point anywhere, very low contrast. Windows crop backgrounds at
+arbitrary shapes, so no part of the composition may matter.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="command-reference"><a class="header" href="#command-reference">Command Reference</a></h1>
