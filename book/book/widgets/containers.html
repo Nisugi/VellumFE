@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f875b337.js";
+            window.path_to_searchindex_js = "../searchindex-76333e76.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba9683ee.js"></script>
+        <script src="../toc-d148862c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -180,20 +180,18 @@
                         <h1 id="containers"><a class="header" href="#containers">Containers</a></h1>
 <p>Displays contents of open containers (bags, backpacks, chests).</p>
 <h2 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h2>
-<p>Container windows are per-container choices in the <strong>known windows</strong> list.
+<p>Container windows are per-container choices in the <strong>Windows</strong> list.
 Every container the game mentions (a <code>LOOK IN</code>, opening a bag, the stow
 feed) is added to the list automatically; tick its row to open a window
 for it, untick to close it again.</p>
-<pre><code>.knownwindows
-</code></pre>
-<p>opens the list (<code>.containers</code> is an alias). On the GUI the same list is a
-checkbox panel. <code>.hidecontainers [title]</code> closes container windows
-without changing anything else.</p>
+<p>Open the list from the menu: <strong>Windows → Show/Hide windows</strong> (TUI popup
+menu; on the GUI the same list is a checkbox panel). <code>.hidecontainers  [title]</code> closes container windows without changing anything else.</p>
 <p>Your choice is remembered for the session: a ticked container’s window
-re-opens whenever the game mentions it again.</p>
+re-opens whenever the game mentions it again. Containers are session-only
+and are not saved across relogs.</p>
 <h2 id="behavior"><a class="header" href="#behavior">Behavior</a></h2>
 <ol>
-<li>Look in a container (<code>look in backpack</code>) — it appears in the known
+<li>Look in a container (<code>look in backpack</code>) — it appears in the Windows
 windows list</li>
 <li>Tick it — a window appears showing contents</li>
 <li>Contents refresh as the game re-sends them; untick to close</li>

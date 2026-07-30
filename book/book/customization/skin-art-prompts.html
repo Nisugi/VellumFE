@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>The Launcher - VellumFE User Guide</title>
+        <title>Generating Skin Art with AI - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -177,57 +177,348 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="the-launcher"><a class="header" href="#the-launcher">The Launcher</a></h1>
-<p>The easiest way to start VellumFE: run it with <strong>no arguments</strong> (or just
-double-click <code>vellum-fe.exe</code>) and a graphical launcher opens with your
-saved connection profiles. One click launches a session; launch several
-profiles to play multiple characters at once.</p>
-<p>You can also open it explicitly with <code>vellum-fe --launcher</code>.</p>
-<h2 id="creating-a-profile"><a class="header" href="#creating-a-profile">Creating a Profile</a></h2>
-<p>Click <strong>Add profile</strong> and fill in:</p>
+                        <h1 id="generating-skin-art-with-ai"><a class="header" href="#generating-skin-art-with-ai">Generating Skin Art with AI</a></h1>
+<p>Every image slot a <a href="./skins.html">skin</a> can fill — window backgrounds,
+nine-slice frames, status icons, hotbar icon sheets, the compass, the
+injury doll — can be produced with an image model like Gemini in an
+afternoon, without drawing anything. This chapter is a working prompt
+kit: the technique, per-asset prompts, and the post-processing that
+turns raw generations into game-ready PNGs.</p>
+<p>The prompts below produce a dark-fantasy hand-painted look; swap the
+style language for your own. The <em>technique</em> — style anchor, black
+keying, batching, image conditioning — applies to any style.</p>
+<h2 id="the-three-rules"><a class="header" href="#the-three-rules">The three rules</a></h2>
+<ol>
+<li><strong>Anchor style with an image, not adjectives.</strong> Generate one image
+you love, then attach it to every later request (“in the exact style
+of the attached reference”). Consistency comes from image
+conditioning; repeating adjectives drifts.</li>
+<li><strong>Never ask for a transparent background.</strong> Image models cannot emit
+an alpha channel — they ignore you or paint a fake checkerboard. Ask
+for a <strong>solid pure black background</strong> and key it out afterward (see
+<a href="#post-processing-dekeypy">Post-processing</a>).</li>
+<li><strong>Reject gloss immediately.</strong> Shine creeps back with each generation
+unless the NO-gloss lines stay in the prompt (for matte styles).</li>
+</ol>
+<h2 id="master-style-block"><a class="header" href="#master-style-block">Master style block</a></h2>
+<p>Prepend something like this to every prompt, with your style anchor
+attached:</p>
+<blockquote>
+<p>Art direction: dark-fantasy medieval game asset in the exact style of
+the attached reference image — hand-painted illustration with clean
+dark ink outlines, muted desaturated earth tones (olive greens, worn
+browns, iron greys, dull brass), weathered matte surfaces. Absolutely
+NO gloss, NO shiny highlights, NO glow, NO bloom, NO lens flare, NO
+neon or saturated colors. Lighting is flat and diffuse. Solid PURE
+BLACK background — no scenery, no ground shadow, no vignette, no
+gradient. No text, no watermark, no border.</p>
+</blockquote>
+<p>Models approximate canvas sizes; aspect ratio is what they honor. The
+skin loader scales everything and doll anchors are fractional, so exact
+pixel dimensions never matter — internal consistency is everything.</p>
+<h2 id="compass-12-images-one-shared-canvas"><a class="header" href="#compass-12-images-one-shared-canvas">Compass (12 images, one shared canvas)</a></h2>
+<p>The widget stacks per-direction overlays on the rose, so registration
+matters more than beauty. Generate two “master” states; cut the 11
+overlays from the all-lit master in an editor (models cannot guarantee
+pixel registration across separate generations — don’t fight it).</p>
+<p><strong>Prompt A — the rose (base, everything unlit):</strong></p>
+<blockquote>
+<p>A square compass rose for a fantasy game UI, viewed flat from directly
+above. An aged dark-iron ring with a worn brass center hub. Eight
+directional pointers (N, NE, E, SE, S, SW, W, NW) as tarnished
+arrowheads radiating from the hub, plus a small UP chevron at the top
+inside the ring and a small DOWN chevron at the bottom inside the
+ring. ALL pointers, both chevrons, and the hub are in a dormant, unlit
+state: dark gunmetal, barely distinguishable from the ring. Square
+canvas, composition perfectly centered and symmetrical.</p>
+</blockquote>
+<p><strong>Prompt B — all-lit master (same composition):</strong></p>
+<blockquote>
+<p>The IDENTICAL compass rose, same canvas, same composition, same
+camera — but every pointer, both chevrons, and the center hub are now
+in an active state: dull ember-copper with a faint warm edge, still
+matte, like heated iron cooling — NOT glowing, NOT shiny.</p>
+</blockquote>
+<p>Slice each lit pointer out of B onto a transparent canvas → <code>n.png</code>,
+<code>ne.png</code> … <code>nw.png</code>, <code>up.png</code>, <code>down.png</code>, <code>out.png</code> (the hub). Rose
+from A → <code>rose.png</code>. If a generation drifts, regenerate B by attaching A
+and asking for “the same image with all pointers lit.”</p>
+<p>Manifest section: <code>[compass]</code> — see <a href="./skins.html">Skins</a>. Pool folder:
+<code>~/.vellum-fe/global/images/compass/</code>.</p>
+<h2 id="status-icons-16-glyphs-one-sprite-sheet"><a class="header" href="#status-icons-16-glyphs-one-sprite-sheet">Status icons (16 glyphs, one sprite sheet)</a></h2>
+<p>One sheet keeps the style uniform; slice into individual PNGs after.</p>
+<blockquote>
+<p>A 4x4 grid sprite sheet of sixteen square fantasy game status icons,
+uniform in style, stroke weight, and visual density, each a single
+bold pictogram readable at 20 pixels. Flat matte colors from the
+reference palette, one restrained accent color where meaning demands
+it. Cells in row-major order:</p>
+<ol>
+<li>an open left hand, palm out</li>
+<li>an open right hand, palm out</li>
+<li>a hand with a subtle rune circle above the palm (spellcasting hand)</li>
+<li>a standing figure</li>
+<li>a kneeling figure</li>
+<li>a sitting cross-legged figure</li>
+<li>a figure lying prone</li>
+<li>a skull (dead)</li>
+<li>stars circling a tilted head (stunned)</li>
+<li>a falling blood drop (bleeding), dull crimson accent</li>
+<li>a hooded figure half-dissolved into shadow (hidden)</li>
+<li>a dotted outline of a figure (invisible)</li>
+<li>a figure wrapped in spiderweb strands (webbed)</li>
+<li>a serpent coiled around a drop (poisoned), dull green accent</li>
+<li>a gaunt face with sunken cheeks (diseased), pale ochre accent</li>
+<li>two linked shackle rings (group-joined)</li>
+</ol>
+</blockquote>
+<p>Slice to <code>lefthand.png</code>, <code>righthand.png</code>, <code>spellhand.png</code>,
+<code>standing.png</code>, <code>kneeling.png</code>, <code>sitting.png</code>, <code>prone.png</code>, <code>dead.png</code>,
+<code>stunned.png</code>, <code>bleeding.png</code>, <code>hidden.png</code>, <code>invisible.png</code>,
+<code>webbed.png</code>, <code>poisoned.png</code>, <code>diseased.png</code>, <code>joined.png</code> — these names
+match the <code>[icons]</code> manifest keys.</p>
+<h2 id="injury-dolls-one-base-image-per-raceclass"><a class="header" href="#injury-dolls-one-base-image-per-raceclass">Injury dolls (one base image per race/class)</a></h2>
+<p>The app draws wounds itself as dots at calibrated anchor points, so the
+art must expose every anchored body part. The requirements below are
+non-negotiable — bake them into the prompt. Swap the {RACE} / {CLASS}
+slots (GemStone IV races: Human, Giantman, Dwarf, Halfling, Elf, Dark
+Elf, Half-Elf, Sylvankind, Forest Gnome, Burghal Gnome, Half-Krolvin,
+Erithian, Aelotoi).</p>
+<blockquote>
+<p>A full-body character portrait of a {RACE} {CLASS} from a fantasy
+world, in the exact painted style, palette, framing, and proportional
+scale of the attached reference image. Requirements, all mandatory:</p>
 <ul>
-<li><strong>Connection mode</strong> — <em>Direct</em> (eAccess, no Lich) or <em>Lich</em> (proxy
-host/port)</li>
-<li><strong>Account / game / character</strong> for direct mode, or <strong>host / port</strong> for
-Lich mode</li>
-<li><strong>Frontend</strong> — GUI (default) or Terminal (the hand-typed equivalent
-is <code>--frontend gui|tui</code>; note the bare CLI defaults to the terminal)</li>
-<li><strong>Advanced options</strong> — everything the CLI offers: web/phone port,
-sound off, settings profile, data directory, color mode, palette setup</li>
+<li>standing straight, facing the viewer directly, perfectly front-on</li>
+<li>arms relaxed and held slightly away from the torso so upper arms,
+forearms, and both open hands are fully visible and do not overlap
+the body</li>
+<li>legs slightly apart, both feet visible</li>
+<li>head bare or with headwear that leaves the face open: BOTH eyes
+must be clearly visible, open, and unobstructed</li>
+<li>neck visible between head and collar</li>
+<li>the full figure fits inside the frame with a small margin — nothing
+cropped</li>
+<li>portrait orientation, roughly 3:4</li>
+<li>muted, weathered, matte clothing appropriate to a {CLASS}; no shiny
+armor, no glowing effects, no magic auras</li>
+<li>solid pure black background, no ground shadow</li>
 </ul>
-<h2 id="passwords-go-in-the-keyring"><a class="header" href="#passwords-go-in-the-keyring">Passwords Go in the Keyring</a></h2>
-<p>Check <strong>Save password</strong> and the password is stored in your operating
-system’s secure credential store (Windows Credential Manager, macOS
-Keychain, or the Linux secret service) — it is <strong>never written to a
-file</strong> and never appears on a command line. Passwords are keyed by
-account, so several profiles on the same account share one saved
-password.</p>
-<p>If you don’t save it, the launcher prompts when you hit Launch (terminal
-sessions ask in their own console instead). Account names are masked in
-the profile list, and the password field has a show/hide toggle — safe
-to open at a convention table.</p>
-<h2 id="how-sessions-launch"><a class="header" href="#how-sessions-launch">How Sessions Launch</a></h2>
-<p>Each <strong>Launch</strong> spawns a separate <code>vellum-fe --launch-profile NAME</code>
-process — exactly the same startup path as a hand-typed command line, so
-everything in this book applies unchanged. Terminal sessions open in
-their own console window, which remembers its size and position across
-launches.</p>
-<h2 id="skipping-the-launcher"><a class="header" href="#skipping-the-launcher">Skipping the Launcher</a></h2>
-<p>Saved profiles work from the command line or a shortcut too:</p>
-<pre><code class="language-bash">vellum-fe --launch-profile "Rolfard hunting"
+</blockquote>
+<p>After dropping one into a skin, run Settings → Skin → “Calibrate injury
+doll” and click through the parts — anchors are stored as fractions of
+the image, so exact pixel size never matters. Generate dolls on demand
+for characters that exist; the calibrator makes each new doll a
+two-minute job. The greyscale <code>_grey.png</code> variant from post-processing
+makes colored wound dots pop.</p>
+<h2 id="window-frames-nine-slice-borders"><a class="header" href="#window-frames-nine-slice-borders">Window frames (nine-slice borders)</a></h2>
+<p>The renderer slices the image into nine regions from the manifest’s
+<code>slice</code> insets: corners draw at fixed size, the four straight runs
+stretch along one axis, and the center is never drawn. That dictates
+the art:</p>
+<ul>
+<li>The frame must run <strong>flush to all four canvas edges</strong>, with a roughly
+<strong>uniform band thickness</strong> (target ~1/8 of the canvas width).</li>
+<li>Corner ornament is free — it draws unstretched. The straight runs
+between corners must be <strong>continuous, uniform material</strong> (riveted
+iron, wood grain along the run, plain rope) with no medallions or
+creatures mid-run: anything distinct there gets stretched.</li>
+<li>Corner caps <strong>thicker than the runs are fine</strong> — real generations
+come back that way and it looks good. Set <code>slice</code> to the <em>cap</em> size;
+the black between the runs’ inner edge and the cap depth becomes
+transparent in post and simply never draws.</li>
+<li>Inspect the inner corners at full zoom before accepting — models like
+to drop small “glint” artifacts there, and anything inside the corner
+squares gets drawn over window content. A clean corner can be
+mirrored over a blemished one in an editor (the bands line up by
+construction).</li>
+</ul>
+<p><strong>Prompt:</strong></p>
+<blockquote>
+<p>A square ornamental window frame for a fantasy game UI, viewed flat.
+An aged dark-iron band with worn brass corner caps, riveted along its
+length. The frame runs flush to all four edges of the canvas with a
+uniform thickness on all sides, about one eighth of the canvas wide.
+Corner ornamentation stays within the corner squares; the four
+straight runs between corners are plain, continuous, evenly textured
+metal with no emblems or breaks. The inner edge of the frame is a
+crisp straight line. The center of the frame is empty pure black.</p>
+</blockquote>
+<p>Frames need the keying pass with a twist: the center is a sealed pocket
+the edge flood can’t reach, so seed it explicitly and use a low
+threshold so near-black seams in the art survive:</p>
+<pre><code>python dekey.py frame.png --seed 1024,1024 --threshold 12 --no-grey
 </code></pre>
-<p>Profile definitions live in <code>~/.vellum-fe/launcher.toml</code> (passwords
-excluded — those stay in the keyring).</p>
+<p>Worked example (a 2048px generation with ~307px caps and ~240px runs):</p>
+<pre><code class="language-toml">[window.default.border]
+image = "frames/frame_iron.png"
+slice = [310.0, 310.0, 310.0, 310.0]  # measure the CAPS in source pixels
+scale = 0.045                         # 2048px source -&gt; ~14pt caps on screen
+</code></pre>
+<p>Measure the caps once in an editor, set <code>slice</code> to that, then tune
+<code>scale</code> by eye. Pool folder: <code>~/.vellum-fe/global/images/frames/</code>.</p>
+<h2 id="window-background-textures"><a class="header" href="#window-background-textures">Window background textures</a></h2>
+<p>Backgrounds sit <strong>behind text</strong>, so restraint is the whole game: low
+contrast, no focal points, no vignette (windows crop the image at
+arbitrary aspect ratios with <code>fit = "cover"</code>, so nothing about the
+composition may matter). The manifest’s <code>scrim</code> paints a theme-colored
+wash on top for readability — author the texture legible-ish and let
+scrim do the rest.</p>
+<blockquote>
+<p>A flat, even, borderless surface texture for a game UI background:
+{aged parchment with faint fiber flecks | worn dark leather with fine
+grain | rough hewn dark stone}. Perfectly uniform lighting across the
+whole canvas — no vignette, no hotspot, no directional shadow, no
+focal detail anywhere. Very low contrast, subtle texture only.
+Landscape orientation.</p>
+</blockquote>
+<p>Don’t ask for “seamless/tileable” — image models can’t actually do it
+and the seam will show. Use <code>fit = "cover"</code> and generate generously
+sized. Backgrounds are opaque by design — no keying pass.</p>
+<pre><code class="language-toml">[window.default.background]
+image = "backgrounds/leather.png"
+fit = "cover"
+opacity = 1.0
+scrim = 0.35
+</code></pre>
+<h2 id="hotbar-icon-sheets"><a class="header" href="#hotbar-icon-sheets">Hotbar icon sheets</a></h2>
+<p>Hotbar buttons pull from <code>[sheets]</code> sprite sheets: square cells, <strong>no
+padding</strong>, indexed 1-based left→right then top→bottom (64px cells by
+default). Models keep style coherent across about 16 icons per
+generation, so build sheets from 4x4 grids — reuse the status-icon
+prompt frame with new cell contents (ability and spell pictograms).</p>
+<p>After acceptance, resample the image so cells land exactly on the cell
+size (a 4x4 sheet → 256x256 for 64px cells) — the loader tiles by pixel
+arithmetic, and drifted cell boundaries bleed neighbors into buttons.
+Keep a note of which cell is which when you slice; the index is the
+only key.</p>
+<pre><code class="language-toml">[sheets.combat]
+path = "icons/combat.png"
+cell = 64
+</code></pre>
+<h2 id="post-processing-dekeypy"><a class="header" href="#post-processing-dekeypy">Post-processing (dekey.py)</a></h2>
+<p>Every keyed image (compass, icons, dolls, frames — not backgrounds)
+goes through the same script to turn the black background into a real
+alpha channel. It flood-fills from the image edges, so black ink lines
+and dark clothing <em>inside</em> a figure survive; only background connected
+to the border becomes transparent. It also emits a greyscale twin
+derived from the same pixels (never generate a greyscale variant
+separately — it will not match).</p>
+<pre><code>python dekey.py TheImage.png                  # -&gt; _alpha.png + _grey.png
+python dekey.py TheImage.png --threshold 40   # if a dark halo remains
+python dekey.py frame.png --seed 1024,1024 --threshold 12 --no-grey
+</code></pre>
+<p>Save this as <code>dekey.py</code> (needs Python with <code>Pillow</code>:
+<code>pip install Pillow</code>):</p>
+<pre><code class="language-python">#!/usr/bin/env python3
+"""Give AI-generated skin art a REAL alpha channel."""
+
+import argparse
+import sys
+from collections import deque
+from pathlib import Path
+
+from PIL import Image, ImageOps
+
+
+def dekey(img, threshold, seeds=()):
+    img = img.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+
+    def is_bg(x, y):
+        r, g, b, _ = px[x, y]
+        return r &lt;= threshold and g &lt;= threshold and b &lt;= threshold
+
+    seen = bytearray(w * h)
+    queue = deque()
+    for x in range(w):
+        for y in (0, h - 1):
+            if is_bg(x, y) and not seen[y * w + x]:
+                seen[y * w + x] = 1
+                queue.append((x, y))
+    for y in range(h):
+        for x in (0, w - 1):
+            if is_bg(x, y) and not seen[y * w + x]:
+                seen[y * w + x] = 1
+                queue.append((x, y))
+    for x, y in seeds:
+        if not (0 &lt;= x &lt; w and 0 &lt;= y &lt; h):
+            raise SystemExit(f"seed {x},{y} outside {w}x{h} image")
+        if not is_bg(x, y):
+            raise SystemExit(f"seed {x},{y} is not background")
+        if not seen[y * w + x]:
+            seen[y * w + x] = 1
+            queue.append((x, y))
+
+    while queue:
+        x, y = queue.popleft()
+        px[x, y] = (0, 0, 0, 0)
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 &lt;= nx &lt; w and 0 &lt;= ny &lt; h and not seen[ny * w + nx] and is_bg(nx, ny):
+                seen[ny * w + nx] = 1
+                queue.append((nx, ny))
+    return img
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("input", type=Path)
+    ap.add_argument("--threshold", type=int, default=30,
+                    help="max RGB channel value treated as background")
+    ap.add_argument("--no-grey", action="store_true", help="skip greyscale variant")
+    ap.add_argument("--seed", action="append", default=[], metavar="X,Y",
+                    help="extra interior flood seed (repeatable); needed for "
+                         "closed frames whose center the edge flood cannot reach")
+    args = ap.parse_args()
+
+    seeds = []
+    for spec in args.seed:
+        try:
+            x, y = (int(part) for part in spec.split(","))
+        except ValueError:
+            ap.error(f"--seed wants X,Y integers, got {spec!r}")
+        seeds.append((x, y))
+
+    img = dekey(Image.open(args.input), args.threshold, seeds)
+    out_alpha = args.input.with_name(args.input.stem + "_alpha.png")
+    img.save(out_alpha)
+    print(f"wrote {out_alpha}")
+
+    if not args.no_grey:
+        grey = ImageOps.grayscale(img).convert("RGBA")
+        grey.putalpha(img.getchannel("A"))
+        out_grey = args.input.with_name(args.input.stem + "_grey.png")
+        grey.save(out_grey)
+        print(f"wrote {out_grey}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+</code></pre>
+<h2 id="workflow-notes"><a class="header" href="#workflow-notes">Workflow notes</a></h2>
+<ul>
+<li>Always attach the previous batch’s accepted output as a reference
+when generating siblings.</li>
+<li>If a result comes back with scenery or a non-black background, ask to
+“re-render the same image on a solid pure black background” rather
+than regenerating fresh.</li>
+<li>Not every widget is skinnable: progress bars, countdown timers, the
+command input, title bars, and scroll bars have no manifest slots
+today. Check <a href="./skins.html">Skins</a> for the current surface before
+generating art for something.</li>
+</ul>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../getting-started/installation.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../customization/skins.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../getting-started/first-launch.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../reference/commands.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -237,11 +528,11 @@ excluded — those stay in the keyring).</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../getting-started/installation.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../customization/skins.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../getting-started/first-launch.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../reference/commands.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

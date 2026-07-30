@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f875b337.js";
+            window.path_to_searchindex_js = "../searchindex-76333e76.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba9683ee.js"></script>
+        <script src="../toc-d148862c.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -279,9 +279,10 @@ label; icons are ignored there, and the GUI falls back to text when no
 registered sheet matches.</p>
 <p>Sheets live in one of two places:</p>
 <ul>
-<li><strong>Shared store</strong> (<code>~/.vellum-fe/global/icons/</code> with an <code>icons.toml</code>
-manifest) — available to every skin, and with no skin active at all.
-This is the default and the right choice for personal icon sets.</li>
+<li><strong>Shared store</strong> (<code>~/.vellum-fe/global/images/icons/</code> with an
+<code>icons.toml</code> manifest) — available to every skin, and with no skin
+active at all. This is the default and the right choice for personal
+icon sets.</li>
 <li><strong>Active skin</strong> (the skin’s <code>[sheets]</code> table in <code>skin.toml</code>, see the
 skin docs) — travels with the skin; a skin sheet overrides a shared
 sheet with the same name.</li>
@@ -315,7 +316,7 @@ border_dir = "radial"         # horizontal (default) | vertical |
 can swap the icon (a different cell, or the same cell grayscaled) via
 <code>[bars.buttons.states.style.icon]</code> — dimmed states automatically use the
 grayscale variant. The sheet entry itself — in the shared store’s
-<code>icons.toml</code> (paths relative to <code>global/icons/</code>) or a skin’s <code>skin.toml</code>
+<code>icons.toml</code> (paths relative to <code>global/images/icons/</code>) or a skin’s <code>skin.toml</code>
 (paths relative to the skin directory) — looks the same either way:</p>
 <pre><code class="language-toml">[sheets.rogue]
 path = "icons/rogue.png"      # image path; absolute paths allowed

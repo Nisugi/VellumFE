@@ -24,6 +24,11 @@ folder" button, and a "Create" button.
 
 ## Making a Skin
 
+No art skills needed — [Generating Skin Art with AI](./skin-art-prompts.md)
+is a working prompt kit for producing every image below with an image
+model, including the keying script that turns black backgrounds into
+real transparency.
+
 The quickest start:
 
 ```
