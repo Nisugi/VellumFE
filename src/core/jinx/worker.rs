@@ -147,10 +147,13 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
         Ok(a) => a,
         Err(e) => return send(format!("[jinx] {e}"), None),
     };
-    let repos = match RepoList::load_or_seed(game) {
+    let mut repos = match RepoList::load_or_seed(game) {
         Ok(r) => r,
         Err(e) => return send(format!("[jinx] cannot load repos: {e}"), None),
     };
+    // Best-effort: pick up category repos the vellum-assets monorepo has
+    // grown since this client shipped (add-only; offline is a no-op).
+    repos.discover(&agent);
     let mut cache = ManifestCache::new();
 
     match request {

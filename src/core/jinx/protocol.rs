@@ -69,6 +69,22 @@ pub struct VellumMeta {
     /// Path *inside* the asset bundle to a preview image.
     #[serde(default)]
     pub preview: Option<String>,
+    /// Shared-image-pool folder this per-file asset installs into
+    /// (`global/images/<pool>/`). Published by the repository generator from
+    /// its category layout, so a brand-new category needs no client change.
+    #[serde(default)]
+    pub pool: Option<String>,
+}
+
+/// Directory-safe pool category name: lowercase alphanumerics plus `_`/`-`,
+/// bounded length. Anything else (path separators, dots, uppercase) is
+/// rejected so a manifest can never steer bytes outside the image pool.
+pub fn valid_pool_category(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 32
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 impl Asset {
@@ -107,11 +123,25 @@ impl Asset {
             // publish per-file (skins reference them by pool-relative path).
             "iconmap" | "image" | "icon" | "doll" | "skin" | "layout" | "uipack" | "frame"
             | "background" | "compass" | "statusicon" => true,
-            // Map IMAGE tiles (kind `map`) are not used by VellumFE. The map
-            // database itself is `mapdb.json` (kind `data`, allowed above).
-            // Scripts/engines are Lich's.
-            _ => false,
+            // Never installable, pool tag or not: code is Lich's, and map
+            // IMAGE tiles (kind `map`) are unused here. The map database
+            // itself is `mapdb.json` (kind `data`, allowed above).
+            "script" | "engine" | "map" => false,
+            // Unknown kinds install when the manifest names a valid pool
+            // folder — how future vellum-assets categories work with no
+            // client change.
+            _ => self.pool_category().is_some(),
         }
+    }
+
+    /// The shared-image-pool folder this asset installs into, when the
+    /// manifest names one and the name is directory-safe.
+    pub fn pool_category(&self) -> Option<&str> {
+        self.vellum
+            .as_ref()?
+            .pool
+            .as_deref()
+            .filter(|pool| valid_pool_category(pool))
     }
 }
 
@@ -234,6 +264,46 @@ mod tests {
         // Code stays Lich's.
         assert!(!mk("/go2.lic", "script").is_installable());
         assert!(!mk("/lich.rb", "engine").is_installable());
+    }
+
+    #[test]
+    fn pool_tag_makes_unknown_kinds_installable_but_never_code() {
+        let mk = |kind: &str, pool: Option<&str>| Asset {
+            file: "/thing.png".into(),
+            kind: Some(kind.into()),
+            md5: "x".into(),
+            last_commit: 0,
+            header: None,
+            vellum: Some(VellumMeta {
+                pool: pool.map(str::to_string),
+                ..VellumMeta::default()
+            }),
+        };
+        // A future category the client has never heard of: installable via
+        // its pool tag, and the pool folder is exposed for the installer.
+        assert!(mk("banner", Some("banners")).is_installable());
+        assert_eq!(mk("banner", Some("banners")).pool_category(), Some("banners"));
+        // Unknown kind without a pool tag stays hidden.
+        assert!(!mk("banner", None).is_installable());
+        // Unsafe pool names are rejected wholesale.
+        for bad in ["", "..", "a/b", "a\\b", "Banners", "x".repeat(33).as_str()] {
+            assert!(!mk("banner", Some(bad)).is_installable(), "pool '{bad}'");
+            assert_eq!(mk("banner", Some(bad)).pool_category(), None);
+        }
+        // Refused kinds stay refused even with a pool tag.
+        assert!(!mk("script", Some("scripts")).is_installable());
+        assert!(!mk("engine", Some("engines")).is_installable());
+        assert!(!mk("map", Some("maps")).is_installable());
+    }
+
+    #[test]
+    fn valid_pool_category_bounds() {
+        assert!(valid_pool_category("frames"));
+        assert!(valid_pool_category("status_icons-2"));
+        assert!(!valid_pool_category(""));
+        assert!(!valid_pool_category("UPPER"));
+        assert!(!valid_pool_category("with.dot"));
+        assert!(!valid_pool_category(&"x".repeat(33)));
     }
 
     #[test]

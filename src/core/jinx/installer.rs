@@ -132,7 +132,7 @@ pub fn install_asset(
         ));
     }
 
-    let dest = plain_file_dest(kind, &name)?;
+    let dest = plain_file_dest(asset)?;
 
     if let Some(dest) = &dest {
         // Idempotence: an on-disk file whose digest already matches is a no-op,
@@ -203,7 +203,9 @@ fn install_bundle(kind: &str, name: &str, zip_bytes: &[u8]) -> Result<PathBuf, S
 
 /// Destination path for a plain single-file asset, or `None` for a kind that is
 /// a composed bundle needing extraction (`skin`, `layout`, `uipack`).
-fn plain_file_dest(kind: &str, name: &str) -> Result<Option<PathBuf>, String> {
+fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
+    let name = asset.basename();
+    let kind = asset.kind();
     // mapdb.json is `data`-typed but belongs in the map dir the map subsystem
     // reads, not the game-data store. The mapdb downloader versions its own
     // filenames; a direct .jinx install lands the plain name there and J3's
@@ -223,16 +225,22 @@ fn plain_file_dest(kind: &str, name: &str) -> Result<Option<PathBuf>, String> {
         // Standalone injury-doll base images drop into the doll pool; a skin's
         // [injury_doll] base references one by (absolute) path.
         "doll" => Config::global_dolls_dir(),
-        // Per-file shared-image-pool categories; skins (and the per-window
-        // frame picker's [frames.*] entries) reference them by pool-relative
-        // path ("frames/iron.png").
+        // Established per-file pool categories keep their fixed mapping;
+        // skins (and the per-window frame picker's [frames.*] entries)
+        // reference them by pool-relative path ("frames/iron.png").
         "frame" => Config::global_image_category_dir("frames"),
         "background" => Config::global_image_category_dir("backgrounds"),
         "compass" => Config::global_image_category_dir("compass"),
         "statusicon" => Config::global_image_category_dir("statusicons"),
         // Composed bundles: extracted elsewhere, not a plain write.
         "skin" | "layout" | "uipack" => return Ok(None),
-        other => return Err(format!("unknown asset kind '{other}' for '{name}'")),
+        // Anything else installs into the pool folder the manifest names
+        // (sanitized by pool_category), so new categories need no client
+        // change. is_installable already gated on the pool being present.
+        other => match asset.pool_category() {
+            Some(pool) => Config::global_image_category_dir(pool),
+            None => return Err(format!("unknown asset kind '{other}' for '{name}'")),
+        },
     };
     let dir = dir.map_err(|e| format!("cannot resolve install dir: {e}"))?;
     Ok(Some(dir.join(name)))
@@ -527,6 +535,43 @@ mod tests {
             );
             assert_eq!(db.get(&format!("asset-{kind}.png")).unwrap().kind, kind);
         }
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn install_unknown_kind_with_pool_tag_lands_in_named_pool() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+        let body = b"BANNERPNG".to_vec();
+        let base = spawn_stub(body.clone());
+        let mut a = asset("/parade.png", &digest_b64(&body));
+        a.kind = Some("banner".into());
+        a.vellum = Some(crate::core::jinx::protocol::VellumMeta {
+            pool: Some("banners".into()),
+            ..Default::default()
+        });
+
+        let out = install_asset(&ag, &repo(&base), &a, &mut db, false).unwrap();
+        let dest = match out {
+            InstallOutcome::Installed { path } => path,
+            other => panic!("expected Installed, got {other:?}"),
+        };
+        assert!(
+            dest.ends_with("global/images/banners/parade.png")
+                || dest.ends_with("global\\images\\banners\\parade.png"),
+            "{}",
+            dest.display()
+        );
+
+        // Same kind without the pool tag: refused (not installable).
+        let mut bare = asset("/parade2.png", &digest_b64(&body));
+        bare.kind = Some("banner".into());
+        assert!(install_asset(&ag, &repo(&base), &bare, &mut db, false).is_err());
 
         std::env::remove_var("VELLUM_FE_DIR");
     }
