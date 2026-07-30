@@ -74,6 +74,12 @@ pub struct TabSettings {
     #[serde(default)]
     pub accent_color: Option<String>,
 
+    /// Corner radius override for this window's frame; None follows the
+    /// global `GuiUiSettings::window_corner_radius`. Skin border art still
+    /// forces square corners.
+    #[serde(default)]
+    pub corner_radius: Option<f32>,
+
     /// Whether to wrap text at window boundary
     #[serde(default = "default_wrap_text")]
     pub wrap_text: bool,
@@ -98,6 +104,7 @@ impl Default for TabSettings {
             font_secondary: FontRef::SystemDefault,
             text_size: None,
             accent_color: None,
+            corner_radius: None,
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
             map_zoom: None,
@@ -265,6 +272,12 @@ pub struct GuiUiSettings {
     #[serde(default = "default_bar_corner_radius")]
     pub bar_corner_radius: f32,
 
+    /// Corner radius for window frames. 0 = square Wrayth-style corners;
+    /// 6 matches egui's default rounding. Windows with skin border art
+    /// always render square so the art isn't clipped.
+    #[serde(default = "default_window_corner_radius")]
+    pub window_corner_radius: f32,
+
     /// Automatically switch bar text between light and dark when the
     /// configured color would be unreadable against the bar fill.
     #[serde(default = "default_true")]
@@ -299,6 +312,10 @@ fn default_bar_corner_radius() -> f32 {
     2.0
 }
 
+fn default_window_corner_radius() -> f32 {
+    6.0
+}
+
 fn default_true() -> bool {
     true
 }
@@ -312,6 +329,7 @@ impl Default for GuiUiSettings {
             effects_bar_height: default_effects_bar_height(),
             density: default_density(),
             bar_corner_radius: default_bar_corner_radius(),
+            window_corner_radius: default_window_corner_radius(),
             auto_contrast_bar_text: default_true(),
             vitals: VitalsConfig::default(),
         }
@@ -871,6 +889,7 @@ mod tests {
             font_secondary: FontRef::SystemDefault,
             text_size: None,
             accent_color: None,
+            corner_radius: None,
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
             map_zoom: None,
@@ -1090,6 +1109,7 @@ mod tests {
                 font_secondary: FontRef::Named("Consolas".to_string()),
                 text_size: Some(16.0),
                 accent_color: Some("#4784d9".to_string()),
+                corner_radius: None,
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
                 map_zoom: None,

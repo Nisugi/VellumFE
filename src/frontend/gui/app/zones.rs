@@ -1002,6 +1002,10 @@ impl VellumGuiApp {
                 if let Some(accent) = self.accent_color_for_tab(&tab.id.key) {
                     window_frame.stroke.color = accent;
                 }
+                if let Some(radius) = self.corner_radius_override_for_tab(&tab.id.key) {
+                    window_frame.corner_radius =
+                        egui::CornerRadius::same(radius.clamp(0.0, 12.0).round() as u8);
+                }
                 self.apply_skin_border_to_frame(&tab.window_name, &mut window_frame);
                 // Advance by what actually rendered, not by the intended slot:
                 // any disagreement between our chrome math and egui's real
@@ -1380,6 +1384,10 @@ impl VellumGuiApp {
                 .shadow(egui::epaint::Shadow::NONE);
             if let Some(accent) = self.accent_color_for_tab(&tab.id.key) {
                 docked_window_frame.stroke.color = accent;
+            }
+            if let Some(radius) = self.corner_radius_override_for_tab(&tab.id.key) {
+                docked_window_frame.corner_radius =
+                    egui::CornerRadius::same(radius.clamp(0.0, 12.0).round() as u8);
             }
             self.apply_skin_border_to_frame(&tab.window_name, &mut docked_window_frame);
             // `default_size` (like `fixed_size`) is the whole window rect in

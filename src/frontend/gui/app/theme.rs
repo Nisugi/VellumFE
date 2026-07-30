@@ -266,6 +266,9 @@ impl VellumGuiApp {
         );
         if let Some(theme) = presets.get(&active) {
             ctx.set_visuals(visuals_from_theme(theme));
+            // set_visuals rebuilds Visuals wholesale; force the ui_settings
+            // window radius to re-apply over it next frame.
+            self.applied_window_corner_radius = None;
             self.current_theme = theme.clone();
         } else {
             tracing::warn!("Unknown theme '{}', keeping current visuals", active);

@@ -460,6 +460,14 @@ fn render_gui_section(
                  0 = square (Wrayth-style).",
             );
         ui.end_row();
+        ui.label("Window corners");
+        ui.add(egui::Slider::new(&mut gui_settings.window_corner_radius, 0.0..=12.0).step_by(0.5))
+            .on_hover_text(
+                "Corner radius for window frames. \
+                 0 = square (Wrayth-style). Windows framed by skin \
+                 border art always render square.",
+            );
+        ui.end_row();
         ui.label("Bar text contrast");
         ui.checkbox(&mut gui_settings.auto_contrast_bar_text, "Auto light/dark")
             .on_hover_text(
@@ -1022,6 +1030,7 @@ impl VellumGuiApp {
             self.zoom_applied = false;
             self.applied_title_font_size = None;
             self.applied_density = None;
+            self.applied_window_corner_radius = None;
             self.layout_dirty = true;
 
             if errors.is_empty() {

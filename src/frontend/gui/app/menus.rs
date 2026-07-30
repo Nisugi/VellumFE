@@ -58,6 +58,9 @@ pub(super) enum GuiWindowMenuCommand {
     SetFont(Option<String>),
     /// Per-window border accent color; None reverts to the theme border.
     SetAccent(Option<[u8; 3]>),
+    /// Per-window frame corner radius; None reverts to the global setting.
+    /// Keeps the menu open like SetTextSize.
+    SetCornerRadius(Option<f32>),
     /// Lock this window together with another one.
     GroupWith(TabKey),
     /// Remove one specific member from this window's group.
@@ -104,6 +107,9 @@ pub(super) struct WindowAppearanceView {
     wrap_text: bool,
     current_font: Option<String>,
     accent_color: Option<Color32>,
+    /// Per-window frame corner radius override; None follows the global.
+    corner_radius_override: Option<f32>,
+    global_corner_radius: f32,
 }
 
 /// Preset border accent colors offered in the window context menu.
@@ -279,6 +285,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetWrapText(_)
             | GuiWindowMenuCommand::SetFont(_)
             | GuiWindowMenuCommand::SetAccent(_)
+            | GuiWindowMenuCommand::SetCornerRadius(_)
             | GuiWindowMenuCommand::SetMapZoom(_) => {
                 let tab_key = request.tab_key.clone();
                 self.apply_appearance_command(&tab_key, command);
@@ -384,6 +391,13 @@ impl VellumGuiApp {
                     color.map(|[r, g, b]| format!("#{:02x}{:02x}{:02x}", r, g, b));
                 self.layout_dirty = true;
             }
+            GuiWindowMenuCommand::SetCornerRadius(radius) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .corner_radius = radius;
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::SetMapZoom(zoom) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -431,6 +445,8 @@ impl VellumGuiApp {
             wrap_text: self.effective_wrap_text(tab_key),
             current_font,
             accent_color: self.accent_color_for_tab(tab_key),
+            corner_radius_override: self.corner_radius_override_for_tab(tab_key),
+            global_corner_radius: self.ui_settings.window_corner_radius,
         }
     }
 
@@ -1171,6 +1187,26 @@ impl VellumGuiApp {
                 command = Some(GuiWindowMenuCommand::SetAccent(None));
             }
         });
+        let mut radius_enabled = view.corner_radius_override.is_some();
+        if ui
+            .checkbox(&mut radius_enabled, "Custom corner radius")
+            .changed()
+        {
+            command = Some(GuiWindowMenuCommand::SetCornerRadius(if radius_enabled {
+                Some(view.corner_radius_override.unwrap_or(view.global_corner_radius))
+            } else {
+                None
+            }));
+        }
+        if let Some(current) = view.corner_radius_override {
+            let mut value = current;
+            if ui
+                .add(egui::Slider::new(&mut value, 0.0..=12.0).step_by(0.5))
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
+            }
+        }
         command
     }
 }

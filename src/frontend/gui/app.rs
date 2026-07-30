@@ -275,6 +275,9 @@ pub struct VellumGuiApp {
     applied_title_font_size: Option<f32>,
     /// Spacing density currently applied to the egui style.
     applied_density: Option<f32>,
+    /// Window frame corner radius currently applied to the egui visuals;
+    /// also reset after a theme switch, which rebuilds the visuals.
+    applied_window_corner_radius: Option<f32>,
     settings_editor: Option<editors::SettingsEditorState>,
     highlight_editor: Option<editors::HighlightEditorState>,
     keybind_editor: Option<editors::KeybindEditorState>,
@@ -583,6 +586,7 @@ impl VellumGuiApp {
             startup_music_at: None,
             applied_title_font_size: None,
             applied_density: None,
+            applied_window_corner_radius: None,
             settings_editor: None,
             highlight_editor: None,
             keybind_editor: None,
@@ -1523,6 +1527,9 @@ impl VellumGuiApp {
             return;
         };
         frame.stroke = egui::Stroke::NONE;
+        // Square corners whenever skin art frames the window: a rounded
+        // background fill would show through (or clip) the art's corners.
+        frame.corner_radius = egui::CornerRadius::ZERO;
         let side = |inset: f32| (inset * border.scale).ceil().clamp(0.0, 127.0) as i8;
         let margin = &mut frame.inner_margin;
         margin.top = margin.top.max(side(border.slice[0]));
@@ -1552,6 +1559,15 @@ impl VellumGuiApp {
     /// accent (context menu), else the shared layout definition's
     /// border_color — so a border color set in the window editor or the
     /// TUI finally shows here too — else the theme frame (None).
+    /// Per-window frame corner radius override (context menu); None follows
+    /// the global `ui_settings.window_corner_radius` already baked into the
+    /// window frame style.
+    pub(super) fn corner_radius_override_for_tab(&self, key: &TabKey) -> Option<f32> {
+        self.tab_settings
+            .get(key)
+            .and_then(|settings| settings.corner_radius)
+    }
+
     fn accent_color_for_tab(&self, key: &TabKey) -> Option<Color32> {
         if let Some(accent) = self
             .tab_settings
@@ -1609,14 +1625,20 @@ impl VellumGuiApp {
 
         let title_size = self.ui_settings.title_font_size.clamp(8.0, 40.0);
         let density = self.ui_settings.density.clamp(0.5, 2.0);
-        if self.applied_title_font_size != Some(title_size) || self.applied_density != Some(density)
+        let window_radius = self.ui_settings.window_corner_radius.clamp(0.0, 12.0);
+        if self.applied_title_font_size != Some(title_size)
+            || self.applied_density != Some(density)
+            || self.applied_window_corner_radius != Some(window_radius)
         {
             self.applied_title_font_size = Some(title_size);
             self.applied_density = Some(density);
+            self.applied_window_corner_radius = Some(window_radius);
             ctx.global_style_mut(|style| {
                 if let Some(font) = style.text_styles.get_mut(&egui::TextStyle::Heading) {
                     font.size = title_size;
                 }
+                style.visuals.window_corner_radius =
+                    egui::CornerRadius::same(window_radius.round() as u8);
                 // Scale spacing from egui's defaults (not the current values,
                 // so repeated applies don't compound).
                 let defaults = egui::style::Spacing::default();
@@ -1830,6 +1852,7 @@ impl VellumGuiApp {
         self.zoom_applied = false;
         self.applied_title_font_size = None;
         self.applied_density = None;
+        self.applied_window_corner_radius = None;
         // The live autosave slot now reflects the loaded arrangement; the
         // checkpoint itself is only written by an explicit .savelayout.
         self.layout_dirty = true;
