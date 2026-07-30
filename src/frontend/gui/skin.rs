@@ -303,11 +303,6 @@ pub struct SkinState {
     /// Compass pool set override (lowercase prefix); replaces the skin's
     /// `[compass]` when its rose is present.
     compass_set: Option<String>,
-    /// Hand icon set override (lowercase prefix); its left/right/spell
-    /// entries replace the skin's hand icons.
-    hand_set: Option<String>,
-    /// Resolved hand set: lowercase hand ("left"/"right"/"spell") -> path.
-    pool_hands: HashMap<String, String>,
     /// Build grayscale twins for status icons ("gray when inactive").
     gray_status_icons: bool,
     /// Build grayscale twins for doll art ("grayscale doll").
@@ -357,7 +352,6 @@ impl SkinState {
         self.pool_frames = load_pool_frames(&self.needed_pool_frames);
         self.pool_status_icons = load_pool_set("statusicons", self.statusicon_set.as_deref());
         self.pool_compass = load_pool_set("compass", self.compass_set.as_deref());
-        self.pool_hands = load_pool_set("hands", self.hand_set.as_deref());
         self.textures.clear();
         self.widget_art = None;
         self.manifest_mtime = None;
@@ -472,15 +466,6 @@ impl SkinState {
         }
     }
 
-    /// Declare the hand icon pool set (from ui_settings.hand_set). Call
-    /// before `apply_if_changed`; a change triggers a reload.
-    pub fn set_hand_set(&mut self, set: Option<&str>) {
-        let set = set.map(|s| s.to_ascii_lowercase());
-        if set != self.hand_set {
-            self.hand_set = set;
-            self.applied = false;
-        }
-    }
 
     /// Declare which pool frames window overrides reference (any case).
     /// Call before `apply_if_changed`; a changed set triggers a reload so
@@ -578,19 +563,6 @@ impl SkinState {
                 art.icons
                     .entry(id.to_ascii_uppercase())
                     .or_insert(IconSlot::Sprite(texture));
-            }
-        }
-        // A hand set is an explicit user choice: its left/right/spell art
-        // replaces the skin's hand icons (overrides below still win).
-        for (hand, path) in &self.pool_hands {
-            let id = match hand.as_str() {
-                "left" => "LEFTHAND",
-                "right" => "RIGHTHAND",
-                "spell" => "SPELLHAND",
-                _ => continue,
-            };
-            if let Some(texture) = tex(path) {
-                art.icons.insert(id.to_string(), IconSlot::Sprite(texture));
             }
         }
         // Per-indicator overrides beat both.
@@ -792,7 +764,6 @@ impl SkinState {
         images.extend(self.doll_override.iter().cloned());
         images.extend(self.pool_status_icons.values().cloned());
         images.extend(self.pool_compass.values().cloned());
-        images.extend(self.pool_hands.values().cloned());
         images.extend(
             self.statusicon_overrides
                 .values()

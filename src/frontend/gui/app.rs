@@ -4791,8 +4791,6 @@ impl eframe::App for VellumGuiApp {
         );
         self.skin_state
             .set_compass_set(self.ui_settings.compass_set.as_deref());
-        self.skin_state
-            .set_hand_set(self.ui_settings.hand_set.as_deref());
         self.skin_state.set_needed_pool_backgrounds(
             self.tab_settings
                 .values()

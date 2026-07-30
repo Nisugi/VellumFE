@@ -365,10 +365,6 @@ pub struct GuiUiSettings {
     #[serde(default)]
     pub compass_set: Option<String>,
 
-    /// Hand icon set from the pool (`hands/<set>_<hand>.png`, hands
-    /// left/right/spell); None follows the active skin's `[icons]`.
-    #[serde(default)]
-    pub hand_set: Option<String>,
 
     /// Render the injury doll's art (base + overlays) in grayscale; the
     /// generated wound/scar dots keep their colors. Off = no gray twins
@@ -450,7 +446,6 @@ impl Default for GuiUiSettings {
             doll_image: None,
             status_icons: StatusIconSettings::default(),
             compass_set: None,
-            hand_set: None,
             doll_grayscale: false,
         }
     }

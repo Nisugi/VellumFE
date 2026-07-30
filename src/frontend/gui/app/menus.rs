@@ -73,8 +73,13 @@ pub(super) enum GuiWindowMenuCommand {
     SetDollGrayscale(bool),
     /// Global compass art set from the pool; None reverts to the skin's.
     SetCompassSet(Option<String>),
-    /// Global hand icon set from the pool; None reverts to the skin's.
-    SetHandSet(Option<String>),
+    /// Icon for one hand window (LEFTHAND/RIGHTHAND/SPELLHAND); None
+    /// reverts to the skin default. Stored as a per-indicator override so
+    /// the whole IconRef machinery (pool images, sheet cells) applies.
+    SetHandIcon {
+        hand_id: String,
+        icon: Option<crate::data::IconRef>,
+    },
     /// Per-window background: pool image path, "none" for no background,
     /// or None to revert to the skin's per-window mapping.
     SetBackground(Option<String>),
@@ -174,12 +179,13 @@ pub(super) struct WindowAppearanceView {
     compass_sets: Vec<String>,
     /// Global compass set override; None = skin default.
     compass_override: Option<String>,
-    /// Hand widget: offer the pool hand-set picker.
-    is_hand: bool,
-    /// Pool hand sets.
-    hand_sets: Vec<String>,
-    /// Global hand set override; None = skin default.
-    hand_override: Option<String>,
+    /// Hand widget: which hand this window is (LEFTHAND/RIGHTHAND/
+    /// SPELLHAND); None for non-hand windows.
+    hand_id: Option<String>,
+    /// Pool hand images as (pool-relative path, display stem).
+    hand_images: Vec<(String, String)>,
+    /// This hand's current icon override; None = skin default.
+    hand_icon_override: Option<crate::data::IconRef>,
     /// Pool background images as (pool-relative path, display stem).
     background_images: Vec<(String, String)>,
     /// Per-window background override; None = skin default.
@@ -385,7 +391,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::CalibrateDoll
             | GuiWindowMenuCommand::SetDollGrayscale(_)
             | GuiWindowMenuCommand::SetCompassSet(_)
-            | GuiWindowMenuCommand::SetHandSet(_)
+            | GuiWindowMenuCommand::SetHandIcon { .. }
             | GuiWindowMenuCommand::SetBackground(_)
             | GuiWindowMenuCommand::SetTitleBarHeight(_)
             | GuiWindowMenuCommand::SetTitleBarAlign(_)
@@ -556,8 +562,18 @@ impl VellumGuiApp {
                 self.ui_settings.compass_set = set;
                 self.layout_dirty = true;
             }
-            GuiWindowMenuCommand::SetHandSet(set) => {
-                self.ui_settings.hand_set = set;
+            GuiWindowMenuCommand::SetHandIcon { hand_id, icon } => {
+                match icon {
+                    Some(icon) => {
+                        self.ui_settings
+                            .status_icons
+                            .overrides
+                            .insert(hand_id, icon);
+                    }
+                    None => {
+                        self.ui_settings.status_icons.overrides.remove(&hand_id);
+                    }
+                }
                 self.layout_dirty = true;
             }
             GuiWindowMenuCommand::SetBackground(background) => {
@@ -664,9 +680,27 @@ impl VellumGuiApp {
         } else {
             Vec::new()
         };
-        let is_hand = widget_type == Some(WidgetType::Hand);
-        let hand_sets = if is_hand {
-            crate::config::pool::set_names("hands")
+        // Which hand a hand window is, by the same name rule the renderer
+        // uses (left/right substrings, else spell).
+        let hand_id = (widget_type == Some(WidgetType::Hand))
+            .then(|| {
+                self.available_tabs.get(tab_key).map(|tab| {
+                    let name = tab.window_name.to_ascii_lowercase();
+                    if name.contains("left") {
+                        "LEFTHAND".to_string()
+                    } else if name.contains("right") {
+                        "RIGHTHAND".to_string()
+                    } else {
+                        "SPELLHAND".to_string()
+                    }
+                })
+            })
+            .flatten();
+        let hand_images = if hand_id.is_some() {
+            crate::config::pool::list_category("hands")
+                .iter()
+                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .collect()
         } else {
             Vec::new()
         };
@@ -702,9 +736,11 @@ impl VellumGuiApp {
             is_compass,
             compass_sets,
             compass_override: self.ui_settings.compass_set.clone(),
-            is_hand,
-            hand_sets,
-            hand_override: self.ui_settings.hand_set.clone(),
+            hand_icon_override: hand_id.as_ref().and_then(|id| {
+                self.ui_settings.status_icons.overrides.get(id).cloned()
+            }),
+            hand_id,
+            hand_images,
             background_images: crate::config::pool::list_category("backgrounds")
                 .iter()
                 .map(|image| (image.pool_path.clone(), image.stem().to_string()))
@@ -821,7 +857,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetDollImage(_)
                     | GuiWindowMenuCommand::SetDollGrayscale(_)
                     | GuiWindowMenuCommand::SetCompassSet(_)
-                    | GuiWindowMenuCommand::SetHandSet(_)
+                    | GuiWindowMenuCommand::SetHandIcon { .. }
                     | GuiWindowMenuCommand::SetBackground(_)
                     | GuiWindowMenuCommand::SetTitleBarHeight(_)
                     | GuiWindowMenuCommand::SetTitleBarAlign(_)
@@ -1678,30 +1714,53 @@ impl VellumGuiApp {
                 ui.weak("No compass sets in the pool — install with .jinx");
             }
         }
-        if view.is_hand {
+        if let Some(hand_id) = &view.hand_id {
             ui.horizontal(|ui| {
-                ui.label("Hand icons");
-                let selected_label = view.hand_override.as_deref().unwrap_or("Skin default");
-                egui::ComboBox::from_id_salt("gui_window_hand_set")
+                ui.label("Hand icon");
+                let selected_label = match &view.hand_icon_override {
+                    None => "Skin default".to_string(),
+                    Some(crate::data::IconRef::Default) => "Skin default".to_string(),
+                    Some(crate::data::IconRef::Image { path }) => view
+                        .hand_images
+                        .iter()
+                        .find(|(pool_path, _)| pool_path == path)
+                        .map(|(_, stem)| stem.clone())
+                        .unwrap_or_else(|| path.clone()),
+                    Some(crate::data::IconRef::SheetCell { sheet, cell }) => {
+                        format!("{sheet} #{cell}")
+                    }
+                };
+                egui::ComboBox::from_id_salt("gui_window_hand_icon")
                     .selected_text(selected_label)
                     .show_ui(ui, |ui| {
                         if ui
-                            .selectable_label(view.hand_override.is_none(), "Skin default")
+                            .selectable_label(view.hand_icon_override.is_none(), "Skin default")
                             .clicked()
                         {
-                            command = Some(GuiWindowMenuCommand::SetHandSet(None));
+                            command = Some(GuiWindowMenuCommand::SetHandIcon {
+                                hand_id: hand_id.clone(),
+                                icon: None,
+                            });
                         }
-                        for set in &view.hand_sets {
-                            let selected = view.hand_override.as_deref() == Some(set.as_str());
-                            if ui.selectable_label(selected, set).clicked() {
-                                command =
-                                    Some(GuiWindowMenuCommand::SetHandSet(Some(set.clone())));
+                        for (path, stem) in &view.hand_images {
+                            let selected = matches!(
+                                &view.hand_icon_override,
+                                Some(crate::data::IconRef::Image { path: current })
+                                    if current == path
+                            );
+                            if ui.selectable_label(selected, stem).clicked() {
+                                command = Some(GuiWindowMenuCommand::SetHandIcon {
+                                    hand_id: hand_id.clone(),
+                                    icon: Some(crate::data::IconRef::Image {
+                                        path: path.clone(),
+                                    }),
+                                });
                             }
                         }
                     });
             });
-            if view.hand_sets.is_empty() {
-                ui.weak("No hand icon sets in the pool — install with .jinx");
+            if view.hand_images.is_empty() {
+                ui.weak("No hand icons in the pool — install with .jinx");
             }
         }
         if !view.skin_frames.is_empty() || view.has_skin_border {
