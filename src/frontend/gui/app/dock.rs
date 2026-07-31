@@ -21,6 +21,12 @@ pub(super) struct DockStateSnapshot {
     /// Windows locked together, rendered as one window per group.
     #[serde(default)]
     pub(super) tab_groups: Vec<TabGroup>,
+    /// Sidebars whose windows are free-placement rects (zone-free-movement
+    /// P2). A zone absent here still carries a legacy gap-stack layout and
+    /// gets baked into rects on its first render pass; files from before
+    /// the conversion deserialize to an empty list.
+    #[serde(default)]
+    pub(super) free_sidebar_zones: Vec<GuiShellZone>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -55,6 +61,9 @@ pub(super) struct RestoredLayoutState {
     pub(super) hidden_tabs: HashSet<TabKey>,
     pub(super) main_window_rects: HashMap<TabKey, [f32; 4]>,
     pub(super) sidebar_gap_above: HashMap<TabKey, f32>,
+    /// Sidebars already converted to free-placement rects; the others bake
+    /// their legacy gap stack on first render (`bake_sidebar_stack`).
+    pub(super) migrated_sidebar_zones: HashSet<GuiShellZone>,
     pub(super) tab_zones: HashMap<TabKey, GuiShellZone>,
     pub(super) no_title_tabs: HashSet<TabKey>,
     pub(super) shell_layout: ShellLayoutSnapshot,
@@ -116,6 +125,14 @@ impl VellumGuiApp {
                     .collect()
             })
             .unwrap_or_default();
+        // A missing layout file means there is nothing legacy to bake:
+        // fresh sidebars are free-placement from the start.
+        let migrated_sidebar_zones: HashSet<GuiShellZone> = match snapshot.as_ref() {
+            Some(snapshot) => snapshot.free_sidebar_zones.iter().copied().collect(),
+            None => [GuiShellZone::LeftSidebar, GuiShellZone::RightSidebar]
+                .into_iter()
+                .collect(),
+        };
         let mut tab_zones = snapshot
             .as_ref()
             .map(|snapshot| {
@@ -179,6 +196,7 @@ impl VellumGuiApp {
             hidden_tabs,
             main_window_rects,
             sidebar_gap_above,
+            migrated_sidebar_zones,
             tab_zones,
             no_title_tabs,
             shell_layout,
@@ -486,6 +504,7 @@ mod tests {
             no_title_tabs: Vec::new(),
             shell_layout: ShellLayoutSnapshot::default(),
             tab_groups: Vec::new(),
+            free_sidebar_zones: vec![GuiShellZone::LeftSidebar],
         };
 
         let json = serde_json::to_string(&snapshot).unwrap();
@@ -493,6 +512,14 @@ mod tests {
         assert_eq!(parsed.visible_tabs.len(), 2);
         assert_eq!(parsed.visible_tabs[0], TabKey::TextMain);
         assert_eq!(parsed.visible_tabs[1], TabKey::Vitals);
+        assert_eq!(parsed.free_sidebar_zones, vec![GuiShellZone::LeftSidebar]);
+
+        // Files from before the sidebar conversion have no field at all:
+        // they deserialize to an empty list, which is what triggers the
+        // legacy gap-stack bake.
+        let legacy: DockStateSnapshot =
+            serde_json::from_str(r#"{"visible_tabs":[]}"#).unwrap();
+        assert!(legacy.free_sidebar_zones.is_empty());
     }
 
     #[test]

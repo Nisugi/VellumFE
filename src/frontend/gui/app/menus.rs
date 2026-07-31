@@ -408,7 +408,6 @@ impl VellumGuiApp {
                 self.window_move_state = Some(GuiWindowMoveState {
                     tab_key: request.tab_key.clone(),
                     original_rect: self.main_window_rects.get(&request.tab_key).copied(),
-                    original_order: None,
                     just_started: true,
                 });
             }

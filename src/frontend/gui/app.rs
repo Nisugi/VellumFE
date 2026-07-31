@@ -227,9 +227,15 @@ pub struct VellumGuiApp {
     available_tabs: HashMap<TabKey, GuiTab>,
     hidden_tabs: HashSet<TabKey>,
     main_window_rects: HashMap<TabKey, [f32; 4]>,
-    /// Sidebar stacks: desired empty space above each docked window, in
-    /// points (free vertical placement; 0 / absent = stacked flush).
+    /// Legacy sidebar stacks: desired empty space above each docked
+    /// window. Read once by `bake_sidebar_stack`, which converts the
+    /// stack into free-placement rects and drains these entries.
     sidebar_gap_above: HashMap<TabKey, f32>,
+    /// Sidebars whose windows are free-placement rects. A zone missing
+    /// here bakes its legacy gap stack on its first render pass; the set
+    /// persists in the layout snapshot so a bake can never re-run on a
+    /// freely rearranged sidebar.
+    migrated_sidebar_zones: HashSet<GuiShellZone>,
     last_center_window_rects: HashMap<TabKey, [f32; 4]>,
     tab_zones: HashMap<TabKey, GuiShellZone>,
     no_title_tabs: HashSet<TabKey>,
@@ -541,6 +547,7 @@ impl VellumGuiApp {
             hidden_tabs,
             main_window_rects,
             sidebar_gap_above,
+            migrated_sidebar_zones,
             tab_zones,
             no_title_tabs,
             shell_layout,
@@ -603,6 +610,7 @@ impl VellumGuiApp {
             hidden_tabs,
             main_window_rects,
             sidebar_gap_above,
+            migrated_sidebar_zones,
             last_center_window_rects: HashMap::new(),
             tab_zones,
             no_title_tabs,
@@ -2243,6 +2251,11 @@ impl VellumGuiApp {
             },
             shell_layout: self.shell_layout.clone(),
             tab_groups: Self::sanitize_tab_groups(self.tab_groups.clone(), &self.available_tabs),
+            // Stable order: GuiShellZone::all() filtered, not HashSet order.
+            free_sidebar_zones: GuiShellZone::all()
+                .into_iter()
+                .filter(|zone| self.migrated_sidebar_zones.contains(zone))
+                .collect(),
         };
         layout.dock_state_json = match serde_json::to_value(snapshot) {
             Ok(value) => value,
@@ -2349,6 +2362,7 @@ impl VellumGuiApp {
         self.hidden_tabs = restored.hidden_tabs;
         self.main_window_rects = restored.main_window_rects;
         self.sidebar_gap_above = restored.sidebar_gap_above;
+        self.migrated_sidebar_zones = restored.migrated_sidebar_zones;
         self.last_center_window_rects.clear();
         self.zone_snap_drag = None;
         self.zone_snap_guides.clear();
@@ -5295,11 +5309,22 @@ impl eframe::App for VellumGuiApp {
                     Pos2::new(rect.max.x - 6.0, rect.min.y),
                     Pos2::new(rect.max.x + 6.0, rect.max.y),
                 );
-                let splitter_response = ui.interact(
-                    splitter,
-                    egui::Id::new("gui_left_sidebar_splitter"),
-                    egui::Sense::click_and_drag(),
-                );
+                // D5 gutter: an always-on-top strip owned by the zone, so
+                // the grab survives windows parked flush on the boundary
+                // (free-placement sidebars have no per-window width band).
+                let splitter_response =
+                    egui::Area::new(egui::Id::new("gui_left_sidebar_splitter"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(splitter.min)
+                        .show(ui.ctx(), |gutter_ui| {
+                            gutter_ui
+                                .allocate_exact_size(
+                                    splitter.size(),
+                                    egui::Sense::click_and_drag(),
+                                )
+                                .1
+                        })
+                        .inner;
                 if splitter_response.hovered() || splitter_response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                     if separator_style == ZoneSeparatorStyle::Hover {
@@ -5328,11 +5353,20 @@ impl eframe::App for VellumGuiApp {
                     Pos2::new(rect.min.x - 6.0, rect.min.y),
                     Pos2::new(rect.min.x + 6.0, rect.max.y),
                 );
-                let splitter_response = ui.interact(
-                    splitter,
-                    egui::Id::new("gui_right_sidebar_splitter"),
-                    egui::Sense::click_and_drag(),
-                );
+                // D5 gutter — see the left-sidebar twin above.
+                let splitter_response =
+                    egui::Area::new(egui::Id::new("gui_right_sidebar_splitter"))
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(splitter.min)
+                        .show(ui.ctx(), |gutter_ui| {
+                            gutter_ui
+                                .allocate_exact_size(
+                                    splitter.size(),
+                                    egui::Sense::click_and_drag(),
+                                )
+                                .1
+                        })
+                        .inner;
                 if splitter_response.hovered() || splitter_response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                     if separator_style == ZoneSeparatorStyle::Hover {
@@ -5359,16 +5393,15 @@ impl eframe::App for VellumGuiApp {
         let detached_link_clicks = self.render_detached_viewports(&ctx);
         self.render_map_explorer(&ctx);
 
-        let zone_drop_result =
-            self.render_zone_drop_overlay(&ctx, &visible_zone_rects, &zone_window_rects);
-        self.render_window_move_overlay(&ctx, &visible_zone_rects, &zone_window_rects);
+        let zone_drop_result = self.render_zone_drop_overlay(&ctx, &visible_zone_rects);
+        self.render_window_move_overlay(&ctx, &visible_zone_rects);
         self.handle_link_drag_drop(&ctx, &zone_window_rects);
 
         if open_windows_manager {
             self.open_known_windows_editor();
         }
         if let Some(drop_result) = zone_drop_result {
-            self.apply_zone_drop(drop_result);
+            self.apply_zone_drop(drop_result, &visible_zone_rects);
         }
         if let Some(request) = zone_actions.window_menu_request {
             // While a window is in Move mode the pointer belongs to placement.
