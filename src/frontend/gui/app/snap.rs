@@ -141,15 +141,22 @@ fn snap_1d(
     params: &SnapParams,
     edge_names: [&'static str; 3],
 ) -> Option<AxisSnap> {
-    let moving: &[(f32, &'static str)] = match gesture {
+    // Each moving position carries whether it is the window's CENTER:
+    // centers pair only with center-line candidates and edges only with
+    // edge/bound/grid candidates. Cross-pairing made move-snap "mostly not
+    // work" against a grid — the window's center is nearly always closer
+    // to some grid line than either edge is (any width not a multiple of
+    // the pitch), so the center kept winning and the window landed with
+    // both edges off-grid.
+    let moving: &[(f32, &'static str, bool)] = match gesture {
         AxisGesture::Idle => return None,
         AxisGesture::Translate => &[
-            (lo, edge_names[0]),
-            (hi, edge_names[1]),
-            ((lo + hi) * 0.5, edge_names[2]),
+            (lo, edge_names[0], false),
+            (hi, edge_names[1], false),
+            ((lo + hi) * 0.5, edge_names[2], true),
         ],
-        AxisGesture::MinEdge => &[(lo, edge_names[0])],
-        AxisGesture::MaxEdge => &[(hi, edge_names[1])],
+        AxisGesture::MinEdge => &[(lo, edge_names[0], false)],
+        AxisGesture::MaxEdge => &[(hi, edge_names[1], false)],
     };
 
     let extent_ok = |new_lo: f32, new_hi: f32| {
@@ -189,11 +196,14 @@ fn snap_1d(
         }
     };
 
-    for &(pos, edge) in moving {
+    for &(pos, edge, is_center) in moving {
         for candidate in candidates {
+            if (candidate.kind == SnapGuideKind::Center) != is_center {
+                continue;
+            }
             consider(pos, edge, candidate.value, candidate.kind, candidate.target);
         }
-        if params.grid > 0.0 {
+        if params.grid > 0.0 && !is_center {
             let grid_value =
                 grid_origin + ((pos - grid_origin) / params.grid).round() * params.grid;
             consider(pos, edge, grid_value, SnapGuideKind::Grid, None);
@@ -837,6 +847,62 @@ mod tests {
         );
         assert_eq!(snapped.min.x, 146.0);
         assert_eq!(guides[0].kind, SnapGuideKind::Grid);
+    }
+
+    #[test]
+    fn window_center_never_snaps_to_grid_lines() {
+        // Field report (v2 first live test): move-snap "flaky and mostly
+        // not working" against a grid while resize-snap worked. A move
+        // tested the window's CENTER against grid lines too, and for any
+        // width that isn't a multiple of the pitch the center is usually
+        // the closest match — the window landed with its center on a grid
+        // line and both edges off-grid. Centers pair only with center-line
+        // candidates now; the grid is edges-only.
+        let mut p = params(8.0);
+        p.grid = 48.0;
+        p.to_bounds = false;
+        p.to_centers = false;
+        p.to_siblings = false;
+        // Left edge 5px off line 96; center sits EXACTLY on line 192
+        // (width 182). The old engine snapped the center (distance 0) and
+        // left the edges off-grid; the edge must win now.
+        let unsnapped = rect(101.0, 400.0, 283.0, 500.0);
+        let (snapped, guides) = snap_rect(
+            unsnapped,
+            AxisGesture::Translate,
+            AxisGesture::Idle,
+            BOUNDS,
+            &[],
+            MIN,
+            MAX,
+            &p,
+        );
+        assert_eq!(snapped.min.x, 96.0);
+        assert_eq!(guides[0].edge, "left");
+        assert_eq!(guides[0].kind, SnapGuideKind::Grid);
+    }
+
+    #[test]
+    fn edges_do_not_snap_to_the_pane_center_line() {
+        // Same pairing rule from the other side: with "Pane center" on,
+        // only the window's center may match it — an edge passing over the
+        // pane's center line must not stick to it.
+        let unsnapped = rect(497.0, 100.0, 697.0, 300.0);
+        let mut p = params(8.0);
+        p.to_bounds = false;
+        p.to_siblings = false;
+        let (snapped, guides) = snap_rect(
+            unsnapped,
+            AxisGesture::Translate,
+            AxisGesture::Idle,
+            BOUNDS,
+            &[],
+            MIN,
+            MAX,
+            &p,
+        );
+        assert_eq!(snapped, unsnapped);
+        assert!(guides.is_empty());
     }
 
     #[test]
