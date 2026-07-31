@@ -94,6 +94,10 @@ pub(super) struct WidgetRenderSettings {
     /// Current command-input buffer, only for command-input windows. Render
     /// paths are `&self`; edits flow back via `CommandInputEcho`.
     command_input_seed: Option<String>,
+    /// Command-input windows with a hidden title bar show a small grip
+    /// gutter: the TextEdit owns every drag in the body, so without it the
+    /// window would have no drag surface at all.
+    command_input_drag_gutter: bool,
     /// Inactive status icons render their grayscale twin instead of the
     /// alpha dim (ui_settings.status_icons.gray_inactive).
     gray_inactive_icons: bool,
@@ -1357,6 +1361,12 @@ impl VellumGuiApp {
                 .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
                 .filter(|window| window.widget_type == WidgetType::CommandInput)
                 .map(|_| self.command_input.clone()),
+            command_input_drag_gutter: self
+                .available_tabs
+                .get(key)
+                .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
+                .is_some_and(|window| window.widget_type == WidgetType::CommandInput)
+                && self.title_bar_hidden(key),
             gray_inactive_icons: self.ui_settings.status_icons.gray_inactive,
             doll_grayscale: self.ui_settings.doll_grayscale,
         }
@@ -5108,7 +5118,8 @@ impl eframe::App for VellumGuiApp {
         if !self.command_input_tab_rendered() {
             egui::Panel::bottom("gui_command_input").show(ui, |ui| {
                 let seed = self.command_input.clone();
-                Self::render_command_input_widget(ui, &seed);
+                // Fixed fallback panel: not a movable window, no grip.
+                Self::render_command_input_widget(ui, &seed, false);
             });
         }
 

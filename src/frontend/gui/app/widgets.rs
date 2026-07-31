@@ -3739,7 +3739,7 @@ impl VellumGuiApp {
     /// in the fallback bottom panel). Render paths are `&self`, so buffer
     /// edits and key events are stashed as a `CommandInputEcho` in egui
     /// temp data and drained once per frame by the app update loop.
-    pub(super) fn render_command_input_widget(ui: &mut egui::Ui, seed: &str) {
+    pub(super) fn render_command_input_widget(ui: &mut egui::Ui, seed: &str, drag_gutter: bool) {
         let mut text = seed.to_string();
         let mut echo = CommandInputEcho::default();
         // Vertically center the single-line edit in whatever height the
@@ -3749,12 +3749,41 @@ impl VellumGuiApp {
         if pad > 0.0 {
             ui.add_space(pad);
         }
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut text)
-                .id(egui::Id::new(COMMAND_INPUT_EDIT_ID))
-                .hint_text("Enter command...")
-                .desired_width(ui.available_width()),
-        );
+        let edit = |ui: &mut egui::Ui, text: &mut String| {
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(egui::Id::new(COMMAND_INPUT_EDIT_ID))
+                    .hint_text("Enter command...")
+                    .desired_width(ui.available_width()),
+            )
+        };
+        let response = if drag_gutter {
+            // Title bar hidden: the TextEdit owns every drag in the body,
+            // so this grip is the window's only drag surface. It is
+            // hover-only on purpose — drags on it fall through to the
+            // window body and move it.
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::Vec2::new(12.0, edit_height),
+                    egui::Sense::hover(),
+                );
+                if ui.is_rect_visible(rect) {
+                    let color = ui.visuals().weak_text_color();
+                    let center = rect.center();
+                    for row in -1..=1i32 {
+                        for col in 0..2i32 {
+                            let pos = center
+                                + egui::vec2(col as f32 * 4.0 - 2.0, row as f32 * 5.0);
+                            ui.painter().circle_filled(pos, 1.2, color);
+                        }
+                    }
+                }
+                edit(ui, &mut text)
+            })
+            .inner
+        } else {
+            edit(ui, &mut text)
+        };
         let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
         if response.lost_focus() && pressed_enter {
             echo.submit = true;
@@ -3947,17 +3976,12 @@ impl VellumGuiApp {
             .max_height(max_height)
             .show_viewport(ui, |ui, viewport| {
                 let is_touch = ui.input(|i| i.has_touch_screen());
-                // Blank space between and below lines must not start a
-                // window-body drag; claim drags across the viewport before
-                // the line widgets so those still win where they overlap.
-                // Touch screens skip this so drag-to-scroll keeps working.
-                if !is_touch {
-                    ui.interact(
-                        ui.clip_rect(),
-                        ui.id().with("text_blank_drag"),
-                        egui::Sense::drag(),
-                    );
-                }
+                // Drags on blank space between/below lines deliberately
+                // fall through to the window body: windows drag from
+                // anywhere now, and blank space is how a text window is
+                // moved without its title bar. Drags starting ON text stay
+                // with the line widgets (selection), and Lock Window is
+                // the guard against accidental moves.
                 if rendered_count == 0 {
                     return;
                 }
@@ -4684,6 +4708,7 @@ impl VellumGuiApp {
                 Self::render_command_input_widget(
                     ui,
                     settings.command_input_seed.as_deref().unwrap_or(""),
+                    settings.command_input_drag_gutter,
                 );
                 None
             }
