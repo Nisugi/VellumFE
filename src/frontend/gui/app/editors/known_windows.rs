@@ -32,6 +32,15 @@ struct Row {
     ephemeral: bool,
 }
 
+/// One window group resolved for the Groups section: the joined member
+/// titles, the member window names (render order), and the leader TabKey
+/// used to dissolve the whole group.
+struct GroupView {
+    title: String,
+    member_names: Vec<String>,
+    leader: crate::frontend::gui::TabKey,
+}
+
 /// Blank custom widgets offered by "Custom window…", label → seed template
 /// (the `*_custom` templates excluded from the catalog rows).
 const CUSTOM_SEEDS: &[(&str, &str)] = &[
@@ -82,11 +91,43 @@ impl VellumGuiApp {
             .collect();
         rows.sort_by(|a, b| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()));
 
+        // Window groups (locked-together windows rendered as one). Resolve
+        // each group to its member window names in render order so the Groups
+        // section can nest them; grouped names are excluded from the flat
+        // category list below so a window never appears twice.
+        let groups: Vec<GroupView> = self
+            .tab_groups
+            .iter()
+            .filter_map(|group| {
+                let members: Vec<String> = group
+                    .members
+                    .iter()
+                    .filter_map(|key| {
+                        self.available_tabs
+                            .get(key)
+                            .map(|tab| tab.window_name.clone())
+                    })
+                    .collect();
+                // A leader key we can hand back to dissolve the whole group.
+                let leader = group.members.first().cloned();
+                (members.len() >= 2 && leader.is_some()).then(|| GroupView {
+                    title: members.join(" + "),
+                    member_names: members,
+                    leader: leader.unwrap(),
+                })
+            })
+            .collect();
+        let grouped_names: std::collections::HashSet<String> = groups
+            .iter()
+            .flat_map(|g| g.member_names.iter().cloned())
+            .collect();
+
         // Actions chosen this frame (applied after the closure so it doesn't
         // borrow self mutably while rendering).
         let mut toggle: Option<(String, bool)> = None;
         let mut zone_change: Option<(String, GuiShellZone)> = None;
         let mut add_template: Option<String> = None;
+        let mut ungroup: Option<crate::frontend::gui::TabKey> = None;
 
         egui::Window::new("Windows")
             .id(egui::Id::new("gui_known_windows"))
@@ -113,9 +154,57 @@ impl VellumGuiApp {
                 ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    // Groups first: clustered windows, nested under their
+                    // group, so the parent/child relationship is visible and
+                    // they don't scatter across the category list below.
+                    if !groups.is_empty() {
+                        egui::CollapsingHeader::new("Groups")
+                            .id_salt("known_windows_groups")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                for group in &groups {
+                                    ui.horizontal(|ui| {
+                                        ui.strong(&group.title);
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui
+                                                    .button("Ungroup")
+                                                    .on_hover_text(
+                                                        "Break this group into standalone windows.",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    ungroup = Some(group.leader.clone());
+                                                }
+                                            },
+                                        );
+                                    });
+                                    ui.indent(("group_members", &group.title), |ui| {
+                                        for name in &group.member_names {
+                                            if let Some(row) =
+                                                rows.iter().find(|r| &r.name == name)
+                                            {
+                                                Self::known_window_row(
+                                                    ui,
+                                                    row,
+                                                    &mut toggle,
+                                                    &mut zone_change,
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                    }
+
                     for category in WidgetCategory::ALL {
-                        let group: Vec<&Row> =
-                            rows.iter().filter(|r| r.category == category).collect();
+                        let group: Vec<&Row> = rows
+                            .iter()
+                            .filter(|r| r.category == category)
+                            // Grouped windows live in the Groups section only.
+                            .filter(|r| !grouped_names.contains(&r.name))
+                            .collect();
                         if group.is_empty() {
                             continue;
                         }
@@ -175,6 +264,9 @@ impl VellumGuiApp {
         }
         if let Some(template) = add_template {
             self.add_window_from_template(&template);
+        }
+        if let Some(leader) = ungroup {
+            self.dissolve_group_of(&leader);
         }
         if !open {
             self.known_windows_editor = None;

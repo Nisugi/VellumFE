@@ -1214,6 +1214,25 @@ impl VellumGuiApp {
         self.layout_dirty = true;
     }
 
+    /// Dissolve the entire group a tab belongs to (every member becomes a
+    /// standalone window again). Used by the Windows manager's "Ungroup"
+    /// control. No-op when the tab isn't grouped.
+    pub(in crate::frontend::gui) fn dissolve_group_of(&mut self, key: &TabKey) {
+        let members: Vec<TabKey> = match self.group_for_tab(key) {
+            Some(group) => group.members.clone(),
+            None => return,
+        };
+        self.tab_groups.retain(|group| !group.members.contains(key));
+        // Followers rendered inside the old leader; give each its own zone
+        // entry again if it somehow lost one (defensive — normally intact).
+        for member in &members {
+            self.tab_zones
+                .entry(member.clone())
+                .or_insert_with(|| Self::default_zone_for_tab_key(member));
+        }
+        self.layout_dirty = true;
+    }
+
     /// Strip a tab from every group's member/merged/end_anchored lists and
     /// drop any group left with fewer than two members. Pure so both
     /// `ungroup_tab` and the delete path can share it (bug: deleting a
