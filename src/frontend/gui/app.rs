@@ -363,6 +363,13 @@ pub struct VellumGuiApp {
     /// Fingerprint of the window set backing `available_tabs`; refresh is
     /// skipped while it is unchanged.
     available_tabs_fingerprint: Option<u64>,
+    /// Pending proportional rescale of the docked window rects, deferred to
+    /// the next frame because the target canvas size is only known inside the
+    /// render pass. Holds the save-time canvas size (the "from"); the frame
+    /// loop divides the current content size by it. Set by a layout load /
+    /// startup restore whose rects were captured on a differently-sized
+    /// window, and by the `.resize` command.
+    pending_layout_rescale: Option<egui::Vec2>,
     command_input_id: Option<egui::Id>,
     repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     layout_save_tx: Option<std::sync::mpsc::Sender<GuiLayoutFileV1>>,
@@ -609,6 +616,15 @@ impl VellumGuiApp {
         let command_history =
             Self::load_command_history(app_core.config.character.as_deref());
 
+        // Queue a first-frame rescale of the restored rects: the OS window is
+        // restored toward the saved viewport size, but a changed monitor or a
+        // maximized-open can land it at a different size, and the rects are
+        // absolute against the save-time canvas. Same deferred path as
+        // `.loadlayout` — it no-ops when the sizes match.
+        let pending_layout_rescale = persisted_layout
+            .as_ref()
+            .map(|layout| Self::layout_reference_canvas(layout, &main_window_rects));
+
         // Login music plays when the game connection is established (first
         // server data), not when the login screen opens — the frame loop
         // arms the deadline on first receive.
@@ -709,6 +725,7 @@ impl VellumGuiApp {
             search_bar_needs_focus: false,
             search_match_cache: None,
             available_tabs_fingerprint: None,
+            pending_layout_rescale,
             // Fixed id: the TextEdit uses it wherever it renders, so focus
             // routing and cursor placement survive docking moves.
             command_input_id: Some(egui::Id::new(COMMAND_INPUT_EDIT_ID)),
@@ -938,10 +955,20 @@ impl VellumGuiApp {
             .retain(|key| self.available_tabs.contains_key(key));
         self.main_window_rects
             .retain(|key, _| self.available_tabs.contains_key(key));
+        self.last_center_window_rects
+            .retain(|key, _| self.available_tabs.contains_key(key));
+        self.sidebar_gap_above
+            .retain(|key, _| self.available_tabs.contains_key(key));
         self.tab_zones
             .retain(|key, _| self.available_tabs.contains_key(key));
         self.no_title_tabs
             .retain(|key| self.available_tabs.contains_key(key));
+        // Any window that vanished (delete, layout swap) must also leave its
+        // groups, or surviving members render as followers of a ghost leader
+        // and can't be re-added individually. sanitize_tab_groups drops
+        // absent members and dissolves groups left with fewer than two.
+        self.tab_groups =
+            Self::sanitize_tab_groups(std::mem::take(&mut self.tab_groups), &self.available_tabs);
         for (key, tab) in &self.available_tabs {
             if !self.tab_zones.contains_key(key) {
                 // A pending zone pref (Windows-window dropdown set while
@@ -1183,12 +1210,60 @@ impl VellumGuiApp {
         if self.group_for_tab(key).is_none() {
             return;
         }
-        for group in &mut self.tab_groups {
+        Self::drop_tab_from_groups(&mut self.tab_groups, key);
+        self.layout_dirty = true;
+    }
+
+    /// Dissolve the entire group a tab belongs to (every member becomes a
+    /// standalone window again). Used by the Windows manager's "Ungroup"
+    /// control. No-op when the tab isn't grouped.
+    pub(in crate::frontend::gui) fn dissolve_group_of(&mut self, key: &TabKey) {
+        let members: Vec<TabKey> = match self.group_for_tab(key) {
+            Some(group) => group.members.clone(),
+            None => return,
+        };
+        self.tab_groups.retain(|group| !group.members.contains(key));
+        // Followers rendered inside the old leader; give each its own zone
+        // entry again if it somehow lost one (defensive — normally intact).
+        for member in &members {
+            self.tab_zones
+                .entry(member.clone())
+                .or_insert_with(|| Self::default_zone_for_tab_key(member));
+        }
+        self.layout_dirty = true;
+    }
+
+    /// Strip a tab from every group's member/merged/end_anchored lists and
+    /// drop any group left with fewer than two members. Pure so both
+    /// `ungroup_tab` and the delete path can share it (bug: deleting a
+    /// grouped window left the group intact, so surviving members stayed
+    /// grouped followers — checked and un-re-addable in the Windows menu).
+    fn drop_tab_from_groups(groups: &mut Vec<TabGroup>, key: &TabKey) {
+        for group in groups.iter_mut() {
             group.members.retain(|member| member != key);
             group.merged.retain(|member| member != key);
             group.end_anchored.retain(|member| member != key);
         }
-        self.tab_groups.retain(|group| group.members.len() >= 2);
+        groups.retain(|group| group.members.len() >= 2);
+    }
+
+    /// Forget every scrap of per-tab GUI state for a window that no longer
+    /// exists (deleted from the layout). Dissolves its group so surviving
+    /// members are freed, and purges the position/zone/visibility maps so a
+    /// re-added window of the same key starts clean instead of inheriting a
+    /// stale rect or a phantom "hidden" mark. `pending_zones` is keyed by
+    /// window name, so the caller passes it separately.
+    fn forget_tab_state(&mut self, key: &TabKey, window_name: &str) {
+        Self::drop_tab_from_groups(&mut self.tab_groups, key);
+        self.hidden_tabs.remove(key);
+        self.main_window_rects.remove(key);
+        self.last_center_window_rects.remove(key);
+        self.sidebar_gap_above.remove(key);
+        self.tab_zones.remove(key);
+        self.no_title_tabs.remove(key);
+        self.tab_settings.remove(key);
+        self.detached_tabs.remove(key);
+        self.pending_zones.remove(window_name);
         self.layout_dirty = true;
     }
 
@@ -2332,6 +2407,10 @@ impl VellumGuiApp {
             .map(|(key, state)| (key.short_id(), state.current.clone()))
             .collect();
         layout.main_viewport = self.main_viewport_state.clone();
+        // Carry the full window definitions so a named layout loaded into a
+        // profile that lacks these windows (a fresh character) can recreate
+        // them. The dock snapshot alone only references windows by TabKey.
+        layout.window_defs = self.app_core.layout.windows.clone();
         layout.touch();
         Some(layout)
     }
@@ -2413,6 +2492,32 @@ impl VellumGuiApp {
     /// are dropped. The main OS window geometry is deliberately left alone:
     /// only the arrangement inside it (and detached windows) changes.
     fn apply_layout_snapshot(&mut self, layout: &GuiLayoutFileV1) {
+        // Recreate any window the saved layout carries but this profile lacks
+        // BEFORE reconciling: restore_layout_state filters arrangement against
+        // available_tabs, so a window that doesn't exist yet would have its
+        // rect/zone/group dropped. Materializing first (then refreshing the
+        // tab list) lets the arrangement land on the freshly-created windows.
+        // Without the window_defs field (pre-upgrade files) this is a no-op
+        // and the old arrangement-only behavior stands.
+        if !layout.window_defs.is_empty() {
+            let (w, h) = self.core_layout_size;
+            let created =
+                self.app_core
+                    .materialize_missing_windows(&layout.window_defs, w, h);
+            if !created.is_empty() {
+                tracing::info!(
+                    "loadlayout: created {} missing window(s): {}",
+                    created.len(),
+                    created.join(", ")
+                );
+                // Rebuild the tab list so the new windows are available to the
+                // reconcile below (fingerprint would otherwise skip the refresh
+                // mid-frame).
+                self.available_tabs_fingerprint = None;
+                self.refresh_available_tabs_if_needed();
+            }
+        }
+
         let restored = Self::restore_layout_state(Some(layout), &self.available_tabs);
         tracing::info!(
             "Applying GUI layout snapshot: {} window rects, {} zone assignments",
@@ -2464,9 +2569,46 @@ impl VellumGuiApp {
         self.applied_title_font_size = None;
         self.applied_density = None;
         self.applied_window_corner_radius = None;
+        // Rects are stored in absolute points against the save-time canvas.
+        // Loading into a differently-sized window would pin them at those
+        // coordinates (dead space on a larger canvas, clipping on a smaller
+        // one). Defer a proportional rescale to the next frame, when the
+        // live content size is known. `from` is the saved canvas; without a
+        // recorded viewport (legacy checkpoints) fall back to the bounding
+        // box of the saved rects so we still have a reference.
+        self.pending_layout_rescale =
+            Some(Self::layout_reference_canvas(layout, &self.main_window_rects));
         // The live autosave slot now reflects the loaded arrangement; the
         // checkpoint itself is only written by an explicit .savelayout.
         self.layout_dirty = true;
+    }
+
+    /// The canvas size a saved layout's rects were captured against, used as
+    /// the "from" size when rescaling to the current window. Prefers the
+    /// recorded main-viewport inner size; falls back to the bounding box of
+    /// the saved rects (legacy checkpoints predate the viewport record).
+    /// Returns a 1x1 sentinel when neither is usable, which `rescale_rect`
+    /// treats as an identity (no scaling).
+    fn layout_reference_canvas(
+        layout: &GuiLayoutFileV1,
+        rects: &HashMap<TabKey, [f32; 4]>,
+    ) -> egui::Vec2 {
+        if let Some(viewport) = &layout.main_viewport {
+            let [w, h] = viewport.inner_size;
+            if w.is_finite() && h.is_finite() && w > 1.0 && h > 1.0 {
+                return egui::Vec2::new(w, h);
+            }
+        }
+        // Bounding box of the saved rects (max right / max bottom edge).
+        let mut max_x = 0.0_f32;
+        let mut max_y = 0.0_f32;
+        for rect in rects.values() {
+            if rect.iter().all(|value| value.is_finite()) {
+                max_x = max_x.max(rect[0] + rect[2]);
+                max_y = max_y.max(rect[1] + rect[3]);
+            }
+        }
+        egui::Vec2::new(max_x.max(1.0), max_y.max(1.0))
     }
 
     /// egui internals section for `.performance dump`: texture allocator
@@ -4596,9 +4738,25 @@ impl VellumGuiApp {
             }
             A::ListLayouts => self.list_layout_checkpoints(),
             A::ResizeLayout => {
-                self.app_core.add_system_message(
-                    ".resize refits the TUI's cell layout; the GUI has no cell grid.",
-                );
+                // The GUI has no cell grid, but the TUI's `.resize` intent —
+                // reflow the windows to fill the current window size — maps
+                // cleanly onto a proportional rescale. A plain OS resize only
+                // displaces windows inward (growing leaves dead space); this
+                // is the explicit "grow/shrink everything to fit now" action.
+                // "from" is the bounding box the rects currently occupy; the
+                // deferred frame pass divides the live content size by it.
+                if self.main_window_rects.is_empty() {
+                    self.app_core
+                        .add_system_message("No positioned windows to refit.");
+                } else {
+                    let from = Self::layout_reference_canvas(
+                        &GuiLayoutFileV1::new(&self.layout_profile, &self.layout_character),
+                        &self.main_window_rects,
+                    );
+                    self.pending_layout_rescale = Some(from);
+                    self.app_core
+                        .add_system_message("Refitting windows to the current size.");
+                }
             }
             A::SaveSkin(name) => {
                 if !is_valid_layout_name(&name) {
@@ -4895,6 +5053,23 @@ impl eframe::App for VellumGuiApp {
             // The new families become usable next frame; make sure it happens
             // promptly instead of waiting for the idle repaint tick.
             ctx.request_repaint();
+        }
+        // A layout load / startup restore / `.resize` queued a proportional
+        // rescale; the target canvas size is only knowable here. Scale the
+        // stored rects from the save-time canvas to the current content size,
+        // then clamp each into the live window so nothing lands off-screen.
+        if let Some(from) = self.pending_layout_rescale.take() {
+            let content = ctx.input(|input| input.content_rect());
+            let to = egui::Vec2::new(content.width().max(1.0), content.height().max(1.0));
+            let changed = Self::rescale_main_window_rects(&mut self.main_window_rects, from, to);
+            for rect in self.main_window_rects.values_mut() {
+                if let Some(r) = Self::rect_from_snapshot(*rect) {
+                    *rect = Self::rect_to_snapshot(Self::clamp_main_window_rect(r, content));
+                }
+            }
+            if changed {
+                self.layout_dirty = true;
+            }
         }
         self.apply_theme_if_changed(&ctx);
         // Pool frames referenced by per-window overrides load lazily; tell
@@ -6118,6 +6293,62 @@ mod tests {
         };
 
         assert!(live_creature.is_valid_target(&cfg.excluded_nouns));
+    }
+
+    // ── drop_tab_from_groups (bug #5: deleting a grouped window) ─────────
+
+    fn group(members: &[TabKey]) -> super::TabGroup {
+        super::TabGroup {
+            members: members.to_vec(),
+            horizontal: false,
+            merged: members.to_vec(),
+            end_anchored: members.to_vec(),
+        }
+    }
+
+    #[test]
+    fn drop_tab_dissolves_two_member_group() {
+        // Parent+child pair: deleting either must dissolve the whole group
+        // so the survivor is a free, standalone window again — not a
+        // follower stuck rendering inside a leader that no longer exists.
+        let parent = TabKey::TextByName { id: "parent".into() };
+        let child = TabKey::TextByName { id: "child".into() };
+        let mut groups = vec![group(&[parent.clone(), child.clone()])];
+
+        VellumGuiApp::drop_tab_from_groups(&mut groups, &parent);
+
+        assert!(groups.is_empty(), "group left with one member must dissolve");
+    }
+
+    #[test]
+    fn drop_tab_shrinks_larger_group_and_purges_side_lists() {
+        // A three-member group loses one member but survives; the removed
+        // key must also leave the merged/end_anchored side lists so no stale
+        // reference lingers.
+        let a = TabKey::TextByName { id: "a".into() };
+        let b = TabKey::TextByName { id: "b".into() };
+        let c = TabKey::TextByName { id: "c".into() };
+        let mut groups = vec![group(&[a.clone(), b.clone(), c.clone()])];
+
+        VellumGuiApp::drop_tab_from_groups(&mut groups, &b);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members, vec![a.clone(), c.clone()]);
+        assert!(!groups[0].merged.contains(&b));
+        assert!(!groups[0].end_anchored.contains(&b));
+    }
+
+    #[test]
+    fn drop_tab_is_noop_when_key_absent() {
+        let a = TabKey::TextByName { id: "a".into() };
+        let b = TabKey::TextByName { id: "b".into() };
+        let stranger = TabKey::TextByName { id: "stranger".into() };
+        let mut groups = vec![group(&[a.clone(), b.clone()])];
+
+        VellumGuiApp::drop_tab_from_groups(&mut groups, &stranger);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members, vec![a, b]);
     }
 
     fn migration_test_layout() -> crate::config::Layout {

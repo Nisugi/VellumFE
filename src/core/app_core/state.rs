@@ -3672,6 +3672,40 @@ impl AppCore {
         tracing::info!("Showed window '{}' - added to layout and UI state", name);
     }
 
+    /// Create any window definitions this layout lacks, from a saved layout's
+    /// captured defs. Used by the GUI `.loadlayout`: a named layout saved on
+    /// one character carries the full window definitions, so loading it into a
+    /// fresh profile (which only has the default windows) recreates the missing
+    /// windows before the arrangement is reconciled. Windows already present
+    /// are left untouched — their live content (buffered text, etc.) survives.
+    /// Returns the names actually created.
+    pub fn materialize_missing_windows(
+        &mut self,
+        defs: &[crate::config::WindowDef],
+        terminal_width: u16,
+        terminal_height: u16,
+    ) -> Vec<String> {
+        let mut created = Vec::new();
+        for def in defs {
+            let name = def.name().to_string();
+            if self.ui_state.windows.contains_key(&name) {
+                continue;
+            }
+            // Keep the layout's def list authoritative so a later .savelayout
+            // (or autosave) re-persists the window; add_new_window only writes
+            // ui_state.
+            if !self.layout.windows.iter().any(|w| w.name() == name) {
+                self.layout.windows.push(def.clone());
+            }
+            self.add_new_window(def, terminal_width, terminal_height);
+            created.push(name);
+        }
+        if !created.is_empty() {
+            self.needs_render = true;
+        }
+        created
+    }
+
     /// Process pending window additions from openDialog events.
     /// Called by the frontend each frame with terminal dimensions.
     /// Whether a layout window equivalent to `template_name` already exists,
@@ -7231,6 +7265,40 @@ mod tests {
             .map(|w| w.base().visibility.is_shown())
             .unwrap_or(false));
         assert!(core.ui_state.windows.contains_key("compass"));
+    }
+
+    /// Bug #1: a named GUI layout saved on one character carries the full
+    /// window defs; loading it into a profile that only has the default
+    /// windows must recreate the missing ones (in both the layout def list
+    /// and ui_state) while leaving existing windows untouched.
+    #[test]
+    fn materialize_missing_windows_creates_only_the_absent() {
+        let mut core = core_with_layout(vec![positioned_text_def("story", 0, 0, 40, 10)]);
+        core.init_windows(80, 24);
+        assert!(core.ui_state.windows.contains_key("story"));
+
+        let saved_defs = vec![
+            positioned_text_def("story", 0, 0, 40, 10), // already present
+            positioned_text_def("room", 40, 0, 20, 8),  // missing
+            positioned_text_def("map", 60, 0, 20, 8),   // missing
+        ];
+        let created = core.materialize_missing_windows(&saved_defs, 80, 24);
+
+        // Only the two absent windows are created, in order.
+        assert_eq!(created, vec!["room".to_string(), "map".to_string()]);
+        // Both live in ui_state AND the authoritative layout def list.
+        for name in ["room", "map"] {
+            assert!(core.ui_state.windows.contains_key(name), "{name} in ui_state");
+            assert!(
+                core.layout.windows.iter().any(|w| w.name() == name),
+                "{name} in layout defs"
+            );
+        }
+        // The pre-existing window is not duplicated.
+        assert_eq!(
+            core.layout.windows.iter().filter(|w| w.name() == "story").count(),
+            1
+        );
     }
 
     /// A text window subscribed to the main stream.
