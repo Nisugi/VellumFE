@@ -418,6 +418,14 @@ impl VellumGuiApp {
     /// UI and from the layout so it does not reappear, then rebuild routing.
     /// Shared by the Custom Windows panel and the Window Editor.
     pub(in super::super) fn delete_custom_window(&mut self, name: &str) {
+        // Forget the GUI-side per-tab state BEFORE removing the window from
+        // the core: find_tab_key_by_name resolves through available_tabs,
+        // which is derived from the core window list. Deleting a grouped
+        // window otherwise left the group intact, so surviving members
+        // stayed grouped followers — checked and un-re-addable in Windows.
+        if let Some(key) = self.find_tab_key_by_name(name) {
+            self.forget_tab_state(&key, name);
+        }
         self.app_core.remove_window(name);
         self.app_core.layout.windows.retain(|w| w.name() != name);
         self.app_core.schedule_layout_autosave();

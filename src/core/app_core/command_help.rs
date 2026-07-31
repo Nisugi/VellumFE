@@ -122,7 +122,7 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             ),
             entry!(&["loadlayout"], "[name]", "Load a saved layout"),
             entry!(&["layouts"], "", "List available layouts"),
-            entry!(&["resize"], "", "Resize layout to current terminal (TUI)"),
+            entry!(&["resize"], "", "Refit windows to the current window/terminal size"),
         ],
     },
     CommandHelpSection {

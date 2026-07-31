@@ -703,6 +703,16 @@ pub struct GuiLayoutFileV1 {
     /// Main OS window geometry, restored at launch
     #[serde(default)]
     pub main_viewport: Option<MainViewportState>,
+
+    /// Full core window definitions captured at save time. The dock snapshot
+    /// only references windows by TabKey; without the defs, loading a named
+    /// layout into a profile that lacks those windows (a fresh character)
+    /// would silently drop them. `.loadlayout` recreates any missing window
+    /// from this list before reconciling the arrangement. Empty on files
+    /// saved before this field existed (serde default), which fall back to
+    /// the old arrangement-only behavior.
+    #[serde(default)]
+    pub window_defs: Vec<crate::config::WindowDef>,
 }
 
 impl GuiLayoutFileV1 {
@@ -720,6 +730,7 @@ impl GuiLayoutFileV1 {
             ui_settings: GuiUiSettings::default(),
             detached_viewports: HashMap::new(),
             main_viewport: None,
+            window_defs: Vec::new(),
         }
     }
 

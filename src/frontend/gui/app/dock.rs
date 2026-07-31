@@ -281,6 +281,51 @@ impl VellumGuiApp {
         Rect::from_min_size(Pos2::new(x, y), Vec2::new(width, height))
     }
 
+    /// Scale one stored `[x, y, w, h]` rect from a save-time canvas size to
+    /// the current canvas size, per axis. Shared by `.loadlayout`/startup
+    /// restore (a layout built on a differently-sized window would otherwise
+    /// pin every window at absolute save-time coordinates, leaving dead space
+    /// on a larger screen and clipping on a smaller one) and by the explicit
+    /// `.resize` command. Degenerate or non-finite sizes yield an identity
+    /// scale so the rect passes through untouched.
+    pub(super) fn rescale_rect(raw: [f32; 4], from: Vec2, to: Vec2) -> [f32; 4] {
+        if !raw.iter().all(|value| value.is_finite())
+            || !from.is_finite()
+            || !to.is_finite()
+            || from.x <= 1.0
+            || from.y <= 1.0
+            || to.x <= 1.0
+            || to.y <= 1.0
+        {
+            return raw;
+        }
+        let sx = to.x / from.x;
+        let sy = to.y / from.y;
+        [raw[0] * sx, raw[1] * sy, raw[2] * sx, raw[3] * sy]
+    }
+
+    /// Rescale every stored main-window rect in place from `from` to `to`.
+    /// No-op (returns false) when the scale is an identity within epsilon, so
+    /// resizing to the same size doesn't churn the layout or mark it dirty.
+    pub(super) fn rescale_main_window_rects(
+        rects: &mut HashMap<TabKey, [f32; 4]>,
+        from: Vec2,
+        to: Vec2,
+    ) -> bool {
+        if !from.is_finite() || !to.is_finite() || from.x <= 1.0 || from.y <= 1.0 {
+            return false;
+        }
+        let sx = to.x / from.x;
+        let sy = to.y / from.y;
+        if (sx - 1.0).abs() < 0.001 && (sy - 1.0).abs() < 0.001 {
+            return false;
+        }
+        for rect in rects.values_mut() {
+            *rect = Self::rescale_rect(*rect, from, to);
+        }
+        true
+    }
+
     pub(super) fn track_main_window_rect(&mut self, key: &TabKey, rect: Rect, bounds: Rect) {
         if !rect.is_finite() || !bounds.is_finite() {
             return;
@@ -550,6 +595,108 @@ mod tests {
         let legacy: DockStateSnapshot =
             serde_json::from_str(r#"{"visible_tabs":[]}"#).unwrap();
         assert!(legacy.free_sidebar_zones.is_empty());
+    }
+
+    // ── rescale_rect / rescale_main_window_rects (bugs #2, #3, .resize) ──
+
+    #[test]
+    fn rescale_rect_scales_per_axis() {
+        // Save-time canvas 1280x1024 -> current 1920x1080: a window keeps its
+        // relative position and size, filling the larger canvas rather than
+        // pinning to the smaller save-time coordinates.
+        let from = Vec2::new(1280.0, 1024.0);
+        let to = Vec2::new(1920.0, 1080.0);
+        let scaled = VellumGuiApp::rescale_rect([640.0, 512.0, 300.0, 200.0], from, to);
+        let sx = 1920.0 / 1280.0;
+        let sy = 1080.0 / 1024.0;
+        assert!((scaled[0] - 640.0 * sx).abs() < 0.01);
+        assert!((scaled[1] - 512.0 * sy).abs() < 0.01);
+        assert!((scaled[2] - 300.0 * sx).abs() < 0.01);
+        assert!((scaled[3] - 200.0 * sy).abs() < 0.01);
+    }
+
+    #[test]
+    fn rescale_rect_identity_on_degenerate_or_equal_sizes() {
+        let raw = [10.0, 20.0, 300.0, 200.0];
+        let size = Vec2::new(1000.0, 800.0);
+        // Same size in and out: untouched.
+        assert_eq!(VellumGuiApp::rescale_rect(raw, size, size), raw);
+        // Zero/degenerate from-size: identity, never a divide-by-zero blowup.
+        assert_eq!(
+            VellumGuiApp::rescale_rect(raw, Vec2::new(0.0, 0.0), size),
+            raw
+        );
+        // Non-finite input rect passes through untouched (NaN != NaN, so
+        // compare element-wise rather than with assert_eq! on the array).
+        let nan = [f32::NAN, 0.0, 100.0, 100.0];
+        let out = VellumGuiApp::rescale_rect(nan, size, size);
+        assert!(out[0].is_nan());
+        assert_eq!(&out[1..], &[0.0, 100.0, 100.0]);
+    }
+
+    #[test]
+    fn rescale_main_window_rects_reports_change_and_noops_on_equal() {
+        let mut rects = HashMap::new();
+        rects.insert(TabKey::Vitals, [100.0, 100.0, 200.0, 150.0]);
+        let from = Vec2::new(1000.0, 800.0);
+
+        // Doubling width reports a change and scales x/w.
+        let changed =
+            VellumGuiApp::rescale_main_window_rects(&mut rects, from, Vec2::new(2000.0, 800.0));
+        assert!(changed);
+        let r = rects[&TabKey::Vitals];
+        assert!((r[0] - 200.0).abs() < 0.01);
+        assert!((r[2] - 400.0).abs() < 0.01);
+        assert!((r[1] - 100.0).abs() < 0.01, "y unchanged when height equal");
+
+        // Same-size rescale is a no-op.
+        let unchanged = VellumGuiApp::rescale_main_window_rects(&mut rects, from, from);
+        assert!(!unchanged);
+    }
+
+    #[test]
+    fn restore_keeps_rect_for_hidden_tab() {
+        // Bug #4: a window hidden at save time must still restore its saved
+        // rect, so showing it later from the Windows menu places it where it
+        // was left instead of falling back to the top-left default.
+        let mut available_tabs = HashMap::new();
+        available_tabs.insert(
+            TabKey::Vitals,
+            GuiTab {
+                id: TabId::new(TabKey::Vitals),
+                window_name: "vitals".to_string(),
+            },
+        );
+
+        let snapshot = DockStateSnapshot {
+            visible_tabs: Vec::new(),
+            main_window_rects: vec![MainWindowRectSnapshot {
+                key: TabKey::Vitals,
+                rect: [250.0, 300.0, 400.0, 220.0],
+                gap_above: 0.0,
+            }],
+            tab_zones: Vec::new(),
+            no_title_tabs: Vec::new(),
+            shell_layout: ShellLayoutSnapshot::default(),
+            tab_groups: Vec::new(),
+            free_sidebar_zones: Vec::new(),
+            pending_zones: Vec::new(),
+        };
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.hidden_tabs = vec![TabKey::Vitals];
+        layout.dock_state_json = serde_json::to_value(snapshot).unwrap();
+
+        let restored = VellumGuiApp::restore_layout_state(Some(&layout), &available_tabs);
+
+        assert!(
+            restored.hidden_tabs.contains(&TabKey::Vitals),
+            "tab stays hidden"
+        );
+        assert_eq!(
+            restored.main_window_rects.get(&TabKey::Vitals).copied(),
+            Some([250.0, 300.0, 400.0, 220.0]),
+            "hidden tab keeps its saved rect for a later show"
+        );
     }
 
     #[test]
