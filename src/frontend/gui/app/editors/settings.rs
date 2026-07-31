@@ -176,6 +176,12 @@ pub(in super::super) struct SettingsEditorState {
     /// Voices the engine reported when the editor opened (empty when TTS
     /// is off or the platform doesn't enumerate).
     tts_voices: Vec<String>,
+    /// Frame names (active skin ∪ pool) for the global default-frame
+    /// combo, captured when the editor opened.
+    frame_names: Vec<String>,
+    /// Pool backgrounds as (pool path, display stem) for the global
+    /// default-background combo.
+    background_images: Vec<(String, String)>,
     /// Pronunciation substitutions (pattern, replacement) — registry-exempt
     /// structured data with bespoke rows.
     tts_subs: Vec<(String, String)>,
@@ -190,6 +196,7 @@ impl SettingsEditorState {
         theme_names: Vec<String>,
         skin_names: Vec<String>,
         tts_voices: Vec<String>,
+        frame_names: Vec<String>,
         gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
     ) -> Self {
         Self {
@@ -201,6 +208,11 @@ impl SettingsEditorState {
             new_skin_name: String::new(),
             skin_error: None,
             tts_voices,
+            frame_names,
+            background_images: crate::config::pool::list_category("backgrounds")
+                .iter()
+                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .collect(),
             tts_subs: config
                 .tts
                 .substitutions
@@ -428,6 +440,8 @@ fn category_intro(category: &str) -> Option<&'static str> {
 fn render_gui_section(
     ui: &mut egui::Ui,
     gui_settings: &mut crate::frontend::gui::persistence::GuiUiSettings,
+    frame_names: &[String],
+    background_images: &[(String, String)],
 ) {
     ui.label(
         "Sizing applies to the GUI only and is saved per character. \
@@ -611,6 +625,99 @@ fn render_gui_section(
                 );
             ui.end_row();
         }
+
+        // Global appearance defaults: applied to every window without its
+        // own Appearance-menu choice (per-window picks always win).
+        ui.label("Default frame");
+        {
+            let selected = match gui_settings.default_frame.as_deref() {
+                None => "Skin default".to_string(),
+                Some(name) if name.eq_ignore_ascii_case("none") => "None".to_string(),
+                Some(name) => name.to_string(),
+            };
+            egui::ComboBox::from_id_salt("settings_default_frame")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(gui_settings.default_frame.is_none(), "Skin default")
+                        .clicked()
+                    {
+                        gui_settings.default_frame = None;
+                    }
+                    let none_active = gui_settings
+                        .default_frame
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("none"));
+                    if ui.selectable_label(none_active, "None").clicked() {
+                        gui_settings.default_frame = Some("none".to_string());
+                    }
+                    for name in frame_names {
+                        let active = gui_settings
+                            .default_frame
+                            .as_deref()
+                            .is_some_and(|current| current.eq_ignore_ascii_case(name));
+                        if ui.selectable_label(active, name).clicked() {
+                            gui_settings.default_frame = Some(name.clone());
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Frame for every window without its own Appearance > \
+                     Skin frame choice. None hides frames everywhere by \
+                     default; per-window picks always win.",
+                );
+        }
+        ui.end_row();
+
+        ui.label("Default background");
+        {
+            let selected = match gui_settings.default_background.as_deref() {
+                None => "Skin default",
+                Some(path) if path.eq_ignore_ascii_case("none") => "None",
+                Some(path) => background_images
+                    .iter()
+                    .find(|(pool_path, _)| pool_path == path)
+                    .map(|(_, stem)| stem.as_str())
+                    .unwrap_or(path),
+            };
+            egui::ComboBox::from_id_salt("settings_default_background")
+                .selected_text(selected.to_string())
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(
+                            gui_settings.default_background.is_none(),
+                            "Skin default",
+                        )
+                        .clicked()
+                    {
+                        gui_settings.default_background = None;
+                    }
+                    let none_active = gui_settings
+                        .default_background
+                        .as_deref()
+                        .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                    if ui.selectable_label(none_active, "None").clicked() {
+                        gui_settings.default_background = Some("none".to_string());
+                    }
+                    for (path, stem) in background_images {
+                        let active = gui_settings
+                            .default_background
+                            .as_deref()
+                            .is_some_and(|current| current == path);
+                        if ui.selectable_label(active, stem).clicked() {
+                            gui_settings.default_background = Some(path.clone());
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Background image for every window without its own \
+                     Appearance > Background choice; per-window picks \
+                     always win.",
+                );
+        }
+        ui.end_row();
     });
     ui.weak(
         "Vitals bar options (layout, height, text, bars shown) moved to the \
@@ -636,6 +743,7 @@ impl VellumGuiApp {
             theme_names,
             crate::config::skins::list_skins(),
             self.app_core.tts_manager.available_voices(),
+            self.skin_state.frame_names(),
             self.ui_settings.clone(),
         ));
     }
@@ -796,7 +904,12 @@ impl VellumGuiApp {
                                     // the per-character GUI layout file, not
                                     // config.toml; keep it next to Appearance.
                                     ui.collapsing("GUI", |ui| {
-                                        render_gui_section(ui, &mut state.gui_settings);
+                                        render_gui_section(
+                                            ui,
+                                            &mut state.gui_settings,
+                                            &state.frame_names,
+                                            &state.background_images,
+                                        );
                                     });
                                 }
                                 "Speech" => {

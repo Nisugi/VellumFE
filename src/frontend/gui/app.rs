@@ -1375,7 +1375,8 @@ impl VellumGuiApp {
                     &tab.window_name,
                     self.tab_settings
                         .get(key)
-                        .and_then(|settings| settings.background_image.as_deref()),
+                        .and_then(|settings| settings.background_image.as_deref())
+                        .or(self.ui_settings.default_background.as_deref()),
                 )
             }),
             skin_art: self.skin_state.widget_art(),
@@ -1780,11 +1781,13 @@ impl VellumGuiApp {
             }
         }
 
-        // Pool frames any window override references -> [frames.<stem>].
+        // Pool frames any window override references -> [frames.<stem>],
+        // plus the global default frame (Settings > GUI).
         let mut wanted_frames: Vec<String> = self
             .tab_settings
             .values()
             .filter_map(|settings| settings.skin_frame.clone())
+            .chain(self.ui_settings.default_frame.clone())
             .map(|frame| frame.to_ascii_lowercase())
             .filter(|frame| frame != "none")
             .collect();
@@ -1818,9 +1821,16 @@ impl VellumGuiApp {
             }
         }
 
-        // Per-window backgrounds -> [window.<name>.background].
+        // Per-window backgrounds -> [window.<name>.background]; the global
+        // default background bakes as the skin's [window.default] entry
+        // (the manifest-wide fallback window_field consults).
         let mut backgrounds: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
+        if let Some(background) = &self.ui_settings.default_background {
+            if !background.eq_ignore_ascii_case("none") {
+                backgrounds.insert("default".to_string(), background.clone());
+            }
+        }
         for (key, settings) in &self.tab_settings {
             let Some(background) = &settings.background_image else {
                 continue;
@@ -1976,13 +1986,15 @@ impl VellumGuiApp {
     }
 
     /// The skin border this tab draws, honoring the per-window frame
-    /// override (Appearance > Skin frame) stored in its tab settings.
+    /// override (Appearance > Skin frame) stored in its tab settings,
+    /// then the global default frame (Settings > GUI).
     pub(super) fn skin_border_for_tab(&self, key: &TabKey) -> Option<skin::ResolvedBorder> {
         let tab = self.available_tabs.get(key)?;
         let frame_override = self
             .tab_settings
             .get(key)
-            .and_then(|settings| settings.skin_frame.as_deref());
+            .and_then(|settings| settings.skin_frame.as_deref())
+            .or(self.ui_settings.default_frame.as_deref());
         self.skin_state
             .border_for_with_override(&tab.window_name, frame_override)
     }
@@ -4824,7 +4836,8 @@ impl eframe::App for VellumGuiApp {
         self.skin_state.set_needed_pool_frames(
             self.tab_settings
                 .values()
-                .filter_map(|settings| settings.skin_frame.clone()),
+                .filter_map(|settings| settings.skin_frame.clone())
+                .chain(self.ui_settings.default_frame.clone()),
         );
         self.skin_state.set_status_icon_config(
             self.ui_settings.status_icons.set.as_deref(),
@@ -4835,7 +4848,8 @@ impl eframe::App for VellumGuiApp {
         self.skin_state.set_needed_pool_backgrounds(
             self.tab_settings
                 .values()
-                .filter_map(|settings| settings.background_image.clone()),
+                .filter_map(|settings| settings.background_image.clone())
+                .chain(self.ui_settings.default_background.clone()),
         );
         // Pool images named by hand-widget icon states and hotbar button
         // icons load with the skin (declared loads, like frames).

@@ -365,6 +365,18 @@ pub struct GuiUiSettings {
     #[serde(default)]
     pub compass_set: Option<String>,
 
+    /// Global default frame for windows without a per-window override (a
+    /// skin `[frames.*]` name or pool frame stem). Precedence: window
+    /// override > this > the skin's own per-window mapping; a per-window
+    /// "none" still removes the frame.
+    #[serde(default)]
+    pub default_frame: Option<String>,
+
+    /// Global default background (pool-relative path, or "none" to
+    /// suppress skin backgrounds everywhere). Same precedence as
+    /// `default_frame`.
+    #[serde(default)]
+    pub default_background: Option<String>,
 
     /// Render the injury doll's art (base + overlays) in grayscale; the
     /// generated wound/scar dots keep their colors. Off = no gray twins
@@ -520,6 +532,8 @@ impl Default for GuiUiSettings {
             doll_image: None,
             status_icons: StatusIconSettings::default(),
             compass_set: None,
+            default_frame: None,
+            default_background: None,
             doll_grayscale: false,
             zone_separators: ZoneSeparatorStyle::default(),
             snap_enabled: default_true(),
