@@ -3082,103 +3082,29 @@ impl VellumGuiApp {
     }
 
     pub(super) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        use crate::performance::{PerfFrontend, PerfMetric, PerfSeverity, PERF_METRICS};
+
         let cfg = app_core.perf_overlay_data(true);
         let stats = &app_core.perf_stats;
 
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        if cfg.show_fps {
-            rows.push(("FPS", format!("{:.1}", stats.fps())));
-        }
-        if cfg.show_frame_times {
-            rows.push((
-                "Frame",
-                format!(
-                    "{:.2} ms ({:.2}-{:.2})",
-                    stats.avg_frame_time_ms(),
-                    stats.min_frame_time_ms(),
-                    stats.max_frame_time_ms()
-                ),
-            ));
-        }
-        if cfg.show_render_times {
-            rows.push(("Render", format!("{:.2} ms", stats.avg_render_time_ms())));
-        }
-        if cfg.show_ui_times {
-            rows.push(("UI", format!("{:.2} ms", stats.avg_ui_render_time_ms())));
-        }
-        if cfg.show_wrap_times {
-            rows.push(("Wrap", format!("{:.1} us", stats.avg_text_wrap_time_us())));
-        }
-        if cfg.show_net {
-            rows.push((
-                "Net",
-                format!(
-                    "{} B/s in, {} B/s out",
-                    stats.bytes_received_per_sec(),
-                    stats.bytes_sent_per_sec()
-                ),
-            ));
-        }
-        if cfg.show_parse {
-            rows.push((
-                "Parse",
-                format!(
-                    "{:.1} us, {} elem/s",
-                    stats.avg_parse_time_us(),
-                    stats.elements_per_sec()
-                ),
-            ));
-        }
-        if cfg.show_events {
-            rows.push((
-                "Events",
-                format!(
-                    "{:.1} us, queue {}",
-                    stats.avg_event_process_time_us(),
-                    stats.last_event_queue_depth()
-                ),
-            ));
-        }
-        if cfg.show_memory {
-            rows.push((
-                "Memory",
-                format!(
-                    "{:.1} MB rss, {:.1} MB est",
-                    stats.process_rss_mb(),
-                    stats.estimated_memory_mb()
-                ),
-            ));
-        }
-        if cfg.show_lines {
-            rows.push((
-                "Lines",
-                format!(
-                    "{} in {} windows",
-                    stats.total_lines_buffered(),
-                    stats.active_window_count()
-                ),
-            ));
-        }
-        if cfg.show_uptime {
-            rows.push(("Uptime", stats.uptime_formatted()));
-        }
-        if cfg.show_jitter {
-            rows.push(("Jitter", format!("{:.2} ms", stats.frame_jitter_ms())));
-        }
-        if cfg.show_frame_spikes {
-            rows.push(("Spikes", stats.frame_spike_count().to_string()));
-        }
-        if cfg.show_event_lag {
-            rows.push(("Event lag", format!("{:.1} ms", stats.event_lag_ms())));
-        }
-        if cfg.show_memory_delta {
-            rows.push(("Mem delta", format!("{:+.1} MB", stats.memory_delta_mb())));
-        }
+        // Rows derive from the shared metric table, filtered to what the
+        // GUI actually records — a metric this frontend can't measure
+        // never renders as a confident-looking zero.
+        let visible: Vec<&PerfMetric> = PERF_METRICS
+            .iter()
+            .filter(|metric| metric.in_scope(PerfFrontend::Gui))
+            .filter(|metric| metric.enabled_in(&cfg))
+            .collect();
 
-        if rows.is_empty() {
+        if visible.is_empty() {
             ui.weak("All performance metrics are disabled in settings.");
             return;
         }
+
+        // Keep the numbers live at ~1 Hz while the monitor is visible,
+        // without repainting fast enough to distort what it measures.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
 
         let max_height = ui.available_height().max(1.0);
         egui::ScrollArea::vertical()
@@ -3187,10 +3113,67 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show(ui, |ui| {
-                for (name, value) in rows {
-                    ui.label(RichText::new(format!("{:<10} {}", name, value)).monospace());
+                for metric in visible {
+                    let severity = metric.severity.map(|f| f(stats));
+                    let value_color = match severity {
+                        Some(PerfSeverity::Crit) => egui::Color32::from_rgb(235, 90, 90),
+                        Some(PerfSeverity::Warn) => egui::Color32::from_rgb(230, 175, 60),
+                        _ => ui.visuals().text_color(),
+                    };
+                    let value = (metric.format)(stats);
+                    let mut lines = value.lines();
+                    let first = lines.next().unwrap_or("");
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{:<8}", metric.label))
+                                .monospace()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.label(RichText::new(first).monospace().color(value_color));
+                        if cfg.sparklines {
+                            if let Some(spark) = metric.spark {
+                                Self::draw_perf_sparkline(ui, &spark(stats));
+                            }
+                        }
+                    });
+                    for line in lines {
+                        ui.label(
+                            RichText::new(format!("{:<8} {}", "", line))
+                                .monospace()
+                                .color(value_color),
+                        );
+                    }
                 }
             });
+    }
+
+    /// Small trend polyline next to a performance row, normalized to the
+    /// series max.
+    fn draw_perf_sparkline(ui: &mut egui::Ui, values: &[f32]) {
+        if values.len() < 2 {
+            return;
+        }
+        let height = ui.text_style_height(&egui::TextStyle::Monospace).max(8.0);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(64.0, height), egui::Sense::hover());
+        let max = values.iter().cloned().fold(0.0f32, f32::max);
+        if max <= 0.0 {
+            return;
+        }
+        let n = values.len();
+        let points: Vec<egui::Pos2> = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let x = rect.left() + rect.width() * i as f32 / (n - 1) as f32;
+                let y = rect.bottom() - (v / max).clamp(0.0, 1.0) * (rect.height() - 1.0);
+                egui::pos2(x, y)
+            })
+            .collect();
+        ui.painter().add(egui::Shape::line(
+            points,
+            egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+        ));
     }
 
     pub(super) fn render_dashboard_content(

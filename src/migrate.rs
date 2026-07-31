@@ -489,11 +489,11 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
             }
         }
         WindowDef::Performance { data, .. } => {
+            // Old layouts may carry show_frame_times/show_jitter/
+            // show_frame_spikes/show_event_lag/show_memory_delta; those
+            // metrics no longer exist, so the keys are simply ignored.
             if let Some(v) = get_bool(table, "show_fps")? {
                 data.show_fps = v;
-            }
-            if let Some(v) = get_bool(table, "show_frame_times")? {
-                data.show_frame_times = v;
             }
             if let Some(v) = get_bool(table, "show_render_times")? {
                 data.show_render_times = v;
@@ -521,18 +521,6 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
             }
             if let Some(v) = get_bool(table, "show_uptime")? {
                 data.show_uptime = v;
-            }
-            if let Some(v) = get_bool(table, "show_jitter")? {
-                data.show_jitter = v;
-            }
-            if let Some(v) = get_bool(table, "show_frame_spikes")? {
-                data.show_frame_spikes = v;
-            }
-            if let Some(v) = get_bool(table, "show_event_lag")? {
-                data.show_event_lag = v;
-            }
-            if let Some(v) = get_bool(table, "show_memory_delta")? {
-                data.show_memory_delta = v;
             }
         }
         WindowDef::Hand { base, .. } => {

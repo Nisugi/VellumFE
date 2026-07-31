@@ -1353,12 +1353,19 @@ impl VellumGuiApp {
             if is_webui_window && !title_bar_hidden {
                 window_builder = window_builder.open(&mut webui_open);
             }
-            if let Some(inner) = window_builder.show(ctx, |ui| {
-                    ui.push_id(&tab.id.key, |ui| {
-                        self.render_window_or_group_content(ui, &tab)
-                    })
-                    .inner
-                }) {
+            // Per-window render cost for the performance monitor (chrome +
+            // content; detached viewports are not timed).
+            let window_render_start = std::time::Instant::now();
+            let window_shown = window_builder.show(ctx, |ui| {
+                ui.push_id(&tab.id.key, |ui| {
+                    self.render_window_or_group_content(ui, &tab)
+                })
+                .inner
+            });
+            self.app_core
+                .perf_stats
+                .record_window_render(&tab.window_name, window_render_start.elapsed());
+            if let Some(inner) = window_shown {
                 self.paint_skin_border(ctx, &tab.id.key, skin_sides, &inner.response);
                 self.paint_border_plan(ctx, &border_plan, &inner.response);
                 if is_hand_widget {

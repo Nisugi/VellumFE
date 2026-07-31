@@ -607,6 +607,10 @@ pub fn handle_ui_action(
             gui_only(app_core, "Shell zones (.header/.footer/.leftbar/.rightbar)")
         }
         UiAction::SnapDebug => gui_only(app_core, "Snap diagnostics (.snapdebug)"),
+        UiAction::PerformanceDump => {
+            app_core.write_perf_dump(crate::performance::PerfFrontend::Tui, None);
+            app_core.needs_render = true;
+        }
     }
     Ok(())
 }

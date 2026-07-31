@@ -1607,6 +1607,22 @@ impl AppCore {
                 }
             }
 
+            // Toggling is core-side (the overlay window lives in ui_state,
+            // shared by every frontend); `dump` is a UiAction so each
+            // frontend can append its own report sections.
+            "performance" | "perf" => {
+                if parts.get(1).map(|s| s.eq_ignore_ascii_case("dump")) == Some(true) {
+                    return Ok(CommandOutcome::Ui(UiAction::PerformanceDump));
+                }
+                let enabled = self.toggle_performance_overlay();
+                self.add_system_message(if enabled {
+                    "Performance monitor shown (.performance again to hide, .performance dump for a report)."
+                } else {
+                    "Performance monitor hidden."
+                });
+                return Ok(CommandOutcome::Handled);
+            }
+
             // Layout commands are capability hooks (parity plan D3): core
             // owns the command names, each frontend owns its persistence
             // model — TOML cell layouts in the TUI, window-snapshot

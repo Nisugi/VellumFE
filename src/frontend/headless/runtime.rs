@@ -781,6 +781,10 @@ fn dispatch_command(
             }
             false
         }
+        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::PerformanceDump)) => {
+            app_core.write_perf_dump(crate::performance::PerfFrontend::Headless, None);
+            false
+        }
         Ok(crate::data::CommandOutcome::Ui(_)) => {
             app_core.add_system_message("That action needs the desktop client.");
             false
@@ -1066,11 +1070,10 @@ fn handle_server_message(app_core: &mut AppCore, msg: ServerMessage) -> bool {
             app_core
                 .perf_stats
                 .record_bytes_received((line.len() + 1) as u64);
-            let parse_start = Instant::now();
+            // Parse timing is recorded inside process_server_data.
             if let Err(e) = app_core.process_server_data(&line) {
                 tracing::error!("Error processing server data: {}", e);
             }
-            app_core.perf_stats.record_parse(parse_start.elapsed());
 
             // Content-driven sizing still runs: it feeds stream routing
             // decisions, not just TUI pane geometry.

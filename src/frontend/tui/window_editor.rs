@@ -692,18 +692,20 @@ enum PerfMetricGroup {
     Events,
     Memory,
     UptimeLines,
+    Diagnostics,
 }
 
 impl PerfMetricGroup {
     fn label(&self) -> &'static str {
         match self {
-            PerfMetricGroup::FrameTiming => "Frame timing (FPS/jitter/spikes)",
-            PerfMetricGroup::RenderPipeline => "Render pipeline (render/UI/wrap)",
+            PerfMetricGroup::FrameTiming => "Draw cadence (draws/sec)",
+            PerfMetricGroup::RenderPipeline => "Render pipeline (render/draw/wrap)",
             PerfMetricGroup::Network => "Network",
             PerfMetricGroup::Parser => "Parser",
             PerfMetricGroup::Events => "Events",
-            PerfMetricGroup::Memory => "Memory",
+            PerfMetricGroup::Memory => "CPU & memory",
             PerfMetricGroup::UptimeLines => "Uptime & lines/windows",
+            PerfMetricGroup::Diagnostics => "Diagnostics (spikes/window costs)",
         }
     }
 }
@@ -1413,20 +1415,19 @@ pub struct WindowEditor {
     show_exits: bool,
     show_name: bool,
     perf_show_fps: bool,
-    perf_show_frame_times: bool,
     perf_show_render_times: bool,
     perf_show_ui_times: bool,
     perf_show_wrap_times: bool,
     perf_show_net: bool,
     perf_show_parse: bool,
     perf_show_events: bool,
+    perf_show_cpu: bool,
     perf_show_memory: bool,
     perf_show_lines: bool,
     perf_show_uptime: bool,
-    perf_show_jitter: bool,
-    perf_show_frame_spikes: bool,
-    perf_show_event_lag: bool,
-    perf_show_memory_delta: bool,
+    perf_show_spike_log: bool,
+    perf_show_per_window: bool,
+    perf_sparklines: bool,
     available_indicators: Vec<IndicatorItem>,
 
     // Perception widget (stream and buffer_size hardcoded, only sort_direction configurable)
@@ -1985,20 +1986,19 @@ impl WindowEditor {
         let mut dashboard_hide_inactive = false;
         let mut perf_enabled = true;
         let mut perf_show_fps = true;
-        let mut perf_show_frame_times = false;
         let mut perf_show_render_times = true;
         let mut perf_show_ui_times = true;
         let mut perf_show_wrap_times = true;
         let mut perf_show_net = true;
         let mut perf_show_parse = true;
         let mut perf_show_events = true;
+        let mut perf_show_cpu = true;
         let mut perf_show_memory = true;
         let mut perf_show_lines = true;
         let mut perf_show_uptime = true;
-        let mut perf_show_jitter = false;
-        let mut perf_show_frame_spikes = false;
-        let mut perf_show_event_lag = false;
-        let mut perf_show_memory_delta = true;
+        let mut perf_show_spike_log = true;
+        let mut perf_show_per_window = true;
+        let mut perf_sparklines = true;
         let mut show_desc = true;
         let mut show_objs = true;
         let mut show_players = true;
@@ -2161,20 +2161,19 @@ impl WindowEditor {
         if let crate::config::WindowDef::Performance { data, .. } = &window_def {
             perf_enabled = data.enabled;
             perf_show_fps = data.show_fps;
-            perf_show_frame_times = data.show_frame_times;
             perf_show_render_times = data.show_render_times;
             perf_show_ui_times = data.show_ui_times;
             perf_show_wrap_times = data.show_wrap_times;
             perf_show_net = data.show_net;
             perf_show_parse = data.show_parse;
             perf_show_events = data.show_events;
+            perf_show_cpu = data.show_cpu;
             perf_show_memory = data.show_memory;
             perf_show_lines = data.show_lines;
             perf_show_uptime = data.show_uptime;
-            perf_show_jitter = data.show_jitter;
-            perf_show_frame_spikes = data.show_frame_spikes;
-            perf_show_event_lag = data.show_event_lag;
-            perf_show_memory_delta = data.show_memory_delta;
+            perf_show_spike_log = data.show_spike_log;
+            perf_show_per_window = data.show_per_window;
+            perf_sparklines = data.sparklines;
         }
 
         if let crate::config::WindowDef::Room { data, .. } = &window_def {
@@ -2381,20 +2380,19 @@ impl WindowEditor {
             show_exits,
             show_name,
             perf_show_fps,
-            perf_show_frame_times,
             perf_show_render_times,
             perf_show_ui_times,
             perf_show_wrap_times,
             perf_show_net,
             perf_show_parse,
             perf_show_events,
+            perf_show_cpu,
             perf_show_memory,
             perf_show_lines,
             perf_show_uptime,
-            perf_show_jitter,
-            perf_show_frame_spikes,
-            perf_show_event_lag,
-            perf_show_memory_delta,
+            perf_show_spike_log,
+            perf_show_per_window,
+            perf_sparklines,
             available_indicators: Vec::new(),
             perception_sort_direction_input,
             perception_use_short_spell_names,
@@ -2521,24 +2519,7 @@ impl WindowEditor {
             },
             "performance" => WindowDef::Performance {
                 base,
-                data: PerformanceWidgetData {
-                    enabled: true,
-                    show_fps: true,
-                    show_frame_times: true,
-                    show_render_times: true,
-                    show_ui_times: true,
-                    show_wrap_times: true,
-                    show_net: true,
-                    show_parse: true,
-                    show_events: true,
-                    show_memory: true,
-                    show_lines: true,
-                    show_uptime: true,
-                    show_jitter: true,
-                    show_frame_spikes: true,
-                    show_event_lag: true,
-                    show_memory_delta: true,
-                },
+                data: PerformanceWidgetData::default(),
             },
             _ => WindowDef::Text {
                 base,
@@ -2630,20 +2611,19 @@ impl WindowEditor {
         let dashboard_hide_inactive = false;
         let perf_enabled = true;
         let perf_show_fps = true;
-        let perf_show_frame_times = false;
         let perf_show_render_times = true;
         let perf_show_ui_times = true;
         let perf_show_wrap_times = true;
         let perf_show_net = true;
         let perf_show_parse = true;
         let perf_show_events = true;
+        let perf_show_cpu = true;
         let perf_show_memory = true;
         let perf_show_lines = true;
         let perf_show_uptime = true;
-        let perf_show_jitter = false;
-        let perf_show_frame_spikes = false;
-        let perf_show_event_lag = false;
-        let perf_show_memory_delta = true;
+        let perf_show_spike_log = true;
+        let perf_show_per_window = true;
+        let perf_sparklines = true;
         let show_desc = true;
         let show_objs = true;
         let show_players = true;
@@ -2733,20 +2713,19 @@ impl WindowEditor {
             show_exits,
             show_name,
             perf_show_fps,
-            perf_show_frame_times,
             perf_show_render_times,
             perf_show_ui_times,
             perf_show_wrap_times,
             perf_show_net,
             perf_show_parse,
             perf_show_events,
+            perf_show_cpu,
             perf_show_memory,
             perf_show_lines,
             perf_show_uptime,
-            perf_show_jitter,
-            perf_show_frame_spikes,
-            perf_show_event_lag,
-            perf_show_memory_delta,
+            perf_show_spike_log,
+            perf_show_per_window,
+            perf_sparklines,
             available_indicators: Vec::new(),
             perception_sort_direction_input,
             perception_use_short_spell_names,
@@ -3064,10 +3043,7 @@ impl WindowEditor {
         vec![
             PerfMetricGroupState {
                 group: PerfMetricGroup::FrameTiming,
-                enabled: self.perf_show_fps
-                    || self.perf_show_frame_times
-                    || self.perf_show_jitter
-                    || self.perf_show_frame_spikes,
+                enabled: self.perf_show_fps,
             },
             PerfMetricGroupState {
                 group: PerfMetricGroup::RenderPipeline,
@@ -3085,15 +3061,19 @@ impl WindowEditor {
             },
             PerfMetricGroupState {
                 group: PerfMetricGroup::Events,
-                enabled: self.perf_show_events || self.perf_show_event_lag,
+                enabled: self.perf_show_events,
             },
             PerfMetricGroupState {
                 group: PerfMetricGroup::Memory,
-                enabled: self.perf_show_memory || self.perf_show_memory_delta,
+                enabled: self.perf_show_cpu || self.perf_show_memory,
             },
             PerfMetricGroupState {
                 group: PerfMetricGroup::UptimeLines,
                 enabled: self.perf_show_uptime || self.perf_show_lines,
+            },
+            PerfMetricGroupState {
+                group: PerfMetricGroup::Diagnostics,
+                enabled: self.perf_show_spike_log || self.perf_show_per_window,
             },
         ]
     }
@@ -3103,9 +3083,6 @@ impl WindowEditor {
             match state.group {
                 PerfMetricGroup::FrameTiming => {
                     self.perf_show_fps = state.enabled;
-                    self.perf_show_frame_times = state.enabled;
-                    self.perf_show_jitter = state.enabled;
-                    self.perf_show_frame_spikes = state.enabled;
                 }
                 PerfMetricGroup::RenderPipeline => {
                     self.perf_show_render_times = state.enabled;
@@ -3120,15 +3097,18 @@ impl WindowEditor {
                 }
                 PerfMetricGroup::Events => {
                     self.perf_show_events = state.enabled;
-                    self.perf_show_event_lag = state.enabled;
                 }
                 PerfMetricGroup::Memory => {
+                    self.perf_show_cpu = state.enabled;
                     self.perf_show_memory = state.enabled;
-                    self.perf_show_memory_delta = state.enabled;
                 }
                 PerfMetricGroup::UptimeLines => {
                     self.perf_show_uptime = state.enabled;
                     self.perf_show_lines = state.enabled;
+                }
+                PerfMetricGroup::Diagnostics => {
+                    self.perf_show_spike_log = state.enabled;
+                    self.perf_show_per_window = state.enabled;
                 }
             }
         }
@@ -4924,20 +4904,19 @@ impl WindowEditor {
         if let crate::config::WindowDef::Performance { data, .. } = &mut self.window_def {
             data.enabled = self.perf_enabled;
             data.show_fps = self.perf_show_fps;
-            data.show_frame_times = self.perf_show_frame_times;
             data.show_render_times = self.perf_show_render_times;
             data.show_ui_times = self.perf_show_ui_times;
             data.show_wrap_times = self.perf_show_wrap_times;
             data.show_net = self.perf_show_net;
             data.show_parse = self.perf_show_parse;
             data.show_events = self.perf_show_events;
+            data.show_cpu = self.perf_show_cpu;
             data.show_memory = self.perf_show_memory;
             data.show_lines = self.perf_show_lines;
             data.show_uptime = self.perf_show_uptime;
-            data.show_jitter = self.perf_show_jitter;
-            data.show_frame_spikes = self.perf_show_frame_spikes;
-            data.show_event_lag = self.perf_show_event_lag;
-            data.show_memory_delta = self.perf_show_memory_delta;
+            data.show_spike_log = self.perf_show_spike_log;
+            data.show_per_window = self.perf_show_per_window;
+            data.sparklines = self.perf_sparklines;
         }
 
         if let crate::config::WindowDef::CommandInput { data, .. } = &mut self.window_def {

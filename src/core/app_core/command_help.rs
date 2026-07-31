@@ -339,6 +339,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "",
                 "Toggle the snap-engine trace in vellum-fe.log (GUI)"
             ),
+            entry!(
+                &["performance", "perf"],
+                "[dump]",
+                "Toggle the performance monitor; 'dump' writes a diagnostic report file"
+            ),
         ],
     },
     CommandHelpSection {

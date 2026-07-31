@@ -4349,24 +4349,10 @@ impl TuiFrontend {
             app_core.ui_state.input_mode = InputMode::Normal;
             app_core.needs_render = true;
         } else if let Some(metric) = command.strip_prefix("__TOGGLE_PERF__") {
-            // Handle performance overlay metric toggle from right-click menu
-            match metric {
-                "fps" => app_core.config.ui.perf_show_fps = !app_core.config.ui.perf_show_fps,
-                "frame_times" => app_core.config.ui.perf_show_frame_times = !app_core.config.ui.perf_show_frame_times,
-                "render_times" => app_core.config.ui.perf_show_render_times = !app_core.config.ui.perf_show_render_times,
-                "ui_times" => app_core.config.ui.perf_show_ui_times = !app_core.config.ui.perf_show_ui_times,
-                "wrap_times" => app_core.config.ui.perf_show_wrap_times = !app_core.config.ui.perf_show_wrap_times,
-                "net" => app_core.config.ui.perf_show_net = !app_core.config.ui.perf_show_net,
-                "parse" => app_core.config.ui.perf_show_parse = !app_core.config.ui.perf_show_parse,
-                "events" => app_core.config.ui.perf_show_events = !app_core.config.ui.perf_show_events,
-                "memory" => app_core.config.ui.perf_show_memory = !app_core.config.ui.perf_show_memory,
-                "lines" => app_core.config.ui.perf_show_lines = !app_core.config.ui.perf_show_lines,
-                "uptime" => app_core.config.ui.perf_show_uptime = !app_core.config.ui.perf_show_uptime,
-                "jitter" => app_core.config.ui.perf_show_jitter = !app_core.config.ui.perf_show_jitter,
-                "frame_spikes" => app_core.config.ui.perf_show_frame_spikes = !app_core.config.ui.perf_show_frame_spikes,
-                "event_lag" => app_core.config.ui.perf_show_event_lag = !app_core.config.ui.perf_show_event_lag,
-                "memory_delta" => app_core.config.ui.perf_show_memory_delta = !app_core.config.ui.perf_show_memory_delta,
-                _ => {}
+            // Performance metric toggle from the right-click menu; ids come
+            // from performance::PERF_METRICS.
+            if !app_core.config.ui.toggle_perf_metric(metric) {
+                tracing::warn!("Unknown perf metric toggle: {metric}");
             }
             // Re-apply enabled flags to perf_stats collector
             let data = app_core.perf_overlay_data(true);
@@ -4461,96 +4447,35 @@ impl TuiFrontend {
 
     /// Build performance overlay metrics context menu with checkmarks for enabled metrics
     fn build_perf_metrics_context_menu(ui: &crate::config::UiConfig) -> Vec<crate::data::ui_state::PopupMenuItem> {
+        use crate::performance::{PerfFrontend, PERF_METRICS};
         let check = |on: bool| if on { "✓" } else { " " };
-        vec![
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] FPS", check(ui.perf_show_fps)),
-                command: "__TOGGLE_PERF__fps".to_string(),
+        // Rows derive from the shared metric table (TUI scope), so this
+        // menu can never list a metric the widget doesn't render.
+        let mut items: Vec<crate::data::ui_state::PopupMenuItem> = PERF_METRICS
+            .iter()
+            .filter(|metric| metric.in_scope(PerfFrontend::Tui))
+            .map(|metric| crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] {}", check(ui.perf_metric_enabled(metric.id)), metric.label),
+                command: format!("__TOGGLE_PERF__{}", metric.id),
                 disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Render Times", check(ui.perf_show_render_times)),
-                command: "__TOGGLE_PERF__render_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] UI Times", check(ui.perf_show_ui_times)),
-                command: "__TOGGLE_PERF__ui_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Wrap Times", check(ui.perf_show_wrap_times)),
-                command: "__TOGGLE_PERF__wrap_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Network", check(ui.perf_show_net)),
-                command: "__TOGGLE_PERF__net".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Parse Stats", check(ui.perf_show_parse)),
-                command: "__TOGGLE_PERF__parse".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Events", check(ui.perf_show_events)),
-                command: "__TOGGLE_PERF__events".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Memory", check(ui.perf_show_memory)),
-                command: "__TOGGLE_PERF__memory".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Lines/Windows", check(ui.perf_show_lines)),
-                command: "__TOGGLE_PERF__lines".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Uptime", check(ui.perf_show_uptime)),
-                command: "__TOGGLE_PERF__uptime".to_string(),
-                disabled: false,
-            },
-            // Advanced metrics (usually disabled by default)
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Frame Times", check(ui.perf_show_frame_times)),
-                command: "__TOGGLE_PERF__frame_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Jitter", check(ui.perf_show_jitter)),
-                command: "__TOGGLE_PERF__jitter".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Frame Spikes", check(ui.perf_show_frame_spikes)),
-                command: "__TOGGLE_PERF__frame_spikes".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Event Lag", check(ui.perf_show_event_lag)),
-                command: "__TOGGLE_PERF__event_lag".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Memory Delta", check(ui.perf_show_memory_delta)),
-                command: "__TOGGLE_PERF__memory_delta".to_string(),
-                disabled: false,
-            },
-            // Separator and Close button
-            crate::data::ui_state::PopupMenuItem {
-                text: "─────────────".to_string(),
-                command: String::new(),
-                disabled: true,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: "Close".to_string(),
-                command: "__PERF_MENU_CLOSE__".to_string(),
-                disabled: false,
-            },
-        ]
+            })
+            .collect();
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: format!("[{}] Sparklines", check(ui.perf_sparklines)),
+            command: "__TOGGLE_PERF__sparklines".to_string(),
+            disabled: false,
+        });
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: "─────────────".to_string(),
+            command: String::new(),
+            disabled: true,
+        });
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: "Close".to_string(),
+            command: "__PERF_MENU_CLOSE__".to_string(),
+            disabled: false,
+        });
+        items
     }
 
     /// Handle WindowEditor mode keyboard events (extracted from main.rs Phase 4.2)

@@ -172,6 +172,12 @@ impl Frontend for TuiFrontend {
         self.window_order_cache.refresh(&app_core.ui_state);
         let order_cache = &self.window_order_cache;
 
+        // Perf: widget pass duration (closure body, before the terminal
+        // flush) and per-window draw costs, fed to perf_stats after the
+        // draw call releases its borrows.
+        let mut widget_pass = std::time::Duration::ZERO;
+        let mut window_times: Vec<(String, std::time::Duration)> = Vec::new();
+
         self.terminal.draw(|f| {
             use crate::data::WindowContent;
             use ratatui::layout::Rect;
@@ -210,6 +216,8 @@ impl Frontend for TuiFrontend {
                 if area.width < 1 || area.height < 1 {
                     continue;
                 }
+
+                let window_start = Instant::now();
 
                 match &window.content {
                     WindowContent::Text(_) => {
@@ -495,6 +503,8 @@ impl Frontend for TuiFrontend {
                         f.render_widget(note, area);
                     }
                 }
+
+                window_times.push((name.clone(), window_start.elapsed()));
             }
 
             // Render popup menu if active
@@ -642,6 +652,10 @@ impl Frontend for TuiFrontend {
             if let Some(ref injuries_popup) = app_core.ui_state.injuries_popup {
                 injury_doll::render_injuries_popup(injuries_popup, screen_area, f.buffer_mut(), &theme);
             }
+
+            // Widget pass ends here; the terminal flush happens after the
+            // closure returns, so "Render" minus "Draw" is flush cost.
+            widget_pass = render_start.elapsed();
         })?;
 
         // Feed text wrapping timings into performance stats (drain samples from all text widgets)
@@ -656,11 +670,15 @@ impl Frontend for TuiFrontend {
             }
         }
 
-        // Record basic frame/render timings for the performance overlay
-        let render_duration = render_start.elapsed();
-        app_core.perf_stats.record_render_time(render_duration);
-        app_core.perf_stats.record_ui_render_time(render_duration);
+        // Record frame/render timings for the performance monitor:
+        // "Render" = whole pass including terminal flush, "Draw" = the
+        // widget pass only.
+        app_core.perf_stats.record_render_time(render_start.elapsed());
+        app_core.perf_stats.record_ui_render_time(widget_pass);
         app_core.perf_stats.record_frame();
+        for (name, duration) in window_times.drain(..) {
+            app_core.perf_stats.record_window_render(&name, duration);
+        }
 
         // Lightweight memory snapshot: number of tracked windows (keeps totals non-zero)
         let total_windows = app_core.ui_state.windows.len();

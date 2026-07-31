@@ -679,8 +679,6 @@ pub struct PerformanceWidgetData {
     #[serde(default = "default_true")]
     pub show_fps: bool,
     #[serde(default = "default_true")]
-    pub show_frame_times: bool,
-    #[serde(default = "default_true")]
     pub show_render_times: bool,
     #[serde(default = "default_true")]
     pub show_ui_times: bool,
@@ -693,19 +691,42 @@ pub struct PerformanceWidgetData {
     #[serde(default = "default_true")]
     pub show_events: bool,
     #[serde(default = "default_true")]
+    pub show_cpu: bool,
+    #[serde(default = "default_true")]
     pub show_memory: bool,
     #[serde(default = "default_true")]
     pub show_lines: bool,
     #[serde(default = "default_true")]
     pub show_uptime: bool,
     #[serde(default = "default_true")]
-    pub show_jitter: bool,
+    pub show_spike_log: bool,
     #[serde(default = "default_true")]
-    pub show_frame_spikes: bool,
+    pub show_per_window: bool,
+    /// Draw trend sparklines next to rows that have a series.
     #[serde(default = "default_true")]
-    pub show_event_lag: bool,
-    #[serde(default = "default_true")]
-    pub show_memory_delta: bool,
+    pub sparklines: bool,
+}
+
+impl Default for PerformanceWidgetData {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            show_fps: true,
+            show_render_times: true,
+            show_ui_times: true,
+            show_wrap_times: true,
+            show_net: true,
+            show_parse: true,
+            show_events: true,
+            show_cpu: true,
+            show_memory: true,
+            show_lines: true,
+            show_uptime: true,
+            show_spike_log: true,
+            show_per_window: true,
+            sparklines: true,
+        }
+    }
 }
 
 /// Targets widget specific data

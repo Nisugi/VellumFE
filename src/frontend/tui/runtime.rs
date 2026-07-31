@@ -806,13 +806,11 @@ async fn async_run(
                     app_core
                         .perf_stats
                         .record_bytes_received((line.len() + 1) as u64);
-                    let parse_start = Instant::now();
-                    // Process incoming server data through parser
+                    // Process incoming server data through parser (parse
+                    // timing is recorded inside process_server_data).
                     if let Err(e) = app_core.process_server_data(&line) {
                         tracing::error!("Error processing server data: {}", e);
                     }
-                    let parse_duration = parse_start.elapsed();
-                    app_core.perf_stats.record_parse(parse_duration);
 
                     // Adjust content-driven window sizes (e.g., Betrayer auto-resize)
                     app_core.adjust_content_driven_windows();

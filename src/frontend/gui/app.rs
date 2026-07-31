@@ -2465,6 +2465,32 @@ impl VellumGuiApp {
         self.layout_dirty = true;
     }
 
+    /// egui internals section for `.performance dump`: texture allocator
+    /// state, visible areas, and scale factors — the numbers that explain
+    /// GPU-side memory and DPI questions a core dump can't answer.
+    fn egui_internals_report(&self) -> Option<String> {
+        let ctx = self.repaint_ctx.lock().ok()?.as_ref()?.clone();
+        let (tex_count, tex_bytes) = {
+            let tex_manager = ctx.tex_manager();
+            let tex = tex_manager.read();
+            let bytes: usize = tex.allocated().map(|(_, meta)| meta.bytes_used()).sum();
+            (tex.num_allocated(), bytes)
+        };
+        let visible_areas = ctx.memory(|m| m.areas().visible_layer_ids().len());
+        Some(format!(
+            "== egui internals ==\n\
+             textures      {} allocated ({:.1} MB)\n\
+             visible areas {}\n\
+             pixels/point  {:.2}\n\
+             zoom factor   {:.2}\n",
+            tex_count,
+            tex_bytes as f64 / (1024.0 * 1024.0),
+            visible_areas,
+            ctx.pixels_per_point(),
+            ctx.zoom_factor()
+        ))
+    }
+
     fn list_layout_checkpoints(&mut self) {
         let names = list_named_layouts();
         if names.is_empty() {
@@ -2711,7 +2737,13 @@ impl VellumGuiApp {
         }
 
         let mut received_text = false;
+        // Backlog before this drain = how far behind the UI is on server
+        // messages (the GUI's event queue).
+        self.app_core
+            .perf_stats
+            .record_event_queue_depth(self.server_rx.len() as u64);
         while let Ok(message) = self.server_rx.try_recv() {
+            let event_start = std::time::Instant::now();
             match message {
                 ServerMessage::Text(line) => {
                     // First data from the game = connection established:
@@ -2753,6 +2785,9 @@ impl VellumGuiApp {
                     self.app_core.needs_render = true;
                 }
             }
+            self.app_core
+                .perf_stats
+                .record_event_process_time(event_start.elapsed());
         }
 
         // Post-processing the TUI runtime also performs after server data:
@@ -4425,6 +4460,11 @@ impl VellumGuiApp {
                     "Snap debug trace off."
                 });
             }
+            A::PerformanceDump => {
+                let extra = self.egui_internals_report();
+                self.app_core
+                    .write_perf_dump(crate::performance::PerfFrontend::Gui, extra);
+            }
             A::Settings => self.open_settings_editor(),
             A::Highlights => self.open_highlight_editor(None),
             A::AddHighlight => {
@@ -4772,6 +4812,40 @@ impl eframe::App for VellumGuiApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.app_core.perf_stats.record_frame();
+        // "Render" in the GUI is last frame's CPU cost as reported by
+        // eframe (App::ui + painting); the first frame has none yet.
+        if let Some(cpu_seconds) = frame.info().cpu_usage {
+            self.app_core
+                .perf_stats
+                .record_render_time(std::time::Duration::from_secs_f32(cpu_seconds));
+        }
+        // Process CPU/RSS (rate-limited to 1 Hz internally) and buffered
+        // content totals for the performance monitor.
+        self.app_core.perf_stats.sample_sysinfo();
+        {
+            let total_lines: usize = self
+                .app_core
+                .ui_state
+                .windows
+                .values()
+                .map(|w| match &w.content {
+                    crate::data::WindowContent::Text(content)
+                    | crate::data::WindowContent::Inventory(content)
+                    | crate::data::WindowContent::Reserve(content)
+                    | crate::data::WindowContent::Spells(content) => content.lines.len(),
+                    crate::data::WindowContent::TabbedText(tabbed) => tabbed
+                        .tabs
+                        .iter()
+                        .map(|tab| tab.content.lines.len())
+                        .sum(),
+                    _ => 0,
+                })
+                .sum();
+            let window_count = self.app_core.ui_state.windows.len();
+            self.app_core
+                .perf_stats
+                .update_memory_stats(total_lines, window_count);
+        }
         self.capture_main_viewport(&ctx);
         // Fire delayed startup music once its deadline passes; ask egui for
         // a frame at the deadline so a slow idle repaint can't stretch the

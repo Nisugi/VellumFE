@@ -48,6 +48,8 @@ pub fn build_settings_items_with_source(
 
     let mut items: Vec<SettingItem> = registry::registry()
         .iter()
+        // GUI-scoped settings have no effect in the terminal; hide them.
+        .filter(|def| def.frontend.includes_tui())
         .map(|def| {
             let character_only = def.scope == SettingScope::CharacterOnly;
             SettingItem {

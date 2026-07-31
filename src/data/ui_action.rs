@@ -161,6 +161,9 @@ pub enum UiAction {
 
     // Diagnostics
     SnapDebug,
+    /// Write a `.performance dump` report; each frontend appends its own
+    /// sections (the GUI adds graphics-toolkit internals) before writing.
+    PerformanceDump,
 }
 
 impl UiAction {
@@ -285,6 +288,7 @@ impl UiAction {
             "webui" => UiAction::WebUiPicker,
             "webui:off" => UiAction::WebUiOff,
             "snapdebug" => UiAction::SnapDebug,
+            "performance:dump" => UiAction::PerformanceDump,
             "layout:save" => UiAction::SaveLayout(None),
             "layout:load" => UiAction::LoadLayout(None),
             "layout:list" => UiAction::ListLayouts,
@@ -368,6 +372,7 @@ impl std::fmt::Display for UiAction {
             UiAction::WebUiOff => write!(f, "action:webui:off"),
             UiAction::WebUiOpen(page) => write!(f, "action:webui:open:{page}"),
             UiAction::SnapDebug => write!(f, "action:snapdebug"),
+            UiAction::PerformanceDump => write!(f, "action:performance:dump"),
         }
     }
 }
@@ -462,6 +467,7 @@ mod tests {
             UiAction::WebUiOff,
             UiAction::WebUiOpen("bigshot".into()),
             UiAction::SnapDebug,
+            UiAction::PerformanceDump,
         ]
     }
 

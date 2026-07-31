@@ -2776,6 +2776,15 @@ impl AppCore {
 
     /// Process incoming XML data from server
     pub fn process_server_data(&mut self, data: &str) -> Result<()> {
+        // Parse timing lives here so every frontend gets it for free —
+        // runtimes must not also time this call (double counting).
+        let parse_start = std::time::Instant::now();
+        let result = self.process_server_data_inner(data);
+        self.perf_stats.record_parse(parse_start.elapsed());
+        result
+    }
+
+    fn process_server_data_inner(&mut self, data: &str) -> Result<()> {
         // Handle empty input (blank line from server) - "".lines() yields nothing!
         // Network reads line-by-line, so blank lines arrive as empty strings.
         // We must handle this explicitly since Rust's lines() returns an empty iterator for "".
@@ -4314,25 +4323,11 @@ impl AppCore {
         };
 
         if widget_type == WidgetType::Performance {
-            let cfg = crate::config::PerformanceWidgetData {
-                enabled: true,
-                show_fps: true,
-                show_frame_times: true,
-                show_render_times: true,
-                show_ui_times: true,
-                show_wrap_times: true,
-                show_net: true,
-                show_parse: true,
-                show_events: true,
-                show_memory: true,
-                show_lines: true,
-                show_uptime: true,
-                show_jitter: true,
-                show_frame_spikes: true,
-                show_event_lag: true,
-                show_memory_delta: true,
-            };
+            // Enable collection per the user's metric toggles; restart
+            // peaks/spike log so they describe this viewing session.
+            let cfg = self.perf_overlay_data(true);
             self.perf_stats.apply_enabled_from(&cfg);
+            self.perf_stats.reset_peaks();
         }
 
         // Create window state

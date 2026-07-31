@@ -112,11 +112,9 @@ pub struct UiConfig {
     pub perf_stats_width: u16,
     #[serde(default = "default_perf_stats_height")]
     pub perf_stats_height: u16,
-    // Performance overlay metric toggles
+    // Performance monitor metric toggles (ids match performance::PERF_METRICS)
     #[serde(default = "default_true")]
     pub perf_show_fps: bool,
-    #[serde(default)]
-    pub perf_show_frame_times: bool,
     #[serde(default = "default_true")]
     pub perf_show_render_times: bool,
     #[serde(default = "default_true")]
@@ -130,19 +128,20 @@ pub struct UiConfig {
     #[serde(default = "default_true")]
     pub perf_show_events: bool,
     #[serde(default = "default_true")]
+    pub perf_show_cpu: bool,
+    #[serde(default = "default_true")]
     pub perf_show_memory: bool,
     #[serde(default = "default_true")]
     pub perf_show_lines: bool,
     #[serde(default = "default_true")]
     pub perf_show_uptime: bool,
-    #[serde(default)]
-    pub perf_show_jitter: bool,
-    #[serde(default)]
-    pub perf_show_frame_spikes: bool,
-    #[serde(default)]
-    pub perf_show_event_lag: bool,
     #[serde(default = "default_true")]
-    pub perf_show_memory_delta: bool,
+    pub perf_show_spike_log: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_per_window: bool,
+    /// Draw block-character trend sparklines next to rows that have them.
+    #[serde(default = "default_true")]
+    pub perf_sparklines: bool,
     // Color rendering mode
     #[serde(default)]
     pub color_mode: ColorMode, // "direct" (true color) or "slot" (256-color palette)
@@ -157,6 +156,54 @@ pub struct UiConfig {
     /// Empty string = don't modify terminal title
     #[serde(default)]
     pub terminal_title: String,
+}
+
+impl UiConfig {
+    /// Current state of a performance-metric toggle by registry id (the
+    /// `<id>` in `ui.perf_show_<id>`, plus "sparklines"). Unknown ids read
+    /// as false.
+    pub fn perf_metric_enabled(&self, id: &str) -> bool {
+        match id {
+            "fps" => self.perf_show_fps,
+            "render_times" => self.perf_show_render_times,
+            "ui_times" => self.perf_show_ui_times,
+            "wrap_times" => self.perf_show_wrap_times,
+            "net" => self.perf_show_net,
+            "parse" => self.perf_show_parse,
+            "events" => self.perf_show_events,
+            "cpu" => self.perf_show_cpu,
+            "memory" => self.perf_show_memory,
+            "lines" => self.perf_show_lines,
+            "uptime" => self.perf_show_uptime,
+            "spike_log" => self.perf_show_spike_log,
+            "per_window" => self.perf_show_per_window,
+            "sparklines" => self.perf_sparklines,
+            _ => false,
+        }
+    }
+
+    /// Flip a performance-metric toggle by id; returns false for unknown ids.
+    pub fn toggle_perf_metric(&mut self, id: &str) -> bool {
+        let field = match id {
+            "fps" => &mut self.perf_show_fps,
+            "render_times" => &mut self.perf_show_render_times,
+            "ui_times" => &mut self.perf_show_ui_times,
+            "wrap_times" => &mut self.perf_show_wrap_times,
+            "net" => &mut self.perf_show_net,
+            "parse" => &mut self.perf_show_parse,
+            "events" => &mut self.perf_show_events,
+            "cpu" => &mut self.perf_show_cpu,
+            "memory" => &mut self.perf_show_memory,
+            "lines" => &mut self.perf_show_lines,
+            "uptime" => &mut self.perf_show_uptime,
+            "spike_log" => &mut self.perf_show_spike_log,
+            "per_window" => &mut self.perf_show_per_window,
+            "sparklines" => &mut self.perf_sparklines,
+            _ => return false,
+        };
+        *field = !*field;
+        true
+    }
 }
 
 impl Default for UiConfig {
@@ -181,20 +228,19 @@ impl Default for UiConfig {
             perf_stats_width: default_perf_stats_width(),
             perf_stats_height: default_perf_stats_height(),
             perf_show_fps: true,
-            perf_show_frame_times: false,
             perf_show_render_times: true,
             perf_show_ui_times: true,
             perf_show_wrap_times: true,
             perf_show_net: true,
             perf_show_parse: true,
             perf_show_events: true,
+            perf_show_cpu: true,
             perf_show_memory: true,
             perf_show_lines: true,
             perf_show_uptime: true,
-            perf_show_jitter: false,
-            perf_show_frame_spikes: false,
-            perf_show_event_lag: false,
-            perf_show_memory_delta: true,
+            perf_show_spike_log: true,
+            perf_show_per_window: true,
+            perf_sparklines: true,
             color_mode: ColorMode::default(),
             timestamp_position: TimestampPosition::default(),
             betrayer_active_color: default_betrayer_active_color(),

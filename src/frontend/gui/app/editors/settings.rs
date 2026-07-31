@@ -142,10 +142,15 @@ fn ordered_categories() -> Vec<&'static str> {
         .iter()
         .copied()
         .filter(|cat| !CATEGORIES_IN_WINDOW_EDITOR.contains(cat))
-        .filter(|cat| registry::registry().iter().any(|def| def.category == *cat))
+        .filter(|cat| {
+            registry::registry()
+                .iter()
+                .any(|def| def.category == *cat && def.frontend.includes_gui())
+        })
         .collect();
     let mut extras: Vec<&'static str> = registry::registry()
         .iter()
+        .filter(|def| def.frontend.includes_gui())
         .map(|def| def.category)
         .filter(|cat| {
             !CATEGORY_ORDER.contains(cat) && !CATEGORIES_IN_WINDOW_EDITOR.contains(cat)
@@ -249,6 +254,9 @@ impl SettingsEditorState {
                     .iter()
                     .filter(|def| def.category == category)
                     .filter(|def| !HIDDEN_KEYS.contains(&def.key))
+                    // TUI-scoped settings (cell-grid geometry, terminal-only
+                    // metrics) have no effect here; hide them.
+                    .filter(|def| def.frontend.includes_gui())
                     .collect();
                 for def in defs {
                     self.render_setting_row(ui, def);
