@@ -2,7 +2,7 @@
 
 A modern, multi-frontend client for [GemStone IV](https://www.play.net/gs4/) — play in the terminal, in a native desktop GUI, or from your phone.
 
-![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
+![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 ![Tests](https://img.shields.io/badge/tests-3%2C100%2B%20passing-brightgreen)
 ![Rust](https://img.shields.io/badge/rust-stable-orange)
 [![Discord](https://img.shields.io/badge/discord-join%20us-5865F2?logo=discord&logoColor=white)](https://discord.gg/6nKhWRTkSN)
@@ -127,7 +127,8 @@ controller talk, beta testing, and release announcements.
 
 ## Contributing
 
-Contributions welcome!
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for
+development setup and contribution licensing terms.
 
 ```bash
 # Run tests
@@ -139,11 +140,27 @@ RUST_LOG=debug cargo run -- --port 8000
 
 ## License
 
-Licensed under either of:
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+Copyright © 2026 Nisugi
 
-at your option.
+Licensed under the GNU General Public License v3.0 or later
+([LICENSE](LICENSE)). You may use, modify, and redistribute VellumFE
+freely; any distributed version, modified or not, must remain under the
+same license with source code available.
+
+## Code Signing Policy
+
+Windows releases are signed with a certificate provided by the
+[SignPath Foundation](https://signpath.org/), with free code signing
+provided by [SignPath.io](https://about.signpath.io/).
+
+- **Team roles**: [Nisugi](https://github.com/Nisugi) is the project
+  author, reviewer, and release approver.
+- **Signing process**: binaries are built from this repository's source
+  by GitHub Actions ([beta-release.yml](.github/workflows/beta-release.yml));
+  each release is manually approved for signing by the approver.
+- **Privacy**: this program will not transfer any information to other
+  networked systems unless specifically requested by the user or the
+  person installing or operating it. See the [privacy policy](PRIVACY.md).
 
 ## Acknowledgments
 
