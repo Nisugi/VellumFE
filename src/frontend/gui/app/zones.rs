@@ -63,6 +63,31 @@ pub(super) struct PendingZoneSnapshot {
     pub(super) zone: GuiShellZone,
 }
 
+/// Display-only sidebar widths for the shell pass on a window too
+/// narrow for both sidebars plus the center's minimum: shrink the
+/// EXPANDED sidebars proportionally so the center keeps `min_center`
+/// and the three regions can never overlap or invert. Collapsed
+/// sidebars (width 0) stay collapsed — the old math floored every
+/// sidebar at 220, resurrecting collapsed ones and driving
+/// `center_min_x` past `center_max_x` on narrow windows
+/// (gui-shell-zone-overflow-quirk). Persisted widths are the caller's
+/// business and must NOT be updated from these values: a transiently
+/// narrow window must not destroy the stored layout.
+pub(super) fn squeezed_sidebar_widths(
+    root_width: f32,
+    min_center: f32,
+    left: f32,
+    right: f32,
+) -> (f32, f32) {
+    let available = (root_width - min_center).max(0.0);
+    let total = left + right;
+    if total <= available || total <= 0.0 {
+        return (left, right);
+    }
+    let scale = available / total;
+    (left * scale, right * scale)
+}
+
 /// Effective per-tab gaps for a legacy sidebar stack. Each tab's desired
 /// `gap_above` is granted top-down out of whatever height the windows
 /// leave free in the zone, so a shrinking zone collapses gaps
@@ -1574,6 +1599,46 @@ mod tests {
 
         let zone = VellumGuiApp::zone_for_pointer(&zone_rects, Pos2::new(50.0, 50.0));
         assert_eq!(zone, None);
+    }
+
+    #[test]
+    fn squeezed_widths_fit_untouched_when_there_is_room() {
+        assert_eq!(
+            super::squeezed_sidebar_widths(1920.0, 220.0, 300.0, 300.0),
+            (300.0, 300.0)
+        );
+    }
+
+    #[test]
+    fn squeezed_widths_never_resurrect_a_collapsed_sidebar() {
+        // The old floor forced a collapsed (0-width) sidebar back to 220
+        // on narrow windows; a zero input must stay zero at ANY width.
+        let (left, right) = super::squeezed_sidebar_widths(400.0, 220.0, 0.0, 300.0);
+        assert_eq!(left, 0.0);
+        assert!((right - 180.0).abs() < 0.01, "right takes all the room");
+    }
+
+    #[test]
+    fn squeezed_widths_never_invert_the_center() {
+        // Sweep narrow widths: left + right must never exceed the space
+        // outside the center minimum, so center_min_x <= center_max_x by
+        // construction (the old math inverted at ~<660px).
+        for root in [100.0f32, 220.0, 300.0, 440.0, 660.0, 659.0] {
+            let (left, right) = super::squeezed_sidebar_widths(root, 220.0, 300.0, 300.0);
+            assert!(
+                left + right <= (root - 220.0).max(0.0) + 0.01,
+                "root {root}: {left} + {right} overflows"
+            );
+            assert!(left >= 0.0 && right >= 0.0);
+        }
+    }
+
+    #[test]
+    fn squeezed_widths_shrink_proportionally() {
+        // 2:1 sidebars keep their ratio under squeeze.
+        let (left, right) = super::squeezed_sidebar_widths(520.0, 220.0, 400.0, 200.0);
+        assert!((left / right - 2.0).abs() < 0.01);
+        assert!((left + right - 300.0).abs() < 0.01);
     }
 
     #[test]

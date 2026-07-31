@@ -5153,34 +5153,27 @@ impl eframe::App for VellumGuiApp {
 
             self.shell_layout.sanitize(root.width());
             let min_center_width = 220.0;
-            let mut left_width = if self.shell_layout.left_sidebar_collapsed {
+            let left_width = if self.shell_layout.left_sidebar_collapsed {
                 0.0
             } else {
                 self.shell_layout.left_sidebar_width
             };
-            let mut right_width = if self.shell_layout.right_sidebar_collapsed {
+            let right_width = if self.shell_layout.right_sidebar_collapsed {
                 0.0
             } else {
                 self.shell_layout.right_sidebar_width
             };
-            if left_width + right_width > (root.width() - min_center_width).max(0.0) {
-                let overflow = left_width + right_width - (root.width() - min_center_width).max(0.0);
-                let shrink_left = (overflow * 0.5).min(left_width.max(0.0));
-                left_width = (left_width - shrink_left).max(220.0);
-                right_width = (right_width - (overflow - shrink_left)).max(220.0);
-            }
-            if !self.shell_layout.left_sidebar_collapsed
-                && (self.shell_layout.left_sidebar_width - left_width).abs() > 0.5
-            {
-                self.shell_layout.left_sidebar_width = left_width;
-                self.layout_dirty = true;
-            }
-            if !self.shell_layout.right_sidebar_collapsed
-                && (self.shell_layout.right_sidebar_width - right_width).abs() > 0.5
-            {
-                self.shell_layout.right_sidebar_width = right_width;
-                self.layout_dirty = true;
-            }
+            // Display-only squeeze on narrow windows; the persisted widths
+            // stay untouched so the layout springs back when the window
+            // grows again (the old math floored collapsed sidebars back to
+            // life, inverted the center, and baked the squeeze into the
+            // saved layout).
+            let (left_width, right_width) = zones::squeezed_sidebar_widths(
+                root.width(),
+                min_center_width,
+                left_width,
+                right_width,
+            );
 
             let left_rect = if left_width > 0.0 {
                 Some(Rect::from_min_max(
