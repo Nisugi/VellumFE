@@ -564,10 +564,11 @@ fn render_gui_section(
                          along the same edge.",
                     );
                 ui.checkbox(&mut gui_settings.snap_to_bounds, "Pane edges");
-                ui.checkbox(&mut gui_settings.snap_to_centers, "Centers")
+                ui.checkbox(&mut gui_settings.snap_to_centers, "Pane center")
                     .on_hover_text(
-                        "The pane's and other windows' horizontal and \
-                         vertical center lines.",
+                        "The pane's horizontal and vertical center lines. \
+                         Off by default: center lines close to real edge \
+                         targets make snapping feel jumpy.",
                     );
             });
             ui.end_row();
@@ -575,8 +576,23 @@ fn render_gui_section(
             ui.add(egui::Slider::new(&mut gui_settings.snap_grid, 0.0..=48.0).step_by(4.0))
                 .on_hover_text(
                     "Also snap edges to a grid of this pitch in points, \
-                     anchored at the pane's top-left. 0 = no grid.",
+                     anchored at the pane's top-left. While you drag, the \
+                     grid shows as a faint overlay. 0 = no grid.",
                 );
+            ui.end_row();
+            ui.label("Grid sizing");
+            ui.add_enabled(
+                gui_settings.snap_grid > 0.0,
+                egui::Checkbox::new(
+                    &mut gui_settings.snap_move_sizes_to_grid,
+                    "Moving also sizes to grid",
+                ),
+            )
+            .on_hover_text(
+                "With a grid set, moving a window pulls each edge to its \
+                 nearest grid line — the window resizes to fit the grid. \
+                 Off = moving only repositions.",
+            );
             ui.end_row();
             ui.label("Snap guides");
             ui.checkbox(&mut gui_settings.snap_show_guides, "Show alignment guides")

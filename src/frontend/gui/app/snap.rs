@@ -1,17 +1,21 @@
-//! Snap-to-edge docking for freely placed Center-zone windows.
+//! Snap docking for freely placed Center-zone windows (v2).
 //!
-//! The engine is pure geometry: given the pointer-true (unsnapped) rect of
-//! the window being dragged, the gesture per axis (move vs. which edge is
-//! resizing), and the candidate lines (pane bounds, sibling edges, center
-//! lines, grid), it returns the snapped rect plus the guides to draw.
+//! Design (see .claude/work-units/snap-docking-v2-plan.md): while the user
+//! is engaging a center window, the shell does NOT re-feed its position —
+//! egui owns the whole gesture, so every handle and move behaves natively
+//! and the reported rect is pointer-true by construction. The engine is a
+//! pure function of that rect: classify the gesture per axis from totals
+//! since gesture start, snap the moving edges against pane bounds, sibling
+//! edges, the optional pane center, and the grid, and write the snapped
+//! rect into the canonical map every frame. egui ignores those writes
+//! mid-gesture; the moment the gesture ends the position feed resumes and
+//! the window glues onto the snapped rect (the drag state survives the
+//! release frame so the final write is the snapped drop position).
 //!
-//! The egui hook lives in `apply_center_snap`: egui applies drags as
-//! per-frame deltas on top of the canonical rect we feed it, so a plain
-//! "snap what egui reports" would make snaps inescapable (each frame's
-//! delta restarts from the snapped position). `CenterSnapDrag` therefore
-//! accumulates the pointer-true rect across the whole drag; snapping is a
-//! pure function of it, and the pointer escapes a snap the moment the true
-//! rect leaves the radius.
+//! Guides: a steady faint full-pane grid while a gesture is live (when a
+//! grid is set), plus one accent line per engaged snap with its coordinate.
+//! Shift suspends snapping and hides the accent lines; the grid overlay
+//! stays up as context.
 
 use super::*;
 
@@ -20,9 +24,15 @@ pub(super) struct SnapParams {
     pub radius: f32,
     pub to_siblings: bool,
     pub to_bounds: bool,
+    /// Pane center lines only — sibling centers are deliberately not
+    /// candidates: they sit a few px from real edge targets and make the
+    /// engaged line flip while dragging (beta.21 field report).
     pub to_centers: bool,
     /// Grid pitch in points; 0 = off.
     pub grid: f32,
+    /// Move gestures also pull each edge to its nearest grid line (the
+    /// window resizes to conform to the grid).
+    pub move_sizes_to_grid: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,12 +41,24 @@ pub(super) enum SnapGuideKind {
     Bound,
     /// Sibling window near or far edge.
     Sibling,
-    /// Pane or sibling center line.
+    /// Pane center line.
     Center,
     Grid,
 }
 
-/// One engaged snap, drawn as a dashed line with the matched coordinate.
+/// Exact ties go to the more meaningful target: butting the pane edge
+/// beats a sibling that happens to sit flush on it, which beats a grid
+/// line running through both.
+fn kind_priority(kind: SnapGuideKind) -> u8 {
+    match kind {
+        SnapGuideKind::Bound => 0,
+        SnapGuideKind::Sibling => 1,
+        SnapGuideKind::Center => 2,
+        SnapGuideKind::Grid => 3,
+    }
+}
+
+/// One engaged snap, drawn as an accent line with the matched coordinate.
 pub(super) struct SnapGuide {
     /// True: vertical line at x = `line`; false: horizontal at y = `line`.
     pub vertical: bool,
@@ -49,12 +71,13 @@ pub(super) struct SnapGuide {
     pub target: Option<String>,
 }
 
-/// How the current gesture moves the rect along one axis. Classified once
-/// per axis from the first frame the axis actually moves (egui gestures are
-/// one of title-drag or a single resize handle for the whole press).
+/// How the gesture moves the rect along one axis, classified fresh every
+/// frame from the totals since gesture start. Totals are unambiguous: a
+/// move shifts both edges equally, a resize pins the untouched edge
+/// exactly (egui owns the rect mid-gesture; nothing fights it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AxisGesture {
-    /// Axis has not moved yet this drag.
+    /// Axis has not moved (yet) this gesture.
     Idle,
     /// Both edges move together (title-bar move).
     Translate,
@@ -67,20 +90,16 @@ pub(super) enum AxisGesture {
 /// Live bookkeeping for the Center window currently being dragged/resized.
 pub(super) struct CenterSnapDrag {
     pub tab_key: TabKey,
-    /// Canonical rect at the moment the drag started.
+    /// Canonical rect at the moment the gesture started; the baseline the
+    /// per-frame gesture classification measures totals against.
     pub start: Rect,
-    /// Pointer-true rect: where the window would be with snapping off.
-    pub unsnapped: Rect,
-    pub gesture_x: AxisGesture,
-    pub gesture_y: AxisGesture,
 }
 
-/// Movement below this is treated as pixel-rounding noise, not a gesture:
-/// egui rounds window rects to physical pixels, which at fractional DPI
-/// scales reports sub-half-point jitter on rects nobody is moving.
+/// Total movement below this is pixel-rounding noise, not a gesture.
 const MOVED_EPS: f32 = 0.6;
 
-/// Classify one axis of a gesture from its min/max edge deltas.
+/// Classify one axis from its min/max edge TOTAL deltas since gesture
+/// start.
 pub(super) fn classify_axis(dmin: f32, dmax: f32) -> AxisGesture {
     let min_moved = dmin.abs() > MOVED_EPS;
     let max_moved = dmax.abs() > MOVED_EPS;
@@ -88,8 +107,6 @@ pub(super) fn classify_axis(dmin: f32, dmax: f32) -> AxisGesture {
         (false, false) => AxisGesture::Idle,
         (true, false) => AxisGesture::MinEdge,
         (false, true) => AxisGesture::MaxEdge,
-        // Both edges moving by the same amount is a move; unequal can only
-        // be rounding noise on top of a move, so read it as one too.
         (true, true) => AxisGesture::Translate,
     }
 }
@@ -109,8 +126,9 @@ struct AxisSnap {
 }
 
 /// Best snap along one axis, or None when nothing is within radius.
-/// `lo`/`hi` are the unsnapped interval; extent limits guard resize snaps
-/// against violating the window's min/max size.
+/// Candidates whose application would violate the extent limits are
+/// skipped BEFORE the closest-wins choice, so an illegal near candidate
+/// never shadows a legal one.
 #[allow(clippy::too_many_arguments)]
 fn snap_1d(
     gesture: AxisGesture,
@@ -155,7 +173,15 @@ fn snap_1d(
         {
             return;
         }
-        if best.as_ref().is_none_or(|(d, _)| distance < *d) {
+        let wins = match &best {
+            None => true,
+            Some((best_distance, best_snap)) => {
+                distance + 0.001 < *best_distance
+                    || ((distance - *best_distance).abs() <= 0.001
+                        && kind_priority(kind) < kind_priority(best_snap.kind))
+            }
+        };
+        if wins {
             best = Some((
                 distance,
                 AxisSnap { delta, line: value, kind, target, edge },
@@ -202,8 +228,8 @@ fn axis_candidates(
             target: None,
         });
     }
-    for (index, lo, hi) in siblings {
-        if params.to_siblings {
+    if params.to_siblings {
+        for (index, lo, hi) in siblings {
             candidates.push(AxisCandidate {
                 value: lo,
                 kind: SnapGuideKind::Sibling,
@@ -215,19 +241,15 @@ fn axis_candidates(
                 target: Some(index),
             });
         }
-        if params.to_centers {
-            candidates.push(AxisCandidate {
-                value: (lo + hi) * 0.5,
-                kind: SnapGuideKind::Center,
-                target: Some(index),
-            });
-        }
     }
     candidates
 }
 
-/// Snap `unsnapped` against pane bounds, sibling rects, center lines, and
-/// the grid. Axes are independent; each contributes at most one guide.
+/// Snap the pointer-true rect against pane bounds, sibling edges, the
+/// pane center, and the grid. Axes are independent. With
+/// `move_sizes_to_grid`, a move gesture additionally pulls each edge to
+/// its nearest grid line (extent-guarded), so the window conforms to the
+/// grid instead of only repositioning.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn snap_rect(
     unsnapped: Rect,
@@ -316,15 +338,99 @@ pub(super) fn snap_rect(
         });
     }
 
+    // Grid conformance on moves: after the position snap, pull each edge
+    // independently to its nearest grid line within radius. The min edge
+    // goes first; the max edge then re-checks the extent so a tiny window
+    // over a coarse grid never collapses onto a single line.
+    if params.move_sizes_to_grid && params.grid > 0.0 {
+        let mut conform =
+            |gesture: AxisGesture,
+             lo: &mut f32,
+             hi: &mut f32,
+             origin: f32,
+             min_extent: f32,
+             max_extent: f32,
+             vertical: bool,
+             names: [&'static str; 2],
+             guides: &mut Vec<SnapGuide>| {
+                if gesture != AxisGesture::Translate {
+                    return;
+                }
+                let line_near =
+                    |pos: f32| origin + ((pos - origin) / params.grid).round() * params.grid;
+                let lo_line = line_near(*lo);
+                let lo_delta = lo_line - *lo;
+                if lo_delta.abs() <= params.radius && lo_delta.abs() > 0.01 {
+                    let extent = *hi - lo_line;
+                    if extent >= min_extent - 0.01 && extent <= max_extent + 0.01 {
+                        *lo = lo_line;
+                        guides.push(SnapGuide {
+                            vertical,
+                            line: lo_line,
+                            kind: SnapGuideKind::Grid,
+                            edge: names[0],
+                            target: None,
+                        });
+                    }
+                }
+                let hi_line = line_near(*hi);
+                let hi_delta = hi_line - *hi;
+                if hi_delta.abs() <= params.radius && hi_delta.abs() > 0.01 {
+                    let extent = hi_line - *lo;
+                    if extent >= min_extent - 0.01 && extent <= max_extent + 0.01 {
+                        *hi = hi_line;
+                        guides.push(SnapGuide {
+                            vertical,
+                            line: hi_line,
+                            kind: SnapGuideKind::Grid,
+                            edge: names[1],
+                            target: None,
+                        });
+                    }
+                }
+            };
+        let (mut lo, mut hi) = (rect.min.x, rect.max.x);
+        conform(
+            gesture_x,
+            &mut lo,
+            &mut hi,
+            bounds.min.x,
+            min_size.x,
+            max_size.x,
+            true,
+            ["left", "right"],
+            &mut guides,
+        );
+        (rect.min.x, rect.max.x) = (lo, hi);
+        let (mut lo, mut hi) = (rect.min.y, rect.max.y);
+        conform(
+            gesture_y,
+            &mut lo,
+            &mut hi,
+            bounds.min.y,
+            min_size.y,
+            max_size.y,
+            false,
+            ["top", "bottom"],
+            &mut guides,
+        );
+        (rect.min.y, rect.max.y) = (lo, hi);
+    }
+
     (rect, guides)
 }
 
 impl VellumGuiApp {
-    /// Snap hook for the Center-zone drag/resize tracking path. `fed` is the
-    /// rect this frame's window builder was given (canonical/display),
-    /// `reported` is egui's post-gesture rect. Returns the rect to write
-    /// into the canonical map. Maintains the per-drag pointer-true rect and
-    /// this frame's guides as a side effect.
+    /// Snap hook for the Center-zone drag/resize tracking path. `fed` is
+    /// the canonical/display rect (what a non-engaged frame would feed),
+    /// `reported` is egui's rect — pointer-true for the whole gesture
+    /// because the position feed is suspended while the user engages the
+    /// window. Returns the rect to write into the canonical map and
+    /// maintains this frame's guides.
+    ///
+    /// On the release frame (`pointer_down` false with a live drag) the
+    /// snapped rect is written one final time as the drop position and the
+    /// drag state ends; guides end with it.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_center_snap(
         &mut self,
@@ -336,6 +442,7 @@ impl VellumGuiApp {
         min_size: Vec2,
         max_size: Vec2,
         suspended: bool,
+        pointer_down: bool,
     ) -> Rect {
         let settings = &self.ui_settings;
         let radius = settings.snap_radius.clamp(0.0, 64.0);
@@ -344,74 +451,33 @@ impl VellumGuiApp {
             return reported;
         }
 
-        if self
+        let fresh = self
             .center_snap_drag
             .as_ref()
-            .is_none_or(|drag| drag.tab_key != *tab_key)
-        {
+            .is_none_or(|drag| drag.tab_key != *tab_key);
+        if fresh {
+            if !pointer_down {
+                // A stray release-frame rect change with no drag to finish.
+                return reported;
+            }
             self.center_snap_drag = Some(CenterSnapDrag {
                 tab_key: tab_key.clone(),
                 start: fed,
-                unsnapped: fed,
-                gesture_x: AxisGesture::Idle,
-                gesture_y: AxisGesture::Idle,
             });
         }
-        let mut drag = self.center_snap_drag.take().expect("just ensured");
+        let start = self
+            .center_snap_drag
+            .as_ref()
+            .map(|drag| drag.start)
+            .expect("just ensured");
 
-        // Per-axis classification happens on the first frame that axis
-        // moves (not just the first frame of the drag): a diagonal
-        // title-drag often starts along one axis, and freezing the other
-        // axis at Idle would pin the window to it for the whole drag.
-        let dmin = reported.min - fed.min;
-        let dmax = reported.max - fed.max;
-        if drag.gesture_x == AxisGesture::Idle {
-            drag.gesture_x = classify_axis(dmin.x, dmax.x);
-        }
-        if drag.gesture_y == AxisGesture::Idle {
-            drag.gesture_y = classify_axis(dmin.y, dmax.y);
-        }
-
-        // Advance the pointer-true rect. Translation arrives as per-frame
-        // deltas (position is re-fed from the canonical map every frame, so
-        // egui's delta is relative to the snapped position); sizes are NOT
-        // re-fed while the user is engaging the window, so egui's reported
-        // extent already IS the pointer-true extent.
-        match drag.gesture_x {
-            AxisGesture::Idle => {}
-            AxisGesture::Translate => {
-                let width = drag.unsnapped.width();
-                drag.unsnapped.min.x += dmin.x;
-                drag.unsnapped.max.x = drag.unsnapped.min.x + width;
-            }
-            AxisGesture::MaxEdge => {
-                drag.unsnapped.min.x = drag.start.min.x;
-                drag.unsnapped.max.x = drag.start.min.x + reported.width();
-            }
-            AxisGesture::MinEdge => {
-                drag.unsnapped.min.x = drag.start.max.x - reported.width();
-                drag.unsnapped.max.x = drag.start.max.x;
-            }
-        }
-        match drag.gesture_y {
-            AxisGesture::Idle => {}
-            AxisGesture::Translate => {
-                let height = drag.unsnapped.height();
-                drag.unsnapped.min.y += dmin.y;
-                drag.unsnapped.max.y = drag.unsnapped.min.y + height;
-            }
-            AxisGesture::MaxEdge => {
-                drag.unsnapped.min.y = drag.start.min.y;
-                drag.unsnapped.max.y = drag.start.min.y + reported.height();
-            }
-            AxisGesture::MinEdge => {
-                drag.unsnapped.min.y = drag.start.max.y - reported.height();
-                drag.unsnapped.max.y = drag.start.max.y;
-            }
-        }
+        let gesture_x =
+            classify_axis(reported.min.x - start.min.x, reported.max.x - start.max.x);
+        let gesture_y =
+            classify_axis(reported.min.y - start.min.y, reported.max.y - start.max.y);
 
         let (snapped, guides) = if suspended {
-            (drag.unsnapped, Vec::new())
+            (reported, Vec::new())
         } else {
             let params = SnapParams {
                 radius,
@@ -419,6 +485,7 @@ impl VellumGuiApp {
                 to_bounds: settings.snap_to_bounds,
                 to_centers: settings.snap_to_centers,
                 grid: settings.snap_grid.max(0.0),
+                move_sizes_to_grid: settings.snap_move_sizes_to_grid,
             };
             let sibling_rects: Vec<(String, Rect)> = siblings
                 .iter()
@@ -426,9 +493,9 @@ impl VellumGuiApp {
                 .map(|(_, name, rect)| (name.clone(), *rect))
                 .collect();
             snap_rect(
-                drag.unsnapped,
-                drag.gesture_x,
-                drag.gesture_y,
+                reported,
+                gesture_x,
+                gesture_y,
                 bounds,
                 &sibling_rects,
                 min_size,
@@ -436,15 +503,24 @@ impl VellumGuiApp {
                 &params,
             )
         };
-        self.center_snap_guides = guides;
-        self.center_snap_drag = Some(drag);
+        if pointer_down {
+            self.center_snap_guides = guides;
+        } else {
+            self.center_snap_drag = None;
+        }
         snapped
     }
 
-    /// Draw the engaged snap guides over the center pane: a dashed line
-    /// along the matched coordinate with a small label beside it.
-    pub(super) fn paint_snap_guides(&self, ctx: &egui::Context, bounds: Rect) {
-        if self.center_snap_guides.is_empty() {
+    /// Draw the snap overlays for the center pane: the steady faint grid
+    /// while a gesture is live (Niffy's spec — context, never flashing),
+    /// then the accent guide lines for engaged snaps with their
+    /// coordinates. Shift-suspend empties the accent guides but the grid
+    /// overlay deliberately stays.
+    pub(super) fn paint_snap_overlays(&self, ctx: &egui::Context, bounds: Rect) {
+        let settings = &self.ui_settings;
+        let gesture_live = self.center_snap_drag.is_some();
+        let draw_grid = gesture_live && settings.snap_enabled && settings.snap_grid > 0.0;
+        if !draw_grid && self.center_snap_guides.is_empty() {
             return;
         }
         let painter = ctx.layer_painter(egui::LayerId::new(
@@ -453,6 +529,23 @@ impl VellumGuiApp {
         ));
         let style = ctx.global_style();
         let visuals = &style.visuals;
+
+        if draw_grid {
+            let pitch = settings.snap_grid.max(4.0);
+            let color = visuals.weak_text_color().gamma_multiply(0.3);
+            let stroke = egui::Stroke::new(1.0, color);
+            let mut x = bounds.min.x + pitch;
+            while x < bounds.max.x - 0.5 {
+                painter.vline(x, bounds.min.y..=bounds.max.y, stroke);
+                x += pitch;
+            }
+            let mut y = bounds.min.y + pitch;
+            while y < bounds.max.y - 0.5 {
+                painter.hline(bounds.min.x..=bounds.max.x, y, stroke);
+                y += pitch;
+            }
+        }
+
         let label_bg = visuals.window_fill;
         for guide in &self.center_snap_guides {
             let color = match guide.kind {
@@ -521,6 +614,7 @@ mod tests {
             to_bounds: true,
             to_centers: true,
             grid: 0.0,
+            move_sizes_to_grid: false,
         }
     }
 
@@ -608,8 +702,28 @@ mod tests {
     }
 
     #[test]
+    fn illegal_near_candidate_does_not_shadow_a_legal_one() {
+        // Sibling edge 3px away would shrink the window below min width;
+        // the pane bound 6px away is legal and must win instead.
+        let siblings = vec![("a".to_string(), rect(0.0, 0.0, 385.0, 300.0))];
+        let bounds = rect(0.0, 0.0, 394.0, 800.0);
+        let unsnapped = rect(266.0, 400.0, 388.0, 500.0);
+        let (snapped, guides) = snap_rect(
+            unsnapped,
+            AxisGesture::MaxEdge,
+            AxisGesture::Idle,
+            bounds,
+            &siblings,
+            MIN,
+            MAX,
+            &params(8.0),
+        );
+        assert_eq!(snapped.max.x, 394.0);
+        assert_eq!(guides[0].kind, SnapGuideKind::Bound);
+    }
+
+    #[test]
     fn resize_snap_rejected_when_below_min_size() {
-        // Sibling edge 4px away, but snapping would shrink below 120 wide.
         let siblings = vec![("a".to_string(), rect(0.0, 0.0, 385.0, 300.0))];
         let unsnapped = rect(266.0, 400.0, 389.0, 500.0);
         let (snapped, guides) = snap_rect(
@@ -644,7 +758,7 @@ mod tests {
     }
 
     #[test]
-    fn center_lines_snap_and_are_marked_center() {
+    fn pane_center_snaps_when_enabled() {
         // Window center-x at 497 with pane center at 500.
         let unsnapped = rect(397.0, 100.0, 597.0, 300.0);
         let (snapped, guides) = snap_rect(
@@ -663,7 +777,28 @@ mod tests {
     }
 
     #[test]
-    fn centers_toggle_off_disables_center_lines() {
+    fn sibling_centers_are_not_candidates() {
+        // A sibling whose center-x is 2px from the moving window's left
+        // edge: v1 snapped to it (and flapped between it and real edges);
+        // v2 has no sibling-center candidates at all.
+        let siblings = vec![("a".to_string(), rect(200.0, 700.0, 424.0, 780.0))];
+        let unsnapped = rect(310.0, 100.0, 460.0, 200.0);
+        let (snapped, guides) = snap_rect(
+            unsnapped,
+            AxisGesture::Translate,
+            AxisGesture::Idle,
+            BOUNDS,
+            &siblings,
+            MIN,
+            MAX,
+            &params(8.0),
+        );
+        assert_eq!(snapped, unsnapped);
+        assert!(guides.is_empty());
+    }
+
+    #[test]
+    fn centers_toggle_off_disables_pane_center() {
         let unsnapped = rect(397.0, 100.0, 597.0, 300.0);
         let mut p = params(8.0);
         p.to_centers = false;
@@ -705,10 +840,114 @@ mod tests {
     }
 
     #[test]
+    fn move_conforms_both_edges_to_grid_when_enabled() {
+        let mut p = params(8.0);
+        p.grid = 48.0;
+        p.to_bounds = false;
+        p.to_centers = false;
+        p.to_siblings = false;
+        p.move_sizes_to_grid = true;
+        // Left edge 2px off 96, right edge 5px off 288 (width 195): the
+        // translate snap lands the left edge on 96, and conformance then
+        // pulls the right edge to 288 — the window resizes to 192.
+        let unsnapped = rect(94.0, 400.0, 289.0, 500.0);
+        let (snapped, guides) = snap_rect(
+            unsnapped,
+            AxisGesture::Translate,
+            AxisGesture::Idle,
+            BOUNDS,
+            &[],
+            MIN,
+            MAX,
+            &p,
+        );
+        assert_eq!(snapped.min.x, 96.0);
+        assert_eq!(snapped.max.x, 288.0);
+        assert!(guides.iter().any(|g| g.vertical && g.line == 288.0));
+    }
+
+    #[test]
+    fn conform_never_collapses_a_small_window() {
+        let mut p = params(24.0);
+        p.grid = 48.0;
+        p.to_bounds = false;
+        p.to_centers = false;
+        p.to_siblings = false;
+        p.move_sizes_to_grid = true;
+        // 130-wide window (min 120) between lines 96 and 240: pulling the
+        // right edge from 226 down to 192 would leave 96 wide — rejected;
+        // only the left edge conforms.
+        let unsnapped = rect(95.0, 400.0, 225.0, 500.0);
+        let (snapped, _) = snap_rect(
+            unsnapped,
+            AxisGesture::Translate,
+            AxisGesture::Idle,
+            BOUNDS,
+            &[],
+            MIN,
+            MAX,
+            &p,
+        );
+        assert_eq!(snapped.min.x, 96.0);
+        assert!(snapped.width() >= 120.0);
+    }
+
+    #[test]
+    fn side_handle_draws_one_guide_on_its_own_edge_and_walks_the_grid() {
+        // Niffy's S9 (beta.21, grid-only): dragging the bottom edge drew a
+        // guide at the TOP of the window, locked to the first grid line
+        // forever. v1's latched per-frame classification could mislabel a
+        // resize as a move; v2 classifies from totals every frame, so a
+        // bottom-edge drag tests exactly one moving edge — the bottom —
+        // and its snap advances line to line as the pointer walks.
+        let mut p = params(8.0);
+        p.grid = 48.0;
+        p.to_bounds = false;
+        p.to_centers = false;
+        p.to_siblings = false;
+        let start = rect(100.0, 100.0, 300.0, 285.0);
+        for (bottom, expected_line) in [(290.0, 288.0), (338.0, 336.0), (387.0, 384.0)] {
+            let reported = rect(100.0, 100.0, 300.0, bottom);
+            // Classification straight from totals, as the hook computes it.
+            let gesture_y = classify_axis(
+                reported.min.y - start.min.y,
+                reported.max.y - start.max.y,
+            );
+            assert_eq!(gesture_y, AxisGesture::MaxEdge);
+            let (snapped, guides) =
+                snap_rect(reported, AxisGesture::Idle, gesture_y, BOUNDS, &[], MIN, MAX, &p);
+            assert_eq!(guides.len(), 1, "exactly one guide for a side handle");
+            assert!(!guides[0].vertical);
+            assert_eq!(guides[0].edge, "bottom", "guide on the dragged edge");
+            assert_eq!(guides[0].line, expected_line, "guide walks the grid");
+            assert_eq!(snapped.max.y, expected_line);
+            assert_eq!(snapped.min.y, 100.0, "top edge untouched");
+        }
+    }
+
+    #[test]
+    fn exact_tie_prefers_bound_over_grid() {
+        let mut p = params(8.0);
+        p.grid = 50.0;
+        // Pane right bound at 1000 is also a grid line (20 × 50): the
+        // guide must say "pane", not "grid".
+        let unsnapped = rect(700.0, 100.0, 996.0, 300.0);
+        let (snapped, guides) = snap_rect(
+            unsnapped,
+            AxisGesture::MaxEdge,
+            AxisGesture::Idle,
+            BOUNDS,
+            &[],
+            MIN,
+            MAX,
+            &p,
+        );
+        assert_eq!(snapped.max.x, 1000.0);
+        assert_eq!(guides[0].kind, SnapGuideKind::Bound);
+    }
+
+    #[test]
     fn closest_candidate_wins() {
-        // Sibling edge at 303 and pane center at 500 are both irrelevant;
-        // between sibling edges at 303 and 306, the left edge (at 305)
-        // takes 306.
         let siblings = vec![
             ("far".to_string(), rect(100.0, 0.0, 303.0, 50.0)),
             ("near".to_string(), rect(306.0, 0.0, 500.0, 50.0)),

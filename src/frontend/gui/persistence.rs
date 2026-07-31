@@ -397,13 +397,21 @@ pub struct GuiUiSettings {
     #[serde(default = "default_true")]
     pub snap_to_bounds: bool,
 
-    /// Snap to the pane's and siblings' horizontal/vertical center lines.
-    #[serde(default = "default_true")]
+    /// Snap to the pane's horizontal/vertical center lines. Off by
+    /// default: center candidates near real edge targets make the engaged
+    /// line flip while dragging. Sibling centers are not candidates at all.
+    #[serde(default)]
     pub snap_to_centers: bool,
 
     /// Grid pitch in points, relative to the pane origin; 0 = no grid.
     #[serde(default)]
     pub snap_grid: f32,
+
+    /// With a grid set, moving a window also pulls each edge to its
+    /// nearest grid line — the window resizes to conform to the grid
+    /// instead of only repositioning.
+    #[serde(default)]
+    pub snap_move_sizes_to_grid: bool,
 
     /// Draw a dashed guide line with the matched coordinate while a snap
     /// is engaged.
@@ -508,8 +516,9 @@ impl Default for GuiUiSettings {
             snap_radius: default_snap_radius(),
             snap_to_siblings: default_true(),
             snap_to_bounds: default_true(),
-            snap_to_centers: default_true(),
+            snap_to_centers: false,
             snap_grid: 0.0,
+            snap_move_sizes_to_grid: false,
             snap_show_guides: default_true(),
         }
     }

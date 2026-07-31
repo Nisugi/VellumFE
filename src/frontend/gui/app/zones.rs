@@ -1354,7 +1354,13 @@ impl VellumGuiApp {
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         if !pointer_down {
             self.center_engaged_tab = None;
-            self.center_snap_drag = None;
+            // The snap drag must survive the RELEASE frame: the hook's
+            // final pass writes the snapped rect as the drop position and
+            // drops the state itself. This is only the backstop for a
+            // release the center pass never got to process.
+            if !ctx.input(|i| i.pointer.any_released()) {
+                self.center_snap_drag = None;
+            }
         }
 
         // Center windows render at *display* rects computed from their
@@ -1610,11 +1616,21 @@ impl VellumGuiApp {
             // The canonical rect drives the position every frame, in every
             // zone: egui's remembered position must never win, or a
             // `.loadlayout` restore leaves the window wherever it was
-            // (`default_pos` is ignored once a window exists). Drags still
-            // work — egui applies the drag delta after this, and the
-            // engagement-gated tracking below writes the result back into
-            // the canonical map, which this then follows next frame.
-            window_builder = window_builder.current_pos(initial_rect.min);
+            // (`default_pos` is ignored once a window exists).
+            //
+            // EXCEPT while the user is engaging a Center window: egui does
+            // not accept an externally fed position mid-gesture — a move
+            // drag anchors to drag-start + total pointer delta and ignores
+            // the feed, and left/top resizes (position + size) get yanked
+            // back each frame with the next delta applied on top, which is
+            // why only size-only handles behaved in beta.21. During the
+            // gesture egui owns the rect (every handle native by
+            // construction); the engagement-gated tracking below adopts
+            // the (snapped) result into the canonical map, and the feed
+            // resumes on release — gluing the window to any engaged snap.
+            if !(zone == GuiShellZone::Center && user_engaging_window && !being_moved) {
+                window_builder = window_builder.current_pos(initial_rect.min);
+            }
             if is_webui_window && !title_bar_hidden {
                 window_builder = window_builder.open(&mut webui_open);
             }
@@ -1659,9 +1675,11 @@ impl VellumGuiApp {
                 // so windows never sprang back when the zone closed and a
                 // loaded layout was overwritten by the on-screen geometry.
                 let should_track_rect = rect_changed && user_engaging_window;
-                // While a snap drag is live, keep running the snap hook even
-                // on frames where the pointer holds still (rect unchanged),
-                // so the guides stay up instead of flickering off mid-drag.
+                // While a snap drag is live the hook runs every frame — even
+                // when the pointer holds still (guides must not flicker off)
+                // and on the release frame, where the engagement gate is
+                // already down but the drag's final snapped rect still has
+                // to be written as the drop position.
                 let snap_drag_live = self
                     .center_snap_drag
                     .as_ref()
@@ -1669,8 +1687,7 @@ impl VellumGuiApp {
                 if zone == GuiShellZone::Center
                     && !is_hand_widget
                     && !being_moved
-                    && user_engaging_window
-                    && (rect_changed || snap_drag_live)
+                    && (snap_drag_live || (rect_changed && user_engaging_window))
                 {
                     let tracked = self.apply_center_snap(
                         &tab.id.key,
@@ -1681,6 +1698,7 @@ impl VellumGuiApp {
                         min_window_size,
                         max_window_size,
                         snap_suspended,
+                        pointer_down,
                     );
                     self.track_main_window_rect(&tab.id.key, tracked, window_bounds);
                 } else if should_track_rect {
@@ -1764,7 +1782,7 @@ impl VellumGuiApp {
         }
 
         if zone == GuiShellZone::Center && self.ui_settings.snap_show_guides {
-            self.paint_snap_guides(ctx, window_bounds);
+            self.paint_snap_overlays(ctx, window_bounds);
         }
 
         actions
