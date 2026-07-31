@@ -41,6 +41,7 @@ command `quit` also saves your settings on the way out.)
 | `.rename <window> <new title>` | | Rename a window's title |
 | `.border <window> <style> [color]` | | Set border sides: `all`, `none`, `top`, `bottom`, `left`, `right` |
 | `.lockwindows` | `.lockall`, `.unlockwindows`, `.unlockall` | Toggle move/resize lock on all windows |
+| `.performance [dump]` | `.perf` | Toggle the [performance monitor](./performance.md); `dump` writes a diagnostic report file |
 | `.savelayout [name]` | | Save the current layout under a name in the shared `~/.vellum-fe/layouts/` folder, loadable by any character (each frontend has its own format: TUI `.toml` grids, GUI `.json` checkpoints) |
 | `.loadlayout <name>` | | Load a saved layout; in the GUI it applies live to the running session |
 | `.layouts` | | List saved layouts for this frontend |

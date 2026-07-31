@@ -67,6 +67,7 @@
 
 - [Command Reference](./reference/commands.md)
 - [Inventory Tools (.foreach, .sorter)](./features/inventory-tools.md)
+- [Performance Monitor](./reference/performance.md)
 - [CLI Reference](./reference/cli.md)
 - [FAQ](./reference/faq.md)
 - [Troubleshooting](./reference/troubleshooting.md)
