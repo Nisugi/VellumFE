@@ -549,9 +549,11 @@ fn render_gui_section(
         ui.label("Window snapping");
         ui.checkbox(&mut gui_settings.snap_enabled, "Snap windows to edges")
             .on_hover_text(
-                "Center-pane windows snap to each other and to the pane \
-                 edges while you drag or resize them. Hold Shift during a \
-                 drag to place a window freely.",
+                "Windows snap to each other and to their pane's edges \
+                 while you drag or resize them — in the center, header, \
+                 and footer alike (windows only snap against neighbors in \
+                 the same pane). Hold Shift during a drag to place a \
+                 window freely.",
             );
         ui.end_row();
         if gui_settings.snap_enabled {

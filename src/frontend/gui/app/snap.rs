@@ -1,7 +1,13 @@
-//! Snap docking for freely placed Center-zone windows (v2).
+//! Snap docking for freely placed zone windows (v2).
+//!
+//! Born Center-only; the header and footer zones share the same render
+//! loop and joined via zone-free-movement-plan.md P1 (sidebars follow in
+//! P2). The drag state carries its zone so guides and the grid overlay
+//! paint into the pane the gesture lives in; sibling candidates come from
+//! that zone only.
 //!
 //! Design (see .claude/work-units/snap-docking-v2-plan.md): while the user
-//! is engaging a center window, the shell does NOT re-feed its position —
+//! is engaging a zone window, the shell does NOT re-feed its position —
 //! egui owns the whole gesture, so every handle and move behaves natively
 //! and the reported rect is pointer-true by construction. The engine is a
 //! pure function of that rect: classify the gesture per axis from totals
@@ -87,9 +93,12 @@ pub(super) enum AxisGesture {
     MaxEdge,
 }
 
-/// Live bookkeeping for the Center window currently being dragged/resized.
-pub(super) struct CenterSnapDrag {
+/// Live bookkeeping for the zone window currently being dragged/resized.
+/// One pointer means at most one live gesture, so a single slot serves
+/// every zone; `zone` scopes the overlays to the pane that owns it.
+pub(super) struct ZoneSnapDrag {
     pub tab_key: TabKey,
+    pub zone: GuiShellZone,
     /// Canonical rect at the moment the gesture started; the baseline the
     /// per-frame gesture classification measures totals against.
     pub start: Rect,
@@ -431,19 +440,21 @@ pub(super) fn snap_rect(
 }
 
 impl VellumGuiApp {
-    /// Snap hook for the Center-zone drag/resize tracking path. `fed` is
-    /// the canonical/display rect (what a non-engaged frame would feed),
+    /// Snap hook for the zone drag/resize tracking path. `fed` is the
+    /// canonical/display rect (what a non-engaged frame would feed),
     /// `reported` is egui's rect — pointer-true for the whole gesture
     /// because the position feed is suspended while the user engages the
-    /// window. Returns the rect to write into the canonical map and
+    /// window. `bounds` is the engaged zone's pane rect and `siblings`
+    /// its windows. Returns the rect to write into the canonical map and
     /// maintains this frame's guides.
     ///
     /// On the release frame (`pointer_down` false with a live drag) the
     /// snapped rect is written one final time as the drop position and the
     /// drag state ends; guides end with it.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn apply_center_snap(
+    pub(super) fn apply_zone_snap(
         &mut self,
+        zone: GuiShellZone,
         tab_key: &TabKey,
         fed: Rect,
         reported: Rect,
@@ -457,12 +468,12 @@ impl VellumGuiApp {
         let settings = &self.ui_settings;
         let radius = settings.snap_radius.clamp(0.0, 64.0);
         if !settings.snap_enabled || radius <= 0.0 {
-            self.center_snap_drag = None;
+            self.zone_snap_drag = None;
             return reported;
         }
 
         let fresh = self
-            .center_snap_drag
+            .zone_snap_drag
             .as_ref()
             .is_none_or(|drag| drag.tab_key != *tab_key);
         if fresh {
@@ -470,13 +481,14 @@ impl VellumGuiApp {
                 // A stray release-frame rect change with no drag to finish.
                 return reported;
             }
-            self.center_snap_drag = Some(CenterSnapDrag {
+            self.zone_snap_drag = Some(ZoneSnapDrag {
                 tab_key: tab_key.clone(),
+                zone,
                 start: fed,
             });
         }
         let start = self
-            .center_snap_drag
+            .zone_snap_drag
             .as_ref()
             .map(|drag| drag.start)
             .expect("just ensured");
@@ -519,8 +531,9 @@ impl VellumGuiApp {
                 .map(|guide| format!("{} {:.1} {:?}", guide.edge, guide.line, guide.kind))
                 .collect();
             tracing::info!(
-                "snapdbg drag {:?} down={} susp={} gx={:?} gy={:?} start=[{:.1} {:.1} {:.1} {:.1}] fed=[{:.1} {:.1} {:.1} {:.1}] reported=[{:.1} {:.1} {:.1} {:.1}] snapped=[{:.1} {:.1} {:.1} {:.1}] guides=[{}]",
+                "snapdbg drag {:?} zone={:?} down={} susp={} gx={:?} gy={:?} start=[{:.1} {:.1} {:.1} {:.1}] fed=[{:.1} {:.1} {:.1} {:.1}] reported=[{:.1} {:.1} {:.1} {:.1}] snapped=[{:.1} {:.1} {:.1} {:.1}] guides=[{}]",
                 tab_key,
+                zone,
                 pointer_down,
                 suspended,
                 gesture_x,
@@ -533,23 +546,29 @@ impl VellumGuiApp {
             );
         }
         if pointer_down {
-            self.center_snap_guides = guides;
+            self.zone_snap_guides = guides;
         } else {
-            self.center_snap_drag = None;
+            self.zone_snap_drag = None;
         }
         snapped
     }
 
-    /// Draw the snap overlays for the center pane: the steady faint grid
+    /// Draw the snap overlays for one zone's pane: the steady faint grid
     /// while a gesture is live (Niffy's spec — context, never flashing),
     /// then the accent guide lines for engaged snaps with their
     /// coordinates. Shift-suspend empties the accent guides but the grid
-    /// overlay deliberately stays.
-    pub(super) fn paint_snap_overlays(&self, ctx: &egui::Context, bounds: Rect) {
+    /// overlay deliberately stays. Zone-scoped: only the pane that owns
+    /// the live gesture draws anything — guides are cleared and rebuilt
+    /// by the owning zone's pass each frame, and the grid check here
+    /// keeps a header drag from carpeting the center in grid lines.
+    pub(super) fn paint_snap_overlays(&self, ctx: &egui::Context, zone: GuiShellZone, bounds: Rect) {
         let settings = &self.ui_settings;
-        let gesture_live = self.center_snap_drag.is_some();
+        let gesture_live = self
+            .zone_snap_drag
+            .as_ref()
+            .is_some_and(|drag| drag.zone == zone);
         let draw_grid = gesture_live && settings.snap_enabled && settings.snap_grid > 0.0;
-        if !draw_grid && self.center_snap_guides.is_empty() {
+        if !draw_grid && (!gesture_live || self.zone_snap_guides.is_empty()) {
             return;
         }
         let painter = ctx.layer_painter(egui::LayerId::new(
@@ -576,7 +595,7 @@ impl VellumGuiApp {
         }
 
         let label_bg = visuals.window_fill;
-        for guide in &self.center_snap_guides {
+        for guide in &self.zone_snap_guides {
             let color = match guide.kind {
                 SnapGuideKind::Center => Color32::from_rgb(204, 136, 68),
                 SnapGuideKind::Grid => visuals.weak_text_color(),

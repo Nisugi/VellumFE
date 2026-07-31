@@ -365,17 +365,17 @@ pub struct VellumGuiApp {
     window_context_menu_just_opened: bool,
     zone_drag_state: Option<GuiZoneDragState>,
     hand_resize_tab: Option<TabKey>,
-    /// Center window whose size pin is relaxed for the CURRENT press.
+    /// Zone window whose size pin is relaxed for the CURRENT press.
     /// Latched when a press starts on/near the window and held until the
     /// mouse releases: a shrink drag moves the grabbed edge away from the
     /// press origin, so re-testing the origin against the current rect
     /// every frame would re-pin the size mid-drag and stall the resize.
-    center_engaged_tab: Option<TabKey>,
-    /// Pointer-true rect of the Center window being dragged/resized, so
+    zone_engaged_tab: Option<TabKey>,
+    /// Pointer-true rect of the zone window being dragged/resized, so
     /// snapping stays escapable (see `snap.rs`); None outside a drag.
-    center_snap_drag: Option<snap::CenterSnapDrag>,
-    /// Snaps engaged this frame, drawn as guides by the Center zone pass.
-    center_snap_guides: Vec<snap::SnapGuide>,
+    zone_snap_drag: Option<snap::ZoneSnapDrag>,
+    /// Snaps engaged this frame, drawn as guides by the owning zone's pass.
+    zone_snap_guides: Vec<snap::SnapGuide>,
     /// `.snapdebug`: per-frame snap trace into vellum-fe.log. Runtime
     /// toggle, deliberately not persisted.
     snap_debug: bool,
@@ -684,9 +684,9 @@ impl VellumGuiApp {
             window_context_menu_just_opened: false,
             zone_drag_state: None,
             hand_resize_tab: None,
-            center_engaged_tab: None,
-            center_snap_drag: None,
-            center_snap_guides: Vec::new(),
+            zone_engaged_tab: None,
+            zone_snap_drag: None,
+            zone_snap_guides: Vec::new(),
             snap_debug: false,
             last_monitor_bounds: None,
             main_viewport_state,
@@ -2350,8 +2350,8 @@ impl VellumGuiApp {
         self.main_window_rects = restored.main_window_rects;
         self.sidebar_gap_above = restored.sidebar_gap_above;
         self.last_center_window_rects.clear();
-        self.center_snap_drag = None;
-        self.center_snap_guides.clear();
+        self.zone_snap_drag = None;
+        self.zone_snap_guides.clear();
         self.tab_zones = restored.tab_zones;
         self.no_title_tabs = restored.no_title_tabs;
         self.shell_layout = restored.shell_layout;

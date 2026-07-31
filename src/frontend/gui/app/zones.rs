@@ -1368,13 +1368,13 @@ impl VellumGuiApp {
         // The engagement latch lives for one press; release clears it.
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         if !pointer_down {
-            self.center_engaged_tab = None;
+            self.zone_engaged_tab = None;
             // The snap drag must survive the RELEASE frame: the hook's
             // final pass writes the snapped rect as the drop position and
             // drops the state itself. This is only the backstop for a
-            // release the center pass never got to process.
+            // release the owning zone's pass never got to process.
             if !ctx.input(|i| i.pointer.any_released()) {
-                self.center_snap_drag = None;
+                self.zone_snap_drag = None;
             }
         }
 
@@ -1426,15 +1426,20 @@ impl VellumGuiApp {
             HashMap::new()
         };
 
-        // Snap candidates: every center window's on-screen (display) rect
-        // and title — snapping matches what the user sees. Guides live for
-        // one frame; an active drag repopulates them below.
-        if zone == GuiShellZone::Center {
-            self.center_snap_guides.clear();
-        }
+        // Snap candidates: every window's on-screen rect and title, scoped
+        // to THIS zone — snapping matches what the user sees, and a header
+        // window never snaps against a center sibling it can't reach. For
+        // Center that is the display rect (displacement applied); for
+        // header/footer it mirrors the position feed (canonical clamped to
+        // the pane, fallback otherwise) with the compact height cap applied
+        // so a hand's phantom stored height is not a snap target. Guides
+        // live for one frame; each non-sidebar pass clears them and only
+        // the pass owning the live drag repopulates (and paints) them, so
+        // they can never leak into another zone's pane.
+        self.zone_snap_guides.clear();
         let snap_suspended = ctx.input(|i| i.modifiers.shift);
-        let snap_siblings: Vec<(TabKey, String, Rect)> =
-            if zone == GuiShellZone::Center && self.ui_settings.snap_enabled {
+        let snap_siblings: Vec<(TabKey, String, Rect)> = if self.ui_settings.snap_enabled {
+            if zone == GuiShellZone::Center {
                 tabs.iter()
                     .filter_map(|tab| {
                         center_displays.get(&tab.id.key).map(|rect| {
@@ -1443,8 +1448,40 @@ impl VellumGuiApp {
                     })
                     .collect()
             } else {
-                Vec::new()
-            };
+                tabs.iter()
+                    .filter_map(|tab| {
+                        let window = self.app_core.ui_state.windows.get(&tab.window_name)?;
+                        let mut rect = self
+                            .main_window_rects
+                            .get(&tab.id.key)
+                            .copied()
+                            .and_then(Self::rect_from_snapshot)
+                            .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
+                            .or_else(|| {
+                                Self::tab_window_rect(window_bounds, layout_bounds, window)
+                            })?;
+                        let grouped = self
+                            .group_for_tab(&tab.id.key)
+                            .is_some_and(|group| group.members.len() > 1);
+                        if !grouped {
+                            if let Some(cap) = self.compact_height_cap(
+                                ctx,
+                                &tab.id.key,
+                                window,
+                                self.title_bar_hidden(&tab.id.key),
+                            ) {
+                                let capped =
+                                    rect.height().min(cap.max(MIN_DOCKED_WINDOW_HEIGHT));
+                                rect.set_height(capped);
+                            }
+                        }
+                        Some((tab.id.key.clone(), self.window_display_title(tab), rect))
+                    })
+                    .collect()
+            }
+        } else {
+            Vec::new()
+        };
 
         let mut occupied_rects: Vec<Rect> = Vec::new();
         for tab in tabs {
@@ -1628,17 +1665,17 @@ impl VellumGuiApp {
             // window (resize handles included) relaxes the pin so drags
             // behave normally — and the drag's tracking then updates the
             // canonical rect the display derives from. Engagement LATCHES
-            // for the whole press (center_engaged_tab): a shrink drag pulls
+            // for the whole press (zone_engaged_tab): a shrink drag pulls
             // the grabbed edge away from the press origin, and re-testing
             // the origin against the shrinking rect would re-pin the size
             // mid-drag, stalling the resize after ~12px per grab.
             let user_engaging_window = !window_locked
                 && pointer_interacting
-                && (self.center_engaged_tab.as_ref() == Some(&tab.id.key)
+                && (self.zone_engaged_tab.as_ref() == Some(&tab.id.key)
                     || press_origin
                         .is_some_and(|pos| initial_rect.expand(12.0).contains(pos)));
             if user_engaging_window && pointer_down {
-                self.center_engaged_tab = Some(tab.id.key.clone());
+                self.zone_engaged_tab = Some(tab.id.key.clone());
             }
             if !is_compact_widget && !is_hand_widget && !being_moved && !user_engaging_window {
                 window_builder = window_builder
@@ -1650,17 +1687,19 @@ impl VellumGuiApp {
             // `.loadlayout` restore leaves the window wherever it was
             // (`default_pos` is ignored once a window exists).
             //
-            // EXCEPT while the user is engaging a Center window: egui does
-            // not accept an externally fed position mid-gesture — a move
-            // drag anchors to drag-start + total pointer delta and ignores
-            // the feed, and left/top resizes (position + size) get yanked
+            // EXCEPT while the user is engaging the window: egui does not
+            // accept an externally fed position mid-gesture — a move drag
+            // anchors to drag-start + total pointer delta and ignores the
+            // feed, and left/top resizes (position + size) get yanked
             // back each frame with the next delta applied on top, which is
-            // why only size-only handles behaved in beta.21. During the
-            // gesture egui owns the rect (every handle native by
-            // construction); the engagement-gated tracking below adopts
-            // the (snapped) result into the canonical map, and the feed
-            // resumes on release — gluing the window to any engaged snap.
-            if !(zone == GuiShellZone::Center && user_engaging_window && !being_moved) {
+            // why only size-only handles behaved in beta.21 (and why
+            // header/footer left/top resizes stayed broken until this gate
+            // covered them too). During the gesture egui owns the rect
+            // (every handle native by construction); the engagement-gated
+            // tracking below adopts the (snapped) result into the
+            // canonical map, and the feed resumes on release — gluing the
+            // window to any engaged snap.
+            if !(user_engaging_window && !being_moved) {
                 window_builder = window_builder.current_pos(initial_rect.min);
             }
             if is_webui_window && !title_bar_hidden {
@@ -1700,11 +1739,12 @@ impl VellumGuiApp {
                 // every "can't snap to window X" report — the canonical
                 // (candidate source), the display rect fed to egui, and
                 // what egui actually rendered (title bar, pins, caps).
-                if self.snap_debug && zone == GuiShellZone::Center && pointer_interacting {
+                if self.snap_debug && pointer_interacting {
                     let rendered = inner.response.rect;
                     tracing::info!(
-                        "snapdbg win {:?} title_hidden={} canon={:?} display=[{:.1} {:.1} {:.1} {:.1}] rendered=[{:.1} {:.1} {:.1} {:.1}]",
+                        "snapdbg win {:?} zone={:?} title_hidden={} canon={:?} display=[{:.1} {:.1} {:.1} {:.1}] rendered=[{:.1} {:.1} {:.1} {:.1}]",
                         tab.id.key,
+                        zone,
                         title_bar_hidden,
                         self.main_window_rects.get(&tab.id.key),
                         initial_rect.min.x,
@@ -1734,15 +1774,15 @@ impl VellumGuiApp {
                 // already down but the drag's final snapped rect still has
                 // to be written as the drop position.
                 let snap_drag_live = self
-                    .center_snap_drag
+                    .zone_snap_drag
                     .as_ref()
                     .is_some_and(|drag| drag.tab_key == tab.id.key);
-                if zone == GuiShellZone::Center
-                    && !is_hand_widget
+                if !is_hand_widget
                     && !being_moved
                     && (snap_drag_live || (rect_changed && user_engaging_window))
                 {
-                    let tracked = self.apply_center_snap(
+                    let tracked = self.apply_zone_snap(
+                        zone,
                         &tab.id.key,
                         initial_rect,
                         inner.response.rect,
@@ -1834,8 +1874,8 @@ impl VellumGuiApp {
             }
         }
 
-        if zone == GuiShellZone::Center && self.ui_settings.snap_show_guides {
-            self.paint_snap_overlays(ctx, window_bounds);
+        if self.ui_settings.snap_show_guides {
+            self.paint_snap_overlays(ctx, zone, window_bounds);
         }
 
         actions
