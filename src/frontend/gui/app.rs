@@ -369,6 +369,9 @@ pub struct VellumGuiApp {
     center_snap_drag: Option<snap::CenterSnapDrag>,
     /// Snaps engaged this frame, drawn as guides by the Center zone pass.
     center_snap_guides: Vec<snap::SnapGuide>,
+    /// `.snapdebug`: per-frame snap trace into vellum-fe.log. Runtime
+    /// toggle, deliberately not persisted.
+    snap_debug: bool,
     last_monitor_bounds: Option<[f32; 4]>,
     /// Latest main OS window geometry, persisted so the next launch opens
     /// at the same size (per-window rects are saved against this geometry).
@@ -676,6 +679,7 @@ impl VellumGuiApp {
             center_engaged_tab: None,
             center_snap_drag: None,
             center_snap_guides: Vec::new(),
+            snap_debug: false,
             last_monitor_bounds: None,
             main_viewport_state,
             webui_bridge: None,
@@ -4467,6 +4471,17 @@ impl VellumGuiApp {
                         .add_system_message("No skin active. Use .setskin <name> first.");
                 }
             }
+            return true;
+        }
+        if action == "action:snapdebug" {
+            self.snap_debug = !self.snap_debug;
+            self.app_core.add_system_message(if self.snap_debug {
+                "Snap debug trace ON: drag/resize center windows, then read \
+                 ~/.vellum-fe/vellum-fe.log (lines tagged 'snapdbg'). \
+                 Toggle off with .snapdebug."
+            } else {
+                "Snap debug trace off."
+            });
             return true;
         }
         if action == "action:settings" {

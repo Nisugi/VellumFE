@@ -1951,6 +1951,14 @@ impl AppCore {
                 }
             }
 
+            // Snap diagnostics (GUI): toggle a per-frame trace of the
+            // center-window snap engine (gesture classification,
+            // canonical vs rendered rects, engaged guides) into
+            // vellum-fe.log. Lines are tagged 'snapdbg'.
+            "snapdebug" => {
+                return Ok("action:snapdebug".to_string());
+            }
+
             // Reload config from disk
             "reload" => {
                 tracing::debug!("handle_dot_command: reload args {:?}", parts.get(1));

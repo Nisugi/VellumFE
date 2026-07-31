@@ -513,6 +513,25 @@ impl VellumGuiApp {
                 &params,
             )
         };
+        if self.snap_debug {
+            let guide_list: Vec<String> = guides
+                .iter()
+                .map(|guide| format!("{} {:.1} {:?}", guide.edge, guide.line, guide.kind))
+                .collect();
+            tracing::info!(
+                "snapdbg drag {:?} down={} susp={} gx={:?} gy={:?} start=[{:.1} {:.1} {:.1} {:.1}] fed=[{:.1} {:.1} {:.1} {:.1}] reported=[{:.1} {:.1} {:.1} {:.1}] snapped=[{:.1} {:.1} {:.1} {:.1}] guides=[{}]",
+                tab_key,
+                pointer_down,
+                suspended,
+                gesture_x,
+                gesture_y,
+                start.min.x, start.min.y, start.max.x, start.max.y,
+                fed.min.x, fed.min.y, fed.max.x, fed.max.y,
+                reported.min.x, reported.min.y, reported.max.x, reported.max.y,
+                snapped.min.x, snapped.min.y, snapped.max.x, snapped.max.y,
+                guide_list.join(", "),
+            );
+        }
         if pointer_down {
             self.center_snap_guides = guides;
         } else {

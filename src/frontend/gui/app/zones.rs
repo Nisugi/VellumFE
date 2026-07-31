@@ -1664,6 +1664,27 @@ impl VellumGuiApp {
                         hand_resize_delta_x += ctx.input(|i| i.pointer.delta().x);
                     }
                 }
+                // `.snapdebug`: the three rects whose divergence explains
+                // every "can't snap to window X" report — the canonical
+                // (candidate source), the display rect fed to egui, and
+                // what egui actually rendered (title bar, pins, caps).
+                if self.snap_debug && zone == GuiShellZone::Center && pointer_interacting {
+                    let rendered = inner.response.rect;
+                    tracing::info!(
+                        "snapdbg win {:?} title_hidden={} canon={:?} display=[{:.1} {:.1} {:.1} {:.1}] rendered=[{:.1} {:.1} {:.1} {:.1}]",
+                        tab.id.key,
+                        title_bar_hidden,
+                        self.main_window_rects.get(&tab.id.key),
+                        initial_rect.min.x,
+                        initial_rect.min.y,
+                        initial_rect.max.x,
+                        initial_rect.max.y,
+                        rendered.min.x,
+                        rendered.min.y,
+                        rendered.max.x,
+                        rendered.max.y,
+                    );
+                }
                 let rect_changed = (inner.response.rect.min - initial_rect.min).length_sq() > 0.25
                     || (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25;
                 // Only geometry the user changed by grabbing THIS window may
