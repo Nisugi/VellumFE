@@ -1392,6 +1392,9 @@ impl AppCore {
         tracing::debug!("handle_dot_command: '{}'", command);
 
         match cmd.as_str() {
+            // === COMMAND ARMS BEGIN === (command_help.rs tripwire: every
+            // top-level arm literal here must have a help-table row, and
+            // vice versa; the test extracts them from this source span)
             // Application commands
             "quit" | "q" => {
                 self.quit();
@@ -2113,6 +2116,7 @@ impl AppCore {
                 self.needs_render = true;
             }
 
+            // === COMMAND ARMS END ===
             _ => {
                 self.add_system_message(&format!("Unknown command: {}", command));
                 self.add_system_message("Type .help for list of commands");
