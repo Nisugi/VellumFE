@@ -1400,11 +1400,11 @@ impl MessageProcessor {
                 tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
 
                 // U3: dialogs reaching here are non-resident (resident ones
-                // are mined into panels). Blocklisted ones (bank-style that
-                // the user suppresses) don't pop up; the store still ingests
-                // their data so the window can be shown later.
+                // are mined into panels). Hidden-until-shown: a dialog the
+                // user never showed doesn't pop up, but the store still
+                // ingests its data so the window can be shown later.
                 if !Self::dialog_should_popup(ui_state, id) {
-                    tracing::debug!("DialogOpen suppressed (blocklisted): id={}", id);
+                    tracing::debug!("DialogOpen suppressed (not shown by user): id={}", id);
                     return;
                 }
 
@@ -2069,10 +2069,6 @@ impl MessageProcessor {
     /// stream to "room", causing room text to be discarded. The stream is reset on prompt.
     ///
     /// DragonRealms-specific - GemStone IV doesn't use streamWindow room.
-    /// Gate a `dialogData` element through the window-offer registry:
-    /// make sure the dialog id is offered (seeding a Hidden policy from
-    /// the config blocklist the first time it's seen, so dialogData-first
-    /// ids are still suppressed) and return whether it may be shown.
     /// After ingesting a dialogData delta into the store, reflect it into
     /// the visible `active_dialog` if this dialog should be shown. When
     /// first materializing a shown dialog, seed its saved position/size.
@@ -2107,7 +2103,6 @@ impl MessageProcessor {
         }
     }
 
-    /// Whether a dialog's data may be shown as a transient popup. The
     /// Whether a dialog's data may be shown as a transient popup. The
     /// always-ingest store keeps every dialog's state regardless; this only
     /// gates the popup. U6: nothing pops up unless the user has SHOWN it via
@@ -4685,7 +4680,7 @@ mod tests {
     #[test]
     fn discovery_routes_container_signal_bank_popup_stream_queue() {
         // U3: no offer registry. A container sets the newly_registered
-        // signal; a non-blocklisted dialog (bank) becomes a popup; a
+        // signal; a dialog (bank) pops up only once the user shows it; a
         // streamWindow pushes a WindowDiscovery for AppCore to bind.
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
@@ -4729,8 +4724,8 @@ mod tests {
             processor.newly_registered_container,
             Some(("77".to_string(), "Backpack".to_string()))
         );
-        // U6: bank does NOT pop up by default (hidden-until-shown; the
-        // blocklist is gone — nothing pops unless its id is in shown_dialog_ids).
+        // U6: bank does NOT pop up by default (hidden-until-shown —
+        // nothing pops unless its id is in shown_dialog_ids).
         assert!(ui_state.active_dialog.is_none());
         // Stream → a WindowDiscovery for AppCore to register.
         let disc = &ui_state.pending_window_discoveries;
@@ -4760,8 +4755,8 @@ mod tests {
 
     #[test]
     fn dialog_popup_gated_on_shown_dialog_ids() {
-        // U6: no blocklist — a dialog pops up ONLY if the user has shown it
-        // (its id in shown_dialog_ids). Empty set = nothing pops up.
+        // U6: a dialog pops up ONLY if the user has shown it (its id in
+        // shown_dialog_ids). Empty set = nothing pops up.
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
         let mut ui_state = UiState::default();
@@ -4804,11 +4799,11 @@ mod tests {
     }
 
     #[test]
-    fn blocklisted_combat_dialogdata_never_opens_popup() {
+    fn hidden_combat_dialogdata_never_opens_popup() {
         // Real shapes from a 2026-07-28 session log: the combat window is a
         // RESIDENT openDialog (so no DialogOpen is emitted) whose dialogData
-        // then arrives both embedded and standalone. 'combat' is in the
-        // default blocklist, so none of it may create the generic popup.
+        // then arrives both embedded and standalone. The user never showed
+        // 'combat', so none of it may create the generic popup.
         let mut parser = crate::parser::XmlParser::new();
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
@@ -4838,7 +4833,7 @@ mod tests {
 
         assert!(
             ui_state.active_dialog.is_none(),
-            "blocklisted combat dialogData opened the generic popup: {:?}",
+            "hidden combat dialogData opened the generic popup: {:?}",
             ui_state.active_dialog.as_ref().map(|d| &d.id)
         );
         // It was recorded as a DialogPanel discovery (Hidden by default).
@@ -4919,9 +4914,9 @@ mod tests {
     }
 
     #[test]
-    fn always_ingest_store_accumulates_blocklisted_dialog() {
+    fn always_ingest_store_accumulates_hidden_dialog() {
         // The core fix: the game sends combat's definition (here as a batch);
-        // combat is blocklisted so no popup appears, but the store ingests
+        // combat was never shown so no popup appears, but the store ingests
         // the whole panel so showing it later renders fully formed.
         let mut parser = crate::parser::XmlParser::new();
         let mut processor = create_test_processor();
@@ -4948,7 +4943,7 @@ mod tests {
             }
         }
 
-        // Blocklisted → no transient popup, but fully stored.
+        // Hidden → no transient popup, but fully stored.
         assert!(app.ui_state.active_dialog.is_none());
         let stored = app.ui_state.dialog_store.get("combat").expect("stored");
         assert_eq!(stored.buttons.len(), 2);

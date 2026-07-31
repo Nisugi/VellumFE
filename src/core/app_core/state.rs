@@ -4158,8 +4158,8 @@ impl AppCore {
 
     /// Register a game-window discovery into the layout as a bound entry.
     /// Streams and resident dialog panels become persistent Hidden layout
-    /// windows (known forever); the visibility default respects the config
-    /// blocklist. No-op if a window is already bound to this id.
+    /// windows (known forever); hidden-until-shown is the universal
+    /// default. No-op if a window is already bound to this id.
     fn register_window_discovery(&mut self, d: crate::data::WindowDiscovery) {
         use crate::config::{WindowBinding, WindowVisibility, WindowDef};
         use crate::data::WindowDiscoveryKind;
@@ -4230,9 +4230,8 @@ impl AppCore {
                 if !d.title.is_empty() {
                     def.base_mut().title = Some(d.title.clone());
                 }
-                // Blocklisted → stay Hidden (already the register default);
-                // otherwise a freshly discovered window is Hidden too (U3:
-                // hidden-by-default), but this is where a future policy
+                // Freshly discovered windows are Hidden (U3:
+                // hidden-by-default); this is where a future policy
                 // (e.g. resident streams shown) would flip it.
                 def.base_mut().visibility = WindowVisibility::Hidden;
                 // Wire the widget to its game feed by id.
