@@ -3016,6 +3016,10 @@ function openHlForm(name) {
   document.getElementById("hl-replace").value = rule.replace || "";
   document.getElementById("hl-stream").value = rule.stream || "";
   document.getElementById("hl-window").value = rule.window || "";
+  document.getElementById("hl-set-status").value = rule.set_status || "";
+  document.getElementById("hl-status-duration").value =
+    rule.status_duration != null ? rule.status_duration : "";
+  document.getElementById("hl-clear-status").value = rule.clear_status || "";
   // Redirect: "off" when there's no target; else copy/only from the mode.
   document.getElementById("hl-redirect-to").value = rule.redirect_to || "";
   document.getElementById("hl-redirect-mode").value = !rule.redirect_to
@@ -3161,6 +3165,8 @@ hlForm.addEventListener("submit", (ev) => {
   setText("replace", "hl-replace");
   setText("stream", "hl-stream");
   setText("window", "hl-window");
+  setText("set_status", "hl-set-status");
+  setText("clear_status", "hl-clear-status");
 
   // Sound volume: a number in [0, 1], or cleared when blank/invalid.
   const volRaw = document.getElementById("hl-sound-volume").value.trim();
@@ -3169,6 +3175,16 @@ hlForm.addEventListener("submit", (ev) => {
     rule.sound_volume = Math.min(1, Math.max(0, vol));
   } else {
     delete rule.sound_volume;
+  }
+
+  // Status duration: seconds until the set status auto-clears; no upper
+  // clamp, cleared when blank/invalid.
+  const durRaw = document.getElementById("hl-status-duration").value.trim();
+  const dur = parseFloat(durRaw);
+  if (durRaw !== "" && !Number.isNaN(dur) && dur >= 0) {
+    rule.status_duration = dur;
+  } else {
+    delete rule.status_duration;
   }
 
   // Redirect: the mode select drives both fields. "Off" clears the redirect

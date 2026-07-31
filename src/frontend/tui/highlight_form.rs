@@ -16,7 +16,7 @@ use tui_textarea::TextArea;
 
 // Keep popup geometry in one place so dragging + rendering stay in sync
 const POPUP_WIDTH: u16 = 70;
-const POPUP_HEIGHT: u16 = 24;
+const POPUP_HEIGHT: u16 = 27;
 
 /// Actions that can result from mouse interaction with the highlight form
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -87,6 +87,12 @@ pub struct HighlightFormWidget {
     // Filter fields: restrict the highlight to one stream and/or window
     stream_filter: TextArea<'static>,
     window_filter: TextArea<'static>,
+
+    // Custom-status actions: flip a named indicator status on match
+    // (optionally auto-clearing after a duration) or turn one off.
+    set_status: TextArea<'static>,
+    status_duration: TextArea<'static>,
+    clear_status: TextArea<'static>,
 
     // Scope (Global vs Character)
     is_global: bool, // true = save to global/, false = save to character profile
@@ -187,6 +193,18 @@ impl HighlightFormWidget {
         window_filter.set_cursor_line_style(Style::default());
         window_filter.set_placeholder_text("only this window (optional)");
 
+        let mut set_status = TextArea::default();
+        set_status.set_cursor_line_style(Style::default());
+        set_status.set_placeholder_text("status id to turn on (optional)");
+
+        let mut status_duration = TextArea::default();
+        status_duration.set_cursor_line_style(Style::default());
+        status_duration.set_placeholder_text("seconds until auto-clear (optional)");
+
+        let mut clear_status = TextArea::default();
+        clear_status.set_cursor_line_style(Style::default());
+        clear_status.set_placeholder_text("status id to turn off (optional)");
+
         Self {
             name,
             pattern,
@@ -211,6 +229,9 @@ impl HighlightFormWidget {
             redirect_mode_index: 0, // Default to "Off"
             stream_filter,
             window_filter,
+            set_status,
+            status_duration,
+            clear_status,
             is_global: true,        // Default to global scope
             rumble: None,
             rumble_options: vec!["(none)".to_string()],
@@ -304,6 +325,18 @@ impl HighlightFormWidget {
             form.window_filter = TextArea::from([window.clone()]);
             form.window_filter.set_cursor_line_style(Style::default());
         }
+        if let Some(ref status) = pattern.set_status {
+            form.set_status = TextArea::from([status.clone()]);
+            form.set_status.set_cursor_line_style(Style::default());
+        }
+        if let Some(duration) = pattern.status_duration {
+            form.status_duration = TextArea::from([duration.to_string()]);
+            form.status_duration.set_cursor_line_style(Style::default());
+        }
+        if let Some(ref status) = pattern.clear_status {
+            form.clear_status = TextArea::from([status.clone()]);
+            form.clear_status.set_cursor_line_style(Style::default());
+        }
 
         form.status_message = "Editing highlight".to_string();
         form
@@ -358,13 +391,14 @@ impl HighlightFormWidget {
 
     /// Move focus to next field
     pub fn focus_next(&mut self) {
-        self.focused_field = (self.focused_field + 1) % 20; // 0-19 (19 = rumble picklist)
+        // 0-22 (19 = rumble picklist, 20-22 = custom-status actions)
+        self.focused_field = (self.focused_field + 1) % 23;
     }
 
     /// Move focus to previous field
     pub fn focus_prev(&mut self) {
         self.focused_field = if self.focused_field == 0 {
-            19
+            22
         } else {
             self.focused_field - 1
         };
@@ -683,9 +717,25 @@ impl HighlightFormWidget {
                 let text = self.window_filter.lines()[0].as_str().trim();
                 (!text.is_empty()).then(|| text.to_string())
             },
-            set_status: None,
-            status_duration: None,
-            clear_status: None,
+            // These used to be hardcoded None, which silently WIPED
+            // GUI-authored status actions on any TUI edit; the form owns
+            // them now.
+            set_status: {
+                let text = self.set_status.lines()[0].as_str().trim();
+                (!text.is_empty()).then(|| text.to_string())
+            },
+            status_duration: {
+                let text = self.status_duration.lines()[0].as_str().trim();
+                if text.is_empty() {
+                    None
+                } else {
+                    text.parse::<f32>().ok().filter(|v| *v >= 0.0)
+                }
+            },
+            clear_status: {
+                let text = self.clear_status.lines()[0].as_str().trim();
+                (!text.is_empty()).then(|| text.to_string())
+            },
             compiled_regex: None, // Will be compiled when config is loaded
         };
 
@@ -1423,6 +1473,55 @@ impl HighlightFormWidget {
 
         // Field 19: Rumble pattern (dropdown)
         self.render_rumble_dropdown(x + 2, current_y, input_start, input_width, buf, theme);
+        current_y += 1;
+
+        // Fields 20-22: custom-status actions (set / duration / clear)
+        Self::render_text_row(
+            focused_field,
+            20,
+            "Set status:",
+            &mut self.set_status,
+            "optional",
+            x + 2,
+            current_y,
+            input_start,
+            input_width,
+            txtbg,
+            buf,
+            theme,
+        );
+        current_y += 1;
+
+        Self::render_text_row(
+            focused_field,
+            21,
+            "Status secs:",
+            &mut self.status_duration,
+            "optional",
+            x + 2,
+            current_y,
+            input_start,
+            input_width,
+            txtbg,
+            buf,
+            theme,
+        );
+        current_y += 1;
+
+        Self::render_text_row(
+            focused_field,
+            22,
+            "Clear status:",
+            &mut self.clear_status,
+            "optional",
+            x + 2,
+            current_y,
+            input_start,
+            input_width,
+            txtbg,
+            buf,
+            theme,
+        );
     }
 
     fn render_text_row(
@@ -1901,6 +2000,9 @@ impl TextEditable for HighlightFormWidget {
             8 => Some(&self.redirect_to),
             17 => Some(&self.stream_filter),
             18 => Some(&self.window_filter),
+            20 => Some(&self.set_status),
+            21 => Some(&self.status_duration),
+            22 => Some(&self.clear_status),
             _ => None,
         }
     }
@@ -1918,6 +2020,9 @@ impl TextEditable for HighlightFormWidget {
             8 => Some(&mut self.redirect_to),
             17 => Some(&mut self.stream_filter),
             18 => Some(&mut self.window_filter),
+            20 => Some(&mut self.set_status),
+            21 => Some(&mut self.status_duration),
+            22 => Some(&mut self.clear_status),
             _ => None,
         }
     }
@@ -2029,6 +2134,34 @@ mod tests {
         };
         assert_eq!(pattern.stream.as_deref(), Some("combat"));
         assert_eq!(pattern.window.as_deref(), Some("combat_win"));
+    }
+
+    /// Regression guard: save_internal used to hardcode the custom-status
+    /// fields to None, silently wiping GUI-authored status actions on any
+    /// TUI edit. They round-trip (and parse) now.
+    #[test]
+    fn edit_round_trip_preserves_status_actions() {
+        let mut source = pattern_with_filters();
+        source.set_status = Some("hunted".to_string());
+        source.status_duration = Some(12.5);
+        source.clear_status = Some("resting".to_string());
+        let form = HighlightFormWidget::new_edit("test".to_string(), &source);
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.set_status.as_deref(), Some("hunted"));
+        assert_eq!(pattern.status_duration, Some(12.5));
+        assert_eq!(pattern.clear_status.as_deref(), Some("resting"));
+
+        // A junk duration clears rather than erroring the save.
+        let mut source = pattern_with_filters();
+        source.status_duration = Some(1.0);
+        let mut form = HighlightFormWidget::new_edit("test".to_string(), &source);
+        form.status_duration = TextArea::from(["not-a-number"]);
+        let Some(FormResult::Save { pattern, .. }) = form.save_internal() else {
+            panic!("expected Save result");
+        };
+        assert_eq!(pattern.status_duration, None);
     }
 
     /// The TUI form can now EDIT rumble (previously it only carried the value

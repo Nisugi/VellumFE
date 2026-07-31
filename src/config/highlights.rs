@@ -163,10 +163,10 @@ pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
     HlFieldDef { name: "silent_prompt", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "redirect_to", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "redirect_mode", applies_to: &[Tui, Gui, Web] },
-    // Custom-status actions: GUI editor first; TUI/web forms follow.
-    HlFieldDef { name: "set_status", applies_to: &[Gui] },
-    HlFieldDef { name: "status_duration", applies_to: &[Gui] },
-    HlFieldDef { name: "clear_status", applies_to: &[Gui] },
+    // Custom-status actions (all three editors since 2026-07-31).
+    HlFieldDef { name: "set_status", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "status_duration", applies_to: &[Tui, Gui, Web] },
+    HlFieldDef { name: "clear_status", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
@@ -210,6 +210,7 @@ pub const HL_TUI_COVERED: &[&str] = &[
     "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
     "sound_volume", "rumble", "category", "squelch", "silent_prompt",
     "redirect_to", "redirect_mode", "replace", "stream", "window",
+    "set_status", "status_duration", "clear_status",
 ];
 
 /// Fields edited by the GUI highlight editor
@@ -229,6 +230,7 @@ pub const HL_WEB_COVERED: &[&str] = &[
     "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
     "sound_volume", "rumble", "category", "squelch", "silent_prompt",
     "redirect_to", "redirect_mode", "replace", "stream", "window",
+    "set_status", "status_duration", "clear_status",
 ];
 
 /// The DOM element id the web form uses for a given catalog field, so the
@@ -253,6 +255,9 @@ pub fn hl_web_element_id(field: &str) -> &'static str {
         "replace" => "hl-replace",
         "stream" => "hl-stream",
         "window" => "hl-window",
+        "set_status" => "hl-set-status",
+        "status_duration" => "hl-status-duration",
+        "clear_status" => "hl-clear-status",
         other => panic!("no web element id mapped for highlight field '{other}'"),
     }
 }
