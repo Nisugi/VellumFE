@@ -764,6 +764,9 @@ impl VellumGuiApp {
         // makes sense once the selection has been saved and its doll base
         // art actually loaded.
         let mut calibrate_doll_clicked = false;
+        // "Save current appearance": bakes the live appearance into the
+        // typed skin name via the same path as the .saveskin command.
+        let mut save_skin_name: Option<String> = None;
         // Test button applies the panel's live values and speaks a sample
         // without waiting for Save.
         let mut tts_test_clicked = false;
@@ -870,6 +873,33 @@ impl VellumGuiApp {
                                                         state.skin_error =
                                                             Some(err.to_string());
                                                     }
+                                                }
+                                            }
+                                            if ui
+                                                .button("Save current appearance")
+                                                .on_hover_text(
+                                                    "Bake the live appearance (doll, \
+                                                     status icons, frames, backgrounds, \
+                                                     compass) into a skin with this \
+                                                     name — same as .saveskin <name>.",
+                                                )
+                                                .clicked()
+                                            {
+                                                let name =
+                                                    state.new_skin_name.trim().to_string();
+                                                if name.is_empty() {
+                                                    state.skin_error = Some(
+                                                        "Enter a skin name first."
+                                                            .to_string(),
+                                                    );
+                                                } else {
+                                                    save_skin_name = Some(name.clone());
+                                                    if !state.skin_names.contains(&name) {
+                                                        state.skin_names.push(name);
+                                                        state.skin_names.sort();
+                                                    }
+                                                    state.new_skin_name.clear();
+                                                    state.skin_error = None;
                                                 }
                                             }
                                         });
@@ -1172,6 +1202,11 @@ impl VellumGuiApp {
         }
         if calibrate_doll_clicked {
             self.open_doll_calibration();
+        }
+        if let Some(name) = save_skin_name {
+            // Same typed path as the .saveskin command (validation,
+            // compile, system-message feedback).
+            self.handle_ui_action(crate::data::UiAction::SaveSkin(name));
         }
         if data_reload_clicked {
             let types = self.app_core.reload_data_pack();
