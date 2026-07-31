@@ -789,6 +789,23 @@ mod tests {
     }
 
     #[test]
+    fn phantom_untouched_edge_delta_promotes_to_translate() {
+        // Why the compact-widget fix matters: `classify_axis` reads the
+        // gesture from min/max TOTAL deltas since start. If the fed/start
+        // rect disagrees with egui's reported rect on the untouched edge
+        // (compact widgets rendered capped/pinned while the canonical rect
+        // stayed taller/wider), that stale edge shows a nonzero total and a
+        // pure single-edge resize misreads as a Translate — which snap-tests
+        // the far edge and the center too, drawing guides for edges the user
+        // never dragged. Keeping start == reported (the zones.rs fix) holds
+        // the untouched delta at 0, so it stays MaxEdge.
+        assert_eq!(classify_axis(0.0, 6.0), AxisGesture::MaxEdge);
+        // A phantom delta on the left edge, larger than MOVED_EPS, is what a
+        // desynced fed rect injects — and it corrupts the classification.
+        assert_eq!(classify_axis(4.0, 6.0), AxisGesture::Translate);
+    }
+
+    #[test]
     fn nothing_snaps_outside_radius() {
         let unsnapped = rect(100.0, 100.0, 300.0, 300.0);
         let (snapped, guides) = snap_rect(

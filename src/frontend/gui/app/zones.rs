@@ -1184,7 +1184,8 @@ impl VellumGuiApp {
                         ),
                     )
                 });
-            let initial_rect = if zone == GuiShellZone::Center {
+            let is_compact_widget = Self::is_compact_center_widget(&window.widget_type);
+            let mut initial_rect = if zone == GuiShellZone::Center {
                 center_displays
                     .get(&tab.id.key)
                     .copied()
@@ -1199,6 +1200,20 @@ impl VellumGuiApp {
             };
             if !initial_rect.is_finite() {
                 continue;
+            }
+            // Fold the live height cap into the fed rect for compact
+            // single-row widgets: egui renders them capped (max_size), so a
+            // taller stored/canonical height would leave the fed rect and
+            // egui's reported rect disagreeing on the Y axis for the whole
+            // session. That desync made `classify_axis` (which measures
+            // gesture totals against the fed rect) see a phantom vertical
+            // delta and draw guides for edges the user never dragged. Cap
+            // here and the two rects agree at gesture start. Grouped windows
+            // manage their own (uncapped) height, matching the sibling
+            // candidate list above.
+            if is_compact_widget && !grouped {
+                let capped = initial_rect.height().min(max_window_size.y);
+                initial_rect.set_height(capped);
             }
 
             let mut clicked_link = None;
@@ -1299,7 +1314,6 @@ impl VellumGuiApp {
                     .fixed_size(Vec2::new(initial_rect.size().x, max_window_size.y))
                     .resizable(false);
             }
-            let is_compact_widget = Self::is_compact_center_widget(&window.widget_type);
             if !is_compact_widget {
                 // Prevent content-driven growth by making the window scroll instead of expanding.
                 window_builder = window_builder.scroll([true, true]);
@@ -1325,7 +1339,15 @@ impl VellumGuiApp {
             if user_engaging_window && pointer_down {
                 self.zone_engaged_tab = Some(tab.id.key.clone());
             }
-            if !is_compact_widget && !is_hand_widget && !being_moved && !user_engaging_window {
+            if !is_hand_widget && !being_moved && !user_engaging_window {
+                // Pin compact widgets too, now that `initial_rect` carries
+                // the live height cap: without this the width half of a
+                // release-snap never reached egui (position feeds through
+                // `current_pos`, but egui's remembered width won), so a
+                // right-edge snap drew a correct guide yet the frame never
+                // moved to it. Height still tracks the cap because the cap is
+                // already folded into `initial_rect` — a later icon-size
+                // change recomputes it next frame.
                 window_builder = window_builder
                     .min_size(initial_rect.size())
                     .max_size(initial_rect.size());
@@ -1432,6 +1454,20 @@ impl VellumGuiApp {
                     .zone_snap_drag
                     .as_ref()
                     .is_some_and(|drag| drag.tab_key == tab.id.key);
+                // Compact single-row widgets are height-derived: their
+                // canonical height is always the live cap, never a stored
+                // value. Normalizing here — the one choke point where a rect
+                // becomes canonical — means `.savelayout`, the snap candidate
+                // list, and next frame's fed rect all read the same capped
+                // height. Nothing downstream can resurrect a stale height
+                // (e.g. a layout saved under a larger icon-size setting).
+                let compact_derived = is_compact_widget && !grouped;
+                let normalize_height = |mut rect: Rect| -> Rect {
+                    if compact_derived {
+                        rect.set_height(rect.height().min(max_window_size.y));
+                    }
+                    rect
+                };
                 if !is_hand_widget
                     && !being_moved
                     && (snap_drag_live || (rect_changed && user_engaging_window))
@@ -1448,9 +1484,17 @@ impl VellumGuiApp {
                         snap_suspended,
                         pointer_down,
                     );
-                    self.track_main_window_rect(&tab.id.key, tracked, window_bounds);
+                    self.track_main_window_rect(
+                        &tab.id.key,
+                        normalize_height(tracked),
+                        window_bounds,
+                    );
                 } else if should_track_rect {
-                    self.track_main_window_rect(&tab.id.key, inner.response.rect, window_bounds);
+                    self.track_main_window_rect(
+                        &tab.id.key,
+                        normalize_height(inner.response.rect),
+                        window_bounds,
+                    );
                 }
                 if zone == GuiShellZone::Center && pointer_interacting {
                     // Mirror the CANONICAL rect (post-tracking), not the
