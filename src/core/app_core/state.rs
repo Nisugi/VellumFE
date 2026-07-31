@@ -3355,7 +3355,8 @@ impl AppCore {
 
         // Window locking
         self.add_system_message("WINDOW LOCKING:");
-        self.add_system_message("  .lockwindows / .lockall - Toggle lock on all windows (prevent move/resize)");
+        self.add_system_message("  .lockwindows / .lockall [on|off] - Lock/unlock all windows (prevent move/resize)");
+        self.add_system_message("  .lockwindow <window> [on|off] - Lock/unlock one window (.unlockwindow forces off)");
         self.add_system_message("");
 
         self.add_system_message("Type the command name for more details. Example: .help windows");

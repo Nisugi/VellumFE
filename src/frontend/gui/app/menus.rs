@@ -361,9 +361,34 @@ impl VellumGuiApp {
                 self.send_window_to_back(ctx, &request.tab_key);
             }
             GuiWindowMenuCommand::ToggleLock => {
-                let settings = self.tab_settings.entry(request.tab_key.clone()).or_default();
-                settings.locked = !settings.locked;
-                self.layout_dirty = true;
+                // Writes the shared layout's `locked` — the single lock
+                // store `.lockwindows` / `.lockwindow` / the TUI use — so
+                // a menu lock is cleared by `.unlockall` and vice versa.
+                let new_state = !self.window_locked(&request.tab_key);
+                let window_name = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone());
+                let mut stored = false;
+                if let Some(name) = window_name {
+                    if let Some(window) = self
+                        .app_core
+                        .layout
+                        .windows
+                        .iter_mut()
+                        .find(|window| window.name() == name)
+                    {
+                        window.base_mut().locked = new_state;
+                        stored = true;
+                    }
+                }
+                if stored {
+                    self.app_core.schedule_layout_autosave();
+                    self.layout_dirty = true;
+                } else {
+                    self.app_core
+                        .add_system_message("This window has no layout entry to lock.");
+                }
             }
             GuiWindowMenuCommand::EditHandIcons => {
                 if let Some(name) = self

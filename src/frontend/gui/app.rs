@@ -2016,13 +2016,21 @@ impl VellumGuiApp {
         }
     }
 
-    /// Per-window position/size lock (context menu): locked windows ignore
-    /// drag and resize gestures in every zone; the deliberate Arrange ▸
-    /// Move Window menu action still works.
+    /// Per-window position/size lock: locked windows ignore drag and
+    /// resize gestures in every zone; the deliberate Arrange ▸ Move Window
+    /// menu action still works. THE flag is the shared layout's
+    /// `WindowBase::locked` — the same one `.lockwindows`,
+    /// `.lockwindow <name>`, and the TUI write — so global and per-window
+    /// locks are one system across both frontends.
     pub(super) fn window_locked(&self, key: &TabKey) -> bool {
-        self.tab_settings
-            .get(key)
-            .is_some_and(|settings| settings.locked)
+        self.available_tabs.get(key).is_some_and(|tab| {
+            self.app_core
+                .layout
+                .windows
+                .iter()
+                .find(|window| window.name() == tab.window_name)
+                .is_some_and(|window| window.base().locked)
+        })
     }
 
     /// Per-window frame corner radius override (context menu); None follows

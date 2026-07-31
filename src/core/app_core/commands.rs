@@ -1992,11 +1992,23 @@ impl AppCore {
                 self.toggle_transparent_background_all();
             }
 
-            // Lock/unlock all windows (toggle)
+            // Lock/unlock every window at once. THE lock flag is the shared
+            // layout's `WindowBase::locked` — the same one `.lockwindow`,
+            // the GUI context menu, and the TUI window editor write — so
+            // global and per-window locks compose and both frontends
+            // enforce the result.
             "lockwindows" | "lockall" | "unlockwindows" | "unlockall" => {
-                // Check if any window is currently locked
-                let any_locked = self.layout.windows.iter().any(|w| w.base().locked);
-                let new_state = !any_locked;
+                let forced = if cmd.starts_with("unlock") {
+                    Some(false)
+                } else {
+                    match parts.get(1).map(|s| s.to_ascii_lowercase()).as_deref() {
+                        Some("on") | Some("lock") => Some(true),
+                        Some("off") | Some("unlock") => Some(false),
+                        _ => None, // bare = toggle
+                    }
+                };
+                let new_state = forced
+                    .unwrap_or_else(|| !self.layout.windows.iter().any(|w| w.base().locked));
                 for window in &mut self.layout.windows {
                     window.base_mut().locked = new_state;
                 }
@@ -2005,8 +2017,57 @@ impl AppCore {
                 } else {
                     self.add_system_message("All windows unlocked (can be moved/resized)");
                 }
+                self.schedule_layout_autosave();
                 self.needs_render = true;
             }
+
+            // One window by layout name: `.lockwindow main [on|off]` (bare
+            // toggles); `.unlockwindow main` forces off.
+            "lockwindow" | "unlockwindow" => match parts.get(1) {
+                None => {
+                    self.add_system_message(
+                        "Usage: .lockwindow <window> [on|off] — .unlockwindow <window> forces off",
+                    );
+                }
+                Some(name) => {
+                    let forced = if cmd == "unlockwindow" {
+                        Some(false)
+                    } else {
+                        match parts.get(2).map(|s| s.to_ascii_lowercase()).as_deref() {
+                            Some("on") | Some("lock") => Some(true),
+                            Some("off") | Some("unlock") => Some(false),
+                            _ => None,
+                        }
+                    };
+                    let target = name.to_ascii_lowercase();
+                    match self
+                        .layout
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.base().name.to_ascii_lowercase() == target)
+                    {
+                        Some(window) => {
+                            let new_state = forced.unwrap_or(!window.base().locked);
+                            window.base_mut().locked = new_state;
+                            let display = window.base().name.clone();
+                            self.add_system_message(&format!(
+                                "Window '{}' {}",
+                                display,
+                                if new_state {
+                                    "locked (cannot be moved/resized)"
+                                } else {
+                                    "unlocked (can be moved/resized)"
+                                },
+                            ));
+                            self.schedule_layout_autosave();
+                            self.needs_render = true;
+                        }
+                        None => {
+                            self.add_system_message(&format!("No window named '{}'", name));
+                        }
+                    }
+                }
+            },
 
             "hidecontainers" => {
                 // No args = close all, with arg = close matching container
