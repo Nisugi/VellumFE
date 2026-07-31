@@ -7,6 +7,26 @@
 use super::*;
 use crate::data::geometry::{Col, Height, Row, Width};
 
+/// One condition-driven status icon state, mirroring `HandIconState`: while
+/// its `when` holds, its icon/text/color override the template's static
+/// defaults. First match wins across the `states` list. This is what lets a
+/// status show one icon at rank 1 and another at rank 2 (e.g. an injury
+/// threshold), or a different icon per game state generally.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatusIconState {
+    pub when: super::Condition,
+    /// GUI icon while the state holds (pool image / sheet cell /
+    /// `IconRef::None` for no art). None = keep the resolved default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<crate::data::IconRef>,
+    /// TUI text glyph while the state holds (the TUI renders no images).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Color override while the state holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
 /// Globally available indicator template definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IndicatorTemplateEntry {
@@ -18,8 +38,14 @@ pub struct IndicatorTemplateEntry {
     /// Optional display title
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Legacy text-glyph icon (TUI prefix / GUI fallback). Kept for
+    /// back-compat; `icon_ref` takes precedence for GUI art.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Pickable default GUI icon (pool image / sheet cell). Resolved before
+    /// the legacy `icon` string and the id-keyed skin/pictogram fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_ref: Option<crate::data::IconRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,6 +54,10 @@ pub struct IndicatorTemplateEntry {
     pub default_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_color: Option<String>,
+    /// Condition-driven icon states (first match wins), overriding the static
+    /// icon/colors above while a state holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<StatusIconState>,
     /// Enabled flag; if false, this template is skipped on load
     #[serde(
         default = "default_template_enabled",
@@ -1601,10 +1631,12 @@ impl Config {
                     name: Some(base.name),
                     title: base.title.clone(),
                     icon: data.icon,
+                    icon_ref: None,
                     inactive_color: data.inactive_color,
                     active_color: data.active_color,
                     default_status: data.default_status,
                     default_color: data.default_color,
+                    states: Vec::new(),
                     enabled: true,
                 });
             }

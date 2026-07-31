@@ -41,7 +41,9 @@ pub use colors::{
 pub use highlights::{
     highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
 };
-pub use conditions::{Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit};
+pub use conditions::{
+    Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit, INJURY_AREAS,
+};
 pub use hotbars::{
     GradientDir, HotbarButton, HotbarButtonState, HotbarCountdownSource, HotbarDef, HotbarIcon,
     HotbarStyle, HotbarsConfig, IconMode,
@@ -61,12 +63,13 @@ pub use settings::{
     SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
     TtsConfig, TtsSubstitution, UiConfig, WebConfig,
 };
-pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore};
+pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};
 pub use widgets::{
     apply_compiled_text_replacements, compile_text_replacements, default_minivitals_bar_order,
     ActiveEffectsWidgetData, BetrayerWidgetData, BorderSides, CommandInputWidgetData,
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
-    DashboardIndicatorDef, DashboardWidgetData, DialogPanelWidgetData, EncumbranceWidgetData,
+    DashboardIndicatorDef, DashboardLayout, DashboardWidgetData, DialogPanelWidgetData,
+    EncumbranceWidgetData,
     ExperienceWidgetData,
     GS4ExperienceWidgetData, HandIconState, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
     InjuryDollWidgetData, InventoryWidgetData, ItemsWidgetData, MapWidgetData,

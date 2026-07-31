@@ -593,6 +593,44 @@ pub struct IndicatorWidgetData {
     pub default_color: Option<String>,  // legacy
 }
 
+/// Resolved dashboard layout, parsed from the config `layout` string. Shared
+/// so both frontends interpret `dashboard_layout` identically (the config
+/// stores the raw string; each renderer parses it through here).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DashboardLayout {
+    Horizontal,
+    Vertical,
+    Grid { rows: usize, cols: usize },
+    Flow,
+}
+
+impl DashboardLayout {
+    /// Parse a `dashboard_layout` string: `horizontal`/`vertical`/`flow`, or
+    /// `grid:RxC` (e.g. `grid:2x3`). Anything unrecognized falls back to
+    /// horizontal.
+    pub fn from_str(value: &str) -> Self {
+        let lower = value.to_lowercase();
+        if lower.starts_with("grid") {
+            if let Some(spec) = lower.split(':').nth(1) {
+                let parts: Vec<_> = spec.split('x').collect();
+                if parts.len() == 2 {
+                    if let (Ok(r), Ok(c)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+                        if r > 0 && c > 0 {
+                            return DashboardLayout::Grid { rows: r, cols: c };
+                        }
+                    }
+                }
+            }
+        }
+        match lower.as_str() {
+            "vertical" => DashboardLayout::Vertical,
+            "flow" => DashboardLayout::Flow,
+            "horizontal" => DashboardLayout::Horizontal,
+            _ => DashboardLayout::Horizontal,
+        }
+    }
+}
+
 /// Dashboard widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashboardWidgetData {
@@ -1111,6 +1149,33 @@ fn is_default_bar_order(order: &Vec<String>) -> bool {
     *order == default_minivitals_bar_order()
 }
 
+
+#[cfg(test)]
+mod dashboard_layout_tests {
+    use super::*;
+
+    #[test]
+    fn parses_named_layouts() {
+        assert_eq!(DashboardLayout::from_str("horizontal"), DashboardLayout::Horizontal);
+        assert_eq!(DashboardLayout::from_str("VERTICAL"), DashboardLayout::Vertical);
+        assert_eq!(DashboardLayout::from_str("Flow"), DashboardLayout::Flow);
+    }
+
+    #[test]
+    fn parses_grid_spec() {
+        assert_eq!(
+            DashboardLayout::from_str("grid:2x3"),
+            DashboardLayout::Grid { rows: 2, cols: 3 }
+        );
+    }
+
+    #[test]
+    fn unrecognized_and_bad_grid_fall_back_to_horizontal() {
+        assert_eq!(DashboardLayout::from_str("nonsense"), DashboardLayout::Horizontal);
+        assert_eq!(DashboardLayout::from_str("grid:0x3"), DashboardLayout::Horizontal);
+        assert_eq!(DashboardLayout::from_str("grid:2"), DashboardLayout::Horizontal);
+    }
+}
 
 #[cfg(test)]
 mod visibility_tests {

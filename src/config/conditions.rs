@@ -54,6 +54,16 @@ pub enum Condition {
         #[serde(default)]
         unit: VitalUnit,
     },
+    /// A body-part injury (from the injury XML that drives the doll) compared
+    /// against a level threshold. Levels: 1-3 = wounds, 4-6 = scars, absent
+    /// (healthy) = 0. `area` is the body-part id the injury feed uses (e.g.
+    /// "neck", "head", "leftArm"). False when the part is healthy/unknown —
+    /// e.g. `cmp: >=, level: 2` matches a rank-2+ wound on that part.
+    Injury {
+        area: String,
+        cmp: Cmp,
+        level: u8,
+    },
     /// The bundled spell table (effect-list.xml) lists static costs for
     /// this spell number and current absolute vitals cover them. Fails
     /// closed: unknown numbers, formula costs, and missing vitals data
@@ -91,6 +101,14 @@ pub enum Condition {
 fn default_true() -> bool {
     true
 }
+
+/// Body-part ids the injury feed uses (same keys as the injury doll). The
+/// canonical list the parser emits on a full clear; editors offer these in a
+/// dropdown for `Condition::Injury.area`.
+pub const INJURY_AREAS: &[&str] = &[
+    "head", "neck", "chest", "abdomen", "back", "leftArm", "rightArm", "leftHand", "rightHand",
+    "leftLeg", "rightLeg", "leftEye", "rightEye", "nsys",
+];
 
 /// Which hand a hand condition inspects.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -19,6 +19,69 @@ pub struct ResolvedHand {
     pub icon_color: Option<String>,
 }
 
+/// A status template's resolved appearance for this frame, after applying its
+/// condition-driven states over the static defaults. `icon` follows the same
+/// precedence a renderer wants: a matched state's icon, else the template's
+/// pickable `icon_ref`, else `None` (renderer falls back to the legacy text
+/// glyph / id-keyed skin sprite / built-in pictogram). `text` is the TUI
+/// glyph, `color` the resolved color string.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ResolvedStatusArt {
+    pub icon: Option<crate::data::IconRef>,
+    pub text: Option<String>,
+    pub color: Option<String>,
+    /// Whether any state matched (the status is in a driven state). Callers
+    /// that only track binary on/off can ignore this; it lets a renderer know
+    /// a state (not just the static default) is in effect.
+    pub state_matched: bool,
+}
+
+/// Resolve a status template's appearance against the game state. First
+/// matching `states` entry wins (hotbar/hand-style); when none match, falls
+/// back to the template's static `icon_ref`/legacy-icon/colors. `active`
+/// selects the static color (active vs inactive) when no state supplies one.
+pub fn resolve_status(
+    template: &crate::config::IndicatorTemplateEntry,
+    active: bool,
+    gs: &GameState,
+    now_server: i64,
+    gameobj: Option<&GameObjData>,
+) -> ResolvedStatusArt {
+    if let Some(state) = template
+        .states
+        .iter()
+        .find(|state| eval_condition(&state.when, gs, now_server, gameobj))
+    {
+        return ResolvedStatusArt {
+            icon: state.icon.clone().or_else(|| template.icon_ref.clone()),
+            text: state.text.clone().or_else(|| template.icon.clone()),
+            color: state
+                .color
+                .clone()
+                .or_else(|| static_status_color(template, active)),
+            state_matched: true,
+        };
+    }
+    ResolvedStatusArt {
+        icon: template.icon_ref.clone(),
+        text: template.icon.clone(),
+        color: static_status_color(template, active),
+        state_matched: false,
+    }
+}
+
+/// The template's static color for the active/inactive state.
+fn static_status_color(
+    template: &crate::config::IndicatorTemplateEntry,
+    active: bool,
+) -> Option<String> {
+    if active {
+        template.active_color.clone()
+    } else {
+        template.inactive_color.clone()
+    }
+}
+
 /// Resolve a hand widget's icon states against the game state; first
 /// matching state wins (hotbar-style).
 pub fn resolve_hand(
@@ -89,6 +152,12 @@ pub fn eval_condition(
         } => vital_value(gs, *vital, *unit)
             .map(|v| cmp.eval(v, *value as i64))
             .unwrap_or(false),
+        Condition::Injury { area, cmp, level } => {
+            // Absent = healthy = level 0; compare so `>= 2` is false when the
+            // part isn't in the map.
+            let current = gs.injuries.get(area).copied().unwrap_or(0);
+            cmp.eval(current as i64, *level as i64)
+        }
         Condition::SpellAffordable { number } => spell_affordable(gs, *number),
         Condition::HandEmpty { hand } => match hand {
             HandSlot::Right => hand_item(gs, Hand::Right).is_none(),
@@ -274,5 +343,134 @@ fn vital_value(gs: &GameState, vital: VitalKind, unit: VitalUnit) -> Option<i64>
             };
             (entry.max > 0).then_some(entry.value as i64)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Cmp;
+
+    fn injury(area: &str, cmp: Cmp, level: u8) -> Condition {
+        Condition::Injury {
+            area: area.to_string(),
+            cmp,
+            level,
+        }
+    }
+
+    #[test]
+    fn injury_absent_part_is_healthy() {
+        let gs = GameState::new();
+        // No injuries: `>= 1` is false, `< 1` is true (level 0).
+        assert!(!eval_condition(&injury("neck", Cmp::Ge, 1), &gs, 0, None));
+        assert!(eval_condition(&injury("neck", Cmp::Lt, 1), &gs, 0, None));
+    }
+
+    #[test]
+    fn injury_threshold_matches_rank() {
+        let mut gs = GameState::new();
+        gs.injuries.insert("neck".to_string(), 2);
+        // The motivating example: a rank-2 wound on the neck.
+        assert!(eval_condition(&injury("neck", Cmp::Ge, 2), &gs, 0, None));
+        assert!(!eval_condition(&injury("neck", Cmp::Ge, 3), &gs, 0, None));
+        // A different part is unaffected.
+        assert!(!eval_condition(&injury("head", Cmp::Ge, 1), &gs, 0, None));
+    }
+
+    #[test]
+    fn injury_scar_levels_compare_above_wounds() {
+        let mut gs = GameState::new();
+        gs.injuries.insert("leftArm".to_string(), 5); // Scar2
+        assert!(eval_condition(&injury("leftArm", Cmp::Ge, 4), &gs, 0, None));
+        assert!(eval_condition(&injury("leftArm", Cmp::Gt, 3), &gs, 0, None));
+    }
+
+    fn template_with_states(states: Vec<crate::config::StatusIconState>) -> crate::config::IndicatorTemplateEntry {
+        crate::config::IndicatorTemplateEntry {
+            id: "BLEEDING".to_string(),
+            icon: Some("*".to_string()),
+            icon_ref: Some(crate::data::IconRef::Image {
+                path: "statusicons/bleeding.png".to_string(),
+            }),
+            active_color: Some("#ff0000".to_string()),
+            inactive_color: Some("#555555".to_string()),
+            states,
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn resolve_status_no_states_uses_static_defaults() {
+        let gs = GameState::new();
+        let t = template_with_states(vec![]);
+        let active = resolve_status(&t, true, &gs, 0, None);
+        assert_eq!(active.color.as_deref(), Some("#ff0000"));
+        assert_eq!(active.text.as_deref(), Some("*"));
+        assert!(!active.state_matched);
+        assert!(matches!(active.icon, Some(crate::data::IconRef::Image { .. })));
+        let inactive = resolve_status(&t, false, &gs, 0, None);
+        assert_eq!(inactive.color.as_deref(), Some("#555555"));
+    }
+
+    #[test]
+    fn resolve_status_first_matching_state_wins() {
+        let mut gs = GameState::new();
+        gs.injuries.insert("neck".to_string(), 2);
+        // rank>=2 state first; a rank>=1 state second. Both match at rank 2,
+        // first wins.
+        let t = template_with_states(vec![
+            crate::config::StatusIconState {
+                when: injury("neck", Cmp::Ge, 2),
+                icon: Some(crate::data::IconRef::Image {
+                    path: "statusicons/neck2.png".to_string(),
+                }),
+                text: Some("N2".to_string()),
+                color: Some("#ff00ff".to_string()),
+            },
+            crate::config::StatusIconState {
+                when: injury("neck", Cmp::Ge, 1),
+                icon: Some(crate::data::IconRef::Image {
+                    path: "statusicons/neck1.png".to_string(),
+                }),
+                text: None,
+                color: None,
+            },
+        ]);
+        let r = resolve_status(&t, true, &gs, 0, None);
+        assert!(r.state_matched);
+        assert_eq!(r.color.as_deref(), Some("#ff00ff"));
+        assert_eq!(r.text.as_deref(), Some("N2"));
+        match r.icon {
+            Some(crate::data::IconRef::Image { path }) => assert_eq!(path, "statusicons/neck2.png"),
+            other => panic!("expected neck2 image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_status_state_inherits_template_defaults_when_unset() {
+        let mut gs = GameState::new();
+        gs.injuries.insert("neck".to_string(), 1);
+        // Matching state leaves icon/color None → inherit the template's.
+        let t = template_with_states(vec![crate::config::StatusIconState {
+            when: injury("neck", Cmp::Ge, 1),
+            icon: None,
+            text: None,
+            color: None,
+        }]);
+        let r = resolve_status(&t, true, &gs, 0, None);
+        assert!(r.state_matched);
+        assert_eq!(r.color.as_deref(), Some("#ff0000")); // template active_color
+        assert!(matches!(r.icon, Some(crate::data::IconRef::Image { .. }))); // template icon_ref
+    }
+
+    #[test]
+    fn injury_area_list_is_the_parser_clear_set() {
+        // Guards against the editor dropdown drifting from the ids the feed
+        // actually emits (parser's full-clear body-part list).
+        assert!(crate::config::INJURY_AREAS.contains(&"neck"));
+        assert!(crate::config::INJURY_AREAS.contains(&"nsys"));
+        assert_eq!(crate::config::INJURY_AREAS.len(), 14);
     }
 }
