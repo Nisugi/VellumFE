@@ -10,8 +10,9 @@ feed) is added to the list automatically; tick its row to open a window
 for it, untick to close it again.
 
 Open the list from the menu: **Windows → Show/Hide windows** (TUI popup
-menu; on the GUI the same list is a checkbox panel). `.hidecontainers
-[title]` closes container windows without changing anything else.
+menu; on the GUI the same list is the Windows manager window). Container
+rows sit under the **Containers** category. `.hidecontainers [title]`
+closes container windows without changing anything else.
 
 Your choice is remembered for the session: a ticked container's window
 re-opens whenever the game mentions it again. Containers are session-only

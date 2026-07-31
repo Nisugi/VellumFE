@@ -6133,12 +6133,14 @@ impl AppCore {
         out
     }
 
-    /// Build the unified Windows list menu: every known window (from the
-    /// layout + ephemeral runtime), each row `[x]`/`[ ]` for its shown
-    /// state, grouped by kind. Selecting a row emits `__TOGGLE_WINDOW__<name>`
-    /// to flip it. U3: reads enumerate_known_windows — no offer registry.
+    /// Build the unified Windows list menu: the FULL window catalog (every
+    /// template + layout + ephemeral runtime), each row `[x]`/`[ ]` for its
+    /// shown state, grouped under disabled category-header rows. Selecting
+    /// a row emits `__TOGGLE_WINDOW__<name>` to flip it (ticking a
+    /// never-added template conjures it). The GUI has its own Windows
+    /// window; this menu is the TUI's view of the same catalog.
     pub fn build_known_windows_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        use crate::core::known_windows::KnownWindowKind;
+        use crate::config::WidgetCategory;
         let known = self.enumerate_known_windows();
         if known.is_empty() {
             return vec![crate::data::ui_state::PopupMenuItem {
@@ -6148,16 +6150,25 @@ impl AppCore {
             }];
         }
         let mut items = Vec::new();
-        for kind in KnownWindowKind::MENU_ORDER {
-            let mut group: Vec<_> = known.iter().filter(|k| k.kind == kind).collect();
+        for category in WidgetCategory::ALL {
+            let mut group: Vec<_> = known
+                .iter()
+                .filter(|k| WidgetCategory::from_widget_type(&k.widget_type) == category)
+                .collect();
             if group.is_empty() {
                 continue;
             }
-            group.sort_by(|a, b| a.title.cmp(&b.title));
+            group.sort_by(|a, b| a.title.to_ascii_lowercase().cmp(&b.title.to_ascii_lowercase()));
+            items.push(crate::data::ui_state::PopupMenuItem {
+                text: format!("── {} ──", category.display_name()),
+                command: String::new(),
+                disabled: true,
+            });
             for k in group {
                 let mark = if k.shown { "[x]" } else { "[ ]" };
+                let session = if k.ephemeral { " (session)" } else { "" };
                 items.push(crate::data::ui_state::PopupMenuItem {
-                    text: format!("{} {} ({})", mark, k.title, kind.label()),
+                    text: format!("{} {}{}", mark, k.title, session),
                     command: format!("__TOGGLE_WINDOW__{}", k.name),
                     disabled: false,
                 });

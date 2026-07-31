@@ -25,24 +25,6 @@ pub enum KnownWindowKind {
     Container,
 }
 
-impl KnownWindowKind {
-    pub fn label(&self) -> &'static str {
-        match self {
-            KnownWindowKind::Layout => "window",
-            KnownWindowKind::Dialog => "dialog",
-            KnownWindowKind::Stream => "stream",
-            KnownWindowKind::Container => "container",
-        }
-    }
-
-    /// Stable group order for the menu.
-    pub const MENU_ORDER: [KnownWindowKind; 4] = [
-        KnownWindowKind::Layout,
-        KnownWindowKind::Dialog,
-        KnownWindowKind::Stream,
-        KnownWindowKind::Container,
-    ];
-}
 
 /// One row in the unified known-windows list.
 #[derive(Debug, Clone)]

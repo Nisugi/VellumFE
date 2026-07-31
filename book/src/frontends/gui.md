@@ -54,12 +54,21 @@ and remember their spot.
 - **Lock Window** (context menu) pins a window's position and size;
   `.lockwindows` locks everything at once.
 - **The Windows manager**: the **Windows** button in the toolbar opens one
-  window listing everything the client knows about — layout widgets, game
-  dialogs, streams, and containers — grouped by category and collapsible.
-  Each row has a **show/hide checkbox** and a **Zone** selector; **➕ Add
-  window…** creates a new one (custom windows open the editor). Hidden
-  windows stay hidden even when the game re-sends them (there is no dialog
-  blocklist — hiding is the control).
+  window listing **every window the client can have** — the full built-in
+  catalog plus game dialogs, streams, and containers — grouped into
+  categories (Status, Progress Bars, Character, Navigation, Hotbars,
+  Containers, Dialogs, …) that start collapsed. Each row has a
+  **show/hide checkbox** (ticking a never-added window creates it) and a
+  **Zone** dropdown — set the zone on a hidden window and it appears
+  there when shown; otherwise placement defaults to a sensible zone
+  (usually Center). **➕ Custom window…** creates blank custom widgets
+  (text, tabbed, progress, countdown, entity, active effects) and drops
+  you into the editor; they then appear as rows under their category.
+  Hidden windows stay hidden even when the game re-sends them (there is
+  no dialog blocklist — hiding is the control). Even the **story (main)
+  window** can be hidden once another window or tab carries the `main`
+  stream, and hiding the **command input** hands typing to the built-in
+  bottom bar (the TUI always keeps its input line).
 - **Right-click** a window body for its context menu — including **Edit
   Window…**, which opens the window editor; title bars can be hidden
   per-window. Overlapping windows offer **Send to Back**, dropping the
