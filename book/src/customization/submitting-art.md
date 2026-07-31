@@ -22,9 +22,9 @@ needs:
 | **Hotbar icon sheet** | a grid of square ability icons for hotbar buttons | one sheet image |
 | **Window frame** | an ornamental nine-slice border drawn around windows | one image |
 | **Window background** | a flat texture that sits behind window text | one image |
-| **Compass art** | a compass rose and/or its lit direction overlays | a zip of images |
-| **Status icons** | the glyph set for stance and conditions | a zip of images |
-| **Hand icons** | left, right, and spell hand icons for the hands widget | a zip of images |
+| **Compass art** | a compass rose and/or its lit direction overlays | an image or a zip |
+| **Status icons** | the glyph set for stance and conditions | an image or a zip |
+| **Hand icons** | left, right, and spell hand icons for the hands widget | an image or a zip |
 
 Full skins (complete graphics themes) and layouts aren't submitted
 through these forms — they're folders rather than single images, and go
@@ -98,9 +98,12 @@ their **role** so the client knows what each image is:
 - **Hand icons**: `lefthand` `righthand` `spellhand`
 
 Name each file either `<role>.png` or `<anything>_<role>.png` — both
-work. A partial set is fine (just a rose, say). Your set name from the
-form becomes the prefix, so `emberiron` + `rose.png` is published as
-`emberiron_rose.png`.
+work. A partial set is fine (just a rose, say). Files named for a bare
+role take your set name as prefix, so `emberiron` + `rose.png` is
+published as `emberiron_rose.png`; files with their own prefix keep it,
+so one zip can carry `ember_spellhand.png` and `frost_spellhand.png` as
+two separate assets. You don't need a zip at all for one image — attach
+it directly and pick its role in the form's dropdown.
 
 ## What happens after you click Submit
 
