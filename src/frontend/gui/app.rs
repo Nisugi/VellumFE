@@ -2006,6 +2006,15 @@ impl VellumGuiApp {
         }
     }
 
+    /// Per-window position/size lock (context menu): locked windows ignore
+    /// drag and resize gestures in every zone; the deliberate Arrange ▸
+    /// Move Window menu action still works.
+    pub(super) fn window_locked(&self, key: &TabKey) -> bool {
+        self.tab_settings
+            .get(key)
+            .is_some_and(|settings| settings.locked)
+    }
+
     /// Per-window frame corner radius override (context menu); None follows
     /// the global `ui_settings.window_corner_radius` already baked into the
     /// window frame style.

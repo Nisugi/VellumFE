@@ -44,6 +44,9 @@ pub(super) enum GuiWindowMenuCommand {
     /// Start Move mode: the window follows the cursor (title bar stays as-is)
     /// until a click places it or Esc cancels.
     StartMove,
+    /// Toggle the per-window position/size lock: locked windows ignore
+    /// drag and resize gestures (Move Window above stays available).
+    ToggleLock,
     ToggleTitleBar,
     MoveUp,
     MoveDown,
@@ -129,6 +132,8 @@ pub(super) enum GuiWindowMenuCommand {
 struct WindowMenuView<'a> {
     zone: GuiShellZone,
     allow_reorder: bool,
+    /// Position/size lock state, rendered as a checked row.
+    locked: bool,
     appearance: WindowAppearanceView,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
@@ -354,6 +359,11 @@ impl VellumGuiApp {
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),
             GuiWindowMenuCommand::SendToBack => {
                 self.send_window_to_back(ctx, &request.tab_key);
+            }
+            GuiWindowMenuCommand::ToggleLock => {
+                let settings = self.tab_settings.entry(request.tab_key.clone()).or_default();
+                settings.locked = !settings.locked;
+                self.layout_dirty = true;
             }
             GuiWindowMenuCommand::EditHandIcons => {
                 if let Some(name) = self
@@ -827,6 +837,7 @@ impl VellumGuiApp {
         let view = WindowMenuView {
             zone: request.zone,
             allow_reorder: request.allow_reorder,
+            locked: self.window_locked(&request.tab_key),
             appearance: self.appearance_view_for_tab(&request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
@@ -1350,6 +1361,19 @@ impl VellumGuiApp {
             .clicked()
         {
             return Some(GuiWindowMenuCommand::SendToBack);
+        }
+        if ui
+            .selectable_label(
+                view.locked,
+                if view.locked { "Unlock Window" } else { "Lock Window" },
+            )
+            .on_hover_text(
+                "Locked windows ignore dragging and resizing. \
+                 Arrange ▸ Move Window still works deliberately.",
+            )
+            .clicked()
+        {
+            return Some(GuiWindowMenuCommand::ToggleLock);
         }
         ui.separator();
         // Everything below folds into sections so the menu opens short.

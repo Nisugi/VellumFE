@@ -114,6 +114,12 @@ pub struct TabSettings {
     /// Mini map zoom (pixels per grid cell); None uses the widget default
     #[serde(default)]
     pub map_zoom: Option<f32>,
+
+    /// Position/size lock (context menu): a locked window ignores drag and
+    /// resize gestures in every zone. Arrange ▸ Move Window still works —
+    /// the lock blocks accidents, not deliberate menu actions.
+    #[serde(default)]
+    pub locked: bool,
 }
 
 fn default_wrap_text() -> bool {
@@ -135,6 +141,7 @@ impl Default for TabSettings {
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
             map_zoom: None,
+            locked: false,
         }
     }
 }
@@ -1086,6 +1093,7 @@ mod tests {
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
             map_zoom: None,
+            locked: false,
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -1310,6 +1318,7 @@ mod tests {
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
                 map_zoom: None,
+                locked: false,
             },
         );
         layout.set_tab_settings(

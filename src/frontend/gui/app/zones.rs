@@ -1043,6 +1043,10 @@ impl VellumGuiApp {
                 let mut gap_drag_delta = 0.0f32;
                 let mut zone_width_drag_delta = 0.0f32;
                 let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
+                // Locked sidebar windows keep the zone-width band (that
+                // resizes the ZONE, not the window) but lose their own
+                // height-resize and gap-move handles.
+                let window_locked = self.window_locked(&tab.id.key);
                 let window_id =
                     egui::Id::new(("gui_zone_window", zone.id_fragment(), &tab.id.key));
                 let mut window_frame = egui::Frame::window(ctx.global_style().as_ref())
@@ -1111,10 +1115,14 @@ impl VellumGuiApp {
                             let handle_response = ui.interact(
                                 band_rect,
                                 ui.id().with("sidebar_resize_handle"),
-                                egui::Sense::click_and_drag(),
+                                if window_locked {
+                                    egui::Sense::hover()
+                                } else {
+                                    egui::Sense::click_and_drag()
+                                },
                             );
-                            let handle_active =
-                                handle_response.hovered() || handle_response.dragged();
+                            let handle_active = !window_locked
+                                && (handle_response.hovered() || handle_response.dragged());
                             if handle_active {
                                 let stroke_color =
                                     ui.visuals().widgets.hovered.fg_stroke.color;
@@ -1147,10 +1155,14 @@ impl VellumGuiApp {
                             let move_response = ui.interact(
                                 move_band_rect,
                                 ui.id().with("sidebar_move_handle"),
-                                egui::Sense::click_and_drag(),
+                                if window_locked {
+                                    egui::Sense::hover()
+                                } else {
+                                    egui::Sense::click_and_drag()
+                                },
                             );
-                            let move_active =
-                                move_response.hovered() || move_response.dragged();
+                            let move_active = !window_locked
+                                && (move_response.hovered() || move_response.dragged());
                             if move_active {
                                 let stroke_color =
                                     ui.visuals().widgets.hovered.fg_stroke.color;
@@ -1452,6 +1464,7 @@ impl VellumGuiApp {
                 min_window_height.min(window_bounds.height().max(1.0)),
             );
             let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
+            let window_locked = self.window_locked(&tab.id.key);
             let grouped = group_shape.is_some_and(|(count, _)| count > 1);
             // Docked text-like windows fill their zone's full height — no
             // reserved headroom, which otherwise left a gap at the bottom edge.
@@ -1528,6 +1541,7 @@ impl VellumGuiApp {
             if is_hand_widget
                 && primary_down
                 && pointer_over_hand_resize_handle
+                && !window_locked
                 && self.hand_resize_tab.is_none()
             {
                 self.hand_resize_tab = Some(tab.id.key.clone());
@@ -1563,8 +1577,18 @@ impl VellumGuiApp {
                 .default_size(initial_rect.size())
                 .min_size(min_window_size)
                 .max_size(max_window_size)
-                .resizable(true)
-                .movable(!ctx.input(|i| i.modifiers.alt) && !hand_resize_active)
+                .resizable(!window_locked)
+                .movable(
+                    !ctx.input(|i| i.modifiers.alt) && !hand_resize_active && !window_locked,
+                )
+                // Drag from anywhere — body and title bar alike — so every
+                // move goes through the anchored area-move path. Title-bar
+                // drag mode routes through a separate pre-`Area::begin`
+                // per-frame delta hand-off that loses against the canonical
+                // position feed, leaving titled windows unmovable/unsnappable.
+                // Interactive content (text selection, links, scrollbars)
+                // still wins hit-testing over the body drag.
+                .drag_area(egui::WindowDrag::Anywhere)
                 .title_bar(!title_bar_hidden)
                 .collapsible(false)
                 .constrain_to(window_bounds)
@@ -1601,7 +1625,8 @@ impl VellumGuiApp {
             // the grabbed edge away from the press origin, and re-testing
             // the origin against the shrinking rect would re-pin the size
             // mid-drag, stalling the resize after ~12px per grab.
-            let user_engaging_window = pointer_interacting
+            let user_engaging_window = !window_locked
+                && pointer_interacting
                 && (self.center_engaged_tab.as_ref() == Some(&tab.id.key)
                     || press_origin
                         .is_some_and(|pos| initial_rect.expand(12.0).contains(pos)));
@@ -1780,7 +1805,7 @@ impl VellumGuiApp {
                     self.layout_dirty = true;
                 }
                 occupied_rects.push(inner.response.rect);
-                if self.zone_drag_state.is_none() {
+                if self.zone_drag_state.is_none() && !window_locked {
                     if let Some(pointer_pos) = Self::zone_drag_pointer_for_rect(
                         ctx,
                         inner.response.rect,
