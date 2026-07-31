@@ -465,9 +465,32 @@ pub struct StatusIconSettings {
     #[serde(default)]
     pub overrides: std::collections::HashMap<String, crate::data::IconRef>,
     /// Inactive statuses render their icon in grayscale (instead of the
-    /// default alpha dim). Off = no gray twins are ever built.
+    /// default alpha dim). Off = no gray twins are ever built (unless a
+    /// per-indicator override below turns one on).
     #[serde(default)]
     pub gray_inactive: bool,
+
+    /// Per-indicator exceptions to `gray_inactive` (indicator id → force
+    /// on/off). Absent = follow the global toggle.
+    #[serde(default)]
+    pub gray_overrides: std::collections::HashMap<String, bool>,
+}
+
+impl StatusIconSettings {
+    /// Whether this indicator grays out when inactive: its override if it
+    /// has one, else the global toggle.
+    pub fn gray_for(&self, indicator_id: &str) -> bool {
+        self.gray_overrides
+            .get(indicator_id)
+            .or_else(|| self.gray_overrides.get(&indicator_id.to_ascii_uppercase()))
+            .copied()
+            .unwrap_or(self.gray_inactive)
+    }
+
+    /// Whether ANY indicator needs a gray twin built.
+    pub fn any_gray(&self) -> bool {
+        self.gray_inactive || self.gray_overrides.values().any(|on| *on)
+    }
 }
 
 fn default_zoom_factor() -> f32 {

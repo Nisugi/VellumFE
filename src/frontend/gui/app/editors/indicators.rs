@@ -11,6 +11,8 @@ pub(in super::super) struct IndicatorTemplatesEditorState {
     entries: Vec<EntryBuffer>,
     /// Indicator id being typed into the "add icon override" row.
     new_override_id: String,
+    /// Indicator id being typed into the "add grayscale exception" row.
+    new_gray_id: String,
     error: Option<String>,
 }
 
@@ -91,6 +93,7 @@ impl VellumGuiApp {
         self.indicator_templates_editor = Some(IndicatorTemplatesEditorState {
             entries,
             new_override_id: String::new(),
+            new_gray_id: String::new(),
             error: None,
         });
     }
@@ -128,6 +131,16 @@ impl VellumGuiApp {
         let mut override_changes: Vec<(String, Option<crate::data::IconRef>)> = Vec::new();
         let current_gray = self.ui_settings.status_icons.gray_inactive;
         let mut gray_change: Option<bool> = None;
+        let mut sorted_gray_overrides: Vec<(String, bool)> = self
+            .ui_settings
+            .status_icons
+            .gray_overrides
+            .iter()
+            .map(|(id, on)| (id.clone(), *on))
+            .collect();
+        sorted_gray_overrides.sort_by(|a, b| a.0.cmp(&b.0));
+        // (id, Some(on)) = upsert; (id, None) = back to the global toggle.
+        let mut gray_override_changes: Vec<(String, Option<bool>)> = Vec::new();
 
         egui::Window::new("Indicator Templates")
             .id(egui::Id::new("gui_indicator_templates"))
@@ -224,6 +237,51 @@ impl VellumGuiApp {
                 {
                     gray_change = Some(gray);
                 }
+                // Per-indicator exceptions to the grayscale toggle.
+                for (id, on) in &sorted_gray_overrides {
+                    ui.horizontal(|ui| {
+                        ui.monospace(id);
+                        let mut on = *on;
+                        egui::ComboBox::from_id_salt(format!("statusicon_gray_{id}"))
+                            .width(140.0)
+                            .selected_text(if on { "Grayscale" } else { "Alpha dim" })
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_label(on, "Grayscale").clicked() && !on {
+                                    on = true;
+                                    gray_override_changes.push((id.clone(), Some(true)));
+                                }
+                                if ui.selectable_label(!on, "Alpha dim").clicked() && on {
+                                    on = false;
+                                    gray_override_changes.push((id.clone(), Some(false)));
+                                }
+                            });
+                        if ui
+                            .small_button("✕")
+                            .on_hover_text("Follow the global toggle again")
+                            .clicked()
+                        {
+                            gray_override_changes.push((id.clone(), None));
+                        }
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.new_gray_id)
+                            .hint_text("indicator id for a grayscale exception")
+                            .desired_width(160.0),
+                    );
+                    if ui.button("Add grayscale exception").clicked()
+                        && !state.new_gray_id.trim().is_empty()
+                    {
+                        // Exceptions start as the opposite of the global
+                        // toggle — that's why you'd add one.
+                        gray_override_changes.push((
+                            state.new_gray_id.trim().to_ascii_uppercase(),
+                            Some(!current_gray),
+                        ));
+                        state.new_gray_id.clear();
+                    }
+                });
                 for (id, icon) in &sorted_overrides {
                     ui.horizontal(|ui| {
                         ui.monospace(id);
@@ -295,6 +353,17 @@ impl VellumGuiApp {
         }
         if let Some(gray) = gray_change {
             self.ui_settings.status_icons.gray_inactive = gray;
+            self.layout_dirty = true;
+        }
+        for (id, change) in gray_override_changes {
+            match change {
+                Some(on) => {
+                    self.ui_settings.status_icons.gray_overrides.insert(id, on);
+                }
+                None => {
+                    self.ui_settings.status_icons.gray_overrides.remove(&id);
+                }
+            }
             self.layout_dirty = true;
         }
         for (id, change) in override_changes {

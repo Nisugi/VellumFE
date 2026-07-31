@@ -101,8 +101,10 @@ pub(super) struct WidgetRenderSettings {
     /// Hand widget icon box size in points (ui_settings.hand_icon_size).
     hand_icon_size: f32,
     /// Inactive status icons render their grayscale twin instead of the
-    /// alpha dim (ui_settings.status_icons.gray_inactive).
+    /// alpha dim: the global toggle plus per-indicator exceptions
+    /// (ui_settings.status_icons.gray_inactive / gray_overrides).
     gray_inactive_icons: bool,
+    gray_icon_overrides: std::collections::HashMap<String, bool>,
     /// Doll art renders its grayscale twins (ui_settings.doll_grayscale).
     doll_grayscale: bool,
 }
@@ -1394,6 +1396,7 @@ impl VellumGuiApp {
                 && self.title_bar_hidden(key),
             hand_icon_size: self.ui_settings.hand_icon_size.clamp(16.0, 48.0),
             gray_inactive_icons: self.ui_settings.status_icons.gray_inactive,
+            gray_icon_overrides: self.ui_settings.status_icons.gray_overrides.clone(),
             doll_grayscale: self.ui_settings.doll_grayscale,
         }
     }
@@ -4889,7 +4892,7 @@ impl eframe::App for VellumGuiApp {
             hand_state_images.chain(hotbar_images).collect();
         self.skin_state.set_needed_pool_icons(needed_pool_icons);
         self.skin_state.set_grayscale(
-            self.ui_settings.status_icons.gray_inactive,
+            self.ui_settings.status_icons.any_gray(),
             self.ui_settings.doll_grayscale,
         );
         self.skin_state.apply_if_changed(

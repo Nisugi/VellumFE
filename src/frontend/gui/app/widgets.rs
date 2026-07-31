@@ -4648,12 +4648,23 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Indicator(indicator) => {
+                // Per-indicator gray override wins over the global toggle.
+                let gray = settings
+                    .gray_icon_overrides
+                    .get(&indicator.indicator_id)
+                    .or_else(|| {
+                        settings
+                            .gray_icon_overrides
+                            .get(&indicator.indicator_id.to_ascii_uppercase())
+                    })
+                    .copied()
+                    .unwrap_or(settings.gray_inactive_icons);
                 Self::render_indicator_content(
                     ui,
                     &tab.id.title,
                     indicator,
                     settings.skin_art.as_deref(),
-                    settings.gray_inactive_icons,
+                    gray,
                 );
                 None
             }
