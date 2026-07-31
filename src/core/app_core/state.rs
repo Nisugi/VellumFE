@@ -3256,14 +3256,17 @@ impl AppCore {
         self.add_system_message("  .version / .ver         - Show version info");
         self.add_system_message("  .menu                   - Open main menu");
         self.add_system_message("  .settings               - Open settings editor");
-        self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors)");
+        self.add_system_message("  .reload [category]      - Reload config from disk (highlights|keybinds|hotbars|settings|colors|layout)");
         self.add_system_message("  .room                   - Show how the current room resolved against the mapdb");
         self.add_system_message("  .mapdb [download|remove|repo <r>] - Manage downloaded map data (status by default)");
-        self.add_system_message("  .data [status|reload]   - Shared game-data assets: source + age (Lich folder > local > bundled)");
+        self.add_system_message("  .data [status|reload|update <name>] - Shared game-data assets: source + age (Lich folder > local > bundled)");
+        self.add_system_message("  .jinx                   - Asset manager: install skins, icons, layouts, game data (.jinx for usage)");
+        self.add_system_message("  .tts ...                - Text-to-speech control (.tts for usage; GUI also has Settings > Speech)");
+        self.add_system_message("  .portal [n]             - Walk the room's non-compass exit (go door, climb stair, ...)");
         self.add_system_message("  .go2 <target>           - Travel there (room id, uid, tag, saved name, or text search)");
         self.add_system_message("  .go2 stop|status        - Cancel / show the active trip");
         self.add_system_message("  .go2 save <name> [id]   - Save a target (.go2 targets lists, .go2 back returns)");
-        self.add_system_message("  .sorter [on|off]        - Categorize 'look in container' output by item type");
+        self.add_system_message("  .sorter [on|off|edit]   - Categorize 'look in container' output (edit opens the rules editor)");
         self.add_system_message("  .foreach ... in <bag>; cmd; cmd - Batch commands over matching container items (.foreach for usage)");
         self.add_system_message("  .stop                   - Stop whatever automation is driving (go2 trip, foreach run)");
         self.add_system_message("");
@@ -3291,6 +3294,8 @@ impl AppCore {
         self.add_system_message("  .rename <win> <title>   - Rename window title");
         self.add_system_message("  .border <win> <style> [color] - Set window border");
         self.add_system_message("    Styles: all, none, top, bottom, left, right");
+        self.add_system_message("  .streams                - Stream routing: every known stream and where it goes");
+        self.add_system_message("  .hidecontainers [title] - Close popped-up container windows (all, or by title)");
         self.add_system_message("");
 
         // Highlights
@@ -3312,6 +3317,8 @@ impl AppCore {
         // Keybinds
         self.add_system_message("KEYBINDS:");
         self.add_system_message("  .keybinds / .kb         - Open keybinds browser");
+        self.add_system_message("  .menukeybinds / .menukb - Edit the menu navigation/action keys");
+        self.add_system_message("  .controller             - Open the controller bindings editor (GUI)");
         self.add_system_message("  .addkeybind / .addkey   - Create new keybind");
         self.add_system_message("  .savekeybinds [name]    - Save keybinds as profile (default: 'default')");
         self.add_system_message("  .loadkeybinds <name>    - Load keybinds from profile");
@@ -3346,6 +3353,7 @@ impl AppCore {
         self.add_system_message("  .setskin <name>         - Activate a GUI skin (.setskin none to disable)");
         self.add_system_message("  .skin <name>            - Alias for .setskin");
         self.add_system_message("  .makeskin <name>        - Create a starter skin to edit");
+        self.add_system_message("  .saveskin <name>        - Bake the current GUI appearance into a skin (GUI)");
         self.add_system_message("  .reloadskin             - Reload the active skin's images");
         self.add_system_message("");
 
@@ -3364,6 +3372,8 @@ impl AppCore {
 
         // Toggles
         self.add_system_message("TOGGLES:");
+        self.add_system_message("  .transparent            - Toggle transparent window backgrounds");
+        self.add_system_message("  .snapdebug              - Toggle the snap-engine trace in vellum-fe.log (GUI)");
         self.add_system_message("");
 
         // Window locking
@@ -3372,7 +3382,14 @@ impl AppCore {
         self.add_system_message("  .lockwindow <window> [on|off] - Lock/unlock one window (.unlockwindow forces off)");
         self.add_system_message("");
 
-        self.add_system_message("Type the command name for more details. Example: .help windows");
+        // Web & phones
+        self.add_system_message("WEB & PHONES:");
+        self.add_system_message("  .webinfo                - Show the phone pairing URL + QR code");
+        self.add_system_message("  .reloadmacros           - Reload macros.toml and push to connected phones");
+        self.add_system_message("  .webui [page|off]       - Lich WebUI pages as native panels (GUI)");
+        self.add_system_message("");
+
+        self.add_system_message("Commands marked (GUI) need the desktop GUI; .setpalette/.resetpalette and .resize are TUI-only.");
     }
 
     /// Show version information

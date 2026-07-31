@@ -4672,6 +4672,18 @@ impl VellumGuiApp {
             }
             return true;
         }
+        // Bare `.hidewindow` (no name) asks for a picker: the Windows
+        // manager IS the show/hide picker here.
+        if action == "action:hidewindow" {
+            self.open_known_windows_editor();
+            return true;
+        }
+        // `.streams`: the routing lives in the Streams & Custom Windows
+        // panel (same surface the Windows menu opens).
+        if action == "action:streams" {
+            self.open_custom_windows_editor();
+            return true;
+        }
         if let Some(rest) = action.strip_prefix("action:zone:") {
             return self.handle_zone_action(rest);
         }

@@ -90,6 +90,26 @@ pub fn handle_menu_action(
     } else if let Some(window_name) = command.strip_prefix("action:hidewindow:") {
         // Hide a visible window
         app_core.hide_window(window_name);
+    } else if let Some(name) = command.strip_prefix("action:edithighlight:") {
+        // `.edithighlight <name>`: open the edit form for that highlight.
+        match app_core.config.highlights.get(name) {
+            Some(pattern) => {
+                let mut form =
+                    crate::frontend::tui::highlight_form::HighlightFormWidget::new_edit(
+                        name.to_string(),
+                        pattern,
+                    );
+                form.set_rumble_options(app_core.config.controller_rumble.pattern_names());
+                frontend.highlight_form = Some(form);
+                close_all_menus(&mut app_core.ui_state);
+                app_core.ui_state.input_mode = InputMode::HighlightForm;
+            }
+            None => {
+                app_core
+                    .add_system_message(&format!("No highlight named '{}' (.highlights lists them)", name));
+                app_core.needs_render = true;
+            }
+        }
     } else if let Some(stream) = command.strip_prefix("action:streamacts:") {
         // Per-stream route actions submenu. Rebuild the streams list under it
         // first: the mouse path closes every menu before dispatching actions.
@@ -226,7 +246,9 @@ pub fn handle_menu_action(
                 app_core.ui_state.input_mode = InputMode::Normal;
                 app_core.needs_render = true;
             }
-            "action:highlights" => {
+            // Bare `.edithighlight` opens the browser to pick from, same
+            // as `.highlights` (the GUI does the equivalent).
+            "action:highlights" | "action:edithighlight" => {
                 // Open highlight browser with source tracking
                 let global_highlights =
                     crate::config::Config::load_common_highlights().unwrap_or_default();
@@ -450,7 +472,11 @@ pub fn handle_menu_action(
                 frontend.sync_tabbed_active_state(app_core);
                 app_core.needs_render = true;
             }
-            "action:gonew" => {
+            // Core emits `action:nextunread` for both `.gonew` and
+            // `.nextunread`; this arm matched the never-emitted
+            // "action:gonew" until 2026-07-31, leaving the typed commands
+            // dead in the TUI (the keybind path is separate and worked).
+            "action:nextunread" => {
                 // Navigate to next tab with unread messages
                 if !frontend.go_to_next_unread_tab() {
                     app_core.add_system_message("No tabs with new messages");
