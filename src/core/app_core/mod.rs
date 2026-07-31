@@ -12,6 +12,7 @@ mod interact;
 mod keybinds;
 mod layout;
 mod state;
+mod streams;
 
 pub use automation::AutomationOwner;
 pub use haptics::{HapticEvent, HapticSnapshot};

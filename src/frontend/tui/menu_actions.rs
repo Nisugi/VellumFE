@@ -292,8 +292,8 @@ pub fn handle_ui_action(
                 Some(route) if !stream.is_empty() => {
                     // Route actions orphan the stream first (a subscription would
                     // always win over the route) — same as the GUI Streams panel.
-                    remove_stream_from_text_windows(app_core, &stream, None);
-                    if let Err(err) = set_stream_route(app_core, &stream, route) {
+                    app_core.remove_stream_from_text_windows(&stream, None);
+                    if let Err(err) = app_core.set_stream_route(&stream, route) {
                         app_core.add_system_message(&err);
                     }
                     open_streams_menu(app_core, Some(&stream));
@@ -304,8 +304,8 @@ pub fn handle_ui_action(
         UiAction::StreamSubscribe { window, stream } => {
             // Subscribe an existing text window to the stream (moving it from any
             // other text window). Any route entry stays as the orphan policy.
-            remove_stream_from_text_windows(app_core, &stream, Some(&window));
-            if let Err(err) = add_stream_to_text_window(app_core, &window, &stream) {
+            app_core.remove_stream_from_text_windows(&stream, Some(&window));
+            if let Err(err) = app_core.add_stream_to_text_window(&window, &stream) {
                 app_core.add_system_message(&err);
             }
             open_streams_menu(app_core, Some(&stream));
@@ -636,105 +636,7 @@ fn open_streams_menu(app_core: &mut AppCore, select: Option<&str>) {
     app_core.needs_render = true;
 }
 
-/// Mirror a text window's live stream list into its layout definition so the
-/// change survives a restart (same fix the Window Editor carries).
-fn sync_text_streams_to_layout(app_core: &mut AppCore, name: &str, streams: Vec<String>) {
-    if let Some(crate::config::WindowDef::Text { data, .. }) = app_core
-        .layout
-        .windows
-        .iter_mut()
-        .find(|w| w.name() == name)
-    {
-        data.streams = streams;
-        app_core.schedule_layout_autosave();
-    }
-}
-
-/// Remove `stream` from every plain Text window's stream list except `keep`,
-/// syncing layout definitions and the routing cache.
-fn remove_stream_from_text_windows(app_core: &mut AppCore, stream: &str, keep: Option<&str>) {
-    let mut changed: Vec<(String, Vec<String>)> = Vec::new();
-    for (name, window) in app_core.ui_state.windows.iter_mut() {
-        if keep == Some(name.as_str()) {
-            continue;
-        }
-        // Only plain Text widgets: tabbed tabs and built-in inventory-type
-        // widgets are Window Editor territory (their rows are read-only here).
-        let crate::data::WindowContent::Text(text) = &mut window.content else {
-            continue;
-        };
-        let before = text.streams.len();
-        text.streams
-            .retain(|s| !s.trim().eq_ignore_ascii_case(stream));
-        if text.streams.len() != before {
-            changed.push((name.clone(), text.streams.clone()));
-        }
-    }
-    if changed.is_empty() {
-        return;
-    }
-    for (name, streams) in changed {
-        sync_text_streams_to_layout(app_core, &name, streams);
-    }
-    app_core
-        .message_processor
-        .update_text_stream_subscribers(&app_core.ui_state);
-    app_core.needs_render = true;
-}
-
-/// Subscribe an existing Text window to `stream` (no-op when already
-/// subscribed), syncing the layout definition and the routing cache.
-fn add_stream_to_text_window(
-    app_core: &mut AppCore,
-    name: &str,
-    stream: &str,
-) -> Result<(), String> {
-    let streams = {
-        let window = app_core
-            .ui_state
-            .windows
-            .get_mut(name)
-            .ok_or_else(|| format!("Window '{}' no longer exists.", name))?;
-        let crate::data::WindowContent::Text(text) = &mut window.content else {
-            return Err(format!("Window '{}' is not a text window.", name));
-        };
-        if !text
-            .streams
-            .iter()
-            .any(|s| s.trim().eq_ignore_ascii_case(stream))
-        {
-            text.streams.push(stream.to_string());
-        }
-        text.streams.clone()
-    };
-    sync_text_streams_to_layout(app_core, name, streams);
-    app_core
-        .message_processor
-        .update_text_stream_subscribers(&app_core.ui_state);
-    app_core.needs_render = true;
-    Ok(())
-}
-
-/// Set (or clear, with `None`) the `[streams.routes]` entry for a stream,
-/// persist it via the sparse profile save, and push the new config into the
-/// message processor (which routes from its own copy).
-fn set_stream_route(
-    app_core: &mut AppCore,
-    stream: &str,
-    route: Option<crate::config::StreamRoute>,
-) -> Result<(), String> {
-    let routes = &mut app_core.config.streams.routes;
-    // Replace any existing entry regardless of letter case (route lookup is
-    // case-insensitive, so near-duplicates would shadow each other).
-    routes.retain(|id, _| !id.eq_ignore_ascii_case(stream));
-    if let Some(route) = route {
-        routes.insert(stream.to_string(), route);
-    }
-    app_core
-        .save_config()
-        .map_err(|err| format!("Failed to save config: {}", err))?;
-    let config = app_core.config.clone();
-    app_core.message_processor.apply_config(config);
-    app_core.needs_render = true;
-    Ok(())
-}
+// The stream-routing mutations themselves (subscribe, orphan, route,
+// layout sync) live on AppCore (core/app_core/streams.rs), shared with
+// the GUI's Streams & Custom Windows panel; only the menu plumbing above
+// is TUI-specific.
