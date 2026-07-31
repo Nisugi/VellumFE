@@ -24,7 +24,6 @@ pub(super) struct GuiMenuCommand {
 pub(super) struct GuiWindowMenuRequest {
     pub(super) tab_key: TabKey,
     pub(super) zone: GuiShellZone,
-    pub(super) allow_reorder: bool,
     pub(super) position: Pos2,
     /// The window's rendered rect at the time of the right-click; seeds the
     /// stored rect for Move mode when the window was never moved before.
@@ -38,8 +37,8 @@ pub(super) enum GuiWindowMenuCommand {
     Hide,
     Detach,
     /// Send this floating window behind any windows it overlaps in its
-    /// zone (Center, Header, or Footer), so a covered window can be
-    /// reached. Live-session only, like egui's built-in click-to-raise.
+    /// zone, so a covered window can be reached. Live-session only, like
+    /// egui's built-in click-to-raise.
     SendToBack,
     /// Start Move mode: the window follows the cursor (title bar stays as-is)
     /// until a click places it or Esc cancels.
@@ -48,8 +47,6 @@ pub(super) enum GuiWindowMenuCommand {
     /// drag and resize gestures (Move Window above stays available).
     ToggleLock,
     ToggleTitleBar,
-    MoveUp,
-    MoveDown,
     MoveTo(GuiShellZone),
     /// Per-window text size override; None reverts to the global size.
     /// Unlike the other commands this keeps the menu open (slider drags
@@ -131,7 +128,6 @@ pub(super) enum GuiWindowMenuCommand {
 /// the menu body stays a static fn.
 struct WindowMenuView<'a> {
     zone: GuiShellZone,
-    allow_reorder: bool,
     /// Position/size lock state, rendered as a checked row.
     locked: bool,
     appearance: WindowAppearanceView,
@@ -410,16 +406,6 @@ impl VellumGuiApp {
                     original_rect: self.main_window_rects.get(&request.tab_key).copied(),
                     just_started: true,
                 });
-            }
-            GuiWindowMenuCommand::MoveUp => {
-                if request.allow_reorder {
-                    self.move_tab_within_zone(&request.tab_key, request.zone, true);
-                }
-            }
-            GuiWindowMenuCommand::MoveDown => {
-                if request.allow_reorder {
-                    self.move_tab_within_zone(&request.tab_key, request.zone, false);
-                }
             }
             GuiWindowMenuCommand::MoveTo(target) => {
                 if target != request.zone {
@@ -860,7 +846,6 @@ impl VellumGuiApp {
             .unwrap_or_default();
         let view = WindowMenuView {
             zone: request.zone,
-            allow_reorder: request.allow_reorder,
             locked: self.window_locked(&request.tab_key),
             appearance: self.appearance_view_for_tab(&request.tab_key),
             group_horizontal: self
@@ -1407,14 +1392,6 @@ impl VellumGuiApp {
         ui.collapsing("Arrange", |ui| {
             if ui.selectable_label(false, "Move Window").clicked() {
                 command = Some(GuiWindowMenuCommand::StartMove);
-            }
-            if view.allow_reorder {
-                if ui.selectable_label(false, "Move Up").clicked() {
-                    command = Some(GuiWindowMenuCommand::MoveUp);
-                }
-                if ui.selectable_label(false, "Move Down").clicked() {
-                    command = Some(GuiWindowMenuCommand::MoveDown);
-                }
             }
             ui.label("Move to");
             for target in GuiShellZone::all() {

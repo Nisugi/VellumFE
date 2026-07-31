@@ -337,16 +337,25 @@ impl VellumGuiApp {
     fn set_tab_zone_single(&mut self, key: TabKey, zone: GuiShellZone) {
         let current = self.zone_for_tab(&key);
         if current != zone {
-            // Order value from BEFORE this tab joins the zone: append at the
-            // end instead of inheriting a stale y from the previous zone.
-            let append_y = self.next_zone_order_y(zone);
             self.tab_zones.insert(key.clone(), zone);
             if let Some(target_height) = self.target_docked_height(zone) {
+                // Header/footer: append after the zone's right-most window
+                // in real screen coords (the render clamp pulls the rect
+                // into the strip), filling the strip's height.
+                let after = self
+                    .tab_zones
+                    .iter()
+                    .filter(|(other, assigned)| **assigned == zone && **other != key)
+                    .filter_map(|(other, _)| self.main_window_rects.get(other))
+                    .map(|rect| rect[0] + rect[2])
+                    .filter(|value| value.is_finite())
+                    .fold(0.0f32, f32::max);
                 let entry = self
                     .main_window_rects
                     .entry(key.clone())
-                    .or_insert([16.0, append_y, 240.0, target_height]);
-                entry[1] = append_y;
+                    .or_insert([after + 4.0, 0.0, 240.0, target_height]);
+                entry[0] = after + 4.0;
+                entry[1] = 0.0;
                 entry[3] = target_height;
             }
             if matches!(zone, GuiShellZone::LeftSidebar | GuiShellZone::RightSidebar) {
@@ -450,58 +459,6 @@ impl VellumGuiApp {
         self.layout_dirty = true;
     }
 
-    /// Spacing between synthetic order-encoding y values. Deliberately far
-    /// larger than any TUI grid coordinate (`window.position.y`, the sort
-    /// fallback for never-ordered tabs) so the two never interleave.
-    const ZONE_ORDER_STEP: f32 = 1000.0;
-
-    fn persist_zone_order(&mut self, ordered: &[TabKey]) {
-        let mut y = Self::ZONE_ORDER_STEP;
-        for key in ordered {
-            let rect = self
-                .main_window_rects
-                .entry(key.clone())
-                .or_insert([16.0, y, 220.0, 140.0]);
-            rect[1] = y;
-            y += Self::ZONE_ORDER_STEP;
-        }
-        self.layout_dirty = true;
-    }
-
-    /// Order value that places a tab after everything currently in `zone`.
-    fn next_zone_order_y(&self, zone: GuiShellZone) -> f32 {
-        self.tab_zones
-            .iter()
-            .filter(|(_, assigned)| **assigned == zone)
-            .filter_map(|(key, _)| self.main_window_rects.get(key))
-            .map(|rect| rect[1])
-            .fold(0.0f32, f32::max)
-            + Self::ZONE_ORDER_STEP
-    }
-
-    pub(super) fn move_tab_within_zone(&mut self, key: &TabKey, zone: GuiShellZone, move_up: bool) {
-        let detached_tabs = self.detached_tab_keys();
-        let mut ordered: Vec<TabKey> = self
-            .zone_surface_tabs(&detached_tabs, zone)
-            .into_iter()
-            .map(|tab| tab.id.key)
-            .collect();
-        let Some(current_idx) = ordered.iter().position(|candidate| candidate == key) else {
-            return;
-        };
-        let target_idx = if move_up {
-            current_idx.checked_sub(1)
-        } else if current_idx + 1 < ordered.len() {
-            Some(current_idx + 1)
-        } else {
-            None
-        };
-        if let Some(target_idx) = target_idx {
-            ordered.swap(current_idx, target_idx);
-            self.persist_zone_order(&ordered);
-        }
-    }
-
     /// The egui `Id` of the window drawn for `tab_key` in `zone`. This is the
     /// single source of the formula — the render pass and the send-to-back
     /// logic both go through here so they can never drift apart.
@@ -513,8 +470,8 @@ impl VellumGuiApp {
     /// its zone. egui has no move-to-bottom, so instead we raise every
     /// *other* window of that zone above it, preserving their existing
     /// relative order — which leaves this one at the bottom of the stack.
-    /// Works in every free-placement zone (Center, Header, Footer); the
-    /// packed sidebars never overlap. Live-session only.
+    /// Works in every zone; all five are free-placement now. Live-session
+    /// only.
     pub(super) fn send_window_to_back(&mut self, ctx: &egui::Context, tab_key: &TabKey) {
         let zone = self.zone_for_tab(tab_key);
         let target = Self::zone_window_id(zone, tab_key);
@@ -1477,7 +1434,6 @@ impl VellumGuiApp {
                         actions.window_menu_request = Some(GuiWindowMenuRequest {
                             tab_key: tab.id.key.clone(),
                             zone,
-                            allow_reorder: false,
                             position: pointer_pos,
                             window_rect: inner.response.rect,
                         });
