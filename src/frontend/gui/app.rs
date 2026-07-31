@@ -2433,165 +2433,6 @@ impl VellumGuiApp {
         self.layout_dirty = true;
     }
 
-    /// Intercept the layout dot-commands with GUI-native named checkpoints,
-    /// mirroring how the TUI intercepts them before AppCore's fallbacks.
-    /// Returns true when the command was one of ours.
-    fn handle_layout_command(&mut self, command: &str) -> bool {
-        let Some(rest) = command.strip_prefix('.') else {
-            return false;
-        };
-        let mut parts = rest.split_whitespace();
-        let Some(cmd) = parts.next() else {
-            return false;
-        };
-        let arg = parts.next();
-        let cmd = cmd.to_lowercase();
-        if !matches!(
-            cmd.as_str(),
-            "savelayout" | "loadlayout" | "layouts" | "uiexport" | "uiimport" | "saveskin"
-        ) {
-            return false;
-        }
-        // These are intercepted before AppCore::send_command, so echo the
-        // typed command here to match every other command's behavior.
-        self.app_core.echo_command_to_main(command);
-        match cmd.as_str() {
-            "saveskin" => {
-                let Some(name) = arg else {
-                    self.app_core.add_system_message(
-                        "Usage: .saveskin <name> — bakes the current appearance \
-                         (doll, compass, status icons, frames, backgrounds) into a skin.",
-                    );
-                    return true;
-                };
-                if !is_valid_layout_name(name) {
-                    self.app_core.add_system_message(
-                        "Skin names use letters, digits, '-' and '_' only.",
-                    );
-                    return true;
-                }
-                match self.compile_appearance_to_skin(name) {
-                    Ok(()) => self.app_core.add_system_message(&format!(
-                        "Saved skin '{}' from the current appearance. Activate it with .setskin {}",
-                        name, name
-                    )),
-                    Err(err) => self
-                        .app_core
-                        .add_system_message(&format!("Failed to save skin: {}", err)),
-                }
-                true
-            }
-            "savelayout" => {
-                let name = arg.unwrap_or("default");
-                if !is_valid_layout_name(name) {
-                    self.app_core.add_system_message(
-                        "Layout names use letters, digits, '-' and '_' only.",
-                    );
-                    return true;
-                }
-                let Some(layout) = self.build_layout_snapshot() else {
-                    self.app_core
-                        .add_system_message("Could not snapshot the current layout.");
-                    return true;
-                };
-                match save_named_layout(
-                    &layout,
-                    &self.layout_profile,
-                    &self.layout_character,
-                    name,
-                ) {
-                    Ok(()) => self.app_core.add_system_message(&format!(
-                        "Saved GUI layout '{}'. Load it with .loadlayout {}",
-                        name, name
-                    )),
-                    Err(err) => self
-                        .app_core
-                        .add_system_message(&format!("Failed to save layout: {}", err)),
-                }
-                true
-            }
-            "loadlayout" => {
-                let Some(name) = arg else {
-                    self.app_core
-                        .add_system_message("Usage: .loadlayout <name>");
-                    self.list_layout_checkpoints();
-                    return true;
-                };
-                match load_named_layout(&self.layout_profile, &self.layout_character, name) {
-                    Ok(layout) => {
-                        self.apply_layout_snapshot(&layout);
-                        self.app_core
-                            .add_system_message(&format!("Loaded GUI layout '{}'.", name));
-                    }
-                    Err(err) => {
-                        self.app_core
-                            .add_system_message(&format!("Failed to load layout: {}", err));
-                        self.list_layout_checkpoints();
-                    }
-                }
-                true
-            }
-            "layouts" => {
-                self.list_layout_checkpoints();
-                true
-            }
-            // UI packs: the GUI rides along on the core commands to add
-            // (export) / install (import) its live layout.
-            "uiexport" => {
-                let args: Vec<String> = parts.map(str::to_string).collect();
-                let mut args = {
-                    let mut all = vec![arg.unwrap_or_default().to_string()];
-                    all.extend(args);
-                    all
-                };
-                args.retain(|a| !a.is_empty());
-                let extra = self
-                    .build_layout_snapshot()
-                    .and_then(|layout| serde_json::to_vec_pretty(&layout).ok())
-                    .map(|bytes| {
-                        vec![(
-                            crate::core::uipack::GUI_LAYOUT_ENTRY.to_string(),
-                            bytes,
-                        )]
-                    })
-                    .unwrap_or_default();
-                self.app_core.uiexport_with(&args, extra);
-                true
-            }
-            "uiimport" => {
-                let args: Vec<String> = parts.map(str::to_string).collect();
-                let mut args = {
-                    let mut all = vec![arg.unwrap_or_default().to_string()];
-                    all.extend(args);
-                    all
-                };
-                args.retain(|a| !a.is_empty());
-                if let Some((pack_name, bytes)) = self.app_core.uiimport(&args) {
-                    match serde_json::from_slice(&bytes) {
-                        Ok(layout) => match save_named_layout(
-                            &layout,
-                            &self.layout_profile,
-                            &self.layout_character,
-                            &pack_name,
-                        ) {
-                            Ok(()) => self.app_core.add_system_message(&format!(
-                                "GUI layout installed — load it with .loadlayout {pack_name}"
-                            )),
-                            Err(err) => self.app_core.add_system_message(&format!(
-                                "Pack's GUI layout could not be saved: {err}"
-                            )),
-                        },
-                        Err(err) => self.app_core.add_system_message(&format!(
-                            "Pack's GUI layout did not parse: {err}"
-                        )),
-                    }
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-
     fn list_layout_checkpoints(&mut self) {
         let names = list_named_layouts(&self.layout_profile, &self.layout_character);
         if names.is_empty() {
@@ -4096,12 +3937,6 @@ impl VellumGuiApp {
             return;
         }
 
-        // Layout commands are GUI-native named checkpoints here; intercept
-        // before AppCore's TUI-oriented fallbacks see them.
-        if self.handle_layout_command(&command) {
-            return;
-        }
-
         match self.app_core.send_command(command) {
             Ok(crate::data::CommandOutcome::Ui(action)) => self.handle_ui_action(action),
             Ok(crate::data::CommandOutcome::Handled) => {}
@@ -4636,10 +4471,119 @@ impl VellumGuiApp {
             A::LoadLayoutToml(_) => {
                 // This action comes from the Layouts menu, which lists TUI TOML
                 // layouts — those don't apply here. GUI checkpoints are the
-                // .savelayout/.loadlayout commands (see handle_layout_command).
+                // .savelayout/.loadlayout commands below.
                 self.app_core.add_system_message(
                     "TOML layouts are a TUI feature. In the GUI, use .savelayout <name> and .loadlayout <name> for named layouts.",
                 );
+            }
+            // Layout capability hooks (parity plan D3): same command
+            // names as the TUI, GUI-native window-snapshot checkpoints.
+            A::SaveLayout(name) => {
+                let name = name.unwrap_or_else(|| "default".to_string());
+                if !is_valid_layout_name(&name) {
+                    self.app_core.add_system_message(
+                        "Layout names use letters, digits, '-' and '_' only.",
+                    );
+                    return;
+                }
+                let Some(layout) = self.build_layout_snapshot() else {
+                    self.app_core
+                        .add_system_message("Could not snapshot the current layout.");
+                    return;
+                };
+                match save_named_layout(
+                    &layout,
+                    &self.layout_profile,
+                    &self.layout_character,
+                    &name,
+                ) {
+                    Ok(()) => self.app_core.add_system_message(&format!(
+                        "Saved GUI layout '{}'. Load it with .loadlayout {}",
+                        name, name
+                    )),
+                    Err(err) => self
+                        .app_core
+                        .add_system_message(&format!("Failed to save layout: {}", err)),
+                }
+            }
+            A::LoadLayout(None) => {
+                self.app_core
+                    .add_system_message("Usage: .loadlayout <name>");
+                self.list_layout_checkpoints();
+            }
+            A::LoadLayout(Some(name)) => {
+                match load_named_layout(&self.layout_profile, &self.layout_character, &name) {
+                    Ok(layout) => {
+                        self.apply_layout_snapshot(&layout);
+                        self.app_core
+                            .add_system_message(&format!("Loaded GUI layout '{}'.", name));
+                    }
+                    Err(err) => {
+                        self.app_core
+                            .add_system_message(&format!("Failed to load layout: {}", err));
+                        self.list_layout_checkpoints();
+                    }
+                }
+            }
+            A::ListLayouts => self.list_layout_checkpoints(),
+            A::ResizeLayout => {
+                self.app_core.add_system_message(
+                    ".resize refits the TUI's cell layout; the GUI has no cell grid.",
+                );
+            }
+            A::SaveSkin(name) => {
+                if !is_valid_layout_name(&name) {
+                    self.app_core.add_system_message(
+                        "Skin names use letters, digits, '-' and '_' only.",
+                    );
+                    return;
+                }
+                match self.compile_appearance_to_skin(&name) {
+                    Ok(()) => self.app_core.add_system_message(&format!(
+                        "Saved skin '{}' from the current appearance. Activate it with .setskin {}",
+                        name, name
+                    )),
+                    Err(err) => self
+                        .app_core
+                        .add_system_message(&format!("Failed to save skin: {}", err)),
+                }
+            }
+            // UI packs ride the core commands with the live GUI layout
+            // attached (export) / installed (import).
+            A::UiExport(args) => {
+                let extra = self
+                    .build_layout_snapshot()
+                    .and_then(|layout| serde_json::to_vec_pretty(&layout).ok())
+                    .map(|bytes| {
+                        vec![(
+                            crate::core::uipack::GUI_LAYOUT_ENTRY.to_string(),
+                            bytes,
+                        )]
+                    })
+                    .unwrap_or_default();
+                self.app_core.uiexport_with(&args, extra);
+            }
+            A::UiImport(args) => {
+                if let Some((pack_name, bytes)) = self.app_core.uiimport(&args) {
+                    match serde_json::from_slice(&bytes) {
+                        Ok(layout) => match save_named_layout(
+                            &layout,
+                            &self.layout_profile,
+                            &self.layout_character,
+                            &pack_name,
+                        ) {
+                            Ok(()) => self.app_core.add_system_message(&format!(
+                                "GUI layout installed — load it with .loadlayout {pack_name}"
+                            )),
+                            Err(err) => self.app_core.add_system_message(&format!(
+                                "Pack's GUI layout could not be saved: {err}"
+                            )),
+                        },
+                        Err(err) => self.app_core.add_system_message(&format!(
+                            "Pack's GUI layout did not parse: {err}"
+                        )),
+                    }
+                }
             }
             A::WebUiPicker => {
                 let _ = self.handle_webui_action("action:webui");

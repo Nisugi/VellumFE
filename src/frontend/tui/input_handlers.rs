@@ -450,48 +450,25 @@ impl super::TuiFrontend {
         app_core: &mut crate::core::AppCore,
     ) -> Result<Option<String>> {
         tracing::debug!("handle_command_submission: start '{}'", command);
-        if command.starts_with(".savelayout ") || command == ".savelayout" {
-            let name = command
-                .strip_prefix(".savelayout ")
-                .unwrap_or("default")
-                .trim();
-            let (width, height) = self.size();
-            app_core.save_layout(name, width, height);
-            app_core.needs_render = true;
-        } else if command.starts_with(".loadlayout ") || command == ".loadlayout" {
-            let name = command
-                .strip_prefix(".loadlayout ")
-                .unwrap_or("default")
-                .trim();
-            let (width, height) = self.size();
-            if let Some((theme_id, theme)) = app_core.load_layout(name, width, height) {
-                self.update_theme_cache(theme_id, theme);
+        // Layout commands ride the same core dispatch as everything else
+        // now (parity plan D3): core emits SaveLayout/LoadLayout/... UI
+        // actions and menu_actions supplies the live terminal size.
+        let outcome = app_core.send_command(command)?;
+        tracing::debug!("handle_command_submission: send_command returned {:?}", outcome);
+        app_core.needs_render = true;
+        match outcome {
+            crate::data::CommandOutcome::Ui(action) => {
+                // Perform internal UI actions locally instead of
+                // sending anything to the game.
+                menu_actions::handle_ui_action(app_core, self, action)?;
+                Ok(None)
             }
-            app_core.needs_render = true;
-        } else if command == ".resize" {
-            let (width, height) = self.size();
-            app_core.resize_windows(width, height);
-            app_core.needs_render = true;
-        } else {
-            let outcome = app_core.send_command(command)?;
-            tracing::debug!("handle_command_submission: send_command returned {:?}", outcome);
-            app_core.needs_render = true;
-            return match outcome {
-                crate::data::CommandOutcome::Ui(action) => {
-                    // Perform internal UI actions locally instead of
-                    // sending anything to the game.
-                    menu_actions::handle_ui_action(app_core, self, action)?;
-                    Ok(None)
-                }
-                crate::data::CommandOutcome::Handled => Ok(None),
-                crate::data::CommandOutcome::Game(to_send) => {
-                    tracing::debug!("handle_command_submission: queued for network");
-                    Ok(Some(to_send))
-                }
-            };
+            crate::data::CommandOutcome::Handled => Ok(None),
+            crate::data::CommandOutcome::Game(to_send) => {
+                tracing::debug!("handle_command_submission: queued for network");
+                Ok(Some(to_send))
+            }
         }
-        tracing::debug!("handle_command_submission: end");
-        Ok(None)
     }
 
     fn handle_quickbar_action(

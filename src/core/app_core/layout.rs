@@ -1005,7 +1005,7 @@ impl AppCore {
     }
 
     /// List all saved layouts
-    pub(super) fn list_layouts(&mut self) {
+    pub fn list_layouts(&mut self) {
         match Config::list_layouts() {
             Ok(layouts) => {
                 if layouts.is_empty() {
@@ -1021,16 +1021,6 @@ impl AppCore {
         }
     }
 
-    /// Fallback for the `.resize` dot-command in frontends without a cell grid
-    /// (GUI, headless). Resizes the layout to its own stored terminal size —
-    /// a zero delta in practice — routed through the single resize algorithm.
-    /// The TUI's real `.resize` handler calls `resize_windows` directly with
-    /// the actual terminal size (see frontend/tui/input_handlers.rs).
-    pub(super) fn resize_to_current_terminal(&mut self) {
-        let width = self.layout.terminal_width.unwrap_or(80);
-        let height = self.layout.terminal_height.unwrap_or(24);
-        self.resize_windows(width, height);
-    }
 }
 
 #[cfg(test)]
@@ -2026,13 +2016,12 @@ mod tests {
         assert_eq!(row_rows(&core, "c"), (6, 3));
     }
 
-    /// The `.resize` dot-command fallback (GUI/headless frontends without a
-    /// cell grid) goes through `resize_to_current_terminal`, which resizes the
-    /// layout to its OWN already-stored terminal size — a zero delta — so it
-    /// must leave geometry unchanged. This pins the behavior after collapsing
-    /// the former second algorithm (`resize_to_terminal`) into `resize_windows`.
+    /// Resizing to the layout's own stored size is a zero delta and must
+    /// leave geometry unchanged. This pins the behavior after collapsing
+    /// the former second algorithm (`resize_to_terminal`) into
+    /// `resize_windows`.
     #[test]
-    fn resize_to_current_terminal_is_a_noop_at_stored_size() {
+    fn resize_to_stored_size_is_a_noop() {
         let mut core = core_with_baseline(
             vec![
                 text_def("top", 0, 0, 80, 10),
@@ -2041,7 +2030,7 @@ mod tests {
             80,
             24,
         );
-        core.resize_to_current_terminal();
+        core.resize_windows(80, 24);
 
         // Stored size == baseline size == 80x24, so nothing moves or resizes.
         assert_eq!(row_rows(&core, "top"), (0, 10));

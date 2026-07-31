@@ -1576,20 +1576,16 @@ impl AppCore {
                 self.show_webinfo();
             }
 
-            // Shareable UI packs: export the files that make this UI /
-            // preview + apply a shared one. The GUI intercepts both to
-            // add / install its live layout alongside.
+            // Shareable UI packs: capability hooks too — the GUI adds /
+            // installs its live layout alongside the core pack, the TUI
+            // and headless run the plain core pack.
             "uiexport" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-                self.uiexport_with(&args, Vec::new());
+                return Ok(CommandOutcome::Ui(UiAction::UiExport(args)));
             }
             "uiimport" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-                if self.uiimport(&args).is_some() {
-                    self.add_system_message(
-                        "This pack also carries a GUI layout — run the import in the GUI to install it.",
-                    );
-                }
+                return Ok(CommandOutcome::Ui(UiAction::UiImport(args)));
             }
 
             // Text-to-speech control from any frontend (the GUI also has
@@ -1608,32 +1604,41 @@ impl AppCore {
                 }
             }
 
-            // Layout commands. The TUI intercepts both in
-            // handle_command_submission with the real terminal size, so these
-            // fallbacks only run in frontends without a cell grid (GUI,
-            // headless), where TOML cell layouts don't apply.
+            // Layout commands are capability hooks (parity plan D3): core
+            // owns the command names, each frontend owns its persistence
+            // model — TOML cell layouts in the TUI, window-snapshot
+            // checkpoints in the GUI, a "needs the desktop client"
+            // answer on phones.
             "savelayout" => {
-                let name = parts.get(1).unwrap_or(&"default");
-                tracing::info!("[APP_CORE] User entered .savelayout command: '{}'", name);
-                let width = self.layout.terminal_width.unwrap_or(80);
-                let height = self.layout.terminal_height.unwrap_or(24);
-                self.save_layout(name, width, height);
-                self.add_system_message(&format!(
-                    "Saved TUI layout '{}' at {}x{} cells (this frontend has no terminal grid; the GUI saves its own window layout automatically).",
-                    name, width, height
-                ));
+                return Ok(CommandOutcome::Ui(UiAction::SaveLayout(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             "loadlayout" => {
-                self.add_system_message(
-                    "TOML layouts are a TUI feature. The GUI manages its own window layout and saves it automatically.",
-                );
+                return Ok(CommandOutcome::Ui(UiAction::LoadLayout(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             "layouts" => {
-                self.list_layouts();
+                return Ok(CommandOutcome::Ui(UiAction::ListLayouts));
             }
             "resize" => {
-                self.resize_to_current_terminal();
+                return Ok(CommandOutcome::Ui(UiAction::ResizeLayout));
             }
+            // Bake the current GUI appearance into a skin. Core knows the
+            // command so the TUI can answer "GUI-only" instead of
+            // "Unknown command".
+            "saveskin" => match parts.get(1) {
+                Some(name) => {
+                    return Ok(CommandOutcome::Ui(UiAction::SaveSkin(name.to_string())));
+                }
+                None => {
+                    self.add_system_message(
+                        "Usage: .saveskin <name> — bakes the current appearance \
+                         (doll, compass, status icons, frames, backgrounds) into a skin.",
+                    );
+                }
+            },
 
             // Window management commands
             "windows" => {

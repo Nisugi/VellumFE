@@ -768,6 +768,19 @@ fn dispatch_command(
     }
     match app_core.send_command(command) {
         Ok(crate::data::CommandOutcome::Handled) => false,
+        // UI packs are core-side work; everything else needs a local UI.
+        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::UiExport(args))) => {
+            app_core.uiexport_with(&args, Vec::new());
+            false
+        }
+        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::UiImport(args))) => {
+            if app_core.uiimport(&args).is_some() {
+                app_core.add_system_message(
+                    "This pack also carries a GUI layout — run the import in the GUI to install it.",
+                );
+            }
+            false
+        }
         Ok(crate::data::CommandOutcome::Ui(_)) => {
             app_core.add_system_message("That action needs the desktop client.");
             false

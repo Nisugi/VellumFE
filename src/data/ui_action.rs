@@ -139,6 +139,18 @@ pub enum UiAction {
     // TOML (TUI) layout load, from the Layouts menu
     LoadLayoutToml(String),
 
+    // Layout & pack capability hooks (zone-free plan D3): core owns the
+    // COMMANDS (.savelayout/.loadlayout/.layouts/.resize/.saveskin/
+    // .uiexport/.uiimport), each frontend owns its persistence model —
+    // TOML cell layouts in the TUI, window snapshots in the GUI.
+    SaveLayout(Option<String>),
+    LoadLayout(Option<String>),
+    ListLayouts,
+    ResizeLayout,
+    SaveSkin(String),
+    UiExport(Vec<String>),
+    UiImport(Vec<String>),
+
     // GUI shell zones
     Zone { zone: ShellZoneTarget, op: ZoneOp },
 
@@ -208,6 +220,25 @@ impl UiAction {
         if let Some(name) = body.strip_prefix("loadlayout:") {
             return Some(UiAction::LoadLayoutToml(name.to_string()));
         }
+        if let Some(name) = body.strip_prefix("layout:save:") {
+            return Some(UiAction::SaveLayout(Some(name.to_string())));
+        }
+        if let Some(name) = body.strip_prefix("layout:load:") {
+            return Some(UiAction::LoadLayout(Some(name.to_string())));
+        }
+        if let Some(name) = body.strip_prefix("saveskin:") {
+            return Some(UiAction::SaveSkin(name.to_string()));
+        }
+        if let Some(rest) = body.strip_prefix("uiexport:") {
+            return Some(UiAction::UiExport(
+                rest.split_whitespace().map(str::to_string).collect(),
+            ));
+        }
+        if let Some(rest) = body.strip_prefix("uiimport:") {
+            return Some(UiAction::UiImport(
+                rest.split_whitespace().map(str::to_string).collect(),
+            ));
+        }
         if let Some(rest) = body.strip_prefix("zone:") {
             let (zone, op) = rest.split_once(':')?;
             return Some(UiAction::Zone {
@@ -254,6 +285,12 @@ impl UiAction {
             "webui" => UiAction::WebUiPicker,
             "webui:off" => UiAction::WebUiOff,
             "snapdebug" => UiAction::SnapDebug,
+            "layout:save" => UiAction::SaveLayout(None),
+            "layout:load" => UiAction::LoadLayout(None),
+            "layout:list" => UiAction::ListLayouts,
+            "layout:resize" => UiAction::ResizeLayout,
+            "uiexport" => UiAction::UiExport(Vec::new()),
+            "uiimport" => UiAction::UiImport(Vec::new()),
             _ => return None,
         })
     }
@@ -313,6 +350,17 @@ impl std::fmt::Display for UiAction {
             }
             UiAction::StreamNewWindow(stream) => write!(f, "action:streamnew:{stream}"),
             UiAction::LoadLayoutToml(name) => write!(f, "action:loadlayout:{name}"),
+            UiAction::SaveLayout(None) => write!(f, "action:layout:save"),
+            UiAction::SaveLayout(Some(name)) => write!(f, "action:layout:save:{name}"),
+            UiAction::LoadLayout(None) => write!(f, "action:layout:load"),
+            UiAction::LoadLayout(Some(name)) => write!(f, "action:layout:load:{name}"),
+            UiAction::ListLayouts => write!(f, "action:layout:list"),
+            UiAction::ResizeLayout => write!(f, "action:layout:resize"),
+            UiAction::SaveSkin(name) => write!(f, "action:saveskin:{name}"),
+            UiAction::UiExport(args) if args.is_empty() => write!(f, "action:uiexport"),
+            UiAction::UiExport(args) => write!(f, "action:uiexport:{}", args.join(" ")),
+            UiAction::UiImport(args) if args.is_empty() => write!(f, "action:uiimport"),
+            UiAction::UiImport(args) => write!(f, "action:uiimport:{}", args.join(" ")),
             UiAction::Zone { zone, op } => {
                 write!(f, "action:zone:{}:{}", zone.as_str(), op.as_str())
             }
@@ -396,6 +444,16 @@ mod tests {
             },
             UiAction::StreamNewWindow("speech".into()),
             UiAction::LoadLayoutToml("combat".into()),
+            UiAction::SaveLayout(None),
+            UiAction::SaveLayout(Some("combat".into())),
+            UiAction::LoadLayout(None),
+            UiAction::LoadLayout(Some("combat".into())),
+            UiAction::ListLayouts,
+            UiAction::ResizeLayout,
+            UiAction::SaveSkin("mine".into()),
+            UiAction::UiExport(Vec::new()),
+            UiAction::UiExport(vec!["mypack".into(), "highlights".into()]),
+            UiAction::UiImport(vec!["mypack".into(), "apply".into()]),
             UiAction::Zone {
                 zone: ShellZoneTarget::LeftBar,
                 op: ZoneOp::Toggle,

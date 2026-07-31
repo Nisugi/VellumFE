@@ -56,7 +56,9 @@ pub fn handle_ui_action(
     action: UiAction,
 ) -> Result<()> {
     match action {
-        UiAction::LoadLayoutToml(layout_name) => {
+        // The Layouts menu names TOML layouts explicitly; `.loadlayout`
+        // resolves to the same thing in this frontend.
+        UiAction::LoadLayoutToml(layout_name) | UiAction::LoadLayout(Some(layout_name)) => {
             // Load a layout with proper terminal size
             tracing::info!("[MENU_ACTIONS] Menu action loadlayout: '{}'", layout_name);
             let (width, height) = frontend.size();
@@ -68,6 +70,46 @@ pub fn handle_ui_action(
             if let Some((theme_id, theme)) = app_core.load_layout(&layout_name, width, height) {
                 frontend.update_theme_cache(theme_id, theme);
             }
+            app_core.needs_render = true;
+        }
+        UiAction::LoadLayout(None) => {
+            // Bare `.loadlayout` historically loaded 'default'.
+            let (width, height) = frontend.size();
+            if let Some((theme_id, theme)) = app_core.load_layout("default", width, height) {
+                frontend.update_theme_cache(theme_id, theme);
+            }
+            app_core.needs_render = true;
+        }
+        UiAction::SaveLayout(name) => {
+            let name = name.unwrap_or_else(|| "default".to_string());
+            let (width, height) = frontend.size();
+            app_core.save_layout(&name, width, height);
+            app_core.needs_render = true;
+        }
+        UiAction::ListLayouts => {
+            app_core.list_layouts();
+            app_core.needs_render = true;
+        }
+        UiAction::ResizeLayout => {
+            let (width, height) = frontend.size();
+            app_core.resize_windows(width, height);
+            app_core.needs_render = true;
+        }
+        UiAction::SaveSkin(_) => {
+            gui_only(app_core, "Saving a skin from the current appearance (.saveskin)")
+        }
+        UiAction::UiExport(args) => {
+            // The plain core pack; the GUI adds its live layout on top.
+            app_core.uiexport_with(&args, Vec::new());
+            app_core.needs_render = true;
+        }
+        UiAction::UiImport(args) => {
+            if app_core.uiimport(&args).is_some() {
+                app_core.add_system_message(
+                    "This pack also carries a GUI layout — run the import in the GUI to install it.",
+                );
+            }
+            app_core.needs_render = true;
         }
         UiAction::CreateWindow(widget_type) => {
             // Create a new window with the specified widget type
