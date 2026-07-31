@@ -3708,6 +3708,9 @@ impl TuiFrontend {
                     ) {
                         self.indicator_template_editor = None;
                         app_core.ui_state.input_mode = InputMode::Normal;
+                        // The editor may have saved the store; refresh the
+                        // shared render cache so resolution stays coherent.
+                        app_core.refresh_indicator_templates();
                     }
                 } else {
                     app_core.ui_state.input_mode = InputMode::Normal;

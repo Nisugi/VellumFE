@@ -110,6 +110,12 @@ pub struct AppCore {
     /// Auto-clear deadlines for highlight-set custom statuses (UPPERCASE
     /// id -> when it switches back off).
     pub custom_status_expiries: std::collections::HashMap<String, std::time::Instant>,
+    /// Cached indicator templates keyed by UPPERCASE id, rebuilt from disk on
+    /// load and after the template editor saves. Status icon resolution
+    /// (indicator windows + dashboards) reads this per frame; the underlying
+    /// `Config::list_indicator_templates()` does file IO, so it must not run
+    /// in the render loop.
+    pub indicator_templates: std::collections::HashMap<String, crate::config::IndicatorTemplateEntry>,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
     /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
@@ -279,6 +285,7 @@ impl AppCore {
             map_updater: crate::core::mapdb_update::MapDbUpdater::new(temp.join("mapdb")),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
+            indicator_templates: std::collections::HashMap::new(),
             travel: Default::default(),
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -411,6 +418,7 @@ impl AppCore {
             ),
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
+            indicator_templates: std::collections::HashMap::new(),
             travel: Default::default(),
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -483,6 +491,7 @@ impl AppCore {
         app.apply_session_cache();
         app.apply_custom_quickbars();
         app.refresh_tts_windows();
+        app.refresh_indicator_templates();
         app.apply_tts_settings();
 
         if let Some((theme_id, _)) = app.apply_layout_theme(layout_theme.as_deref()) {
@@ -494,6 +503,24 @@ impl AppCore {
         app.refresh_map_source();
 
         Ok(app)
+    }
+
+    /// Rebuild the cached indicator-template map (UPPERCASE id -> entry) from
+    /// disk. Call at startup and after the indicator-template editor saves —
+    /// the render loop reads the cache, never the file.
+    pub fn refresh_indicator_templates(&mut self) {
+        self.indicator_templates = crate::config::Config::list_indicator_templates()
+            .into_iter()
+            .map(|entry| (entry.id.to_ascii_uppercase(), entry))
+            .collect();
+    }
+
+    /// Look up a status template by id (case-insensitive) from the cache.
+    pub fn indicator_template(
+        &self,
+        id: &str,
+    ) -> Option<&crate::config::IndicatorTemplateEntry> {
+        self.indicator_templates.get(&id.to_ascii_uppercase())
     }
 
     /// Rebuild the message processor's set of TTS-opted windows from the
