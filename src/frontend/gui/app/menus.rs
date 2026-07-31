@@ -143,6 +143,34 @@ struct WindowMenuView<'a> {
     group_candidates: &'a [(TabKey, String)],
 }
 
+/// A picker row with a fixed-width preview slot before the label: the
+/// thumbnail paints centered in the slot when loaded; the slot is
+/// reserved either way so labels align while thumbs stream in (the
+/// SkinState cache decodes a few per frame). Returns true on click.
+fn thumbed_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    stem: &str,
+    thumb: Option<(egui::TextureId, egui::Vec2)>,
+) -> bool {
+    const EDGE: f32 = 20.0;
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(EDGE), egui::Sense::hover());
+        if let Some((id, size)) = thumb {
+            let scale = (EDGE / size.x.max(size.y)).min(1.0);
+            let draw_rect = egui::Rect::from_center_size(rect.center(), size * scale);
+            ui.painter().image(
+                id,
+                draw_rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+        ui.selectable_label(selected, stem).clicked()
+    })
+    .inner
+}
+
 /// Per-window appearance state for the context menu's Appearance section,
 /// attached and detached alike (see `appearance_view_for_tab`).
 pub(super) struct WindowAppearanceView {
@@ -171,8 +199,8 @@ pub(super) struct WindowAppearanceView {
     has_skin_border: bool,
     /// Injury doll widget: offer the pool doll picker + calibrator.
     is_doll: bool,
-    /// Pool doll images as (pool-relative path, display stem).
-    doll_images: Vec<(String, String)>,
+    /// Pool doll images as (pool-relative path, display stem, thumbnail).
+    doll_images: Vec<(String, String, Option<(egui::TextureId, egui::Vec2)>)>,
     /// Global doll override (pool-relative path); None = skin default.
     doll_override: Option<String>,
     /// Grayscale doll art toggle (global).
@@ -186,12 +214,13 @@ pub(super) struct WindowAppearanceView {
     /// Hand widget: which hand this window is (LEFTHAND/RIGHTHAND/
     /// SPELLHAND); None for non-hand windows.
     hand_id: Option<String>,
-    /// Pool hand images as (pool-relative path, display stem).
-    hand_images: Vec<(String, String)>,
+    /// Pool hand images as (pool-relative path, display stem, thumbnail).
+    hand_images: Vec<(String, String, Option<(egui::TextureId, egui::Vec2)>)>,
     /// This hand's current icon override; None = skin default.
     hand_icon_override: Option<crate::data::IconRef>,
-    /// Pool background images as (pool-relative path, display stem).
-    background_images: Vec<(String, String)>,
+    /// Pool background images as (pool-relative path, display stem,
+    /// thumbnail).
+    background_images: Vec<(String, String, Option<(egui::TextureId, egui::Vec2)>)>,
     /// Per-window background override; None = skin default.
     background_override: Option<String>,
     /// Whether the skin resolves a background for this window by default.
@@ -674,8 +703,13 @@ impl VellumGuiApp {
     }
 
     /// Resolve the current appearance state for `tab_key` for the window
-    /// context menu (attached and detached).
-    pub(super) fn appearance_view_for_tab(&self, tab_key: &TabKey) -> WindowAppearanceView {
+    /// context menu (attached and detached). Needs `&mut self` + ctx for
+    /// the picker thumbnails (budgeted decode cache on SkinState).
+    pub(super) fn appearance_view_for_tab(
+        &mut self,
+        ctx: &egui::Context,
+        tab_key: &TabKey,
+    ) -> WindowAppearanceView {
         let current_font = self.font_ref_for_tab(tab_key).and_then(|font| match font {
             FontRef::Named(name) => Some(name),
             _ => None,
@@ -701,7 +735,10 @@ impl VellumGuiApp {
         let doll_images = if is_doll {
             crate::config::pool::list_category("dolls")
                 .iter()
-                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .map(|image| {
+                    let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
+                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                })
                 .collect()
         } else {
             Vec::new()
@@ -731,7 +768,10 @@ impl VellumGuiApp {
         let hand_images = if hand_id.is_some() {
             crate::config::pool::list_category("hands")
                 .iter()
-                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .map(|image| {
+                    let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
+                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                })
                 .collect()
         } else {
             Vec::new()
@@ -775,7 +815,10 @@ impl VellumGuiApp {
             hand_images,
             background_images: crate::config::pool::list_category("backgrounds")
                 .iter()
-                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .map(|image| {
+                    let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
+                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                })
                 .collect(),
             background_override: self
                 .tab_settings
@@ -847,7 +890,7 @@ impl VellumGuiApp {
         let view = WindowMenuView {
             zone: request.zone,
             locked: self.window_locked(&request.tab_key),
-            appearance: self.appearance_view_for_tab(&request.tab_key),
+            appearance: self.appearance_view_for_tab(ctx, &request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
                 .map(|group| group.horizontal),
@@ -1566,8 +1609,8 @@ impl VellumGuiApp {
                     Some(path) => view
                         .doll_images
                         .iter()
-                        .find(|(pool_path, _)| pool_path == path)
-                        .map(|(_, stem)| stem.as_str())
+                        .find(|(pool_path, _, _)| pool_path == path)
+                        .map(|(_, stem, _)| stem.as_str())
                         // Stale override (image removed): show the raw path.
                         .unwrap_or(path),
                 };
@@ -1593,9 +1636,9 @@ impl VellumGuiApp {
                                 "none".to_string(),
                             )));
                         }
-                        for (path, stem) in &view.doll_images {
+                        for (path, stem, thumb) in &view.doll_images {
                             let selected = view.doll_override.as_deref() == Some(path.as_str());
-                            if ui.selectable_label(selected, stem).clicked() {
+                            if thumbed_row(ui, selected, stem, *thumb) {
                                 command =
                                     Some(GuiWindowMenuCommand::SetDollImage(Some(path.clone())));
                             }
@@ -1670,8 +1713,8 @@ impl VellumGuiApp {
                     Some(crate::data::IconRef::Image { path }) => view
                         .hand_images
                         .iter()
-                        .find(|(pool_path, _)| pool_path == path)
-                        .map(|(_, stem)| stem.clone())
+                        .find(|(pool_path, _, _)| pool_path == path)
+                        .map(|(_, stem, _)| stem.clone())
                         .unwrap_or_else(|| path.clone()),
                     Some(crate::data::IconRef::SheetCell { sheet, cell }) => {
                         format!("{sheet} #{cell}")
@@ -1703,13 +1746,13 @@ impl VellumGuiApp {
                                 icon: Some(crate::data::IconRef::None),
                             });
                         }
-                        for (path, stem) in &view.hand_images {
+                        for (path, stem, thumb) in &view.hand_images {
                             let selected = matches!(
                                 &view.hand_icon_override,
                                 Some(crate::data::IconRef::Image { path: current })
                                     if current == path
                             );
-                            if ui.selectable_label(selected, stem).clicked() {
+                            if thumbed_row(ui, selected, stem, *thumb) {
                                 command = Some(GuiWindowMenuCommand::SetHandIcon {
                                     hand_id: hand_id.clone(),
                                     icon: Some(crate::data::IconRef::Image {
@@ -2009,8 +2052,8 @@ impl VellumGuiApp {
                         Some(path) => view
                             .background_images
                             .iter()
-                            .find(|(pool_path, _)| pool_path == path)
-                            .map(|(_, stem)| stem.as_str())
+                            .find(|(pool_path, _, _)| pool_path == path)
+                            .map(|(_, stem, _)| stem.as_str())
                             .unwrap_or(path),
                     };
                     egui::ComboBox::from_id_salt("gui_window_background")
@@ -2034,10 +2077,10 @@ impl VellumGuiApp {
                                     "none".to_string(),
                                 )));
                             }
-                            for (path, stem) in &view.background_images {
+                            for (path, stem, thumb) in &view.background_images {
                                 let selected =
                                     view.background_override.as_deref() == Some(path.as_str());
-                                if ui.selectable_label(selected, stem).clicked() {
+                                if thumbed_row(ui, selected, stem, *thumb) {
                                     command = Some(GuiWindowMenuCommand::SetBackground(Some(
                                         path.clone(),
                                     )));

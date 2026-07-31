@@ -391,6 +391,14 @@ pub struct SkinState {
     shared_manifest_mtime: Option<std::time::SystemTime>,
     /// Last hot-reload poll, so the mtime stat runs at most once a second.
     last_mtime_check: Option<std::time::Instant>,
+    /// Appearance-picker preview textures (pool-relative path → ≤48px
+    /// thumb). Never cleared: thumbs are tiny (~16KB VRAM each) and pool
+    /// paths are skin-independent. `None` records a decode failure.
+    thumbnails: HashMap<String, Option<egui::TextureHandle>>,
+    /// New thumbnail decodes still allowed this frame (reset by
+    /// `apply_if_changed`); menus fill in over a few frames instead of
+    /// hitching once on a big pool.
+    thumb_budget: u32,
 }
 
 impl SkinState {
@@ -404,6 +412,9 @@ impl SkinState {
         active: Option<&str>,
         doll_override: Option<&str>,
     ) {
+        // Per-frame decode allowance for picker thumbnails (this runs
+        // once per frame regardless of skin changes).
+        self.thumb_budget = 3;
         if self.applied
             && self.loaded_id.as_deref() == active
             && self.doll_override.as_deref() == doll_override
@@ -1052,6 +1063,30 @@ impl SkinState {
         })
     }
 
+    /// A small preview texture for Appearance pickers (aspect kept,
+    /// longest edge ≤ 48px). Budgeted: a handful of new decodes per
+    /// frame — callers get None until a later frame fills the cache, and
+    /// a repaint is requested so open menus fill in on their own.
+    pub fn thumbnail(
+        &mut self,
+        ctx: &egui::Context,
+        image_path: &str,
+    ) -> Option<(egui::TextureId, egui::Vec2)> {
+        if let Some(entry) = self.thumbnails.get(image_path) {
+            return entry.as_ref().map(|t| (t.id(), t.size_vec2()));
+        }
+        if self.thumb_budget == 0 {
+            ctx.request_repaint();
+            return None;
+        }
+        self.thumb_budget -= 1;
+        let handle = load_thumbnail_impl(ctx, &self.root, image_path);
+        let out = handle.as_ref().map(|t| (t.id(), t.size_vec2()));
+        self.thumbnails.insert(image_path.to_string(), handle);
+        ctx.request_repaint();
+        out
+    }
+
     /// Frames the Appearance picker offers: the active skin's `[frames.*]`
     /// plus every pool frame with a sidecar (names only — textures load
     /// lazily for frames actually assigned). Skin names win collisions.
@@ -1183,6 +1218,28 @@ fn load_texture_desaturated(
     skin_name: &str,
 ) -> Option<egui::TextureHandle> {
     load_texture_impl(ctx, root, image_path, skin_name, true)
+}
+
+/// Decode + downscale one image into a picker thumbnail texture. Quieter
+/// than the full loader (a broken pool image just shows no preview).
+fn load_thumbnail_impl(
+    ctx: &egui::Context,
+    root: &Path,
+    image_path: &str,
+) -> Option<egui::TextureHandle> {
+    const THUMB_EDGE: u32 = 48;
+    let path = skins::resolve_image_path(root, image_path);
+    let bytes = std::fs::read(&path).ok()?;
+    let decoded = image::load_from_memory(&bytes).ok()?;
+    // `thumbnail` is the image crate's fast aspect-preserving resize.
+    let rgba = decoded.thumbnail(THUMB_EDGE, THUMB_EDGE).to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+    Some(ctx.load_texture(
+        format!("thumb:{image_path}"),
+        color_image,
+        egui::TextureOptions::LINEAR,
+    ))
 }
 
 fn load_texture_impl(
