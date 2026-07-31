@@ -27,9 +27,12 @@ impl Config {
         let mut config: Config = toml::from_str(&contents)
             .context(format!("Failed to parse config file: {:?}", path))?;
 
-        // Same legacy drop-list migration as load_with_options (in-memory
-        // only; never writes files).
+        // Same legacy migrations as load_with_options (in-memory only;
+        // never writes files).
         config.streams.migrate_drop_list_to_routes();
+        if std::mem::take(&mut config.ui.sorter_enabled) {
+            config.sorter.enabled = true;
+        }
 
         // Override port from command line (if specified)
         if let Some(port) = port_override {
@@ -532,6 +535,9 @@ impl Config {
         self.web = character_config.web;
         self.map = character_config.map;
         self.go2 = character_config.go2;
+
+        // Sorter (rules/order/labels/format): character overrides global.
+        self.sorter = character_config.sorter;
     }
 
     pub fn load_with_options(character: Option<&str>, port_override: Option<u16>) -> Result<Self> {
@@ -548,6 +554,13 @@ impl Config {
         // source of truth. In-memory only — load never writes files; the
         // next sparse save carries routes and ages the old key out.
         config.streams.migrate_drop_list_to_routes();
+
+        // Legacy ui.sorter_enabled becomes [sorter].enabled. In-memory
+        // only, like the streams migration; the next sparse save carries
+        // [sorter] and ages the old key out.
+        if std::mem::take(&mut config.ui.sorter_enabled) {
+            config.sorter.enabled = true;
+        }
 
         // Override port from command line (if specified)
         if let Some(port) = port_override {
@@ -784,6 +797,7 @@ impl Default for Config {
             target_list: TargetListConfig::default(),
             logging: LoggingConfig::default(),
             streams: StreamsConfig::default(), // Stream routing config
+            sorter: SorterConfig::default(),
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default

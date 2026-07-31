@@ -123,6 +123,10 @@ pub const EXEMPT_PREFIXES: &[&str] = &[
     "go2.pathcodes",              // captured maze routes, never hand-edited
     "tts.substitutions",          // pattern/replacement pairs; Accessibility panel
     "streams.routes",             // per-stream route map; dedicated Streams panel editor later
+    "ui.sorter_enabled",          // legacy home of sorter.enabled; migrated at load
+    "sorter.category_order",      // ordered list; `.sorter edit` editor
+    "sorter.labels",              // rename map; `.sorter edit` editor
+    "sorter.rules",               // structured rules; `.sorter edit` editor
 ];
 
 macro_rules! bool_entry {
@@ -350,8 +354,16 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Render :grin:-style shortcodes in incoming text as emoji", ui.emoji_shortcodes),
         bool_entry!("ui.color_emoji", "Color Emoji", "UI",
             "Draw emoji in color in the GUI (monochrome when off)", ui.color_emoji),
-        bool_entry!("ui.sorter_enabled", "Sort Container Looks", "UI",
-            "Categorize 'look in container' output by item type (.sorter)", ui.sorter_enabled),
+        bool_entry!("sorter.enabled", "Sort Container Looks", "UI",
+            "Categorize 'look in container' output by item type (.sorter; rules/order/renames in '.sorter edit')",
+            sorter.enabled),
+        bool_entry!("sorter.show_counts", "Sorter Counts", "UI",
+            "Show duplicate counts and category totals in sorted container looks", sorter.show_counts),
+        bool_entry!("sorter.bold_labels", "Sorter Bold Labels", "UI",
+            "Render sorted-look category labels in monsterbold", sorter.bold_labels),
+        enum_entry!("sorter.item_sort", "Sorter Item Order", "UI",
+            "Item order within a category: last_word (sorter.lic style), alpha, or none (look order)",
+            &["last_word", "alpha", "none"], sorter.item_sort),
         text_entry!("ui.terminal_title", "Terminal Title", "UI",
             "Terminal title template ({character}, {room}, {health}, ...); empty leaves the title alone",
             ui.terminal_title),

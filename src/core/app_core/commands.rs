@@ -1415,23 +1415,27 @@ impl AppCore {
             }
 
             // Toggle categorized container-look display (sorter.lic's
-            // native cousin). Persisted like any UI setting.
+            // native cousin). Persisted like any UI setting; `.sorter
+            // edit` opens the rules/order/labels editor.
             "sorter" => {
                 let sub = parts.get(1).map(|s| s.to_lowercase());
                 let target = match sub.as_deref() {
                     Some("on") => true,
                     Some("off") => false,
-                    None => !self.config.ui.sorter_enabled,
+                    Some("edit") => {
+                        return Ok("action:sorteredit".to_string());
+                    }
+                    None => !self.config.sorter.enabled,
                     Some(other) => {
                         self.add_system_message(&format!(
-                            "Usage: .sorter [on|off] (currently {}), got '{}'",
-                            if self.config.ui.sorter_enabled { "on" } else { "off" },
+                            "Usage: .sorter [on|off|edit] (currently {}), got '{}'",
+                            if self.config.sorter.enabled { "on" } else { "off" },
                             other
                         ));
                         return Ok(String::new());
                     }
                 };
-                self.config.ui.sorter_enabled = target;
+                self.config.sorter.enabled = target;
                 self.message_processor.set_sorter_enabled(target);
                 match self.save_config() {
                     Ok(()) => self.add_system_message(&format!(

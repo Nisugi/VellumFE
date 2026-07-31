@@ -336,6 +336,7 @@ pub struct VellumGuiApp {
     window_editor: Option<editors::WindowEditorState>,
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
+    sorter_editor: Option<editors::SorterEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
     /// settings command (`.controller`, `.settings`, …) is re-issued while
@@ -666,6 +667,7 @@ impl VellumGuiApp {
             window_editor: None,
             custom_windows_editor: None,
             known_windows_editor: None,
+            sorter_editor: None,
             doll_calibration: None,
             pending_editor_raise: None,
             search_bar_needs_focus: false,
@@ -4501,6 +4503,10 @@ impl VellumGuiApp {
                         .add_system_message("No skin active. Use .setskin <name> first.");
                 }
             }
+            return true;
+        }
+        if action == "action:sorteredit" {
+            self.open_sorter_editor();
             return true;
         }
         if action == "action:snapdebug" {

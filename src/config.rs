@@ -58,8 +58,8 @@ pub use paths::{write_atomic, DialogPosition, SavedDialogPositions};
 pub use paths::VELLUM_FE_DIR_TEST_LOCK;
 pub use settings::{
     ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
-    SoundConfig, StreamRoute, StreamsConfig, TargetListConfig, TtsConfig, TtsSubstitution,
-    UiConfig, WebConfig,
+    SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
+    TtsConfig, TtsSubstitution, UiConfig, WebConfig,
 };
 pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore};
 pub use widgets::{
@@ -296,6 +296,8 @@ pub struct Config {
     pub doll_image: Option<String>, // Injury doll image override (pool-relative, "dolls/x.png"); mirrors ui_settings.doll_image like active_skin (web doll endpoint reads it here)
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
+    #[serde(default)] // `[sorter]` — categorized container looks (.sorter)
+    pub sorter: SorterConfig,
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml
     pub highlight_settings: HighlightsConfig, // Highlight system toggles (sounds, replace, redirect, coloring)
     #[serde(default)]

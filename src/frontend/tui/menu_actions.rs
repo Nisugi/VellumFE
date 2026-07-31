@@ -490,6 +490,16 @@ pub fn handle_menu_action(
                 }
                 app_core.needs_render = true;
             }
+            "action:sorteredit" => {
+                // TUI parity for the structured editor (rules/order/renames)
+                // is planned; the scalar toggles already ride the registry.
+                app_core.add_system_message(
+                    "The sorter rules editor is GUI-only for now. The on/off, \
+                     counts, bold-label, and item-order toggles are in \
+                     .settings under UI (Sorter rows).",
+                );
+                app_core.needs_render = true;
+            }
             _ => {
                 tracing::warn!("Unknown menu action: {}", command);
             }

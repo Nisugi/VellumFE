@@ -2748,7 +2748,13 @@ impl MessageProcessor {
     /// Mirror the `.sorter` toggle into the processor's live config
     /// (AppCore owns the persisted copy).
     pub fn set_sorter_enabled(&mut self, enabled: bool) {
-        self.config.ui.sorter_enabled = enabled;
+        self.config.sorter.enabled = enabled;
+    }
+
+    /// Mirror the full sorter config (rules/order/labels/format) into the
+    /// processor after an editor save.
+    pub fn set_sorter_config(&mut self, sorter: crate::config::SorterConfig) {
+        self.config.sorter = sorter;
     }
 
     /// Apply container contents captured from a main-stream look line into
@@ -2890,12 +2896,13 @@ impl MessageProcessor {
             }
 
             // Categorized display transform (only when .sorter is on).
-            if self.config.ui.sorter_enabled {
+            if self.config.sorter.enabled {
                 let data = self.sorter_gameobj();
                 if let Some(mut lines) = crate::core::sorter::transform(
                     &self.current_segments,
                     &full_text,
                     &data,
+                    &self.config.sorter,
                 ) {
                     self.current_segments = lines.remove(0);
                     self.injected_lines.extend(lines);

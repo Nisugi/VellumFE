@@ -97,8 +97,8 @@ pub struct UiConfig {
     /// Draw emoji in color in the GUI (monochrome when off)
     #[serde(default = "default_true")]
     pub color_emoji: bool,
-    /// Categorize "look in container" output by item type (`.sorter`,
-    /// the native sorter.lic)
+    /// LEGACY: migrated to `[sorter].enabled` at load (`SorterConfig`);
+    /// kept readable one release so old files carry their value over.
     #[serde(default)]
     pub sorter_enabled: bool,
     // Performance stats settings
@@ -640,6 +640,80 @@ impl StreamsConfig {
                 self.routes.insert(id, StreamRoute::Discard);
             }
         }
+    }
+}
+
+/// `[sorter]` — categorized container looks (`.sorter`, sorter.lic's
+/// native cousin). The transform lives in `core/sorter.rs`; the editor is
+/// `.sorter edit`. `ui.sorter_enabled` is the legacy home of `enabled`
+/// and migrates here at load.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SorterConfig {
+    /// Master switch (`.sorter [on|off]`).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Show "(n)" duplicate counts and the "(total)" in category labels.
+    #[serde(default = "default_true")]
+    pub show_counts: bool,
+    /// Render category labels monsterbold (sorter.lic style).
+    #[serde(default = "default_true")]
+    pub bold_labels: bool,
+    /// Item order within a category: "last_word" (sorter.lic style),
+    /// "alpha", or "none" (keep the look's order).
+    #[serde(default = "default_sorter_item_sort")]
+    pub item_sort: String,
+    /// Explicit category display order; categories not listed follow in
+    /// first-seen order after the listed ones.
+    #[serde(default)]
+    pub category_order: Vec<String>,
+    /// Display renames, keyed by category name ("gem" -> "Gems").
+    #[serde(default)]
+    pub labels: std::collections::BTreeMap<String, String>,
+    /// User rules, checked BEFORE the gameobj data pack; first matching
+    /// rule wins. Items are never hidden — only re-categorized.
+    #[serde(default)]
+    pub rules: Vec<SorterRule>,
+}
+
+/// One user categorization rule. Both matchers empty = matches everything
+/// (a catch-all the user can order last).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SorterRule {
+    /// Case-insensitive substring of the item's display name; empty = any.
+    #[serde(rename = "match", default)]
+    pub name_match: String,
+    /// Exact noun (case-insensitive); empty = any.
+    #[serde(default)]
+    pub noun: String,
+    /// Target category. New names create new buckets.
+    pub category: String,
+}
+
+fn default_sorter_item_sort() -> String {
+    "last_word".to_string()
+}
+
+impl Default for SorterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_counts: true,
+            bold_labels: true,
+            item_sort: default_sorter_item_sort(),
+            category_order: Vec::new(),
+            labels: std::collections::BTreeMap::new(),
+            rules: Vec::new(),
+        }
+    }
+}
+
+impl SorterRule {
+    /// True when this rule matches the item. Empty matchers are wildcards.
+    pub fn matches(&self, name: &str, noun: &str) -> bool {
+        let name_ok = self.name_match.is_empty()
+            || name.to_lowercase().contains(&self.name_match.to_lowercase());
+        let noun_ok = self.noun.is_empty() || noun.eq_ignore_ascii_case(&self.noun);
+        name_ok && noun_ok
     }
 }
 

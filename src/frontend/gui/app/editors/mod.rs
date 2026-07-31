@@ -15,6 +15,7 @@ mod keybinds;
 mod known_windows;
 mod menu_keybinds;
 mod settings;
+mod sorter;
 mod themes;
 mod windows;
 
@@ -31,6 +32,7 @@ pub(super) use keybinds::KeybindEditorState;
 pub(super) use known_windows::KnownWindowsEditorState;
 pub(super) use menu_keybinds::MenuKeybindEditorState;
 pub(super) use settings::SettingsEditorState;
+pub(super) use sorter::SorterEditorState;
 pub(super) use themes::{ThemeBrowserState, ThemeEditorState};
 pub(super) use windows::WindowEditorState;
 
@@ -73,6 +75,7 @@ impl VellumGuiApp {
         self.render_hand_icons_editor(ctx);
         self.render_custom_windows_editor(ctx);
         self.render_known_windows_editor(ctx);
+        self.render_sorter_editor(ctx);
         self.render_doll_calibration(ctx);
     }
 }

@@ -209,6 +209,18 @@ impl GameObjData {
         Self::matching(&self.types, name, noun)
     }
 
+    /// Unique type tags in the data pack, in file order. The sorter editor
+    /// enumerates these so its category list reflects the real pack
+    /// instead of a hardcoded copy.
+    pub fn known_categories(&self) -> Vec<&str> {
+        let mut seen = std::collections::HashSet::new();
+        self.types
+            .iter()
+            .filter(|entry| seen.insert(entry.name.as_str()))
+            .map(|entry| entry.name.as_str())
+            .collect()
+    }
+
     /// Comma-joined type string exactly like Lich's `GameObj#type`
     /// ("gem,valuable"), or None when nothing matches.
     pub fn classify(&self, name: &str, noun: &str) -> Option<String> {
