@@ -44,8 +44,8 @@ use detached::{DetachedMenuState, DetachedWindowState};
 use dock::{DockStateSnapshot, MainWindowRectSnapshot};
 use menus::GuiWindowMenuRequest;
 use zones::{
-    GuiShellZone, GuiWindowMoveState, GuiZoneDragState, GuiZoneWindowRect, ShellLayoutSnapshot,
-    TabZoneSnapshot,
+    GuiShellZone, GuiWindowMoveState, GuiZoneDragState, GuiZoneWindowRect, PendingZoneSnapshot,
+    ShellLayoutSnapshot, TabZoneSnapshot,
 };
 
 const INITIAL_LAYOUT_WIDTH: u16 = 160;
@@ -238,6 +238,9 @@ pub struct VellumGuiApp {
     migrated_sidebar_zones: HashSet<GuiShellZone>,
     last_center_window_rects: HashMap<TabKey, [f32; 4]>,
     tab_zones: HashMap<TabKey, GuiShellZone>,
+    /// Zone prefs for windows that aren't live tabs yet (hidden / never
+    /// added), keyed by window name; seeds tab_zones on materialize.
+    pending_zones: HashMap<String, GuiShellZone>,
     no_title_tabs: HashSet<TabKey>,
     shell_layout: ShellLayoutSnapshot,
     layout_profile: String,
@@ -549,6 +552,7 @@ impl VellumGuiApp {
             sidebar_gap_above,
             migrated_sidebar_zones,
             tab_zones,
+            pending_zones,
             no_title_tabs,
             shell_layout,
             tab_groups,
@@ -613,6 +617,7 @@ impl VellumGuiApp {
             migrated_sidebar_zones,
             last_center_window_rects: HashMap::new(),
             tab_zones,
+            pending_zones,
             no_title_tabs,
             shell_layout,
             layout_profile,
@@ -914,10 +919,17 @@ impl VellumGuiApp {
             .retain(|key, _| self.available_tabs.contains_key(key));
         self.no_title_tabs
             .retain(|key| self.available_tabs.contains_key(key));
-        for key in self.available_tabs.keys() {
-            self.tab_zones
-                .entry(key.clone())
-                .or_insert_with(|| Self::default_zone_for_tab_key(key));
+        for (key, tab) in &self.available_tabs {
+            if !self.tab_zones.contains_key(key) {
+                // A pending zone pref (Windows-window dropdown set while
+                // the window was hidden) beats the widget default.
+                let zone = self
+                    .pending_zones
+                    .get(&tab.window_name)
+                    .copied()
+                    .unwrap_or_else(|| Self::default_zone_for_tab_key(key));
+                self.tab_zones.insert(key.clone(), zone);
+            }
         }
         self.prune_detached_tabs();
         self.layout_dirty = true;
@@ -2256,6 +2268,18 @@ impl VellumGuiApp {
                 .into_iter()
                 .filter(|zone| self.migrated_sidebar_zones.contains(zone))
                 .collect(),
+            pending_zones: {
+                let mut entries: Vec<PendingZoneSnapshot> = self
+                    .pending_zones
+                    .iter()
+                    .map(|(window, zone)| PendingZoneSnapshot {
+                        window: window.clone(),
+                        zone: *zone,
+                    })
+                    .collect();
+                entries.sort_by(|a, b| a.window.cmp(&b.window));
+                entries
+            },
         };
         layout.dock_state_json = match serde_json::to_value(snapshot) {
             Ok(value) => value,
@@ -2367,6 +2391,7 @@ impl VellumGuiApp {
         self.zone_snap_drag = None;
         self.zone_snap_guides.clear();
         self.tab_zones = restored.tab_zones;
+        self.pending_zones = restored.pending_zones;
         self.no_title_tabs = restored.no_title_tabs;
         self.shell_layout = restored.shell_layout;
         self.tab_groups = restored.tab_groups;

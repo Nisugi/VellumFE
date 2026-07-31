@@ -54,6 +54,15 @@ pub(super) struct TabZoneSnapshot {
     pub(super) zone: GuiShellZone,
 }
 
+/// A zone preference for a window that isn't a live tab (hidden or not
+/// yet added) — set from the Windows window's zone dropdown, keyed by
+/// window name, applied when the tab materializes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct PendingZoneSnapshot {
+    pub(super) window: String,
+    pub(super) zone: GuiShellZone,
+}
+
 /// Effective per-tab gaps for a legacy sidebar stack. Each tab's desired
 /// `gap_above` is granted top-down out of whatever height the windows
 /// leave free in the zone, so a shrinking zone collapses gaps
@@ -217,6 +226,19 @@ impl VellumGuiApp {
             .get(key)
             .copied()
             .unwrap_or_else(|| Self::default_zone_for_tab_key(key))
+    }
+
+    /// Where a window of this widget type would land by default — the
+    /// widget-type mirror of `default_zone_for_tab_key`, for windows that
+    /// aren't live tabs yet (the Windows window's zone dropdown).
+    pub(super) fn default_zone_for_widget_type(widget_type: &str) -> GuiShellZone {
+        match widget_type {
+            "hand" => GuiShellZone::Header,
+            "compass" | "quickbar" | "hotkeybar" | "indicator" | "minivitals" | "countdown"
+            | "dashboard" | "encum" | "experience" | "gs4_experience" | "perception"
+            | "injury_doll" => GuiShellZone::Footer,
+            _ => GuiShellZone::Center,
+        }
     }
 
     fn target_docked_height(&self, zone: GuiShellZone) -> Option<f32> {

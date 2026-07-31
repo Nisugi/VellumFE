@@ -27,6 +27,12 @@ pub(super) struct DockStateSnapshot {
     /// the conversion deserialize to an empty list.
     #[serde(default)]
     pub(super) free_sidebar_zones: Vec<GuiShellZone>,
+    /// Zone preferences for windows that aren't live tabs (hidden / not
+    /// yet added), keyed by window name. Never filtered against
+    /// available_tabs — the whole point is surviving until the window
+    /// materializes.
+    #[serde(default)]
+    pub(super) pending_zones: Vec<PendingZoneSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,6 +71,8 @@ pub(super) struct RestoredLayoutState {
     /// their legacy gap stack on first render (`bake_sidebar_stack`).
     pub(super) migrated_sidebar_zones: HashSet<GuiShellZone>,
     pub(super) tab_zones: HashMap<TabKey, GuiShellZone>,
+    /// Window-name-keyed zone prefs for not-yet-live windows.
+    pub(super) pending_zones: HashMap<String, GuiShellZone>,
     pub(super) no_title_tabs: HashSet<TabKey>,
     pub(super) shell_layout: ShellLayoutSnapshot,
     pub(super) tab_groups: Vec<TabGroup>,
@@ -145,6 +153,18 @@ impl VellumGuiApp {
             })
             .unwrap_or_default();
         tab_zones.retain(|key, _| available_tabs.contains_key(key));
+        // Pending zone prefs survive unfiltered — they exist precisely for
+        // windows that aren't tabs yet.
+        let pending_zones: HashMap<String, GuiShellZone> = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .pending_zones
+                    .iter()
+                    .map(|entry| (entry.window.clone(), entry.zone))
+                    .collect()
+            })
+            .unwrap_or_default();
         let mut no_title_tabs: HashSet<TabKey> = snapshot
             .as_ref()
             .map(|snapshot| {
@@ -157,10 +177,13 @@ impl VellumGuiApp {
             })
             .unwrap_or_default();
         no_title_tabs.retain(|key| available_tabs.contains_key(key));
-        for key in available_tabs.keys() {
-            tab_zones
-                .entry(key.clone())
-                .or_insert_with(|| Self::default_zone_for_tab_key(key));
+        for (key, tab) in available_tabs {
+            tab_zones.entry(key.clone()).or_insert_with(|| {
+                pending_zones
+                    .get(&tab.window_name)
+                    .copied()
+                    .unwrap_or_else(|| Self::default_zone_for_tab_key(key))
+            });
         }
         let mut shell_layout = snapshot
             .as_ref()
@@ -198,6 +221,7 @@ impl VellumGuiApp {
             sidebar_gap_above,
             migrated_sidebar_zones,
             tab_zones,
+            pending_zones,
             no_title_tabs,
             shell_layout,
             tab_groups,
@@ -505,6 +529,10 @@ mod tests {
             shell_layout: ShellLayoutSnapshot::default(),
             tab_groups: Vec::new(),
             free_sidebar_zones: vec![GuiShellZone::LeftSidebar],
+            pending_zones: vec![PendingZoneSnapshot {
+                window: "compass".to_string(),
+                zone: GuiShellZone::Footer,
+            }],
         };
 
         let json = serde_json::to_string(&snapshot).unwrap();
@@ -513,6 +541,8 @@ mod tests {
         assert_eq!(parsed.visible_tabs[0], TabKey::TextMain);
         assert_eq!(parsed.visible_tabs[1], TabKey::Vitals);
         assert_eq!(parsed.free_sidebar_zones, vec![GuiShellZone::LeftSidebar]);
+        assert_eq!(parsed.pending_zones.len(), 1);
+        assert_eq!(parsed.pending_zones[0].window, "compass");
 
         // Files from before the sidebar conversion have no field at all:
         // they deserialize to an empty list, which is what triggers the
