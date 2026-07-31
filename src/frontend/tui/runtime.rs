@@ -260,6 +260,9 @@ async fn async_run(
 
     // Create core application state
     let mut app_core = AppCore::new(config)?;
+    // The TUI has no fallback input bar (the GUI does), so the command
+    // input window renders even when the layout marks it hidden.
+    app_core.force_show_command_input = true;
 
     // Start the web frontend sidecar if enabled (off by default). The
     // server runs as a tokio task; core feeds it via the attached sink,

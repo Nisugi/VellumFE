@@ -3428,6 +3428,69 @@ impl MessageProcessor {
                         break;
                     }
                     if !delivered {
+                        // Last resort: any shown subscriber of the story
+                        // ("main") stream. The window NAMED "main" can be
+                        // hidden with the story feed routed into another
+                        // window or a tabbedtext tab — mirror
+                        // add_system_message's fallback instead of dropping.
+                        'fallback: for (win_name, window) in ui_state.windows.iter_mut() {
+                            match &mut window.content {
+                                WindowContent::Text(content)
+                                    if content
+                                        .streams
+                                        .iter()
+                                        .any(|s| s.eq_ignore_ascii_case("main")) =>
+                                {
+                                    let final_line = if deferred_replacements.is_empty() {
+                                        line.clone()
+                                    } else {
+                                        StyledLine {
+                                            segments:
+                                                super::highlight_engine::apply_deferred_for_window(
+                                                    &line.segments,
+                                                    &deferred_replacements,
+                                                    win_name,
+                                                ),
+                                            stream: line.stream.clone(),
+                                            timestamp: line.timestamp,
+                                        }
+                                    };
+                                    content.add_line(final_line);
+                                    if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                                        self.enqueue_tts(tts_mgr, win_name, line);
+                                    }
+                                    delivered = true;
+                                    break 'fallback;
+                                }
+                                WindowContent::TabbedText(tab_content) => {
+                                    let active_tab_index = tab_content.active_tab_index;
+                                    for (tab_index, tab) in
+                                        tab_content.tabs.iter_mut().enumerate()
+                                    {
+                                        if tab
+                                            .definition
+                                            .streams
+                                            .iter()
+                                            .any(|s| s.trim().eq_ignore_ascii_case("main"))
+                                        {
+                                            tab.content.add_line(line.clone());
+                                            if tab_index != active_tab_index
+                                                && !tab.definition.ignore_activity
+                                            {
+                                                tab.has_unread = true;
+                                            }
+                                            delivered = true;
+                                        }
+                                    }
+                                    if delivered {
+                                        break 'fallback;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    if !delivered {
                         tracing::trace!(
                             "No routing candidate exists for stream '{}' (tried {:?}), line dropped",
                             self.current_stream,

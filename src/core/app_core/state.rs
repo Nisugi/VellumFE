@@ -175,6 +175,12 @@ pub struct AppCore {
     /// Track if save reminder has been shown this session
     pub save_reminder_shown: bool,
 
+    /// TUI-only: materialize the command_input window even when the
+    /// layout marks it hidden (the TUI has no fallback input bar; the
+    /// GUI shows its fixed bottom panel instead). The hidden flag itself
+    /// is preserved so the GUI preference survives TUI sessions.
+    pub force_show_command_input: bool,
+
     /// Base layout name for autosave reference
     pub base_layout_name: Option<String>,
 
@@ -314,6 +320,7 @@ impl AppCore {
             layout_modified_since_save: false,
             layout_autosave_pending: None,
             save_reminder_shown: false,
+            force_show_command_input: false,
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts: Vec::new(),
@@ -445,6 +452,7 @@ impl AppCore {
             layout_modified_since_save: false,
             layout_autosave_pending: None,
             save_reminder_shown: false,
+            force_show_command_input: false,
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts,
@@ -1994,10 +2002,15 @@ impl AppCore {
 
         // Create windows based on layout (only visible ones)
         for window_def in &self.layout.windows {
-            // Skip hidden windows
+            // Skip hidden windows (except command_input under the TUI
+            // force-show rule — the TUI has no fallback input bar).
             if !window_def.base().visibility.is_shown() {
-                tracing::debug!("Skipping hidden window '{}' during init", window_def.name());
-                continue;
+                let force = self.force_show_command_input
+                    && window_def.widget_type() == "command_input";
+                if !force {
+                    tracing::debug!("Skipping hidden window '{}' during init", window_def.name());
+                    continue;
+                }
             }
 
             let position = positions
@@ -3631,23 +3644,77 @@ impl AppCore {
         }
     }
 
+    /// True if a shown window other than `excluding` carries the "main"
+    /// stream — a text window subscribed to it, or a tabbedtext with a
+    /// subscribed tab. The story feed must always have a live subscriber;
+    /// hide_window gates on this instead of hard-protecting the window
+    /// NAMED "main" (the feed may live in a tabbedtext tab instead).
+    fn main_stream_has_subscriber_excluding(&self, excluding: &str) -> bool {
+        self.ui_state.windows.iter().any(|(win_name, window)| {
+            if win_name == excluding {
+                return false;
+            }
+            Self::window_subscribes_to_main(&window.content)
+        })
+    }
+
+    fn window_subscribes_to_main(content: &crate::data::WindowContent) -> bool {
+        match content {
+            crate::data::WindowContent::Text(text) => {
+                text.streams.iter().any(|s| s.eq_ignore_ascii_case("main"))
+            }
+            crate::data::WindowContent::TabbedText(tabbed) => tabbed.tabs.iter().any(|tab| {
+                tab.definition
+                    .streams
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case("main"))
+            }),
+            _ => false,
+        }
+    }
+
     /// Hide a window (keep in layout for persistence, remove from UI)
     pub fn hide_window(&mut self, name: &str) {
-        if name == "main" {
-            self.add_system_message("Cannot hide main window");
+        // Main-stream invariant: hiding the last shown subscriber of the
+        // story feed would silently eat all main text.
+        let hides_main_subscriber = self
+            .ui_state
+            .windows
+            .get(name)
+            .map(|w| Self::window_subscribes_to_main(&w.content))
+            .unwrap_or(false);
+        if hides_main_subscriber && !self.main_stream_has_subscriber_excluding(name) {
+            self.add_system_message(
+                "Cannot hide the only window showing the story (main) feed. \
+                 Add the main stream to another window first.",
+            );
             return;
         }
 
         // Find ALL windows with this name and mark as hidden (handles duplicates)
         let mut found_count = 0;
+        let mut is_command_input = false;
         for window_def in self.layout.windows.iter_mut() {
             if window_def.name() == name && window_def.base().visibility.is_shown() {
                 window_def.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+                is_command_input |= window_def.widget_type() == "command_input";
                 found_count += 1;
             }
         }
 
         if found_count > 0 {
+            // TUI force-show: persist the hidden flag (so the GUI honors
+            // it) but keep the input line on screen — the TUI has no
+            // fallback bar and would otherwise leave the user typing blind.
+            if is_command_input && self.force_show_command_input {
+                self.add_system_message(
+                    "Command input hidden in the layout (GUI shows its fallback bar); \
+                     the TUI keeps it visible.",
+                );
+                self.mark_layout_modified();
+                self.needs_render = true;
+                return;
+            }
             // Remove from UI state (but keep in layout!)
             self.ui_state.remove_window(name);
 
@@ -4052,6 +4119,12 @@ impl AppCore {
                 self.ui_state.shown_container_titles.insert(title.clone());
                 self.create_ephemeral_container_window(&title, terminal_width, terminal_height);
                 self.needs_render = true;
+                return;
+            }
+            // A catalog row for a template not yet in the layout → conjure
+            // it (show_window adds from the template and materializes it).
+            if crate::config::Config::get_window_template(name).is_some() {
+                self.show_window(name, terminal_width, terminal_height);
             }
         }
     }
@@ -5947,14 +6020,14 @@ impl AppCore {
         let mut out: Vec<KnownWindow> = Vec::new();
 
         // Persistent layout windows. Bound ones are game-discovered
-        // dialogs/streams; unbound ones are template/custom widgets. Skip
-        // the essentials that can't be hidden (main stream, command input).
+        // dialogs/streams; unbound ones are template/custom widgets.
+        // Nothing is unlisted: "main" is just the story window (hideable
+        // while another window carries the main stream), and command_input
+        // is hideable in the GUI (fallback bottom bar) while the TUI
+        // force-shows it.
         for w in &self.layout.windows {
             let base = w.base();
             let name = base.name.clone();
-            if name == "main" || w.widget_type() == "command_input" {
-                continue;
-            }
             let kind = match &base.binding {
                 Some(WindowBinding::Stream(_)) => KnownWindowKind::Stream,
                 Some(WindowBinding::Dialog(_)) => KnownWindowKind::Dialog,
@@ -6020,6 +6093,40 @@ impl AppCore {
                 widget_type: "container".to_string(),
                 shown: false,
                 ephemeral: true,
+            });
+        }
+
+        // Full catalog: every template for this game type is a row even
+        // before it exists in the layout — ticking one conjures it via
+        // set_known_window_shown. Seed templates (`*_custom`) and spacers
+        // are creation flows, not windows, so they stay out; command_input
+        // has no template and is covered by the layout pass above.
+        let existing: std::collections::HashSet<String> =
+            out.iter().map(|k| k.name.to_ascii_lowercase()).collect();
+        for template_name in
+            crate::config::Config::list_window_templates_for_game(self.game_type())
+        {
+            if template_name == "spacer" || template_name.ends_with("_custom") {
+                continue;
+            }
+            if existing.contains(&template_name.to_ascii_lowercase()) {
+                continue;
+            }
+            let Some(template) = crate::config::Config::get_window_template(&template_name)
+            else {
+                continue;
+            };
+            out.push(KnownWindow {
+                title: template
+                    .base()
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| template_name.clone()),
+                name: template_name,
+                kind: KnownWindowKind::Layout,
+                widget_type: template.widget_type().to_string(),
+                shown: false,
+                ephemeral: false,
             });
         }
 
@@ -7175,8 +7282,10 @@ mod tests {
         core.layout.windows.push(positioned_text_def("my_notes", 0, 0, 20, 5)); // plain
 
         let known = core.enumerate_known_windows();
-        // "main" is filtered out (essential).
-        assert!(!known.iter().any(|k| k.name == "main"));
+        // "main" is listed like any other window (hideable under the
+        // main-stream invariant — see hide_window).
+        let main = known.iter().find(|k| k.name == "main").expect("main listed");
+        assert!(main.shown);
         // The bound combat window is classified as a Dialog, hidden.
         let combat = known.iter().find(|k| k.name == "combat").expect("combat listed");
         assert_eq!(combat.kind, KnownWindowKind::Dialog);
@@ -7186,6 +7295,110 @@ mod tests {
         let notes = known.iter().find(|k| k.name == "my_notes").expect("notes listed");
         assert_eq!(notes.kind, KnownWindowKind::Layout);
         assert!(notes.shown);
+    }
+
+    /// Full-catalog rows: every template is listed even before it exists
+    /// in the layout; seed templates and spacers stay out; a layout entry
+    /// wins over its template row (no duplicates, live state preserved).
+    #[test]
+    fn enumerate_known_windows_lists_full_template_catalog() {
+        let core = core_with_layout(vec![positioned_text_def("thoughts", 0, 0, 10, 5)]);
+        let known = core.enumerate_known_windows();
+
+        // Never-added template → unchecked row.
+        let compass = known.iter().find(|k| k.name == "compass").expect("compass listed");
+        assert!(!compass.shown);
+        assert!(!compass.ephemeral);
+        // main appears as a template row even though the layout lacks it.
+        assert!(known.iter().any(|k| k.name == "main"));
+        // Creation seeds are flows, not windows.
+        assert!(!known.iter().any(|k| k.name.ends_with("_custom")));
+        assert!(!known.iter().any(|k| k.name == "spacer"));
+        // Layout entry dedups its template row and keeps live state.
+        let thoughts: Vec<_> = known.iter().filter(|k| k.name == "thoughts").collect();
+        assert_eq!(thoughts.len(), 1);
+        assert!(thoughts[0].shown);
+    }
+
+    /// Ticking a catalog row whose template isn't in the layout yet
+    /// conjures it: added to the layout shown + materialized in ui_state.
+    #[test]
+    fn set_known_window_shown_conjures_template_not_in_layout() {
+        let mut core = core_with_layout(vec![]);
+        assert!(core.layout.get_window("compass").is_none());
+        core.set_known_window_shown("compass", true, 80, 24);
+        assert!(core
+            .layout
+            .get_window("compass")
+            .map(|w| w.base().visibility.is_shown())
+            .unwrap_or(false));
+        assert!(core.ui_state.windows.contains_key("compass"));
+    }
+
+    /// A text window subscribed to the main stream.
+    fn main_text_def(name: &str) -> WindowDef {
+        let mut def = positioned_text_def(name, 0, 0, 40, 10);
+        if let WindowDef::Text { data, .. } = &mut def {
+            data.streams = vec!["main".to_string()];
+        }
+        def
+    }
+
+    /// The story feed must always have a shown subscriber: hiding the
+    /// last main-stream window is refused; with a second subscriber the
+    /// window named "main" hides like any other.
+    #[test]
+    fn hide_window_gates_on_main_stream_invariant() {
+        let mut core = core_with_layout(vec![main_text_def("main")]);
+        core.init_windows(80, 24);
+
+        // Sole subscriber → refused, still shown.
+        core.hide_window("main");
+        assert!(core.ui_state.windows.contains_key("main"));
+        assert!(core.layout.get_window("main").unwrap().base().visibility.is_shown());
+
+        // A second subscriber makes main hideable.
+        let second = main_text_def("story_tab");
+        core.layout.windows.push(second.clone());
+        core.add_new_window(&second, 80, 24);
+        core.hide_window("main");
+        assert!(!core.ui_state.windows.contains_key("main"));
+        assert!(!core.layout.get_window("main").unwrap().base().visibility.is_shown());
+
+        // Now story_tab is the last subscriber → refused in turn.
+        core.hide_window("story_tab");
+        assert!(core.ui_state.windows.contains_key("story_tab"));
+    }
+
+    /// TUI force-show: a hidden command_input still materializes at init,
+    /// and hiding it persists the layout flag without dropping the UI
+    /// window. Without the flag (GUI), it hides like any other window.
+    #[test]
+    fn command_input_hidden_flag_vs_tui_force_show() {
+        let cmd = {
+            let mut base = test_window_base("command_input");
+            base.visibility = crate::config::WindowVisibility::Hidden;
+            WindowDef::CommandInput {
+                base,
+                data: crate::config::CommandInputWidgetData::default(),
+            }
+        };
+        // GUI mode (no force): hidden stays out of ui_state.
+        let mut core = core_with_layout(vec![cmd.clone()]);
+        core.init_windows(80, 24);
+        assert!(!core.ui_state.windows.contains_key("command_input"));
+
+        // TUI mode: force-show materializes it despite the hidden flag.
+        let mut core = core_with_layout(vec![cmd]);
+        core.force_show_command_input = true;
+        core.init_windows(80, 24);
+        assert!(core.ui_state.windows.contains_key("command_input"));
+
+        // Hiding under force-show flips the layout flag but keeps the UI.
+        core.layout.windows[0].base_mut().visibility = crate::config::WindowVisibility::Shown;
+        core.hide_window("command_input");
+        assert!(!core.layout.get_window("command_input").unwrap().base().visibility.is_shown());
+        assert!(core.ui_state.windows.contains_key("command_input"));
     }
 
     #[test]
