@@ -103,9 +103,14 @@ const LAYOUT_DEFAULT: &str = include_str!("../defaults/globals/layouts/layout.to
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum WidgetCategory {
     ActiveEffects,
+    Character,
+    Container,
     Countdown,
+    Dialog,
     Entity,
     Hand,
+    Hotbars,
+    Navigation,
     Other,
     ProgressBar,
     Status,
@@ -114,7 +119,7 @@ pub enum WidgetCategory {
 
 impl WidgetCategory {
     /// All categories in a stable display order.
-    pub const ALL: [WidgetCategory; 8] = [
+    pub const ALL: [WidgetCategory; 13] = [
         WidgetCategory::Status,
         WidgetCategory::ProgressBar,
         WidgetCategory::Countdown,
@@ -122,15 +127,25 @@ impl WidgetCategory {
         WidgetCategory::Entity,
         WidgetCategory::Hand,
         WidgetCategory::TextWindow,
+        WidgetCategory::Character,
+        WidgetCategory::Navigation,
+        WidgetCategory::Hotbars,
+        WidgetCategory::Container,
+        WidgetCategory::Dialog,
         WidgetCategory::Other,
     ];
 
     pub fn display_name(&self) -> &str {
         match self {
             Self::ActiveEffects => "Active Effects",
+            Self::Character => "Character",
+            Self::Container => "Containers",
             Self::Countdown => "Countdowns",
+            Self::Dialog => "Dialogs",
             Self::Entity => "Entities",
             Self::Hand => "Hands",
+            Self::Hotbars => "Hotbars",
+            Self::Navigation => "Navigation",
             Self::Other => "Other",
             Self::ProgressBar => "Progress Bars",
             Self::Status => "Status",
@@ -143,9 +158,14 @@ impl WidgetCategory {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "ActiveEffects" => Some(Self::ActiveEffects),
+            "Character" => Some(Self::Character),
+            "Container" => Some(Self::Container),
             "Countdown" => Some(Self::Countdown),
+            "Dialog" => Some(Self::Dialog),
             "Entity" => Some(Self::Entity),
             "Hand" => Some(Self::Hand),
+            "Hotbars" => Some(Self::Hotbars),
+            "Navigation" => Some(Self::Navigation),
             "Other" => Some(Self::Other),
             "ProgressBar" => Some(Self::ProgressBar),
             "Status" => Some(Self::Status),
@@ -160,9 +180,15 @@ impl WidgetCategory {
             "hand" => Self::Hand,
             "active_effects" => Self::ActiveEffects,
             "indicator" | "dashboard" => Self::Status,
-            "progress" => Self::ProgressBar,
+            "progress" | "minivitals" => Self::ProgressBar,
             "text" | "tabbedtext" => Self::TextWindow,
             "targets" | "players" | "items" => Self::Entity,
+            "inventory" | "spells" | "injury_doll" | "experience" | "gs4_experience"
+            | "encum" | "reserve" | "perception" => Self::Character,
+            "room" | "compass" | "map" => Self::Navigation,
+            "quickbar" | "hotkeybar" => Self::Hotbars,
+            "container" => Self::Container,
+            "dialogpanel" | "betrayer" => Self::Dialog,
             _ => Self::Other,
         }
     }

@@ -5,6 +5,37 @@ use super::*;
 use crate::data::geometry::{Col, Height, Row, Width};
 
 
+    /// The Other split: every former Other-dweller with a real home lands
+    /// in it; container/dialog runtime types get their own categories.
+    #[test]
+    fn widget_category_classification_covers_other_split() {
+        use WidgetCategory as C;
+        for (wt, want) in [
+            ("inventory", C::Character),
+            ("spells", C::Character),
+            ("injury_doll", C::Character),
+            ("gs4_experience", C::Character),
+            ("encum", C::Character),
+            ("room", C::Navigation),
+            ("compass", C::Navigation),
+            ("map", C::Navigation),
+            ("quickbar", C::Hotbars),
+            ("hotkeybar", C::Hotbars),
+            ("minivitals", C::ProgressBar),
+            ("container", C::Container),
+            ("dialogpanel", C::Dialog),
+            ("betrayer", C::Dialog),
+            ("spacer", C::Other),
+            ("command_input", C::Other),
+        ] {
+            assert_eq!(C::from_widget_type(wt), want, "widget type '{}'", wt);
+        }
+        // Round-trip: every ALL entry parses back from its Debug name.
+        for c in C::ALL {
+            assert_eq!(C::from_name(&format!("{:?}", c)), Some(c));
+        }
+    }
+
     #[test]
     fn test_spacer_template_exists() {
         // RED: Spacer template should exist and be retrievable

@@ -4441,16 +4441,9 @@ impl TuiFrontend {
         use crate::config::WidgetCategory;
         use crate::data::ui_state::InputMode;
 
-        match category_str {
-            "ProgressBar" => Ok(WidgetCategory::ProgressBar),
-            "TextWindow" => Ok(WidgetCategory::TextWindow),
-            "Countdown" => Ok(WidgetCategory::Countdown),
-            "Hand" => Ok(WidgetCategory::Hand),
-            "ActiveEffects" => Ok(WidgetCategory::ActiveEffects),
-            "Entity" => Ok(WidgetCategory::Entity),
-            "Status" => Ok(WidgetCategory::Status),
-            "Other" => Ok(WidgetCategory::Other),
-            _ => {
+        match WidgetCategory::from_name(category_str) {
+            Some(category) => Ok(category),
+            None => {
                 tracing::warn!("Unknown widget category: {}", category_str);
                 app_core.ui_state.popup_menu = None;
                 app_core.ui_state.input_mode = InputMode::Normal;
