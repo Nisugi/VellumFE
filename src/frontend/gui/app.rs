@@ -98,6 +98,8 @@ pub(super) struct WidgetRenderSettings {
     /// gutter: the TextEdit owns every drag in the body, so without it the
     /// window would have no drag surface at all.
     command_input_drag_gutter: bool,
+    /// Hand widget icon box size in points (ui_settings.hand_icon_size).
+    hand_icon_size: f32,
     /// Inactive status icons render their grayscale twin instead of the
     /// alpha dim (ui_settings.status_icons.gray_inactive).
     gray_inactive_icons: bool,
@@ -1367,6 +1369,7 @@ impl VellumGuiApp {
                 .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
                 .is_some_and(|window| window.widget_type == WidgetType::CommandInput)
                 && self.title_bar_hidden(key),
+            hand_icon_size: self.ui_settings.hand_icon_size.clamp(16.0, 48.0),
             gray_inactive_icons: self.ui_settings.status_icons.gray_inactive,
             doll_grayscale: self.ui_settings.doll_grayscale,
         }

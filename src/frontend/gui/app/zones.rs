@@ -292,8 +292,11 @@ impl VellumGuiApp {
     ) -> Option<f32> {
         use crate::frontend::gui::persistence::VitalsOrientation;
         let row = match window.widget_type {
-            WidgetType::Hand
-            | WidgetType::Countdown
+            // Hand rows grow with the configured icon size.
+            WidgetType::Hand => {
+                (self.ui_settings.hand_icon_size.clamp(16.0, 48.0) + 6.0).max(28.0)
+            }
+            WidgetType::Countdown
             | WidgetType::Progress
             | WidgetType::Indicator
             | WidgetType::CommandInput => 28.0,
@@ -1603,8 +1606,12 @@ impl VellumGuiApp {
                 window_builder = window_builder.interactable(false);
             }
             if is_hand_widget {
+                // Width comes from the stored rect (user-set via the side
+                // handle); height follows the icon-size-aware row cap so a
+                // larger hand icon setting can never clip inside a stale
+                // stored height.
                 window_builder = window_builder
-                    .fixed_size(initial_rect.size())
+                    .fixed_size(Vec2::new(initial_rect.size().x, max_window_size.y))
                     .resizable(false);
             }
             let is_compact_widget = Self::is_compact_center_widget(&window.widget_type);

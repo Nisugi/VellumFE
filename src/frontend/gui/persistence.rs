@@ -417,6 +417,12 @@ pub struct GuiUiSettings {
     /// is engaged.
     #[serde(default = "default_true")]
     pub snap_show_guides: bool,
+
+    /// Hand widget icon size in points (left/right/spell hand art). Rows
+    /// grow to fit; the default matches Wrayth, whose hand icons span
+    /// about two text lines.
+    #[serde(default = "default_hand_icon_size")]
+    pub hand_icon_size: f32,
 }
 
 /// How the shell draws the boundary between zones.
@@ -492,6 +498,10 @@ fn default_snap_radius() -> f32 {
     8.0
 }
 
+fn default_hand_icon_size() -> f32 {
+    30.0
+}
+
 impl Default for GuiUiSettings {
     fn default() -> Self {
         Self {
@@ -520,6 +530,7 @@ impl Default for GuiUiSettings {
             snap_grid: 0.0,
             snap_move_sizes_to_grid: false,
             snap_show_guides: default_true(),
+            hand_icon_size: default_hand_icon_size(),
         }
     }
 }

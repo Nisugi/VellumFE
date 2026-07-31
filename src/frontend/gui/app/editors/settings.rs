@@ -475,6 +475,13 @@ fn render_gui_section(
         ui.label("Effect bar height");
         ui.add(egui::Slider::new(&mut gui_settings.effects_bar_height, 10.0..=60.0).step_by(1.0));
         ui.end_row();
+        ui.label("Hand icon size");
+        ui.add(egui::Slider::new(&mut gui_settings.hand_icon_size, 16.0..=48.0).step_by(1.0))
+            .on_hover_text(
+                "Size of the left/right/spell hand icons in points. \
+                 Hand rows grow to fit.",
+            );
+        ui.end_row();
         ui.label("Density");
         ui.add(egui::Slider::new(&mut gui_settings.density, 0.5..=2.0).step_by(0.05))
             .on_hover_text(

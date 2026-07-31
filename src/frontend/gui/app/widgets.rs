@@ -1920,6 +1920,7 @@ impl VellumGuiApp {
         link: &Option<LinkData>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
         resolved: &crate::core::conditions::ResolvedHand,
+        icon_size: f32,
     ) -> Option<GuiLinkClick> {
         let empty_text = if hand_prefix == "S" { "None" } else { "Empty" };
         let item_text = item
@@ -1959,8 +1960,11 @@ impl VellumGuiApp {
         } else {
             item_text.to_string()
         };
-        let row_height = ui.spacing().interact_size.y.max(16.0);
-        let icon_width = 22.0;
+        // The row grows with the configured icon size so bigger art gets
+        // real pixels instead of being squeezed into the text row height.
+        let icon_size = icon_size.clamp(16.0, 48.0);
+        let row_height = ui.spacing().interact_size.y.max(16.0).max(icon_size);
+        let icon_width = icon_size;
         let icon_gap = 4.0;
         let handle_gutter_width = 12.0;
 
@@ -4568,6 +4572,7 @@ impl VellumGuiApp {
                     link,
                     settings.skin_art.as_deref(),
                     &resolved,
+                    settings.hand_icon_size,
                 )
             }
             WindowContent::TabbedText(tabbed) => {
