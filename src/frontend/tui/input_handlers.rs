@@ -401,10 +401,20 @@ impl super::TuiFrontend {
                     app_core.needs_render = true;
                 } else {
                     match app_core.execute_keybind_action(&action) {
-                        Ok(commands) => {
-                            if let Some(cmd) = commands.into_iter().next() {
-                                app_core.needs_render = true;
-                                return Ok(Some(cmd));
+                        Ok(outcomes) => {
+                            for outcome in outcomes {
+                                match outcome {
+                                    crate::data::CommandOutcome::Game(cmd) => {
+                                        app_core.needs_render = true;
+                                        return Ok(Some(cmd));
+                                    }
+                                    crate::data::CommandOutcome::Handled => {}
+                                    // A macro bound to a dot-command that
+                                    // opens an editor: perform it here.
+                                    crate::data::CommandOutcome::Ui(ui) => {
+                                        menu_actions::handle_ui_action(app_core, self, ui)?;
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -463,25 +473,22 @@ impl super::TuiFrontend {
             app_core.resize_windows(width, height);
             app_core.needs_render = true;
         } else {
-            let to_send = app_core.send_command(command)?;
-            tracing::debug!("handle_command_submission: send_command returned '{}'", to_send);
-            if to_send.starts_with("action:") {
-                // Handle internal UI actions locally instead of sending to the game
-                menu_actions::handle_menu_action(app_core, self, &to_send)?;
-                app_core.needs_render = true;
-                tracing::debug!("handle_command_submission: handled action '{}'", to_send);
-                return Ok(None);
-            }
-
-            if to_send.is_empty() {
-                app_core.needs_render = true;
-                tracing::debug!("handle_command_submission: no-op command");
-                return Ok(None);
-            }
-
+            let outcome = app_core.send_command(command)?;
+            tracing::debug!("handle_command_submission: send_command returned {:?}", outcome);
             app_core.needs_render = true;
-            tracing::debug!("handle_command_submission: queued for network");
-            return Ok(Some(to_send));
+            return match outcome {
+                crate::data::CommandOutcome::Ui(action) => {
+                    // Perform internal UI actions locally instead of
+                    // sending anything to the game.
+                    menu_actions::handle_ui_action(app_core, self, action)?;
+                    Ok(None)
+                }
+                crate::data::CommandOutcome::Handled => Ok(None),
+                crate::data::CommandOutcome::Game(to_send) => {
+                    tracing::debug!("handle_command_submission: queued for network");
+                    Ok(Some(to_send))
+                }
+            };
         }
         tracing::debug!("handle_command_submission: end");
         Ok(None)

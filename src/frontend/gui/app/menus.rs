@@ -1098,8 +1098,9 @@ impl VellumGuiApp {
 
         if command.starts_with("action:") {
             if !self.handle_action_string(&command) {
+                // Every real action parses; this is a menu-wiring bug.
                 self.app_core
-                    .add_system_message(&format!("GUI action not implemented yet: {}", command));
+                    .add_system_message(&format!("Unknown action: {}", command));
             }
             // Actions open editors/panels that own input next — leave
             // interact mode rather than fighting them for the keyboard.

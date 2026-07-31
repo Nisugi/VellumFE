@@ -106,9 +106,15 @@ impl AppCore {
         self.keybind_map = map;
     }
 
-    /// Execute a keybind action (called when a bound key is pressed)
-    /// Returns a list of commands to send to the server (for macros)
-    pub fn execute_keybind_action(&mut self, action: &KeyBindAction) -> Result<Vec<String>> {
+    /// Execute a keybind action (called when a bound key is pressed).
+    /// Returns the outcomes of any macro commands: the frontend sends
+    /// `Game` strings to the server and performs `Ui` actions itself —
+    /// which is what makes a macro bound to `.settings` actually open
+    /// the settings editor instead of leaking an action string.
+    pub fn execute_keybind_action(
+        &mut self,
+        action: &KeyBindAction,
+    ) -> Result<Vec<crate::data::CommandOutcome>> {
         match action {
             KeyBindAction::Action(action_str) => {
                 // Parse the action string to a KeyAction
@@ -141,10 +147,11 @@ impl AppCore {
                     macro_action.macro_text
                 );
 
-                // Send the macro text as a command (posts prompt+echo, returns command for server)
-                let command = self.send_command(clean_text)?;
-                tracing::info!("[MACRO] send_command returned: '{}'", command);
-                Ok(vec![command]) // Return command for network layer to send
+                // Send the macro text as a command (posts prompt+echo);
+                // the outcome flows back to the frontend to dispatch.
+                let outcome = self.send_command(clean_text)?;
+                tracing::info!("[MACRO] send_command returned: {:?}", outcome);
+                Ok(vec![outcome])
             }
         }
     }
@@ -349,7 +356,11 @@ impl AppCore {
 
             // Macro actions (should not reach here - handled by execute_keybind_action)
             KeyAction::SendMacro(text) => {
-                self.send_command(text)?;
+                // Core can't dispatch a Ui outcome itself; this path is a
+                // defensive fallback and drops one with a log if it fires.
+                if let crate::data::CommandOutcome::Ui(action) = self.send_command(text)? {
+                    tracing::warn!("SendMacro fallback dropped UI action {action}");
+                }
             }
         }
 

@@ -645,7 +645,7 @@ pub async fn async_run(
         app_core.poll_map();
         for command in app_core.take_outbound() {
             match app_core.send_command(command) {
-                Ok(out) if !out.is_empty() && !out.starts_with("action:") => {
+                Ok(crate::data::CommandOutcome::Game(out)) => {
                     if let Some(conn) = supervisor.connection.as_ref() {
                         let _ = conn.command_tx.send(out);
                     }
@@ -656,11 +656,15 @@ pub async fn async_run(
         }
 
         // Feed-injected dot-commands (<vellumCmd> from Lich scripts):
-        // same core path as typed input; action strings need a local UI
-        // and are quietly skipped here.
+        // same core path as typed input; UI actions need a local UI and
+        // are quietly skipped here.
         for command in app_core.take_pending_client_commands() {
-            if let Err(e) = app_core.send_command(command) {
-                tracing::warn!("vellumCmd failed: {e}");
+            match app_core.send_command(command) {
+                Ok(crate::data::CommandOutcome::Ui(action)) => {
+                    tracing::debug!("vellumCmd UI action skipped headless: {action}");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("vellumCmd failed: {e}"),
             }
         }
 
@@ -763,12 +767,14 @@ fn dispatch_command(
         return false;
     }
     match app_core.send_command(command) {
-        Ok(outbound) => {
-            if outbound.is_empty() || outbound.starts_with("__") {
-                return false;
-            }
-            if outbound.starts_with("action:") || outbound.starts_with("menu:") {
-                app_core.add_system_message("That action needs the desktop client.");
+        Ok(crate::data::CommandOutcome::Handled) => false,
+        Ok(crate::data::CommandOutcome::Ui(_)) => {
+            app_core.add_system_message("That action needs the desktop client.");
+            false
+        }
+        Ok(crate::data::CommandOutcome::Game(outbound)) => {
+            if outbound.is_empty() || outbound.starts_with("__") || outbound.starts_with("menu:")
+            {
                 return false;
             }
             let is_quit = outbound.trim().eq_ignore_ascii_case("quit");

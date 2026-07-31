@@ -470,27 +470,30 @@ async fn async_run(
         app_core.poll_map();
         for command in app_core.take_outbound() {
             match app_core.send_command(command) {
-                Ok(out) if !out.is_empty() && !out.starts_with("action:") => {
+                Ok(crate::data::CommandOutcome::Game(out)) => {
                     app_core
                         .perf_stats
                         .record_bytes_sent((out.len() + 1) as u64);
                     let _ = command_tx.send(out);
                 }
+                // Travel never produces UI actions; drop defensively.
                 Ok(_) => {}
                 Err(e) => tracing::warn!("travel command failed: {e}"),
             }
         }
 
         // Feed-injected dot-commands (<vellumCmd> from Lich scripts) run
-        // through the same dispatch as typed dot-commands; action strings
-        // route into the menu-action handler like menu picks do.
+        // through the same dispatch as typed dot-commands; UI outcomes
+        // route into the action handler like menu picks do. (Game
+        // outcomes are deliberately not forwarded — vellumCmd is a
+        // dot-command channel, not a command injector.)
         for command in app_core.take_pending_client_commands() {
             match app_core.send_command(command) {
-                Ok(action) if action.starts_with("action:") => {
-                    if let Err(e) = crate::frontend::tui::menu_actions::handle_menu_action(
+                Ok(crate::data::CommandOutcome::Ui(action)) => {
+                    if let Err(e) = crate::frontend::tui::menu_actions::handle_ui_action(
                         &mut app_core,
                         &mut frontend,
-                        &action,
+                        action,
                     ) {
                         tracing::warn!("vellumCmd action failed: {e}");
                     }

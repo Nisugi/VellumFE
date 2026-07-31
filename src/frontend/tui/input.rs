@@ -4392,12 +4392,13 @@ impl TuiFrontend {
                 app_core.ui_state.nested_submenu = None;
                 app_core.ui_state.deep_submenu = None;
                 app_core.ui_state.input_mode = InputMode::Normal;
-                // Process the dot command (e.g., .menu, .help)
-                // IMPORTANT: Check return value for action: prefix - some dot commands
-                // return UI action strings that need to be handled by handle_menu_action
+                // Process the dot command (e.g., .menu, .help); UI
+                // outcomes are performed here like any menu pick.
                 match app_core.send_command(command.to_string()) {
-                    Ok(action_str) if action_str.starts_with("action:") => {
-                        handle_menu_action_fn(app_core, self, &action_str)?;
+                    Ok(crate::data::CommandOutcome::Ui(action)) => {
+                        crate::frontend::tui::menu_actions::handle_ui_action(
+                            app_core, self, action,
+                        )?;
                     }
                     Err(e) => {
                         tracing::error!("Dot command error: {}", e);

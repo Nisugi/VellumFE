@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use super::AppCore;
+use crate::data::{CommandOutcome, ShellZoneTarget, UiAction, ZoneOp};
 
 /// Compass/vertical movement words — everything else in a room's wayto
 /// edges is a "portal" (go door, climb stair, enter hole, ...).
@@ -92,7 +93,7 @@ fn split_sleep_macro(
 
 impl AppCore {
     /// Send command to server
-    pub fn send_command(&mut self, command: String) -> Result<String> {
+    pub fn send_command(&mut self, command: String) -> Result<CommandOutcome> {
         // Macro sleep segments: `look\rs2.5\rhide` pauses 2.5s between the
         // commands (paused segments go out via take_outbound when due).
         // Only strings containing a sleep segment take this path — plain
@@ -103,7 +104,7 @@ impl AppCore {
             }
             return match immediate {
                 Some(text) => self.send_command(text),
-                None => Ok(String::new()),
+                None => Ok(CommandOutcome::Handled),
             };
         }
 
@@ -133,7 +134,7 @@ impl AppCore {
         // Command history is now managed by the CommandInput widget
 
         // Return command for network layer to send (network layer adds newline)
-        Ok(command)
+        Ok(CommandOutcome::Game(command))
     }
 
     /// Echo a user-entered command to every window subscribed to "main"
@@ -1385,7 +1386,7 @@ impl AppCore {
         self.tick_foreach();
     }
 
-    fn handle_dot_command(&mut self, command: &str) -> Result<String> {
+    fn handle_dot_command(&mut self, command: &str) -> Result<CommandOutcome> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
         tracing::debug!("handle_dot_command: '{}'", command);
@@ -1423,7 +1424,7 @@ impl AppCore {
                     Some("on") => true,
                     Some("off") => false,
                     Some("edit") => {
-                        return Ok("action:sorteredit".to_string());
+                        return Ok(CommandOutcome::Ui(UiAction::SorterEdit));
                     }
                     None => !self.config.sorter.enabled,
                     Some(other) => {
@@ -1432,7 +1433,7 @@ impl AppCore {
                             if self.config.sorter.enabled { "on" } else { "off" },
                             other
                         ));
-                        return Ok(String::new());
+                        return Ok(CommandOutcome::Handled);
                     }
                 };
                 self.config.sorter.enabled = target;
@@ -1603,7 +1604,7 @@ impl AppCore {
             "portal" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
                 if let Some(command) = self.handle_portal_command(&args) {
-                    return Ok(command);
+                    return Ok(CommandOutcome::Game(command));
                 }
             }
 
@@ -1648,9 +1649,11 @@ impl AppCore {
             // Lich WebUI bridge: no args -> handshake + page picker;
             // ".webui <script/page>" -> open that page as a native panel.
             "webui" => match parts.get(1) {
-                None => return Ok("action:webui".to_string()),
-                Some(&"off") => return Ok("action:webui:off".to_string()),
-                Some(page) => return Ok(format!("action:webui:open:{}", page)),
+                None => return Ok(CommandOutcome::Ui(UiAction::WebUiPicker)),
+                Some(&"off") => return Ok(CommandOutcome::Ui(UiAction::WebUiOff)),
+                Some(page) => {
+                    return Ok(CommandOutcome::Ui(UiAction::WebUiOpen(page.to_string())))
+                }
             },
             "addwindow" => {
                 if parts.len() >= 6 {
@@ -1666,7 +1669,7 @@ impl AppCore {
                     self.add_window(name, widget_type, x, y, width, height);
                 } else if parts.len() == 1 {
                     // No arguments - open widget picker
-                    return Ok("action:addwindow".to_string());
+                    return Ok(CommandOutcome::Ui(UiAction::AddWindowPicker));
                 } else {
                     self.add_system_message(
                         "Usage: .addwindow <name> <type> <x> <y> <width> [height]",
@@ -1698,17 +1701,15 @@ impl AppCore {
 
             // Highlights
             "highlights" | "hl" => {
-                return Ok("action:highlights".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Highlights));
             }
             "addhighlight" | "addhl" => {
-                return Ok("action:addhighlight".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddHighlight));
             }
             "edithighlight" | "edithl" => {
-                if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:edithighlight:{}", name));
-                } else {
-                    return Ok("action:edithighlight".to_string());
-                }
+                return Ok(CommandOutcome::Ui(UiAction::EditHighlight(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             "testline" => {
                 if let Some(text) = parts.get(1) {
@@ -1762,26 +1763,26 @@ impl AppCore {
 
             // Keybinds
             "keybinds" | "kb" => {
-                return Ok("action:keybinds".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Keybinds));
             }
             // Menu keybinds (nav/action keys active while a menu has focus)
             "menukeybinds" | "menukb" => {
-                return Ok("action:menukeybinds".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::MenuKeybinds));
             }
             // Controller bindings editor (GUI)
             "controller" => {
-                return Ok("action:controller".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Controller));
             }
             // Hotbars (hotkey bar definitions)
             "hotbars" | "hotbar" => {
-                return Ok("action:hotbars".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Hotbars));
             }
             // Streams (per-stream routing: every known stream and where it goes)
             "streams" => {
-                return Ok("action:streams".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Streams));
             }
             "addkeybind" | "addkey" => {
-                return Ok("action:addkeybind".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddKeybind));
             }
             "savekeybinds" | "savekb" => {
                 let name = parts.get(1).unwrap_or(&"default");
@@ -1838,97 +1839,93 @@ impl AppCore {
 
             // Colors
             "colors" | "colorpalette" => {
-                return Ok("action:colors".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Colors));
             }
             "addcolor" | "createcolor" => {
-                return Ok("action:addcolor".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddColor));
             }
             "uicolors" => {
-                return Ok("action:uicolors".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::UiColors));
             }
             "spellcolors" => {
-                return Ok("action:spellcolors".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::SpellColors));
             }
             "addspellcolor" | "newspellcolor" => {
-                return Ok("action:addspellcolor".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddSpellColor));
             }
             // Terminal palette commands (for 256-color mode)
             "setpalette" => {
-                return Ok("action:setpalette".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::SetPalette));
             }
             "resetpalette" => {
-                return Ok("action:resetpalette".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::ResetPalette));
             }
 
             // Themes
             "themes" => {
-                return Ok("action:themes".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Themes));
             }
             "settheme" | "theme" => {
                 if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:settheme:{}", name));
+                    return Ok(CommandOutcome::Ui(UiAction::SetTheme(name.to_string())));
                 } else {
                     self.add_system_message("Usage: .settheme <name>");
                 }
             }
             "edittheme" => {
-                return Ok("action:edittheme".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::EditTheme));
             }
 
             // Skins (GUI graphics layered on top of themes)
             "skins" => {
-                return Ok("action:skins".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Skins));
             }
             "setskin" | "skin" => {
                 if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:setskin:{}", name));
+                    return Ok(CommandOutcome::Ui(UiAction::SetSkin(name.to_string())));
                 } else {
                     self.add_system_message("Usage: .setskin <name> (or .setskin none to disable)");
                 }
             }
             "makeskin" => {
                 if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:makeskin:{}", name));
+                    return Ok(CommandOutcome::Ui(UiAction::MakeSkin(name.to_string())));
                 } else {
                     self.add_system_message("Usage: .makeskin <name> - create a starter skin");
                 }
             }
             "reloadskin" => {
-                return Ok("action:reloadskin".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::ReloadSkin));
             }
 
             // Tab navigation
             "nexttab" => {
-                return Ok("action:nexttab".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::NextTab));
             }
             "prevtab" => {
-                return Ok("action:prevtab".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::PrevTab));
             }
             "gonew" | "nextunread" => {
-                return Ok("action:nextunread".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::NextUnread));
             }
 
             // Settings
             "settings" => {
-                return Ok("action:settings".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Settings));
             }
 
             // Window editor
             "editwindow" | "editwin" => {
-                if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:editwindow:{}", name));
-                } else {
-                    // Open window picker
-                    return Ok("action:editwindow".to_string());
-                }
+                // No name = open the picker.
+                return Ok(CommandOutcome::Ui(UiAction::EditWindow(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             "hidewindow" | "hidewin" => {
-                if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:hidewindow:{}", name));
-                } else {
-                    // Open window picker
-                    return Ok("action:hidewindow".to_string());
-                }
+                // No name = open the picker.
+                return Ok(CommandOutcome::Ui(UiAction::HideWindow(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
 
             // Shell zones (GUI): show/hide/toggle the header, footer, and
@@ -1936,15 +1933,23 @@ impl AppCore {
             // hotbar button can flip a zone; on/off variants let macros
             // force a known state.
             "header" | "footer" | "leftbar" | "rightbar" => {
+                let zone = ShellZoneTarget::parse(&cmd)
+                    .expect("arm matches exactly the four zone command names");
                 match parts.get(1).map(|s| s.to_ascii_lowercase()).as_deref() {
                     None | Some("toggle") => {
-                        return Ok(format!("action:zone:{}:toggle", cmd));
+                        return Ok(CommandOutcome::Ui(UiAction::Zone {
+                            zone,
+                            op: ZoneOp::Toggle,
+                        }));
                     }
                     Some("on") | Some("show") => {
-                        return Ok(format!("action:zone:{}:on", cmd));
+                        return Ok(CommandOutcome::Ui(UiAction::Zone { zone, op: ZoneOp::On }));
                     }
                     Some("off") | Some("hide") => {
-                        return Ok(format!("action:zone:{}:off", cmd));
+                        return Ok(CommandOutcome::Ui(UiAction::Zone {
+                            zone,
+                            op: ZoneOp::Off,
+                        }));
                     }
                     Some(other) => {
                         self.add_system_message(&format!(
@@ -1960,7 +1965,7 @@ impl AppCore {
             // canonical vs rendered rects, engaged guides) into
             // vellum-fe.log. Lines are tagged 'snapdbg'.
             "snapdebug" => {
-                return Ok("action:snapdebug".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::SnapDebug));
             }
 
             // Reload config from disk
@@ -2112,7 +2117,7 @@ impl AppCore {
         // Command input is now managed by the CommandInput widget
 
         // Don't send anything to server
-        Ok(String::new())
+        Ok(CommandOutcome::Handled)
     }
 }
 
@@ -2715,264 +2720,118 @@ mod tests {
         }
     }
 
-    // ========== Action string generation tests ==========
+    // ========== Typed UI-action outcome tests ==========
+    //
+    // These exercise the REAL dispatcher (send_command) instead of a
+    // hand-maintained mirror of it: the old `get_expected_action` helper
+    // was a third copy of the emit mapping and could drift exactly like
+    // the frontend string-matches did.
 
-    /// Helper to determine what action string a command would return
-    fn get_expected_action(cmd: &str, args: &[String]) -> Option<String> {
-        match cmd {
-            "highlights" | "hl" => Some("action:highlights".to_string()),
-            "addhighlight" | "addhl" => Some("action:addhighlight".to_string()),
-            "edithighlight" | "edithl" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:edithighlight:{}", name))
-                } else {
-                    Some("action:edithighlight".to_string())
-                }
-            }
-            "keybinds" | "kb" => Some("action:keybinds".to_string()),
-            "hotbars" | "hotbar" => Some("action:hotbars".to_string()),
-            "streams" => Some("action:streams".to_string()),
-            "addkeybind" | "addkey" => Some("action:addkeybind".to_string()),
-            "colors" | "colorpalette" => Some("action:colors".to_string()),
-            "addcolor" | "createcolor" => Some("action:addcolor".to_string()),
-            "uicolors" => Some("action:uicolors".to_string()),
-            "spellcolors" => Some("action:spellcolors".to_string()),
-            "addspellcolor" | "newspellcolor" => Some("action:addspellcolor".to_string()),
-            "themes" => Some("action:themes".to_string()),
-            "settheme" | "theme" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:settheme:{}", name))
-                } else {
-                    None // Shows usage message instead
-                }
-            }
-            "edittheme" => Some("action:edittheme".to_string()),
-            "skins" => Some("action:skins".to_string()),
-            "setskin" | "skin" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:setskin:{}", name))
-                } else {
-                    None // Shows usage message instead
-                }
-            }
-            "makeskin" => args
-                .first()
-                .map(|name| format!("action:makeskin:{}", name)),
-            "reloadskin" => Some("action:reloadskin".to_string()),
-            "nexttab" => Some("action:nexttab".to_string()),
-            "prevtab" => Some("action:prevtab".to_string()),
-            "gonew" | "nextunread" => Some("action:nextunread".to_string()),
-            "settings" => Some("action:settings".to_string()),
-            "editwindow" | "editwin" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:editwindow:{}", name))
-                } else {
-                    Some("action:editwindow".to_string())
-                }
-            }
-            "hidewindow" | "hidewin" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:hidewindow:{}", name))
-                } else {
-                    Some("action:hidewindow".to_string())
-                }
-            }
-            "addwindow" if args.is_empty() => Some("action:addwindow".to_string()),
-            _ => None,
+    use crate::core::AppCore;
+    use crate::data::{CommandOutcome, UiAction};
+
+    fn ui_outcome(command: &str) -> CommandOutcome {
+        let mut core = AppCore::new_for_test();
+        core.send_command(command.to_string())
+            .expect("command should not error")
+    }
+
+    #[test]
+    fn editor_commands_return_their_ui_actions() {
+        let cases: Vec<(&str, UiAction)> = vec![
+            (".highlights", UiAction::Highlights),
+            (".hl", UiAction::Highlights),
+            (".addhighlight", UiAction::AddHighlight),
+            (
+                ".edithighlight bandits",
+                UiAction::EditHighlight(Some("bandits".into())),
+            ),
+            (".edithighlight", UiAction::EditHighlight(None)),
+            (".keybinds", UiAction::Keybinds),
+            (".kb", UiAction::Keybinds),
+            (".hotbars", UiAction::Hotbars),
+            (".streams", UiAction::Streams),
+            (".addkeybind", UiAction::AddKeybind),
+            (".colors", UiAction::Colors),
+            (".addcolor", UiAction::AddColor),
+            (".uicolors", UiAction::UiColors),
+            (".spellcolors", UiAction::SpellColors),
+            (".addspellcolor", UiAction::AddSpellColor),
+            (".themes", UiAction::Themes),
+            (".settheme gruvbox", UiAction::SetTheme("gruvbox".into())),
+            (".theme gruvbox", UiAction::SetTheme("gruvbox".into())),
+            (".edittheme", UiAction::EditTheme),
+            (".skins", UiAction::Skins),
+            (".setskin wrayth", UiAction::SetSkin("wrayth".into())),
+            (".makeskin mine", UiAction::MakeSkin("mine".into())),
+            (".reloadskin", UiAction::ReloadSkin),
+            (".nexttab", UiAction::NextTab),
+            (".prevtab", UiAction::PrevTab),
+            (".gonew", UiAction::NextUnread),
+            (".nextunread", UiAction::NextUnread),
+            (".settings", UiAction::Settings),
+            (".editwindow main", UiAction::EditWindow(Some("main".into()))),
+            (".editwindow", UiAction::EditWindow(None)),
+            (".hidewindow main", UiAction::HideWindow(Some("main".into()))),
+            (".hidewindow", UiAction::HideWindow(None)),
+            (".hidewin main", UiAction::HideWindow(Some("main".into()))),
+            (".addwindow", UiAction::AddWindowPicker),
+            (".menukeybinds", UiAction::MenuKeybinds),
+            (".controller", UiAction::Controller),
+            (".snapdebug", UiAction::SnapDebug),
+            (".webui", UiAction::WebUiPicker),
+            (".webui off", UiAction::WebUiOff),
+            (".webui bigshot", UiAction::WebUiOpen("bigshot".into())),
+            (".sorter edit", UiAction::SorterEdit),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(
+                ui_outcome(command),
+                CommandOutcome::Ui(expected),
+                "wrong outcome for {command}"
+            );
         }
     }
 
     #[test]
-    fn test_action_highlights() {
-        let (cmd, args) = parse_dot_command(".highlights");
+    fn zone_commands_return_zone_actions() {
+        use crate::data::{ShellZoneTarget, ZoneOp};
         assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:highlights".to_string())
+            ui_outcome(".header"),
+            CommandOutcome::Ui(UiAction::Zone {
+                zone: ShellZoneTarget::Header,
+                op: ZoneOp::Toggle
+            })
+        );
+        assert_eq!(
+            ui_outcome(".leftbar on"),
+            CommandOutcome::Ui(UiAction::Zone {
+                zone: ShellZoneTarget::LeftBar,
+                op: ZoneOp::On
+            })
+        );
+        assert_eq!(
+            ui_outcome(".footer hide"),
+            CommandOutcome::Ui(UiAction::Zone {
+                zone: ShellZoneTarget::Footer,
+                op: ZoneOp::Off
+            })
         );
     }
 
     #[test]
-    fn test_action_highlights_alias() {
-        let (cmd, args) = parse_dot_command(".hl");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:highlights".to_string())
-        );
+    fn usage_paths_are_handled_not_actions() {
+        // Missing required args show usage instead of emitting an action.
+        assert_eq!(ui_outcome(".settheme"), CommandOutcome::Handled);
+        assert_eq!(ui_outcome(".setskin"), CommandOutcome::Handled);
+        assert_eq!(ui_outcome(".makeskin"), CommandOutcome::Handled);
+        // Unknown commands are handled (with a help hint), never sent.
+        assert_eq!(ui_outcome(".nonexistent"), CommandOutcome::Handled);
     }
 
     #[test]
-    fn test_action_keybinds() {
-        let (cmd, args) = parse_dot_command(".keybinds");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:keybinds".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_streams() {
-        let (cmd, args) = parse_dot_command(".streams");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:streams".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_colors() {
-        let (cmd, args) = parse_dot_command(".colors");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:colors".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_themes() {
-        let (cmd, args) = parse_dot_command(".themes");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:themes".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_settheme_with_name() {
-        let (cmd, args) = parse_dot_command(".settheme dark");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:settheme:dark".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_settheme_without_name() {
-        let (cmd, args) = parse_dot_command(".settheme");
-        assert_eq!(get_expected_action(&cmd, &args), None);
-    }
-
-    #[test]
-    fn test_action_editwindow_with_name() {
-        let (cmd, args) = parse_dot_command(".editwindow main");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:editwindow:main".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_editwindow_without_name() {
-        let (cmd, args) = parse_dot_command(".editwindow");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:editwindow".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_hidewindow_with_name() {
-        let (cmd, args) = parse_dot_command(".hidewindow main");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:hidewindow:main".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_hidewindow_without_name() {
-        let (cmd, args) = parse_dot_command(".hidewindow");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:hidewindow".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_hidewin_alias() {
-        let (cmd, args) = parse_dot_command(".hidewin chat");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:hidewindow:chat".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_edithighlight_with_name() {
-        let (cmd, args) = parse_dot_command(".edithighlight combat");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:edithighlight:combat".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_edithighlight_without_name() {
-        let (cmd, args) = parse_dot_command(".edithighlight");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:edithighlight".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_addwindow_no_args_opens_picker() {
-        let (cmd, args) = parse_dot_command(".addwindow");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:addwindow".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_addwindow_with_args_does_not_return_action() {
-        // When addwindow has args, it creates window directly (no action string)
-        let (cmd, args) = parse_dot_command(".addwindow main text 0 0 80");
-        assert_eq!(get_expected_action(&cmd, &args), None);
-    }
-
-    #[test]
-    fn test_action_settings() {
-        let (cmd, args) = parse_dot_command(".settings");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:settings".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_nexttab() {
-        let (cmd, args) = parse_dot_command(".nexttab");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:nexttab".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_prevtab() {
-        let (cmd, args) = parse_dot_command(".prevtab");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:prevtab".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_nextunread() {
-        let (cmd, args) = parse_dot_command(".nextunread");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:nextunread".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_gonew() {
-        let (cmd, args) = parse_dot_command(".gonew");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:nextunread".to_string())
-        );
+    fn game_commands_pass_through_as_game_outcomes() {
+        assert_eq!(ui_outcome("look"), CommandOutcome::Game("look".to_string()));
     }
 
     // ========== Addwindow argument parsing tests ==========
@@ -3044,7 +2903,8 @@ mod tests {
     fn test_unknown_command() {
         let (cmd, _) = parse_dot_command(".nonexistent");
         assert_eq!(cmd, "nonexistent");
-        assert_eq!(get_expected_action(&cmd, &[]), None);
+        // The Handled outcome for unknown commands is asserted in
+        // usage_paths_are_handled_not_actions.
     }
 
     // ========== Command detection tests ==========

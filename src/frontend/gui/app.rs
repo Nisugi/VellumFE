@@ -3812,13 +3812,21 @@ impl VellumGuiApp {
             return;
         }
         match self.app_core.execute_keybind_action(action) {
-            Ok(commands) => {
-                for outbound in commands {
-                    if Self::should_send_to_network(&outbound) {
-                        self.app_core
-                            .perf_stats
-                            .record_bytes_sent((outbound.len() + 1) as u64);
-                        let _ = self.command_tx.send(outbound);
+            Ok(outcomes) => {
+                for outcome in outcomes {
+                    match outcome {
+                        crate::data::CommandOutcome::Game(outbound) => {
+                            if Self::should_send_to_network(&outbound) {
+                                self.app_core
+                                    .perf_stats
+                                    .record_bytes_sent((outbound.len() + 1) as u64);
+                                let _ = self.command_tx.send(outbound);
+                            }
+                        }
+                        crate::data::CommandOutcome::Handled => {}
+                        // A macro bound to a dot-command that opens an
+                        // editor: perform it here.
+                        crate::data::CommandOutcome::Ui(ui) => self.handle_ui_action(ui),
                     }
                 }
             }
@@ -4095,15 +4103,10 @@ impl VellumGuiApp {
         }
 
         match self.app_core.send_command(command) {
-            Ok(outbound) => {
-                if outbound.starts_with("action:") {
-                    if !self.handle_action_string(&outbound) {
-                        self.app_core.add_system_message(&format!(
-                            "GUI action not implemented yet: {}",
-                            outbound
-                        ));
-                    }
-                } else if Self::should_send_to_network(&outbound) {
+            Ok(crate::data::CommandOutcome::Ui(action)) => self.handle_ui_action(action),
+            Ok(crate::data::CommandOutcome::Handled) => {}
+            Ok(crate::data::CommandOutcome::Game(outbound)) => {
+                if Self::should_send_to_network(&outbound) {
                     self.app_core
                         .perf_stats
                         .record_bytes_sent((outbound.len() + 1) as u64);
@@ -4504,34 +4507,36 @@ impl VellumGuiApp {
         true
     }
 
-    /// Dispatch an `action:*` string from a dot-command or menu item.
-    /// Returns false when the action has no GUI handler yet.
+    /// Dispatch an `action:*` string from a popup-menu item (menu items
+    /// carry strings). The typed path is [`Self::handle_ui_action`]; this
+    /// is the single string bridge into it. Returns false only for
+    /// unparseable strings — a menu-wiring bug.
     fn handle_action_string(&mut self, action: &str) -> bool {
-        if action == "action:windows" || action == "action:listwindows" {
-            let _ = self.app_core.send_command(".windows".to_string());
-            return true;
+        match crate::data::UiAction::parse(action) {
+            Some(action) => {
+                self.handle_ui_action(action);
+                true
+            }
+            None => false,
         }
-        if let Some(name) = action.strip_prefix("action:settheme:") {
-            let name = name.to_string();
-            self.apply_theme_by_name(&name);
-            return true;
-        }
-        if let Some(name) = action.strip_prefix("action:setskin:") {
-            let name = name.to_string();
-            self.apply_skin_by_name(&name);
-            return true;
-        }
-        if action == "action:skins" {
-            self.list_skins_to_window();
-            return true;
-        }
-        if let Some(name) = action.strip_prefix("action:makeskin:") {
-            let name = name.to_string();
-            self.make_skin_scaffold(&name);
-            return true;
-        }
-        if action == "action:reloadskin" {
-            match self.ui_settings.active_skin.clone() {
+    }
+
+    /// Perform a [`UiAction`] in the GUI. The match is EXHAUSTIVE on
+    /// purpose: adding a UiAction variant forces every frontend to decide
+    /// — implement it or answer with a redirect — so actions can never
+    /// silently die again (see the dot-command parity audit).
+    fn handle_ui_action(&mut self, action: crate::data::UiAction) {
+        use crate::data::UiAction as A;
+        match action {
+            A::WindowList => {
+                // Core renders the list; round-trip through the command.
+                let _ = self.app_core.send_command(".windows".to_string());
+            }
+            A::SetTheme(name) => self.apply_theme_by_name(&name),
+            A::SetSkin(name) => self.apply_skin_by_name(&name),
+            A::Skins => self.list_skins_to_window(),
+            A::MakeSkin(name) => self.make_skin_scaffold(&name),
+            A::ReloadSkin => match self.ui_settings.active_skin.clone() {
                 Some(name) => {
                     self.skin_state.force_reload();
                     self.app_core
@@ -4541,202 +4546,142 @@ impl VellumGuiApp {
                     self.app_core
                         .add_system_message("No skin active. Use .setskin <name> first.");
                 }
+            },
+            A::SorterEdit => self.open_sorter_editor(),
+            A::SnapDebug => {
+                self.snap_debug = !self.snap_debug;
+                self.app_core.add_system_message(if self.snap_debug {
+                    "Snap debug trace ON: drag/resize center windows, then read \
+                     ~/.vellum-fe/vellum-fe.log (lines tagged 'snapdbg'). \
+                     Toggle off with .snapdebug."
+                } else {
+                    "Snap debug trace off."
+                });
             }
-            return true;
-        }
-        if action == "action:sorteredit" {
-            self.open_sorter_editor();
-            return true;
-        }
-        if action == "action:snapdebug" {
-            self.snap_debug = !self.snap_debug;
-            self.app_core.add_system_message(if self.snap_debug {
-                "Snap debug trace ON: drag/resize center windows, then read \
-                 ~/.vellum-fe/vellum-fe.log (lines tagged 'snapdbg'). \
-                 Toggle off with .snapdebug."
-            } else {
-                "Snap debug trace off."
-            });
-            return true;
-        }
-        if action == "action:settings" {
-            self.open_settings_editor();
-            return true;
-        }
-        if action == "action:highlights" {
-            self.open_highlight_editor(None);
-            return true;
-        }
-        if action == "action:addhighlight" {
-            self.open_highlight_editor(None);
-            self.open_highlight_form_new();
-            return true;
-        }
-        if let Some(name) = action.strip_prefix("action:edithighlight") {
-            let name = name.strip_prefix(':').unwrap_or("").to_string();
-            if name.is_empty() {
+            A::Settings => self.open_settings_editor(),
+            A::Highlights => self.open_highlight_editor(None),
+            A::AddHighlight => {
                 self.open_highlight_editor(None);
-            } else {
-                self.open_highlight_editor(Some(&name));
+                self.open_highlight_form_new();
             }
-            return true;
-        }
-        if action == "action:keybinds" {
-            self.open_keybind_editor();
-            return true;
-        }
-        if action == "action:menukeybinds" {
-            self.open_menu_keybind_editor();
-            return true;
-        }
-        if action == "action:controller" {
-            #[cfg(feature = "gamepad")]
-            self.open_controller_editor();
-            #[cfg(not(feature = "gamepad"))]
-            self.app_core
-                .add_system_message("This build has no gamepad support.");
-            return true;
-        }
-        if action == "action:hotbars" {
-            self.open_hotbar_editor();
-            return true;
-        }
-        if action == "action:addkeybind" {
-            self.open_keybind_editor();
-            self.open_keybind_form_new();
-            return true;
-        }
-        if action == "action:colors" {
-            self.open_colors_editor();
-            return true;
-        }
-        if action == "action:addcolor" {
-            self.open_palette_form_new();
-            return true;
-        }
-        if action == "action:uicolors" {
-            self.open_ui_colors_editor();
-            return true;
-        }
-        if action == "action:spellcolors" {
-            self.open_spell_colors_editor();
-            return true;
-        }
-        if action == "action:addspellcolor" {
-            self.open_spell_form_new();
-            return true;
-        }
-        if action == "action:themes" {
-            self.open_theme_browser();
-            return true;
-        }
-        if action == "action:edittheme" {
-            let base = self.current_theme.clone();
-            self.open_theme_editor(&base);
-            return true;
-        }
-        if let Some(name) = action.strip_prefix("action:editwindow") {
-            let name = name.strip_prefix(':').unwrap_or("").to_string();
-            if name.is_empty() {
-                self.open_window_editor(None);
-            } else {
-                self.open_window_editor(Some(&name));
-            }
-            return true;
-        }
-        if action == "action:nexttab" {
-            self.cycle_tabbed_tabs(true);
-            return true;
-        }
-        if action == "action:prevtab" {
-            self.cycle_tabbed_tabs(false);
-            return true;
-        }
-        if action == "action:nextunread" {
-            self.goto_unread_tab();
-            return true;
-        }
-        if let Some(name) = action.strip_prefix("action:hidewindow:") {
-            let name = name.to_string();
-            let key = self
-                .app_core
-                .ui_state
-                .windows
-                .get(&name)
-                .and_then(|window| Self::tab_key_for_window(&name, window));
-            match key {
-                Some(key) => self.hide_tab(key),
-                None => self
-                    .app_core
-                    .add_system_message(&format!("Window '{}' not found.", name)),
-            }
-            return true;
-        }
-        // Bare `.hidewindow` (no name) asks for a picker: the Windows
-        // manager IS the show/hide picker here.
-        if action == "action:hidewindow" {
-            self.open_known_windows_editor();
-            return true;
-        }
-        // `.streams`: the routing lives in the Streams & Custom Windows
-        // panel (same surface the Windows menu opens).
-        if action == "action:streams" {
-            self.open_custom_windows_editor();
-            return true;
-        }
-        if let Some(rest) = action.strip_prefix("action:zone:") {
-            return self.handle_zone_action(rest);
-        }
-        if action == "action:setpalette" || action == "action:resetpalette" {
-            self.app_core.add_system_message(
-                "Terminal palette commands do not apply to the GUI; use .themes instead.",
-            );
-            return true;
-        }
-        if action.strip_prefix("action:loadlayout:").is_some() {
-            // This action comes from the Layouts menu, which lists TUI TOML
-            // layouts — those don't apply here. GUI checkpoints are the
-            // .savelayout/.loadlayout commands (see handle_layout_command).
-            self.app_core.add_system_message(
-                "TOML layouts are a TUI feature. In the GUI, use .savelayout <name> and .loadlayout <name> for named layouts.",
-            );
-            return true;
-        }
-        if self.handle_webui_action(action) {
-            return true;
-        }
-        if action == "action:customwindows" {
-            self.open_custom_windows_editor();
-            return true;
-        }
-        if action == "action:knownwindows" {
-            self.open_known_windows_editor();
-            return true;
-        }
-        if action == "action:addwindow" {
-            let mut items = self.app_core.build_add_window_menu();
-            // Surface the custom-window authoring panel at the top of the
-            // Add Widget menu (GUI-local; the shared core menu builder stays
-            // untouched). The show/hide list lives under Windows > Show/Hide.
-            items.insert(
-                0,
-                PopupMenuItem {
-                    text: "Streams & Custom Windows…".to_string(),
-                    command: "action:customwindows".to_string(),
-                    disabled: false,
-                },
-            );
-            if items.is_empty() {
+            A::EditHighlight(name) => match name.as_deref() {
+                Some(name) => self.open_highlight_editor(Some(name)),
+                None => self.open_highlight_editor(None),
+            },
+            A::Keybinds => self.open_keybind_editor(),
+            A::MenuKeybinds => self.open_menu_keybind_editor(),
+            A::Controller => {
+                #[cfg(feature = "gamepad")]
+                self.open_controller_editor();
+                #[cfg(not(feature = "gamepad"))]
                 self.app_core
-                    .add_system_message("No window templates available to add.");
-            } else {
-                self.close_all_popup_menus();
-                self.app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (8, 4)));
-                self.app_core.ui_state.input_mode = InputMode::Menu;
+                    .add_system_message("This build has no gamepad support.");
             }
-            return true;
+            A::Hotbars => self.open_hotbar_editor(),
+            A::AddKeybind => {
+                self.open_keybind_editor();
+                self.open_keybind_form_new();
+            }
+            A::Colors => self.open_colors_editor(),
+            A::AddColor => self.open_palette_form_new(),
+            A::UiColors => self.open_ui_colors_editor(),
+            A::SpellColors => self.open_spell_colors_editor(),
+            A::AddSpellColor => self.open_spell_form_new(),
+            A::Themes => self.open_theme_browser(),
+            A::EditTheme => {
+                let base = self.current_theme.clone();
+                self.open_theme_editor(&base);
+            }
+            A::EditWindow(name) => match name.as_deref() {
+                Some(name) => self.open_window_editor(Some(name)),
+                None => self.open_window_editor(None),
+            },
+            A::NextTab => self.cycle_tabbed_tabs(true),
+            A::PrevTab => self.cycle_tabbed_tabs(false),
+            A::NextUnread => self.goto_unread_tab(),
+            A::HideWindow(Some(name)) => {
+                let key = self
+                    .app_core
+                    .ui_state
+                    .windows
+                    .get(&name)
+                    .and_then(|window| Self::tab_key_for_window(&name, window));
+                match key {
+                    Some(key) => self.hide_tab(key),
+                    None => self
+                        .app_core
+                        .add_system_message(&format!("Window '{}' not found.", name)),
+                }
+            }
+            // Bare `.hidewindow` (no name) asks for a picker: the Windows
+            // manager IS the show/hide picker here.
+            A::HideWindow(None) => self.open_known_windows_editor(),
+            // `.streams` and the Streams & Custom Windows panel are the
+            // same surface; the TUI stream-menu actions land there too.
+            A::Streams
+            | A::CustomWindows
+            | A::StreamActions(_)
+            | A::StreamPickWindow(_)
+            | A::StreamRoute { .. }
+            | A::StreamSubscribe { .. }
+            | A::StreamNewWindow(_) => self.open_custom_windows_editor(),
+            A::Zone { zone, op } => {
+                let _ = self.handle_zone_action(&format!("{}:{}", zone.as_str(), op.as_str()));
+            }
+            A::SetPalette | A::ResetPalette => {
+                self.app_core.add_system_message(
+                    "Terminal palette commands do not apply to the GUI; use .themes instead.",
+                );
+            }
+            A::LoadLayoutToml(_) => {
+                // This action comes from the Layouts menu, which lists TUI TOML
+                // layouts — those don't apply here. GUI checkpoints are the
+                // .savelayout/.loadlayout commands (see handle_layout_command).
+                self.app_core.add_system_message(
+                    "TOML layouts are a TUI feature. In the GUI, use .savelayout <name> and .loadlayout <name> for named layouts.",
+                );
+            }
+            A::WebUiPicker => {
+                let _ = self.handle_webui_action("action:webui");
+            }
+            A::WebUiOff => {
+                let _ = self.handle_webui_action("action:webui:off");
+            }
+            A::WebUiOpen(page) => {
+                let _ = self.handle_webui_action(&format!("action:webui:open:{page}"));
+            }
+            A::KnownWindows => self.open_known_windows_editor(),
+            A::AddWindowPicker => {
+                let mut items = self.app_core.build_add_window_menu();
+                // Surface the custom-window authoring panel at the top of the
+                // Add Widget menu (GUI-local; the shared core menu builder stays
+                // untouched). The show/hide list lives under Windows > Show/Hide.
+                items.insert(
+                    0,
+                    PopupMenuItem {
+                        text: "Streams & Custom Windows…".to_string(),
+                        command: "action:customwindows".to_string(),
+                        disabled: false,
+                    },
+                );
+                if items.is_empty() {
+                    self.app_core
+                        .add_system_message("No window templates available to add.");
+                } else {
+                    self.close_all_popup_menus();
+                    self.app_core.ui_state.popup_menu = Some(PopupMenu::new(items, (8, 4)));
+                    self.app_core.ui_state.input_mode = InputMode::Menu;
+                }
+            }
+            // TUI-menu-only actions the GUI's own menus never emit; keep
+            // them meaningful if one ever arrives.
+            A::CreateWindow(_) | A::ShowWindow(_) => {
+                self.open_known_windows_editor();
+                self.app_core.add_system_message(
+                    "Use the Windows manager to add and show windows in the GUI.",
+                );
+            }
         }
-        false
     }
 
     fn should_send_to_network(command: &str) -> bool {
