@@ -499,6 +499,21 @@ pub fn handle_ui_action(
             close_all_menus(&mut app_core.ui_state);
             app_core.ui_state.input_mode = InputMode::SettingsEditor;
         }
+        UiAction::PackEditor => {
+            match crate::config::Config::base_dir() {
+                Ok(base) => {
+                    frontend.pack_editor = Some(
+                        crate::frontend::tui::pack_editor::PackEditorWidget::new(base),
+                    );
+                    close_all_menus(&mut app_core.ui_state);
+                    app_core.ui_state.input_mode = InputMode::PackEditor;
+                }
+                Err(e) => {
+                    app_core.add_system_message(&format!("Pack editor unavailable: {e}"))
+                }
+            }
+            app_core.needs_render = true;
+        }
         UiAction::Themes => {
             // Open theme browser (includes built-in and custom themes)
             frontend.theme_browser =

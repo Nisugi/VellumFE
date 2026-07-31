@@ -54,9 +54,10 @@ command `quit` also saves your settings on the way out.)
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `.uiexport <name> [parts...]` | | Bundle the files that make your UI into `~/.vellum-fe/exports/<name>.vellumpack` — a single shareable file. Parts: `layout` (TUI grid + the GUI's live arrangement when exported from the GUI), `highlights`, `keybinds`, `hotbars`, `colors`, `macros`, `skin` (the active skin's whole folder). Default: all. Connection settings and passwords are never included. |
-| `.uiimport <name\|file>` | | Preview a pack: its parts, skin, and file count |
-| `.uiimport <name\|file> apply` | | Install a pack: replaced files are backed up to `~/.vellum-fe/backups/`, everything hot-reloads, and layouts land as named checkpoints (`.loadlayout <packname>`). Skins extract and activate. Unknown or unsafe entries in a pack are skipped, never written. |
+| `.packs` | `.packeditor` | Open the pack editor panel (TUI and GUI): pick parts with checkboxes, export to a folder of your choice, and import from `~/.vellum-fe/imports/` (a dropdown lists any `.vellumpack` you drop there) or a pasted path, with a preview and per-part install selection. |
+| `.uiexport <name> [parts...]` | | Bundle the files that make your UI into `~/.vellum-fe/exports/<name>.vellumpack` — a single shareable file. Parts: `layout` (TUI grid + the GUI's live arrangement when exported from the GUI), `highlights`, `keybinds`, `controller`, `hotbars`, `colors`, `macros`, `skin` (the active skin's whole folder), `theme` (the active theme, including its file for custom themes), `sounds` (the shared sound folder), `quickbars`, and `settings` (general settings: UI options, sound/TTS prefs, stream routes — never connection or account data). Default: all. Connection settings and passwords are never included. |
+| `.uiimport <name\|file>` | | Preview a pack: its parts, skin, theme, and file count. Names resolve from `~/.vellum-fe/imports/` and `exports/`. |
+| `.uiimport <name\|file> apply [parts...]` | | Install a pack (optionally only the listed parts): replaced files are backed up to `~/.vellum-fe/backups/`, everything hot-reloads, and layouts land as named checkpoints (`.loadlayout <packname>`). Skins and themes activate; quickbars and settings merge into your config without touching connection data. Unknown or unsafe entries in a pack are skipped, never written. |
 
 Post packs in the community Discord — favorites can become shipped
 default layouts.

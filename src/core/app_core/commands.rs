@@ -513,23 +513,47 @@ impl AppCore {
         } else {
             crate::core::uipack::PARTS.iter().map(|s| s.to_string()).collect()
         };
+        self.uiexport_pack(&name, &parts, None, extra_files);
+    }
+
+    /// Build a pack; shared by `.uiexport` and the pack editor panels
+    /// (which pass an explicit destination folder). Returns success.
+    pub fn uiexport_pack(
+        &mut self,
+        name: &str,
+        parts: &[String],
+        dest_dir: Option<std::path::PathBuf>,
+        extra_files: Vec<(String, Vec<u8>)>,
+    ) -> bool {
         let layout_toml = self.layout.clone().to_share_toml().ok();
         let base = match crate::config::Config::base_dir() {
             Ok(base) => base,
             Err(e) => {
                 self.add_system_message(&format!("Export failed: {e:#}"));
-                return;
+                return false;
             }
         };
-        match crate::core::uipack::export(
-            &base,
-            &name,
-            &parts,
-            self.config.character.as_deref(),
+        let quickbars_toml = toml::to_string_pretty(&crate::core::uipack::QuickbarsFile {
+            quickbars: self.config.quickbars.clone(),
+        })
+        .ok();
+        let settings_toml = toml::to_string_pretty(
+            &crate::core::uipack::ShareableSettings::from_config(&self.config),
+        )
+        .ok();
+        let request = crate::core::uipack::ExportRequest {
+            name,
+            parts,
+            character: self.config.character.as_deref(),
             layout_toml,
-            self.config.active_skin.as_deref(),
-            &extra_files,
-        ) {
+            active_skin: self.config.active_skin.as_deref(),
+            active_theme: Some(self.config.active_theme.as_str()),
+            quickbars_toml,
+            settings_toml,
+            extra_files: &extra_files,
+            dest_dir: dest_dir.as_deref(),
+        };
+        match crate::core::uipack::export(&base, &request) {
             Ok((path, included)) => {
                 self.add_system_message(&format!(
                     "Exported UI pack '{}' ({}) to {}",
@@ -540,8 +564,12 @@ impl AppCore {
                 self.add_system_message(
                     "Share the file anywhere — it carries no account or connection settings.",
                 );
+                true
             }
-            Err(e) => self.add_system_message(&format!("Export failed: {e:#}")),
+            Err(e) => {
+                self.add_system_message(&format!("Export failed: {e:#}"));
+                false
+            }
         }
     }
 
@@ -588,7 +616,7 @@ impl AppCore {
                             .unwrap_or_default()
                     ));
                     self.add_system_message(&format!(
-                        "{} file(s). Run `.uiimport {} apply` to install — replaced files are backed up.",
+                        "{} file(s). Run `.uiimport {} apply [parts...]` to install — replaced files are backed up.",
                         preview.entries.len(),
                         target
                     ));
@@ -598,7 +626,33 @@ impl AppCore {
             return None;
         }
 
-        match crate::core::uipack::apply(&base, &path, self.config.character.as_deref()) {
+        // `.uiimport <name> apply [parts...]` — extra args limit the
+        // install to those parts.
+        let selected: Option<Vec<String>> = (args.len() > 2)
+            .then(|| args[2..].iter().map(|s| s.to_lowercase()).collect());
+        self.uiimport_apply(&path, selected.as_deref())
+    }
+
+    /// Install a pack from a resolved path; shared by `.uiimport ... apply`
+    /// and the pack editor panels. `selected` limits to those parts.
+    pub fn uiimport_apply(
+        &mut self,
+        path: &std::path::Path,
+        selected: Option<&[String]>,
+    ) -> Option<(String, Vec<u8>)> {
+        let base = match crate::config::Config::base_dir() {
+            Ok(base) => base,
+            Err(e) => {
+                self.add_system_message(&format!("Import failed: {e:#}"));
+                return None;
+            }
+        };
+        match crate::core::uipack::apply(
+            &base,
+            path,
+            self.config.character.as_deref(),
+            selected,
+        ) {
             Ok(outcome) => {
                 for note in &outcome.notes {
                     self.add_system_message(&format!("uiimport: {note}"));
@@ -608,6 +662,35 @@ impl AppCore {
                         "Replaced files backed up to {}",
                         dir.display()
                     ));
+                }
+                // Config-merging parts first, so the hot reloads below see
+                // the merged state.
+                if let Some(text) = &outcome.quickbars_toml {
+                    match toml::from_str::<crate::core::uipack::QuickbarsFile>(text) {
+                        Ok(file) => {
+                            self.config.quickbars = file.quickbars;
+                            let _ = self.save_config();
+                            self.add_system_message("Quickbars installed.");
+                        }
+                        Err(e) => self.add_system_message(&format!(
+                            "Pack's quickbars did not parse: {e:#}"
+                        )),
+                    }
+                }
+                if let Some(text) = &outcome.settings_toml {
+                    match toml::from_str::<crate::core::uipack::ShareableSettings>(text) {
+                        Ok(settings) => {
+                            settings.apply_to(&mut self.config);
+                            let _ = self.save_config();
+                            self.apply_tts_settings();
+                            self.add_system_message(
+                                "General settings installed (connection settings are never touched; some take effect on restart).",
+                            );
+                        }
+                        Err(e) => self.add_system_message(&format!(
+                            "Pack's settings did not parse: {e:#}"
+                        )),
+                    }
                 }
                 // Hot-reload everything the pack can touch.
                 self.reload_keybinds();
@@ -636,11 +719,17 @@ impl AppCore {
                         "Active skin set to '{skin}' (the GUI applies it on next load or via Settings > Appearance)"
                     ));
                 }
+                if let Some(theme) = &outcome.theme {
+                    self.config.active_theme = theme.clone();
+                    let _ = self.save_config();
+                    self.add_system_message(&format!("Active theme set to '{theme}'."));
+                }
                 if let Some(layout) = &outcome.layout_name {
                     self.add_system_message(&format!(
                         "TUI layout installed — load it with .loadlayout {layout}"
                     ));
                 }
+                self.needs_render = true;
                 let pack_name = path
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
@@ -1589,6 +1678,10 @@ impl AppCore {
             "uiimport" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
                 return Ok(CommandOutcome::Ui(UiAction::UiImport(args)));
+            }
+            // The guided panel over .uiexport/.uiimport (desktop frontends).
+            "packs" | "packeditor" => {
+                return Ok(CommandOutcome::Ui(UiAction::PackEditor));
             }
 
             // Text-to-speech control from any frontend (the GUI also has

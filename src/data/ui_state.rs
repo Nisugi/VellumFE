@@ -252,6 +252,8 @@ pub enum InputMode {
     ThemeEditor,
     /// Settings editor is open
     SettingsEditor,
+    /// Pack editor (.packs) is open
+    PackEditor,
     /// Indicator template editor is open
     IndicatorTemplateEditor,
     /// Interact mode: arrow-key/controller focus cycling over room entities

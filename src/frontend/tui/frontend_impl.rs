@@ -633,6 +633,10 @@ impl Frontend for TuiFrontend {
                 settings_editor.render(screen_area, f.buffer_mut(), &app_core.config, &theme);
             }
 
+            if let Some(ref mut pack_editor) = self.pack_editor {
+                pack_editor.render(screen_area, f.buffer_mut(), &theme);
+            }
+
             if let Some(ref mut indicator_template_editor) = self.indicator_template_editor {
                 indicator_template_editor.render(screen_area, f.buffer_mut(), &theme);
             }

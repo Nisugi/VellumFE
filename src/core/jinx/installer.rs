@@ -195,7 +195,7 @@ fn install_bundle(kind: &str, name: &str, zip_bytes: &[u8]) -> Result<PathBuf, S
             let base = Config::base_dir().map_err(|e| format!("cannot resolve base dir: {e}"))?;
             let tmp = base.join(format!(".jinx-{stem}.vellumpack.part"));
             write_atomic(&tmp, zip_bytes)?;
-            let result = crate::core::uipack::apply(&base, &tmp, None)
+            let result = crate::core::uipack::apply(&base, &tmp, None, None)
                 .map_err(|e| format!("applying '{name}': {e:#}"));
             let _ = std::fs::remove_file(&tmp);
             result?;

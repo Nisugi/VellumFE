@@ -350,6 +350,7 @@ pub struct VellumGuiApp {
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
     sorter_editor: Option<editors::SorterEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
+    pack_editor: Option<editors::PackEditorState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
     /// settings command (`.controller`, `.settings`, …) is re-issued while
     /// its editor is already open, so the command surfaces the buried
@@ -701,6 +702,7 @@ impl VellumGuiApp {
             known_windows_editor: None,
             sorter_editor: None,
             doll_calibration: None,
+            pack_editor: None,
             pending_editor_raise: None,
             search_bar_needs_focus: false,
             search_match_cache: None,
@@ -4616,35 +4618,15 @@ impl VellumGuiApp {
             // UI packs ride the core commands with the live GUI layout
             // attached (export) / installed (import).
             A::UiExport(args) => {
-                let extra = self
-                    .build_layout_snapshot()
-                    .and_then(|layout| serde_json::to_vec_pretty(&layout).ok())
-                    .map(|bytes| {
-                        vec![(
-                            crate::core::uipack::GUI_LAYOUT_ENTRY.to_string(),
-                            bytes,
-                        )]
-                    })
-                    .unwrap_or_default();
+                let extra = self.gui_layout_pack_entry();
                 self.app_core.uiexport_with(&args, extra);
             }
             A::UiImport(args) => {
                 if let Some((pack_name, bytes)) = self.app_core.uiimport(&args) {
-                    match serde_json::from_slice(&bytes) {
-                        Ok(layout) => match save_named_layout(&layout, &pack_name) {
-                            Ok(()) => self.app_core.add_system_message(&format!(
-                                "GUI layout installed — load it with .loadlayout {pack_name}"
-                            )),
-                            Err(err) => self.app_core.add_system_message(&format!(
-                                "Pack's GUI layout could not be saved: {err}"
-                            )),
-                        },
-                        Err(err) => self.app_core.add_system_message(&format!(
-                            "Pack's GUI layout did not parse: {err}"
-                        )),
-                    }
+                    self.install_gui_layout_from_pack(&pack_name, &bytes);
                 }
             }
+            A::PackEditor => self.open_pack_editor(),
             A::WebUiPicker => {
                 let _ = self.handle_webui_action("action:webui");
             }

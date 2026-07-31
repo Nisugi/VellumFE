@@ -49,6 +49,7 @@ mod room_window_ops;
 mod runtime;
 mod scrollable_container;
 mod search;
+pub mod pack_editor;
 pub mod settings_editor;
 mod spacer;
 pub mod menu_keybind_editor;
@@ -122,6 +123,8 @@ pub struct TuiFrontend {
     pub theme_editor: Option<theme_editor::ThemeEditor>,
     /// Active settings editor (if any)
     pub settings_editor: Option<settings_editor::SettingsEditor>,
+    /// Active pack editor (.packs) for export/import of UI packs
+    pub pack_editor: Option<pack_editor::PackEditorWidget>,
     /// Debouncer for terminal resize events (100ms debounce)
     resize_debouncer: ResizeDebouncer,
     /// Theme cache to avoid HashMap lookup + clone every render
@@ -287,6 +290,7 @@ impl TuiFrontend {
             theme_browser: None,
             theme_editor: None,
             settings_editor: None,
+            pack_editor: None,
             resize_debouncer: ResizeDebouncer::new(300), // 300ms debounce
             theme_cache: ThemeCache::new(),
             window_order_cache: WindowOrderCache::default(),

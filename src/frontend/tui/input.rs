@@ -2705,6 +2705,43 @@ impl TuiFrontend {
                 }
                 return Ok(None);
             }
+            InputMode::PackEditor => {
+                if let Some(ref mut editor) = self.pack_editor {
+                    use crate::frontend::tui::pack_editor::PackEditorAction;
+                    let key_event = crate::data::input::KeyEvent { code, modifiers };
+                    match editor.handle_key(key_event.code, key_event.modifiers) {
+                        PackEditorAction::None => {}
+                        PackEditorAction::Close => {
+                            self.pack_editor = None;
+                            app_core.ui_state.input_mode = InputMode::Normal;
+                        }
+                        PackEditorAction::Export { name, parts, dest } => {
+                            // TUI packs carry no GUI layout entry.
+                            let ok = app_core.uiexport_pack(&name, &parts, dest, Vec::new());
+                            if let Some(ref mut editor) = self.pack_editor {
+                                editor.set_status(if ok {
+                                    format!("Exported '{name}'.")
+                                } else {
+                                    "Export failed — see the main window.".to_string()
+                                });
+                            }
+                        }
+                        PackEditorAction::Install { path, parts } => {
+                            let gui_layout = app_core.uiimport_apply(&path, Some(&parts));
+                            if gui_layout.is_some() {
+                                app_core.add_system_message(
+                                    "This pack also carries a GUI layout — run the import in the GUI to install it.",
+                                );
+                            }
+                            if let Some(ref mut editor) = self.pack_editor {
+                                editor.set_status("Install finished — see the main window.");
+                            }
+                        }
+                    }
+                    app_core.needs_render = true;
+                }
+                return Ok(None);
+            }
             InputMode::HighlightForm => {
                 if let Some(ref mut form) = self.highlight_form {
                     use crate::frontend::tui::widget_traits::{

@@ -303,14 +303,19 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
         title: "SHARING",
         entries: &[
             entry!(
+                &["packs", "packeditor"],
+                "",
+                "Open the pack editor: guided export/import of shareable UI packs"
+            ),
+            entry!(
                 &["uiexport"],
                 "<name> [parts]",
-                "Export layout/highlights/keybinds/hotbars/colors/macros/skin as a shareable pack"
+                "Export layout/highlights/keybinds/hotbars/colors/macros/skin/theme/sounds/quickbars/settings as a shareable pack"
             ),
             entry!(
                 &["uiimport"],
                 "<name|file>",
-                "Preview a shared UI pack; add 'apply' to install (with backups)"
+                "Preview a shared UI pack; add 'apply [parts...]' to install (with backups)"
             ),
         ],
     },

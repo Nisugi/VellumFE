@@ -150,6 +150,9 @@ pub enum UiAction {
     SaveSkin(String),
     UiExport(Vec<String>),
     UiImport(Vec<String>),
+    /// The pack editor panel (.packs): guided export/import of
+    /// .vellumpack files.
+    PackEditor,
 
     // GUI shell zones
     Zone { zone: ShellZoneTarget, op: ZoneOp },
@@ -295,6 +298,7 @@ impl UiAction {
             "layout:resize" => UiAction::ResizeLayout,
             "uiexport" => UiAction::UiExport(Vec::new()),
             "uiimport" => UiAction::UiImport(Vec::new()),
+            "packeditor" => UiAction::PackEditor,
             _ => return None,
         })
     }
@@ -365,6 +369,7 @@ impl std::fmt::Display for UiAction {
             UiAction::UiExport(args) => write!(f, "action:uiexport:{}", args.join(" ")),
             UiAction::UiImport(args) if args.is_empty() => write!(f, "action:uiimport"),
             UiAction::UiImport(args) => write!(f, "action:uiimport:{}", args.join(" ")),
+            UiAction::PackEditor => write!(f, "action:packeditor"),
             UiAction::Zone { zone, op } => {
                 write!(f, "action:zone:{}:{}", zone.as_str(), op.as_str())
             }
@@ -468,6 +473,7 @@ mod tests {
             UiAction::WebUiOpen("bigshot".into()),
             UiAction::SnapDebug,
             UiAction::PerformanceDump,
+            UiAction::PackEditor,
         ]
     }
 
