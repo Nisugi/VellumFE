@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-8a1a8f09.js";
+            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-a6416afc.js"></script>
@@ -242,6 +242,28 @@ stream = "thoughts"       # only applies to the thoughts stream
 <p>For replacement patterns, <code>window = "..."</code> limits the <em>replacement</em> to one
 window by name (colors still apply everywhere). Both filter fields are
 editable in the TUI highlight form (<code>.edithighlight</code>).</p>
+<h2 id="custom-statuses"><a class="header" href="#custom-statuses">Custom Statuses</a></h2>
+<p>A rule can drive a status icon of your own invention. Set these in the
+GUI highlight editor:</p>
+<ul>
+<li><strong>Set status</strong> — a status id to activate when the rule matches
+(e.g. <code>POISONED</code>).</li>
+<li><strong>Status duration</strong> — seconds until it clears itself; leave empty to
+keep it on until a clearing rule matches.</li>
+<li><strong>Clear status</strong> — a status id to deactivate on match.</li>
+</ul>
+<p>Any indicator or dashboard entry whose id matches lights up, exactly
+like the game’s built-in statuses — so it gets skin/pool icon art, the
+per-indicator icon picker, grayscale-when-inactive, and TUI glyphs for
+free. Typical use: regex a spell’s wear-off message into a status so
+you can <em>see</em> the buff drop:</p>
+<pre><code class="language-toml">[silver_lace_down]
+pattern = "The silvery luminescence fades"
+set_status = "SILVERLACE_DOWN"
+status_duration = 30.0
+</code></pre>
+<p>Then add an indicator window with id <code>SILVERLACE_DOWN</code> (Indicator
+Templates editor) and pick an icon for it.</p>
 <h2 id="test-your-patterns"><a class="header" href="#test-your-patterns">Test Your Patterns</a></h2>
 <p>Don’t wait for the game — inject a line:</p>
 <pre><code>.testline The death cry of Grimswarm echoes!

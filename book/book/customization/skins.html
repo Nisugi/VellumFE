@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-8a1a8f09.js";
+            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-a6416afc.js"></script>
@@ -251,6 +251,56 @@ image = "borders/frame.png"
 slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
 scale = 1.0                # source pixels -&gt; screen points
 </code></pre>
+<h2 id="named-frames-per-window-picker"><a class="header" href="#named-frames-per-window-picker">Named Frames (Per-Window Picker)</a></h2>
+<p><code>[window.&lt;name&gt;.border]</code> bakes the frame choice into the skin. To let
+players mix frames themselves, name them under <code>[frames.*]</code>:</p>
+<pre><code class="language-toml">[frames.ornate]
+image = "borders/ornate.png"
+slice = [16, 16, 16, 16]
+scale = 0.75
+
+[frames.plain]
+image = "borders/plain.png"
+slice = [6, 6, 6, 6]
+</code></pre>
+<p>Every named frame shows up in each window’s right-click menu under
+<strong>Appearance → Skin frame</strong> (also in the Window Editor’s Appearance
+section), alongside <strong>Skin default</strong> (follow the skin’s own
+<code>[window.*]</code> mapping) and <strong>None</strong> (no frame on this window). The
+choice is saved per window in the GUI layout, so it survives restarts
+and travels with <code>.savelayout</code> checkpoints. If a layout names a frame
+the active skin doesn’t define, the window falls back to the skin’s
+default mapping.</p>
+<p>The name <code>none</code> is reserved — a <code>[frames.none]</code> entry is ignored.</p>
+<h2 id="no-skin-required-the-image-pool"><a class="header" href="#no-skin-required-the-image-pool">No Skin Required: the Image Pool</a></h2>
+<p>Everything above describes skins, but <strong>none of it requires one</strong>. Art
+installed into the shared pool (<code>~/.vellum-fe/global/images/&lt;category&gt;/</code>,
+usually via <code>.jinx install</code>) is selectable straight from the GUI:</p>
+<ul>
+<li><strong>Injury doll</strong> — right-click the injuries window → Appearance →
+<em>Doll image</em> lists every doll in the pool; <em>Calibrate doll…</em> places the
+wound anchors, saved into the image’s sidecar toml so the calibration
+travels with the art (Jinx dolls can ship pre-calibrated). A
+<em>Grayscale doll art</em> checkbox desaturates the art (dots keep their
+colors); the grayscale copy is built only while it’s checked.</li>
+<li><strong>Frames</strong> — the per-window <em>Skin frame</em> picker lists pool frames
+(those with a slice/scale sidecar) alongside the skin’s <code>[frames.*]</code>.</li>
+<li><strong>Backgrounds</strong> — every window’s Appearance menu has a <em>Background</em>
+picker over <code>backgrounds/</code> pool images.</li>
+<li><strong>Compass</strong> — the compass window’s Appearance menu picks a pool set
+(<code>compass/&lt;set&gt;_&lt;role&gt;.png</code>, roles <code>rose</code>, <code>n</code> … <code>nw</code>, <code>up</code>, <code>down</code>,
+<code>out</code>).</li>
+<li><strong>Status icons</strong> — the Indicator Templates editor picks a pool set
+(<code>statusicons/&lt;set&gt;_&lt;glyph&gt;.png</code>, glyph = indicator id) plus
+per-indicator overrides: any pool image or a hotbar sheet cell. A
+<em>Grayscale when inactive</em> checkbox shows the desaturated icon for
+inactive statuses instead of fading it.</li>
+</ul>
+<p>All of these choices live in your GUI layout (checkpoints and
+<code>.uiexport</code> carry them). When an arrangement is worth sharing,
+<strong><code>.saveskin &lt;name&gt;</code></strong> compiles it into <code>global/skins/&lt;name&gt;/skin.toml</code>
+referencing the pool art — a publishable skin, without hand-writing any
+TOML.</p>
 <h2 id="status-icons"><a class="header" href="#status-icons">Status Icons</a></h2>
 <p>Replace the built-in vector pictograms in the dashboard and indicator
 widgets, keyed by indicator id (case-insensitive):</p>

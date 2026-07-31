@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-8a1a8f09.js";
+            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-a6416afc.js"></script>
@@ -199,8 +199,9 @@ needs:</p>
 <tr><td><strong>Hotbar icon sheet</strong></td><td>a grid of square ability icons for hotbar buttons</td><td>one sheet image</td></tr>
 <tr><td><strong>Window frame</strong></td><td>an ornamental nine-slice border drawn around windows</td><td>one image</td></tr>
 <tr><td><strong>Window background</strong></td><td>a flat texture that sits behind window text</td><td>one image</td></tr>
-<tr><td><strong>Compass art</strong></td><td>a compass rose and/or its lit direction overlays</td><td>a zip of images</td></tr>
-<tr><td><strong>Status icons</strong></td><td>the glyph set for hands, stance, and conditions</td><td>a zip of images</td></tr>
+<tr><td><strong>Compass art</strong></td><td>a compass rose and/or its lit direction overlays</td><td>an image or a zip</td></tr>
+<tr><td><strong>Status icons</strong></td><td>the glyph set for stance and conditions</td><td>an image or a zip</td></tr>
+<tr><td><strong>Hand icons</strong></td><td>left, right, and spell hand icons for the hands widget</td><td>an image or a zip</td></tr>
 </tbody>
 </table>
 </div>
@@ -224,7 +225,10 @@ metalwork.)</p>
 <p>Two consequences worth knowing:</p>
 <ul>
 <li>If your image <strong>already has real transparency</strong> — you cleaned it up
-yourself in an editor — the robot detects that and leaves it alone.</li>
+yourself in an editor — the robot detects that and leaves it alone.
+(Detection requires meaningful transparency; a few stray transparent
+pixels from an export won’t disable keying. Filling in the threshold
+field always forces a re-key either way.)</li>
 <li><strong>Don’t submit greyscale variants</strong> of anything. VellumFE desaturates
 art at runtime when it needs to (the injury doll base, dormant
 states), so only the color version is ever stored.</li>
@@ -257,14 +261,18 @@ their <strong>role</strong> so the client knows what each image is:</p>
 <ul>
 <li><strong>Compass</strong>: <code>rose</code> (the base), <code>n</code> <code>ne</code> <code>e</code> <code>se</code> <code>s</code> <code>sw</code> <code>w</code> <code>nw</code>
 (lit pointers), <code>up</code> <code>down</code> (chevrons), <code>out</code> (the hub)</li>
-<li><strong>Status icons</strong>: <code>lefthand</code> <code>righthand</code> <code>spellhand</code> <code>standing</code>
-<code>kneeling</code> <code>sitting</code> <code>prone</code> <code>dead</code> <code>stunned</code> <code>bleeding</code> <code>hidden</code>
-<code>invisible</code> <code>webbed</code> <code>poisoned</code> <code>diseased</code> <code>joined</code></li>
+<li><strong>Status icons</strong>: <code>standing</code> <code>kneeling</code> <code>sitting</code> <code>prone</code> <code>dead</code>
+<code>stunned</code> <code>bleeding</code> <code>hidden</code> <code>invisible</code> <code>webbed</code> <code>poisoned</code>
+<code>diseased</code> <code>joined</code></li>
+<li><strong>Hand icons</strong>: <code>lefthand</code> <code>righthand</code> <code>spellhand</code></li>
 </ul>
 <p>Name each file either <code>&lt;role&gt;.png</code> or <code>&lt;anything&gt;_&lt;role&gt;.png</code> — both
-work. A partial set is fine (just a rose, say). Your set name from the
-form becomes the prefix, so <code>emberiron</code> + <code>rose.png</code> is published as
-<code>emberiron_rose.png</code>.</p>
+work. A partial set is fine (just a rose, say). Files named for a bare
+role take your set name as prefix, so <code>emberiron</code> + <code>rose.png</code> is
+published as <code>emberiron_rose.png</code>; files with their own prefix keep it,
+so one zip can carry <code>ember_spellhand.png</code> and <code>frost_spellhand.png</code> as
+two separate assets. You don’t need a zip at all for one image — attach
+it directly and pick its role in the form’s dropdown.</p>
 <h2 id="what-happens-after-you-click-submit"><a class="header" href="#what-happens-after-you-click-submit">What happens after you click Submit</a></h2>
 <ol>
 <li>Within a minute or two, the robot processes your submission and
@@ -292,9 +300,13 @@ land exactly on multiples of that size, or buttons will bleed into
 their neighbors. Sheets are used as-is — no background removal.</li>
 <li><strong>Window frames</strong> — uniform band thickness, ornament confined to the
 corners, continuous plain material along the straight runs (they get
-stretched), pure-black center. The form asks for the <strong>corner cap
-size</strong> in pixels — measure it in your editor — since the renderer
-slices the frame at that inset.</li>
+stretched), pure-black center. The renderer slices the frame at the
+<strong>corner cap size</strong> — the smallest square, anchored at a canvas
+corner, that contains the corner ornament. <strong>The robot measures this
+automatically</strong> from your image; the number it found is shown in the
+pull request. If it looks wrong, measure the caps yourself in an
+editor and put the pixel value in the form’s cap-size field to
+override.</li>
 <li><strong>Compass overlays</strong> — the lit pointers are stacked on top of the rose
 at runtime, so they must be registered pixel-perfect against it.
 Generate them from one master image; don’t generate each separately.</li>
