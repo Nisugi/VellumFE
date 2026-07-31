@@ -72,6 +72,9 @@ pub(super) enum GuiWindowMenuCommand {
     /// Open the hand-icons editor (hand windows): status-driven icon
     /// states (empty hand, held weapon, prepared spell, ...).
     EditHandIcons,
+    /// Open the dashboard editor (dashboard windows): which status ids to
+    /// show plus layout/spacing/hide-inactive.
+    EditDashboard,
     /// Render doll art in grayscale (dots keep their colors).
     SetDollGrayscale(bool),
     /// Global compass art set from the pool; None reverts to the skin's.
@@ -207,6 +210,8 @@ pub(super) struct WindowAppearanceView {
     doll_grayscale: bool,
     /// Compass widget: offer the pool compass-set picker.
     is_compass: bool,
+    /// Dashboard widget: offer the "Edit Dashboard…" pop-out.
+    is_dashboard: bool,
     /// Pool compass sets.
     compass_sets: Vec<String>,
     /// Global compass set override; None = skin default.
@@ -422,6 +427,15 @@ impl VellumGuiApp {
                     .map(|tab| tab.window_name.clone())
                 {
                     self.open_hand_icons_editor(name);
+                }
+            }
+            GuiWindowMenuCommand::EditDashboard => {
+                if let Some(name) = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone())
+                {
+                    self.open_dashboard_editor(name);
                 }
             }
             GuiWindowMenuCommand::StartMove => {
@@ -806,6 +820,7 @@ impl VellumGuiApp {
             doll_override: self.ui_settings.doll_image.clone(),
             doll_grayscale: self.ui_settings.doll_grayscale,
             is_compass,
+            is_dashboard: widget_type == Some(WidgetType::Dashboard),
             compass_sets,
             compass_override: self.ui_settings.compass_set.clone(),
             hand_icon_override: hand_id.as_ref().and_then(|id| {
@@ -1423,6 +1438,14 @@ impl VellumGuiApp {
             && ui.selectable_label(false, "Calibrate doll…").clicked()
         {
             return Some(GuiWindowMenuCommand::CalibrateDoll);
+        }
+        if view.appearance.is_dashboard
+            && ui
+                .selectable_label(false, "Edit dashboard…")
+                .on_hover_text("Which statuses to show, plus layout and spacing")
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::EditDashboard);
         }
         if view.appearance.hand_id.is_some()
             && ui

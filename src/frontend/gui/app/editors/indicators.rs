@@ -25,6 +25,12 @@ struct EntryBuffer {
     inactive_color: String,
     default_status: Option<String>,
     default_color: Option<String>,
+    /// Pickable default GUI icon; edited in the Phase-D1 states UI. Carried
+    /// through save so a plain field edit never wipes it.
+    icon_ref: Option<crate::data::IconRef>,
+    /// Condition-driven icon states; edited in the Phase-D1 states UI, carried
+    /// through save.
+    states: Vec<crate::config::StatusIconState>,
     enabled: bool,
 }
 
@@ -39,6 +45,8 @@ impl EntryBuffer {
             inactive_color: entry.inactive_color.clone().unwrap_or_default(),
             default_status: entry.default_status.clone(),
             default_color: entry.default_color.clone(),
+            icon_ref: entry.icon_ref.clone(),
+            states: entry.states.clone(),
             enabled: entry.enabled,
         }
     }
@@ -53,6 +61,8 @@ impl EntryBuffer {
             inactive_color: String::new(),
             default_status: None,
             default_color: None,
+            icon_ref: None,
+            states: Vec::new(),
             enabled: true,
         }
     }
@@ -71,10 +81,12 @@ impl EntryBuffer {
             name: self.name.clone(),
             title: opt(&self.title),
             icon: opt(&self.icon),
+            icon_ref: self.icon_ref.clone(),
             inactive_color: opt(&self.inactive_color),
             active_color: opt(&self.active_color),
             default_status: self.default_status.clone(),
             default_color: self.default_color.clone(),
+            states: self.states.clone(),
             enabled: self.enabled,
         }
     }
@@ -117,6 +129,22 @@ impl VellumGuiApp {
                 .collect();
         let art = self.skin_state.widget_art();
         let sheets: Vec<String> = art.as_ref().map(|a| a.sheet_names()).unwrap_or_default();
+        // Effect-name suggestions for the shared condition builder (states).
+        let suggestions: std::collections::HashMap<&'static str, Vec<String>> =
+            crate::config::EffectCategory::ALL
+                .iter()
+                .map(|c| {
+                    (
+                        c.state_key(),
+                        self.app_core
+                            .game_state
+                            .effects
+                            .get(c.state_key())
+                            .map(|store| store.effects.iter().map(|e| e.text.clone()).collect())
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect();
         let current_set = self.ui_settings.status_icons.set.clone();
         let mut sorted_overrides: Vec<(String, crate::data::IconRef)> = self
             .ui_settings
@@ -342,6 +370,67 @@ impl VellumGuiApp {
                     }
                 });
 
+                ui.separator();
+                ui.strong("Per-template icons & states");
+                ui.weak(
+                    "A pickable default icon and condition-driven states per template. \
+                     States check top to bottom; the first match drives the icon/color \
+                     (e.g. an injury rank). Icons come from the 'statusicons' pool.",
+                );
+                for entry in state.entries.iter_mut() {
+                    let heading = if entry.id.trim().is_empty() {
+                        "(unnamed)".to_string()
+                    } else {
+                        entry.id.trim().to_string()
+                    };
+                    egui::CollapsingHeader::new(heading)
+                        .id_salt(format!("status_states_{}", entry.id))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("Default icon");
+                                match super::icon_ref_picker(
+                                    ui,
+                                    format!("status_default_icon_{}", entry.id),
+                                    entry.icon_ref.as_ref(),
+                                    &pool_images,
+                                    &sheets,
+                                    Some("Default (by id)"),
+                                    None,
+                                    Some("None (no art)"),
+                                ) {
+                                    Some(super::IconRefPick::Unset) => entry.icon_ref = None,
+                                    Some(super::IconRefPick::Ref(picked)) => {
+                                        entry.icon_ref = Some(picked)
+                                    }
+                                    None => {}
+                                }
+                                if let Some(crate::data::IconRef::SheetCell { cell, .. }) =
+                                    &mut entry.icon_ref
+                                {
+                                    let mut value = (*cell).max(1);
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut value)
+                                                .range(1..=9999)
+                                                .prefix("#"),
+                                        )
+                                        .changed()
+                                    {
+                                        *cell = value;
+                                    }
+                                }
+                            });
+                            Self::render_status_states(
+                                ui,
+                                &entry.id,
+                                &mut entry.states,
+                                &pool_images,
+                                &sheets,
+                                &suggestions,
+                            );
+                        });
+                }
+
                 if let Some(error) = &state.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
@@ -398,9 +487,13 @@ impl VellumGuiApp {
             }
             let store = IndicatorTemplateStore { indicators: entries };
             match Config::save_indicator_template_store(&store) {
-                Ok(()) => self
-                    .app_core
-                    .add_system_message("Indicator templates saved."),
+                Ok(()) => {
+                    // Refresh the render-loop cache so new icons/states show
+                    // without a restart.
+                    self.app_core.refresh_indicator_templates();
+                    self.app_core
+                        .add_system_message("Indicator templates saved.");
+                }
                 Err(err) => {
                     state.error = Some(format!("Failed to save: {}", err));
                 }
@@ -409,6 +502,119 @@ impl VellumGuiApp {
 
         if open {
             self.indicator_templates_editor = Some(state);
+        }
+    }
+
+    /// Condition-driven status icon states for one template. Mirrors the
+    /// hand-icon states editor: each state gets the shared condition builder,
+    /// an IconRef picker (statusicons pool / sheet cell / none), a TUI text
+    /// glyph, and a color; first match wins. Reorder + remove + add.
+    fn render_status_states(
+        ui: &mut egui::Ui,
+        entry_id: &str,
+        states: &mut Vec<crate::config::StatusIconState>,
+        pool_images: &[(String, String)],
+        sheets: &[String],
+        suggestions: &std::collections::HashMap<&'static str, Vec<String>>,
+    ) {
+        let mut remove: Option<usize> = None;
+        let mut swap: Option<(usize, usize)> = None;
+        let len = states.len();
+        for (idx, st) in states.iter_mut().enumerate() {
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.strong(format!("State {}", idx + 1));
+                if ui
+                    .add_enabled(idx > 0, egui::Button::new("⬆").small())
+                    .clicked()
+                {
+                    swap = Some((idx, idx - 1));
+                }
+                if ui
+                    .add_enabled(idx + 1 < len, egui::Button::new("⬇").small())
+                    .clicked()
+                {
+                    swap = Some((idx, idx + 1));
+                }
+                if ui
+                    .small_button("✕")
+                    .on_hover_text("Remove this state")
+                    .clicked()
+                {
+                    remove = Some(idx);
+                }
+            });
+            super::hotbars::render_condition_group(
+                ui,
+                &format!("status_state_{entry_id}_{idx}"),
+                &mut st.when,
+                0,
+                suggestions,
+            );
+            ui.horizontal(|ui| {
+                ui.label("Icon");
+                match super::icon_ref_picker(
+                    ui,
+                    format!("status_state_icon_{entry_id}_{idx}"),
+                    st.icon.as_ref(),
+                    pool_images,
+                    sheets,
+                    Some("Template default"),
+                    None,
+                    Some("None (no art)"),
+                ) {
+                    Some(super::IconRefPick::Unset) => st.icon = None,
+                    Some(super::IconRefPick::Ref(picked)) => st.icon = Some(picked),
+                    None => {}
+                }
+                if let Some(crate::data::IconRef::SheetCell { cell, .. }) = &mut st.icon {
+                    let mut value = (*cell).max(1);
+                    if ui
+                        .add(egui::DragValue::new(&mut value).range(1..=9999).prefix("#"))
+                        .changed()
+                    {
+                        *cell = value;
+                    }
+                }
+                ui.label("Text");
+                let mut text = st.text.clone().unwrap_or_default();
+                if ui
+                    .add(
+                        egui::TextEdit::singleline(&mut text)
+                            .hint_text("TUI glyph")
+                            .desired_width(60.0),
+                    )
+                    .changed()
+                {
+                    st.text = (!text.trim().is_empty()).then(|| text.clone());
+                }
+                ui.label("Color");
+                let mut color = st.color.clone().unwrap_or_default();
+                let before = color.clone();
+                color_field(ui, &mut color);
+                if color != before {
+                    let trimmed = color.trim();
+                    st.color = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                }
+            });
+        }
+        if let Some((a, b)) = swap {
+            states.swap(a, b);
+        }
+        if let Some(idx) = remove {
+            states.remove(idx);
+        }
+        if ui.button("+ Add state").clicked() {
+            states.push(crate::config::StatusIconState {
+                when: crate::config::Condition::Injury {
+                    area: "neck".to_string(),
+                    cmp: crate::config::Cmp::Ge,
+                    level: 1,
+                },
+                icon: None,
+                text: None,
+                color: None,
+            });
         }
     }
 }

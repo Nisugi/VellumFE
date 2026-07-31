@@ -70,6 +70,7 @@ const LEAF_KINDS: &[&str] = &[
     "Casttime active",
     "Indicator",
     "Vital",
+    "Injury",
     "Spell affordable",
     "Hand empty",
     "Hand holds",
@@ -85,10 +86,11 @@ fn leaf_kind_index(cond: &Condition) -> usize {
         Condition::CtActive => 4,
         Condition::Indicator { .. } => 5,
         Condition::Vital { .. } => 6,
-        Condition::SpellAffordable { .. } => 7,
-        Condition::HandEmpty { .. } => 8,
-        Condition::HandHolds { .. } => 9,
-        Condition::SpellPrepared { .. } => 10,
+        Condition::Injury { .. } => 7,
+        Condition::SpellAffordable { .. } => 8,
+        Condition::HandEmpty { .. } => 9,
+        Condition::HandHolds { .. } => 10,
+        Condition::SpellPrepared { .. } => 11,
         Condition::All { .. } | Condition::Any { .. } => 0,
     }
 }
@@ -124,11 +126,16 @@ fn default_leaf(kind: usize) -> Condition {
             value: 25,
             unit: VitalUnit::Percent,
         },
-        7 => Condition::SpellAffordable { number: 101 },
-        8 => Condition::HandEmpty {
+        7 => Condition::Injury {
+            area: "neck".to_string(),
+            cmp: Cmp::Ge,
+            level: 1,
+        },
+        8 => Condition::SpellAffordable { number: 101 },
+        9 => Condition::HandEmpty {
             hand: crate::config::HandSlot::Right,
         },
-        9 => Condition::HandHolds {
+        10 => Condition::HandHolds {
             hand: crate::config::HandSlot::Right,
             item_type: Some("weapon".to_string()),
             name: None,
@@ -1334,6 +1341,24 @@ fn render_leaf_condition(
                         changed = true;
                     }
                 });
+        }
+        Condition::Injury { area, cmp, level } => {
+            egui::ComboBox::from_id_salt(format!("{}_area", id))
+                .selected_text(area.as_str())
+                .show_ui(ui, |ui| {
+                    for candidate in crate::config::INJURY_AREAS {
+                        if ui.selectable_label(area == candidate, *candidate).clicked() {
+                            *area = candidate.to_string();
+                            changed = true;
+                        }
+                    }
+                });
+            changed |= cmp_combo(ui, &format!("{}_cmp", id), cmp);
+            // Levels: 1-3 wounds, 4-6 scars (0 = healthy).
+            changed |= ui
+                .add(egui::DragValue::new(level).range(0..=6))
+                .on_hover_text("1-3 = wounds, 4-6 = scars, 0 = healthy")
+                .changed();
         }
         Condition::SpellAffordable { number } => {
             ui.label("spell #:");

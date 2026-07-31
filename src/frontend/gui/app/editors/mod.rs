@@ -6,6 +6,7 @@ mod colors;
 #[cfg(feature = "gamepad")]
 mod controller;
 mod custom_windows;
+mod dashboard;
 mod doll_calibration;
 mod hand_icons;
 mod highlights;
@@ -24,6 +25,7 @@ pub(super) use colors::ColorsEditorState;
 #[cfg(feature = "gamepad")]
 pub(super) use controller::ControllerEditorState;
 pub(super) use custom_windows::CustomWindowsEditorState;
+pub(super) use dashboard::DashboardEditorState;
 pub(super) use doll_calibration::DollCalibrationState;
 pub(super) use hand_icons::HandIconsEditorState;
 pub(super) use highlights::HighlightEditorState;
@@ -77,6 +79,7 @@ impl VellumGuiApp {
         self.render_hand_icons_editor(ctx);
         self.render_custom_windows_editor(ctx);
         self.render_known_windows_editor(ctx);
+        self.render_dashboard_editor(ctx);
         self.render_sorter_editor(ctx);
         self.render_doll_calibration(ctx);
         self.render_pack_editor(ctx);
