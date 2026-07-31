@@ -1097,6 +1097,34 @@ impl VellumGuiApp {
         self.app_core.ui_state.input_mode = InputMode::Menu;
     }
 
+    /// The Layouts submenu, GUI edition: core's builder lists the TUI's
+    /// TOML cell layouts, which don't apply here, so this lists the GUI's
+    /// JSON checkpoints from the same shared ~/.vellum-fe/layouts/ pool.
+    fn build_gui_layouts_submenu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
+        let mut items: Vec<crate::data::ui_state::PopupMenuItem> =
+            list_named_layouts()
+                .into_iter()
+                .map(|name| crate::data::ui_state::PopupMenuItem {
+                    text: name.clone(),
+                    command: format!("action:layout:load:{}", name),
+                    disabled: false,
+                })
+                .collect();
+        if items.is_empty() {
+            items.push(crate::data::ui_state::PopupMenuItem {
+                text: "No layouts found (.savelayout <name>)".to_string(),
+                command: String::new(),
+                disabled: true,
+            });
+        }
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: "Close menu".to_string(),
+            command: String::new(),
+            disabled: true,
+        });
+        items
+    }
+
     fn handle_popup_menu_command(&mut self, menu_command: GuiMenuCommand) {
         let command = menu_command.command;
 
@@ -1106,12 +1134,17 @@ impl VellumGuiApp {
             // highlights/keybinds/layouts/windows) are built on demand by
             // build_submenu. Try the cache first, then fall back — without
             // the fallback the whole .menu tree is dead in the GUI.
-            let items = self
-                .app_core
-                .menu_categories
-                .get(category)
-                .cloned()
-                .unwrap_or_else(|| self.app_core.build_submenu(category));
+            // Layouts are frontend-owned (core would list the TUI's TOML
+            // cell layouts), so the GUI builds that one itself.
+            let items = if category == "layouts" {
+                self.build_gui_layouts_submenu()
+            } else {
+                self.app_core
+                    .menu_categories
+                    .get(category)
+                    .cloned()
+                    .unwrap_or_else(|| self.app_core.build_submenu(category))
+            };
             if items.is_empty() {
                 tracing::warn!("Missing GUI menu category: {}", category);
             } else {
@@ -1128,7 +1161,11 @@ impl VellumGuiApp {
                 self.close_menus_to_normal();
                 return;
             }
-            let items = self.app_core.build_submenu(submenu);
+            let items = if submenu == "layouts" {
+                self.build_gui_layouts_submenu()
+            } else {
+                self.app_core.build_submenu(submenu)
+            };
             if items.is_empty() {
                 self.app_core
                     .add_system_message(&format!("Menu '{}' has no entries.", submenu));

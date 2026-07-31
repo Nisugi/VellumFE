@@ -53,7 +53,7 @@ pub use keybinds::{
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
-pub use paths::{write_atomic, DialogPosition, SavedDialogPositions};
+pub use paths::{is_valid_layout_name, write_atomic, DialogPosition, SavedDialogPositions};
 #[cfg(test)]
 pub use paths::VELLUM_FE_DIR_TEST_LOCK;
 pub use settings::{

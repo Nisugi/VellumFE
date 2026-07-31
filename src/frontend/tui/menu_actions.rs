@@ -73,11 +73,11 @@ pub fn handle_ui_action(
             app_core.needs_render = true;
         }
         UiAction::LoadLayout(None) => {
-            // Bare `.loadlayout` historically loaded 'default'.
-            let (width, height) = frontend.size();
-            if let Some((theme_id, theme)) = app_core.load_layout("default", width, height) {
-                frontend.update_theme_cache(theme_id, theme);
-            }
+            // Bare `.loadlayout` shows usage + the saved list, matching the
+            // GUI (it used to load 'default', which silently replaced the
+            // current arrangement on a bare invocation).
+            app_core.add_system_message("Usage: .loadlayout <name>");
+            app_core.list_layouts();
             app_core.needs_render = true;
         }
         UiAction::SaveLayout(name) => {

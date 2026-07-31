@@ -39,6 +39,18 @@ pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::
     std::fs::rename(&tmp, path)
 }
 
+/// True when a layout name is safe to use as a file stem in the shared
+/// layouts pool (also blocks path traversal, since names become
+/// `<name>.toml` / `<name>.json`). Shared by both frontends so
+/// `.savelayout` accepts the same names everywhere.
+pub fn is_valid_layout_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// Saved dialog position for persistence across sessions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DialogPosition {
@@ -98,9 +110,11 @@ impl Config {
         Ok(Self::profile_dir(character)?.join("colors.toml"))
     }
 
-    /// Get the shared layouts directory (where .savelayout saves to)
+    /// Get the shared layouts directory (where .savelayout saves to, for
+    /// both frontends: TUI cell layouts as `<name>.toml`, GUI window
+    /// snapshots as `<name>.json`)
     /// Returns: ~/.vellum-fe/layouts/
-    pub(super) fn layouts_dir() -> Result<PathBuf> {
+    pub fn layouts_dir() -> Result<PathBuf> {
         Ok(Self::config_dir()?.join("layouts"))
     }
 
@@ -346,6 +360,9 @@ impl Config {
     }
 
     pub fn layout_path(name: &str) -> Result<PathBuf> {
+        if !is_valid_layout_name(name) {
+            anyhow::bail!("Layout names use letters, digits, '-' and '_' only");
+        }
         let layouts_dir = Self::layouts_dir()?;
         Ok(layouts_dir.join(format!("{}.toml", name)))
     }
@@ -425,6 +442,31 @@ impl Config {
             toml::from_str(&contents).context("Failed to parse keybinds profile")?;
 
         Ok(keybinds)
+    }
+}
+
+#[cfg(test)]
+mod layout_name_tests {
+    use super::*;
+
+    #[test]
+    fn layout_path_rejects_unsafe_names() {
+        // Validation fires before any directory resolution, so a bad name
+        // can never become a path outside the layouts pool.
+        assert!(Config::layout_path("").is_err());
+        assert!(Config::layout_path("../escape").is_err());
+        assert!(Config::layout_path("..\\escape").is_err());
+        assert!(Config::layout_path("my layout").is_err());
+        assert!(Config::layout_path(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn layout_path_accepts_normal_names() {
+        let path = Config::layout_path("town-square_2").unwrap();
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("town-square_2.toml")
+        );
     }
 }
 

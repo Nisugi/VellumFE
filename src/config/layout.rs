@@ -545,10 +545,11 @@ impl Layout {
         self.normalize_windows_for_save();
 
         // Save to shared layouts directory: ~/.vellum-fe/layouts/{name}.toml
-        let layouts_dir = Config::layouts_dir()?;
-        fs::create_dir_all(&layouts_dir)?;
-
-        let layout_path = layouts_dir.join(format!("{}.toml", name));
+        // (layout_path validates the name so it can't escape the pool)
+        let layout_path = Config::layout_path(name)?;
+        if let Some(dir) = layout_path.parent() {
+            fs::create_dir_all(dir)?;
+        }
         let toml_string = self.to_toml_string_preserving()?;
         write_atomic(&layout_path, toml_string).context("Failed to write layout file")?;
 

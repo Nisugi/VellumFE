@@ -80,8 +80,10 @@ layout (`.savelayout` with no name) if no auto-save exists. Use
 
 The same three commands work in the [Desktop GUI](../frontends/gui.md)
 on its own layout format: named checkpoints of the GUI arrangement,
-saved per character under `~/.vellum-fe/gui/`, applied live by
-`.loadlayout`. The two formats don't cross-load.
+saved to the same shared `~/.vellum-fe/layouts/` folder (as
+`<name>.json` next to the TUI's `<name>.toml`), so any character can
+load a layout any character saved — exactly like the TUI. The two
+formats don't cross-load.
 
 ## Example Layouts
 

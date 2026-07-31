@@ -1,8 +1,9 @@
 use super::persistence::{
-    is_valid_layout_name, list_named_layouts, load_layout, load_named_layout, save_layout,
-    save_named_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState, TabGroup,
-    TabSettings, TabSettingsEntry, ViewportState, ZoneSeparatorStyle,
+    list_named_layouts, load_layout, load_named_layout, migrate_legacy_named_layouts,
+    save_layout, save_named_layout, FontRef, GuiLayoutFileV1, GuiUiSettings, MainViewportState,
+    TabGroup, TabSettings, TabSettingsEntry, ViewportState, ZoneSeparatorStyle,
 };
+use crate::config::is_valid_layout_name;
 use super::skin;
 use super::{TabId, TabKey};
 use crate::cmdlist::CmdList;
@@ -545,6 +546,22 @@ impl VellumGuiApp {
                 Self::write_layout_now(&layout, &worker_profile, &worker_character);
             }
         });
+
+        // Named checkpoints moved from per-character dirs into the shared
+        // ~/.vellum-fe/layouts/ pool; sweep any stragglers in before the
+        // session starts so .loadlayout/.layouts see them.
+        let migrated_checkpoints = migrate_legacy_named_layouts();
+        if !migrated_checkpoints.is_empty() {
+            let names: Vec<&str> = migrated_checkpoints
+                .iter()
+                .map(|(_, pool_name)| pool_name.as_str())
+                .collect();
+            app_core.add_system_message(&format!(
+                "Moved {} saved layout(s) into the shared layouts folder: {}",
+                names.len(),
+                names.join(", ")
+            ));
+        }
 
         let persisted_layout = load_layout(&layout_profile, &layout_character).ok();
         let available_tabs = Self::collect_available_tabs(&app_core);
@@ -2449,7 +2466,7 @@ impl VellumGuiApp {
     }
 
     fn list_layout_checkpoints(&mut self) {
-        let names = list_named_layouts(&self.layout_profile, &self.layout_character);
+        let names = list_named_layouts();
         if names.is_empty() {
             self.app_core.add_system_message(
                 "No saved GUI layouts. Save the current arrangement with .savelayout <name>",
@@ -4483,13 +4500,11 @@ impl VellumGuiApp {
                     "Terminal palette commands do not apply to the GUI; use .themes instead.",
                 );
             }
-            A::LoadLayoutToml(_) => {
-                // This action comes from the Layouts menu, which lists TUI TOML
-                // layouts — those don't apply here. GUI checkpoints are the
-                // .savelayout/.loadlayout commands below.
-                self.app_core.add_system_message(
-                    "TOML layouts are a TUI feature. In the GUI, use .savelayout <name> and .loadlayout <name> for named layouts.",
-                );
+            A::LoadLayoutToml(name) => {
+                // TOML cell layouts are the TUI's format; the GUI's Layouts
+                // menu lists its own JSON checkpoints from the same shared
+                // folder, so route the request to the matching GUI layout.
+                self.handle_ui_action(A::LoadLayout(Some(name)));
             }
             // Layout capability hooks (parity plan D3): same command
             // names as the TUI, GUI-native window-snapshot checkpoints.
@@ -4506,12 +4521,7 @@ impl VellumGuiApp {
                         .add_system_message("Could not snapshot the current layout.");
                     return;
                 };
-                match save_named_layout(
-                    &layout,
-                    &self.layout_profile,
-                    &self.layout_character,
-                    &name,
-                ) {
+                match save_named_layout(&layout, &name) {
                     Ok(()) => self.app_core.add_system_message(&format!(
                         "Saved GUI layout '{}'. Load it with .loadlayout {}",
                         name, name
@@ -4527,7 +4537,7 @@ impl VellumGuiApp {
                 self.list_layout_checkpoints();
             }
             A::LoadLayout(Some(name)) => {
-                match load_named_layout(&self.layout_profile, &self.layout_character, &name) {
+                match load_named_layout(&name) {
                     Ok(layout) => {
                         self.apply_layout_snapshot(&layout);
                         self.app_core
@@ -4581,12 +4591,7 @@ impl VellumGuiApp {
             A::UiImport(args) => {
                 if let Some((pack_name, bytes)) = self.app_core.uiimport(&args) {
                     match serde_json::from_slice(&bytes) {
-                        Ok(layout) => match save_named_layout(
-                            &layout,
-                            &self.layout_profile,
-                            &self.layout_character,
-                            &pack_name,
-                        ) {
+                        Ok(layout) => match save_named_layout(&layout, &pack_name) {
                             Ok(()) => self.app_core.add_system_message(&format!(
                                 "GUI layout installed — load it with .loadlayout {pack_name}"
                             )),

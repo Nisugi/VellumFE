@@ -14,7 +14,7 @@ Connection settings, highlights, keybinds, colors, themes, and all
 dot-commands work identically — editors opened in the GUI write to the same
 config files, so changes carry over if you switch frontends.
 
-**Layout is not shared.** The GUI keeps its own per-character layout
+**Layout is not shared.** The GUI keeps its own per-character live layout
 (window positions, zoom, fonts) in `~/.vellum-fe/gui/`, separate from the
 TUI's layout.toml. Window size, position, and zoom are restored between
 sessions automatically.
@@ -22,11 +22,14 @@ sessions automatically.
 `.savelayout <name>` / `.loadlayout <name>` / `.layouts` work here too,
 on GUI-native layouts: save the current arrangement as a named
 checkpoint (say, `combat` vs `town`), then swap with one command.
-Loading applies instantly — windows, zones, tab groups, detached
-windows, fonts, zoom — and later rearranging never rewrites a
-checkpoint; only an explicit `.savelayout` does. TUI `.toml` layouts
-are a separate format and can't be loaded here (`.resize` is also
-TUI-only).
+Checkpoints go to the shared `~/.vellum-fe/layouts/` folder (as
+`<name>.json`), so — like TUI layouts — any character can load a layout
+any character saved; a checkpoint carries the whole look, including
+skin, fonts, and zoom. Loading applies instantly — windows, zones, tab
+groups, detached windows, fonts, zoom — and later rearranging never
+rewrites a checkpoint; only an explicit `.savelayout` does. TUI `.toml`
+layouts are a separate format and can't be loaded here (`.resize` is
+also TUI-only).
 
 ## Windows and Zones
 
