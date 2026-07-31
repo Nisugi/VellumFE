@@ -387,6 +387,14 @@ impl Layout {
             layout.terminal_height
         );
 
+        // Migration: the default layouts used to ship explicit border
+        // colors (grey everywhere, purple society), which were extracted
+        // verbatim into user files — masking the theme's border color on
+        // every window and making the one window WITHOUT a baked color
+        // look broken. Only user-chosen colors should override the theme,
+        // so the known shipped values normalize back to "unset".
+        Self::normalize_legacy_border_colors(&mut layout);
+
         // Migration: Ensure command_input exists in windows array with valid values
         if let Some(idx) = layout
             .windows
@@ -435,6 +443,26 @@ impl Layout {
         }
 
         Ok(layout)
+    }
+
+    /// Border colors the default layouts used to ship. Windows carrying
+    /// exactly one of these were extracted defaults, not user choices, so
+    /// they reset to unset and follow the theme's border color. A user who
+    /// deliberately wants one of these exact values can re-pick it in the
+    /// editor (any other hex is never touched).
+    fn normalize_legacy_border_colors(layout: &mut Layout) {
+        const LEGACY_DEFAULTS: [&str; 2] = ["#808080", "#9370DB"];
+        for window in &mut layout.windows {
+            let base = window.base_mut();
+            if let Some(color) = &base.border_color {
+                if LEGACY_DEFAULTS
+                    .iter()
+                    .any(|legacy| color.eq_ignore_ascii_case(legacy))
+                {
+                    base.border_color = None;
+                }
+            }
+        }
     }
 
     /// Save layout to file
@@ -839,6 +867,48 @@ rows = 10
 cols = 120
 zoom = 3
 "#;
+
+    #[test]
+    fn legacy_shipped_border_colors_normalize_to_unset() {
+        let toml = r##"
+[[windows]]
+widget_type = "text"
+name = "main"
+row = 0
+col = 0
+rows = 30
+cols = 120
+border_color = "#808080"
+
+[[windows]]
+widget_type = "text"
+name = "society"
+row = 30
+col = 0
+rows = 10
+cols = 120
+border_color = "#9370db"
+
+[[windows]]
+widget_type = "text"
+name = "custom"
+row = 40
+col = 0
+rows = 10
+cols = 120
+border_color = "#807f80"
+"##;
+        let mut layout = Layout::parse_tolerant(toml, "test").unwrap();
+        Layout::normalize_legacy_border_colors(&mut layout);
+        // Extracted defaults (any case) reset to unset → theme wins...
+        assert_eq!(layout.windows[0].base().border_color, None);
+        assert_eq!(layout.windows[1].base().border_color, None);
+        // ...but a genuinely user-chosen color is never touched.
+        assert_eq!(
+            layout.windows[2].base().border_color.as_deref(),
+            Some("#807f80")
+        );
+    }
 
     #[test]
     fn discovered_windows_persist_binding_and_visibility() {

@@ -13,7 +13,7 @@ cols = 120
 buffer_size = 100000
 show_border = true
 border_style = "single"
-border_color = "#808080"
+border_color = "-"
 
 [[windows]]
 name = "command_input"
@@ -28,7 +28,7 @@ max_rows = 3
 buffer_size = 100
 show_border = true
 border_style = "single"
-border_color = "#808080"
+border_color = "-"
 
 # Hidden windows - can be shown via menu > Windows > Add Window
 [[windows]]
@@ -42,7 +42,7 @@ cols = 40
 buffer_size = 10000
 show_border = true
 border_style = "single"
-border_color = "#808080"
+border_color = "-"
 visible = false
 
 [[windows]]
@@ -56,7 +56,7 @@ cols = 40
 buffer_size = 10000
 show_border = true
 border_style = "single"
-border_color = "#808080"
+border_color = "-"
 visible = false
 
 [[windows]]
@@ -70,7 +70,7 @@ cols = 60
 buffer_size = 100
 show_border = true
 border_style = "single"
-border_color = "#808080"
+border_color = "-"
 visible = false
 
 [[windows]]
@@ -84,5 +84,5 @@ cols = 40
 buffer_size = 10000
 show_border = true
 border_style = "single"
-border_color = "#9370DB"
+border_color = "-"
 visible = false
