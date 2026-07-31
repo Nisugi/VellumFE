@@ -74,17 +74,6 @@ struct WindowCost {
 pub struct PerformanceStats {
     // Draw cadence: timestamps of recent frame draws
     draw_stamps: VecDeque<Instant>,
-    collect_draws: bool,
-    collect_render_times: bool,
-    collect_ui_times: bool,
-    collect_wrap_times: bool,
-    collect_net: bool,
-    collect_parse: bool,
-    collect_events: bool,
-    collect_memory: bool,
-    collect_sys: bool,
-    collect_per_window: bool,
-    collect_spikes: bool,
 
     // Network stats
     bytes_received: u64,
@@ -162,17 +151,6 @@ impl PerformanceStats {
         let now = Instant::now();
         Self {
             draw_stamps: VecDeque::with_capacity(600),
-            collect_draws: true,
-            collect_render_times: true,
-            collect_ui_times: true,
-            collect_wrap_times: true,
-            collect_net: true,
-            collect_parse: true,
-            collect_events: true,
-            collect_memory: true,
-            collect_sys: true,
-            collect_per_window: true,
-            collect_spikes: true,
 
             bytes_received: 0,
             bytes_sent: 0,
@@ -231,9 +209,6 @@ impl PerformanceStats {
 
     /// Record a frame draw (a real repaint, not an idle tick).
     pub fn record_frame(&mut self) {
-        if !self.collect_draws {
-            return;
-        }
         let now = Instant::now();
         self.draw_stamps.push_back(now);
         // Drop stamps outside the draws/sec window.
@@ -260,18 +235,12 @@ impl PerformanceStats {
 
     /// Record bytes received from network
     pub fn record_bytes_received(&mut self, bytes: u64) {
-        if !self.collect_net {
-            return;
-        }
         self.bytes_received += bytes;
         self.roll_network_second();
     }
 
     /// Record bytes sent to network
     pub fn record_bytes_sent(&mut self, bytes: u64) {
-        if !self.collect_net {
-            return;
-        }
         self.bytes_sent += bytes;
         self.roll_network_second();
     }
@@ -291,9 +260,6 @@ impl PerformanceStats {
 
     /// Record a parse operation
     pub fn record_parse(&mut self, duration: Duration) {
-        if !self.collect_parse {
-            return;
-        }
         let now = Instant::now();
 
         self.parse_times.push_back(duration);
@@ -356,9 +322,6 @@ impl PerformanceStats {
 
     /// Record total render/paint time for a frame
     pub fn record_render_time(&mut self, duration: Duration) {
-        if !self.collect_render_times {
-            return;
-        }
         self.render_times.push_back(duration);
         if self.render_times.len() > self.max_render_samples {
             self.render_times.pop_front();
@@ -372,9 +335,6 @@ impl PerformanceStats {
     /// Record widget-only draw time (TUI: the widget pass before the
     /// terminal flush).
     pub fn record_ui_render_time(&mut self, duration: Duration) {
-        if !self.collect_ui_times {
-            return;
-        }
         self.ui_render_times.push_back(duration);
         if self.ui_render_times.len() > self.max_render_samples {
             self.ui_render_times.pop_front();
@@ -383,9 +343,6 @@ impl PerformanceStats {
 
     /// Record text wrapping time
     pub fn record_text_wrap_time(&mut self, duration: Duration) {
-        if !self.collect_wrap_times {
-            return;
-        }
         self.text_wrap_times.push_back(duration);
         if self.text_wrap_times.len() > self.max_render_samples {
             self.text_wrap_times.pop_front();
@@ -394,9 +351,6 @@ impl PerformanceStats {
 
     /// Record event processing time
     pub fn record_event_process_time(&mut self, duration: Duration) {
-        if !self.collect_events {
-            return;
-        }
         self.event_process_times.push_back(duration);
         if self.event_process_times.len() > self.max_event_samples {
             self.event_process_times.pop_front();
@@ -416,19 +370,17 @@ impl PerformanceStats {
         }
     }
 
-    /// Reset peak counters (queue max) and the spike log. Called when the
-    /// monitor opens so peaks describe the current session of watching,
-    /// not the login flood.
+    /// Reset the queue-depth peak. Called when the monitor opens so the
+    /// peak describes the current session of watching, not the login
+    /// flood. The spike log deliberately survives: it is evidence of what
+    /// already happened (timestamps make old entries obvious, and the
+    /// 10-entry cap ages them out naturally).
     pub fn reset_peaks(&mut self) {
         self.event_queue_depth_max = self.event_queue_depth_last;
-        self.spike_log.clear();
     }
 
     /// Update buffered-content tracking
     pub fn update_memory_stats(&mut self, total_lines: usize, window_count: usize) {
-        if !self.collect_memory {
-            return;
-        }
         self.total_lines_buffered = total_lines;
         self.active_window_count = window_count;
     }
@@ -448,9 +400,6 @@ impl PerformanceStats {
 
     /// Sample system/process metrics (CPU/RSS) at most once per second
     pub fn sample_sysinfo(&mut self) {
-        if !self.collect_sys {
-            return;
-        }
         if Instant::now().duration_since(self.last_sys_sample) < Duration::from_secs(1) {
             return;
         }
@@ -485,9 +434,6 @@ impl PerformanceStats {
 
     /// Record one window's render cost this frame.
     pub fn record_window_render(&mut self, name: &str, duration: Duration) {
-        if !self.collect_per_window {
-            return;
-        }
         let now = Instant::now();
         let entry = self
             .window_costs
@@ -525,9 +471,6 @@ impl PerformanceStats {
     }
 
     fn log_spike(&mut self, kind: &'static str, ms: f64) {
-        if !self.collect_spikes {
-            return;
-        }
         let now = Instant::now();
         if let Some(last) = self.last_spike_at.get(kind) {
             if now.duration_since(*last) < SPIKE_DEBOUNCE {
@@ -674,38 +617,6 @@ impl PerformanceStats {
 
     pub fn cpu_series(&self) -> Vec<f32> {
         self.cpu_history.iter().copied().collect()
-    }
-
-    /// Enable/disable collection groups based on widget config (to avoid overhead)
-    pub fn apply_enabled_from(&mut self, cfg: &crate::config::PerformanceWidgetData) {
-        if !cfg.enabled {
-            self.collect_draws = false;
-            self.collect_render_times = false;
-            self.collect_ui_times = false;
-            self.collect_wrap_times = false;
-            self.collect_net = false;
-            self.collect_parse = false;
-            self.collect_events = false;
-            self.collect_memory = false;
-            self.collect_sys = false;
-            self.collect_per_window = false;
-            self.collect_spikes = false;
-            return;
-        }
-        self.collect_draws = cfg.show_fps;
-        // Spike detection rides the render/event/parse recorders, so the
-        // spike log keeps those collectors alive even when their rows are
-        // hidden.
-        self.collect_spikes = cfg.show_spike_log;
-        self.collect_render_times = cfg.show_render_times || cfg.show_spike_log;
-        self.collect_ui_times = cfg.show_ui_times;
-        self.collect_wrap_times = cfg.show_wrap_times;
-        self.collect_net = cfg.show_net || cfg.show_spike_log;
-        self.collect_parse = cfg.show_parse || cfg.show_spike_log;
-        self.collect_events = cfg.show_events || cfg.show_spike_log;
-        self.collect_memory = cfg.show_memory || cfg.show_lines;
-        self.collect_sys = cfg.show_cpu || cfg.show_memory;
-        self.collect_per_window = cfg.show_per_window;
     }
 
     /// Full plain-text report for `.performance dump`: every metric this
@@ -1249,7 +1160,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reset_peaks_clears_spikes_and_queue_max() {
+    fn test_reset_peaks_resets_queue_max_but_keeps_spikes() {
         let mut stats = PerformanceStats::new();
         stats.record_event_queue_depth(80);
         stats.record_event_queue_depth(3);
@@ -1259,7 +1170,9 @@ mod tests {
 
         stats.reset_peaks();
         assert_eq!(stats.max_event_queue_depth(), 3);
-        assert_eq!(stats.spike_log().count(), 0);
+        // Spike history is evidence of what already happened; opening the
+        // monitor must not destroy it.
+        assert_eq!(stats.spike_log().count(), 1);
     }
 
     #[test]

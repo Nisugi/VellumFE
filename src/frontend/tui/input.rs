@@ -4354,9 +4354,6 @@ impl TuiFrontend {
             if !app_core.config.ui.toggle_perf_metric(metric) {
                 tracing::warn!("Unknown perf metric toggle: {metric}");
             }
-            // Re-apply enabled flags to perf_stats collector
-            let data = app_core.perf_overlay_data(true);
-            app_core.perf_stats.apply_enabled_from(&data);
             // Rebuild menu with updated checkmarks (keep it open)
             if let Some(ref mut menu) = app_core.ui_state.popup_menu {
                 menu.items = Self::build_perf_metrics_context_menu(&app_core.config.ui);

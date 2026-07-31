@@ -2197,12 +2197,7 @@ impl AppCore {
                         color: active_color,
                     })
                 }
-                WidgetType::Performance => {
-                    if let crate::config::WindowDef::Performance { data, .. } = window_def {
-                        self.perf_stats.apply_enabled_from(data);
-                    }
-                    WindowContent::Performance
-                }
+                WidgetType::Performance => WindowContent::Performance,
                 WidgetType::Hand => WindowContent::Hand {
                     item: None,
                     link: None,
@@ -2548,12 +2543,7 @@ impl AppCore {
                 last_update: 0,
                 generation: 0,
             }),
-            WidgetType::Performance => {
-                if let crate::config::WindowDef::Performance { data, .. } = window_def {
-                    self.perf_stats.apply_enabled_from(data);
-                }
-                WindowContent::Performance
-            }
+            WidgetType::Performance => WindowContent::Performance,
             WidgetType::Hand => WindowContent::Hand {
                 item: None,
                 link: None,
@@ -4323,10 +4313,7 @@ impl AppCore {
         };
 
         if widget_type == WidgetType::Performance {
-            // Enable collection per the user's metric toggles; restart
-            // peaks/spike log so they describe this viewing session.
-            let cfg = self.perf_overlay_data(true);
-            self.perf_stats.apply_enabled_from(&cfg);
+            // Restart peaks/spike log so they describe this viewing session.
             self.perf_stats.reset_peaks();
         }
 

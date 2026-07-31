@@ -372,10 +372,10 @@ impl AppCore {
     pub(crate) fn toggle_performance_overlay(&mut self) -> bool {
         const OVERLAY_NAME: &str = "performance_overlay";
 
-        // If it's already present, remove it and disable collection
+        // If it's already present, remove it. Collection stays on — it is
+        // always-on (and cheap) so `.performance dump` has history no
+        // matter when the monitor was last open.
         if self.ui_state.remove_window(OVERLAY_NAME).is_some() {
-            let data = self.perf_overlay_data(false);
-            self.perf_stats.apply_enabled_from(&data);
             self.config.ui.performance_stats_enabled = false;
             self.needs_render = true;
             return false;
@@ -394,11 +394,8 @@ impl AppCore {
         // Add to UI state only (does not touch layout)
         self.add_new_window(&window_def, 0, 0);
 
-        // Enable collection based on template data; peaks and the spike
-        // log restart so they describe this viewing session, not the
-        // login flood.
-        let data = self.perf_overlay_data(true);
-        self.perf_stats.apply_enabled_from(&data);
+        // Peaks and the spike log restart so they describe this viewing
+        // session, not the login flood.
         self.perf_stats.reset_peaks();
         self.config.ui.performance_stats_enabled = true;
         self.needs_render = true;

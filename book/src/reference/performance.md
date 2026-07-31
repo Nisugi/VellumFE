@@ -16,9 +16,12 @@ sometimes" into an actual diagnosis.
   [Diagnostic dumps](#diagnostic-dumps-performance-dump) below.
 
 Each metric row can be shown or hidden in **Settings → Performance**, or
-in the TUI by right-clicking the monitor window. When the monitor is
-closed, none of the metrics are collected at all — it costs nothing while
-you're not looking at it.
+in the TUI by right-clicking the monitor window. The toggles control what
+the window *displays*; collection itself is always on and costs almost
+nothing (a few timestamps per redraw and one CPU/memory sample per
+second). That's deliberate: when the client hitches, `.performance dump`
+has the history — including the spike that already happened — even if the
+monitor was never open.
 
 The TUI and GUI each show only the metrics **that frontend actually
 measures**, so the two lists differ slightly. A metric you don't see in
@@ -170,8 +173,9 @@ single most useful row for diagnosing "it hitched a minute ago":
 reads as "at 14:32:07 a redraw took 42 ms while digesting an 18 KB burst
 with 27 messages backed up" — i.e. the game sent something huge. A spike
 with *no* bytes and *no* queue behind it is the client's own fault —
-those are the ones worth reporting. The log clears each time the monitor
-opens.
+those are the ones worth reporting. The log keeps the 10 most recent
+spikes for the whole session; the timestamps tell you whether an entry is
+news or ancient history.
 
 ## Diagnostic dumps (`.performance dump`)
 
@@ -189,6 +193,7 @@ runaway texture count means art is being re-uploaded instead of cached),
 visible areas, and the DPI/zoom factors, which explain most "it looks
 blurry/huge on my monitor" reports.
 
-When reporting a performance problem on Discord, reproduce the hitch with
-the monitor open, then `.performance dump` and attach the file — it
-carries the whole diagnosis.
+The dump works whether or not the monitor is open — collection runs all
+session, so a hitch that already happened is still in the spike log. When
+reporting a performance problem on Discord, `.performance dump` right
+after the hitch and attach the file — it carries the whole diagnosis.
