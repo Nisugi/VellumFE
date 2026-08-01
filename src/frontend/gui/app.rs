@@ -1332,6 +1332,7 @@ impl VellumGuiApp {
             group.members.retain(|member| member != key);
             group.merged.retain(|member| member != key);
             group.end_anchored.retain(|member| member != key);
+            group.weights.retain(|(member, _)| member != key);
         }
         groups.retain(|group| group.members.len() >= 2);
     }
@@ -1376,6 +1377,7 @@ impl VellumGuiApp {
                 horizontal: false,
                 merged: Vec::new(),
                 end_anchored: Vec::new(),
+                weights: Vec::new(),
             });
         }
         self.tab_zones.insert(other, leader_zone);
@@ -1662,6 +1664,7 @@ impl VellumGuiApp {
                     let anchored = end_anchored.contains(&slot[0].id.key);
                     self.render_group_stack(
                         column,
+                        &tab.id.key,
                         slot,
                         anchored,
                         &mut member_rects,
@@ -1684,18 +1687,22 @@ impl VellumGuiApp {
                         })
                 })
                 .collect();
-            let fixed_total: f32 = slot_heights.iter().flatten().sum();
-            let flexible_count = slot_heights.iter().filter(|h| h.is_none()).count() as f32;
-            let total_gap = gap * (slots.len() as f32 - 1.0);
-            let flex_height = if flexible_count > 0.0 {
-                ((ui.available_height() - total_gap - fixed_total) / flexible_count)
-                    .max(24.0)
-            } else {
-                0.0
-            };
+            // A slot's weight is its first member's weight (the slot key).
+            // Weighted leftover split: buffs=2 / cooldowns=1 gives buffs twice
+            // the height instead of a forced 50/50.
+            let slot_weights: Vec<f32> = slots
+                .iter()
+                .map(|slot| self.member_weight(&tab.id.key, &slot[0].id.key))
+                .collect();
+            let resolved_slot_heights = Self::distribute_group_heights(
+                ui.available_height(),
+                gap,
+                &slot_heights,
+                &slot_weights,
+            );
             let width = ui.available_width().max(1.0);
-            for (slot, natural) in slots.iter().zip(&slot_heights) {
-                let each_height = natural.unwrap_or(flex_height);
+            for (slot, resolved) in slots.iter().zip(&resolved_slot_heights) {
+                let each_height = *resolved;
                 if let [member] = slot.as_slice() {
                     let block = ui.push_id(&member.id.key, |ui| {
                         ui.allocate_ui(Vec2::new(width, each_height), |ui| {
@@ -1834,6 +1841,66 @@ impl VellumGuiApp {
         }
     }
 
+    /// Resolve each member's height along the stack axis. Fixed members
+    /// (`Some(natural)`) keep their natural height; the leftover — total
+    /// available minus gaps minus the fixed members' heights — splits among
+    /// the flexible members (`None`) in proportion to their `weights`.
+    ///
+    /// A weight <= 0 is treated as 1.0 (the neutral default), so an empty or
+    /// all-default weight list reproduces the historical equal split. Each
+    /// flexible share is floored at `MIN_FLEX_HEIGHT` so a tiny weight can't
+    /// collapse a member to nothing. `weights` is parallel to `natural`
+    /// (same length, same order).
+    fn distribute_group_heights(
+        available: f32,
+        gap: f32,
+        natural: &[Option<f32>],
+        weights: &[f32],
+    ) -> Vec<f32> {
+        const MIN_FLEX_HEIGHT: f32 = 24.0;
+        let fixed_total: f32 = natural.iter().flatten().sum();
+        let total_gap = gap * (natural.len().saturating_sub(1) as f32);
+        let leftover = (available - total_gap - fixed_total).max(0.0);
+        // Sum of weights over the flexible members only; each non-positive
+        // weight contributes the neutral 1.0.
+        let flex_weight_total: f32 = natural
+            .iter()
+            .zip(weights)
+            .filter(|(n, _)| n.is_none())
+            .map(|(_, w)| if *w > 0.0 { *w } else { 1.0 })
+            .sum();
+        natural
+            .iter()
+            .zip(weights)
+            .map(|(n, w)| match n {
+                Some(h) => *h,
+                None => {
+                    if flex_weight_total > 0.0 {
+                        let w = if *w > 0.0 { *w } else { 1.0 };
+                        (leftover * w / flex_weight_total).max(MIN_FLEX_HEIGHT)
+                    } else {
+                        MIN_FLEX_HEIGHT
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// The weight for a member within its group, defaulting to 1.0 when the
+    /// group has no explicit weight for it (or the group isn't found).
+    fn member_weight(&self, leader: &TabKey, member: &TabKey) -> f32 {
+        self.group_for_tab(leader)
+            .and_then(|group| {
+                group
+                    .weights
+                    .iter()
+                    .find(|(key, _)| key == member)
+                    .map(|(_, w)| *w)
+            })
+            .filter(|w| *w > 0.0)
+            .unwrap_or(1.0)
+    }
+
     /// Render one group slot's members stacked vertically (a column of a
     /// side-by-side group, or the whole body of a stacked group's slot).
     /// Fixed members get their natural height and the leftover splits
@@ -1843,6 +1910,7 @@ impl VellumGuiApp {
     fn render_group_stack(
         &self,
         ui: &mut egui::Ui,
+        leader: &TabKey,
         members: &[GuiTab],
         end_anchored: bool,
         member_rects: &mut Vec<(String, Rect)>,
@@ -1854,14 +1922,17 @@ impl VellumGuiApp {
             .iter()
             .map(|member| self.member_natural_height(gap, bar_height, member))
             .collect();
+        let weights: Vec<f32> = members
+            .iter()
+            .map(|member| self.member_weight(leader, &member.id.key))
+            .collect();
         let fixed_total: f32 = natural_heights.iter().flatten().sum();
         let flexible_count = natural_heights.iter().filter(|h| h.is_none()).count() as f32;
         let total_gap = gap * (members.len() as f32 - 1.0);
-        let flex_height = if flexible_count > 0.0 {
-            ((ui.available_height() - total_gap - fixed_total) / flexible_count).max(24.0)
-        } else {
-            0.0
-        };
+        // Weighted per-member heights: fixed members keep their natural
+        // height, the leftover splits among flexible members by weight.
+        let resolved_heights =
+            Self::distribute_group_heights(ui.available_height(), gap, &natural_heights, &weights);
         if end_anchored && flexible_count == 0.0 {
             let leftover = ui.available_height() - total_gap - fixed_total;
             if leftover > 0.0 {
@@ -1869,8 +1940,8 @@ impl VellumGuiApp {
             }
         }
         let width = ui.available_width().max(1.0);
-        for (member, natural) in members.iter().zip(&natural_heights) {
-            let each_height = natural.unwrap_or(flex_height);
+        for (member, each_height) in members.iter().zip(&resolved_heights) {
+            let each_height = *each_height;
             let block = ui.push_id(&member.id.key, |ui| {
                 ui.allocate_ui(Vec2::new(width, each_height), |ui| {
                     ui.set_min_size(Vec2::new(width, each_height));
@@ -6828,7 +6899,83 @@ mod tests {
             horizontal: false,
             merged: members.to_vec(),
             end_anchored: members.to_vec(),
+            weights: Vec::new(),
         }
+    }
+
+    #[test]
+    fn distribute_group_heights_equal_when_weights_default() {
+        // Two flexible members, no gap: an empty/default weight list keeps
+        // the historical 50/50 split.
+        let h = super::VellumGuiApp::distribute_group_heights(
+            100.0,
+            0.0,
+            &[None, None],
+            &[1.0, 1.0],
+        );
+        assert_eq!(h, vec![50.0, 50.0]);
+    }
+
+    #[test]
+    fn distribute_group_heights_weighted_split() {
+        // buffs=2, cooldowns=1 → 2:1 split of the 90 leftover.
+        let h = super::VellumGuiApp::distribute_group_heights(
+            90.0,
+            0.0,
+            &[None, None],
+            &[2.0, 1.0],
+        );
+        assert_eq!(h, vec![60.0, 30.0]);
+    }
+
+    #[test]
+    fn distribute_group_heights_fixed_members_keep_natural() {
+        // A fixed 20px bar plus two flexible members weighted 3:1 over the
+        // remaining 200 (220 - 20); both shares clear the flex floor.
+        let h = super::VellumGuiApp::distribute_group_heights(
+            220.0,
+            0.0,
+            &[Some(20.0), None, None],
+            &[1.0, 3.0, 1.0],
+        );
+        assert_eq!(h, vec![20.0, 150.0, 50.0]);
+    }
+
+    #[test]
+    fn distribute_group_heights_nonpositive_weight_is_neutral() {
+        // A zero/negative weight is treated as 1.0, not collapsed.
+        let h = super::VellumGuiApp::distribute_group_heights(
+            100.0,
+            0.0,
+            &[None, None],
+            &[0.0, -5.0],
+        );
+        assert_eq!(h, vec![50.0, 50.0]);
+    }
+
+    #[test]
+    fn distribute_group_heights_floors_tiny_share() {
+        // A tiny weight still yields at least the flex floor (24), so a
+        // member never collapses to nothing.
+        let h = super::VellumGuiApp::distribute_group_heights(
+            100.0,
+            0.0,
+            &[None, None],
+            &[1000.0, 0.001],
+        );
+        assert!(h[1] >= 24.0, "tiny-weight member floored, got {}", h[1]);
+    }
+
+    #[test]
+    fn distribute_group_heights_accounts_for_gaps() {
+        // Two members, gap 10 → leftover 90 split evenly.
+        let h = super::VellumGuiApp::distribute_group_heights(
+            100.0,
+            10.0,
+            &[None, None],
+            &[1.0, 1.0],
+        );
+        assert_eq!(h, vec![45.0, 45.0]);
     }
 
     #[test]

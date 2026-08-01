@@ -286,6 +286,16 @@ pub struct TabGroup {
     /// member to absorb the leftover. Stale keys are ignored.
     #[serde(default)]
     pub end_anchored: Vec<TabKey>,
+    /// Per-member relative size weight for FLEXIBLE members (buffs, spells,
+    /// doll, text) along the group's stack axis. A member absent from this
+    /// map, or with a non-positive weight, defaults to 1.0. The leftover
+    /// (after fixed bars take their natural height) splits in proportion to
+    /// these weights, so e.g. buffs=2.0 / cooldowns=1.0 gives buffs twice
+    /// the height of cooldowns. Empty = the historical equal split, so
+    /// existing saved groups load unchanged. Fixed one-row members ignore
+    /// their weight. Stale keys are ignored.
+    #[serde(default)]
+    pub weights: Vec<(TabKey, f32)>,
 }
 
 /// Application-wide GUI sizing/accessibility settings.

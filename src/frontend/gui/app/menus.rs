@@ -125,6 +125,8 @@ pub(super) enum GuiWindowMenuCommand {
     /// Toggle whether the slot this member opens anchors its content to
     /// the end of the perpendicular axis (bottom of a column).
     ToggleSlotAnchor(TabKey),
+    /// Set a member's relative size weight along the group's stack axis.
+    SetMemberWeight { member: TabKey, weight: f32 },
 }
 
 /// Everything the window context menu needs to render, resolved up front so
@@ -142,6 +144,8 @@ struct WindowMenuView<'a> {
     group_merged: &'a [TabKey],
     /// Slot-opening members whose slot content anchors to the end.
     group_end_anchored: &'a [TabKey],
+    /// Per-member relative size weights (defaults to 1.0 when absent).
+    group_weights: &'a [(TabKey, f32)],
     /// Windows this one could be grouped with (visible, ungrouped).
     group_candidates: &'a [(TabKey, String)],
 }
@@ -559,6 +563,22 @@ impl VellumGuiApp {
                     self.layout_dirty = true;
                 }
             }
+            GuiWindowMenuCommand::SetMemberWeight { member, weight } => {
+                if let Some(group) = self
+                    .tab_groups
+                    .iter_mut()
+                    .find(|group| group.members.contains(&member))
+                {
+                    // Weight 1.0 is the neutral default — drop the entry
+                    // rather than storing it, so a reset-to-1 group serializes
+                    // exactly like a never-weighted one.
+                    group.weights.retain(|(key, _)| *key != member);
+                    if (weight - 1.0).abs() > f32::EPSILON && weight > 0.0 {
+                        group.weights.push((member, weight));
+                    }
+                    self.layout_dirty = true;
+                }
+            }
         }
     }
 
@@ -901,9 +921,15 @@ impl VellumGuiApp {
                     .collect()
             })
             .unwrap_or_default();
-        let (group_merged, group_end_anchored) = self
+        let (group_merged, group_end_anchored, group_weights) = self
             .group_for_tab(&request.tab_key)
-            .map(|group| (group.merged.clone(), group.end_anchored.clone()))
+            .map(|group| {
+                (
+                    group.merged.clone(),
+                    group.end_anchored.clone(),
+                    group.weights.clone(),
+                )
+            })
             .unwrap_or_default();
         let view = WindowMenuView {
             zone: request.zone,
@@ -915,6 +941,7 @@ impl VellumGuiApp {
             group_members: &group_members,
             group_merged: &group_merged,
             group_end_anchored: &group_end_anchored,
+            group_weights: &group_weights,
             group_candidates: &group_candidates,
         };
 
@@ -945,6 +972,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::UngroupMember(_)
                     | GuiWindowMenuCommand::ToggleMemberMerge(_)
                     | GuiWindowMenuCommand::ToggleSlotAnchor(_)
+                    | GuiWindowMenuCommand::SetMemberWeight { .. }
                     | GuiWindowMenuCommand::SetCornerRadius(_)
                     | GuiWindowMenuCommand::SetSkinFrame(_)
                     | GuiWindowMenuCommand::SetDollImage(_)
@@ -1597,6 +1625,42 @@ impl VellumGuiApp {
                                         command = Some(
                                             GuiWindowMenuCommand::ToggleSlotAnchor(key.clone()),
                                         );
+                                    }
+                                }
+                                // Relative size weight along the stack axis:
+                                // a member with weight 2 takes twice the
+                                // growable space of a weight-1 sibling (buffs
+                                // 6 lines / cooldowns 3). Only flexible
+                                // members grow, so this is inert for one-row
+                                // widgets (bars/timers), which is why it's
+                                // always offered — no need to know which is
+                                // which. Merged members size on the OTHER
+                                // axis, so hide it for them.
+                                if !merged {
+                                    let mut weight = view
+                                        .group_weights
+                                        .iter()
+                                        .find(|(k, _)| k == key)
+                                        .map(|(_, w)| *w)
+                                        .filter(|w| *w > 0.0)
+                                        .unwrap_or(1.0);
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(&mut weight, 0.25..=4.0)
+                                                .text("size weight")
+                                                .step_by(0.25),
+                                        )
+                                        .on_hover_text(
+                                            "Relative share of the group's growable \
+                                             space. 2 = twice a sibling at 1. \
+                                             One-row widgets ignore this.",
+                                        )
+                                        .changed()
+                                    {
+                                        command = Some(GuiWindowMenuCommand::SetMemberWeight {
+                                            member: key.clone(),
+                                            weight,
+                                        });
                                     }
                                 }
                             });
