@@ -679,6 +679,90 @@ impl TuiFrontend {
         Ok((true, command_to_send))
     }
 
+    /// Left-button drag: move an in-progress link drag, apply a window
+    /// move/resize gesture, or extend a text selection. `window_names` is
+    /// the caller's sorted window-name slice, used to index selections.
+    fn handle_mouse_drag_left(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+        window_names: &[String],
+    ) -> Result<(bool, Option<String>)> {
+        if let Some(ref mut link_drag) = app_core.ui_state.link_drag_state {
+            link_drag.current_pos = (x, y);
+            app_core.needs_render = true;
+        } else if let Some(drag_state) = app_core.ui_state.mouse_drag.clone() {
+            let dx = x as i32 - drag_state.start_pos.0 as i32;
+            let dy = y as i32 - drag_state.start_pos.1 as i32;
+
+            // Get terminal size for clamping windows within bounds
+            let (term_width, term_height) = self.size();
+
+            let (min_width_constraint, min_height_constraint) =
+                app_core.window_min_size(&drag_state.window_name);
+
+            if let Some(window) =
+                app_core.ui_state.get_window_mut(&drag_state.window_name)
+            {
+                // Geometry lives in the pure, unit-tested
+                // apply_window_drag (data/window.rs). The original
+                // window position at drag-start is `original_window_pos`
+                // (x, y, width, height).
+                let (ox, oy, ow, oh) = drag_state.original_window_pos;
+                window.position = crate::data::window::apply_window_drag(
+                    drag_state.operation,
+                    crate::data::WindowPosition {
+                        x: crate::data::geometry::Col::new(ox),
+                        y: crate::data::geometry::Row::new(oy),
+                        width: crate::data::geometry::Width::new(ow),
+                        height: crate::data::geometry::Height::new(oh),
+                    },
+                    dx,
+                    dy,
+                    min_width_constraint,
+                    min_height_constraint,
+                    term_width,
+                    term_height,
+                );
+                app_core.needs_render = true;
+            }
+        } else if app_core.ui_state.pending_link_click.is_some() {
+            app_core.ui_state.pending_link_click = None;
+        } else if let Some(_drag_start) = app_core.ui_state.selection_drag_start
+        {
+            // Update text selection on drag
+            if let Some(ref mut selection) = app_core.ui_state.selection_state {
+                // Find which window we're dragging in
+                for (name, window) in &app_core.ui_state.windows {
+                    let pos = &window.position;
+                    if x >= pos.x.get()
+                        && x < pos.x.get() + pos.width.get()
+                        && y >= pos.y.get()
+                        && y < pos.y.get() + pos.height.get()
+                    {
+                        let window_rect = ratatui::layout::Rect {
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
+                        };
+                        if let Some((line, col)) = self
+                            .mouse_to_text_coords(name, x, y, window_rect)
+                        {
+                            let window_index =
+                                window_names.binary_search(name).unwrap_or(0);
+                            selection.update_end(window_index, line, col);
+                            app_core.needs_render = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        Ok((true, None))
+    }
+
     /// Handle mouse events (extracted from main.rs Phase 4.1)
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
@@ -1527,7 +1611,7 @@ impl TuiFrontend {
         // Stable window index = position in the sorted name list. A binary
         // search at the two use sites replaces the HashMap previously built
         // on every mouse event.
-        let mut window_names: Vec<&String> = app_core.ui_state.windows.keys().collect();
+        let mut window_names: Vec<String> = app_core.ui_state.windows.keys().cloned().collect();
         window_names.sort();
 
         match kind {
@@ -1920,7 +2004,7 @@ impl TuiFrontend {
                             ) {
                                 // Find window index from the stable (sorted) ordering
                                 let window_index = window_names
-                                    .binary_search(&&window_name)
+                                    .binary_search(&window_name)
                                     .unwrap_or(0);
                                 app_core.ui_state.selection_state =
                                     Some(crate::selection::SelectionState::new(
@@ -1953,78 +2037,7 @@ impl TuiFrontend {
                 return Ok((true, None));
             }
             MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                if let Some(ref mut link_drag) = app_core.ui_state.link_drag_state {
-                    link_drag.current_pos = (*x, *y);
-                    app_core.needs_render = true;
-                } else if let Some(drag_state) = app_core.ui_state.mouse_drag.clone() {
-                    let dx = *x as i32 - drag_state.start_pos.0 as i32;
-                    let dy = *y as i32 - drag_state.start_pos.1 as i32;
-
-                    // Get terminal size for clamping windows within bounds
-                    let (term_width, term_height) = self.size();
-
-                    let (min_width_constraint, min_height_constraint) =
-                        app_core.window_min_size(&drag_state.window_name);
-
-                    if let Some(window) =
-                        app_core.ui_state.get_window_mut(&drag_state.window_name)
-                    {
-                        // Geometry lives in the pure, unit-tested
-                        // apply_window_drag (data/window.rs). The original
-                        // window position at drag-start is `original_window_pos`
-                        // (x, y, width, height).
-                        let (ox, oy, ow, oh) = drag_state.original_window_pos;
-                        window.position = crate::data::window::apply_window_drag(
-                            drag_state.operation,
-                            crate::data::WindowPosition {
-                                x: crate::data::geometry::Col::new(ox),
-                                y: crate::data::geometry::Row::new(oy),
-                                width: crate::data::geometry::Width::new(ow),
-                                height: crate::data::geometry::Height::new(oh),
-                            },
-                            dx,
-                            dy,
-                            min_width_constraint,
-                            min_height_constraint,
-                            term_width,
-                            term_height,
-                        );
-                        app_core.needs_render = true;
-                    }
-                } else if app_core.ui_state.pending_link_click.is_some() {
-                    app_core.ui_state.pending_link_click = None;
-                } else if let Some(_drag_start) = app_core.ui_state.selection_drag_start
-                {
-                    // Update text selection on drag
-                    if let Some(ref mut selection) = app_core.ui_state.selection_state {
-                        // Find which window we're dragging in
-                        for (name, window) in &app_core.ui_state.windows {
-                            let pos = &window.position;
-                            if *x >= pos.x.get()
-                                && *x < pos.x.get() + pos.width.get()
-                                && *y >= pos.y.get()
-                                && *y < pos.y.get() + pos.height.get()
-                            {
-                                let window_rect = ratatui::layout::Rect {
-                                    x: pos.x.get(),
-                                    y: pos.y.get(),
-                                    width: pos.width.get(),
-                                    height: pos.height.get(),
-                                };
-                                if let Some((line, col)) = self
-                                    .mouse_to_text_coords(name, *x, *y, window_rect)
-                                {
-                                    let window_index =
-                                        window_names.binary_search(&name).unwrap_or(0);
-                                    selection.update_end(window_index, line, col);
-                                    app_core.needs_render = true;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                return Ok((true, None));
+                return self.handle_mouse_drag_left(app_core, *x, *y, &window_names);
             }
             MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
                 return self.handle_mouse_up_left(app_core, *x, *y);
