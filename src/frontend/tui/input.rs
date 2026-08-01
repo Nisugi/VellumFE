@@ -315,6 +315,80 @@ impl TuiFrontend {
         app_core.ui_state.input_mode = InputMode::Menu;
     }
 
+    /// Route a mouse event to the open highlight form. Returns `Ok(None)`
+    /// when the form is closed so the caller falls through; `Ok(Some(..))`
+    /// when the form consumed the event (Save/Cancel run as simulated key
+    /// presses through `handle_menu_action_fn`).
+    fn handle_highlight_form_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut form) = self.highlight_form {
+            use crate::frontend::tui::highlight_form::HighlightFormMouseAction;
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, false, area)
+                }
+                _ => HighlightFormMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                HighlightFormMouseAction::Save => {
+                    // Trigger save via simulated Ctrl+S key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('s'),
+                        KeyModifiers::CTRL,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightFormMouseAction::Cancel => {
+                    // Trigger cancel via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightFormMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Scroll the topmost window under the cursor. `delta` is positive to
     /// scroll up (toward older lines), negative to scroll down.
     fn handle_mouse_scroll(
@@ -1232,61 +1306,10 @@ impl TuiFrontend {
 
         // Handle highlight form mouse events
         if self.highlight_form.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut form) = self.highlight_form {
-                use crate::frontend::tui::highlight_form::HighlightFormMouseAction;
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, false, area)
-                    }
-                    _ => HighlightFormMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    HighlightFormMouseAction::Save => {
-                        // Trigger save via simulated Ctrl+S key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('s'),
-                            KeyModifiers::CTRL,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightFormMouseAction::Cancel => {
-                        // Trigger cancel via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightFormMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_highlight_form_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
