@@ -315,6 +315,22 @@ impl TuiFrontend {
         app_core.ui_state.input_mode = InputMode::Menu;
     }
 
+    /// Scroll the topmost window under the cursor. `delta` is positive to
+    /// scroll up (toward older lines), negative to scroll down.
+    fn handle_mouse_scroll(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+        delta: i32,
+    ) -> Result<(bool, Option<String>)> {
+        // Find topmost window at mouse position (ephemeral windows have higher z-order)
+        let target_window = find_topmost_window_at(&app_core.ui_state, x, y);
+        self.scroll_window(&target_window, delta);
+        app_core.needs_render = true;
+        Ok((true, None))
+    }
+
     /// Handle mouse events (extracted from main.rs Phase 4.1)
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
@@ -1168,18 +1184,10 @@ impl TuiFrontend {
 
         match kind {
             MouseEventKind::ScrollUp => {
-                // Find topmost window at mouse position (ephemeral windows have higher z-order)
-                let target_window = find_topmost_window_at(&app_core.ui_state, *x, *y);
-                self.scroll_window(&target_window, 10);
-                app_core.needs_render = true;
-                return Ok((true, None));
+                return self.handle_mouse_scroll(app_core, *x, *y, 10);
             }
             MouseEventKind::ScrollDown => {
-                // Find topmost window at mouse position (ephemeral windows have higher z-order)
-                let target_window = find_topmost_window_at(&app_core.ui_state, *x, *y);
-                self.scroll_window(&target_window, -10);
-                app_core.needs_render = true;
-                return Ok((true, None));
+                return self.handle_mouse_scroll(app_core, *x, *y, -10);
             }
             MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
                 // If in menu mode, handle menu clicks first
