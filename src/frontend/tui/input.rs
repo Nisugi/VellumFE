@@ -331,6 +331,75 @@ impl TuiFrontend {
         Ok((true, None))
     }
 
+    /// Right-click handling: performance-overlay metrics menu, then window
+    /// title-bar context menus. Returns `(false, None)` when the click hits
+    /// nothing actionable so the caller can fall through.
+    fn handle_mouse_down_right(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+    ) -> Result<(bool, Option<String>)> {
+        use crate::data::ui_state::InputMode;
+
+        // Right-click on performance overlay: show metrics toggle menu
+        if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
+            let pos = &window.position;
+            if x >= pos.x.get() && x < pos.x.get() + pos.width.get()
+               && y >= pos.y.get() && y < pos.y.get() + pos.height.get() {
+                // Build performance metrics context menu
+                let items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
+                app_core.ui_state.popup_menu =
+                    Some(crate::data::ui_state::PopupMenu::new(items, (x, y + 1)));
+                app_core.ui_state.input_mode = InputMode::Menu;
+                app_core.needs_render = true;
+                return Ok((true, None));
+            }
+        }
+
+        // Right-click: show context menu for window title bars
+        for (name, window) in &app_core.ui_state.windows {
+            let pos = &window.position;
+            // Check if click is on the title bar (top row of window)
+            if y == pos.y.get() && x >= pos.x.get() && x < pos.x.get() + pos.width.get() {
+                // Build context menu items
+                let mut items = Vec::new();
+
+                // Don't allow closing the main window
+                if name != "main" && name != "command_input" {
+                    items.push(crate::data::ui_state::PopupMenuItem {
+                        text: "Close Window".to_string(),
+                        command: format!("__CLOSE_WINDOW__{}", name),
+                        disabled: false,
+                    });
+                }
+
+                items.push(crate::data::ui_state::PopupMenuItem {
+                    text: "Edit Window...".to_string(),
+                    command: format!("action:editwindow:{}", name),
+                    disabled: false,
+                });
+
+                items.push(crate::data::ui_state::PopupMenuItem {
+                    text: "Open Menu".to_string(),
+                    command: ".menu".to_string(),
+                    disabled: false,
+                });
+
+                if !items.is_empty() {
+                    // Position menu just below click point
+                    app_core.ui_state.popup_menu =
+                        Some(crate::data::ui_state::PopupMenu::new(items, (x, y + 1)));
+                    app_core.ui_state.input_mode = InputMode::Menu;
+                    app_core.needs_render = true;
+                    return Ok((true, None));
+                }
+            }
+        }
+
+        Ok((false, None))
+    }
+
     /// Handle mouse events (extracted from main.rs Phase 4.1)
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
@@ -1948,60 +2017,7 @@ impl TuiFrontend {
                 return Ok((true, command_to_send));
             }
             MouseEventKind::Down(crate::data::input::MouseButton::Right) => {
-                // Right-click on performance overlay: show metrics toggle menu
-                if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
-                    let pos = &window.position;
-                    if *x >= pos.x.get() && *x < pos.x.get() + pos.width.get()
-                       && *y >= pos.y.get() && *y < pos.y.get() + pos.height.get() {
-                        // Build performance metrics context menu
-                        let items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
-                        app_core.ui_state.popup_menu =
-                            Some(crate::data::ui_state::PopupMenu::new(items, (*x, *y + 1)));
-                        app_core.ui_state.input_mode = InputMode::Menu;
-                        app_core.needs_render = true;
-                        return Ok((true, None));
-                    }
-                }
-
-                // Right-click: show context menu for window title bars
-                for (name, window) in &app_core.ui_state.windows {
-                    let pos = &window.position;
-                    // Check if click is on the title bar (top row of window)
-                    if *y == pos.y.get() && *x >= pos.x.get() && *x < pos.x.get() + pos.width.get() {
-                        // Build context menu items
-                        let mut items = Vec::new();
-
-                        // Don't allow closing the main window
-                        if name != "main" && name != "command_input" {
-                            items.push(crate::data::ui_state::PopupMenuItem {
-                                text: "Close Window".to_string(),
-                                command: format!("__CLOSE_WINDOW__{}", name),
-                                disabled: false,
-                            });
-                        }
-
-                        items.push(crate::data::ui_state::PopupMenuItem {
-                            text: "Edit Window...".to_string(),
-                            command: format!("action:editwindow:{}", name),
-                            disabled: false,
-                        });
-
-                        items.push(crate::data::ui_state::PopupMenuItem {
-                            text: "Open Menu".to_string(),
-                            command: ".menu".to_string(),
-                            disabled: false,
-                        });
-
-                        if !items.is_empty() {
-                            // Position menu just below click point
-                            app_core.ui_state.popup_menu =
-                                Some(crate::data::ui_state::PopupMenu::new(items, (*x, *y + 1)));
-                            app_core.ui_state.input_mode = InputMode::Menu;
-                            app_core.needs_render = true;
-                            return Ok((true, None));
-                        }
-                    }
-                }
+                return self.handle_mouse_down_right(app_core, *x, *y);
             }
             _ => {}
         }
