@@ -400,6 +400,285 @@ impl TuiFrontend {
         Ok((false, None))
     }
 
+    /// Left-button release: finalize link drag-and-drop, commit window
+    /// drag/resize moves, and close text selections. Returns the command
+    /// (if any) produced by a completed link drop.
+    fn handle_mouse_up_left(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+    ) -> Result<(bool, Option<String>)> {
+        let mut command_to_send: Option<String> = None;
+
+        if let Some(link_drag) = app_core.ui_state.link_drag_state.take() {
+            let dx = (x as i16 - link_drag.start_pos.0 as i16).abs();
+            let dy = (y as i16 - link_drag.start_pos.1 as i16).abs();
+
+            if dx > 2 || dy > 2 {
+                let mut drop_target_hand: Option<String> = None;
+                let mut drop_target_id: Option<String> = None;
+
+                for (name, window) in &app_core.ui_state.windows {
+                    let pos = &window.position;
+                    if x >= pos.x.get()
+                        && x < pos.x.get() + pos.width.get()
+                        && y >= pos.y.get()
+                        && y < pos.y.get() + pos.height.get()
+                    {
+                        // First check if this is a hand widget (left or right only)
+                        if name == "left_hand" || name == "left" {
+                            drop_target_hand = Some("left".to_string());
+                            break;
+                        } else if name == "right_hand" || name == "right" {
+                            drop_target_hand = Some("right".to_string());
+                            break;
+                        }
+
+                        let window_rect = ratatui::layout::Rect {
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
+                        };
+
+                        // Inventory window: check link first, fallback to wear
+                        if matches!(window.content, crate::data::WindowContent::Inventory(_)) {
+                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                                drop_target_id = Some(target_link.exist_id);
+                            } else {
+                                drop_target_hand = Some("wear".to_string());
+                            }
+                            break;
+                        }
+
+                        // Container windows: check link first, fallback to container
+                        if let crate::data::WindowContent::Container { ref container_title } = window.content {
+                            // First: try to find a link at the drop position (nested container)
+                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                                drop_target_id = Some(target_link.exist_id);
+                            } else {
+                                // Fallback: the window's container as a
+                                // game-command target (command_target is
+                                // stow-correct; plain id would be "#stow").
+                                if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
+                                    drop_target_id = Some(container_data.command_target());
+                                }
+                            }
+                            break;  // Container window handled
+                        }
+
+                        // Items window: check link first, fallback to drop
+                        if matches!(window.content, crate::data::WindowContent::Items) {
+                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                                drop_target_id = Some(target_link.exist_id);
+                            }
+                            // No else - if no link clicked, fall through to "drop" at line ~1782
+                            break;  // Items window handled
+                        }
+
+                        // Otherwise check if we dropped on a link (non-container windows)
+                        if let Some(target_link) =
+                            self.link_at_position(name, x, y, window_rect)
+                        {
+                            drop_target_id = Some(target_link.exist_id);
+                            break;
+                        }
+                    }
+                }
+
+                let command = if let Some(hand_type) = drop_target_hand {
+                    format!(
+                        "_drag #{} {}\n",
+                        link_drag.link_data.exist_id, hand_type
+                    )
+                } else if let Some(target_id) = drop_target_id {
+                    format!(
+                        "_drag #{} #{}\n",
+                        link_drag.link_data.exist_id, target_id
+                    )
+                } else {
+                    format!("_drag #{} drop\n", link_drag.link_data.exist_id)
+                };
+                command_to_send = Some(command);
+            }
+        } else if let Some(pending_click) =
+            app_core.ui_state.pending_link_click.take()
+        {
+            let dx = (x as i16 - pending_click.click_pos.0 as i16).abs();
+            let dy = (y as i16 - pending_click.click_pos.1 as i16).abs();
+
+            if dx <= 2 && dy <= 2 {
+                // Handle <d> tags differently (direct commands vs context menus)
+                if pending_click.link_data.exist_id == "_direct_" {
+                    // <d> tag: Send text/noun as direct command
+                    let command = if !pending_click.link_data.noun.is_empty() {
+                        format!("{}\n", pending_click.link_data.noun)
+                    // Use cmd attribute
+                    } else {
+                        format!("{}\n", pending_click.link_data.text)
+                        // Use text content
+                    };
+                    tracing::info!(
+                        "Executing <d> direct command: {}",
+                        command.trim()
+                    );
+                    command_to_send = Some(command);
+                } else if let Some(ref coord) = pending_click.link_data.coord {
+                    // Link has coord field: Look up command in cmdlist and send directly
+                    if let Some(ref cmdlist) = app_core.cmdlist {
+                        if let Some(entry) = cmdlist.get(coord) {
+                            // Substitute placeholders in command
+                            let command = crate::cmdlist::CmdList::substitute_command(
+                                &entry.command,
+                                &pending_click.link_data.noun,
+                                &pending_click.link_data.exist_id,
+                                None,
+                            );
+                            tracing::info!(
+                                "Executing cmdlist command for '{}' (coord: {}): {}",
+                                pending_click.link_data.text,
+                                coord,
+                                command.trim()
+                            );
+                            command_to_send = Some(format!("{}\n", command));
+                        } else {
+                            tracing::warn!(
+                                "Coord {} not found in cmdlist for '{}'",
+                                coord,
+                                pending_click.link_data.text
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Cmdlist not loaded - cannot resolve coord {} for '{}'",
+                            coord,
+                            pending_click.link_data.text
+                        );
+                    }
+                } else {
+                    // Regular <a> tag without coord: Request context menu
+                    let command = app_core.request_menu(
+                        pending_click.link_data.exist_id.clone(),
+                        pending_click.link_data.noun.clone(),
+                        pending_click.click_pos,
+                    );
+                    tracing::info!(
+                        "Sending _menu command for '{}' (exist_id: {})",
+                        pending_click.link_data.noun,
+                        pending_click.link_data.exist_id
+                    );
+                    command_to_send = Some(command);
+                }
+            } else {
+                tracing::debug!(
+                    "Link click cancelled - dragged {} pixels",
+                    dx.max(dy)
+                );
+            }
+        }
+
+        // Sync UI state positions back to layout WindowDefs after mouse resize/move
+        let mut window_layout_changed = false;
+        if let Some(drag_state) = &app_core.ui_state.mouse_drag {
+            if let Some(window) =
+                app_core.ui_state.get_window(&drag_state.window_name)
+            {
+                // Find the corresponding WindowDef in layout and update it
+                if let Some(window_def) = app_core
+                    .layout
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.name() == drag_state.window_name)
+                {
+                    let base = window_def.base_mut();
+                    base.col = window.position.x;
+                    base.row = window.position.y;
+                    base.cols = window.position.width;
+                    base.rows = window.position.height;
+                    tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
+                        drag_state.window_name, base.col.get(), base.row.get(), base.cols.get(), base.rows.get());
+                    window_layout_changed = true;
+                }
+
+                // Save ephemeral container window positions to widget_state.toml
+                if app_core.ui_state.ephemeral_windows.contains(&drag_state.window_name) {
+                    use crate::config::{Config, DialogPosition};
+                    let pos = DialogPosition {
+                        x: window.position.x.get(),
+                        y: window.position.y.get(),
+                        width: Some(window.position.width.get()),
+                        height: Some(window.position.height.get()),
+                    };
+                    app_core.saved_dialog_positions.containers.insert(
+                        drag_state.window_name.clone(),
+                        pos,
+                    );
+                    // Save to disk asynchronously (best-effort)
+                    let character = app_core.config.character.clone();
+                    let positions = app_core.saved_dialog_positions.clone();
+                    std::thread::spawn(move || {
+                        if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
+                            tracing::warn!("Failed to save container positions: {}", e);
+                        }
+                    });
+                    tracing::debug!("Saved ephemeral container position for '{}'", drag_state.window_name);
+                }
+            }
+        }
+
+        if window_layout_changed {
+            app_core.schedule_layout_autosave();
+        }
+
+        app_core.ui_state.mouse_drag = None;
+        app_core.ui_state.selection_drag_start = None;
+
+        // Handle text selection copy to clipboard
+        if let Some(ref selection) = app_core.ui_state.selection_state {
+            let auto_copy = app_core.config.ui.selection_auto_copy;
+
+            if auto_copy && !selection.is_empty() {
+                // Extract text from selection using the stored window name
+                let (start, end) = selection.normalized_range();
+                let window_name = &selection.window_name;
+
+                if let Some(text) = self.extract_selection_text(
+                    window_name, start.line, start.col, end.line, end.col,
+                ) {
+                    // Copy to clipboard
+                    match crate::clipboard::copy(&text) {
+                        Ok(()) => {
+                            tracing::info!(
+                                "Copied {} chars to clipboard from '{}'",
+                                text.len(),
+                                window_name
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to copy to clipboard: {}", e);
+                        }
+                    }
+                }
+            }
+            // Clear selection and unfreeze text window
+            if auto_copy {
+                // Unfreeze the text window before clearing selection
+                let window_to_unfreeze = selection.window_name.clone();
+                if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_to_unfreeze) {
+                    text_window.unfreeze_and_apply_pending();
+                } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_to_unfreeze) {
+                    tabbed_window.unfreeze_and_apply_pending();
+                }
+                app_core.ui_state.selection_state = None;
+            }
+            app_core.needs_render = true;
+        }
+
+
+        Ok((true, command_to_send))
+    }
+
     /// Handle mouse events (extracted from main.rs Phase 4.1)
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
@@ -1748,273 +2027,7 @@ impl TuiFrontend {
                 return Ok((true, None));
             }
             MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                let mut command_to_send: Option<String> = None;
-
-                if let Some(link_drag) = app_core.ui_state.link_drag_state.take() {
-                    let dx = (*x as i16 - link_drag.start_pos.0 as i16).abs();
-                    let dy = (*y as i16 - link_drag.start_pos.1 as i16).abs();
-
-                    if dx > 2 || dy > 2 {
-                        let mut drop_target_hand: Option<String> = None;
-                        let mut drop_target_id: Option<String> = None;
-
-                        for (name, window) in &app_core.ui_state.windows {
-                            let pos = &window.position;
-                            if *x >= pos.x.get()
-                                && *x < pos.x.get() + pos.width.get()
-                                && *y >= pos.y.get()
-                                && *y < pos.y.get() + pos.height.get()
-                            {
-                                // First check if this is a hand widget (left or right only)
-                                if name == "left_hand" || name == "left" {
-                                    drop_target_hand = Some("left".to_string());
-                                    break;
-                                } else if name == "right_hand" || name == "right" {
-                                    drop_target_hand = Some("right".to_string());
-                                    break;
-                                }
-
-                                let window_rect = ratatui::layout::Rect {
-                                    x: pos.x.get(),
-                                    y: pos.y.get(),
-                                    width: pos.width.get(),
-                                    height: pos.height.get(),
-                                };
-
-                                // Inventory window: check link first, fallback to wear
-                                if matches!(window.content, crate::data::WindowContent::Inventory(_)) {
-                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
-                                        drop_target_id = Some(target_link.exist_id);
-                                    } else {
-                                        drop_target_hand = Some("wear".to_string());
-                                    }
-                                    break;
-                                }
-
-                                // Container windows: check link first, fallback to container
-                                if let crate::data::WindowContent::Container { ref container_title } = window.content {
-                                    // First: try to find a link at the drop position (nested container)
-                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
-                                        drop_target_id = Some(target_link.exist_id);
-                                    } else {
-                                        // Fallback: the window's container as a
-                                        // game-command target (command_target is
-                                        // stow-correct; plain id would be "#stow").
-                                        if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
-                                            drop_target_id = Some(container_data.command_target());
-                                        }
-                                    }
-                                    break;  // Container window handled
-                                }
-
-                                // Items window: check link first, fallback to drop
-                                if matches!(window.content, crate::data::WindowContent::Items) {
-                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
-                                        drop_target_id = Some(target_link.exist_id);
-                                    }
-                                    // No else - if no link clicked, fall through to "drop" at line ~1782
-                                    break;  // Items window handled
-                                }
-
-                                // Otherwise check if we dropped on a link (non-container windows)
-                                if let Some(target_link) =
-                                    self.link_at_position(name, *x, *y, window_rect)
-                                {
-                                    drop_target_id = Some(target_link.exist_id);
-                                    break;
-                                }
-                            }
-                        }
-
-                        let command = if let Some(hand_type) = drop_target_hand {
-                            format!(
-                                "_drag #{} {}\n",
-                                link_drag.link_data.exist_id, hand_type
-                            )
-                        } else if let Some(target_id) = drop_target_id {
-                            format!(
-                                "_drag #{} #{}\n",
-                                link_drag.link_data.exist_id, target_id
-                            )
-                        } else {
-                            format!("_drag #{} drop\n", link_drag.link_data.exist_id)
-                        };
-                        command_to_send = Some(command);
-                    }
-                } else if let Some(pending_click) =
-                    app_core.ui_state.pending_link_click.take()
-                {
-                    let dx = (*x as i16 - pending_click.click_pos.0 as i16).abs();
-                    let dy = (*y as i16 - pending_click.click_pos.1 as i16).abs();
-
-                    if dx <= 2 && dy <= 2 {
-                        // Handle <d> tags differently (direct commands vs context menus)
-                        if pending_click.link_data.exist_id == "_direct_" {
-                            // <d> tag: Send text/noun as direct command
-                            let command = if !pending_click.link_data.noun.is_empty() {
-                                format!("{}\n", pending_click.link_data.noun)
-                            // Use cmd attribute
-                            } else {
-                                format!("{}\n", pending_click.link_data.text)
-                                // Use text content
-                            };
-                            tracing::info!(
-                                "Executing <d> direct command: {}",
-                                command.trim()
-                            );
-                            command_to_send = Some(command);
-                        } else if let Some(ref coord) = pending_click.link_data.coord {
-                            // Link has coord field: Look up command in cmdlist and send directly
-                            if let Some(ref cmdlist) = app_core.cmdlist {
-                                if let Some(entry) = cmdlist.get(coord) {
-                                    // Substitute placeholders in command
-                                    let command = crate::cmdlist::CmdList::substitute_command(
-                                        &entry.command,
-                                        &pending_click.link_data.noun,
-                                        &pending_click.link_data.exist_id,
-                                        None,
-                                    );
-                                    tracing::info!(
-                                        "Executing cmdlist command for '{}' (coord: {}): {}",
-                                        pending_click.link_data.text,
-                                        coord,
-                                        command.trim()
-                                    );
-                                    command_to_send = Some(format!("{}\n", command));
-                                } else {
-                                    tracing::warn!(
-                                        "Coord {} not found in cmdlist for '{}'",
-                                        coord,
-                                        pending_click.link_data.text
-                                    );
-                                }
-                            } else {
-                                tracing::warn!(
-                                    "Cmdlist not loaded - cannot resolve coord {} for '{}'",
-                                    coord,
-                                    pending_click.link_data.text
-                                );
-                            }
-                        } else {
-                            // Regular <a> tag without coord: Request context menu
-                            let command = app_core.request_menu(
-                                pending_click.link_data.exist_id.clone(),
-                                pending_click.link_data.noun.clone(),
-                                pending_click.click_pos,
-                            );
-                            tracing::info!(
-                                "Sending _menu command for '{}' (exist_id: {})",
-                                pending_click.link_data.noun,
-                                pending_click.link_data.exist_id
-                            );
-                            command_to_send = Some(command);
-                        }
-                    } else {
-                        tracing::debug!(
-                            "Link click cancelled - dragged {} pixels",
-                            dx.max(dy)
-                        );
-                    }
-                }
-
-                // Sync UI state positions back to layout WindowDefs after mouse resize/move
-                let mut window_layout_changed = false;
-                if let Some(drag_state) = &app_core.ui_state.mouse_drag {
-                    if let Some(window) =
-                        app_core.ui_state.get_window(&drag_state.window_name)
-                    {
-                        // Find the corresponding WindowDef in layout and update it
-                        if let Some(window_def) = app_core
-                            .layout
-                            .windows
-                            .iter_mut()
-                            .find(|w| w.name() == drag_state.window_name)
-                        {
-                            let base = window_def.base_mut();
-                            base.col = window.position.x;
-                            base.row = window.position.y;
-                            base.cols = window.position.width;
-                            base.rows = window.position.height;
-                            tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
-                                drag_state.window_name, base.col.get(), base.row.get(), base.cols.get(), base.rows.get());
-                            window_layout_changed = true;
-                        }
-
-                        // Save ephemeral container window positions to widget_state.toml
-                        if app_core.ui_state.ephemeral_windows.contains(&drag_state.window_name) {
-                            use crate::config::{Config, DialogPosition};
-                            let pos = DialogPosition {
-                                x: window.position.x.get(),
-                                y: window.position.y.get(),
-                                width: Some(window.position.width.get()),
-                                height: Some(window.position.height.get()),
-                            };
-                            app_core.saved_dialog_positions.containers.insert(
-                                drag_state.window_name.clone(),
-                                pos,
-                            );
-                            // Save to disk asynchronously (best-effort)
-                            let character = app_core.config.character.clone();
-                            let positions = app_core.saved_dialog_positions.clone();
-                            std::thread::spawn(move || {
-                                if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
-                                    tracing::warn!("Failed to save container positions: {}", e);
-                                }
-                            });
-                            tracing::debug!("Saved ephemeral container position for '{}'", drag_state.window_name);
-                        }
-                    }
-                }
-
-                if window_layout_changed {
-                    app_core.schedule_layout_autosave();
-                }
-
-                app_core.ui_state.mouse_drag = None;
-                app_core.ui_state.selection_drag_start = None;
-
-                // Handle text selection copy to clipboard
-                if let Some(ref selection) = app_core.ui_state.selection_state {
-                    let auto_copy = app_core.config.ui.selection_auto_copy;
-
-                    if auto_copy && !selection.is_empty() {
-                        // Extract text from selection using the stored window name
-                        let (start, end) = selection.normalized_range();
-                        let window_name = &selection.window_name;
-
-                        if let Some(text) = self.extract_selection_text(
-                            window_name, start.line, start.col, end.line, end.col,
-                        ) {
-                            // Copy to clipboard
-                            match crate::clipboard::copy(&text) {
-                                Ok(()) => {
-                                    tracing::info!(
-                                        "Copied {} chars to clipboard from '{}'",
-                                        text.len(),
-                                        window_name
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to copy to clipboard: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    // Clear selection and unfreeze text window
-                    if auto_copy {
-                        // Unfreeze the text window before clearing selection
-                        let window_to_unfreeze = selection.window_name.clone();
-                        if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_to_unfreeze) {
-                            text_window.unfreeze_and_apply_pending();
-                        } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_to_unfreeze) {
-                            tabbed_window.unfreeze_and_apply_pending();
-                        }
-                        app_core.ui_state.selection_state = None;
-                    }
-                    app_core.needs_render = true;
-                }
-
-                return Ok((true, command_to_send));
+                return self.handle_mouse_up_left(app_core, *x, *y);
             }
             MouseEventKind::Down(crate::data::input::MouseButton::Right) => {
                 return self.handle_mouse_down_right(app_core, *x, *y);
