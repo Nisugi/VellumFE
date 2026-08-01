@@ -28,10 +28,14 @@ pub(super) fn auto_assign_slot(mut color: crate::config::PaletteColor, palette: 
 /// Find the topmost window at the given screen coordinates.
 /// Ephemeral windows (container discovery) have higher z-order and are checked first.
 /// Returns the window name, defaulting to "main" if no window contains the point.
-fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> String {
+/// Topmost window whose rect contains `(x, y)`, falling back to "main".
+/// Ephemeral windows render on top so they win; otherwise any visible window
+/// containing the point. Takes `&UiState` (not the whole AppCore) so the pure
+/// hit-test can be unit-tested without a live core.
+fn find_topmost_window_at(ui_state: &crate::data::ui_state::UiState, x: u16, y: u16) -> String {
     // First check ephemeral windows (they're rendered on top)
-    for window_name in &app_core.ui_state.ephemeral_windows {
-        if let Some(window) = app_core.ui_state.windows.get(window_name) {
+    for window_name in &ui_state.ephemeral_windows {
+        if let Some(window) = ui_state.windows.get(window_name) {
             if !window.visible {
                 continue;
             }
@@ -47,8 +51,8 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
     }
 
     // Then check regular windows
-    for (name, window) in &app_core.ui_state.windows {
-        if !window.visible || app_core.ui_state.ephemeral_windows.contains(name) {
+    for (name, window) in &ui_state.windows {
+        if !window.visible || ui_state.ephemeral_windows.contains(name) {
             continue;
         }
         let pos = &window.position;
@@ -63,6 +67,44 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
 
     // Default to main window
     "main".to_string()
+}
+
+/// Which drag operation a mouse-down at `(x, y)` starts on a window occupying
+/// `(win_x, win_y, width, height)`, or None for a plain body click. Pure edge
+/// geometry, matching the TUI's border-as-handle convention:
+/// - top row → Move
+/// - right column → ResizeRight (and the bottom-right cell → ResizeBottomRight)
+/// - bottom row → ResizeBottom
+/// A locked window resizes nowhere (only Move via the top row). The bottom row
+/// only acts as a resize handle when height > 2, so a 1-2 row widget's bottom
+/// row stays content, not a handle. Right needs width > 1 for the same reason.
+fn resize_op_at(
+    win_x: u16,
+    win_y: u16,
+    width: u16,
+    height: u16,
+    locked: bool,
+    x: u16,
+    y: u16,
+) -> Option<crate::data::DragOperation> {
+    use crate::data::DragOperation;
+    let right_col = win_x + width - 1;
+    let bottom_row = win_y + height - 1;
+    let has_horizontal_space = width > 1;
+    let can_resize_bottom = !locked && height > 2;
+    let can_resize_right = !locked;
+
+    if has_horizontal_space && can_resize_bottom && x == right_col && y == bottom_row {
+        Some(DragOperation::ResizeBottomRight)
+    } else if can_resize_right && has_horizontal_space && x == right_col {
+        Some(DragOperation::ResizeRight)
+    } else if can_resize_bottom && y == bottom_row {
+        Some(DragOperation::ResizeBottom)
+    } else if y == win_y {
+        Some(DragOperation::Move)
+    } else {
+        None
+    }
 }
 
 // TUI-specific methods (not part of Frontend trait)
@@ -1216,14 +1258,14 @@ impl TuiFrontend {
         match kind {
             MouseEventKind::ScrollUp => {
                 // Find topmost window at mouse position (ephemeral windows have higher z-order)
-                let target_window = find_topmost_window_at(app_core, *x, *y);
+                let target_window = find_topmost_window_at(&app_core.ui_state, *x, *y);
                 self.scroll_window(&target_window, 10);
                 app_core.needs_render = true;
                 return Ok((true, None));
             }
             MouseEventKind::ScrollDown => {
                 // Find topmost window at mouse position (ephemeral windows have higher z-order)
-                let target_window = find_topmost_window_at(app_core, *x, *y);
+                let target_window = find_topmost_window_at(&app_core.ui_state, *x, *y);
                 self.scroll_window(&target_window, -10);
                 app_core.needs_render = true;
                 return Ok((true, None));
@@ -1338,7 +1380,7 @@ impl TuiFrontend {
                 }
                 app_core.ui_state.selection_state = None;
 
-                let topmost_window = find_topmost_window_at(app_core, *x, *y);
+                let topmost_window = find_topmost_window_at(&app_core.ui_state, *x, *y);
                 let (is_quickbar, window_pos) = app_core
                     .ui_state
                     .get_window(&topmost_window)
@@ -1459,32 +1501,16 @@ impl TuiFrontend {
                     }
 
                     if handled_tab_click.is_none() {
-                        let right_col = pos.x.get() + pos.width.get() - 1;
-                        let bottom_row = pos.y.get() + pos.height.get() - 1;
-                        let has_horizontal_space = pos.width.get() > 1;
-                        // Only use bottom row as resize handle if:
-                        // 1. Window is NOT locked (locked windows can't be resized anyway)
-                        // 2. Window has enough height (> 2) so there's content area between
-                        //    top row (move) and bottom row (resize). For small widgets (height <= 2),
-                        //    bottom row IS the content area.
-                        let can_resize_bottom = !is_window_locked && pos.height.get() > 2;
-                        let can_resize_right = !is_window_locked;
-
-                        if has_horizontal_space
-                            && can_resize_bottom
-                            && *x == right_col
-                            && *y == bottom_row
-                        {
-                            drag_op = Some(DragOperation::ResizeBottomRight);
-                            found_window = Some(name.clone());
-                        } else if can_resize_right && has_horizontal_space && *x == right_col {
-                            drag_op = Some(DragOperation::ResizeRight);
-                            found_window = Some(name.clone());
-                        } else if can_resize_bottom && *y == bottom_row {
-                            drag_op = Some(DragOperation::ResizeBottom);
-                            found_window = Some(name.clone());
-                        } else if *y == pos.y.get() {
-                            drag_op = Some(DragOperation::Move);
+                        if let Some(op) = resize_op_at(
+                            pos.x.get(),
+                            pos.y.get(),
+                            pos.width.get(),
+                            pos.height.get(),
+                            is_window_locked,
+                            *x,
+                            *y,
+                        ) {
+                            drag_op = Some(op);
                             found_window = Some(name.clone());
                         }
                     }
@@ -3129,5 +3155,91 @@ impl TuiFrontend {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod hit_test_tests {
+    use super::{find_topmost_window_at, resize_op_at};
+    use crate::data::ui_state::UiState;
+    use crate::data::window::WindowState;
+    use crate::data::DragOperation;
+
+    /// Insert a visible text window at the given rect.
+    fn add_window(ui: &mut UiState, name: &str, x: u16, y: u16, w: u16, h: u16) {
+        let mut window = WindowState::new_text(name, 100);
+        window.position.x = crate::data::geometry::Col::new(x);
+        window.position.y = crate::data::geometry::Row::new(y);
+        window.position.width = crate::data::geometry::Width::new(w);
+        window.position.height = crate::data::geometry::Height::new(h);
+        window.visible = true;
+        ui.windows.insert(name.to_string(), window);
+    }
+
+    #[test]
+    fn topmost_falls_back_to_main_when_empty() {
+        let ui = UiState::new();
+        assert_eq!(find_topmost_window_at(&ui, 5, 5), "main");
+    }
+
+    #[test]
+    fn topmost_hits_the_containing_window() {
+        let mut ui = UiState::new();
+        add_window(&mut ui, "a", 0, 0, 10, 10);
+        // Inside a.
+        assert_eq!(find_topmost_window_at(&ui, 3, 3), "a");
+        // Half-open bounds: the far edges are outside.
+        assert_eq!(find_topmost_window_at(&ui, 10, 3), "main");
+        assert_eq!(find_topmost_window_at(&ui, 3, 10), "main");
+    }
+
+    #[test]
+    fn topmost_skips_invisible_windows() {
+        let mut ui = UiState::new();
+        add_window(&mut ui, "a", 0, 0, 10, 10);
+        ui.windows.get_mut("a").unwrap().visible = false;
+        assert_eq!(find_topmost_window_at(&ui, 3, 3), "main");
+    }
+
+    #[test]
+    fn ephemeral_windows_win_over_regular() {
+        let mut ui = UiState::new();
+        // Overlapping regular + ephemeral at the same point.
+        add_window(&mut ui, "regular", 0, 0, 20, 20);
+        add_window(&mut ui, "popup", 0, 0, 20, 20);
+        ui.ephemeral_windows.insert("popup".to_string());
+        assert_eq!(find_topmost_window_at(&ui, 5, 5), "popup");
+    }
+
+    #[test]
+    fn resize_op_edges_and_corner() {
+        // 10x10 window at origin, unlocked. right_col=9, bottom_row=9.
+        let op = |x, y| resize_op_at(0, 0, 10, 10, false, x, y);
+        assert_eq!(op(9, 9), Some(DragOperation::ResizeBottomRight));
+        assert_eq!(op(9, 3), Some(DragOperation::ResizeRight));
+        assert_eq!(op(3, 9), Some(DragOperation::ResizeBottom));
+        assert_eq!(op(3, 0), Some(DragOperation::Move)); // top row
+        assert_eq!(op(3, 3), None); // body
+    }
+
+    #[test]
+    fn resize_op_locked_only_moves() {
+        // Locked: right/bottom/corner are NOT resize handles; only the top row
+        // moves. The bottom-right corner (9,9) is neither top row nor a legal
+        // handle, so it's a plain body click.
+        let op = |x, y| resize_op_at(0, 0, 10, 10, true, x, y);
+        assert_eq!(op(9, 9), None);
+        assert_eq!(op(9, 3), None); // right column, locked
+        assert_eq!(op(3, 9), None); // bottom row, locked
+        assert_eq!(op(3, 0), Some(DragOperation::Move)); // top row
+    }
+
+    #[test]
+    fn resize_op_small_window_bottom_row_is_content() {
+        // height <= 2: bottom row is NOT a resize handle (it's the one content
+        // row); only the top row moves and the right column resizes width.
+        assert_eq!(resize_op_at(0, 0, 10, 2, false, 3, 1), None);
+        assert_eq!(resize_op_at(0, 0, 10, 2, false, 9, 1), Some(DragOperation::ResizeRight));
+        assert_eq!(resize_op_at(0, 0, 10, 2, false, 3, 0), Some(DragOperation::Move));
     }
 }
