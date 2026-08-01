@@ -417,7 +417,9 @@ impl WindowDef {
                 data: DashboardWidgetData {
                     layout: "horizontal".to_string(),
                     spacing: 1,
-                    hide_inactive: false,
+                    // New dashboards hide inactive statuses by default (see
+                    // templates.rs); uncheckable in the dashboard editor.
+                    hide_inactive: true,
                     indicators: vec![],
                 },
             },

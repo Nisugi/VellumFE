@@ -461,7 +461,11 @@ impl Config {
                 data: DashboardWidgetData {
                     layout: default_dashboard_layout(),
                     spacing: default_dashboard_spacing(),
-                    hide_inactive: default_dashboard_hide_inactive(),
+                    // New dashboards hide inactive statuses by default so the
+                    // grid isn't a wall of dim icons; users can uncheck it in
+                    // the dashboard editor. (The serde LOAD default stays
+                    // false so existing saved layouts keep what they had.)
+                    hide_inactive: true,
                     indicators: Vec::new(),
                 },
             }),

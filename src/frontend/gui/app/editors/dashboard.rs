@@ -69,6 +69,9 @@ impl VellumGuiApp {
         };
         let mut open = true;
         let mut save_request = false;
+        // Deferred so the indicator builder opens after this window's closure
+        // releases the &mut self borrow.
+        let mut open_indicator_builder = false;
 
         // Known status ids the user can pick from (built-ins + custom
         // templates); free text is still allowed for the open set.
@@ -126,11 +129,25 @@ impl VellumGuiApp {
                 });
 
                 ui.separator();
-                ui.strong("Statuses");
+                ui.horizontal(|ui| {
+                    ui.strong("Statuses");
+                    // Jump straight to the builder that owns icons/colors/
+                    // conditions for these ids — no hunting for it in a menu.
+                    if ui
+                        .button("Edit indicators…")
+                        .on_hover_text(
+                            "Open the indicator builder to edit icons, colors, and \
+                             condition-driven states for these statuses.",
+                        )
+                        .clicked()
+                    {
+                        open_indicator_builder = true;
+                    }
+                });
                 ui.weak(
                     "Which statuses this dashboard shows. Icons and colors come from the \
-                     status templates (.settings → Indicator Templates). Give two or more \
-                     rows the same 'stack' name to layer them into one square (their PNGs \
+                     status templates (Edit indicators… above, or .indicators). Give two or \
+                     more rows the same 'stack' name to layer them into one square (their PNGs \
                      should sit in different parts of the square so they don't overlap).",
                 );
 
@@ -263,6 +280,10 @@ impl VellumGuiApp {
 
         if open {
             self.dashboard_editor = Some(state);
+        }
+
+        if open_indicator_builder {
+            self.open_indicator_templates_editor();
         }
     }
 }
