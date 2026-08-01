@@ -652,6 +652,8 @@ struct IndicatorItem {
     id: String,
     icon: String,
     colors: Vec<String>,
+    /// Layer-stack group (GUI-only feature); preserved untouched on TUI edits.
+    stack: String,
     enabled: bool,
 }
 
@@ -814,6 +816,7 @@ impl IndicatorEditor {
                         } else {
                             def.colors.clone()
                         },
+                        stack: def.stack.clone(),
                         enabled: true,
                     }
                 } else {
@@ -821,6 +824,7 @@ impl IndicatorEditor {
                         id: tpl.id.clone(),
                         icon: tpl.icon.clone(),
                         colors: tpl.colors.clone(),
+                        stack: String::new(),
                         enabled: false,
                     }
                 }
@@ -835,6 +839,7 @@ impl IndicatorEditor {
                     id: def.id.clone(),
                     icon: def.icon.clone(),
                     colors: def.colors.clone(),
+                    stack: def.stack.clone(),
                     enabled: true,
                 });
             }
@@ -889,6 +894,7 @@ impl IndicatorEditor {
                 id: ind.id.clone(),
                 icon: ind.icon.clone(),
                 colors: ind.colors.clone(),
+                stack: ind.stack.clone(),
             })
             .collect()
     }
@@ -986,6 +992,7 @@ impl IndicatorEditor {
             id: available.id,
             icon: available.icon,
             colors: available.colors,
+            stack: available.stack,
             enabled: true,
         };
 
@@ -1533,6 +1540,7 @@ impl WindowEditor {
                     id,
                     icon,
                     colors: vec![inactive, active],
+                    stack: String::new(),
                     enabled: false,
                 });
             }
@@ -1580,6 +1588,7 @@ impl WindowEditor {
                         id,
                         icon,
                         colors: vec![inactive, active],
+                        stack: String::new(),
                         enabled: true,
                     });
                 }
@@ -1599,6 +1608,7 @@ impl WindowEditor {
                         if !colors.is_empty() {
                             item.colors = colors;
                         }
+                        item.stack = ind.stack.clone();
                         item.enabled = true;
                     } else {
                         index.insert(key, items.len());
@@ -1606,6 +1616,7 @@ impl WindowEditor {
                             id: ind.id.clone(),
                             icon: ind.icon.clone(),
                             colors,
+                            stack: ind.stack.clone(),
                             enabled: true,
                         });
                     }

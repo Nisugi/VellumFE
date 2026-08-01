@@ -350,7 +350,7 @@ impl VellumGuiApp {
                         _ => None,
                     });
                 let Some(data) = data else { return None };
-                let count = data.indicators.len().max(1);
+                let count = data.cell_count().max(1);
                 let rows = match DashboardLayout::from_str(&data.layout) {
                     DashboardLayout::Flow => return None,
                     DashboardLayout::Horizontal => 1,

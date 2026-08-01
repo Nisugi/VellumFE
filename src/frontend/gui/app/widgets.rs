@@ -3227,14 +3227,33 @@ impl VellumGuiApp {
             }
         }
 
-        // Resolve each candidate once. A cell is visible when hide_inactive is
-        // off, OR its runtime value > 0, OR (for a states-driven cell) any
+        // Stack-group tag per id (config only): entries sharing a non-empty
+        // `stack` layer into one square. Case-insensitive lookup, empty = none.
+        let stack_of = |id: &str| -> String {
+            data.and_then(|d| {
+                d.indicators
+                    .iter()
+                    .find(|def| def.id.eq_ignore_ascii_case(id))
+                    .map(|def| def.stack.clone())
+            })
+            .unwrap_or_default()
+        };
+
+        // Resolve each candidate once. A layer is visible when hide_inactive is
+        // off, OR its runtime value > 0, OR (for a states-driven layer) any
         // state currently matches — so a posture group shows whichever posture
         // is active even though its own id never gets a runtime value.
-        struct Cell {
+        struct Layer {
             id: String,
             value: u8,
             resolved: crate::core::conditions::ResolvedStatusArt,
+            visible: bool,
+        }
+        // A cell is either one standalone layer or a stack group of layers,
+        // all painted into the same square. Cells keep first-seen order.
+        struct Cell {
+            stack: String,
+            layers: Vec<Layer>,
         }
         let mut cells: Vec<Cell> = Vec::new();
         for id in candidate_ids {
@@ -3257,10 +3276,20 @@ impl VellumGuiApp {
                 })
                 .unwrap_or_default();
             let visible = !hide_inactive || value > 0 || resolved.state_matched;
-            if visible {
-                cells.push(Cell { id, value, resolved });
+            let stack = stack_of(&id);
+            let layer = Layer { id, value, resolved, visible };
+            // Merge into an existing stack cell of the same (non-empty) name;
+            // otherwise open a new cell.
+            match cells
+                .iter_mut()
+                .find(|c| !stack.is_empty() && c.stack.eq_ignore_ascii_case(&stack))
+            {
+                Some(cell) => cell.layers.push(layer),
+                None => cells.push(Cell { stack, layers: vec![layer] }),
             }
         }
+        // Drop cells with no visible layer.
+        cells.retain(|cell| cell.layers.iter().any(|l| l.visible));
         if cells.is_empty() {
             ui.weak("No active status.");
             return;
@@ -3271,15 +3300,12 @@ impl VellumGuiApp {
         let icon_side = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).clamp(14.0, 64.0);
         let gap = (spacing_chars as f32) * icon_side * 0.35;
 
-        // One cell: paint the resolved IconRef / id-keyed skin sprite /
-        // built-in pictogram / text label, colored by the resolved/value color.
-        let paint_cell = |ui: &mut egui::Ui, cell: &Cell| {
-            let id = cell.id.as_str();
-            // Color: resolved state color → the legacy value ramp
-            // (green/orange/red). A state that matched with no explicit value
-            // counts as "on" for the ramp.
-            let value = cell.value.max(if cell.resolved.state_matched { 1 } else { 0 });
-            let color = cell
+        // Paint one visible layer into `rect`. Returns true if it drew art (so
+        // a stack can fall back to a text label only when nothing drew).
+        let paint_layer = |ui: &mut egui::Ui, rect: Rect, layer: &Layer| -> bool {
+            let id = layer.id.as_str();
+            let value = layer.value.max(if layer.resolved.state_matched { 1 } else { 0 });
+            let color = layer
                 .resolved
                 .color
                 .as_deref()
@@ -3289,29 +3315,62 @@ impl VellumGuiApp {
                     2 => Color32::from_rgb(0xff, 0x88, 0x00),
                     _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
                 });
-            let sprite = match &cell.resolved.icon {
+            let sprite = match &layer.resolved.icon {
                 Some(icon) => skin_art.and_then(|art| art.resolve_icon_ref(icon, id)),
                 None => skin_art.and_then(|art| art.icon(id)),
             };
-            if sprite.is_some() || super::status_icons::supported(id) {
-                let (rect, response) =
-                    ui.allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
-                if let Some(sprite) = sprite {
-                    let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
-                    crate::frontend::gui::skin::paint_icon(ui.painter(), dest, &sprite, Color32::WHITE);
-                } else {
-                    super::status_icons::paint(
-                        ui.painter(),
-                        rect,
-                        id,
+            if let Some(sprite) = sprite {
+                let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                crate::frontend::gui::skin::paint_icon(ui.painter(), dest, &sprite, Color32::WHITE);
+                true
+            } else if super::status_icons::supported(id) {
+                super::status_icons::paint(ui.painter(), rect, id, color, ui.visuals().window_fill());
+                true
+            } else {
+                false
+            }
+        };
+
+        // One cell: allocate a square and paint every visible layer into it,
+        // overlaid (authored art positions each within the square). A single
+        // artless layer falls back to a text label, as before.
+        let paint_cell = |ui: &mut egui::Ui, cell: &Cell| {
+            let visible_layers: Vec<&Layer> = cell.layers.iter().filter(|l| l.visible).collect();
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
+            let mut drew_any = false;
+            let mut names: Vec<String> = Vec::new();
+            for layer in &visible_layers {
+                if paint_layer(ui, rect, layer) {
+                    drew_any = true;
+                }
+                names.push(super::status_icons::display_name(&layer.id));
+            }
+            if !drew_any {
+                // No art resolved for any layer: text label of the first
+                // visible layer's id (single-status cells keep the old look).
+                if let Some(first) = visible_layers.first() {
+                    let value = first.value.max(if first.resolved.state_matched { 1 } else { 0 });
+                    let color = first
+                        .resolved
+                        .color
+                        .as_deref()
+                        .and_then(parse_hex_color)
+                        .unwrap_or_else(|| match value {
+                            1 => Color32::from_rgb(0x55, 0xb8, 0x6c),
+                            2 => Color32::from_rgb(0xff, 0x88, 0x00),
+                            _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+                        });
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        &first.id,
+                        egui::FontId::proportional(icon_side * 0.5),
                         color,
-                        ui.visuals().window_fill(),
                     );
                 }
-                response.on_hover_text(super::status_icons::display_name(id));
-            } else {
-                ui.label(RichText::new(id).color(color).strong());
             }
+            response.on_hover_text(names.join(", "));
         };
 
         ui.spacing_mut().item_spacing = Vec2::splat(gap);

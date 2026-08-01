@@ -129,13 +129,16 @@ impl VellumGuiApp {
                 ui.strong("Statuses");
                 ui.weak(
                     "Which statuses this dashboard shows. Icons and colors come from the \
-                     status templates (.settings → Indicator Templates).",
+                     status templates (.settings → Indicator Templates). Give two or more \
+                     rows the same 'stack' name to layer them into one square (their PNGs \
+                     should sit in different parts of the square so they don't overlap).",
                 );
 
                 let mut remove: Option<usize> = None;
                 let mut swap: Option<(usize, usize)> = None;
+                let mut edited = false;
                 let len = state.working.indicators.len();
-                for (idx, ind) in state.working.indicators.iter().enumerate() {
+                for (idx, ind) in state.working.indicators.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         if ui
                             .add_enabled(idx > 0, egui::Button::new("⬆").small())
@@ -153,7 +156,22 @@ impl VellumGuiApp {
                             remove = Some(idx);
                         }
                         ui.monospace(&ind.id);
+                        ui.label("stack:");
+                        if ui
+                            .add(
+                                egui::TextEdit::singleline(&mut ind.stack)
+                                    .hint_text("(none)")
+                                    .desired_width(90.0),
+                            )
+                            .on_hover_text("Layer group: rows sharing this name share one square")
+                            .changed()
+                        {
+                            edited = true;
+                        }
                     });
+                }
+                if edited {
+                    state.dirty = true;
                 }
                 if let Some((a, b)) = swap {
                     state.working.indicators.swap(a, b);
@@ -196,6 +214,7 @@ impl VellumGuiApp {
                                 id,
                                 icon: String::new(),
                                 colors: Vec::new(),
+                                stack: String::new(),
                             });
                             state.new_id.clear();
                             state.error = None;

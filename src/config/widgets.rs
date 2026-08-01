@@ -658,6 +658,34 @@ pub struct DashboardIndicatorDef {
     pub icon: String,
     #[serde(default)]
     pub colors: Vec<String>,
+    /// Optional layer-stack group. Entries sharing a `stack` name render into
+    /// ONE cell, their active icons painted over each other (Wrayth-style:
+    /// blood/poison/disease share a square, each PNG authored to sit in a
+    /// different part of it so they don't collide). Empty = its own cell.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stack: String,
+}
+
+impl DashboardWidgetData {
+    /// Number of rendered cells: unstacked entries each count once; entries
+    /// sharing a `stack` name collapse into one cell. Used for row-count
+    /// height math in both frontends so a stacked dashboard hugs its content.
+    pub fn cell_count(&self) -> usize {
+        let mut seen: Vec<String> = Vec::new();
+        let mut count = 0;
+        for def in &self.indicators {
+            if def.stack.is_empty() {
+                count += 1;
+            } else {
+                let key = def.stack.to_lowercase();
+                if !seen.contains(&key) {
+                    seen.push(key);
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
 }
 
 fn default_indicator_active_color() -> Option<String> {
@@ -1174,6 +1202,30 @@ mod dashboard_layout_tests {
         assert_eq!(DashboardLayout::from_str("nonsense"), DashboardLayout::Horizontal);
         assert_eq!(DashboardLayout::from_str("grid:0x3"), DashboardLayout::Horizontal);
         assert_eq!(DashboardLayout::from_str("grid:2"), DashboardLayout::Horizontal);
+    }
+
+    #[test]
+    fn cell_count_collapses_stack_groups() {
+        let ind = |id: &str, stack: &str| DashboardIndicatorDef {
+            id: id.to_string(),
+            icon: String::new(),
+            colors: Vec::new(),
+            stack: stack.to_string(),
+        };
+        let data = DashboardWidgetData {
+            layout: "grid:2x3".to_string(),
+            spacing: 0,
+            hide_inactive: true,
+            indicators: vec![
+                ind("BLEEDING", "affliction"),
+                ind("POISONED", "affliction"),
+                ind("DISEASED", "affliction"),
+                ind("STUNNED", ""),
+                ind("WEBBED", ""),
+            ],
+        };
+        // Three afflictions collapse to one cell; two singletons = 3 cells.
+        assert_eq!(data.cell_count(), 3);
     }
 }
 
