@@ -386,7 +386,6 @@ pub struct VellumGuiApp {
     /// check would dismiss the menu on the same frame it appeared.
     window_context_menu_just_opened: bool,
     zone_drag_state: Option<GuiZoneDragState>,
-    hand_resize_tab: Option<TabKey>,
     /// Zone window whose size pin is relaxed for the CURRENT press.
     /// Latched when a press starts on/near the window and held until the
     /// mouse releases: a shrink drag moves the grabbed edge away from the
@@ -738,7 +737,6 @@ impl VellumGuiApp {
             window_move_state: None,
             window_context_menu_just_opened: false,
             zone_drag_state: None,
-            hand_resize_tab: None,
             zone_engaged_tab: None,
             zone_snap_drag: None,
             zone_snap_guides: Vec::new(),

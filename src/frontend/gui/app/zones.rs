@@ -312,10 +312,10 @@ impl VellumGuiApp {
     ) -> Option<f32> {
         use crate::frontend::gui::persistence::VitalsOrientation;
         let row = match window.widget_type {
-            // Hand rows grow with the configured icon size.
-            WidgetType::Hand => {
-                (self.ui_settings.hand_icon_size.clamp(16.0, 48.0) + 6.0).max(28.0)
-            }
+            // Hands are freely resizable — no height cap. The icon scales to
+            // fill the window (render_hand_content), so a taller window means a
+            // bigger icon (2 lines, 4 lines, ...), a shorter one a small icon.
+            WidgetType::Hand => return None,
             WidgetType::Countdown
             | WidgetType::Progress
             | WidgetType::Indicator
@@ -997,10 +997,6 @@ impl VellumGuiApp {
         zone_window_rects: &mut Vec<GuiZoneWindowRect>,
     ) -> GuiWindowActions {
         let mut actions = GuiWindowActions::default();
-        let primary_down = ctx.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-        if !primary_down {
-            self.hand_resize_tab = None;
-        }
         if !root_rect.is_finite() || root_rect.width() <= 24.0 || root_rect.height() <= 24.0 {
             return actions;
         }
@@ -1255,44 +1251,10 @@ impl VellumGuiApp {
             }
 
             let mut clicked_link = None;
-            let mut hand_resize_delta_x = 0.0f32;
-            // Grouped hands lose the fixed-size hand behavior; the group is a
-            // normal resizable window sized for all members.
-            let is_hand_widget =
-                matches!(window.content, WindowContent::Hand { .. }) && group_shape.is_none();
             // WebUI windows get a title-bar close button: unlike layout
             // widgets (hidden/restored via the Windows menu), script pages
             // are transient - closing one removes it and unsubscribes.
             let is_webui_window = matches!(window.content, WindowContent::WebUi(_));
-            let hand_resize_handle_width = 10.0f32;
-            let pointer_over_hand_resize_handle = if is_hand_widget && primary_down {
-                let handle_rect = Rect::from_min_max(
-                    Pos2::new(initial_rect.max.x - hand_resize_handle_width, initial_rect.min.y),
-                    initial_rect.max,
-                );
-                ctx.input(|i| {
-                    i.pointer
-                        .interact_pos()
-                        .or(i.pointer.latest_pos())
-                        .is_some_and(|pos| handle_rect.contains(pos))
-                })
-            } else {
-                false
-            };
-            if is_hand_widget
-                && primary_down
-                && pointer_over_hand_resize_handle
-                && !window_locked
-                && self.hand_resize_tab.is_none()
-            {
-                self.hand_resize_tab = Some(tab.id.key.clone());
-            }
-            let hand_resize_active = is_hand_widget
-                && primary_down
-                && self
-                    .hand_resize_tab
-                    .as_ref()
-                    .is_some_and(|key| key == &tab.id.key);
             let window_id = Self::zone_window_id(zone, &tab.id.key);
             let mut docked_window_frame = egui::Frame::window(ctx.global_style().as_ref())
                 .outer_margin(egui::Margin::ZERO)
@@ -1319,9 +1281,7 @@ impl VellumGuiApp {
                 .min_size(min_window_size)
                 .max_size(max_window_size)
                 .resizable(!window_locked)
-                .movable(
-                    !ctx.input(|i| i.modifiers.alt) && !hand_resize_active && !window_locked,
-                )
+                .movable(!ctx.input(|i| i.modifiers.alt) && !window_locked)
                 // Drag from anywhere — body and title bar alike — so every
                 // move goes through the anchored area-move path. Title-bar
                 // drag mode routes through a separate pre-`Area::begin`
@@ -1342,15 +1302,6 @@ impl VellumGuiApp {
             if being_moved {
                 // The placement click must not land in this window's content.
                 window_builder = window_builder.interactable(false);
-            }
-            if is_hand_widget {
-                // Width comes from the stored rect (user-set via the side
-                // handle); height follows the icon-size-aware row cap so a
-                // larger hand icon setting can never clip inside a stale
-                // stored height.
-                window_builder = window_builder
-                    .fixed_size(Vec2::new(initial_rect.size().x, max_window_size.y))
-                    .resizable(false);
             }
             if !is_compact_widget {
                 // Prevent content-driven growth by making the window scroll instead of expanding.
@@ -1389,15 +1340,13 @@ impl VellumGuiApp {
             let user_engaging_window = !window_locked
                 && pointer_interacting
                 && (already_latched || (self.zone_engaged_tab.is_none() && engaging_press));
-            if !is_hand_widget && !being_moved && !user_engaging_window {
-                // Pin compact widgets too, now that `initial_rect` carries
-                // the live height cap: without this the width half of a
-                // release-snap never reached egui (position feeds through
-                // `current_pos`, but egui's remembered width won), so a
-                // right-edge snap drew a correct guide yet the frame never
-                // moved to it. Height still tracks the cap because the cap is
-                // already folded into `initial_rect` — a later icon-size
-                // change recomputes it next frame.
+            if !being_moved && !user_engaging_window {
+                // Pin every window to its display size when the user isn't
+                // engaging it: egui's Resize state re-clamps its remembered
+                // desired_size each frame, so without this a release-snap's new
+                // size (or a .loadlayout restore) wouldn't stick. Compact
+                // widgets carry their capped height in `initial_rect`; hands
+                // (now freely resizable) pin to whatever size the user set.
                 window_builder = window_builder
                     .min_size(initial_rect.size())
                     .max_size(initial_rect.size());
@@ -1462,28 +1411,6 @@ impl VellumGuiApp {
                         }
                     }
                 }
-                if is_hand_widget {
-                    let handle_rect = Rect::from_min_max(
-                        Pos2::new(
-                            inner.response.rect.max.x - hand_resize_handle_width,
-                            inner.response.rect.min.y,
-                        ),
-                        inner.response.rect.max,
-                    );
-                    if hand_resize_active
-                        || ctx.input(|i| {
-                            i.pointer
-                                .interact_pos()
-                                .or(i.pointer.latest_pos())
-                                .is_some_and(|pos| handle_rect.contains(pos))
-                        })
-                    {
-                        ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                    }
-                    if hand_resize_active {
-                        hand_resize_delta_x += ctx.input(|i| i.pointer.delta().x);
-                    }
-                }
                 // `.snapdebug`: the three rects whose divergence explains
                 // every "can't snap to window X" report — the canonical
                 // (candidate source), the display rect fed to egui, and
@@ -1540,17 +1467,7 @@ impl VellumGuiApp {
                     }
                     rect
                 };
-                // Singleton hands still snap and show the grid when MOVED — the
-                // only reason to keep them out of the snap path is their custom
-                // width-resize handle (hand_resize_active), which drives width
-                // directly and must not be re-interpreted as a snap gesture. A
-                // move is a plain translate the engine handles like any window
-                // (their width is fixed_size, so it only repositions).
-                let hand_snap_excluded = is_hand_widget && hand_resize_active;
-                if !hand_snap_excluded
-                    && !being_moved
-                    && (snap_drag_live || (rect_changed && user_engaging_window))
-                {
+                if !being_moved && (snap_drag_live || (rect_changed && user_engaging_window)) {
                     let tracked = self.apply_zone_snap(
                         zone,
                         &tab.id.key,
@@ -1615,18 +1532,6 @@ impl VellumGuiApp {
                             window_rect: inner.response.rect,
                         });
                     }
-                }
-                if is_hand_widget && hand_resize_delta_x.abs() > 0.0 {
-                    let resized_width =
-                        (inner.response.rect.width() + hand_resize_delta_x).clamp(min_window_size.x, max_window_size.x);
-                    let entry = self.main_window_rects.entry(tab.id.key.clone()).or_insert([
-                        inner.response.rect.min.x,
-                        inner.response.rect.min.y,
-                        inner.response.rect.width(),
-                        inner.response.rect.height(),
-                    ]);
-                    entry[2] = resized_width;
-                    self.layout_dirty = true;
                 }
                 occupied_rects.push(inner.response.rect);
                 if self.zone_drag_state.is_none() && !window_locked {

@@ -1973,9 +1973,13 @@ impl VellumGuiApp {
         } else {
             item_text.to_string()
         };
-        // The row grows with the configured icon size so bigger art gets
-        // real pixels instead of being squeezed into the text row height.
-        let icon_size = icon_size.clamp(16.0, 48.0);
+        // The icon fills the window's height, so a taller hand window means a
+        // bigger icon (drag to 2/4 "lines" for big art) and a short one a small
+        // icon. The configured hand_icon_size is the floor so a freshly-placed
+        // hand isn't tiny; available height (capped) sets the ceiling.
+        let floor = icon_size.clamp(16.0, 48.0);
+        let avail = ui.available_height().max(1.0);
+        let icon_size = avail.clamp(floor.min(avail), 512.0);
         let row_height = ui.spacing().interact_size.y.max(16.0).max(icon_size);
         let icon_width = icon_size;
         let icon_gap = 4.0;
