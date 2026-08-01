@@ -835,6 +835,38 @@ impl UiState {
         self.deep_submenu = None;
     }
 
+    /// Position of the deepest currently-open popup-menu level, falling back
+    /// through deep → nested → submenu → popup, then the default anchor
+    /// `(40, 12)` when no menu is open. The menu-command handlers place a new
+    /// child level relative to this; extracting it collapses ~half a dozen
+    /// hand-copied `.or_else(...).or_else(...)` cascades (which are easy to get
+    /// subtly wrong per site) into one tested function.
+    pub fn deepest_menu_pos(&self) -> (u16, u16) {
+        self.deep_submenu
+            .as_ref()
+            .map(|m| m.get_position())
+            .or_else(|| self.nested_submenu.as_ref().map(|m| m.get_position()))
+            .or_else(|| self.submenu.as_ref().map(|m| m.get_position()))
+            .or_else(|| self.popup_menu.as_ref().map(|m| m.get_position()))
+            .unwrap_or((40, 12))
+    }
+
+    /// Where a new child menu level should open: two columns right of the
+    /// deepest open level, same row.
+    pub fn child_menu_pos(&self) -> (u16, u16) {
+        let (x, y) = self.deepest_menu_pos();
+        (x + 2, y)
+    }
+
+    /// Close every popup-menu level (popup + all three submenu depths). Does
+    /// not touch `input_mode` — callers set that as they need.
+    pub fn close_all_menus(&mut self) {
+        self.popup_menu = None;
+        self.submenu = None;
+        self.nested_submenu = None;
+        self.deep_submenu = None;
+    }
+
     /// Get a window by name
     pub fn get_window(&self, name: &str) -> Option<&WindowState> {
         self.windows.get(name)
@@ -1059,6 +1091,49 @@ mod tests {
         let state = UiState::default();
         assert!(state.windows.is_empty());
         assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn deepest_menu_pos_falls_through_levels() {
+        let mut state = UiState::new();
+        // No menu open: the default anchor.
+        assert_eq!(state.deepest_menu_pos(), (40, 12));
+        // popup only.
+        state.popup_menu = Some(PopupMenu::new(vec![], (10, 20)));
+        assert_eq!(state.deepest_menu_pos(), (10, 20));
+        // submenu wins over popup.
+        state.submenu = Some(PopupMenu::new(vec![], (12, 20)));
+        assert_eq!(state.deepest_menu_pos(), (12, 20));
+        // nested wins over submenu.
+        state.nested_submenu = Some(PopupMenu::new(vec![], (14, 20)));
+        assert_eq!(state.deepest_menu_pos(), (14, 20));
+        // deep wins over all.
+        state.deep_submenu = Some(PopupMenu::new(vec![], (16, 20)));
+        assert_eq!(state.deepest_menu_pos(), (16, 20));
+    }
+
+    #[test]
+    fn child_menu_pos_is_two_right_same_row() {
+        let mut state = UiState::new();
+        state.popup_menu = Some(PopupMenu::new(vec![], (40, 12)));
+        assert_eq!(state.child_menu_pos(), (42, 12));
+    }
+
+    #[test]
+    fn close_all_menus_clears_every_level_but_not_mode() {
+        let mut state = UiState::new();
+        state.popup_menu = Some(PopupMenu::new(vec![], (1, 1)));
+        state.submenu = Some(PopupMenu::new(vec![], (2, 2)));
+        state.nested_submenu = Some(PopupMenu::new(vec![], (3, 3)));
+        state.deep_submenu = Some(PopupMenu::new(vec![], (4, 4)));
+        state.input_mode = InputMode::Menu;
+        state.close_all_menus();
+        assert!(state.popup_menu.is_none());
+        assert!(state.submenu.is_none());
+        assert!(state.nested_submenu.is_none());
+        assert!(state.deep_submenu.is_none());
+        // input_mode is the caller's responsibility, not touched here.
+        assert_eq!(state.input_mode, InputMode::Menu);
     }
 
     #[test]
