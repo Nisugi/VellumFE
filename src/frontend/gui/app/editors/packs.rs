@@ -300,7 +300,9 @@ impl VellumGuiApp {
     /// The GUI's live arrangement as a pack entry (same bytes `.uiexport`
     /// attaches).
     pub(in super::super) fn gui_layout_pack_entry(&mut self) -> Vec<(String, Vec<u8>)> {
-        self.build_layout_snapshot()
+        // Packs are shared with other players — checkpoint semantics (shown
+        // windows only, no hidden residue).
+        self.build_layout_snapshot(super::super::LayoutSaveMode::Checkpoint)
             .and_then(|layout| serde_json::to_vec_pretty(&layout).ok())
             .map(|bytes| vec![(uipack::GUI_LAYOUT_ENTRY.to_string(), bytes)])
             .unwrap_or_default()

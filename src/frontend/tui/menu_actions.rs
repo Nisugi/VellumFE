@@ -58,7 +58,13 @@ pub fn handle_ui_action(
     match action {
         // The Layouts menu names TOML layouts explicitly; `.loadlayout`
         // resolves to the same thing in this frontend.
-        UiAction::LoadLayoutToml(layout_name) | UiAction::LoadLayout(Some(layout_name)) => {
+        // The TUI has no skins; `keep_skin` is a GUI-only concern and is
+        // accepted-and-ignored here.
+        UiAction::LoadLayoutToml(layout_name)
+        | UiAction::LoadLayout {
+            name: Some(layout_name),
+            ..
+        } => {
             // Load a layout with proper terminal size
             tracing::info!("[MENU_ACTIONS] Menu action loadlayout: '{}'", layout_name);
             let (width, height) = frontend.size();
@@ -72,7 +78,7 @@ pub fn handle_ui_action(
             }
             app_core.needs_render = true;
         }
-        UiAction::LoadLayout(None) => {
+        UiAction::LoadLayout { name: None, .. } => {
             // Bare `.loadlayout` shows usage + the saved list, matching the
             // GUI (it used to load 'default', which silently replaced the
             // current arrangement on a bare invocation).

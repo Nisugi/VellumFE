@@ -83,6 +83,34 @@ pub(super) struct RestoredLayoutState {
     pub(super) main_viewport: Option<MainViewportState>,
 }
 
+/// Save order for the main-surface windows: the cached live z-order first
+/// (filtered to windows still on the surface), then any surface window the
+/// cache hasn't recorded yet, appended in stable alphabetical (lowercased
+/// title) order. Front-to-back — topmost last — so `.loadlayout` restores who
+/// overlaps whom. `zorder` is the cached back-to-front order; `surface` is
+/// every currently visible, non-detached tab paired with its lowercased title.
+fn merge_zorder_with_leftover(
+    zorder: &[TabKey],
+    surface: Vec<(TabKey, String)>,
+) -> Vec<TabKey> {
+    let on_surface: HashSet<&TabKey> = surface.iter().map(|(key, _)| key).collect();
+    let mut ordered: Vec<TabKey> = zorder
+        .iter()
+        .filter(|key| on_surface.contains(key))
+        .cloned()
+        .collect();
+    let already: HashSet<&TabKey> = ordered.iter().collect();
+    let mut leftover: Vec<(TabKey, String)> = surface
+        .iter()
+        .filter(|(key, _)| !already.contains(key))
+        .cloned()
+        .collect();
+    leftover.sort_by(|a, b| a.1.cmp(&b.1));
+    drop(already);
+    ordered.extend(leftover.into_iter().map(|(key, _)| key));
+    ordered
+}
+
 impl VellumGuiApp {
     /// Reconcile a persisted layout against this session's available tabs.
     /// `None` yields the same defaults as a missing layout file. Saved state
@@ -512,20 +540,26 @@ impl VellumGuiApp {
         detached
     }
 
+    /// The main-surface windows in save order: true front-to-back stacking
+    /// (topmost last), so `.loadlayout` can restore who overlaps whom. The
+    /// live z-order is cached each frame from egui's layer order
+    /// (`refresh_zorder_cache`); this filters that cache to the currently
+    /// visible, non-detached tabs. Before the first frame populates the cache
+    /// (or for any visible tab egui hasn't laid out yet) it falls back to an
+    /// alphabetical order so a save is never empty.
     pub(super) fn current_main_surface_tab_keys(&self) -> Vec<TabKey> {
-        let mut visible: Vec<(String, TabKey)> = self
+        let is_surface = |key: &TabKey| {
+            self.available_tabs.contains_key(key)
+                && !self.hidden_tabs.contains(key)
+                && !self.detached_tabs.contains_key(key)
+        };
+        let surface: Vec<(TabKey, String)> = self
             .available_tabs
             .iter()
-            .filter_map(|(key, tab)| {
-                if self.hidden_tabs.contains(key) || self.detached_tabs.contains_key(key) {
-                    None
-                } else {
-                    Some((tab.id.title.clone(), key.clone()))
-                }
-            })
+            .filter(|(key, _)| is_surface(key))
+            .map(|(key, tab)| (key.clone(), tab.id.title.to_ascii_lowercase()))
             .collect();
-        visible.sort_by_key(|(title, _)| title.to_ascii_lowercase());
-        visible.into_iter().map(|(_, key)| key).collect()
+        merge_zorder_with_leftover(&self.current_zorder, surface)
     }
 
     pub(super) fn monitor_bounds_from_ctx(ctx: &egui::Context) -> [f32; 4] {
@@ -904,5 +938,49 @@ mod tests {
         let windows = vec![info("a", rect(0.0, 0.0, 300.0, 150.0), false)];
         let out = VellumGuiApp::compute_center_display_rects(&windows, bounds);
         assert_eq!(out[&key("a")], rect(0.0, 200.0, 300.0, 350.0));
+    }
+
+    #[test]
+    fn merge_zorder_preserves_cached_stacking_order() {
+        // Cached z-order is authoritative for windows it knows; the story
+        // window sits on top (last) exactly as the user left it.
+        let zorder = vec![key("inventory"), key("story")];
+        let surface = vec![
+            (key("story"), "story".to_string()),
+            (key("inventory"), "inventory".to_string()),
+        ];
+        assert_eq!(
+            merge_zorder_with_leftover(&zorder, surface),
+            vec![key("inventory"), key("story")],
+            "topmost (story) stays last"
+        );
+    }
+
+    #[test]
+    fn merge_zorder_appends_unseen_windows_alphabetically() {
+        // A window the cache hasn't recorded yet is appended after the known
+        // stack, in stable alphabetical order — never dropped.
+        let zorder = vec![key("story")];
+        let surface = vec![
+            (key("story"), "story".to_string()),
+            (key("zeta"), "zeta".to_string()),
+            (key("alpha"), "alpha".to_string()),
+        ];
+        assert_eq!(
+            merge_zorder_with_leftover(&zorder, surface),
+            vec![key("story"), key("alpha"), key("zeta")]
+        );
+    }
+
+    #[test]
+    fn merge_zorder_drops_stale_cache_entries() {
+        // A key in the cache that's no longer on the surface (hidden/deleted)
+        // is filtered out.
+        let zorder = vec![key("gone"), key("story")];
+        let surface = vec![(key("story"), "story".to_string())];
+        assert_eq!(
+            merge_zorder_with_leftover(&zorder, surface),
+            vec![key("story")]
+        );
     }
 }

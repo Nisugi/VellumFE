@@ -372,18 +372,21 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::Hide => {
-                // Hiding a grouped window hides the whole group; otherwise
-                // the group would keep rendering without its leader.
+                // Hide IS the Windows-window uncheck (one visibility layer):
+                // core WindowVisibility flips, auto-spawn is suppressed, and
+                // the catalog checkbox reflects it. Hiding a grouped window
+                // hides every member — same as unchecking each in the catalog
+                // (which, like this, dissolves the group).
                 let members = self
                     .group_for_tab(&request.tab_key)
                     .map(|group| group.members.clone());
                 match members {
                     Some(members) => {
                         for member in members {
-                            self.hide_tab(member);
+                            self.core_hide_tab(&member);
                         }
                     }
-                    None => self.hide_tab(request.tab_key.clone()),
+                    None => self.core_hide_tab(&request.tab_key.clone()),
                 }
             }
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),

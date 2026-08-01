@@ -1732,9 +1732,30 @@ impl AppCore {
                 )));
             }
             "loadlayout" => {
-                return Ok(CommandOutcome::Ui(UiAction::LoadLayout(
-                    parts.get(1).map(|name| name.to_string()),
-                )));
+                // `.loadlayout <name> [--keep-skin]` — the flag keeps the
+                // loader's appearance (skin/theme/art) and takes only the
+                // arrangement. Lenient spellings: --keep-skin / --keep-skins /
+                // --keep_my_skins / --keepskin all normalize the same.
+                let mut name = None;
+                let mut keep_skin = false;
+                for part in &parts[1..] {
+                    let normalized: String = part
+                        .trim_start_matches('-')
+                        .chars()
+                        .filter(|c| c.is_ascii_alphanumeric())
+                        .collect::<String>()
+                        .to_ascii_lowercase();
+                    if part.starts_with('-')
+                        && matches!(normalized.as_str(), "keepskin" | "keepskins" | "keepmyskins")
+                    {
+                        keep_skin = true;
+                    } else if name.is_none() {
+                        name = Some(part.to_string());
+                    }
+                }
+                // The flag is meaningless without a name (bare form lists).
+                let keep_skin = keep_skin && name.is_some();
+                return Ok(CommandOutcome::Ui(UiAction::LoadLayout { name, keep_skin }));
             }
             "layouts" => {
                 return Ok(CommandOutcome::Ui(UiAction::ListLayouts));
@@ -2940,6 +2961,32 @@ mod tests {
                 op: ZoneOp::Off
             })
         );
+    }
+
+    #[test]
+    fn loadlayout_parses_keep_skin_flag() {
+        // `.loadlayout <name> [--keep-skin]` — lenient flag spellings, any
+        // argument order; the flag is meaningless without a name.
+        let cases: Vec<(&str, Option<&str>, bool)> = vec![
+            (".loadlayout combat", Some("combat"), false),
+            (".loadlayout combat --keep-skin", Some("combat"), true),
+            (".loadlayout --keep-skin combat", Some("combat"), true),
+            (".loadlayout combat --keep_my_skins", Some("combat"), true),
+            (".loadlayout combat --keepskin", Some("combat"), true),
+            (".loadlayout combat --keep-skins", Some("combat"), true),
+            (".loadlayout", None, false),
+            (".loadlayout --keep-skin", None, false), // flag without a name is dropped
+        ];
+        for (command, name, keep_skin) in cases {
+            assert_eq!(
+                ui_outcome(command),
+                CommandOutcome::Ui(UiAction::LoadLayout {
+                    name: name.map(str::to_string),
+                    keep_skin,
+                }),
+                "wrong outcome for {command}"
+            );
+        }
     }
 
     #[test]

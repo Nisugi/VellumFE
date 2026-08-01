@@ -146,7 +146,13 @@ pub enum UiAction {
     // .uiexport/.uiimport), each frontend owns its persistence model —
     // TOML cell layouts in the TUI, window snapshots in the GUI.
     SaveLayout(Option<String>),
-    LoadLayout(Option<String>),
+    /// `keep_skin` (`.loadlayout <name> --keep-skin`): keep the loader's
+    /// appearance (skin/theme/art) and take only the arrangement. Meaningless
+    /// without a name (bare `.loadlayout` just lists checkpoints).
+    LoadLayout {
+        name: Option<String>,
+        keep_skin: bool,
+    },
     ListLayouts,
     ResizeLayout,
     SaveSkin(String),
@@ -231,8 +237,17 @@ impl UiAction {
         if let Some(name) = body.strip_prefix("layout:save:") {
             return Some(UiAction::SaveLayout(Some(name.to_string())));
         }
-        if let Some(name) = body.strip_prefix("layout:load:") {
-            return Some(UiAction::LoadLayout(Some(name.to_string())));
+        if let Some(rest) = body.strip_prefix("layout:load:") {
+            // Layout names are letters/digits/-/_ only, so a ":keep-skin"
+            // suffix is unambiguous.
+            let (name, keep_skin) = match rest.strip_suffix(":keep-skin") {
+                Some(name) => (name, true),
+                None => (rest, false),
+            };
+            return Some(UiAction::LoadLayout {
+                name: Some(name.to_string()),
+                keep_skin,
+            });
         }
         if let Some(name) = body.strip_prefix("saveskin:") {
             return Some(UiAction::SaveSkin(name.to_string()));
@@ -296,7 +311,10 @@ impl UiAction {
             "snapdebug" => UiAction::SnapDebug,
             "performance:dump" => UiAction::PerformanceDump,
             "layout:save" => UiAction::SaveLayout(None),
-            "layout:load" => UiAction::LoadLayout(None),
+            "layout:load" => UiAction::LoadLayout {
+                name: None,
+                keep_skin: false,
+            },
             "layout:list" => UiAction::ListLayouts,
             "layout:resize" => UiAction::ResizeLayout,
             "uiexport" => UiAction::UiExport(Vec::new()),
@@ -364,8 +382,15 @@ impl std::fmt::Display for UiAction {
             UiAction::LoadLayoutToml(name) => write!(f, "action:loadlayout:{name}"),
             UiAction::SaveLayout(None) => write!(f, "action:layout:save"),
             UiAction::SaveLayout(Some(name)) => write!(f, "action:layout:save:{name}"),
-            UiAction::LoadLayout(None) => write!(f, "action:layout:load"),
-            UiAction::LoadLayout(Some(name)) => write!(f, "action:layout:load:{name}"),
+            UiAction::LoadLayout { name: None, .. } => write!(f, "action:layout:load"),
+            UiAction::LoadLayout {
+                name: Some(name),
+                keep_skin: false,
+            } => write!(f, "action:layout:load:{name}"),
+            UiAction::LoadLayout {
+                name: Some(name),
+                keep_skin: true,
+            } => write!(f, "action:layout:load:{name}:keep-skin"),
             UiAction::ListLayouts => write!(f, "action:layout:list"),
             UiAction::ResizeLayout => write!(f, "action:layout:resize"),
             UiAction::SaveSkin(name) => write!(f, "action:saveskin:{name}"),
@@ -461,8 +486,18 @@ mod tests {
             UiAction::LoadLayoutToml("combat".into()),
             UiAction::SaveLayout(None),
             UiAction::SaveLayout(Some("combat".into())),
-            UiAction::LoadLayout(None),
-            UiAction::LoadLayout(Some("combat".into())),
+            UiAction::LoadLayout {
+                name: None,
+                keep_skin: false,
+            },
+            UiAction::LoadLayout {
+                name: Some("combat".into()),
+                keep_skin: false,
+            },
+            UiAction::LoadLayout {
+                name: Some("combat".into()),
+                keep_skin: true,
+            },
             UiAction::ListLayouts,
             UiAction::ResizeLayout,
             UiAction::SaveSkin("mine".into()),

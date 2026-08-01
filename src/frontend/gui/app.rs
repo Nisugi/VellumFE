@@ -65,6 +65,19 @@ struct GuiTab {
     window_name: String,
 }
 
+/// Which persisted layout a snapshot is being built for. The one file format
+/// serves two purposes with different hidden-window semantics:
+/// - `Autosave`: the per-character continuity slot. Hidden windows keep their
+///   defs/rects/hidden state so an unhide after restart restores placement.
+/// - `Checkpoint`: a named `.savelayout` — an exact, portable copy of the
+///   visible arrangement. GUI-hidden windows are stripped entirely so loading
+///   on another profile never carries them over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LayoutSaveMode {
+    Autosave,
+    Checkpoint,
+}
+
 /// Resolved per-window sizing values passed into content renderers.
 #[derive(Clone, Debug)]
 pub(super) struct WidgetRenderSettings {
@@ -371,6 +384,24 @@ pub struct VellumGuiApp {
     /// startup restore whose rects were captured on a differently-sized
     /// window, and by the `.resize` command.
     pending_layout_rescale: Option<egui::Vec2>,
+    /// Live front-to-back stacking order of the main-surface windows, refreshed
+    /// each frame from egui's layer order (only `ctx` knows it). The save
+    /// snapshot reads this so `visible_tabs` records true z-order instead of an
+    /// alphabetical placeholder; back-to-front, i.e. topmost window last.
+    current_zorder: Vec<TabKey>,
+    /// Stacking order to replay next frame (a layout load carries it in
+    /// `visible_tabs`). Applied via `move_to_top` back-to-front, deferred
+    /// because restacking needs `ctx`. Mirrors `pending_layout_rescale`.
+    pending_zorder: Option<Vec<TabKey>>,
+    /// OS-window geometry to restore for a `.loadlayout` (saved size /
+    /// position / maximized), applied in the frame loop via ViewportCommands
+    /// so the rects land on the same canvas they were saved against.
+    pending_viewport_restore: Option<MainViewportState>,
+    /// While a viewport restore is in flight: (target canvas size, frames
+    /// left to wait). The deferred rescale holds until the OS window reaches
+    /// the target (rescale becomes ~identity) or the countdown expires (OS
+    /// refused; rescale proportionally into whatever size we got).
+    viewport_settle: Option<(egui::Vec2, u8)>,
     command_input_id: Option<egui::Id>,
     repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     layout_save_tx: Option<std::sync::mpsc::Sender<GuiLayoutFileV1>>,
@@ -625,6 +656,22 @@ impl VellumGuiApp {
             .as_ref()
             .map(|layout| Self::layout_reference_canvas(layout, &main_window_rects));
 
+        // Replay the saved stacking order on the first frame (needs `ctx`).
+        // `visible_tabs` is recorded back-to-front; filtered to tabs that
+        // actually exist this session so a cross-character load doesn't try to
+        // raise a window that isn't here.
+        let pending_zorder = persisted_layout
+            .as_ref()
+            .and_then(Self::dock_snapshot_from_layout)
+            .map(|snapshot| {
+                snapshot
+                    .visible_tabs
+                    .into_iter()
+                    .filter(|key| available_tabs.contains_key(key))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|order| !order.is_empty());
+
         // Login music plays when the game connection is established (first
         // server data), not when the login screen opens — the frame loop
         // arms the deadline on first receive.
@@ -727,6 +774,12 @@ impl VellumGuiApp {
             search_match_cache: None,
             available_tabs_fingerprint: None,
             pending_layout_rescale,
+            current_zorder: Vec::new(),
+            pending_zorder,
+            // Startup already restores the OS window natively; this pair only
+            // serves runtime `.loadlayout`.
+            pending_viewport_restore: None,
+            viewport_settle: None,
             // Fixed id: the TextEdit uses it wherever it renders, so focus
             // routing and cursor placement survive docking moves.
             command_input_id: Some(egui::Id::new(COMMAND_INPUT_EDIT_ID)),
@@ -950,15 +1003,34 @@ impl VellumGuiApp {
             return;
         }
 
-        self.available_tabs = refreshed;
+        // A window can leave available_tabs two ways: DELETED (gone from the
+        // layout defs) or merely HIDDEN (Windows-menu untick / .hide — core
+        // removes it from ui_state but keeps its layout def). Purging the
+        // stored rect for a hide dropped it to the top-left default when the
+        // user re-showed it. Keep the rect (and its paired sidebar gap) for
+        // a tab whose window is still in the layout defs; deletes already
+        // purge their rect via forget_tab_state before removing the def, so
+        // this only spares the hidden case. Mirrors
+        // restore_keeps_rect_for_hidden_tab on the load path. The old tab list
+        // (still holding window_name for each key) resolves a leaving key back
+        // to its window name.
+        let previous_tabs = std::mem::replace(&mut self.available_tabs, refreshed);
+        // Keys whose rect survives this refresh: still a live tab, OR hidden
+        // (not deleted) — its window name resolved from the OLD tab list is
+        // still present in the layout defs.
+        let rect_survivors = Self::rect_survivor_keys(
+            &previous_tabs,
+            &self.available_tabs,
+            &self.app_core.layout.windows,
+        );
         self.hidden_tabs
             .retain(|key| self.available_tabs.contains_key(key));
         self.main_window_rects
-            .retain(|key, _| self.available_tabs.contains_key(key));
+            .retain(|key, _| rect_survivors.contains(key));
         self.last_center_window_rects
             .retain(|key, _| self.available_tabs.contains_key(key));
         self.sidebar_gap_above
-            .retain(|key, _| self.available_tabs.contains_key(key));
+            .retain(|key, _| rect_survivors.contains(key));
         self.tab_zones
             .retain(|key, _| self.available_tabs.contains_key(key));
         self.no_title_tabs
@@ -1149,17 +1221,34 @@ impl VellumGuiApp {
         }
     }
 
-    fn hide_tab(&mut self, key: TabKey) {
-        if self.hidden_tabs.insert(key) {
-            self.prune_detached_tabs();
-            self.layout_dirty = true;
-        }
+    /// Hide a window the authoritative way: flip its core WindowVisibility —
+    /// the same layer the Windows-window checkbox drives. Right-click Hide,
+    /// detached-viewport close, `.hidewindow`, and load-time extras all route
+    /// here, so "hide" and "uncheck" are one mechanism (auto-spawn suppressed,
+    /// checkbox reflects reality). The old `hidden_tabs` overlay survives only
+    /// to honor legacy layout files at restore time; any overlay mark for this
+    /// window is cleared so the two layers can never disagree. The stored rect
+    /// survives the hide (rect_survivor_keys) so a re-show lands in place.
+    fn core_hide_tab(&mut self, key: &TabKey) {
+        let Some(name) = self
+            .available_tabs
+            .get(key)
+            .map(|tab| tab.window_name.clone())
+        else {
+            return;
+        };
+        self.core_hide_window_by_name(&name);
     }
 
-    fn restore_tab(&mut self, key: TabKey) {
-        if self.hidden_tabs.remove(&key) {
-            self.layout_dirty = true;
+    /// Name-keyed twin of [`Self::core_hide_tab`] for callers that start from
+    /// a window name (`.hidewindow <name>`).
+    fn core_hide_window_by_name(&mut self, name: &str) {
+        if let Some(key) = self.find_tab_key_by_name(name) {
+            self.hidden_tabs.remove(&key);
         }
+        let (w, h) = self.core_layout_size;
+        self.app_core.set_known_window_shown(name, false, w, h);
+        self.layout_dirty = true;
     }
 
     /// Find the live tab whose window matches `window_name` (bridges the
@@ -1672,11 +1761,16 @@ impl VellumGuiApp {
             .get(&member.window_name)
             .map(|window| &window.content)
         {
-            Some(
-                WindowContent::Progress(_)
-                | WindowContent::Countdown(_)
-                | WindowContent::Hand { .. },
-            ) => Some(bar_height),
+            // Progress/countdown bars are genuinely one row tall. Hands are
+            // NOT fixed: their icon scales to fill the height they're given
+            // (render_hand_content reads ui.available_height), matching the
+            // standalone `compact_height_cap` intent (Hand => no cap). Pinning
+            // a grouped hand to one bar row froze its icon at ~16px no matter
+            // how the group window was resized — so hands stay flexible (fall
+            // through to None) and share the group's growable height.
+            Some(WindowContent::Progress(_) | WindowContent::Countdown(_)) => {
+                Some(bar_height)
+            }
             Some(WindowContent::Betrayer)
                 if self.app_core.game_state.betrayer.items.is_empty() =>
             {
@@ -2333,18 +2427,43 @@ impl VellumGuiApp {
 
     /// Assemble the persistable layout snapshot. Returns None when the dock
     /// snapshot fails to serialize (never persist a null layout).
-    fn build_layout_snapshot(&mut self) -> Option<GuiLayoutFileV1> {
+    ///
+    /// One format, two masters: the per-character AUTOSAVE slot needs hidden
+    /// windows (their rects/hidden state must survive a restart so unhide
+    /// restores placement), while a named CHECKPOINT (`.savelayout <name>`) is
+    /// an exact portable copy of what's on screen — shown windows only, no
+    /// hidden residue carried to other profiles. `mode` picks the behavior.
+    fn build_layout_snapshot(&mut self, mode: LayoutSaveMode) -> Option<GuiLayoutFileV1> {
         let mut layout = GuiLayoutFileV1::new(&self.layout_profile, &self.layout_character);
 
-        let mut hidden_tabs: Vec<TabKey> = self.hidden_tabs.iter().cloned().collect();
-        hidden_tabs.sort_by_key(|key| key.short_id());
-        layout.hidden_tabs = hidden_tabs;
+        let strip_hidden = mode == LayoutSaveMode::Checkpoint;
+        // The tabs this save describes. Checkpoints drop GUI-hidden tabs so
+        // nothing below (defs, rects, zones, settings, groups) mentions them.
+        let snapshot_tabs: HashMap<TabKey, GuiTab> = self
+            .available_tabs
+            .iter()
+            .filter(|(key, _)| !(strip_hidden && self.hidden_tabs.contains(*key)))
+            .map(|(key, tab)| (key.clone(), tab.clone()))
+            .collect();
+
+        layout.hidden_tabs = if strip_hidden {
+            Vec::new()
+        } else {
+            let mut hidden_tabs: Vec<TabKey> = self.hidden_tabs.iter().cloned().collect();
+            hidden_tabs.sort_by_key(|key| key.short_id());
+            hidden_tabs
+        };
         layout.ui_font = self.ui_font.clone();
         layout.ui_settings = self.ui_settings.clone();
+        // The theme rides with the layout (like the skin), so a checkpoint
+        // loaded on another profile reproduces the saver's look. The live
+        // source of truth is config.active_theme; stamp it at save time.
+        layout.ui_settings.active_theme = Some(self.app_core.config.active_theme.clone());
         layout.tab_settings = {
             let mut entries: Vec<TabSettingsEntry> = self
                 .tab_settings
                 .iter()
+                .filter(|(key, _)| !strip_hidden || snapshot_tabs.contains_key(*key))
                 .map(|(key, settings)| TabSettingsEntry {
                     key: key.clone(),
                     settings: settings.clone(),
@@ -2360,7 +2479,7 @@ impl VellumGuiApp {
                 let mut rects: Vec<MainWindowRectSnapshot> = self
                     .main_window_rects
                     .iter()
-                    .filter(|(key, _)| self.available_tabs.contains_key(*key))
+                    .filter(|(key, _)| snapshot_tabs.contains_key(*key))
                     .map(|(key, rect)| MainWindowRectSnapshot {
                         key: key.clone(),
                         rect: *rect,
@@ -2379,7 +2498,7 @@ impl VellumGuiApp {
                 let mut zones: Vec<TabZoneSnapshot> = self
                     .tab_zones
                     .iter()
-                    .filter(|(key, _)| self.available_tabs.contains_key(*key))
+                    .filter(|(key, _)| snapshot_tabs.contains_key(*key))
                     .map(|(key, zone)| TabZoneSnapshot {
                         key: key.clone(),
                         zone: *zone,
@@ -2392,28 +2511,34 @@ impl VellumGuiApp {
                 let mut keys: Vec<TabKey> = self
                     .no_title_tabs
                     .iter()
-                    .filter(|key| self.available_tabs.contains_key(*key))
+                    .filter(|key| snapshot_tabs.contains_key(*key))
                     .cloned()
                     .collect();
                 keys.sort_by_key(|key| key.short_id());
                 keys
             },
             shell_layout: self.shell_layout.clone(),
-            tab_groups: Self::sanitize_tab_groups(self.tab_groups.clone(), &self.available_tabs),
+            tab_groups: Self::sanitize_tab_groups(self.tab_groups.clone(), &snapshot_tabs),
             // Stable order: GuiShellZone::all() filtered, not HashSet order.
             free_sidebar_zones: GuiShellZone::all()
                 .into_iter()
                 .filter(|zone| self.migrated_sidebar_zones.contains(zone))
                 .collect(),
             pending_zones: {
-                let mut entries: Vec<PendingZoneSnapshot> = self
-                    .pending_zones
-                    .iter()
-                    .map(|(window, zone)| PendingZoneSnapshot {
-                        window: window.clone(),
-                        zone: *zone,
-                    })
-                    .collect();
+                // Zone prefs for windows that aren't live tabs. Checkpoints
+                // drop them — they describe hidden/never-shown windows, which
+                // an exact copy of the visible arrangement doesn't carry.
+                let mut entries: Vec<PendingZoneSnapshot> = if strip_hidden {
+                    Vec::new()
+                } else {
+                    self.pending_zones
+                        .iter()
+                        .map(|(window, zone)| PendingZoneSnapshot {
+                            window: window.clone(),
+                            zone: *zone,
+                        })
+                        .collect()
+                };
                 entries.sort_by(|a, b| a.window.cmp(&b.window));
                 entries
             },
@@ -2433,10 +2558,16 @@ impl VellumGuiApp {
             .map(|(key, state)| (key.short_id(), state.current.clone()))
             .collect();
         layout.main_viewport = self.main_viewport_state.clone();
-        // Carry the full window definitions so a named layout loaded into a
-        // profile that lacks these windows (a fresh character) can recreate
-        // them. The dock snapshot alone only references windows by TabKey.
-        layout.window_defs = self.app_core.layout.windows.clone();
+        // Carry the window definitions for the windows that actually take part
+        // in THIS arrangement, so a named layout loaded into a profile that
+        // lacks them (a fresh character) can recreate exactly those windows.
+        // The dock snapshot alone only references windows by TabKey. We
+        // deliberately do NOT bake the character's entire window universe:
+        // doing so injected every unrelated window (voln, society, …) into any
+        // profile the layout was loaded into. The arrangement's members are the
+        // windows backing the live tabs.
+        layout.window_defs =
+            Self::arrangement_window_defs(&self.app_core.layout.windows, &snapshot_tabs);
         layout.touch();
         Some(layout)
     }
@@ -2459,15 +2590,23 @@ impl VellumGuiApp {
         if !inner_rect.is_finite() || inner_rect.width() < 1.0 || inner_rect.height() < 1.0 {
             return;
         }
+        // The ACTUAL canvas the rects are being laid out against right now —
+        // recorded in both branches so a maximized save rescales from the
+        // maximized canvas, not the smaller un-maximized restore size.
+        let canvas = Some([inner_rect.width(), inner_rect.height()]);
         if maximized {
             // Keep the last un-maximized geometry as the restore size.
             match &mut self.main_viewport_state {
-                Some(state) => state.maximized = true,
+                Some(state) => {
+                    state.maximized = true;
+                    state.canvas_size = canvas;
+                }
                 None => {
                     self.main_viewport_state = Some(MainViewportState {
                         outer_pos: None,
                         inner_size: [inner_rect.width(), inner_rect.height()],
                         maximized: true,
+                        canvas_size: canvas,
                     });
                 }
             }
@@ -2478,6 +2617,7 @@ impl VellumGuiApp {
                     .map(|rect| [rect.min.x, rect.min.y]),
                 inner_size: [inner_rect.width(), inner_rect.height()],
                 maximized: false,
+                canvas_size: canvas,
             });
         }
     }
@@ -2487,7 +2627,7 @@ impl VellumGuiApp {
     /// runs on the writer thread. Falls back to a synchronous write when the
     /// worker is gone (shutdown path).
     fn save_layout_state(&mut self) {
-        let Some(layout) = self.build_layout_snapshot() else {
+        let Some(layout) = self.build_layout_snapshot(LayoutSaveMode::Autosave) else {
             return;
         };
         match &self.layout_save_tx {
@@ -2515,16 +2655,24 @@ impl VellumGuiApp {
     /// Apply a saved layout snapshot to the live app — the runtime half of
     /// `.loadlayout`. Reuses the constructor's reconciliation, so tabs the
     /// file doesn't know keep working and saved tabs missing this session
-    /// are dropped. The main OS window geometry is deliberately left alone:
-    /// only the arrangement inside it (and detached windows) changes.
-    fn apply_layout_snapshot(&mut self, layout: &GuiLayoutFileV1) {
-        // Recreate any window the saved layout carries but this profile lacks
-        // BEFORE reconciling: restore_layout_state filters arrangement against
+    /// are dropped.
+    /// `keep_skin` (from `.loadlayout <name> --keep-skin`) preserves the
+    /// loader's appearance cluster (skin, theme, doll/status/compass art,
+    /// default frame/background) and takes only the arrangement.
+    fn apply_layout_snapshot(&mut self, layout: &GuiLayoutFileV1, keep_skin: bool) {
+        // Make this profile's window set match the layout's BEFORE
+        // reconciling: (1) recreate any window the file carries but this
+        // profile lacks — restore_layout_state filters arrangement against
         // available_tabs, so a window that doesn't exist yet would have its
-        // rect/zone/group dropped. Materializing first (then refreshing the
-        // tab list) lets the arrangement land on the freshly-created windows.
-        // Without the window_defs field (pre-upgrade files) this is a no-op
-        // and the old arrangement-only behavior stands.
+        // rect/zone/group dropped; (2) core-hide any live window the file
+        // does NOT name (layout is authoritative — loading Character A's
+        // layout onto B must not leave B's unrelated windows on screen).
+        // Hides go through core visibility (hide = the Windows-window
+        // uncheck), and the main story window / command input are never
+        // hidden (tabs_absent_from_layout excludes them). Guarded on
+        // non-empty window_defs — a legacy file can't describe its
+        // arrangement, so we leave the current windows alone rather than
+        // blanking the screen.
         if !layout.window_defs.is_empty() {
             let (w, h) = self.core_layout_size;
             let created =
@@ -2536,12 +2684,19 @@ impl VellumGuiApp {
                     created.len(),
                     created.join(", ")
                 );
-                // Rebuild the tab list so the new windows are available to the
-                // reconcile below (fingerprint would otherwise skip the refresh
-                // mid-frame).
-                self.available_tabs_fingerprint = None;
-                self.refresh_available_tabs_if_needed();
             }
+            // Rebuild the tab list so the freshly-created windows are visible
+            // to the extras scan below (fingerprint would otherwise skip the
+            // refresh mid-frame).
+            self.available_tabs_fingerprint = None;
+            self.refresh_available_tabs_if_needed();
+            for key in Self::tabs_absent_from_layout(&layout.window_defs, &self.available_tabs) {
+                self.core_hide_tab(&key);
+            }
+            // And rebuild again so the reconcile below sees the exact final
+            // window set (extras gone, layout's windows present).
+            self.available_tabs_fingerprint = None;
+            self.refresh_available_tabs_if_needed();
         }
 
         let restored = Self::restore_layout_state(Some(layout), &self.available_tabs);
@@ -2564,18 +2719,39 @@ impl VellumGuiApp {
         self.tab_groups = restored.tab_groups;
         self.detached_tabs = restored.detached_tabs;
         self.ui_font = restored.ui_font;
-        let previous_skin = self.ui_settings.active_skin.take();
+        // Appearance riding with the checkpoint: exact copy by default — the
+        // saved skin/theme/art selections stand, INCLUDING a recorded
+        // no-skin (the target's skin is cleared to match the saver's look).
+        // `--keep-skin` opts out: the loader's whole appearance cluster
+        // (skin, theme, doll, status art, compass set, default frame/bg)
+        // survives and only the arrangement is taken from the file.
+        let previous_look = self.ui_settings.clone();
         self.ui_settings = restored.ui_settings;
-        // Skins ride with checkpoints. One without a skin recorded (incl.
-        // checkpoints from before skins lived in the layout) keeps the
-        // current skin instead of clearing it — .setskin none is the
-        // explicit off switch. apply_if_changed swaps the art next frame.
-        if self.ui_settings.active_skin.is_none() {
-            self.ui_settings.active_skin = previous_skin;
+        if keep_skin {
+            self.ui_settings.active_skin = previous_look.active_skin.clone();
+            self.ui_settings.active_theme = previous_look.active_theme.clone();
+            self.ui_settings.doll_image = previous_look.doll_image.clone();
+            self.ui_settings.status_icons = previous_look.status_icons.clone();
+            self.ui_settings.compass_set = previous_look.compass_set.clone();
+            self.ui_settings.default_frame = previous_look.default_frame.clone();
+            self.ui_settings.default_background = previous_look.default_background.clone();
         }
         if self.app_core.config.active_skin != self.ui_settings.active_skin {
             self.app_core.config.active_skin = self.ui_settings.active_skin.clone();
             self.save_config_after_skin_change();
+        }
+        // Theme: config.active_theme is the live source of truth (the frame
+        // loop's apply_theme_if_changed watches it). A recorded theme mirrors
+        // in; None (legacy file) keeps the current theme. A custom theme the
+        // target profile lacks is reported by apply_theme_if_changed's warn
+        // path and the current visuals stay.
+        if !keep_skin {
+            if let Some(theme) = self.ui_settings.active_theme.clone() {
+                if self.app_core.config.active_theme != theme {
+                    self.app_core.config.active_theme = theme;
+                    self.save_config_after_skin_change();
+                }
+            }
         }
         self.tab_settings = restored.tab_settings;
         // Checkpoints can predate the move of per-window text size/font/wrap
@@ -2604,9 +2780,93 @@ impl VellumGuiApp {
         // box of the saved rects so we still have a reference.
         self.pending_layout_rescale =
             Some(Self::layout_reference_canvas(layout, &self.main_window_rects));
+        // Restore the saved OS-window geometry too, so "exact position on
+        // screen" means exactly that: the rects land on the same canvas they
+        // were saved against (the rescale then no-ops). The frame loop sends
+        // the ViewportCommands and holds the rescale until the OS window
+        // settles (or a short timeout — then it rescales proportionally into
+        // whatever size the OS allowed).
+        self.pending_viewport_restore = layout.main_viewport.clone();
+        // Replay the saved stacking order next frame (windows must exist as
+        // layers first). visible_tabs is recorded back-to-front; filter to
+        // tabs that exist this session so a cross-character load doesn't try
+        // to raise an absent window.
+        self.pending_zorder = Self::dock_snapshot_from_layout(layout).map(|snapshot| {
+            snapshot
+                .visible_tabs
+                .into_iter()
+                .filter(|key| self.available_tabs.contains_key(key))
+                .collect::<Vec<_>>()
+        });
         // The live autosave slot now reflects the loaded arrangement; the
         // checkpoint itself is only written by an explicit .savelayout.
         self.layout_dirty = true;
+    }
+
+    /// Tab keys whose stored rect should survive an available-tabs refresh.
+    /// A key survives if it is still a live tab, OR if it merely went HIDDEN
+    /// (its window, resolved via the pre-refresh tab list, is still present in
+    /// the layout defs). A DELETED window is gone from the layout defs, so its
+    /// rect is not spared here — and the delete path purges it explicitly via
+    /// forget_tab_state anyway. This keeps a Windows-menu untick/retick from
+    /// dropping a window to the top-left default.
+    fn rect_survivor_keys(
+        previous_tabs: &HashMap<TabKey, GuiTab>,
+        current_tabs: &HashMap<TabKey, GuiTab>,
+        layout_windows: &[crate::config::WindowDef],
+    ) -> HashSet<TabKey> {
+        let layout_def_names: HashSet<&str> =
+            layout_windows.iter().map(|def| def.name()).collect();
+        previous_tabs
+            .iter()
+            .filter(|(key, tab)| {
+                current_tabs.contains_key(key)
+                    || layout_def_names.contains(tab.window_name.as_str())
+            })
+            .map(|(key, _)| key.clone())
+            .chain(current_tabs.keys().cloned())
+            .collect()
+    }
+
+    /// The window definitions that take part in a given arrangement: the
+    /// subset of the character's window universe whose windows back a live tab.
+    /// `.savelayout` persists only these (not every WindowDef the character
+    /// owns) so loading the layout into another profile recreates exactly the
+    /// arrangement's windows rather than injecting every unrelated window
+    /// (voln, society, …).
+    fn arrangement_window_defs(
+        all_windows: &[crate::config::WindowDef],
+        available_tabs: &HashMap<TabKey, GuiTab>,
+    ) -> Vec<crate::config::WindowDef> {
+        let arrangement: HashSet<&str> = available_tabs
+            .values()
+            .map(|tab| tab.window_name.as_str())
+            .collect();
+        all_windows
+            .iter()
+            .filter(|def| arrangement.contains(def.name()))
+            .cloned()
+            .collect()
+    }
+
+    /// The live tabs a loaded layout does NOT name — the windows to hide so the
+    /// layout is authoritative (its window_defs define the complete visible
+    /// set). The main story window and the command input are always excluded:
+    /// hiding them would break the main-stream-visible and always-typing
+    /// invariants. Callers must guard on a non-empty `window_defs`; an empty
+    /// list means a legacy file that can't describe its arrangement, and
+    /// hiding against it would blank the screen.
+    fn tabs_absent_from_layout(
+        window_defs: &[crate::config::WindowDef],
+        available_tabs: &HashMap<TabKey, GuiTab>,
+    ) -> Vec<TabKey> {
+        let named: HashSet<&str> = window_defs.iter().map(|def| def.name()).collect();
+        available_tabs
+            .iter()
+            .filter(|(key, _)| **key != TabKey::TextMain && **key != TabKey::CommandInput)
+            .filter(|(_, tab)| !named.contains(tab.window_name.as_str()))
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     /// The canvas size a saved layout's rects were captured against, used as
@@ -2620,7 +2880,10 @@ impl VellumGuiApp {
         rects: &HashMap<TabKey, [f32; 4]>,
     ) -> egui::Vec2 {
         if let Some(viewport) = &layout.main_viewport {
-            let [w, h] = viewport.inner_size;
+            // canvas_size is the ACTUAL inner size at capture (correct even
+            // for a maximized save); inner_size is the un-maximized restore
+            // geometry kept for older files.
+            let [w, h] = viewport.canvas_size.unwrap_or(viewport.inner_size);
             if w.is_finite() && h.is_finite() && w > 1.0 && h > 1.0 {
                 return egui::Vec2::new(w, h);
             }
@@ -4680,17 +4943,12 @@ impl VellumGuiApp {
             A::PrevTab => self.cycle_tabbed_tabs(false),
             A::NextUnread => self.goto_unread_tab(),
             A::HideWindow(Some(name)) => {
-                let key = self
-                    .app_core
-                    .ui_state
-                    .windows
-                    .get(&name)
-                    .and_then(|window| Self::tab_key_for_window(&name, window));
-                match key {
-                    Some(key) => self.hide_tab(key),
-                    None => self
-                        .app_core
-                        .add_system_message(&format!("Window '{}' not found.", name)),
+                // Hide = the Windows-window uncheck (core visibility layer).
+                if self.app_core.ui_state.windows.contains_key(&name) {
+                    self.core_hide_window_by_name(&name);
+                } else {
+                    self.app_core
+                        .add_system_message(&format!("Window '{}' not found.", name));
                 }
             }
             // Bare `.hidewindow` (no name) asks for a picker: the Windows
@@ -4717,7 +4975,10 @@ impl VellumGuiApp {
                 // TOML cell layouts are the TUI's format; the GUI's Layouts
                 // menu lists its own JSON checkpoints from the same shared
                 // folder, so route the request to the matching GUI layout.
-                self.handle_ui_action(A::LoadLayout(Some(name)));
+                self.handle_ui_action(A::LoadLayout {
+                    name: Some(name),
+                    keep_skin: false,
+                });
             }
             // Layout capability hooks (parity plan D3): same command
             // names as the TUI, GUI-native window-snapshot checkpoints.
@@ -4729,7 +4990,7 @@ impl VellumGuiApp {
                     );
                     return;
                 }
-                let Some(layout) = self.build_layout_snapshot() else {
+                let Some(layout) = self.build_layout_snapshot(LayoutSaveMode::Checkpoint) else {
                     self.app_core
                         .add_system_message("Could not snapshot the current layout.");
                     return;
@@ -4744,17 +5005,23 @@ impl VellumGuiApp {
                         .add_system_message(&format!("Failed to save layout: {}", err)),
                 }
             }
-            A::LoadLayout(None) => {
+            A::LoadLayout { name: None, .. } => {
                 self.app_core
-                    .add_system_message("Usage: .loadlayout <name>");
+                    .add_system_message("Usage: .loadlayout <name> [--keep-skin]");
                 self.list_layout_checkpoints();
             }
-            A::LoadLayout(Some(name)) => {
+            A::LoadLayout {
+                name: Some(name),
+                keep_skin,
+            } => {
                 match load_named_layout(&name) {
                     Ok(layout) => {
-                        self.apply_layout_snapshot(&layout);
-                        self.app_core
-                            .add_system_message(&format!("Loaded GUI layout '{}'.", name));
+                        self.apply_layout_snapshot(&layout, keep_skin);
+                        self.app_core.add_system_message(&format!(
+                            "Loaded GUI layout '{}'{}.",
+                            name,
+                            if keep_skin { " (keeping your skin/theme)" } else { "" }
+                        ));
                     }
                     Err(err) => {
                         self.app_core
@@ -5081,21 +5348,71 @@ impl eframe::App for VellumGuiApp {
             // promptly instead of waiting for the idle repaint tick.
             ctx.request_repaint();
         }
+        // A `.loadlayout` queued an OS-window geometry restore. Send the
+        // viewport commands once, then let the rescale below wait for the
+        // window to settle at the target size so the rects land 1:1.
+        if let Some(viewport) = self.pending_viewport_restore.take() {
+            if viewport.maximized {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                let [w, h] = viewport.inner_size;
+                if w.is_finite() && h.is_finite() && w > 1.0 && h > 1.0 {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                }
+                if let Some([x, y]) = viewport
+                    .outer_pos
+                    .filter(|pos| pos.iter().all(|v| v.is_finite()))
+                {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
+                }
+            }
+            let [tw, th] = viewport.canvas_size.unwrap_or(viewport.inner_size);
+            if tw.is_finite() && th.is_finite() && tw > 1.0 && th > 1.0 {
+                // ~half a second at 60fps before giving up on the OS resize.
+                self.viewport_settle = Some((egui::vec2(tw, th), 30));
+            }
+            ctx.request_repaint();
+        }
         // A layout load / startup restore / `.resize` queued a proportional
         // rescale; the target canvas size is only knowable here. Scale the
         // stored rects from the save-time canvas to the current content size,
         // then clamp each into the live window so nothing lands off-screen.
-        if let Some(from) = self.pending_layout_rescale.take() {
+        // While a viewport restore is settling, hold: once the OS window
+        // reaches the saved canvas the rescale is an identity (exact rects);
+        // if the countdown expires we rescale into whatever size we got.
+        if self.pending_layout_rescale.is_some() {
             let content = ctx.input(|input| input.content_rect());
-            let to = egui::Vec2::new(content.width().max(1.0), content.height().max(1.0));
-            let changed = Self::rescale_main_window_rects(&mut self.main_window_rects, from, to);
-            for rect in self.main_window_rects.values_mut() {
-                if let Some(r) = Self::rect_from_snapshot(*rect) {
-                    *rect = Self::rect_to_snapshot(Self::clamp_main_window_rect(r, content));
+            let content_size =
+                egui::Vec2::new(content.width().max(1.0), content.height().max(1.0));
+            let hold = if let Some((target, frames)) = self.viewport_settle {
+                let close = (content_size.x - target.x).abs() <= 1.5
+                    && (content_size.y - target.y).abs() <= 1.5;
+                if close || frames == 0 {
+                    self.viewport_settle = None;
+                    false
+                } else {
+                    self.viewport_settle = Some((target, frames - 1));
+                    ctx.request_repaint();
+                    true
                 }
-            }
-            if changed {
-                self.layout_dirty = true;
+            } else {
+                false
+            };
+            if !hold {
+                if let Some(from) = self.pending_layout_rescale.take() {
+                    let changed =
+                        Self::rescale_main_window_rects(&mut self.main_window_rects, from, content_size);
+                    for rect in self.main_window_rects.values_mut() {
+                        if let Some(r) = Self::rect_from_snapshot(*rect) {
+                            *rect =
+                                Self::rect_to_snapshot(Self::clamp_main_window_rect(r, content));
+                        }
+                    }
+                    if changed {
+                        self.layout_dirty = true;
+                    }
+                }
             }
         }
         self.apply_theme_if_changed(&ctx);
@@ -5598,6 +5915,18 @@ impl eframe::App for VellumGuiApp {
         self.render_window_move_overlay(&ctx, &visible_zone_rects);
         self.handle_link_drag_drop(&ctx, &zone_window_rects);
 
+        // All zone surfaces have rendered, so every visible window is
+        // registered as an egui layer. If a layout load queued a stacking
+        // order, replay it NOW (raising layers that exist — egui resolves the
+        // final order at end of pass); otherwise cache the live order for the
+        // save snapshot. Never both in one frame: the cache read would still
+        // see the pre-raise order and clobber the freshly-applied one.
+        if let Some(order) = self.pending_zorder.take() {
+            self.apply_stacking_order(&ctx, &order);
+        } else {
+            self.refresh_zorder_cache(&ctx);
+        }
+
         if open_windows_manager {
             self.open_known_windows_editor();
         }
@@ -5873,6 +6202,174 @@ mod tests {
     use crate::data::input::{KeyCode, KeyEvent, KeyModifiers};
     use eframe::egui::{Color32, Pos2};
     use std::collections::HashMap;
+
+    use super::GuiTab;
+    use super::TabId;
+    use crate::config::WindowDef;
+
+    /// A minimal spacer WindowDef with the given name. Every WindowBase field
+    /// carries a serde default, so an empty table + name deserializes cleanly —
+    /// no giant literal to keep in sync with the struct.
+    fn window_def_named(name: &str) -> WindowDef {
+        let base: crate::config::WindowBase =
+            toml::from_str(&format!("name = \"{name}\"")).expect("window base from name");
+        WindowDef::blank("spacer", base).expect("spacer def")
+    }
+
+    /// A live tab backed by `window_name`, keyed under `key`.
+    fn tab(key: TabKey, window_name: &str) -> (TabKey, GuiTab) {
+        (
+            key.clone(),
+            GuiTab {
+                id: TabId::new(key),
+                window_name: window_name.to_string(),
+            },
+        )
+    }
+
+    #[test]
+    fn arrangement_window_defs_keeps_only_windows_backing_a_tab() {
+        // The character owns five windows; only three back a live tab. A
+        // savelayout must persist exactly those three, not the whole universe
+        // (voln/society would otherwise be injected into any profile the
+        // layout loads into).
+        let all = vec![
+            window_def_named("main"),
+            window_def_named("room"),
+            window_def_named("health"),
+            window_def_named("voln"),
+            window_def_named("society"),
+        ];
+        let available_tabs: HashMap<TabKey, GuiTab> = [
+            tab(TabKey::TextMain, "main"),
+            tab(TabKey::Room, "room"),
+            tab(TabKey::WindowByName { id: "health".into() }, "health"),
+        ]
+        .into_iter()
+        .collect();
+
+        let saved = VellumGuiApp::arrangement_window_defs(&all, &available_tabs);
+        let mut names: Vec<&str> = saved.iter().map(|def| def.name()).collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["health", "main", "room"]);
+        assert!(
+            !names.contains(&"voln") && !names.contains(&"society"),
+            "unrelated windows must not be baked into the layout"
+        );
+    }
+
+    #[test]
+    fn tabs_absent_from_layout_hides_extras_but_never_main_or_input() {
+        // Loading a layout that names only main+room onto a session that also
+        // has voln/society/input: the extras hide, but the main story window
+        // and the command input are never hidden (invariants).
+        let window_defs = vec![window_def_named("main"), window_def_named("room")];
+        let available_tabs: HashMap<TabKey, GuiTab> = [
+            tab(TabKey::TextMain, "main"),
+            tab(TabKey::Room, "room"),
+            tab(TabKey::WindowByName { id: "voln".into() }, "voln"),
+            tab(TabKey::WindowByName { id: "society".into() }, "society"),
+            tab(TabKey::CommandInput, "input"),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut hide = VellumGuiApp::tabs_absent_from_layout(&window_defs, &available_tabs);
+        hide.sort_by_key(|key| key.short_id());
+        assert_eq!(
+            hide,
+            vec![
+                TabKey::WindowByName { id: "society".into() },
+                TabKey::WindowByName { id: "voln".into() },
+            ],
+            "only the windows the layout omits are hidden"
+        );
+        assert!(
+            !hide.contains(&TabKey::TextMain),
+            "main story window is never hidden"
+        );
+        assert!(
+            !hide.contains(&TabKey::CommandInput),
+            "command input is never hidden"
+        );
+    }
+
+    #[test]
+    fn rect_survivor_keeps_hidden_window_rect_but_drops_deleted() {
+        // Before: loot + inventory are live tabs, both with stored rects.
+        let previous: HashMap<TabKey, GuiTab> = [
+            tab(TabKey::TextByName { id: "loot".into() }, "loot"),
+            tab(TabKey::Inventory { id: "inventory".into() }, "inventory"),
+        ]
+        .into_iter()
+        .collect();
+        // After a refresh both left the live tab set (one hidden, one deleted).
+        let current: HashMap<TabKey, GuiTab> = HashMap::new();
+        // loot was HIDDEN — its def survives in the layout. inventory was
+        // DELETED — gone from the layout defs.
+        let layout_windows = vec![window_def_named("loot")];
+
+        let survivors =
+            VellumGuiApp::rect_survivor_keys(&previous, &current, &layout_windows);
+        assert!(
+            survivors.contains(&TabKey::TextByName { id: "loot".into() }),
+            "a hidden window keeps its rect for a later re-show"
+        );
+        assert!(
+            !survivors.contains(&TabKey::Inventory { id: "inventory".into() }),
+            "a deleted window does not keep its rect"
+        );
+    }
+
+    #[test]
+    fn reference_canvas_prefers_canvas_size_over_restore_size() {
+        // A layout saved while maximized records inner_size = the UN-maximized
+        // restore geometry but canvas_size = the maximized canvas the rects
+        // were actually laid out against. Rescale must use the latter, or the
+        // rects blow up past the screen.
+        use crate::frontend::gui::persistence::{GuiLayoutFileV1, MainViewportState};
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.main_viewport = Some(MainViewportState {
+            outer_pos: None,
+            inner_size: [1280.0, 720.0],
+            maximized: true,
+            canvas_size: Some([2560.0, 1400.0]),
+        });
+        let rects = HashMap::new();
+        assert_eq!(
+            VellumGuiApp::layout_reference_canvas(&layout, &rects),
+            eframe::egui::Vec2::new(2560.0, 1400.0)
+        );
+        // Files predating the field fall back to inner_size.
+        layout.main_viewport.as_mut().unwrap().canvas_size = None;
+        assert_eq!(
+            VellumGuiApp::layout_reference_canvas(&layout, &rects),
+            eframe::egui::Vec2::new(1280.0, 720.0)
+        );
+    }
+
+    #[test]
+    fn rect_survivor_always_keeps_live_tabs() {
+        let previous: HashMap<TabKey, GuiTab> = HashMap::new();
+        let current: HashMap<TabKey, GuiTab> =
+            [tab(TabKey::Room, "room")].into_iter().collect();
+        // Even with no matching layout def, a currently-live tab's rect stays.
+        let survivors = VellumGuiApp::rect_survivor_keys(&previous, &current, &[]);
+        assert!(survivors.contains(&TabKey::Room));
+    }
+
+    #[test]
+    fn tabs_absent_from_layout_hides_nothing_when_layout_matches_session() {
+        let window_defs = vec![window_def_named("main"), window_def_named("room")];
+        let available_tabs: HashMap<TabKey, GuiTab> =
+            [tab(TabKey::TextMain, "main"), tab(TabKey::Room, "room")]
+                .into_iter()
+                .collect();
+        assert!(
+            VellumGuiApp::tabs_absent_from_layout(&window_defs, &available_tabs).is_empty(),
+            "a layout that names every live window hides nothing"
+        );
+    }
 
     #[test]
     fn test_parse_hex_color_with_hash() {

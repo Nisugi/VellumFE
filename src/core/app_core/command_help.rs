@@ -120,7 +120,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "[name]",
                 "Save current layout (default: 'default')"
             ),
-            entry!(&["loadlayout"], "[name]", "Load a saved layout"),
+            entry!(
+                &["loadlayout"],
+                "[name] [--keep-skin]",
+                "Load a saved layout (--keep-skin keeps your skin/theme)"
+            ),
             entry!(&["layouts"], "", "List available layouts"),
             entry!(&["resize"], "", "Refit windows to the current window/terminal size"),
         ],

@@ -579,6 +579,68 @@ impl VellumGuiApp {
         ctx.request_repaint();
     }
 
+    /// Map every live main-surface tab to the egui layer id its window renders
+    /// under, across all zones. The inverse of `zone_window_id` (which hashes,
+    /// so it can't be reversed) — built forward so a layer id from
+    /// `mem.layer_ids()` can be resolved back to a TabKey.
+    fn surface_layer_to_tab(&self) -> HashMap<egui::Id, TabKey> {
+        self.available_tabs
+            .keys()
+            .filter(|key| {
+                !self.hidden_tabs.contains(key) && !self.detached_tabs.contains_key(key)
+            })
+            .map(|key| (Self::zone_window_id(self.zone_for_tab(key), key), key.clone()))
+            .collect()
+    }
+
+    /// Cache the live front-to-back stacking order (topmost last) of the
+    /// main-surface windows from egui's layer order. Read by the save snapshot
+    /// so `visible_tabs` records true z-order. Only refreshes when the order
+    /// actually changed, to avoid churning `current_zorder` every frame.
+    pub(super) fn refresh_zorder_cache(&mut self, ctx: &egui::Context) {
+        let layer_to_tab = self.surface_layer_to_tab();
+        // layer_ids() is back-to-front (top is last) — the order we persist.
+        let ordered: Vec<TabKey> = ctx.memory(|mem| {
+            mem.layer_ids()
+                .filter(|layer| layer.order == egui::Order::Middle)
+                .filter_map(|layer| layer_to_tab.get(&layer.id).cloned())
+                .collect()
+        });
+        // A frame before any surface window has been laid out yields nothing;
+        // don't clobber a good cache with an empty read.
+        if !ordered.is_empty() && ordered != self.current_zorder {
+            self.current_zorder = ordered;
+        }
+    }
+
+    /// Replay a saved stacking order: raise each window in back-to-front order
+    /// so the last-listed ends up on top. Keys not currently on the main
+    /// surface (hidden/detached/absent) are skipped. Deferred one frame from
+    /// the load because the windows must exist as layers first.
+    pub(super) fn apply_stacking_order(&mut self, ctx: &egui::Context, order: &[TabKey]) {
+        let mut raised_any = false;
+        for key in order {
+            if self.hidden_tabs.contains(key)
+                || self.detached_tabs.contains_key(key)
+                || !self.available_tabs.contains_key(key)
+            {
+                continue;
+            }
+            let layer = egui::LayerId::new(
+                egui::Order::Middle,
+                Self::zone_window_id(self.zone_for_tab(key), key),
+            );
+            ctx.move_to_top(layer);
+            raised_any = true;
+        }
+        if raised_any {
+            // Seed the cache so a save right after load re-persists this order
+            // even before the next capture pass runs.
+            self.current_zorder = order.to_vec();
+            ctx.request_repaint();
+        }
+    }
+
     fn zone_surface_tabs(&self, detached_tabs: &HashSet<TabKey>, zone: GuiShellZone) -> Vec<GuiTab> {
         let mut tabs: Vec<(i32, i32, String, GuiTab)> = self
             .available_tabs

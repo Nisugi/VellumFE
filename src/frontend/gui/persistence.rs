@@ -353,6 +353,14 @@ pub struct GuiUiSettings {
     #[serde(default)]
     pub active_skin: Option<String>,
 
+    /// Theme (preset or custom name) at save time, so a checkpoint loaded on
+    /// another profile reproduces the saver's look. The live source of truth
+    /// is config.active_theme; the save path stamps this and the load path
+    /// mirrors it back into config. None = legacy file from before themes
+    /// rode with layouts — loading one keeps the current theme.
+    #[serde(default)]
+    pub active_theme: Option<String>,
+
     /// Injury doll image override as a pool-relative path
     /// ("dolls/dwarf_ranger.png"); None follows the active skin's
     /// `[injury_doll]` (or the vector doll with no skin). Calibration for a
@@ -557,6 +565,7 @@ impl Default for GuiUiSettings {
             auto_contrast_bar_text: default_true(),
             vitals: VitalsConfig::default(),
             active_skin: None,
+            active_theme: None,
             doll_image: None,
             status_icons: StatusIconSettings::default(),
             compass_set: None,
@@ -642,12 +651,22 @@ pub struct MainViewportState {
     #[serde(default)]
     pub outer_pos: Option<[f32; 2]>,
 
-    /// Inner (client area) size [width, height]
+    /// Inner (client area) size [width, height]. When `maximized`, this is
+    /// the last UN-maximized size (the restore geometry), NOT the canvas the
+    /// rects were captured against — see `canvas_size`.
     pub inner_size: [f32; 2],
 
     /// Whether the window was maximized
     #[serde(default)]
     pub maximized: bool,
+
+    /// The ACTUAL inner size at save time, even while maximized. This is the
+    /// reference canvas for rescaling the saved rects; using `inner_size`
+    /// for a maximized save scaled rects from the smaller restore size and
+    /// blew them past the screen. None = file predates the field; fall back
+    /// to `inner_size`.
+    #[serde(default)]
+    pub canvas_size: Option<[f32; 2]>,
 }
 
 /// Per-tab settings entry for serialization.

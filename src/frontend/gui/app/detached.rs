@@ -326,7 +326,9 @@ impl VellumGuiApp {
                 self.detached_context_menu = None;
             }
             if out.hide {
-                self.hide_tab(key);
+                // Hide = the Windows-window uncheck (core visibility); the
+                // next available-tabs refresh prunes this viewport.
+                self.core_hide_tab(&key);
                 continue;
             }
             if out.reattach {
