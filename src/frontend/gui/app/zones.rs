@@ -331,6 +331,36 @@ impl VellumGuiApp {
                     }
                 }
             }
+            // A dashboard's height is its row count × the icon row, so the
+            // frame hugs the grid instead of leaving a slab below the last
+            // row. Rows come from the config (indicator count + layout): a
+            // vertical stack is N rows, a grid is ceil(N/cols), horizontal is
+            // one. Flow wraps by width — not knowable here — so it stays
+            // uncapped (grows as content needs). Empty/absent config: 1 row.
+            WidgetType::Dashboard => {
+                use crate::config::DashboardLayout;
+                let data = self
+                    .app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|def| def.name() == window.name)
+                    .and_then(|def| match def {
+                        crate::config::WindowDef::Dashboard { data, .. } => Some(data),
+                        _ => None,
+                    });
+                let Some(data) = data else { return None };
+                let count = data.indicators.len().max(1);
+                let rows = match DashboardLayout::from_str(&data.layout) {
+                    DashboardLayout::Flow => return None,
+                    DashboardLayout::Horizontal => 1,
+                    DashboardLayout::Vertical => count,
+                    DashboardLayout::Grid { cols, .. } => count.div_ceil(cols.max(1)),
+                };
+                let icon_row = 24.0;
+                let spacing = data.spacing as f32 * icon_row * 0.35;
+                rows as f32 * icon_row + (rows.saturating_sub(1) as f32) * spacing
+            }
             _ => return None,
         };
         let mut frame = egui::Frame::window(ctx.global_style().as_ref());
@@ -357,8 +387,12 @@ impl VellumGuiApp {
     fn min_window_height_for_zone(zone: GuiShellZone, window: &WindowState) -> f32 {
         // Center and the sidebars share the free-placement minimums;
         // header/footer strips accept anything down to the docked floor.
+        // Dashboards are content-height (capped to their row count), so they
+        // get the docked floor too — otherwise the 90px text-window minimum
+        // leaves irreducible padding below a short grid.
         if matches!(zone, GuiShellZone::Header | GuiShellZone::Footer)
             || Self::is_compact_center_widget(&window.widget_type)
+            || matches!(window.widget_type, WidgetType::Dashboard)
         {
             MIN_DOCKED_WINDOW_HEIGHT
         } else {

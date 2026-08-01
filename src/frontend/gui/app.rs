@@ -1710,6 +1710,32 @@ impl VellumGuiApp {
                     }
                 }
             }
+            // A dashboard is fixed to its row count so a grouped dashboard
+            // hugs its grid instead of absorbing the group's leftover space
+            // (which left an empty band below a 2-row grid). Rows come from the
+            // config + layout, same as the standalone height cap; flow wraps
+            // by width, so it stays flexible.
+            Some(WindowContent::Dashboard { .. }) => {
+                use crate::config::DashboardLayout;
+                let data = self
+                    .app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|def| def.name() == member.window_name)
+                    .and_then(|def| match def {
+                        crate::config::WindowDef::Dashboard { data, .. } => Some(data),
+                        _ => None,
+                    })?;
+                let count = data.indicators.len().max(1);
+                let rows = match DashboardLayout::from_str(&data.layout) {
+                    DashboardLayout::Flow => return None,
+                    DashboardLayout::Horizontal => 1,
+                    DashboardLayout::Vertical => count,
+                    DashboardLayout::Grid { cols, .. } => count.div_ceil(cols.max(1)),
+                };
+                Some(bar_height * rows as f32 + gap * (rows.saturating_sub(1) as f32))
+            }
             _ => None,
         }
     }
