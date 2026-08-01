@@ -114,6 +114,41 @@ fn send_to_back_raise_order(
         .collect()
 }
 
+/// How far the pointer must travel from its press origin before a press
+/// counts as a real drag (rather than a click). Matches egui's own default
+/// click/drag threshold closely enough to feel native.
+const PRESS_DRAG_THRESHOLD: f32 = 6.0;
+
+/// Whether a press on a window has become a genuine drag, and so may relax
+/// that window's size pin and hand resizing to egui. A stationary click
+/// (press origin == current pointer, within the threshold) must NOT relax
+/// the pin: relaxing lets egui fall back to its remembered `desired_size`,
+/// which — for grouped windows, whose max height is the whole zone with no
+/// compact cap — snaps the window to a different height on a mere title-bar
+/// click. Requiring travel keeps a click inert while leaving real
+/// resize/move drags fully native.
+///
+/// `latched_drag` short-circuits to true once THIS window owns the
+/// engagement latch and a drag has already been observed this press, so a
+/// resize drag that briefly slows to a stop mid-gesture does not re-pin and
+/// stall. Callers pass the window's engagement state; the pure travel test
+/// is all this helper decides.
+fn press_became_drag(
+    press_origin: Option<egui::Pos2>,
+    pointer_pos: Option<egui::Pos2>,
+    latched_drag: bool,
+) -> bool {
+    if latched_drag {
+        return true;
+    }
+    match (press_origin, pointer_pos) {
+        (Some(origin), Some(current)) => {
+            (current - origin).length() > PRESS_DRAG_THRESHOLD
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn effective_sidebar_gaps(zone_height: f32, items: &[(f32, f32)]) -> Vec<f32> {
     let occupied: f32 = items.iter().map(|(_, height)| height.max(0.0)).sum();
     let mut free = (zone_height - occupied).max(0.0);
@@ -1105,6 +1140,9 @@ impl VellumGuiApp {
         // Where the current press started, for telling "user is engaging
         // this window" apart from "user clicked a toolbar toggle".
         let press_origin = ctx.input(|i| i.pointer.press_origin());
+        // Current pointer position, paired with the press origin to tell a
+        // stationary click apart from a real drag (see `press_became_drag`).
+        let pointer_pos = ctx.input(|i| i.pointer.interact_pos());
         // The engagement latch lives for one press; release clears it.
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         // True only on the frame the primary button goes down — used to raise a
@@ -1402,7 +1440,15 @@ impl VellumGuiApp {
             let user_engaging_window = !window_locked
                 && pointer_interacting
                 && (already_latched || (self.zone_engaged_tab.is_none() && engaging_press));
-            if !being_moved && !user_engaging_window {
+            // The size pin only relaxes once the press becomes a real drag —
+            // a stationary title-bar click keeps the pin, so egui can't snap
+            // the window (grouped windows especially, whose max height is the
+            // whole zone) to its remembered desired_size. `user_engaging_window`
+            // still gates position feed and rect tracking below; this narrower
+            // gate governs the SIZE pin alone.
+            let relax_size_pin = user_engaging_window
+                && press_became_drag(press_origin, pointer_pos, already_latched);
+            if !being_moved && !relax_size_pin {
                 // Pin every window to its display size when the user isn't
                 // engaging it: egui's Resize state re-clamps its remembered
                 // desired_size each frame, so without this a release-snap's new
@@ -1505,7 +1551,11 @@ impl VellumGuiApp {
                 // click-anywhere (the old gate) baked the displaced rect in,
                 // so windows never sprang back when the zone closed and a
                 // loaded layout was overwritten by the on-screen geometry.
-                let should_track_rect = rect_changed && user_engaging_window;
+                // Track only when the press became a real drag (resize or
+                // move): a stationary click never relaxes the pin, so any rect
+                // divergence on a click is egui noise, not user intent, and
+                // must not be baked in.
+                let should_track_rect = rect_changed && relax_size_pin;
                 // While a snap drag is live the hook runs every frame — even
                 // when the pointer holds still (guides must not flicker off)
                 // and on the release frame, where the engagement gate is
@@ -1529,7 +1579,7 @@ impl VellumGuiApp {
                     }
                     rect
                 };
-                if !being_moved && (snap_drag_live || (rect_changed && user_engaging_window)) {
+                if !being_moved && (snap_drag_live || (rect_changed && relax_size_pin)) {
                     let tracked = self.apply_zone_snap(
                         zone,
                         &tab.id.key,
@@ -1644,6 +1694,44 @@ mod tests {
             VellumGuiApp::default_zone_for_tab_key(&TabKey::TextMain),
             super::GuiShellZone::Center
         );
+    }
+
+    #[test]
+    fn stationary_click_does_not_relax_size_pin() {
+        // A title-bar click: press origin and current pointer coincide. This
+        // must NOT count as a drag, so the size pin stays and the (grouped)
+        // window can't jump to egui's remembered desired_size. Regression
+        // guard for "clicking the title bar resizes a grouped window".
+        let origin = egui::pos2(100.0, 50.0);
+        assert!(!super::press_became_drag(Some(origin), Some(origin), false));
+        // Tiny jitter under the threshold is still a click, not a drag.
+        let jitter = egui::pos2(102.0, 51.0);
+        assert!(!super::press_became_drag(Some(origin), Some(jitter), false));
+    }
+
+    #[test]
+    fn real_drag_relaxes_size_pin() {
+        // Pointer traveled well past the threshold: a genuine resize/move
+        // drag, so the pin relaxes and egui owns the geometry.
+        let origin = egui::pos2(100.0, 50.0);
+        let dragged = egui::pos2(140.0, 90.0);
+        assert!(super::press_became_drag(Some(origin), Some(dragged), false));
+    }
+
+    #[test]
+    fn latched_drag_stays_relaxed_when_pointer_stalls() {
+        // Once this window owns the drag latch, a mid-gesture pause (pointer
+        // momentarily back near the origin) must not re-pin and stall the
+        // resize — the latch short-circuits the travel test.
+        let origin = egui::pos2(100.0, 50.0);
+        assert!(super::press_became_drag(Some(origin), Some(origin), true));
+    }
+
+    #[test]
+    fn missing_pointer_is_not_a_drag() {
+        // No press origin or no pointer position → not a drag (pin holds).
+        assert!(!super::press_became_drag(None, Some(egui::pos2(1.0, 1.0)), false));
+        assert!(!super::press_became_drag(Some(egui::pos2(1.0, 1.0)), None, false));
     }
 
     #[test]
