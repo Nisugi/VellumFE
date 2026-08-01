@@ -1049,6 +1049,10 @@ impl VellumGuiApp {
         let press_origin = ctx.input(|i| i.pointer.press_origin());
         // The engagement latch lives for one press; release clears it.
         let pointer_down = ctx.input(|i| i.pointer.any_down());
+        // True only on the frame the primary button goes down — used to raise a
+        // window whose resize edge sits under an overlapping neighbor, so the
+        // grabbed handle wins the interaction instead of the neighbor on top.
+        let just_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         if !pointer_down {
             self.zone_engaged_tab = None;
             // The snap drag must survive the RELEASE frame: the hook's
@@ -1365,14 +1369,26 @@ impl VellumGuiApp {
             // the grabbed edge away from the press origin, and re-testing
             // the origin against the shrinking rect would re-pin the size
             // mid-drag, stalling the resize after ~12px per grab.
+            // Claim the engagement latch only if no window has claimed it this
+            // press. Overlapping edge bands mean a press near a shared border
+            // is inside BOTH windows' expand(12) rings; without the
+            // "unclaimed" guard the later-rendered window stole the latch, the
+            // earlier one re-pinned, and its resize stalled after ~12px (grab
+            // again for another ~12px — the reported symptom). First claim
+            // wins and holds for the whole press; the raise-on-edge-grab below
+            // puts the actually-grabbed window on top so egui resizes the same
+            // one that holds the latch.
+            // The latch is claimed post-show (topmost-at-press, egui-correct);
+            // here we only READ it to relax the pin for the latched window, or
+            // to catch a press on a non-overlapping window on its first frame
+            // (the common case, where topmost is unambiguous anyway). The
+            // post-show claim corrects any ambiguous edge-band press.
+            let engaging_press = press_origin
+                .is_some_and(|pos| initial_rect.expand(12.0).contains(pos));
+            let already_latched = self.zone_engaged_tab.as_ref() == Some(&tab.id.key);
             let user_engaging_window = !window_locked
                 && pointer_interacting
-                && (self.zone_engaged_tab.as_ref() == Some(&tab.id.key)
-                    || press_origin
-                        .is_some_and(|pos| initial_rect.expand(12.0).contains(pos)));
-            if user_engaging_window && pointer_down {
-                self.zone_engaged_tab = Some(tab.id.key.clone());
-            }
+                && (already_latched || (self.zone_engaged_tab.is_none() && engaging_press));
             if !is_hand_widget && !being_moved && !user_engaging_window {
                 // Pin compact widgets too, now that `initial_rect` carries
                 // the live height cap: without this the width half of a
@@ -1424,6 +1440,28 @@ impl VellumGuiApp {
             if let Some(inner) = window_shown {
                 self.paint_skin_border(ctx, &tab.id.key, skin_sides, &inner.response);
                 self.paint_border_plan(ctx, &border_plan, &inner.response);
+                // Claim the engagement latch here, where the real rendered rect
+                // and layer id are known, gated on this window being TOPMOST at
+                // the press origin — i.e. the window egui actually resizes. The
+                // pre-show `engaging_press` test can't tell overlapping windows
+                // apart (both contain the press in their edge ring), which let
+                // the wrong window latch, re-pin the resized one, and stall it
+                // after ~12px. Topmost-at-press is exactly egui's own choice,
+                // so the latch and egui's resize target always agree.
+                if just_pressed && !window_locked && self.zone_engaged_tab.is_none() {
+                    const RESIZE_GRAB: f32 = 6.0;
+                    let rect = inner.response.rect;
+                    if let Some(pos) = press_origin {
+                        // The press hits this window's body or its resize ring
+                        // (the edge band extends a few px outside the frame).
+                        let in_window = rect.expand(RESIZE_GRAB).contains(pos);
+                        let topmost = ctx.layer_id_at(pos) == Some(inner.response.layer_id);
+                        if in_window && topmost {
+                            self.zone_engaged_tab = Some(tab.id.key.clone());
+                            ctx.request_repaint();
+                        }
+                    }
+                }
                 if is_hand_widget {
                     let handle_rect = Rect::from_min_max(
                         Pos2::new(
