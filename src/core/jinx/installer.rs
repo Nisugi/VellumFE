@@ -240,6 +240,8 @@ fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
         "statusicon" => Config::global_image_category_dir("statusicons"),
         // Hand-widget icons (static picker + status-driven states).
         "hand" => Config::global_image_category_dir("hands"),
+        // Sound packs land in the shared sounds dir (highlight sounds, music).
+        "sound" => Config::sounds_dir(),
         // Composed bundles: extracted elsewhere, not a plain write.
         "skin" | "layout" | "uipack" => return Ok(None),
         // Anything else installs into the pool folder the manifest names
@@ -302,6 +304,7 @@ fn record(db: &mut InstalledDb, name: &str, repo: &RepoSource, asset: &Asset) {
             digest: asset.md5.clone(),
             version: asset.vellum.as_ref().and_then(|v| v.version.clone()),
             kind: asset.kind().to_string(),
+            last_updated: Some(chrono::Utc::now().timestamp()),
         },
     );
 }

@@ -615,6 +615,9 @@ pub fn handle_ui_action(
         // Deliberately GUI-only surfaces — say so instead of the old
         // silent log (four commands died unnoticed behind that silence).
         UiAction::Controller => gui_only(app_core, "The controller editor"),
+        UiAction::JinxPanel => {
+            gui_only(app_core, "The Jinx asset panel (.jinx gui) — use .jinx list/install in the TUI")
+        }
         UiAction::WebUiPicker | UiAction::WebUiOff | UiAction::WebUiOpen(_) => {
             gui_only(app_core, "The Lich WebUI bridge (.webui)")
         }

@@ -781,6 +781,7 @@ impl VellumGuiApp {
         // `.data reload` action from the Data panel (re-resolves the shared
         // item database used by .foreach/.sorter).
         let mut data_reload_clicked = false;
+        let mut open_jinx_clicked = false;
         let can_calibrate_doll = self
             .skin_state
             .widget_art()
@@ -1182,6 +1183,21 @@ impl VellumGuiApp {
                             });
                         });
 
+                        ui.collapsing("Assets (Jinx)", |ui| {
+                            ui.label(
+                                "Install and update game data, skins, layouts, \
+                                 icons, sounds and other assets from repositories \
+                                 — VellumFE's own asset manager (no Lich needed).",
+                            );
+                            if ui
+                                .button("Open asset manager")
+                                .on_hover_text("Browse repos and install/update assets (.jinx gui)")
+                                .clicked()
+                            {
+                                open_jinx_clicked = true;
+                            }
+                        });
+
                         if !state.errors.is_empty() {
                             ui.separator();
                             for error in &state.errors {
@@ -1221,6 +1237,9 @@ impl VellumGuiApp {
             self.app_core.add_system_message(&format!(
                 "Data pack reloaded ({types} item types)."
             ));
+        }
+        if open_jinx_clicked {
+            self.open_jinx_panel();
         }
         if tts_test_clicked {
             let rate = state.float_draft("tts.rate") as f32;

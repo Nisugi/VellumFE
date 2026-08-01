@@ -38,6 +38,26 @@ pub enum Request {
     },
     /// Check every tracked asset and update the ones that changed.
     AutoUpdate { dry_run: bool },
+    /// Structured catalog of every installable asset across all repos, for the
+    /// GUI panel. Delivers one `Effect::Catalog` when done (plus status lines).
+    Catalog,
+}
+
+/// One installable asset, as the GUI panel needs it: identity + install state.
+#[derive(Debug, Clone)]
+pub struct CatalogEntry {
+    pub name: String,
+    pub kind: String,
+    pub repo: String,
+    pub title: Option<String>,
+    pub version: Option<String>,
+    /// Manifest digest (md5 field); compared against the installed record to
+    /// tell whether an update is available.
+    pub digest: String,
+    /// Repo-side last-commit epoch (0 when the manifest omits it).
+    pub last_commit: i64,
+    pub installed: bool,
+    pub update_available: bool,
 }
 
 /// One line of output plus whether the job is finished. `done` lets the poll
@@ -54,6 +74,8 @@ pub struct Update {
 #[derive(Debug, Clone)]
 pub enum Effect {
     Installed { name: String, kind: String },
+    /// The GUI panel's asset catalog (all repos), delivered by `Catalog`.
+    Catalog(Vec<CatalogEntry>),
 }
 
 /// Drives at most one `.jinx` job at a time; owns the game gate for repo
@@ -133,6 +155,7 @@ fn request_ack(request: &Request) -> String {
                 "[jinx] updating all installed assets…".to_string()
             }
         }
+        Request::Catalog => "[jinx] loading catalog…".to_string(),
     }
 }
 
@@ -231,6 +254,51 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
 
         Request::AutoUpdate { dry_run } => {
             run_auto_update(&agent, &repos, &mut cache, dry_run, &send);
+        }
+
+        Request::Catalog => {
+            let db = InstalledDb::load().unwrap_or_default();
+            let mut entries: Vec<CatalogEntry> = Vec::new();
+            let mut failed = Vec::new();
+            for repo in &repos.repos {
+                match cache.get(&agent, repo) {
+                    Ok(manifest) => {
+                        for asset in &manifest.available {
+                            if !asset.is_installable() {
+                                continue;
+                            }
+                            let name = asset.basename().to_string();
+                            let installed = db.get(&name);
+                            entries.push(CatalogEntry {
+                                name: name.clone(),
+                                kind: asset.kind().to_string(),
+                                repo: repo.name.clone(),
+                                title: asset.vellum.as_ref().and_then(|v| v.title.clone()),
+                                version: asset.vellum.as_ref().and_then(|v| v.version.clone()),
+                                digest: asset.md5.clone(),
+                                last_commit: asset.last_commit,
+                                installed: installed.is_some(),
+                                update_available: installed
+                                    .is_some_and(|rec| rec.digest != asset.md5),
+                            });
+                        }
+                    }
+                    Err(e) => failed.push(format!("{} unavailable: {e}", repo.name)),
+                }
+            }
+            entries.sort_by(|a, b| {
+                a.kind
+                    .cmp(&b.kind)
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+            for line in failed {
+                send(format!("[jinx] {line}"), None);
+            }
+            let count = entries.len();
+            send(
+                format!("[jinx] catalog: {count} asset{}", if count == 1 { "" } else { "s" }),
+                Some(Effect::Catalog(entries)),
+            );
         }
     }
 }

@@ -346,6 +346,7 @@ pub struct VellumGuiApp {
     theme_editor: Option<editors::ThemeEditorState>,
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     dashboard_editor: Option<editors::DashboardEditorState>,
+    jinx_panel: Option<editors::JinxPanelState>,
     window_editor: Option<editors::WindowEditorState>,
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
@@ -715,6 +716,7 @@ impl VellumGuiApp {
             theme_editor: None,
             indicator_templates_editor: None,
             dashboard_editor: None,
+            jinx_panel: None,
             window_editor: None,
             custom_windows_editor: None,
             known_windows_editor: None,
@@ -4657,6 +4659,7 @@ impl VellumGuiApp {
                     .add_system_message("This build has no gamepad support.");
             }
             A::Hotbars => self.open_hotbar_editor(),
+            A::JinxPanel => self.open_jinx_panel(),
             A::AddKeybind => {
                 self.open_keybind_editor();
                 self.open_keybind_form_new();

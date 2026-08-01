@@ -116,6 +116,13 @@ pub struct AppCore {
     /// `Config::list_indicator_templates()` does file IO, so it must not run
     /// in the render loop.
     pub indicator_templates: std::collections::HashMap<String, crate::config::IndicatorTemplateEntry>,
+    /// Latest Jinx catalog (all installable assets across repos), delivered by
+    /// the worker's `Catalog` request and read by the GUI Assets panel. None
+    /// until first fetched; the panel triggers a refresh on open.
+    pub jinx_catalog: Option<Vec<crate::core::jinx::worker::CatalogEntry>>,
+    /// One-shot: emit the "game data is stale" login nudge on the first game
+    /// text of the session. Set true at construction, cleared after firing.
+    jinx_nudge_pending: bool,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
     /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
@@ -286,6 +293,8 @@ impl AppCore {
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
             indicator_templates: std::collections::HashMap::new(),
+            jinx_catalog: None,
+            jinx_nudge_pending: true,
             travel: Default::default(),
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -419,6 +428,8 @@ impl AppCore {
             jinx_worker: crate::core::jinx::worker::JinxWorker::new(None),
             custom_status_expiries: std::collections::HashMap::new(),
             indicator_templates: std::collections::HashMap::new(),
+            jinx_catalog: None,
+            jinx_nudge_pending: true,
             travel: Default::default(),
             timed_commands: Vec::new(),
             remote_map_cache: None,
@@ -809,6 +820,11 @@ impl AppCore {
                     }
                 },
             },
+            // Stash the catalog for the GUI Assets panel to read; no core
+            // side effect (the panel renders it and drives install/update).
+            Effect::Catalog(entries) => {
+                self.jinx_catalog = Some(entries);
+            }
         }
     }
 
@@ -2793,12 +2809,48 @@ impl AppCore {
 
     /// Process incoming XML data from server
     pub fn process_server_data(&mut self, data: &str) -> Result<()> {
+        // First game text of the session = a good moment for the one-shot
+        // game-data staleness nudge (every frontend funnels through here).
+        if self.jinx_nudge_pending {
+            self.jinx_nudge_pending = false;
+            self.emit_stale_data_nudge();
+        }
         // Parse timing lives here so every frontend gets it for free —
         // runtimes must not also time this call (double counting).
         let parse_start = std::time::Instant::now();
         let result = self.process_server_data_inner(data);
         self.perf_stats.record_parse(parse_start.elapsed());
         result
+    }
+
+    /// Emit a once-per-session reminder when installed game data is old (or was
+    /// installed before timestamping). Silent when nothing is stale or nothing
+    /// is tracked. Threshold: 30 days. Cheap: reads jinx-installed.toml once.
+    fn emit_stale_data_nudge(&mut self) {
+        const STALE_DAYS: i64 = 30;
+        let Ok(db) = crate::core::jinx::metadata::InstalledDb::load() else {
+            return;
+        };
+        // Only game-data assets drive the nudge (effect-list/gameobj/mapdb) —
+        // art staleness isn't worth nagging about.
+        let now = chrono::Utc::now().timestamp();
+        let mut stale = 0;
+        let mut untracked = 0;
+        for asset in db.assets.values().filter(|a| a.kind == "data") {
+            match asset.last_updated {
+                Some(ts) if (now - ts) / 86_400 >= STALE_DAYS => stale += 1,
+                Some(_) => {}
+                None => untracked += 1,
+            }
+        }
+        if stale + untracked == 0 {
+            return;
+        }
+        let n = stale + untracked;
+        self.add_system_message(&format!(
+            "[jinx] {n} game-data file{} may be out of date — run .jinx auto-update to refresh (or .jinx gui)",
+            if n == 1 { "" } else { "s" }
+        ));
     }
 
     fn process_server_data_inner(&mut self, data: &str) -> Result<()> {

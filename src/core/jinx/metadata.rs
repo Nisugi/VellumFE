@@ -22,6 +22,11 @@ pub struct InstalledAsset {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     pub kind: String,
+    /// Unix timestamp of the last install/update. Absent on records written
+    /// before timestamping existed (the panel shows "unknown" age, the login
+    /// nudge treats them as stale). Set by the worker on every install.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_updated: Option<i64>,
 }
 
 /// The `jinx-installed.toml` document: basename -> record.
@@ -75,6 +80,7 @@ mod tests {
                 digest: "abc=".into(),
                 version: Some("1.2.0".into()),
                 kind: "skin".into(),
+                last_updated: Some(1_700_000_000),
             },
         );
         db.record(
@@ -84,6 +90,7 @@ mod tests {
                 digest: "def=".into(),
                 version: None,
                 kind: "data".into(),
+                last_updated: None,
             },
         );
         let toml = toml::to_string_pretty(&db).unwrap();
@@ -107,6 +114,7 @@ mod tests {
                 digest: "old=".into(),
                 version: None,
                 kind: "data".into(),
+                last_updated: None,
             },
         );
         // Same digest -> up to date; different -> update available.

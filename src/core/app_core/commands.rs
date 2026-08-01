@@ -1575,6 +1575,11 @@ impl AppCore {
             // instant and inline.
             "jinx" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                // `.jinx gui` opens the native asset panel (GUI-only); every
+                // other subcommand runs inline / off-thread here.
+                if args.first().map(|s| s.as_str()) == Some("gui") {
+                    return Ok(CommandOutcome::Ui(UiAction::JinxPanel));
+                }
                 self.handle_jinx(&args);
             }
 
