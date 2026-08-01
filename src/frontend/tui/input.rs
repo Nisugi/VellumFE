@@ -798,6 +798,99 @@ impl TuiFrontend {
         Ok(None)
     }
 
+    /// Route a mouse event to the open settings editor; actions run as simulated key presses. Ok(None) when closed.
+    fn handle_settings_editor_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut editor) = self.settings_editor {
+            use crate::frontend::tui::settings_editor::SettingsEditorMouseAction;
+
+            // Determine scroll direction
+            let scroll_direction: i8 = match kind {
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
+                _ => 0,
+            };
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    editor.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    editor.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    editor.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    editor.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                _ => SettingsEditorMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                SettingsEditorMouseAction::EditValue => {
+                    // Trigger edit via simulated Enter key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                SettingsEditorMouseAction::ToggleScope => {
+                    // Trigger scope toggle via simulated 'g' key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('g'),
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                SettingsEditorMouseAction::Close => {
+                    // Trigger close via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                SettingsEditorMouseAction::SelectRow | SettingsEditorMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Route a mouse event to the open highlight form. Returns `Ok(None)`
     /// when the form is closed so the caller falls through; `Ok(Some(..))`
     /// when the form consumed the event (Save/Cancel run as simulated key
@@ -1843,83 +1936,10 @@ impl TuiFrontend {
 
         // Handle settings editor mouse events
         if self.settings_editor.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut editor) = self.settings_editor {
-                use crate::frontend::tui::settings_editor::SettingsEditorMouseAction;
-
-                // Determine scroll direction
-                let scroll_direction: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        editor.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        editor.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        editor.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        editor.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    _ => SettingsEditorMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    SettingsEditorMouseAction::EditValue => {
-                        // Trigger edit via simulated Enter key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Enter,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    SettingsEditorMouseAction::ToggleScope => {
-                        // Trigger scope toggle via simulated 'g' key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('g'),
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    SettingsEditorMouseAction::Close => {
-                        // Trigger close via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    SettingsEditorMouseAction::SelectRow | SettingsEditorMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_settings_editor_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
