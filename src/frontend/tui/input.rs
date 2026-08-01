@@ -763,6 +763,438 @@ impl TuiFrontend {
         Ok((true, None))
     }
 
+    /// Left-button press: the main click hit-test. Handles menu clicks,
+    /// link activation/drag-start, window drag/resize initiation, text
+    /// selection start, and focus changes. `window_names` is the caller's
+    /// sorted window-name slice; `handle_menu_action_fn` runs menu commands.
+    fn handle_mouse_down_left(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+        modifiers: &crate::data::input::KeyModifiers,
+        window_names: &[String],
+        handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<(bool, Option<String>)> {
+        use crate::data::ui_state::InputMode;
+        use crate::data::{DragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
+        use ratatui::layout::Rect;
+
+        // If in menu mode, handle menu clicks first
+        if app_core.ui_state.input_mode == InputMode::Menu {
+            let mut clicked_item = None;
+            let (screen_width, screen_height) = self.size();
+
+            // Helper to calculate menu area with screen bounds
+            let calc_menu_area = |menu: &crate::data::ui_state::PopupMenu| -> (u16, u16, u16, u16) {
+                let pos = menu.get_position();
+                let menu_height = menu.get_items().len() as u16 + 2; // +2 for borders
+                let menu_width = menu
+                    .get_items()
+                    .iter()
+                    .map(|item| item.text.len())
+                    .max()
+                    .unwrap_or(10)
+                    as u16
+                    + 4; // +4 for borders and padding
+                let max_x = screen_width.saturating_sub(menu_width);
+                let max_y = screen_height.saturating_sub(menu_height);
+                let menu_x = pos.0.min(max_x);
+                let menu_y = pos.1.min(max_y);
+                (menu_x, menu_y, menu_width, menu_height)
+            };
+
+            // Check menus from DEEPEST to SHALLOWEST (deep_submenu first, popup_menu last)
+            // This ensures clicks on submenus are handled before checking parent menus
+
+            // Level 4: deep_submenu (deepest)
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.deep_submenu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit deep_submenu item at index {}", index);
+                    }
+                }
+            }
+
+            // Level 3: nested_submenu
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.nested_submenu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit nested_submenu item at index {}", index);
+                    }
+                }
+            }
+
+            // Level 2: submenu
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.submenu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit submenu item at index {}", index);
+                    }
+                }
+            }
+
+            // Level 1: popup_menu (shallowest)
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.popup_menu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit popup_menu item at index {}", index);
+                    }
+                }
+            }
+
+            if let Some(item) = clicked_item {
+                let command = item.command.clone();
+                tracing::info!(
+                    "Menu item clicked: {} (command: {})",
+                    item.text,
+                    command
+                );
+
+                // Dispatch through the same path as keyboard Enter so
+                // mouse and keyboard menus can never diverge.
+                let result =
+                    self.handle_menu_command(command, app_core, &handle_menu_action_fn)?;
+                return Ok((true, result));
+            } else {
+                // Click outside menu - close it
+                app_core.ui_state.popup_menu = None;
+                app_core.ui_state.submenu = None;
+                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
+                app_core.ui_state.input_mode = InputMode::Normal;
+                app_core.needs_render = true;
+            }
+
+            // Don't process other clicks while in menu mode
+            return Ok((true, None));
+        }
+
+        // Mouse down handling (find links, start drags)
+        // Unfreeze any frozen text window before clearing selection
+        if let Some(ref selection) = app_core.ui_state.selection_state {
+            if let Some(text_window) = self.widget_manager.text_windows.get_mut(&selection.window_name) {
+                text_window.unfreeze_and_apply_pending();
+            } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&selection.window_name) {
+                tabbed_window.unfreeze_and_apply_pending();
+            }
+        }
+        app_core.ui_state.selection_state = None;
+
+        let topmost_window = find_topmost_window_at(&app_core.ui_state, x, y);
+        let (is_quickbar, window_pos) = app_core
+            .ui_state
+            .get_window(&topmost_window)
+            .map(|window| (window.widget_type == WidgetType::Quickbar, Some(window.position.clone())))
+            .unwrap_or((false, None));
+
+        if is_quickbar {
+            if let Some(quickbar_widget) =
+                self.widget_manager.quickbar_widgets.get_mut(&topmost_window)
+            {
+                let window_pos = window_pos.unwrap_or(crate::data::WindowPosition {
+                    x: crate::data::geometry::Col::new(0),
+                    y: crate::data::geometry::Row::new(0),
+                    width: crate::data::geometry::Width::new(0),
+                    height: crate::data::geometry::Height::new(0),
+                });
+                let rect = Rect {
+                    x: window_pos.x.get(),
+                    y: window_pos.y.get(),
+                    width: window_pos.width.get(),
+                    height: window_pos.height.get(),
+                };
+                if let Some(action) = quickbar_widget.handle_click(x, y, rect) {
+                    app_core.needs_render = true;
+                    match action {
+                        crate::frontend::tui::quickbar::QuickbarAction::OpenSwitcher => {
+                            self.open_quickbar_switcher(app_core, window_pos);
+                            app_core.needs_render = true;
+                            return Ok((true, None));
+                        }
+                        crate::frontend::tui::quickbar::QuickbarAction::ExecuteCommand(command) => {
+                            return Ok((true, Some(command)));
+                        }
+                        crate::frontend::tui::quickbar::QuickbarAction::MenuRequest { exist, noun } => {
+                            let command = app_core.request_menu(exist, noun, (x, y));
+                            return Ok((true, Some(command)));
+                        }
+                    }
+                }
+            }
+        }
+
+        let is_hotkeybar = app_core
+            .ui_state
+            .get_window(&topmost_window)
+            .map(|window| window.widget_type == WidgetType::Hotkeybar)
+            .unwrap_or(false);
+        if is_hotkeybar {
+            if let Some(bar_widget) = self
+                .widget_manager
+                .hotkey_bar_widgets
+                .get_mut(&topmost_window)
+            {
+                let window_pos = app_core
+                    .ui_state
+                    .get_window(&topmost_window)
+                    .map(|w| w.position.clone())
+                    .unwrap_or(crate::data::WindowPosition {
+                        x: crate::data::geometry::Col::new(0),
+                        y: crate::data::geometry::Row::new(0),
+                        width: crate::data::geometry::Width::new(0),
+                        height: crate::data::geometry::Height::new(0),
+                    });
+                let rect = Rect {
+                    x: window_pos.x.get(),
+                    y: window_pos.y.get(),
+                    width: window_pos.width.get(),
+                    height: window_pos.height.get(),
+                };
+                if let Some(command) = bar_widget.handle_click(x, y, rect) {
+                    app_core.needs_render = true;
+                    return Ok((true, Some(format!("{}\n", command))));
+                }
+            }
+        }
+
+        let mut found_window = None;
+        let mut drag_op = None;
+        let mut handled_tab_click: Option<(String, usize)> = None;
+
+        // Use topmost window for click processing (respects z-order for overlapping windows)
+        let clicked_window_name = Some(topmost_window.clone());
+
+        tracing::debug!(
+            "Mouse down at ({}, {}), topmost_window='{}'",
+            x, y, topmost_window
+        );
+
+        if let Some(window) = app_core.ui_state.get_window(&topmost_window) {
+            tracing::debug!(
+                "  Window pos: y={}, height={}, click_y={}, is_top_row={}",
+                window.position.y.get(), window.position.height.get(), y, y == window.position.y.get()
+            );
+            let pos = &window.position;
+            let name = &topmost_window;
+
+            // Check if window is locked (affects resize handle detection)
+            let is_window_locked = app_core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.base().name == *name)
+                .is_some_and(|w| w.base().locked);
+
+            // Handle tabbed text tab switching on click
+            if window.widget_type == WidgetType::TabbedText {
+                let rect = Rect {
+                    x: pos.x.get(),
+                    y: pos.y.get(),
+                    width: pos.width.get(),
+                    height: pos.height.get(),
+                };
+                if let Some(new_index) =
+                    self.handle_tabbed_click(name, rect, x, y)
+                {
+                    handled_tab_click = Some((name.clone(), new_index));
+                }
+            }
+
+            if handled_tab_click.is_none() {
+                if let Some(op) = resize_op_at(
+                    pos.x.get(),
+                    pos.y.get(),
+                    pos.width.get(),
+                    pos.height.get(),
+                    is_window_locked,
+                    x,
+                    y,
+                ) {
+                    drag_op = Some(op);
+                    found_window = Some(name.clone());
+                }
+            }
+        }
+
+        if let Some((win_name, new_index)) = handled_tab_click {
+            // Focus the tabbed window when clicking its tabs
+            app_core.ui_state.set_focus(Some(win_name.clone()));
+
+            if let Some(window_state) = app_core.ui_state.get_window_mut(&win_name) {
+                if let crate::data::WindowContent::TabbedText(tabbed) =
+                    &mut window_state.content
+                {
+                    if new_index < tabbed.tabs.len() {
+                        tabbed.active_tab_index = new_index;
+                    }
+                }
+            }
+            app_core.needs_render = true;
+            return Ok((true, None));
+        }
+
+        if let (Some(window_name), Some(operation)) = (found_window.clone(), drag_op.clone()) {
+            // Check if window is locked
+            let is_locked = app_core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.base().name == window_name)
+                .is_some_and(|w| w.base().locked);
+
+            // For Move operations, handle links based on modifiers and lock state:
+            // - Ctrl+click on link: ALWAYS starts link drag (regardless of lock)
+            // - Click on link + locked window: opens menu (can't move anyway)
+            // - Click on link + unlocked window: starts window move (repositioning)
+            let mut handled_as_link = false;
+            if operation == DragOperation::Move {
+                let has_ctrl = modifiers.ctrl;
+
+                // Check for links if Ctrl is held OR window is locked
+                if has_ctrl || is_locked {
+                    if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                        let pos = &window.position;
+                        let window_rect = ratatui::layout::Rect {
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
+                        };
+
+                        if let Some(link_data) =
+                            self.link_at_position(&window_name, x, y, window_rect)
+                        {
+                            if has_ctrl {
+                                // Ctrl+click always starts link drag
+                                app_core.ui_state.link_drag_state =
+                                    Some(LinkDragState {
+                                        link_data,
+                                        start_pos: (x, y),
+                                        current_pos: (x, y),
+                                    });
+                            } else {
+                                // Locked window without Ctrl: open menu
+                                app_core.ui_state.pending_link_click =
+                                    Some(PendingLinkClick {
+                                        link_data,
+                                        click_pos: (x, y),
+                                    });
+                            }
+                            handled_as_link = true;
+                        }
+                    }
+                }
+            }
+
+            // Only start window drag if not locked and not handled as link
+            if !handled_as_link && !is_locked {
+                if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                    let pos = &window.position;
+                    app_core.ui_state.mouse_drag = Some(MouseDragState {
+                        operation,
+                        window_name,
+                        start_pos: (x, y),
+                        original_window_pos: (pos.x.get(), pos.y.get(), pos.width.get(), pos.height.get()),
+                    });
+                }
+            }
+        } else if let Some(window_name) = clicked_window_name {
+            // Check if this window should receive focus (text/tabbedtext only)
+            let should_focus = app_core
+                .ui_state
+                .get_window(&window_name)
+                .map(|w| matches!(w.widget_type, WidgetType::Text | WidgetType::TabbedText))
+                .unwrap_or(false);
+
+            if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                let pos = &window.position;
+                let window_rect = ratatui::layout::Rect {
+                    x: pos.x.get(),
+                    y: pos.y.get(),
+                    width: pos.width.get(),
+                    height: pos.height.get(),
+                };
+
+                tracing::debug!(
+                    "Non-drag click on '{}' at ({}, {}), window_rect: y={}, height={}",
+                    window_name, x, y, window_rect.y, window_rect.height
+                );
+
+                if let Some(link_data) =
+                    self.link_at_position(&window_name, x, y, window_rect)
+                {
+                    tracing::debug!("  Found link: {}", link_data.noun);
+                    let has_ctrl = modifiers.ctrl;
+
+                    if has_ctrl {
+                        app_core.ui_state.link_drag_state =
+                            Some(LinkDragState {
+                                link_data,
+                                start_pos: (x, y),
+                                current_pos: (x, y),
+                            });
+                    } else {
+                        app_core.ui_state.pending_link_click =
+                            Some(PendingLinkClick {
+                                link_data,
+                                click_pos: (x, y),
+                            });
+                    }
+                } else {
+                    // Start text selection
+                    app_core.ui_state.selection_drag_start = Some((x, y));
+
+                    // Convert mouse coords to text coords for selection
+                    if let Some((line, col)) = self.mouse_to_text_coords(
+                        &window_name,
+                        x,
+                        y,
+                        window_rect,
+                    ) {
+                        // Find window index from the stable (sorted) ordering
+                        let window_index = window_names
+                            .binary_search(&window_name)
+                            .unwrap_or(0);
+                        app_core.ui_state.selection_state =
+                            Some(crate::selection::SelectionState::new(
+                                window_index,
+                                line,
+                                col,
+                                window_name.clone(),
+                            ));
+
+                        // Freeze the text window if it's scrolled back
+                        // This prevents new lines from shifting selection indices
+                        if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_name) {
+                            if text_window.is_scrolled_back() {
+                                text_window.freeze_for_selection();
+                            }
+                        } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_name) {
+                            if tabbed_window.is_scrolled_back() {
+                                tabbed_window.freeze_for_selection();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Apply focus after borrow on windows ends
+            if should_focus {
+                app_core.ui_state.set_focus(Some(window_name));
+            }
+        }
+        Ok((true, None))
+    }
+
     /// Handle mouse events (extracted from main.rs Phase 4.1)
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
@@ -773,7 +1205,7 @@ impl TuiFrontend {
     ) -> Result<(bool, Option<String>)> {
         use crate::data::ui_state::InputMode;
         use crate::data::input::MouseEventKind;
-        use crate::data::{DragOperation, DialogDragState, DialogDragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
+        use crate::data::{DialogDragState, DialogDragOperation};
         use crate::frontend::tui::dialog;
         use ratatui::layout::Rect;
 
@@ -1622,419 +2054,14 @@ impl TuiFrontend {
                 return self.handle_mouse_scroll(app_core, *x, *y, -10);
             }
             MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                // If in menu mode, handle menu clicks first
-                if app_core.ui_state.input_mode == InputMode::Menu {
-                    let mut clicked_item = None;
-                    let (screen_width, screen_height) = self.size();
-
-                    // Helper to calculate menu area with screen bounds
-                    let calc_menu_area = |menu: &crate::data::ui_state::PopupMenu| -> (u16, u16, u16, u16) {
-                        let pos = menu.get_position();
-                        let menu_height = menu.get_items().len() as u16 + 2; // +2 for borders
-                        let menu_width = menu
-                            .get_items()
-                            .iter()
-                            .map(|item| item.text.len())
-                            .max()
-                            .unwrap_or(10)
-                            as u16
-                            + 4; // +4 for borders and padding
-                        let max_x = screen_width.saturating_sub(menu_width);
-                        let max_y = screen_height.saturating_sub(menu_height);
-                        let menu_x = pos.0.min(max_x);
-                        let menu_y = pos.1.min(max_y);
-                        (menu_x, menu_y, menu_width, menu_height)
-                    };
-
-                    // Check menus from DEEPEST to SHALLOWEST (deep_submenu first, popup_menu last)
-                    // This ensures clicks on submenus are handled before checking parent menus
-
-                    // Level 4: deep_submenu (deepest)
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.deep_submenu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit deep_submenu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    // Level 3: nested_submenu
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.nested_submenu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit nested_submenu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    // Level 2: submenu
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.submenu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit submenu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    // Level 1: popup_menu (shallowest)
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.popup_menu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit popup_menu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    if let Some(item) = clicked_item {
-                        let command = item.command.clone();
-                        tracing::info!(
-                            "Menu item clicked: {} (command: {})",
-                            item.text,
-                            command
-                        );
-
-                        // Dispatch through the same path as keyboard Enter so
-                        // mouse and keyboard menus can never diverge.
-                        let result =
-                            self.handle_menu_command(command, app_core, &handle_menu_action_fn)?;
-                        return Ok((true, result));
-                    } else {
-                        // Click outside menu - close it
-                        app_core.ui_state.popup_menu = None;
-                        app_core.ui_state.submenu = None;
-                        app_core.ui_state.nested_submenu = None;
-                        app_core.ui_state.deep_submenu = None;
-                        app_core.ui_state.input_mode = InputMode::Normal;
-                        app_core.needs_render = true;
-                    }
-
-                    // Don't process other clicks while in menu mode
-                    return Ok((true, None));
-                }
-
-                // Mouse down handling (find links, start drags)
-                // Unfreeze any frozen text window before clearing selection
-                if let Some(ref selection) = app_core.ui_state.selection_state {
-                    if let Some(text_window) = self.widget_manager.text_windows.get_mut(&selection.window_name) {
-                        text_window.unfreeze_and_apply_pending();
-                    } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&selection.window_name) {
-                        tabbed_window.unfreeze_and_apply_pending();
-                    }
-                }
-                app_core.ui_state.selection_state = None;
-
-                let topmost_window = find_topmost_window_at(&app_core.ui_state, *x, *y);
-                let (is_quickbar, window_pos) = app_core
-                    .ui_state
-                    .get_window(&topmost_window)
-                    .map(|window| (window.widget_type == WidgetType::Quickbar, Some(window.position.clone())))
-                    .unwrap_or((false, None));
-
-                if is_quickbar {
-                    if let Some(quickbar_widget) =
-                        self.widget_manager.quickbar_widgets.get_mut(&topmost_window)
-                    {
-                        let window_pos = window_pos.unwrap_or(crate::data::WindowPosition {
-                            x: crate::data::geometry::Col::new(0),
-                            y: crate::data::geometry::Row::new(0),
-                            width: crate::data::geometry::Width::new(0),
-                            height: crate::data::geometry::Height::new(0),
-                        });
-                        let rect = Rect {
-                            x: window_pos.x.get(),
-                            y: window_pos.y.get(),
-                            width: window_pos.width.get(),
-                            height: window_pos.height.get(),
-                        };
-                        if let Some(action) = quickbar_widget.handle_click(*x, *y, rect) {
-                            app_core.needs_render = true;
-                            match action {
-                                crate::frontend::tui::quickbar::QuickbarAction::OpenSwitcher => {
-                                    self.open_quickbar_switcher(app_core, window_pos);
-                                    app_core.needs_render = true;
-                                    return Ok((true, None));
-                                }
-                                crate::frontend::tui::quickbar::QuickbarAction::ExecuteCommand(command) => {
-                                    return Ok((true, Some(command)));
-                                }
-                                crate::frontend::tui::quickbar::QuickbarAction::MenuRequest { exist, noun } => {
-                                    let command = app_core.request_menu(exist, noun, (*x, *y));
-                                    return Ok((true, Some(command)));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let is_hotkeybar = app_core
-                    .ui_state
-                    .get_window(&topmost_window)
-                    .map(|window| window.widget_type == WidgetType::Hotkeybar)
-                    .unwrap_or(false);
-                if is_hotkeybar {
-                    if let Some(bar_widget) = self
-                        .widget_manager
-                        .hotkey_bar_widgets
-                        .get_mut(&topmost_window)
-                    {
-                        let window_pos = app_core
-                            .ui_state
-                            .get_window(&topmost_window)
-                            .map(|w| w.position.clone())
-                            .unwrap_or(crate::data::WindowPosition {
-                                x: crate::data::geometry::Col::new(0),
-                                y: crate::data::geometry::Row::new(0),
-                                width: crate::data::geometry::Width::new(0),
-                                height: crate::data::geometry::Height::new(0),
-                            });
-                        let rect = Rect {
-                            x: window_pos.x.get(),
-                            y: window_pos.y.get(),
-                            width: window_pos.width.get(),
-                            height: window_pos.height.get(),
-                        };
-                        if let Some(command) = bar_widget.handle_click(*x, *y, rect) {
-                            app_core.needs_render = true;
-                            return Ok((true, Some(format!("{}\n", command))));
-                        }
-                    }
-                }
-
-                let mut found_window = None;
-                let mut drag_op = None;
-                let mut handled_tab_click: Option<(String, usize)> = None;
-
-                // Use topmost window for click processing (respects z-order for overlapping windows)
-                let clicked_window_name = Some(topmost_window.clone());
-
-                tracing::debug!(
-                    "Mouse down at ({}, {}), topmost_window='{}'",
-                    *x, *y, topmost_window
+                return self.handle_mouse_down_left(
+                    app_core,
+                    *x,
+                    *y,
+                    modifiers,
+                    &window_names,
+                    handle_menu_action_fn,
                 );
-
-                if let Some(window) = app_core.ui_state.get_window(&topmost_window) {
-                    tracing::debug!(
-                        "  Window pos: y={}, height={}, click_y={}, is_top_row={}",
-                        window.position.y.get(), window.position.height.get(), *y, *y == window.position.y.get()
-                    );
-                    let pos = &window.position;
-                    let name = &topmost_window;
-
-                    // Check if window is locked (affects resize handle detection)
-                    let is_window_locked = app_core
-                        .layout
-                        .windows
-                        .iter()
-                        .find(|w| w.base().name == *name)
-                        .is_some_and(|w| w.base().locked);
-
-                    // Handle tabbed text tab switching on click
-                    if window.widget_type == WidgetType::TabbedText {
-                        let rect = Rect {
-                            x: pos.x.get(),
-                            y: pos.y.get(),
-                            width: pos.width.get(),
-                            height: pos.height.get(),
-                        };
-                        if let Some(new_index) =
-                            self.handle_tabbed_click(name, rect, *x, *y)
-                        {
-                            handled_tab_click = Some((name.clone(), new_index));
-                        }
-                    }
-
-                    if handled_tab_click.is_none() {
-                        if let Some(op) = resize_op_at(
-                            pos.x.get(),
-                            pos.y.get(),
-                            pos.width.get(),
-                            pos.height.get(),
-                            is_window_locked,
-                            *x,
-                            *y,
-                        ) {
-                            drag_op = Some(op);
-                            found_window = Some(name.clone());
-                        }
-                    }
-                }
-
-                if let Some((win_name, new_index)) = handled_tab_click {
-                    // Focus the tabbed window when clicking its tabs
-                    app_core.ui_state.set_focus(Some(win_name.clone()));
-
-                    if let Some(window_state) = app_core.ui_state.get_window_mut(&win_name) {
-                        if let crate::data::WindowContent::TabbedText(tabbed) =
-                            &mut window_state.content
-                        {
-                            if new_index < tabbed.tabs.len() {
-                                tabbed.active_tab_index = new_index;
-                            }
-                        }
-                    }
-                    app_core.needs_render = true;
-                    return Ok((true, None));
-                }
-
-                if let (Some(window_name), Some(operation)) = (found_window.clone(), drag_op.clone()) {
-                    // Check if window is locked
-                    let is_locked = app_core
-                        .layout
-                        .windows
-                        .iter()
-                        .find(|w| w.base().name == window_name)
-                        .is_some_and(|w| w.base().locked);
-
-                    // For Move operations, handle links based on modifiers and lock state:
-                    // - Ctrl+click on link: ALWAYS starts link drag (regardless of lock)
-                    // - Click on link + locked window: opens menu (can't move anyway)
-                    // - Click on link + unlocked window: starts window move (repositioning)
-                    let mut handled_as_link = false;
-                    if operation == DragOperation::Move {
-                        let has_ctrl = modifiers.ctrl;
-
-                        // Check for links if Ctrl is held OR window is locked
-                        if has_ctrl || is_locked {
-                            if let Some(window) = app_core.ui_state.get_window(&window_name) {
-                                let pos = &window.position;
-                                let window_rect = ratatui::layout::Rect {
-                                    x: pos.x.get(),
-                                    y: pos.y.get(),
-                                    width: pos.width.get(),
-                                    height: pos.height.get(),
-                                };
-
-                                if let Some(link_data) =
-                                    self.link_at_position(&window_name, *x, *y, window_rect)
-                                {
-                                    if has_ctrl {
-                                        // Ctrl+click always starts link drag
-                                        app_core.ui_state.link_drag_state =
-                                            Some(LinkDragState {
-                                                link_data,
-                                                start_pos: (*x, *y),
-                                                current_pos: (*x, *y),
-                                            });
-                                    } else {
-                                        // Locked window without Ctrl: open menu
-                                        app_core.ui_state.pending_link_click =
-                                            Some(PendingLinkClick {
-                                                link_data,
-                                                click_pos: (*x, *y),
-                                            });
-                                    }
-                                    handled_as_link = true;
-                                }
-                            }
-                        }
-                    }
-
-                    // Only start window drag if not locked and not handled as link
-                    if !handled_as_link && !is_locked {
-                        if let Some(window) = app_core.ui_state.get_window(&window_name) {
-                            let pos = &window.position;
-                            app_core.ui_state.mouse_drag = Some(MouseDragState {
-                                operation,
-                                window_name,
-                                start_pos: (*x, *y),
-                                original_window_pos: (pos.x.get(), pos.y.get(), pos.width.get(), pos.height.get()),
-                            });
-                        }
-                    }
-                } else if let Some(window_name) = clicked_window_name {
-                    // Check if this window should receive focus (text/tabbedtext only)
-                    let should_focus = app_core
-                        .ui_state
-                        .get_window(&window_name)
-                        .map(|w| matches!(w.widget_type, WidgetType::Text | WidgetType::TabbedText))
-                        .unwrap_or(false);
-
-                    if let Some(window) = app_core.ui_state.get_window(&window_name) {
-                        let pos = &window.position;
-                        let window_rect = ratatui::layout::Rect {
-                            x: pos.x.get(),
-                            y: pos.y.get(),
-                            width: pos.width.get(),
-                            height: pos.height.get(),
-                        };
-
-                        tracing::debug!(
-                            "Non-drag click on '{}' at ({}, {}), window_rect: y={}, height={}",
-                            window_name, *x, *y, window_rect.y, window_rect.height
-                        );
-
-                        if let Some(link_data) =
-                            self.link_at_position(&window_name, *x, *y, window_rect)
-                        {
-                            tracing::debug!("  Found link: {}", link_data.noun);
-                            let has_ctrl = modifiers.ctrl;
-
-                            if has_ctrl {
-                                app_core.ui_state.link_drag_state =
-                                    Some(LinkDragState {
-                                        link_data,
-                                        start_pos: (*x, *y),
-                                        current_pos: (*x, *y),
-                                    });
-                            } else {
-                                app_core.ui_state.pending_link_click =
-                                    Some(PendingLinkClick {
-                                        link_data,
-                                        click_pos: (*x, *y),
-                                    });
-                            }
-                        } else {
-                            // Start text selection
-                            app_core.ui_state.selection_drag_start = Some((*x, *y));
-
-                            // Convert mouse coords to text coords for selection
-                            if let Some((line, col)) = self.mouse_to_text_coords(
-                                &window_name,
-                                *x,
-                                *y,
-                                window_rect,
-                            ) {
-                                // Find window index from the stable (sorted) ordering
-                                let window_index = window_names
-                                    .binary_search(&window_name)
-                                    .unwrap_or(0);
-                                app_core.ui_state.selection_state =
-                                    Some(crate::selection::SelectionState::new(
-                                        window_index,
-                                        line,
-                                        col,
-                                        window_name.clone(),
-                                    ));
-
-                                // Freeze the text window if it's scrolled back
-                                // This prevents new lines from shifting selection indices
-                                if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_name) {
-                                    if text_window.is_scrolled_back() {
-                                        text_window.freeze_for_selection();
-                                    }
-                                } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_name) {
-                                    if tabbed_window.is_scrolled_back() {
-                                        tabbed_window.freeze_for_selection();
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Apply focus after borrow on windows ends
-                    if should_focus {
-                        app_core.ui_state.set_focus(Some(window_name));
-                    }
-                }
-                return Ok((true, None));
             }
             MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
                 return self.handle_mouse_drag_left(app_core, *x, *y, &window_names);
