@@ -1,14 +1,21 @@
-//! Indicator template editor: inline table over the merged template list
-//! (defaults + custom store), saved back to the indicator template store —
-//! the same buffer-and-save-all model the TUI editor uses.
+//! GUI indicator icon editor: image-first. Each indicator gets a default
+//! image icon plus condition-driven image states (first match wins), so one
+//! indicator can show different icons under different game conditions. This
+//! is the GUI's job — images and conditions. The TUI's text glyph, title,
+//! and active/inactive colors are edited in the TUI's own indicator editor;
+//! this editor never shows them, but carries them through save untouched so
+//! the two editors share one template store without clobbering each other.
 
 use super::super::VellumGuiApp;
-use super::color_field;
 use crate::config::{Config, IndicatorTemplateEntry, IndicatorTemplateStore};
 use eframe::egui;
 
 pub(in super::super) struct IndicatorTemplatesEditorState {
     entries: Vec<EntryBuffer>,
+    /// Index of the indicator shown in the right-hand editor panel.
+    selected: usize,
+    /// Free-text id for the "add indicator" row.
+    new_id: String,
     /// Indicator id being typed into the "add icon override" row.
     new_override_id: String,
     /// Indicator id being typed into the "add grayscale exception" row.
@@ -16,78 +23,84 @@ pub(in super::super) struct IndicatorTemplatesEditorState {
     error: Option<String>,
 }
 
+/// A working copy of one template. GUI-editable fields (id, enabled, the
+/// default image `icon_ref`, and the condition-driven image `states`) are
+/// surfaced in the editor; the TUI-only fields (title, text glyph, colors,
+/// default_status/color) are held verbatim and written back on save so the
+/// TUI editor's work is never lost.
 struct EntryBuffer {
     id: String,
+    enabled: bool,
+    /// GUI: default image icon (pool image / sheet cell).
+    icon_ref: Option<crate::data::IconRef>,
+    /// GUI: condition-driven image states (first match wins).
+    states: Vec<crate::config::StatusIconState>,
+    // --- TUI-owned, carried through untouched ---
     name: Option<String>,
-    title: String,
-    icon: String,
-    active_color: String,
-    inactive_color: String,
+    title: Option<String>,
+    icon: Option<String>,
+    active_color: Option<String>,
+    inactive_color: Option<String>,
     default_status: Option<String>,
     default_color: Option<String>,
-    /// Pickable default GUI icon; edited in the Phase-D1 states UI. Carried
-    /// through save so a plain field edit never wipes it.
-    icon_ref: Option<crate::data::IconRef>,
-    /// Condition-driven icon states; edited in the Phase-D1 states UI, carried
-    /// through save.
-    states: Vec<crate::config::StatusIconState>,
-    enabled: bool,
 }
 
 impl EntryBuffer {
     fn from_entry(entry: &IndicatorTemplateEntry) -> Self {
         Self {
             id: entry.id.clone(),
-            name: entry.name.clone(),
-            title: entry.title.clone().unwrap_or_default(),
-            icon: entry.icon.clone().unwrap_or_default(),
-            active_color: entry.active_color.clone().unwrap_or_default(),
-            inactive_color: entry.inactive_color.clone().unwrap_or_default(),
-            default_status: entry.default_status.clone(),
-            default_color: entry.default_color.clone(),
+            enabled: entry.enabled,
             icon_ref: entry.icon_ref.clone(),
             states: entry.states.clone(),
-            enabled: entry.enabled,
+            name: entry.name.clone(),
+            title: entry.title.clone(),
+            icon: entry.icon.clone(),
+            active_color: entry.active_color.clone(),
+            inactive_color: entry.inactive_color.clone(),
+            default_status: entry.default_status.clone(),
+            default_color: entry.default_color.clone(),
         }
     }
 
-    fn empty() -> Self {
+    fn empty(id: &str) -> Self {
         Self {
-            id: String::new(),
-            name: None,
-            title: String::new(),
-            icon: String::new(),
-            active_color: String::new(),
-            inactive_color: String::new(),
-            default_status: None,
-            default_color: None,
+            id: id.trim().to_string(),
+            enabled: true,
             icon_ref: None,
             states: Vec::new(),
-            enabled: true,
+            name: None,
+            title: None,
+            icon: None,
+            active_color: None,
+            inactive_color: None,
+            default_status: None,
+            default_color: None,
         }
     }
 
     fn to_entry(&self) -> IndicatorTemplateEntry {
-        fn opt(value: &str) -> Option<String> {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        }
         IndicatorTemplateEntry {
             id: self.id.trim().to_string(),
             name: self.name.clone(),
-            title: opt(&self.title),
-            icon: opt(&self.icon),
+            title: self.title.clone(),
+            icon: self.icon.clone(),
             icon_ref: self.icon_ref.clone(),
-            inactive_color: opt(&self.inactive_color),
-            active_color: opt(&self.active_color),
+            inactive_color: self.inactive_color.clone(),
+            active_color: self.active_color.clone(),
             default_status: self.default_status.clone(),
             default_color: self.default_color.clone(),
             states: self.states.clone(),
             enabled: self.enabled,
+        }
+    }
+
+    /// Label for the left-hand list: the id, or a placeholder for a brand-new
+    /// unnamed row.
+    fn list_label(&self) -> String {
+        if self.id.trim().is_empty() {
+            "(unnamed)".to_string()
+        } else {
+            self.id.trim().to_string()
         }
     }
 }
@@ -98,12 +111,14 @@ impl VellumGuiApp {
             self.raise_editor(egui::Id::new("gui_indicator_templates"));
             return;
         }
-        let entries = Config::list_indicator_templates()
+        let entries: Vec<EntryBuffer> = Config::list_indicator_templates()
             .iter()
             .map(EntryBuffer::from_entry)
             .collect();
         self.indicator_templates_editor = Some(IndicatorTemplatesEditorState {
             entries,
+            selected: 0,
+            new_id: String::new(),
             new_override_id: String::new(),
             new_gray_id: String::new(),
             error: None,
@@ -170,270 +185,356 @@ impl VellumGuiApp {
         // (id, Some(on)) = upsert; (id, None) = back to the global toggle.
         let mut gray_override_changes: Vec<(String, Option<bool>)> = Vec::new();
 
-        egui::Window::new("Indicator Templates")
+        // Keep the selection in range (entries can shrink via Remove).
+        if state.selected >= state.entries.len() {
+            state.selected = state.entries.len().saturating_sub(1);
+        }
+
+        egui::Window::new("Indicator Icons")
             .id(egui::Id::new("gui_indicator_templates"))
             .order(egui::Order::Foreground)
             .open(&mut open)
-            .default_width(520.0)
-            .default_height(420.0)
+            .resizable(true)
+            .default_width(640.0)
+            .default_height(480.0)
+            .min_width(420.0)
+            .min_height(240.0)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("Add template").clicked() {
-                        state.entries.push(EntryBuffer::empty());
-                    }
-                    if ui.button("Save all").clicked() {
-                        save_request = true;
-                    }
-                });
-                ui.weak("Disabled templates are skipped when building indicator windows.");
+                if ui.button("Save all").clicked() {
+                    save_request = true;
+                }
+                ui.weak(
+                    "Give each status an image icon, and add conditions that swap the \
+                     icon by game state. Text glyphs and colors are the TUI's — edit \
+                     those with .indicators in the TUI.",
+                );
                 ui.separator();
 
-                egui::ScrollArea::vertical()
-                    .id_salt("indicator_templates_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        egui::Grid::new("indicator_templates_grid")
-                            .num_columns(7)
-                            .striped(true)
+                // Two panes: the indicator list (left) and the image/condition
+                // editor for the selected one (right). Each pane scrolls on its
+                // own, so the window resizes freely instead of being stretched
+                // to fit every row.
+                let pane_height = (ui.available_height() - 90.0).max(140.0);
+                ui.horizontal_top(|ui| {
+                    // Left: indicator list + add row.
+                    ui.vertical(|ui| {
+                        ui.set_width(200.0);
+                        ui.strong("Indicators");
+                        egui::ScrollArea::vertical()
+                            .id_salt("indicator_list_scroll")
+                            .max_height(pane_height)
+                            .auto_shrink([false, false])
                             .show(ui, |ui| {
-                                ui.strong("On");
-                                ui.strong("Id");
-                                ui.strong("Title");
-                                ui.strong("Icon");
-                                ui.strong("Active");
-                                ui.strong("Inactive");
-                                ui.label("");
-                                ui.end_row();
-
-                                for (index, entry) in state.entries.iter_mut().enumerate() {
-                                    ui.checkbox(&mut entry.enabled, "");
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut entry.id)
-                                            .desired_width(90.0),
-                                    );
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut entry.title)
-                                            .desired_width(90.0),
-                                    );
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut entry.icon)
-                                            .desired_width(40.0),
-                                    );
-                                    color_field(ui, &mut entry.active_color);
-                                    color_field(ui, &mut entry.inactive_color);
-                                    if ui.small_button("Remove").clicked() {
-                                        remove_index = Some(index);
-                                    }
-                                    ui.end_row();
+                                for index in 0..state.entries.len() {
+                                    let (label, enabled) = {
+                                        let e = &state.entries[index];
+                                        (e.list_label(), e.enabled)
+                                    };
+                                    ui.horizontal(|ui| {
+                                        let mut on = enabled;
+                                        if ui
+                                            .checkbox(&mut on, "")
+                                            .on_hover_text(
+                                                "Enabled: disabled indicators are skipped \
+                                                 when building indicator windows.",
+                                            )
+                                            .changed()
+                                        {
+                                            state.entries[index].enabled = on;
+                                        }
+                                        if ui
+                                            .selectable_label(state.selected == index, label)
+                                            .clicked()
+                                        {
+                                            state.selected = index;
+                                        }
+                                    });
                                 }
                             });
-                    });
-
-                ui.separator();
-                ui.strong("GUI icon art");
-                ui.weak(
-                    "Pool sets and per-indicator icons; the Icon column above is the TUI glyph.",
-                );
-                ui.horizontal(|ui| {
-                    ui.label("Icon set");
-                    let selected = current_set.as_deref().unwrap_or("None");
-                    egui::ComboBox::from_id_salt("statusicon_set")
-                        .selected_text(selected)
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(current_set.is_none(), "None").clicked() {
-                                set_change = Some(None);
-                            }
-                            for set in &icon_sets {
-                                let is_current = current_set.as_deref() == Some(set.as_str());
-                                if ui.selectable_label(is_current, set).clicked() {
-                                    set_change = Some(Some(set.clone()));
-                                }
-                            }
-                        });
-                    if icon_sets.is_empty() {
-                        ui.weak("(no sets in the pool — install with .jinx)");
-                    }
-                });
-                let mut gray = current_gray;
-                if ui
-                    .checkbox(&mut gray, "Grayscale when inactive")
-                    .on_hover_text(
-                        "Inactive statuses show a desaturated copy of their icon instead of \
-                         fading it. Grayscale copies are built only while this is on.",
-                    )
-                    .changed()
-                {
-                    gray_change = Some(gray);
-                }
-                // Per-indicator exceptions to the grayscale toggle.
-                for (id, on) in &sorted_gray_overrides {
-                    ui.horizontal(|ui| {
-                        ui.monospace(id);
-                        let mut on = *on;
-                        egui::ComboBox::from_id_salt(format!("statusicon_gray_{id}"))
-                            .width(140.0)
-                            .selected_text(if on { "Grayscale" } else { "Alpha dim" })
-                            .show_ui(ui, |ui| {
-                                if ui.selectable_label(on, "Grayscale").clicked() && !on {
-                                    on = true;
-                                    gray_override_changes.push((id.clone(), Some(true)));
-                                }
-                                if ui.selectable_label(!on, "Alpha dim").clicked() && on {
-                                    on = false;
-                                    gray_override_changes.push((id.clone(), Some(false)));
-                                }
-                            });
-                        if ui
-                            .small_button("✕")
-                            .on_hover_text("Follow the global toggle again")
-                            .clicked()
-                        {
-                            gray_override_changes.push((id.clone(), None));
-                        }
-                    });
-                }
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.new_gray_id)
-                            .hint_text("indicator id for a grayscale exception")
-                            .desired_width(160.0),
-                    );
-                    if ui.button("Add grayscale exception").clicked()
-                        && !state.new_gray_id.trim().is_empty()
-                    {
-                        // Exceptions start as the opposite of the global
-                        // toggle — that's why you'd add one.
-                        gray_override_changes.push((
-                            state.new_gray_id.trim().to_ascii_uppercase(),
-                            Some(!current_gray),
-                        ));
-                        state.new_gray_id.clear();
-                    }
-                });
-                for (id, icon) in &sorted_overrides {
-                    ui.horizontal(|ui| {
-                        ui.monospace(id);
-                        match super::icon_ref_picker(
-                            ui,
-                            format!("statusicon_override_{id}"),
-                            Some(icon),
-                            &pool_images,
-                            &sheets,
-                            None,
-                            Some("Default"),
-                            Some("None (hidden)"),
-                        ) {
-                            Some(super::IconRefPick::Ref(picked)) => {
-                                override_changes.push((id.clone(), Some(picked)));
-                            }
-                            Some(super::IconRefPick::Unset) | None => {}
-                        }
-                        if let crate::data::IconRef::SheetCell { sheet, cell } = icon {
-                            let max = art
-                                .as_ref()
-                                .and_then(|a| a.sheet_cell_count(sheet))
-                                .unwrap_or(u32::MAX)
-                                .max(1);
-                            let mut value = *cell;
-                            if ui
-                                .add(egui::DragValue::new(&mut value).range(1..=max).prefix("#"))
-                                .changed()
-                            {
-                                override_changes.push((
-                                    id.clone(),
-                                    Some(crate::data::IconRef::SheetCell {
-                                        sheet: sheet.clone(),
-                                        cell: value,
-                                    }),
-                                ));
-                            }
-                        }
-                        if ui.small_button("✕").clicked() {
-                            override_changes.push((id.clone(), None));
-                        }
-                    });
-                }
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.new_override_id)
-                            .hint_text("indicator id (e.g. STUNNED)")
-                            .desired_width(160.0),
-                    );
-                    if ui.button("Add icon override").clicked()
-                        && !state.new_override_id.trim().is_empty()
-                    {
-                        override_changes.push((
-                            state.new_override_id.trim().to_ascii_uppercase(),
-                            Some(crate::data::IconRef::Default),
-                        ));
-                        state.new_override_id.clear();
-                    }
-                });
-
-                ui.separator();
-                ui.strong("Per-template icons & states");
-                ui.weak(
-                    "A pickable default icon and condition-driven states per template. \
-                     States check top to bottom; the first match drives the icon/color \
-                     (e.g. an injury rank). Icons come from the 'statusicons' pool.",
-                );
-                for entry in state.entries.iter_mut() {
-                    let heading = if entry.id.trim().is_empty() {
-                        "(unnamed)".to_string()
-                    } else {
-                        entry.id.trim().to_string()
-                    };
-                    egui::CollapsingHeader::new(heading)
-                        .id_salt(format!("status_states_{}", entry.id))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("Default icon");
-                                match super::icon_ref_picker(
-                                    ui,
-                                    format!("status_default_icon_{}", entry.id),
-                                    entry.icon_ref.as_ref(),
-                                    &pool_images,
-                                    &sheets,
-                                    Some("Default (by id)"),
-                                    None,
-                                    Some("None (no art)"),
-                                ) {
-                                    Some(super::IconRefPick::Unset) => entry.icon_ref = None,
-                                    Some(super::IconRefPick::Ref(picked)) => {
-                                        entry.icon_ref = Some(picked)
-                                    }
-                                    None => {}
-                                }
-                                if let Some(crate::data::IconRef::SheetCell { cell, .. }) =
-                                    &mut entry.icon_ref
-                                {
-                                    let mut value = (*cell).max(1);
-                                    if ui
-                                        .add(
-                                            egui::DragValue::new(&mut value)
-                                                .range(1..=9999)
-                                                .prefix("#"),
-                                        )
-                                        .changed()
-                                    {
-                                        *cell = value;
-                                    }
-                                }
-                            });
-                            Self::render_status_states(
-                                ui,
-                                &entry.id,
-                                &mut entry.states,
-                                &pool_images,
-                                &sheets,
-                                &suggestions,
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.new_id)
+                                    .hint_text("new id")
+                                    .desired_width(120.0),
                             );
+                            if ui.button("Add").clicked() {
+                                let id = state.new_id.trim().to_ascii_uppercase();
+                                if id.is_empty() {
+                                    state.error = Some("Enter an indicator id.".to_string());
+                                } else if state
+                                    .entries
+                                    .iter()
+                                    .any(|e| e.id.eq_ignore_ascii_case(&id))
+                                {
+                                    state.error = Some(format!("'{id}' already exists."));
+                                } else {
+                                    state.entries.push(EntryBuffer::empty(&id));
+                                    state.selected = state.entries.len() - 1;
+                                    state.new_id.clear();
+                                    state.error = None;
+                                }
+                            }
                         });
-                }
+                    });
+
+                    ui.separator();
+
+                    // Right: the selected indicator's image editor.
+                    ui.vertical(|ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("indicator_editor_scroll")
+                            .max_height(pane_height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if let Some(entry) = state.entries.get_mut(state.selected) {
+                                    ui.horizontal(|ui| {
+                                        ui.strong("Id");
+                                        ui.add(
+                                            egui::TextEdit::singleline(&mut entry.id)
+                                                .desired_width(160.0),
+                                        );
+                                        if ui.button("Remove indicator").clicked() {
+                                            remove_index = Some(state.selected);
+                                        }
+                                    });
+                                    ui.separator();
+                                    ui.horizontal(|ui| {
+                                        ui.label("Default icon");
+                                        match super::icon_ref_picker(
+                                            ui,
+                                            format!("status_default_icon_{}", entry.id),
+                                            entry.icon_ref.as_ref(),
+                                            &pool_images,
+                                            &sheets,
+                                            Some("Default (by id)"),
+                                            None,
+                                            Some("None (no art)"),
+                                        ) {
+                                            Some(super::IconRefPick::Unset) => {
+                                                entry.icon_ref = None
+                                            }
+                                            Some(super::IconRefPick::Ref(picked)) => {
+                                                entry.icon_ref = Some(picked)
+                                            }
+                                            None => {}
+                                        }
+                                        if let Some(crate::data::IconRef::SheetCell {
+                                            cell,
+                                            ..
+                                        }) = &mut entry.icon_ref
+                                        {
+                                            let mut value = (*cell).max(1);
+                                            if ui
+                                                .add(
+                                                    egui::DragValue::new(&mut value)
+                                                        .range(1..=9999)
+                                                        .prefix("#"),
+                                                )
+                                                .changed()
+                                            {
+                                                *cell = value;
+                                            }
+                                        }
+                                    });
+                                    ui.weak(
+                                        "Shown when no condition below matches. \
+                                         'Default (by id)' falls back to the skin/pool \
+                                         icon named for this id.",
+                                    );
+                                    ui.separator();
+                                    ui.strong("Conditions (first match wins)");
+                                    ui.weak(
+                                        "Each condition that matches the game state can \
+                                         show a different image. Checked top to bottom; \
+                                         the first match's icon is used.",
+                                    );
+                                    Self::render_status_states(
+                                        ui,
+                                        &entry.id,
+                                        &mut entry.states,
+                                        &pool_images,
+                                        &sheets,
+                                        &suggestions,
+                                    );
+                                } else {
+                                    ui.weak("Add or select an indicator to edit its icon.");
+                                }
+                            });
+                    });
+                });
 
                 if let Some(error) = &state.error {
+                    ui.separator();
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
+
+                // Global image-art controls (GUI-only): the icon set, the
+                // inactive-grayscale toggle, and per-id icon/gray overrides.
+                ui.separator();
+                egui::CollapsingHeader::new("Global icon art")
+                    .id_salt("indicator_global_art")
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("indicator_global_art_scroll")
+                            .max_height(180.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Icon set");
+                                    let selected = current_set.as_deref().unwrap_or("None");
+                                    egui::ComboBox::from_id_salt("statusicon_set")
+                                        .selected_text(selected)
+                                        .show_ui(ui, |ui| {
+                                            if ui
+                                                .selectable_label(current_set.is_none(), "None")
+                                                .clicked()
+                                            {
+                                                set_change = Some(None);
+                                            }
+                                            for set in &icon_sets {
+                                                let is_current =
+                                                    current_set.as_deref() == Some(set.as_str());
+                                                if ui.selectable_label(is_current, set).clicked() {
+                                                    set_change = Some(Some(set.clone()));
+                                                }
+                                            }
+                                        });
+                                    if icon_sets.is_empty() {
+                                        ui.weak("(no sets in the pool — install with .jinx)");
+                                    }
+                                });
+                                let mut gray = current_gray;
+                                if ui
+                                    .checkbox(&mut gray, "Grayscale when inactive")
+                                    .on_hover_text(
+                                        "Inactive statuses show a desaturated copy of their \
+                                         icon instead of fading it. Grayscale copies are \
+                                         built only while this is on.",
+                                    )
+                                    .changed()
+                                {
+                                    gray_change = Some(gray);
+                                }
+                                for (id, on) in &sorted_gray_overrides {
+                                    ui.horizontal(|ui| {
+                                        ui.monospace(id);
+                                        let mut on = *on;
+                                        egui::ComboBox::from_id_salt(format!(
+                                            "statusicon_gray_{id}"
+                                        ))
+                                        .width(140.0)
+                                        .selected_text(if on { "Grayscale" } else { "Alpha dim" })
+                                        .show_ui(ui, |ui| {
+                                            if ui.selectable_label(on, "Grayscale").clicked()
+                                                && !on
+                                            {
+                                                on = true;
+                                                gray_override_changes
+                                                    .push((id.clone(), Some(true)));
+                                            }
+                                            if ui.selectable_label(!on, "Alpha dim").clicked()
+                                                && on
+                                            {
+                                                on = false;
+                                                gray_override_changes
+                                                    .push((id.clone(), Some(false)));
+                                            }
+                                        });
+                                        if ui
+                                            .small_button("✕")
+                                            .on_hover_text("Follow the global toggle again")
+                                            .clicked()
+                                        {
+                                            gray_override_changes.push((id.clone(), None));
+                                        }
+                                    });
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut state.new_gray_id)
+                                            .hint_text("id for a grayscale exception")
+                                            .desired_width(160.0),
+                                    );
+                                    if ui.button("Add grayscale exception").clicked()
+                                        && !state.new_gray_id.trim().is_empty()
+                                    {
+                                        gray_override_changes.push((
+                                            state.new_gray_id.trim().to_ascii_uppercase(),
+                                            Some(!current_gray),
+                                        ));
+                                        state.new_gray_id.clear();
+                                    }
+                                });
+                                ui.separator();
+                                ui.weak("Per-id icon overrides");
+                                for (id, icon) in &sorted_overrides {
+                                    ui.horizontal(|ui| {
+                                        ui.monospace(id);
+                                        match super::icon_ref_picker(
+                                            ui,
+                                            format!("statusicon_override_{id}"),
+                                            Some(icon),
+                                            &pool_images,
+                                            &sheets,
+                                            None,
+                                            Some("Default"),
+                                            Some("None (hidden)"),
+                                        ) {
+                                            Some(super::IconRefPick::Ref(picked)) => {
+                                                override_changes.push((id.clone(), Some(picked)));
+                                            }
+                                            Some(super::IconRefPick::Unset) | None => {}
+                                        }
+                                        if let crate::data::IconRef::SheetCell { sheet, cell } =
+                                            icon
+                                        {
+                                            let max = art
+                                                .as_ref()
+                                                .and_then(|a| a.sheet_cell_count(sheet))
+                                                .unwrap_or(u32::MAX)
+                                                .max(1);
+                                            let mut value = *cell;
+                                            if ui
+                                                .add(
+                                                    egui::DragValue::new(&mut value)
+                                                        .range(1..=max)
+                                                        .prefix("#"),
+                                                )
+                                                .changed()
+                                            {
+                                                override_changes.push((
+                                                    id.clone(),
+                                                    Some(crate::data::IconRef::SheetCell {
+                                                        sheet: sheet.clone(),
+                                                        cell: value,
+                                                    }),
+                                                ));
+                                            }
+                                        }
+                                        if ui.small_button("✕").clicked() {
+                                            override_changes.push((id.clone(), None));
+                                        }
+                                    });
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut state.new_override_id)
+                                            .hint_text("id (e.g. STUNNED)")
+                                            .desired_width(160.0),
+                                    );
+                                    if ui.button("Add icon override").clicked()
+                                        && !state.new_override_id.trim().is_empty()
+                                    {
+                                        override_changes.push((
+                                            state.new_override_id.trim().to_ascii_uppercase(),
+                                            Some(crate::data::IconRef::Default),
+                                        ));
+                                        state.new_override_id.clear();
+                                    }
+                                });
+                            });
+                    });
             });
 
         if let Some(set) = set_change {
@@ -505,10 +606,12 @@ impl VellumGuiApp {
         }
     }
 
-    /// Condition-driven status icon states for one template. Mirrors the
-    /// hand-icon states editor: each state gets the shared condition builder,
-    /// an IconRef picker (statusicons pool / sheet cell / none), a TUI text
-    /// glyph, and a color; first match wins. Reorder + remove + add.
+    /// Condition-driven status icon states for one template (GUI: image
+    /// only). Each state gets the shared condition builder and an IconRef
+    /// picker (statusicons pool / sheet cell / template-default / none);
+    /// first match wins. Reorder + remove + add. The state's TUI text glyph
+    /// and color are not shown here (TUI editor's job) and are preserved
+    /// untouched — this fn never writes `st.text`/`st.color`.
     fn render_status_states(
         ui: &mut egui::Ui,
         entry_id: &str,
@@ -575,26 +678,6 @@ impl VellumGuiApp {
                     {
                         *cell = value;
                     }
-                }
-                ui.label("Text");
-                let mut text = st.text.clone().unwrap_or_default();
-                if ui
-                    .add(
-                        egui::TextEdit::singleline(&mut text)
-                            .hint_text("TUI glyph")
-                            .desired_width(60.0),
-                    )
-                    .changed()
-                {
-                    st.text = (!text.trim().is_empty()).then(|| text.clone());
-                }
-                ui.label("Color");
-                let mut color = st.color.clone().unwrap_or_default();
-                let before = color.clone();
-                color_field(ui, &mut color);
-                if color != before {
-                    let trimmed = color.trim();
-                    st.color = (!trimmed.is_empty()).then(|| trimmed.to_string());
                 }
             });
         }
