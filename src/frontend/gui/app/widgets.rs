@@ -3206,28 +3206,45 @@ impl VellumGuiApp {
         let hide_inactive = data.map(|d| d.hide_inactive).unwrap_or(true);
         let spacing_chars = data.map(|d| d.spacing).unwrap_or(1);
 
-        let visible: Vec<&(String, u8)> = indicators
-            .iter()
-            .filter(|(_, value)| !hide_inactive || *value > 0)
-            .collect();
-        if visible.is_empty() {
-            ui.weak("No active status.");
-            return;
-        }
-
-        // Icons scale with the window's text size. Spacing (in "chars") maps
-        // to a fraction of the icon size so it reads similarly to the TUI.
-        let icon_side = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).clamp(14.0, 64.0);
-        let gap = (spacing_chars as f32) * icon_side * 0.35;
         let now_server =
             chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
 
-        // One cell: resolve the status template's condition-driven art, then
-        // paint the resolved IconRef / id-keyed skin sprite / built-in
-        // pictogram / text label, colored by the resolved/value color.
-        let paint_cell = |ui: &mut egui::Ui, id: &str, value: u8| {
-            let template = app_core.indicator_template(id);
-            let resolved = template
+        // Candidate ids in config order (the authored set + arrangement),
+        // then any runtime-only ids the server sent that the config omits.
+        // A grouped/swapping cell (e.g. one POSTURE entry with per-posture
+        // states) lives in the config with an id the server never flips, so
+        // iterating the config — not just the runtime list — is what lets it
+        // appear at all.
+        let mut candidate_ids: Vec<String> = Vec::new();
+        if let Some(d) = data {
+            for def in &d.indicators {
+                candidate_ids.push(def.id.clone());
+            }
+        }
+        for (id, _) in indicators {
+            if !candidate_ids.iter().any(|c| c.eq_ignore_ascii_case(id)) {
+                candidate_ids.push(id.clone());
+            }
+        }
+
+        // Resolve each candidate once. A cell is visible when hide_inactive is
+        // off, OR its runtime value > 0, OR (for a states-driven cell) any
+        // state currently matches — so a posture group shows whichever posture
+        // is active even though its own id never gets a runtime value.
+        struct Cell {
+            id: String,
+            value: u8,
+            resolved: crate::core::conditions::ResolvedStatusArt,
+        }
+        let mut cells: Vec<Cell> = Vec::new();
+        for id in candidate_ids {
+            let value = indicators
+                .iter()
+                .find(|(rid, _)| rid.eq_ignore_ascii_case(&id))
+                .map(|(_, v)| *v)
+                .unwrap_or(0);
+            let resolved = app_core
+                .indicator_template(&id)
                 .filter(|t| !t.states.is_empty() || t.icon_ref.is_some())
                 .map(|t| {
                     crate::core::conditions::resolve_status(
@@ -3239,9 +3256,31 @@ impl VellumGuiApp {
                     )
                 })
                 .unwrap_or_default();
-            // Color: resolved state color → template active/inactive → the
-            // legacy value ramp (green/orange/red) as a last resort.
-            let color = resolved
+            let visible = !hide_inactive || value > 0 || resolved.state_matched;
+            if visible {
+                cells.push(Cell { id, value, resolved });
+            }
+        }
+        if cells.is_empty() {
+            ui.weak("No active status.");
+            return;
+        }
+
+        // Icons scale with the window's text size. Spacing (in "chars") maps
+        // to a fraction of the icon size so it reads similarly to the TUI.
+        let icon_side = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).clamp(14.0, 64.0);
+        let gap = (spacing_chars as f32) * icon_side * 0.35;
+
+        // One cell: paint the resolved IconRef / id-keyed skin sprite /
+        // built-in pictogram / text label, colored by the resolved/value color.
+        let paint_cell = |ui: &mut egui::Ui, cell: &Cell| {
+            let id = cell.id.as_str();
+            // Color: resolved state color → the legacy value ramp
+            // (green/orange/red). A state that matched with no explicit value
+            // counts as "on" for the ramp.
+            let value = cell.value.max(if cell.resolved.state_matched { 1 } else { 0 });
+            let color = cell
+                .resolved
                 .color
                 .as_deref()
                 .and_then(parse_hex_color)
@@ -3250,7 +3289,7 @@ impl VellumGuiApp {
                     2 => Color32::from_rgb(0xff, 0x88, 0x00),
                     _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
                 });
-            let sprite = match &resolved.icon {
+            let sprite = match &cell.resolved.icon {
                 Some(icon) => skin_art.and_then(|art| art.resolve_icon_ref(icon, id)),
                 None => skin_art.and_then(|art| art.icon(id)),
             };
@@ -3279,22 +3318,22 @@ impl VellumGuiApp {
         match layout {
             DashboardLayout::Horizontal => {
                 ui.horizontal(|ui| {
-                    for (id, value) in &visible {
-                        paint_cell(ui, id, *value);
+                    for cell in &cells {
+                        paint_cell(ui, cell);
                     }
                 });
             }
             DashboardLayout::Flow => {
                 ui.horizontal_wrapped(|ui| {
-                    for (id, value) in &visible {
-                        paint_cell(ui, id, *value);
+                    for cell in &cells {
+                        paint_cell(ui, cell);
                     }
                 });
             }
             DashboardLayout::Vertical => {
                 ui.vertical(|ui| {
-                    for (id, value) in &visible {
-                        paint_cell(ui, id, *value);
+                    for cell in &cells {
+                        paint_cell(ui, cell);
                     }
                 });
             }
@@ -3303,8 +3342,8 @@ impl VellumGuiApp {
                 egui::Grid::new(ui.id().with("dashboard_grid"))
                     .spacing(Vec2::splat(gap))
                     .show(ui, |ui| {
-                        for (index, (id, value)) in visible.iter().enumerate() {
-                            paint_cell(ui, id, *value);
+                        for (index, cell) in cells.iter().enumerate() {
+                            paint_cell(ui, cell);
                             if (index + 1) % cols == 0 {
                                 ui.end_row();
                             }
