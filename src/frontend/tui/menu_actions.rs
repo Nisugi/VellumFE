@@ -414,6 +414,19 @@ pub fn handle_ui_action(
             );
             app_core.needs_render = true;
         }
+        UiAction::EditIndicators => {
+            // The indicator template builder: create/edit every status
+            // indicator, its conditions, and condition-driven icons in one
+            // place. Same editor the `Indicators > Editor` leaf opens, now a
+            // first-class action so it is reachable even with every indicator
+            // already placed.
+            frontend.indicator_template_editor = Some(
+                crate::frontend::tui::indicator_template_editor::IndicatorTemplateEditor::new(),
+            );
+            close_all_menus(&mut app_core.ui_state);
+            app_core.ui_state.input_mode = InputMode::IndicatorTemplateEditor;
+            app_core.needs_render = true;
+        }
         UiAction::Hotbars => {
             // Open the hotbar editor (bars -> buttons -> button form)
             frontend.hotbar_editor = Some(

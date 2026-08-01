@@ -1920,6 +1920,11 @@ impl AppCore {
             "hotbars" | "hotbar" => {
                 return Ok(CommandOutcome::Ui(UiAction::Hotbars));
             }
+            // Indicator template builder: create/edit every status indicator,
+            // its conditions, and condition-driven icons in one place.
+            "indicators" | "indicator" => {
+                return Ok(CommandOutcome::Ui(UiAction::EditIndicators));
+            }
             // Streams (per-stream routing: every known stream and where it goes)
             "streams" => {
                 return Ok(CommandOutcome::Ui(UiAction::Streams));

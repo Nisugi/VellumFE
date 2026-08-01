@@ -5091,6 +5091,7 @@ impl VellumGuiApp {
                 let _ = self.handle_webui_action(&format!("action:webui:open:{page}"));
             }
             A::KnownWindows => self.open_known_windows_editor(),
+            A::EditIndicators => self.open_indicator_templates_editor(),
             A::AddWindowPicker => {
                 let mut items = self.app_core.build_add_window_menu();
                 // Surface the custom-window authoring panel at the top of the

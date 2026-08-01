@@ -4890,6 +4890,14 @@ impl AppCore {
                 command: "__SUBMENU__windows".to_string(),
                 disabled: false,
             },
+            // First-class entry to the indicator template builder — reachable
+            // even when every indicator is already placed (the Add/Edit
+            // submenus' "Editor" leaf disappears once none are left to add).
+            crate::data::ui_state::PopupMenuItem {
+                text: "Indicators".to_string(),
+                command: ".indicators".to_string(),
+                disabled: false,
+            },
         ]
     }
 

@@ -251,6 +251,14 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
         )],
     },
     CommandHelpSection {
+        title: "INDICATORS",
+        entries: &[entry!(
+            &["indicators", "indicator"],
+            "",
+            "Open the indicator builder (create/edit all status indicators, conditions, and icons)"
+        )],
+    },
+    CommandHelpSection {
         title: "COLORS",
         entries: &[
             entry!(

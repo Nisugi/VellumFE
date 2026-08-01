@@ -130,6 +130,11 @@ pub enum UiAction {
     WindowList,
     CustomWindows,
     KnownWindows,
+    /// Open the indicator template builder (`.indicators`): create/edit all
+    /// status indicators, their conditions, and condition-driven icons in
+    /// one place. First-class entry point so the builder is reachable even
+    /// when every indicator is already placed.
+    EditIndicators,
 
     // Stream routing menu entries (TUI `.streams` menu)
     StreamActions(String),
@@ -306,6 +311,7 @@ impl UiAction {
             "windows" | "listwindows" => UiAction::WindowList,
             "customwindows" => UiAction::CustomWindows,
             "knownwindows" => UiAction::KnownWindows,
+            "indicators" => UiAction::EditIndicators,
             "webui" => UiAction::WebUiPicker,
             "webui:off" => UiAction::WebUiOff,
             "snapdebug" => UiAction::SnapDebug,
@@ -370,6 +376,7 @@ impl std::fmt::Display for UiAction {
             UiAction::WindowList => write!(f, "action:windows"),
             UiAction::CustomWindows => write!(f, "action:customwindows"),
             UiAction::KnownWindows => write!(f, "action:knownwindows"),
+            UiAction::EditIndicators => write!(f, "action:indicators"),
             UiAction::StreamActions(stream) => write!(f, "action:streamacts:{stream}"),
             UiAction::StreamPickWindow(stream) => write!(f, "action:streamwin:{stream}"),
             UiAction::StreamRoute { kind, stream } => {
@@ -472,6 +479,7 @@ mod tests {
             UiAction::WindowList,
             UiAction::CustomWindows,
             UiAction::KnownWindows,
+            UiAction::EditIndicators,
             UiAction::StreamActions("speech".into()),
             UiAction::StreamPickWindow("speech".into()),
             UiAction::StreamRoute {
