@@ -69,6 +69,8 @@ pub struct MiniVitals {
     display_mode: VitalDisplayMode,
     /// Background color (from theme)
     background_color: Option<Color>,
+    /// Background color for unfilled cells inside each vital bar
+    depleted_color: Option<Color>,
     /// Order of bars (e.g., ["health", "mana", "stamina", "spirit"])
     bar_order: Vec<String>,
 }
@@ -101,6 +103,7 @@ impl MiniVitals {
             text_color: Color::White,
             display_mode: VitalDisplayMode::Full,
             background_color: None,
+            depleted_color: None,
             bar_order: vec![
                 "health".to_string(),
                 "mana".to_string(),
@@ -149,6 +152,11 @@ impl MiniVitals {
     /// Set the background color (from theme)
     pub fn set_background_color(&mut self, color: Option<String>) {
         self.background_color = color.and_then(|c| super::colors::parse_color_to_ratatui(&c));
+    }
+
+    /// Set the background color for unfilled cells inside each vital bar
+    pub fn set_depleted_color(&mut self, color: Option<Color>) {
+        self.depleted_color = color;
     }
 
     /// Set the bar order (e.g., ["health", "mana", "stamina", "spirit"])
@@ -304,8 +312,11 @@ impl MiniVitals {
                 ' '
             };
 
-            // Use theme background for unfilled portion (or Reset for transparency)
-            let unfilled_bg = self.background_color.unwrap_or(Color::Reset);
+            // Use the configured depleted color, then fall back to the window background.
+            let unfilled_bg = self
+                .depleted_color
+                .or(self.background_color)
+                .unwrap_or(Color::Reset);
             let (fg, bg) = if is_filled {
                 (self.text_color, fill_color)
             } else {
@@ -485,6 +496,75 @@ mod tests {
         mv.set_text_color(Color::Green);
         assert_eq!(mv.border_color, Color::Cyan);
         assert_eq!(mv.text_color, Color::Green);
+    }
+
+    #[test]
+    fn depleted_color_applies_only_to_unfilled_bar_cells() {
+        let mut mv = MiniVitals::new("Stats", false);
+        mv.set_show_title(false);
+        mv.set_bar_order(vec!["health".to_string(), "mana".to_string()]);
+        mv.set_background_color(Some("#010203".to_string()));
+        mv.set_depleted_color(Some(Color::Rgb(191, 97, 106)));
+
+        let area = Rect::new(0, 0, 7, 2);
+        let mut buf = Buffer::empty(area);
+        mv.render(area, &mut buf);
+
+        let depleted = Color::Rgb(191, 97, 106);
+        let background = Color::Rgb(1, 2, 3);
+        for x in [0, 1, 2, 4, 5, 6] {
+            assert_eq!(buf[(x, 0)].bg, depleted);
+        }
+        assert_eq!(buf[(3, 0)].bg, background);
+        assert_eq!(buf[(0, 1)].bg, background);
+        assert_eq!(buf[(3, 1)].bg, background);
+    }
+
+    #[test]
+    fn depleted_color_falls_back_to_window_background() {
+        let mut mv = MiniVitals::new("Stats", false);
+        mv.set_bar_order(vec!["health".to_string()]);
+        mv.set_background_color(Some("#010203".to_string()));
+
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buf = Buffer::empty(area);
+        mv.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn depleted_color_falls_back_to_reset_without_window_background() {
+        let mut mv = MiniVitals::new("Stats", false);
+        mv.set_bar_order(vec!["health".to_string()]);
+
+        let area = Rect::new(0, 0, 3, 1);
+        let mut buf = Buffer::empty(area);
+        mv.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Reset);
+    }
+
+    #[test]
+    fn depleted_color_does_not_replace_filled_cells() {
+        let mv = MiniVitals {
+            health_value: 50,
+            health_max: 100,
+            health_color: Color::Green,
+            depleted_color: Some(Color::Red),
+            bar_order: vec!["health".to_string()],
+            show_border: false,
+            ..MiniVitals::new("Stats", false)
+        };
+
+        let area = Rect::new(0, 0, 4, 1);
+        let mut buf = Buffer::empty(area);
+        mv.render(area, &mut buf);
+
+        assert_eq!(buf[(0, 0)].bg, Color::Green);
+        assert_eq!(buf[(1, 0)].bg, Color::Green);
+        assert_eq!(buf[(2, 0)].bg, Color::Red);
+        assert_eq!(buf[(3, 0)].bg, Color::Red);
     }
 
     #[test]
