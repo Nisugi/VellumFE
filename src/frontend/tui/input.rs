@@ -4033,6 +4033,73 @@ impl TuiFrontend {
         Ok(None)
     }
 
+    /// Add a window from the add-window menu (`__ADD__<name>`): create it,
+    /// mirror it into UI state at the current terminal size, and open its
+    /// editor. Template names may auto-rename (spacer, tabbedtext_custom, …),
+    /// so the actual def is looked up by name then falls back to the last
+    /// window added.
+    fn menu_add_window(&mut self, window_name: &str, app_core: &mut crate::core::AppCore) {
+        use crate::data::ui_state::InputMode;
+        match app_core.layout.add_window(window_name) {
+            Ok(_) => {
+                let (width, height) = self.size();
+                let window_def = app_core
+                    .layout
+                    .get_window(window_name)
+                    .cloned()
+                    .or_else(|| app_core.layout.windows.last().cloned());
+                if let Some(window_def) = window_def {
+                    let actual_name = window_def.name().to_string();
+                    app_core.add_new_window(&window_def, width, height);
+                    app_core.schedule_layout_autosave();
+                    app_core.add_system_message(&format!("Window '{}' added", actual_name));
+                    tracing::info!("Added window: {}", actual_name);
+                    self.window_editor =
+                        Some(crate::frontend::tui::window_editor::WindowEditor::new(window_def));
+                    app_core.ui_state.input_mode = InputMode::WindowEditor;
+                } else {
+                    app_core.add_system_message(&format!(
+                        "Window '{}' added but couldn't retrieve definition",
+                        window_name
+                    ));
+                    app_core.ui_state.input_mode = InputMode::Normal;
+                }
+            }
+            Err(e) => {
+                app_core.add_system_message(&format!("Failed to add window: {}", e));
+                tracing::error!("Failed to add window '{}': {}", window_name, e);
+            }
+        }
+        app_core.ui_state.close_all_menus();
+        app_core.needs_render = true;
+    }
+
+    /// Start a blank/custom window editor for a widget type
+    /// (`__ADD_CUSTOM__<type>`), naming it `custom_<type>[_n]` uniquely.
+    /// No-op if a window editor is already open.
+    fn menu_add_custom_window(&mut self, widget_type: &str, app_core: &mut crate::core::AppCore) {
+        use crate::data::ui_state::InputMode;
+        use crate::frontend::tui::window_editor::WindowEditor;
+        if self.window_editor.is_some() {
+            tracing::debug!("Window editor already open, ignoring add custom request");
+            return;
+        }
+        let mut editor = WindowEditor::new_window(widget_type.to_string());
+        let base = format!("custom_{}", widget_type);
+        let mut candidate = base.clone();
+        let mut idx = 1;
+        while app_core.layout.get_window(&candidate).is_some() {
+            candidate = format!("{}_{}", base, idx);
+            idx += 1;
+        }
+        editor.set_name(&candidate);
+        self.window_editor = Some(editor);
+        app_core.ui_state.popup_menu = None;
+        app_core.ui_state.submenu = None;
+        app_core.ui_state.input_mode = InputMode::WindowEditor;
+        app_core.needs_render = true;
+    }
+
     /// Handle menu command execution (extracted from main.rs Phase 4.2)
     fn handle_menu_command(
         &mut self,
@@ -4196,69 +4263,9 @@ impl TuiFrontend {
             app_core.ui_state.input_mode = crate::data::ui_state::InputMode::IndicatorTemplateEditor;
             app_core.needs_render = true;
         } else if let Some(widget_type) = command.strip_prefix("__ADD_CUSTOM__") {
-            // Start a new blank/custom window editor for this widget type
-            // Safeguard: prevent opening if a window editor is already open
-            if self.window_editor.is_some() {
-                tracing::debug!("Window editor already open, ignoring add custom request");
-            } else {
-                use crate::frontend::tui::window_editor::WindowEditor;
-                let mut editor = WindowEditor::new_window(widget_type.to_string());
-
-                // Generate a unique name like custom_<type>[_n]
-                let base = format!("custom_{}", widget_type);
-                let mut candidate = base.clone();
-                let mut idx = 1;
-                while app_core.layout.get_window(&candidate).is_some() {
-                    candidate = format!("{}_{}", base, idx);
-                    idx += 1;
-                }
-                editor.set_name(&candidate);
-
-                self.window_editor = Some(editor);
-                app_core.ui_state.popup_menu = None;
-                app_core.ui_state.submenu = None;
-                app_core.ui_state.input_mode = InputMode::WindowEditor;
-                app_core.needs_render = true;
-            }
+            self.menu_add_custom_window(widget_type, app_core);
         } else if let Some(window_name) = command.strip_prefix("__ADD__") {
-            match app_core.layout.add_window(window_name) {
-                Ok(_) => {
-                    let (width, height) = self.size();
-                    // Only add the NEW window to UI state, don't overwrite existing windows
-                    // (sync_layout_to_ui_state was overwriting all windows, resetting user changes)
-
-                    // For templates with auto-generated names (spacer, tabbedtext_custom, etc.)
-                    // we need to get the last window in the layout since the template name
-                    // differs from the actual window name (e.g., "tabbedtext_custom" → "custom-tabbedtext-1")
-                    // First try direct lookup, then fallback to last window if template doesn't match
-                    let window_def = app_core.layout.get_window(window_name).cloned()
-                        .or_else(|| app_core.layout.windows.last().cloned());
-
-                    if let Some(window_def) = window_def {
-                        let actual_name = window_def.name().to_string();
-                        app_core.add_new_window(&window_def, width, height);
-                        app_core.schedule_layout_autosave();
-                        app_core.add_system_message(&format!("Window '{}' added", actual_name));
-                        tracing::info!("Added window: {}", actual_name);
-
-                        // Immediately open editor for the newly added window
-                        self.window_editor = Some(
-                            crate::frontend::tui::window_editor::WindowEditor::new(window_def)
-                        );
-                        app_core.ui_state.input_mode = InputMode::WindowEditor;
-                    } else {
-                        // Fallback to normal mode if something goes wrong
-                        app_core.add_system_message(&format!("Window '{}' added but couldn't retrieve definition", window_name));
-                        app_core.ui_state.input_mode = InputMode::Normal;
-                    }
-                }
-                Err(e) => {
-                    app_core.add_system_message(&format!("Failed to add window: {}", e));
-                    tracing::error!("Failed to add window '{}': {}", window_name, e);
-                }
-            }
-            app_core.ui_state.close_all_menus();
-            app_core.needs_render = true;
+            self.menu_add_window(window_name, app_core);
         } else if let Some(window_name) = command.strip_prefix("__HIDE__") {
             match app_core.layout.hide_window(window_name) {
                 Ok(_) => {
