@@ -343,72 +343,10 @@ impl TuiFrontend {
             }
         }
 
-        // Stable window index = position in the sorted name list. A binary
-        // search at the two use sites replaces the HashMap previously built
-        // on every mouse event.
-        let mut window_names: Vec<&String> = app_core.ui_state.windows.keys().collect();
-        window_names.sort();
-
         // Handle window editor mouse events first (if open)
         if self.window_editor.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut window_editor) = self.window_editor {
-                use crate::frontend::tui::window_editor::WindowEditorMouseAction;
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        let action = window_editor.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        action
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        let action = window_editor.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        action
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        let action = window_editor.handle_mouse(*x, *y, false, area);
-                        app_core.needs_render = true;
-                        action
-                    }
-                    _ => WindowEditorMouseAction::None,
-                };
-
-                // Handle Save/Cancel actions from mouse clicks
-                match action {
-                    WindowEditorMouseAction::Save => {
-                        // Trigger save via simulated Ctrl+S key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_window_editor_keys(
-                            KeyCode::Char('s'),
-                            KeyModifiers::CTRL,
-                            app_core,
-                        );
-                        return Ok((true, None));
-                    }
-                    WindowEditorMouseAction::Cancel => {
-                        // Trigger cancel via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_window_editor_keys(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                        );
-                        return Ok((true, None));
-                    }
-                    WindowEditorMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) = self.handle_window_editor_mouse(mouse_event, app_core)? {
+                return Ok(result);
             }
         }
 
@@ -984,48 +922,15 @@ impl TuiFrontend {
         // the browser; every other mouse event is consumed while open so
         // clicks don't fall through to the windows underneath.
         if self.spell_color_form.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
-            if let Some(ref mut form) = self.spell_color_form {
-                match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left)
-                    | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, false, area)
-                    }
-                    _ => {}
-                }
+            if let Some(result) = self.handle_spell_color_form_mouse(mouse_event, app_core)? {
+                return Ok(result);
             }
-            app_core.needs_render = true;
-            return Ok((true, None));
         }
 
         if self.spell_color_browser.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
-            if let Some(ref mut browser) = self.spell_color_browser {
-                let scroll: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-                match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left)
-                    | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left)
-                    | MouseEventKind::ScrollUp
-                    | MouseEventKind::ScrollDown => {
-                        browser.handle_mouse(*x, *y, false, scroll, area)
-                    }
-                    _ => {}
-                }
+            if let Some(result) = self.handle_spell_color_browser_mouse(mouse_event, app_core)? {
+                return Ok(result);
             }
-            app_core.needs_render = true;
-            return Ok((true, None));
         }
 
         if app_core.ui_state.input_mode == InputMode::Dialog {
@@ -1254,6 +1159,12 @@ impl TuiFrontend {
 
             return Ok((true, command_to_send));
         }
+
+        // Stable window index = position in the sorted name list. A binary
+        // search at the two use sites replaces the HashMap previously built
+        // on every mouse event.
+        let mut window_names: Vec<&String> = app_core.ui_state.windows.keys().collect();
+        window_names.sort();
 
         match kind {
             MouseEventKind::ScrollUp => {
@@ -2882,7 +2793,7 @@ impl TuiFrontend {
     }
 
     /// Handle WindowEditor mode keyboard events (extracted from main.rs Phase 4.2)
-    fn handle_window_editor_keys(
+    pub(super) fn handle_window_editor_keys(
         &mut self,
         code: crate::data::input::KeyCode,
         modifiers: crate::data::input::KeyModifiers,

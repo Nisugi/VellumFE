@@ -2228,6 +2228,145 @@ impl super::TuiFrontend {
                 }
                 Ok(None)
     }
+
+    pub(super) fn handle_window_editor_mouse(
+        &mut self,
+        mouse_event: &crate::data::input::MouseEvent,
+        app_core: &mut crate::core::AppCore,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let kind = &mouse_event.kind;
+        let x = &mouse_event.column;
+        let y = &mouse_event.row;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut window_editor) = self.window_editor {
+            use crate::frontend::tui::window_editor::WindowEditorMouseAction;
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    let action = window_editor.handle_mouse(*x, *y, true, area);
+                    app_core.needs_render = true;
+                    action
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    let action = window_editor.handle_mouse(*x, *y, true, area);
+                    app_core.needs_render = true;
+                    action
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    let action = window_editor.handle_mouse(*x, *y, false, area);
+                    app_core.needs_render = true;
+                    action
+                }
+                _ => WindowEditorMouseAction::None,
+            };
+
+            // Handle Save/Cancel actions from mouse clicks
+            match action {
+                WindowEditorMouseAction::Save => {
+                    // Trigger save via simulated Ctrl+S key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_window_editor_keys(
+                        KeyCode::Char('s'),
+                        KeyModifiers::CTRL,
+                        app_core,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                WindowEditorMouseAction::Cancel => {
+                    // Trigger cancel via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_window_editor_keys(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                WindowEditorMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub(super) fn handle_spell_color_form_mouse(
+        &mut self,
+        mouse_event: &crate::data::input::MouseEvent,
+        app_core: &mut crate::core::AppCore,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let kind = &mouse_event.kind;
+        let x = &mouse_event.column;
+        let y = &mouse_event.row;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
+        if let Some(ref mut form) = self.spell_color_form {
+            match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left)
+                | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(*x, *y, true, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(*x, *y, false, area)
+                }
+                _ => {}
+            }
+        }
+        app_core.needs_render = true;
+        Ok(Some((true, None)))
+    }
+
+    pub(super) fn handle_spell_color_browser_mouse(
+        &mut self,
+        mouse_event: &crate::data::input::MouseEvent,
+        app_core: &mut crate::core::AppCore,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let kind = &mouse_event.kind;
+        let x = &mouse_event.column;
+        let y = &mouse_event.row;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
+        if let Some(ref mut browser) = self.spell_color_browser {
+            let scroll: i8 = match kind {
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
+                _ => 0,
+            };
+            match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left)
+                | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(*x, *y, true, scroll, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left)
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown => {
+                    browser.handle_mouse(*x, *y, false, scroll, area)
+                }
+                _ => {}
+            }
+        }
+        app_core.needs_render = true;
+        Ok(Some((true, None)))
+    }
 }
 
 /// Translate a char index into a byte offset within `s`.
