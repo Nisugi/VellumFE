@@ -422,6 +422,111 @@ impl TuiFrontend {
         Ok(None)
     }
 
+    /// Route a mouse event to the open keybind browser; Edit/Delete/Add/Close run as simulated key presses. Ok(None) when closed.
+    fn handle_keybind_browser_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut browser) = self.keybind_browser {
+            use crate::frontend::tui::keybind_browser::KeybindBrowserMouseAction;
+
+            // Determine scroll direction
+            let scroll_direction: i8 = match kind {
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
+                _ => 0,
+            };
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                _ => KeybindBrowserMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                KeybindBrowserMouseAction::Edit => {
+                    // Trigger edit via simulated Enter key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::Delete => {
+                    // Trigger delete via simulated Delete key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Delete,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::Add => {
+                    // Trigger add via simulated 'a' key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('a'),
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::Close => {
+                    // Trigger close via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Route a mouse event to the open highlight form. Returns `Ok(None)`
     /// when the form is closed so the caller falls through; `Ok(Some(..))`
     /// when the form consumed the event (Save/Cancel run as simulated key
@@ -1431,95 +1536,10 @@ impl TuiFrontend {
 
         // Handle keybind browser mouse events
         if self.keybind_browser.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut browser) = self.keybind_browser {
-                use crate::frontend::tui::keybind_browser::KeybindBrowserMouseAction;
-
-                // Determine scroll direction
-                let scroll_direction: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    _ => KeybindBrowserMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    KeybindBrowserMouseAction::Edit => {
-                        // Trigger edit via simulated Enter key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Enter,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::Delete => {
-                        // Trigger delete via simulated Delete key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Delete,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::Add => {
-                        // Trigger add via simulated 'a' key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('a'),
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::Close => {
-                        // Trigger close via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_keybind_browser_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
