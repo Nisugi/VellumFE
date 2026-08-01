@@ -1540,7 +1540,14 @@ impl VellumGuiApp {
                     }
                     rect
                 };
-                if !is_hand_widget
+                // Singleton hands still snap and show the grid when MOVED — the
+                // only reason to keep them out of the snap path is their custom
+                // width-resize handle (hand_resize_active), which drives width
+                // directly and must not be re-interpreted as a snap gesture. A
+                // move is a plain translate the engine handles like any window
+                // (their width is fixed_size, so it only repositions).
+                let hand_snap_excluded = is_hand_widget && hand_resize_active;
+                if !hand_snap_excluded
                     && !being_moved
                     && (snap_drag_live || (rect_changed && user_engaging_window))
                 {
