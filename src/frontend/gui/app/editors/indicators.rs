@@ -211,10 +211,14 @@ impl VellumGuiApp {
                 ui.separator();
 
                 // Two panes: the indicator list (left) and the image/condition
-                // editor for the selected one (right). Each pane scrolls on its
-                // own, so the window resizes freely instead of being stretched
-                // to fit every row.
-                let pane_height = (ui.available_height() - 90.0).max(140.0);
+                // editor for the selected one (right). Each pane scrolls inside
+                // a FIXED height budget. Deriving the budget from
+                // `ui.available_height()` fed back into the window size (a
+                // resizable window grows to fit content, which grew
+                // available_height, which grew the panes… runaway vertical
+                // growth). A fixed budget breaks that loop; the window is still
+                // user-resizable via its own handles.
+                const PANE_HEIGHT: f32 = 300.0;
                 ui.horizontal_top(|ui| {
                     // Left: indicator list + add row.
                     ui.vertical(|ui| {
@@ -222,8 +226,8 @@ impl VellumGuiApp {
                         ui.strong("Indicators");
                         egui::ScrollArea::vertical()
                             .id_salt("indicator_list_scroll")
-                            .max_height(pane_height)
-                            .auto_shrink([false, false])
+                            .max_height(PANE_HEIGHT)
+                            .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 for index in 0..state.entries.len() {
                                     let (label, enabled) = {
@@ -284,8 +288,8 @@ impl VellumGuiApp {
                     ui.vertical(|ui| {
                         egui::ScrollArea::vertical()
                             .id_salt("indicator_editor_scroll")
-                            .max_height(pane_height)
-                            .auto_shrink([false, false])
+                            .max_height(PANE_HEIGHT)
+                            .auto_shrink([false, true])
                             .show(ui, |ui| {
                                 if let Some(entry) = state.entries.get_mut(state.selected) {
                                     ui.horizontal(|ui| {
