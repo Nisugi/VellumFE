@@ -190,15 +190,17 @@ impl VellumGuiApp {
             state.selected = state.entries.len().saturating_sub(1);
         }
 
+        // Mirror the working editor windows (keybinds/colors): a fixed
+        // default height and ONE outer scroll area with
+        // auto_shrink([false,false]). That fills exactly default_height and
+        // never grows — the earlier per-pane scroll areas let egui's window
+        // resize logic balloon the frame to full screen height.
         egui::Window::new("Indicator Icons")
             .id(egui::Id::new("gui_indicator_templates"))
             .order(egui::Order::Foreground)
             .open(&mut open)
-            .resizable(true)
             .default_width(640.0)
             .default_height(480.0)
-            .min_width(420.0)
-            .min_height(240.0)
             .show(ctx, |ui| {
                 if ui.button("Save all").clicked() {
                     save_request = true;
@@ -211,14 +213,16 @@ impl VellumGuiApp {
                 ui.separator();
 
                 // Two panes: the indicator list (left) and the image/condition
-                // editor for the selected one (right). Each pane scrolls inside
-                // a FIXED height budget. Deriving the budget from
-                // `ui.available_height()` fed back into the window size (a
-                // resizable window grows to fit content, which grew
-                // available_height, which grew the panes… runaway vertical
-                // growth). A fixed budget breaks that loop; the window is still
-                // user-resizable via its own handles.
-                const PANE_HEIGHT: f32 = 300.0;
+                // editor for the selected one (right). The whole two-pane row
+                // lives inside a FIXED-SIZE allocation, so no matter how tall
+                // the inner content or scroll state gets, the row reports
+                // exactly PANE_HEIGHT back to the window — the window can never
+                // grow itself from this content (the earlier bug: content
+                // height fed the resizable window's remembered size and it
+                // ballooned to full screen). Each pane scrolls within the box.
+                const PANE_HEIGHT: f32 = 320.0;
+                let pane_size = egui::vec2(ui.available_width(), PANE_HEIGHT);
+                ui.allocate_ui(pane_size, |ui| {
                 ui.horizontal_top(|ui| {
                     // Left: indicator list + add row.
                     ui.vertical(|ui| {
@@ -227,7 +231,7 @@ impl VellumGuiApp {
                         egui::ScrollArea::vertical()
                             .id_salt("indicator_list_scroll")
                             .max_height(PANE_HEIGHT)
-                            .auto_shrink([false, true])
+                            .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 for index in 0..state.entries.len() {
                                     let (label, enabled) = {
@@ -289,7 +293,7 @@ impl VellumGuiApp {
                         egui::ScrollArea::vertical()
                             .id_salt("indicator_editor_scroll")
                             .max_height(PANE_HEIGHT)
-                            .auto_shrink([false, true])
+                            .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 if let Some(entry) = state.entries.get_mut(state.selected) {
                                     ui.horizontal(|ui| {
@@ -392,6 +396,7 @@ impl VellumGuiApp {
                             });
                     });
                 });
+                }); // close the fixed-size allocate_ui around the two panes
 
                 if let Some(error) = &state.error {
                     ui.separator();
