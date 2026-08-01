@@ -337,6 +337,30 @@ impl VellumGuiApp {
                                             }
                                         }
                                     });
+                                    // Visual cell grid for the default icon when
+                                    // it's a sheet ref — click a sprite instead of
+                                    // guessing its number (same picker as hotbars).
+                                    if let (
+                                        Some(art),
+                                        Some(crate::data::IconRef::SheetCell { sheet, cell }),
+                                    ) = (art.as_ref(), &mut entry.icon_ref)
+                                    {
+                                        if let Some(count) = art.sheet_cell_count(sheet) {
+                                            egui::CollapsingHeader::new("Pick cell from sheet")
+                                                .id_salt(format!("status_default_grid_{}", entry.id))
+                                                .show(ui, |ui| {
+                                                    super::sheet_cell_grid(
+                                                        ui,
+                                                        &format!("status_default_{}", entry.id),
+                                                        sheet,
+                                                        cell,
+                                                        art,
+                                                        count,
+                                                        false,
+                                                    );
+                                                });
+                                        }
+                                    }
                                     ui.weak(
                                         "Shown when no condition below matches. \
                                          'Default (by id)' falls back to the skin/pool \
@@ -355,6 +379,7 @@ impl VellumGuiApp {
                                         &mut entry.states,
                                         &pool_images,
                                         &sheets,
+                                        art.as_deref(),
                                         &suggestions,
                                     );
                                 } else {
@@ -618,6 +643,7 @@ impl VellumGuiApp {
         states: &mut Vec<crate::config::StatusIconState>,
         pool_images: &[(String, String)],
         sheets: &[String],
+        art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
         suggestions: &std::collections::HashMap<&'static str, Vec<String>>,
     ) {
         let mut remove: Option<usize> = None;
@@ -680,6 +706,27 @@ impl VellumGuiApp {
                     }
                 }
             });
+            // Visual cell grid for this state's sheet icon (same picker as
+            // the default icon and the hotbar editor).
+            if let (Some(art), Some(crate::data::IconRef::SheetCell { sheet, cell })) =
+                (art, &mut st.icon)
+            {
+                if let Some(count) = art.sheet_cell_count(sheet) {
+                    egui::CollapsingHeader::new("Pick cell from sheet")
+                        .id_salt(format!("status_state_grid_{entry_id}_{idx}"))
+                        .show(ui, |ui| {
+                            super::sheet_cell_grid(
+                                ui,
+                                &format!("status_state_{entry_id}_{idx}"),
+                                sheet,
+                                cell,
+                                art,
+                                count,
+                                false,
+                            );
+                        });
+                }
+            }
         }
         if let Some((a, b)) = swap {
             states.swap(a, b);

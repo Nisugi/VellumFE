@@ -188,6 +188,74 @@ pub(super) fn icon_ref_picker(
     picked
 }
 
+/// A clickable thumbnail grid of a sheet's cells (barbar-style "Browse
+/// Icons"): renders every cell, highlights the current one, and writes the
+/// clicked cell into `current_cell`. Returns true when the selection
+/// changed. Shared by the hotbar and indicator editors so both pick sheet
+/// cells visually instead of guessing a number.
+pub(super) fn sheet_cell_grid(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    sheet: &str,
+    current_cell: &mut u32,
+    art: &crate::frontend::gui::skin::SkinWidgetArt,
+    count: u32,
+    grayscale: bool,
+) -> bool {
+    const THUMB: f32 = 36.0;
+    const PER_ROW: u32 = 8;
+    let mut changed = false;
+    egui::ScrollArea::vertical()
+        .id_salt(format!("{id_salt}_cell_grid_scroll"))
+        .max_height(3.5 * (THUMB + 6.0))
+        .show(ui, |ui| {
+            let rows = count.div_ceil(PER_ROW);
+            for row in 0..rows {
+                ui.horizontal(|ui| {
+                    for col in 0..PER_ROW {
+                        let cell = row * PER_ROW + col + 1;
+                        if cell > count {
+                            break;
+                        }
+                        let Some((texture, uv)) = art.sheet_cell(sheet, cell, grayscale) else {
+                            continue;
+                        };
+                        let (rect, response) = ui
+                            .allocate_exact_size(egui::vec2(THUMB, THUMB), egui::Sense::click());
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().image(
+                                texture.texture,
+                                rect,
+                                uv,
+                                egui::Color32::WHITE,
+                            );
+                            let selected = *current_cell == cell;
+                            if selected || response.hovered() {
+                                let stroke = if selected {
+                                    egui::Stroke::new(2.0, ui.visuals().selection.stroke.color)
+                                } else {
+                                    ui.visuals().widgets.hovered.bg_stroke
+                                };
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    2.0,
+                                    stroke,
+                                    egui::StrokeKind::Inside,
+                                );
+                            }
+                        }
+                        let response = response.on_hover_text(format!("cell {}", cell));
+                        if response.clicked() && *current_cell != cell {
+                            *current_cell = cell;
+                            changed = true;
+                        }
+                    }
+                });
+            }
+        });
+    changed
+}
+
 /// Pool images of one category as (pool-relative path, display stem) rows
 /// for [`icon_ref_picker`].
 pub(super) fn pool_picker_rows(category: &str) -> Vec<(String, String)> {

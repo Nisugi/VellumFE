@@ -1735,76 +1735,19 @@ fn render_icon_editor(
 }
 
 /// The clickable cell grid for one sheet ref. Returns true when a cell is
-/// picked; no-op for non-sheet refs.
+/// picked; no-op for non-sheet refs. Delegates to the shared
+/// `sheet_cell_grid` (also used by the indicator editor).
 fn cell_grid(
     ui: &mut egui::Ui,
     icon: &mut HotbarIcon,
     art: &SkinWidgetArt,
     count: u32,
 ) -> bool {
-    const THUMB: f32 = 36.0;
-    const PER_ROW: u32 = 8;
     let grayscale = icon.grayscale;
     let crate::data::IconRef::SheetCell { sheet, cell: current_cell } = &mut icon.icon else {
         return false;
     };
-    let mut changed = false;
-    egui::ScrollArea::vertical()
-        .id_salt("hotbar_cell_grid_scroll")
-        .max_height(3.5 * (THUMB + 6.0))
-        .show(ui, |ui| {
-            let rows = count.div_ceil(PER_ROW);
-            for row in 0..rows {
-                ui.horizontal(|ui| {
-                    for col in 0..PER_ROW {
-                        let cell = row * PER_ROW + col + 1;
-                        if cell > count {
-                            break;
-                        }
-                        let Some((texture, uv)) = art.sheet_cell(sheet, cell, grayscale)
-                        else {
-                            continue;
-                        };
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(THUMB, THUMB),
-                            egui::Sense::click(),
-                        );
-                        if ui.is_rect_visible(rect) {
-                            ui.painter().image(
-                                texture.texture,
-                                rect,
-                                uv,
-                                egui::Color32::WHITE,
-                            );
-                            let selected = *current_cell == cell;
-                            if selected || response.hovered() {
-                                let stroke = if selected {
-                                    egui::Stroke::new(
-                                        2.0,
-                                        ui.visuals().selection.stroke.color,
-                                    )
-                                } else {
-                                    ui.visuals().widgets.hovered.bg_stroke
-                                };
-                                ui.painter().rect_stroke(
-                                    rect,
-                                    2.0,
-                                    stroke,
-                                    egui::StrokeKind::Inside,
-                                );
-                            }
-                        }
-                        let response =
-                            response.on_hover_text(format!("cell {}", cell));
-                        if response.clicked() && *current_cell != cell {
-                            *current_cell = cell;
-                            changed = true;
-                        }
-                    }
-                });
-            }
-        });
-    changed
+    super::sheet_cell_grid(ui, "hotbar", sheet, current_cell, art, count, grayscale)
 }
 
 /// Style fields: label override, fg/bg colors, dim. Returns true when edited.
