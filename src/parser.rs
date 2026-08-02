@@ -2483,11 +2483,25 @@ impl XmlParser {
                 text: String::new(), // Will be populated as text is rendered
                 coord,               // Optional coord for direct commands
             },
-            _ => LinkData {
-                exist_id: String::new(),
-                noun: String::new(),
-                text: String::new(),
-                coord: None,
+            // Web link (game HELP text carries gswiki anchors): the URL rides
+            // the noun behind the sentinel; each frontend opens it on its own
+            // side. Non-http(s) schemes get the empty sentinel instead and
+            // stay styled-but-inert.
+            _ => match Self::extract_attribute(tag, "href")
+                .filter(|url| crate::data::is_web_url(url))
+            {
+                Some(href) => LinkData {
+                    exist_id: crate::data::URL_LINK_SENTINEL.to_string(),
+                    noun: href,
+                    text: String::new(),
+                    coord: None,
+                },
+                None => LinkData {
+                    exist_id: String::new(),
+                    noun: String::new(),
+                    text: String::new(),
+                    coord: None,
+                },
             },
         };
         self.link_stack.push(data);
@@ -3407,6 +3421,46 @@ mod tests {
             .find(|(content, _)| content.contains("Recent Evasion"))
             .expect("anchor text present");
         assert_eq!(inner.1, SpanType::Link);
+    }
+
+    #[test]
+    fn href_links_carry_the_url_sentinel() {
+        // Game HELP text ships wiki anchors; they must be clickable to open
+        // the page, not just styled.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            r#"Name: <a href="https://gswiki.play.net/Radial_Sweep">Radial Sweep</a> [radialsweep]"#,
+        );
+        let link = elements
+            .iter()
+            .find_map(|e| match e {
+                ParsedElement::Text { link_data: Some(link), .. } => Some(link),
+                _ => None,
+            })
+            .expect("href anchor produces link data");
+        assert_eq!(link.exist_id, crate::data::URL_LINK_SENTINEL);
+        assert_eq!(link.noun, "https://gswiki.play.net/Radial_Sweep");
+        assert_eq!(link.text, "Radial Sweep");
+    }
+
+    #[test]
+    fn non_http_hrefs_stay_styled_but_inert() {
+        let mut parser = test_parser();
+        let elements =
+            parser.parse_line(r#"<a href="javascript:alert(1)">totally safe</a> text"#);
+        let anchor = elements
+            .iter()
+            .find_map(|e| match e {
+                ParsedElement::Text { content, span_type, link_data, .. }
+                    if content.contains("totally safe") =>
+                {
+                    Some((*span_type, link_data.clone()))
+                }
+                _ => None,
+            })
+            .expect("anchor text present");
+        assert_eq!(anchor.0, SpanType::Link, "still styled as a link");
+        assert!(anchor.1.is_none(), "but carries no activation data");
     }
 
     #[test]

@@ -207,6 +207,8 @@ struct GuiKeyPress {
 enum GuiLinkDispatch {
     NetworkCommand(String),
     MenuRequest { exist_id: String, noun: String },
+    /// Web link: open in the default browser (http/https only).
+    OpenUrl(String),
 }
 
 #[derive(Clone, Debug)]
@@ -5275,6 +5277,10 @@ impl VellumGuiApp {
         link_data: &LinkData,
         cmdlist: Option<&CmdList>,
     ) -> Option<GuiLinkDispatch> {
+        if link_data.exist_id == crate::data::URL_LINK_SENTINEL {
+            return crate::data::is_web_url(&link_data.noun)
+                .then(|| GuiLinkDispatch::OpenUrl(link_data.noun.clone()));
+        }
         if link_data.exist_id == "_direct_" {
             let command = if !link_data.noun.trim().is_empty() {
                 link_data.noun.trim().to_string()
@@ -5360,6 +5366,13 @@ impl VellumGuiApp {
             GuiLinkDispatch::MenuRequest { exist_id, noun } => {
                 self.popup_menu_host = origin;
                 self.app_core.request_menu(exist_id, noun, click.click_pos)
+            }
+            GuiLinkDispatch::OpenUrl(url) => {
+                if let Err(err) = crate::platform::open_url(&url) {
+                    self.app_core
+                        .add_system_message(&format!("Cannot open {}: {}", url, err));
+                }
+                return;
             }
         };
         // Direct links carrying a dot command (e.g. the map's native ".go2")
@@ -6715,6 +6728,40 @@ mod tests {
                 noun: "sword".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn test_resolve_link_dispatch_url_sentinel_opens_browser() {
+        let link = LinkData {
+            exist_id: crate::data::URL_LINK_SENTINEL.to_string(),
+            noun: "https://gswiki.play.net/Radial_Sweep".to_string(),
+            text: "Radial Sweep".to_string(),
+            coord: None,
+        };
+        let dispatch = VellumGuiApp::resolve_link_dispatch(&link, None);
+        assert_eq!(
+            dispatch,
+            Some(GuiLinkDispatch::OpenUrl(
+                "https://gswiki.play.net/Radial_Sweep".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_resolve_link_dispatch_url_sentinel_rejects_non_http_schemes() {
+        for bad in ["javascript:alert(1)", "file:///etc/passwd", "vellum://x"] {
+            let link = LinkData {
+                exist_id: crate::data::URL_LINK_SENTINEL.to_string(),
+                noun: bad.to_string(),
+                text: "x".to_string(),
+                coord: None,
+            };
+            assert_eq!(
+                VellumGuiApp::resolve_link_dispatch(&link, None),
+                None,
+                "{bad} must not dispatch"
+            );
+        }
     }
 
     #[test]

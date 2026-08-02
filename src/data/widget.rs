@@ -138,12 +138,31 @@ pub enum SpanType {
 }
 
 /// Link metadata for clickable text
+///
+/// Two sentinel `exist_id` values ride this struct instead of extra fields:
+/// [`DIRECT_LINK_SENTINEL`] (`<d>` tags — `noun`/`text` is a game command)
+/// and [`URL_LINK_SENTINEL`] (`<a href>` web links — `noun` is an http(s)
+/// URL each frontend opens on its own side: browser on desktop,
+/// `window.open` on the phone).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkData {
     pub exist_id: String,
     pub noun: String,
     pub text: String,
     pub coord: Option<String>, // Optional coord for direct commands (e.g., "2524,1864" for movement)
+}
+
+/// `exist_id` marker: the link is a `<d>` direct command.
+pub const DIRECT_LINK_SENTINEL: &str = "_direct_";
+
+/// `exist_id` marker: the link is a web URL (carried in `noun`).
+pub const URL_LINK_SENTINEL: &str = "_url_";
+
+/// Only URLs a browser should ever be handed: plain http(s). Blocks
+/// `javascript:`, `file:`, custom schemes, and relative junk regardless of
+/// what the game (or a Lich script) injects.
+pub fn is_web_url(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
 }
 
 /// Quickbar entry data (links, menu links, separators)

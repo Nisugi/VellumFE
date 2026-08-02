@@ -5329,6 +5329,14 @@ impl AppCore {
         link: &crate::data::LinkData,
         origin: crate::core::remote::MenuOrigin,
     ) -> Option<String> {
+        if link.exist_id == crate::data::URL_LINK_SENTINEL {
+            // Web link: frontends open the URL on their own side (browser on
+            // desktop, window.open on the phone). Never a game command, and
+            // never a _menu request for a fake exist id.
+            tracing::debug!("URL link activation reached core (frontend opens it): {}", link.noun);
+            return None;
+        }
+
         if link.exist_id == "_direct_" {
             // <d> tag: the noun (cmd attribute) or text IS the command
             let command = if !link.noun.is_empty() {

@@ -1159,8 +1159,20 @@ impl TuiFrontend {
             let dy = (y as i16 - pending_click.click_pos.1 as i16).abs();
 
             if dx <= 2 && dy <= 2 {
+                // Web links open in the default browser, nothing goes upstream
+                if pending_click.link_data.exist_id == crate::data::URL_LINK_SENTINEL {
+                    if crate::data::is_web_url(&pending_click.link_data.noun) {
+                        if let Err(err) =
+                            crate::platform::open_url(&pending_click.link_data.noun)
+                        {
+                            app_core.add_system_message(&format!(
+                                "Cannot open {}: {}",
+                                pending_click.link_data.noun, err
+                            ));
+                        }
+                    }
                 // Handle <d> tags differently (direct commands vs context menus)
-                if pending_click.link_data.exist_id == "_direct_" {
+                } else if pending_click.link_data.exist_id == "_direct_" {
                     // <d> tag: Send text/noun as direct command
                     let command = if !pending_click.link_data.noun.is_empty() {
                         format!("{}\n", pending_click.link_data.noun)

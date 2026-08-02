@@ -3497,6 +3497,12 @@ document.addEventListener("click", (ev) => {
 pane.addEventListener("click", (ev) => {
   const span = ev.target.closest("span.link");
   if (!span || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  // Web links (<a href> in game text) open on THIS device, never the host.
+  if (span.dataset.existId === "_url_") {
+    const url = span.dataset.noun || "";
+    if (/^https?:\/\//.test(url)) window.open(url, "_blank", "noopener");
+    return;
+  }
   const requestId = ++menuRequestCounter;
   // Direct links (<d> tags, coord links like exits) execute immediately
   // server-side — no menu will come back, so no sheet.
