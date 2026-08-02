@@ -442,6 +442,7 @@ function setRoom(room) {
   roomName = room.name || null;
   roomId = room.id || null;
   roomExits = room.exits || [];
+  roomDescription = room.description || [];
   renderTitle();
   renderCompass();
   // Exits are an interact category; keep its focus in sync.
@@ -449,6 +450,20 @@ function setRoom(room) {
     syncInteractFocus();
     renderInteract();
   }
+  // The status drawer shows a Room section fed from here.
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
+}
+
+// Room description prose (plaintext lines) and the full spellbook — both
+// arrive from the server (RemoteDelta::Room description / RemoteDelta::Spells)
+// so a phone-only player can read the room "look" and their active spells
+// without a desktop window.
+let roomDescription = [];
+let spellbook = [];
+
+function setSpells(lines) {
+  spellbook = lines || [];
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
 }
 
 // ---- Compass ----------------------------------------------------------------
@@ -744,6 +759,7 @@ function handleSnapshot(d) {
   setHands(d.hands || {});
   setIndicators(d.indicators || {});
   setEffects(d.effects || []);
+  setSpells(d.spellbook || []);
   setInjuries(d.injuries || {});
   setTargets(d.targets || []);
   setRoomEntities(d.entities || {});
@@ -782,6 +798,7 @@ function handleMessage(msg) {
     case "hands": setHands(msg.d); break;
     case "indicators": setIndicators(msg.d); break;
     case "effects": setEffects(msg.d); break;
+    case "spells": setSpells(msg.d); break;
     case "rt": setRt(msg.d); break;
     case "menu": handleMenu(msg.d); break;
     case "macros": macros = msg.d; renderMacros(); break;
@@ -3523,8 +3540,10 @@ document.addEventListener("click", (ev) => {
   closeSheet();
 });
 
-pane.addEventListener("click", (ev) => {
-  const span = ev.target.closest("span.link");
+// Dispatch a tap on a rendered game link (a `span.link` from renderLine).
+// Shared by the text pane and the status drawer's room-prose / spellbook
+// sections so a scenery or spell link works the same wherever it appears.
+function dispatchLinkTap(span) {
   if (!span || !state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   // Web links (<a href> in game text) open on THIS device, never the host.
   if (span.dataset.existId === "_url_") {
@@ -3552,6 +3571,18 @@ pane.addEventListener("click", (ev) => {
       coord: span.dataset.coord || null,
     },
   }));
+}
+
+pane.addEventListener("click", (ev) => {
+  dispatchLinkTap(ev.target.closest("span.link"));
+});
+
+// Room-prose scenery + spellbook links live in the status drawer. Delegate
+// on document (the drawer element is declared later in the file) and scope
+// to the right drawer so their taps run the same dispatch as pane links.
+document.addEventListener("click", (ev) => {
+  const span = ev.target.closest("#drawer-right span.link");
+  if (span) dispatchLinkTap(span);
 });
 
 function handleMenu(d) {
@@ -4772,6 +4803,28 @@ function renderStatusDrawer() {
     panel.appendChild(section);
   }
 
+  // Room: name + description prose so a phone-only player can read the
+  // "look" without a desktop room window. Fed by RemoteDelta::Room; the
+  // description is styled (renderLine keeps its color + clickable scenery).
+  if (roomName || roomDescription.length) {
+    panel.appendChild(sectionTitle("Room"));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    if (roomName) {
+      const nameRow = document.createElement("div");
+      nameRow.className = "status-row status-wrap";
+      nameRow.style.fontWeight = "600";
+      nameRow.textContent = roomName;
+      section.appendChild(nameRow);
+    }
+    for (const line of roomDescription) {
+      const row = renderLine(line);
+      row.classList.add("status-row", "status-wrap");
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+
   // Doll: skinned (base art + dots at calibrated anchors) when the active
   // skin ships doll art, the built-in vector figure otherwise.
   const skinned = !!(dollSkin && dollNatural);
@@ -4865,6 +4918,22 @@ function renderStatusDrawer() {
     panel.appendChild(section);
   }
 
+  // Spellbook: the full active-spell list (the "Spells" stream), fed by
+  // RemoteDelta::Spells. The effect pills above are live countdowns; this is
+  // the complete list a caster audits. Styled (renderLine) so spell colors
+  // and links match the desktop Spells window.
+  if (spellbook.length) {
+    panel.appendChild(sectionTitle("Spells"));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const line of spellbook) {
+      const row = renderLine(line);
+      row.classList.add("status-row", "status-wrap");
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+
   // Active effects with countdowns
   for (const cat of effectCategories) {
     if (!cat.effects.length) continue;
@@ -4910,6 +4979,7 @@ setInterval(() => {
 // helpers, no privileged actions) for both.
 window.vellumDebug = {
   setRoom, setTargets, setCharInfo, setInjuries, setEffects, setSession,
+  setSpells,
 };
 
 

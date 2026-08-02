@@ -123,6 +123,22 @@ pub struct GameState {
     /// Bumped whenever room_players is rewritten
     pub room_players_generation: u64,
 
+    /// Room description prose as styled lines (segments carry color and
+    /// clickable scenery links, exactly like the room widget's buffer).
+    /// Owned here so headless/remote clients get the room "look" — with its
+    /// tappable scenery — without a room window.
+    pub room_description: Vec<crate::data::widget::StyledLine>,
+    /// Bumped whenever room_description is rewritten
+    pub room_description_generation: u64,
+
+    /// Spellbook (the "Spells" stream) as styled lines: segments keep spell
+    /// coloring and links. Owned here so remote clients get the full
+    /// active-spell list without a Spells window; the local Spells widgets
+    /// keep their own copy.
+    pub spellbook: Vec<crate::data::widget::StyledLine>,
+    /// Bumped whenever spellbook is rewritten
+    pub spellbook_generation: u64,
+
     /// Room metadata codes from the `<roommeta>` tag
     pub room_meta: RoomMetaState,
 
@@ -918,6 +934,10 @@ impl GameState {
             room_objects_generation: 0,
             room_players: Vec::new(),
             room_players_generation: 0,
+            room_description: Vec::new(),
+            room_description_generation: 0,
+            spellbook: Vec::new(),
+            spellbook_generation: 0,
             room_meta: RoomMetaState::default(),
             objects: crate::core::game_objects::GameObjects::default(),
             dr_experience: DRExperienceState::default(),

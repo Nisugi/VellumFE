@@ -355,6 +355,8 @@ pub enum RemoteDelta {
         /// Room number when known (nav tag in direct mode, extracted from
         /// the room name under Lich).
         id: Option<String>,
+        /// Room description prose as styled lines (color + scenery links).
+        description: Vec<crate::data::widget::StyledLine>,
     },
     Hands {
         left: Option<String>,
@@ -382,6 +384,8 @@ pub enum RemoteDelta {
     /// Active effects changed (spells/buffs/debuffs/cooldowns), in fixed
     /// category order.
     Effects(Vec<crate::data::ActiveEffectsContent>),
+    /// The full spellbook ("Spells" stream) changed, as styled lines.
+    Spells(Vec<crate::data::widget::StyledLine>),
     /// Body-part injuries changed: id -> level (1-3 wounds, 4-6 scars);
     /// cleared parts are absent.
     Injuries(std::collections::HashMap<String, u8>),
@@ -651,6 +655,9 @@ pub struct RemoteStateSnapshot {
     /// (nav/lich ids live on AppCore, not GameState).
     pub room_id: Option<String>,
     pub exits: Vec<String>,
+    /// Room description prose as styled lines (color + clickable scenery
+    /// links) so remote clients get the full room "look" without a window.
+    pub room_description: Vec<crate::data::widget::StyledLine>,
     pub left_hand: Option<String>,
     pub right_hand: Option<String>,
     pub indicators: StatusInfo,
@@ -659,6 +666,10 @@ pub struct RemoteStateSnapshot {
     pub server_time: i64,
     /// Active effects in fixed category order (empty categories omitted).
     pub effects: Vec<crate::data::ActiveEffectsContent>,
+    /// Full spellbook (the "Spells" stream) as styled lines (spell colors +
+    /// links), so remote clients get the whole active-spell list without a
+    /// Spells window.
+    pub spellbook: Vec<crate::data::widget::StyledLine>,
     /// Body-part injuries: id -> level (1-3 wounds, 4-6 scars).
     pub injuries: std::collections::HashMap<String, u8>,
     /// Targetable creatures in the room (tap-to-target list).
@@ -885,6 +896,7 @@ impl RemoteStateSnapshot {
             room_name: game_state.room_name.clone(),
             room_id: game_state.room_id.clone(),
             exits: game_state.exits.clone(),
+            room_description: game_state.room_description.clone(),
             left_hand: game_state.left_hand.clone(),
             right_hand: game_state.right_hand.clone(),
             indicators: game_state.status.clone(),
@@ -896,6 +908,7 @@ impl RemoteStateSnapshot {
                 .filter_map(|category| game_state.effects.get(*category))
                 .cloned()
                 .collect(),
+            spellbook: game_state.spellbook.clone(),
             injuries: game_state.injuries.clone(),
             targets: {
                 // Lich Creature.targets, matching the TUI/GUI widgets: a room
@@ -1329,11 +1342,13 @@ impl RemoteSink {
         if snap.room_name != self.last.room_name
             || snap.exits != self.last.exits
             || snap.room_id != self.last.room_id
+            || snap.room_description != self.last.room_description
         {
             let _ = self.delta_tx.send(RemoteDelta::Room {
                 name: snap.room_name.clone(),
                 exits: snap.exits.clone(),
                 id: snap.room_id.clone(),
+                description: snap.room_description.clone(),
             });
         }
         if snap.left_hand != self.last.left_hand || snap.right_hand != self.last.right_hand {
@@ -1351,6 +1366,11 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Effects(snap.effects.clone()));
+        }
+        if snap.spellbook != self.last.spellbook {
+            let _ = self
+                .delta_tx
+                .send(RemoteDelta::Spells(snap.spellbook.clone()));
         }
         if snap.injuries != self.last.injuries {
             let _ = self

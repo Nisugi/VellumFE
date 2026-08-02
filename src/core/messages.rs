@@ -757,6 +757,25 @@ impl MessageProcessor {
                 // Flush spells buffer on prompt (after all spells have accumulated)
                 if !self.spells_buffer.is_empty() {
                     self.flush_spells_buffer(ui_state);
+                    // Mirror the spellbook onto GameState as STYLED lines so
+                    // headless/remote clients get the full active-spell list —
+                    // with spell coloring and links — without a Spells window.
+                    // spells_buffer is already Vec<Vec<TextSegment>>, so this
+                    // keeps the styling instead of flattening it. Bump only on
+                    // real change.
+                    let lines: Vec<crate::data::widget::StyledLine> = self
+                        .spells_buffer
+                        .iter()
+                        .map(|segs| crate::data::widget::StyledLine {
+                            segments: segs.clone(),
+                            stream: "Spells".to_string(),
+                            timestamp: None,
+                        })
+                        .collect();
+                    if game_state.spellbook != lines {
+                        game_state.spellbook = lines;
+                        game_state.spellbook_generation += 1;
+                    }
                 }
 
                 // Decide whether to show this prompt based on chunk tracking
@@ -2606,6 +2625,13 @@ impl MessageProcessor {
         // This ensures the room window updates when items are picked up, etc.
         *room_window_dirty = true;
 
+        // An empty "room desc" component clears the mirrored prose (the parse
+        // block below is skipped for empty values, so clear it here).
+        if id == "room desc" && value.trim().is_empty() && !game_state.room_description.is_empty() {
+            game_state.room_description.clear();
+            game_state.room_description_generation += 1;
+        }
+
         // Parse the component value to extract styled segments
         if !value.trim().is_empty() {
             // Save parser state before parsing component (components are self-contained)
@@ -2683,6 +2709,31 @@ impl MessageProcessor {
                     _ => {
                         // Ignore other parsed elements (we only care about Text)
                     }
+                }
+            }
+
+            // Mirror the room description prose onto GameState as STYLED lines
+            // so headless/remote clients get the room "look" — with its
+            // clickable scenery links and coloring — without a room window.
+            // The game sends a full component replacement and handle_component
+            // early-returns on unchanged values, so this runs only on real
+            // changes — the generation bump stays accurate.
+            if id == "room desc" {
+                let is_blank = current_line_segments
+                    .iter()
+                    .all(|s| s.text.trim().is_empty());
+                let new_desc: Vec<crate::data::widget::StyledLine> = if is_blank {
+                    Vec::new()
+                } else {
+                    vec![crate::data::widget::StyledLine {
+                        segments: current_line_segments.clone(),
+                        stream: "room".to_string(),
+                        timestamp: None,
+                    }]
+                };
+                if game_state.room_description != new_desc {
+                    game_state.room_description = new_desc;
+                    game_state.room_description_generation += 1;
                 }
             }
 
@@ -5343,6 +5394,143 @@ mod tests {
         process_component(&mut processor, &mut game_state, "room objs", objs);
         assert_eq!(game_state.room_creatures_generation, 1);
         assert_eq!(game_state.room_objects_generation, 1);
+    }
+
+    // Flatten a styled line's segments to plaintext for readable assertions.
+    fn line_text(line: &crate::data::widget::StyledLine) -> String {
+        line.segments.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    #[test]
+    fn test_room_desc_mirrors_styled_lines_with_links_to_game_state() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        // Fresh state: no prose, generation 0.
+        assert!(game_state.room_description.is_empty());
+        assert_eq!(game_state.room_description_generation, 0);
+
+        // A desc component with a scenery link must be mirrored WITH its
+        // styling and clickable link intact — not flattened to plaintext.
+        let desc = "A mossy <a exist='1' noun='fountain'>marble fountain</a> stands here.";
+        process_component(&mut processor, &mut game_state, "room desc", desc);
+        assert_eq!(game_state.room_description.len(), 1);
+        assert_eq!(
+            line_text(&game_state.room_description[0]),
+            "A mossy marble fountain stands here.",
+            "prose text must be preserved"
+        );
+        // The clickable scenery link must survive — this is the whole point
+        // of carrying styled lines rather than plaintext.
+        let has_fountain_link = game_state.room_description[0]
+            .segments
+            .iter()
+            .any(|s| s.link_data.as_ref().is_some_and(|l| l.exist_id == "1"));
+        assert!(
+            has_fountain_link,
+            "the scenery link (exist_id=1) must survive to the phone: {:?}",
+            game_state.room_description[0].segments
+        );
+        assert_eq!(game_state.room_description_generation, 1);
+    }
+
+    #[test]
+    fn test_room_desc_bumps_only_on_change() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        let desc = "A quiet clearing.";
+        process_component(&mut processor, &mut game_state, "room desc", desc);
+        assert_eq!(game_state.room_description_generation, 1);
+
+        // Identical re-send: the component dedup skips it — no bump.
+        process_component(&mut processor, &mut game_state, "room desc", desc);
+        assert_eq!(
+            game_state.room_description_generation, 1,
+            "unchanged room desc must not bump the generation"
+        );
+
+        // A real change bumps and replaces.
+        process_component(&mut processor, &mut game_state, "room desc", "A dark cave.");
+        assert_eq!(game_state.room_description_generation, 2);
+        assert_eq!(game_state.room_description.len(), 1);
+        assert_eq!(line_text(&game_state.room_description[0]), "A dark cave.");
+    }
+
+    #[test]
+    fn test_room_desc_clears_on_empty_component() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+
+        process_component(&mut processor, &mut game_state, "room desc", "A grand hall.");
+        assert_eq!(game_state.room_description.len(), 1);
+        assert_eq!(game_state.room_description_generation, 1);
+
+        // An empty desc component clears the mirrored prose and bumps.
+        process_component(&mut processor, &mut game_state, "room desc", "");
+        assert!(
+            game_state.room_description.is_empty(),
+            "empty room desc component must clear the mirrored prose"
+        );
+        assert_eq!(game_state.room_description_generation, 2);
+    }
+
+    #[test]
+    fn test_spellbook_mirrors_to_game_state_on_prompt_flush() {
+        // Drive a real Spells stream + prompt the way the game sends it: each
+        // <pushStream id="Spells"> line accumulates, and the prompt flushes the
+        // buffer. The spellbook must then be mirrored onto GameState as styled
+        // lines (keeping spell coloring/links) for remote clients.
+        let mut parser = crate::parser::XmlParser::new();
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        let lines = [
+            "<pushStream id='Spells'/>Elemental Defense III (503)   00:14:59",
+            "<popStream/>",
+            "<pushStream id='Spells'/>Mana Leech (516)   00:29:42",
+            "<popStream/>",
+            "<prompt time='1700000000'>&gt;</prompt>",
+        ];
+        for line in &lines {
+            for element in parser.parse_line(line) {
+                processor.process_element(
+                    &element,
+                    &mut game_state,
+                    &mut ui_state,
+                    &mut std::collections::HashMap::new(),
+                    &mut None,
+                    &mut false,
+                    &mut None,
+                    &mut None,
+                    &mut None,
+                    None,
+                );
+            }
+        }
+
+        assert_eq!(
+            game_state.spellbook.len(),
+            2,
+            "both spell lines must mirror onto GameState, got {:?}",
+            game_state.spellbook
+        );
+        assert!(
+            line_text(&game_state.spellbook[0]).contains("Elemental Defense III"),
+            "first spell line wrong: {:?}",
+            game_state.spellbook
+        );
+        // The mirrored line must be a real styled line (segments present),
+        // not a flattened string — that's what carries spell color/links.
+        assert!(
+            !game_state.spellbook[0].segments.is_empty(),
+            "spellbook line must carry styled segments"
+        );
+        assert!(
+            game_state.spellbook_generation >= 1,
+            "spellbook generation must bump on first population"
+        );
     }
 
     // ===========================================

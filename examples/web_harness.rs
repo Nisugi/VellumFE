@@ -227,6 +227,49 @@ async fn main() {
             // by the wheel_pick resolver below, like AppCore's).
             snap.portals = scripted_portals();
         }
+        // Scripted room name + description prose so the status drawer's Room
+        // section has a "look" to render, and a spellbook so the Spells
+        // section is populated (both P2 feeds). Both ride the wire as styled
+        // lines; the room prose carries a clickable scenery link so the
+        // phone's tap-to-interact path can be exercised.
+        {
+            use vellum_fe::data::widget::{LinkData, StyledLine, TextSegment};
+            let seg = |text: &str| TextSegment {
+                text: text.into(),
+                ..Default::default()
+            };
+            let link_seg = |text: &str, exist: &str, noun: &str| TextSegment {
+                text: text.into(),
+                link_data: Some(LinkData {
+                    exist_id: exist.into(),
+                    noun: noun.into(),
+                    text: text.into(),
+                    coord: None,
+                }),
+                ..Default::default()
+            };
+            let line = |segments: Vec<TextSegment>| StyledLine {
+                segments,
+                stream: "room".into(),
+                timestamp: None,
+            };
+            snap.room_name = Some("Harness Town, Town Square".into());
+            snap.room_description = vec![line(vec![
+                seg("A cobbled square opens beneath a bright sky. A "),
+                link_seg("marble fountain", "555", "fountain"),
+                seg(" bubbles at its center, and shops line the surrounding streets."),
+            ])];
+            let spell = |text: &str| StyledLine {
+                segments: vec![seg(text)],
+                stream: "Spells".into(),
+                timestamp: None,
+            };
+            snap.spellbook = vec![
+                spell("Elemental Defense III (503)   00:14:59"),
+                spell("Mana Leech (516)   00:29:42"),
+                spell("Haste (506)   00:05:11"),
+            ];
+        }
         snap.map_scene = RemoteMapSceneRef(Some(scene));
         snap.map_state = RemoteMapState {
             available: true,

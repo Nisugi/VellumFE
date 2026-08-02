@@ -74,6 +74,10 @@ struct RoomPayload {
     exits: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
+    /// Room description prose as styled lines (color + scenery links);
+    /// empty when unknown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    description: Vec<crate::data::widget::StyledLine>,
 }
 
 #[derive(Serialize)]
@@ -113,6 +117,8 @@ struct SnapshotPayload {
     indicators: StatusInfo,
     rt: RtPayload,
     effects: Vec<ActiveEffectsContent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    spellbook: Vec<crate::data::widget::StyledLine>,
     injuries: std::collections::HashMap<String, u8>,
     targets: Vec<RemoteTarget>,
     entities: RemoteRoomEntities,
@@ -159,6 +165,7 @@ pub fn snapshot(
             name: state.room_name.clone(),
             exits: state.exits.clone(),
             id: state.room_id.clone(),
+            description: state.room_description.clone(),
         },
         hands: HandsPayload {
             left: state.left_hand.clone(),
@@ -171,6 +178,7 @@ pub fn snapshot(
             server_time: state.server_time,
         },
         effects: state.effects.clone(),
+        spellbook: state.spellbook.clone(),
         injuries: state.injuries.clone(),
         targets: state.targets.clone(),
         entities: state.entities.clone(),
@@ -204,13 +212,19 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
             },
         ),
         RemoteDelta::Vitals(v) => encode("vitals", last_seq, v.clone()),
-        RemoteDelta::Room { name, exits, id } => encode(
+        RemoteDelta::Room {
+            name,
+            exits,
+            id,
+            description,
+        } => encode(
             "room",
             last_seq,
             RoomPayload {
                 name: name.clone(),
                 exits: exits.clone(),
                 id: id.clone(),
+                description: description.clone(),
             },
         ),
         RemoteDelta::Hands { left, right } => encode(
@@ -253,6 +267,7 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Macros(m) => macros(m, last_seq),
         RemoteDelta::Wheels(w) => wheels(w, last_seq),
         RemoteDelta::Effects(effects) => encode("effects", last_seq, effects),
+        RemoteDelta::Spells(lines) => encode("spells", last_seq, lines),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
         RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
         RemoteDelta::Targets(targets) => encode("targets", last_seq, targets),

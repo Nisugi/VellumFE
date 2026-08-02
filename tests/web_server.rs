@@ -490,6 +490,71 @@ async fn entities_flow_in_snapshot_and_deltas() {
 }
 
 #[tokio::test]
+async fn room_description_and_spellbook_flow_in_snapshot_and_deltas() {
+    use vellum_fe::core::remote::RemoteStateSnapshot;
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+
+    // A styled line helper: room prose and the spellbook ride the wire as
+    // StyledLine (segments with color/links), the same shape as text deltas.
+    let styled = |text: &str| vellum_fe::data::widget::StyledLine {
+        segments: vec![vellum_fe::data::widget::TextSegment {
+            text: text.to_string(),
+            ..Default::default()
+        }],
+        stream: "room".to_string(),
+        timestamp: None,
+    };
+
+    // Initial state: a room with prose and two active spells.
+    let mut snap = RemoteStateSnapshot::default();
+    snap.room_name = Some("Town Square".to_string());
+    snap.room_description = vec![styled("A fountain bubbles at the center.")];
+    snap.spellbook = vec![
+        styled("Elemental Defense III (503)   00:14:59"),
+        styled("Mana Leech (516)   00:29:42"),
+    ];
+    sink.flush_state(snap.clone());
+
+    let (mut client, snapshot) = connect_and_sync(addr, 0).await;
+    // Room prose rides the room payload as styled lines; spellbook likewise.
+    // The phone renders these through the same renderLine path as text, so
+    // the wire carries `segments`, not bare strings.
+    assert_eq!(
+        snapshot["d"]["room"]["description"][0]["segments"][0]["text"],
+        "A fountain bubbles at the center."
+    );
+    assert_eq!(
+        snapshot["d"]["spellbook"][0]["segments"][0]["text"],
+        "Elemental Defense III (503)   00:14:59"
+    );
+    assert_eq!(snapshot["d"]["spellbook"].as_array().unwrap().len(), 2);
+
+    // Walking to a new room changes both: a `room` delta carries the new
+    // prose, and a `spells` delta carries the updated list.
+    snap.room_name = Some("Dark Alcove".to_string());
+    snap.room_description = vec![styled("Shadows pool in the corners.")];
+    snap.spellbook = vec![styled("Elemental Defense III (503)   00:13:12")];
+    sink.flush_state(snap);
+
+    // Deltas arrive in flush order (room before spells).
+    let room = read_json_timeout(&mut client).await;
+    assert_eq!(room["t"], "room");
+    assert_eq!(room["d"]["name"], "Dark Alcove");
+    assert_eq!(
+        room["d"]["description"][0]["segments"][0]["text"],
+        "Shadows pool in the corners."
+    );
+
+    let spells = read_json_timeout(&mut client).await;
+    assert_eq!(spells["t"], "spells");
+    assert_eq!(spells["d"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        spells["d"][0]["segments"][0]["text"],
+        "Elemental Defense III (503)   00:13:12"
+    );
+}
+
+#[tokio::test]
 async fn wheels_flow_definitions_out_picks_in() {
     let (mut sink, mut event_rx, addr) = start_server(100).await;
 
