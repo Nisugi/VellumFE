@@ -1401,6 +1401,7 @@ impl Config {
                     stamina_color: None,
                     spirit_color: None,
                     concentration_color: None,
+                    depleted_color: None,
                     bar_order: default_minivitals_bar_order(),
                 },
             }),

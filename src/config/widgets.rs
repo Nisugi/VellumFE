@@ -1143,6 +1143,10 @@ pub struct MiniVitalsWidgetData {
     /// Concentration bar color (default: cyan) - DR specific
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub concentration_color: Option<String>,
+    /// Background color for unfilled cells inside each vital bar.
+    /// When unset, the window background or terminal default is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depleted_color: Option<String>,
 }
 
 /// Betrayer widget data (blood pool progress bar + item list) - GS4 only
@@ -1177,6 +1181,27 @@ fn is_default_bar_order(order: &Vec<String>) -> bool {
     *order == default_minivitals_bar_order()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::MiniVitalsWidgetData;
+
+    #[test]
+    fn minivitals_depleted_color_defaults_to_none() {
+        let data: MiniVitalsWidgetData = toml::from_str("numbers_only = false").unwrap();
+
+        assert_eq!(data.depleted_color, None);
+    }
+
+    #[test]
+    fn minivitals_depleted_color_round_trips_and_none_is_omitted() {
+        let data: MiniVitalsWidgetData =
+            toml::from_str("depleted_color = \"#202020\"").unwrap();
+        assert_eq!(data.depleted_color.as_deref(), Some("#202020"));
+
+        let serialized = toml::to_string(&MiniVitalsWidgetData::default()).unwrap();
+        assert!(!serialized.contains("depleted_color"));
+    }
+}
 
 #[cfg(test)]
 mod dashboard_layout_tests {

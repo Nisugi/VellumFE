@@ -2588,20 +2588,38 @@ impl TuiFrontend {
                 let window_def = window_defs.get(name.as_str()).copied();
 
                 // Get display options, bar colors, and bar order from WindowDef
-                let (numbers_only, current_only, health_color, mana_color, stamina_color, spirit_color, bar_order) =
-                    if let Some(crate::config::WindowDef::MiniVitals { data, .. }) = window_def {
-                        (
-                            data.numbers_only,
-                            data.current_only,
-                            data.health_color.clone(),
-                            data.mana_color.clone(),
-                            data.stamina_color.clone(),
-                            data.spirit_color.clone(),
-                            data.bar_order.clone(),
-                        )
-                    } else {
-                        (false, false, None, None, None, None, crate::config::default_minivitals_bar_order())
-                    };
+                let (
+                    numbers_only,
+                    current_only,
+                    health_color,
+                    mana_color,
+                    stamina_color,
+                    spirit_color,
+                    depleted_color,
+                    bar_order,
+                ) = if let Some(crate::config::WindowDef::MiniVitals { data, .. }) = window_def {
+                    (
+                        data.numbers_only,
+                        data.current_only,
+                        data.health_color.clone(),
+                        data.mana_color.clone(),
+                        data.stamina_color.clone(),
+                        data.spirit_color.clone(),
+                        data.depleted_color.clone(),
+                        data.bar_order.clone(),
+                    )
+                } else {
+                    (
+                        false,
+                        false,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        crate::config::default_minivitals_bar_order(),
+                    )
+                };
 
                 // Get show_border, show_title, and border_sides from WindowDef
                 let show_border = window_def
@@ -2632,6 +2650,11 @@ impl TuiFrontend {
                 mv_widget.set_border_sides(border_sides);
                 mv_widget.set_display_mode(numbers_only, current_only);
                 mv_widget.set_bar_order(bar_order);
+                mv_widget.set_depleted_color(
+                    depleted_color
+                        .as_deref()
+                        .and_then(|color| parse_hex_color(color).ok()),
+                );
 
                 // Apply theme colors
                 if let Some(def) = window_def {
@@ -2754,4 +2777,3 @@ impl TuiFrontend {
         }
     }
 }
-
