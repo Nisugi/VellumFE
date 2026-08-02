@@ -270,6 +270,33 @@ pub const ROLES: [Role; 11] = [
     },
 ];
 
+/// Prompt indicators are status signaling, not decoration: Roundtime and
+/// Bleeding carry meaning by being warm, Stunned by being amber, Hiding by
+/// being cool. Harmony varies their lightness/chroma for readability but
+/// holds each inside its semantic hue band regardless of the scheme.
+/// `anchor_hue: None` means "follow the seed hue" (the neutral prompt char
+/// is desaturated to near-gray, so its hue barely shows).
+pub struct PromptRole {
+    /// The prompt glyph matched by `[[prompt_colors]]` (R, S, H, >, !).
+    pub character: &'static str,
+    pub label: &'static str,
+    anchor_hue: Option<f64>,
+    dl: f64,
+    dc: f64,
+}
+
+/// OKLCH hues for the semantic bands: amber warning and cool violet.
+const WARN_HUE: f64 = 85.0;
+const HIDE_HUE: f64 = 300.0;
+
+pub const PROMPT_ROLES: [PromptRole; 5] = [
+    PromptRole { character: "R", label: "roundtime", anchor_hue: Some(ALARM_HUE), dl: 0.0, dc: 0.05 },
+    PromptRole { character: "!", label: "bleeding", anchor_hue: Some(ALARM_HUE), dl: -0.15, dc: 0.0 },
+    PromptRole { character: "S", label: "stunned", anchor_hue: Some(WARN_HUE), dl: 0.05, dc: 0.02 },
+    PromptRole { character: "H", label: "hiding", anchor_hue: Some(HIDE_HUE), dl: 0.0, dc: -0.06 },
+    PromptRole { character: ">", label: "prompt", anchor_hue: None, dl: -0.10, dc: -0.25 },
+];
+
 // ─── Parameters and generation ──────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -316,6 +343,9 @@ pub struct HarmonyResult {
     /// Room title background plate, lightness-solved against the generated
     /// roomName color to hit `room_title_spread`.
     pub room_bg: String,
+    /// `(prompt character, hex)` in PROMPT_ROLES order, hue-anchored to
+    /// their semantic bands.
+    pub prompts: Vec<(String, String)>,
 }
 
 impl HarmonyResult {
@@ -357,23 +387,52 @@ fn lift_to_contrast(mut l: f64, c: f64, h: f64, params: &HarmonyParams) -> Strin
     hex
 }
 
-/// Ladder of lightness and chroma around the role's nominal point, contrast-
-/// lifted. Roles that share a hue separate along L, which is what the eye
-/// reads first. Ordered nearest-to-nominal first.
-fn candidates(role: &Role, params: &HarmonyParams, seed: [f64; 3]) -> Vec<String> {
-    let h = hue_for(role, params, seed[2]);
+/// Ladder of lightness and chroma around a nominal point, contrast-lifted.
+/// Roles that share a hue separate along L, which is what the eye reads
+/// first. Ordered nearest-to-nominal first.
+fn candidates_at(
+    hue: f64,
+    dl: f64,
+    dc: f64,
+    params: &HarmonyParams,
+    seed: [f64; 3],
+) -> Vec<String> {
     let mut out = Vec::new();
-    for dl in [0.0, 0.09, -0.09, 0.18, -0.18, 0.27, -0.27] {
-        for dc in [0.0, 0.05, -0.05, 0.10] {
-            let l = (seed[0] + role.dl + dl).clamp(0.28, 0.94);
-            let c = (seed[1] + role.dc + dc).clamp(0.015, 0.33);
-            let hex = lift_to_contrast(l, c, h, params);
+    for step_l in [0.0, 0.09, -0.09, 0.18, -0.18, 0.27, -0.27] {
+        for step_c in [0.0, 0.05, -0.05, 0.10] {
+            let l = (seed[0] + dl + step_l).clamp(0.28, 0.94);
+            let c = (seed[1] + dc + step_c).clamp(0.015, 0.33);
+            let hex = lift_to_contrast(l, c, hue, params);
             if !out.contains(&hex) {
                 out.push(hex);
             }
         }
     }
     out
+}
+
+/// First candidate (nearest the nominal point) that clears the separation
+/// floor and isn't lost in the background; else greedy max-min so roles
+/// sharing a hue never come out identical. (The prototype exposed the
+/// separation knob but never read it.)
+fn pick_color(cands: &[String], used: &[String], params: &HarmonyParams) -> String {
+    let min_dist = |hex: &str| -> f64 {
+        used.iter()
+            .map(|u| delta_e(u, hex))
+            .fold(f64::INFINITY, f64::min)
+    };
+    cands
+        .iter()
+        .find(|c| delta_e(c, &params.background) >= 0.06 && min_dist(c) >= params.separation)
+        .or_else(|| {
+            cands
+                .iter()
+                .filter(|c| delta_e(c, &params.background) >= 0.06)
+                .max_by(|a, b| min_dist(a).total_cmp(&min_dist(b)))
+        })
+        .or_else(|| cands.first())
+        .cloned()
+        .unwrap_or_else(|| params.seed.clone())
 }
 
 /// Generate the full role set. Deterministic for a given `HarmonyParams`.
@@ -388,30 +447,23 @@ pub fn generate(params: &HarmonyParams) -> HarmonyResult {
             colors.push((role.name.to_string(), pinned.clone()));
             continue;
         }
-        let cands = candidates(role, params, seed);
-        let min_dist = |hex: &str| -> f64 {
-            used.iter()
-                .map(|u| delta_e(u, hex))
-                .fold(f64::INFINITY, f64::min)
-        };
-        // First candidate (nearest the role's nominal point) that clears the
-        // separation floor and isn't lost in the background; else fall back
-        // to greedy max-min so roles sharing a hue never come out identical.
-        // (The prototype exposed the separation knob but never read it.)
-        let pick = cands
-            .iter()
-            .find(|c| delta_e(c, &params.background) >= 0.06 && min_dist(c) >= params.separation)
-            .or_else(|| {
-                cands
-                    .iter()
-                    .filter(|c| delta_e(c, &params.background) >= 0.06)
-                    .max_by(|a, b| min_dist(a).total_cmp(&min_dist(b)))
-            })
-            .or_else(|| cands.first())
-            .cloned()
-            .unwrap_or_else(|| params.seed.clone());
+        let cands = candidates_at(hue_for(role, params, seed[2]), role.dl, role.dc, params, seed);
+        let pick = pick_color(&cands, &used, params);
         used.push(pick.clone());
         colors.push((role.name.to_string(), pick));
+    }
+
+    // Prompt indicators: separate used-list (they appear in a different
+    // context than story text, so they only need to stay distinct from each
+    // other), hue-anchored to their semantic bands.
+    let mut prompt_used: Vec<String> = Vec::new();
+    let mut prompts: Vec<(String, String)> = Vec::new();
+    for role in &PROMPT_ROLES {
+        let hue = role.anchor_hue.unwrap_or(seed[2]);
+        let cands = candidates_at(hue, role.dl, role.dc, params, seed);
+        let pick = pick_color(&cands, &prompt_used, params);
+        prompt_used.push(pick.clone());
+        prompts.push((role.character.to_string(), pick));
     }
 
     // Room title background: same hue family as the roomName color, lightness
@@ -436,7 +488,11 @@ pub fn generate(params: &HarmonyParams) -> HarmonyResult {
         room_bg = hex;
     }
 
-    HarmonyResult { colors, room_bg }
+    HarmonyResult {
+        colors,
+        room_bg,
+        prompts,
+    }
 }
 
 /// For the click-a-swatch explorer: hold the role's lightness/chroma target
@@ -640,6 +696,67 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn prompt_roles_stay_in_their_semantic_hue_bands() {
+        let hue_dist = |a: f64, b: f64| (a - b).abs().min(360.0 - (a - b).abs());
+        // Whatever the scheme or seed, anchored prompts hold their bands.
+        for scheme in Scheme::ALL {
+            for seed in ["#50fa7b", "#6a9fb5", "#c09eff"] {
+                let p = HarmonyParams {
+                    seed: seed.to_string(),
+                    scheme,
+                    ..params()
+                };
+                let result = generate(&p);
+                for (character, hex) in &result.prompts {
+                    let role = PROMPT_ROLES
+                        .iter()
+                        .find(|r| r.character == character)
+                        .unwrap();
+                    let Some(anchor) = role.anchor_hue else {
+                        continue; // ">" follows the seed and is near-gray
+                    };
+                    let [_, chroma, hue] = hex_to_lch(hex).unwrap();
+                    // Heavy desaturation makes hue meaningless; only assert
+                    // the band when the color visibly carries one.
+                    if chroma >= 0.04 {
+                        assert!(
+                            hue_dist(hue, anchor) < 30.0,
+                            "{} ({hex}) hue {hue:.0} left its band around {anchor} \
+                             ({} seed {seed})",
+                            role.label,
+                            scheme.name()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prompt_colors_are_readable_and_distinct() {
+        let p = params();
+        let result = generate(&p);
+        assert_eq!(result.prompts.len(), PROMPT_ROLES.len());
+        for (character, hex) in &result.prompts {
+            let cr = wcag_contrast(hex, &p.background);
+            assert!(
+                cr >= p.min_contrast - 0.35,
+                "prompt '{character}' = {hex} only {cr:.2}:1"
+            );
+        }
+        // Roundtime and Bleeding share the alarm hue: they must separate
+        // along lightness, not collapse into one color.
+        let r = result.prompts.iter().find(|(c, _)| c == "R").unwrap();
+        let bang = result.prompts.iter().find(|(c, _)| c == "!").unwrap();
+        assert!(
+            delta_e(&r.1, &bang.1) > 0.015,
+            "roundtime {} and bleeding {} are nearly identical",
+            r.1,
+            bang.1
+        );
     }
 
     #[test]

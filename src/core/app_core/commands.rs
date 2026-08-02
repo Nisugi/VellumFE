@@ -1564,6 +1564,7 @@ impl AppCore {
         if let Err(err) = ColorConfig::persist_generated_presets(
             &result.colors,
             &result.room_bg,
+            &result.prompts,
             &new_recipe,
             character.as_deref(),
         ) {
@@ -1598,6 +1599,20 @@ impl AppCore {
             "  {:<17} {}  {:.1}:1 vs room title (plate)",
             "roomName bg", result.room_bg, plate_contrast
         ));
+        for (character, hex) in &result.prompts {
+            let label = harmony::PROMPT_ROLES
+                .iter()
+                .find(|r| r.character == character)
+                .map(|r| r.label)
+                .unwrap_or("prompt");
+            self.add_system_message(&format!(
+                "  {:<17} {}  {:.1}:1  (prompt '{}')",
+                label,
+                hex,
+                harmony::wcag_contrast(hex, &params.background),
+                character
+            ));
+        }
         self.add_system_message(
             "Presets updated (previous colors.toml kept as .bak). \
              .harmony schemes lists schemes; the GUI Colors editor's Generate \

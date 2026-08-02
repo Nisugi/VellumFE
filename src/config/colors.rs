@@ -511,21 +511,49 @@ impl ColorConfig {
         palette_updates
     }
 
+    /// Apply generated prompt-indicator colors in-memory: matching
+    /// `[[prompt_colors]]` entries get the new fg (with the legacy `color`
+    /// field cleared so the canonical value wins); missing characters are
+    /// added. Backgrounds are left alone.
+    pub fn apply_generated_prompts(&mut self, prompts: &[(String, String)]) {
+        for (character, hex) in prompts {
+            match self
+                .prompt_colors
+                .iter_mut()
+                .find(|p| p.character == *character)
+            {
+                Some(entry) => {
+                    entry.fg = Some(hex.clone());
+                    entry.color = None;
+                }
+                None => self.prompt_colors.push(PromptColor {
+                    character: character.clone(),
+                    fg: Some(hex.clone()),
+                    bg: None,
+                    color: None,
+                }),
+            }
+        }
+    }
+
     /// Persist a generated color set (and its recipe) honoring the global +
     /// character scope split. The full set lands in the global file; the
     /// character file is touched only where it already shadows the result —
     /// a non-empty character palette replaces the whole global list (so its
-    /// matching entries are recolored and missing ones added), and per-key
+    /// matching entries are recolored and missing ones added), a non-empty
+    /// character prompt list replaces the global one likewise, and per-key
     /// character preset overrides win over global (so those keys get the hex
     /// directly). Both writes are atomic with .bak backups.
     pub fn persist_generated_presets(
         colors: &[(String, String)],
         room_bg: &str,
+        prompts: &[(String, String)],
         recipe: &HarmonyRecipe,
         character: Option<&str>,
     ) -> Result<()> {
         let mut global = Self::load_common_colors()?;
         let palette_updates = global.apply_generated_presets(colors, room_bg);
+        global.apply_generated_prompts(prompts);
         global.harmony = Some(recipe.clone());
         global.save_common()?;
 
@@ -569,6 +597,13 @@ impl ColorConfig {
             char_dirty |= override_role(&mut chara, role, hex, false);
         }
         char_dirty |= override_role(&mut chara, "roomName", room_bg, true);
+
+        // A non-empty character prompt list replaces the global one wholesale
+        // on merge, so mirror the generated prompts into it.
+        if !chara.prompt_colors.is_empty() {
+            chara.apply_generated_prompts(prompts);
+            char_dirty = true;
+        }
 
         if char_dirty {
             chara.save(character)?;
@@ -759,6 +794,26 @@ mod harmony_apply_tests {
         cfg.presets.remove("speech");
         cfg.apply_generated_presets(&generated(), "#0a0a14");
         assert_eq!(cfg.presets["speech"].fg.as_deref(), Some("#333333"));
+    }
+
+    #[test]
+    fn generated_prompts_update_fg_clear_legacy_and_add_missing() {
+        let mut cfg = ColorConfig::default();
+        // Defaults carry "R" with the legacy `color` field set.
+        assert!(cfg.prompt_colors.iter().any(|p| p.character == "R"));
+        cfg.prompt_colors.retain(|p| p.character != "S"); // force an add path
+        let prompts: Vec<(String, String)> = [("R", "#cc4433"), ("S", "#ccaa22")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        cfg.apply_generated_prompts(&prompts);
+        let r = cfg.prompt_colors.iter().find(|p| p.character == "R").unwrap();
+        assert_eq!(r.fg.as_deref(), Some("#cc4433"));
+        assert!(r.color.is_none(), "legacy field cleared so fg wins");
+        let s = cfg.prompt_colors.iter().find(|p| p.character == "S").unwrap();
+        assert_eq!(s.fg.as_deref(), Some("#ccaa22"), "missing character added");
+        // Untouched characters keep their colors.
+        assert!(cfg.prompt_colors.iter().any(|p| p.character == "H"));
     }
 
     #[test]

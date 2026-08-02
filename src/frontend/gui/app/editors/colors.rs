@@ -150,6 +150,86 @@ fn tier_row(ui: &mut egui::Ui, label: &str, hint: &str, value: &mut f64, tiers: 
     });
 }
 
+/// Fake game text rendered entirely in the generated colors, so the set is
+/// judged the way it will actually be read - words on the theme background -
+/// not as isolated swatches.
+fn story_preview(
+    app_theme: &crate::theme::AppTheme,
+    result: &crate::core::harmony::HarmonyResult,
+) -> egui::text::LayoutJob {
+    let body = {
+        let c = app_theme.text_primary;
+        egui::Color32::from_rgb(c.r, c.g, c.b)
+    };
+    let role = |name: &str| -> egui::Color32 {
+        result
+            .color_for(name)
+            .and_then(theme::resolve_color)
+            .unwrap_or(body)
+    };
+    let prompt = |character: &str| -> egui::Color32 {
+        result
+            .prompts
+            .iter()
+            .find(|(c, _)| c == character)
+            .and_then(|(_, hex)| theme::resolve_color(hex))
+            .unwrap_or(body)
+    };
+    let plate = theme::resolve_color(&result.room_bg).unwrap_or(egui::Color32::BLACK);
+
+    let font = egui::FontId::monospace(12.0);
+    let mut job = egui::text::LayoutJob::default();
+    let mut span = |text: &str, color: egui::Color32, background: egui::Color32| {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color,
+                background,
+                ..Default::default()
+            },
+        );
+    };
+    let none = egui::Color32::TRANSPARENT;
+
+    span("[Seamist Hall, Central Lounge]", role("roomName"), plate);
+    span("\nA circular ", body, none);
+    span("bar", role("links"), none);
+    span(" dominates the room, potted ", body, none);
+    span("ferns", role("links"), none);
+    span(" placed about it. A ", body, none);
+    span("grizzled kobold", role("monsterbold"), none);
+    span(" shuffles past.\nObvious exits: ", body, none);
+    span("northeast", role("links"), none);
+    span(", ", body, none);
+    span("northwest", role("links"), none);
+    span("\n>", prompt(">"), none);
+    span("go archway", role("commands"), none);
+    span("\n", body, none);
+    span("Penelopia says,", role("speech"), none);
+    span(" \"Selling a satyr will-o-wisp in a black acorn amulet.\"\n", body, none);
+    span("Someone whispers,", role("whisper"), none);
+    span(" \"Meet me by the fountain.\"\n", body, none);
+    span(
+        "[General] Aravon: \"Anyone running the rift tonight?\"\n",
+        role("thought"),
+        none,
+    );
+    span("Your familiar senses movement nearby.\n", role("familiar"), none);
+    span("You feel the favor of Voln upon you.\n", role("voln"), none);
+    span("\u{25b8} kobold", role("target_indicator"), none);
+    span("   ", body, none);
+    span("Spirit Warding II  12:04", role("percWindow"), none);
+    span("\nR", prompt("R"), none);
+    span(" S", prompt("S"), none);
+    span(" H", prompt("H"), none);
+    span(" !", prompt("!"), none);
+    span(" >", prompt(">"), none);
+    span("  (roundtime / stunned / hiding / bleeding / prompt)", body, none);
+    job
+}
+
 /// Clickable seed chip; returns true when clicked.
 fn seed_chip(ui: &mut egui::Ui, hex: &str, selected: bool) -> bool {
     let Some(fill) = theme::resolve_color(hex) else {
@@ -1034,6 +1114,9 @@ impl VellumGuiApp {
                     .corner_radius(3.0)
                     .show(ui, |ui| {
                         ui.set_min_width(ui.available_width());
+                        ui.label(story_preview(&app_theme, &result));
+                        ui.add_space(6.0);
+                        ui.separator();
                         for (role, hex) in &result.colors {
                             let Some(color) = theme::resolve_color(hex) else {
                                 continue;
@@ -1102,6 +1185,47 @@ impl VellumGuiApp {
                                 });
                             }
                         }
+                        // Prompt indicators: hue-anchored to their semantic
+                        // bands (alarm stays warm), so no explorer or pins.
+                        ui.add_space(4.0);
+                        for (character, hex) in &result.prompts {
+                            let Some(color) = theme::resolve_color(hex) else {
+                                continue;
+                            };
+                            ui.horizontal(|ui| {
+                                let _ = seed_chip(ui, hex, false);
+                                let label = harmony::PROMPT_ROLES
+                                    .iter()
+                                    .find(|r| r.character == character)
+                                    .map(|r| r.label)
+                                    .unwrap_or("prompt");
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{:<17}",
+                                        format!("{label} '{character}'")
+                                    ))
+                                    .monospace()
+                                    .color(color),
+                                );
+                                ui.label(
+                                    egui::RichText::new(hex.to_string())
+                                        .monospace()
+                                        .weak()
+                                        .color(color),
+                                );
+                                let contrast = harmony::wcag_contrast(hex, &background);
+                                let ok = contrast >= params.min_contrast - 0.35;
+                                ui.label(
+                                    egui::RichText::new(format!("{contrast:.1}:1"))
+                                        .monospace()
+                                        .color(if ok {
+                                            egui::Color32::from_rgb(0x7f, 0xb8, 0xa4)
+                                        } else {
+                                            egui::Color32::from_rgb(0xc0, 0x56, 0x4a)
+                                        }),
+                                );
+                            });
+                        }
                     });
             });
 
@@ -1131,6 +1255,7 @@ impl VellumGuiApp {
             match ColorConfig::persist_generated_presets(
                 &result.colors,
                 &result.room_bg,
+                &result.prompts,
                 &recipe,
                 character.as_deref(),
             ) {
