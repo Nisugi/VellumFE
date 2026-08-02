@@ -363,7 +363,13 @@ pub struct XmlParser {
     // Semantic type tracking
     pub(crate) link_depth: usize,                   // Track nested links
     pub(crate) spell_depth: usize,                  // Track nested spells
-    pub(crate) current_link_data: Option<LinkData>, // Current link metadata (exist_id, noun)
+    pub(crate) current_link_data: Option<LinkData>, // Current link metadata (exist_id, noun) = top of link_stack
+    /// Stack of open link metadata, one entry per open `<a>`/`<d>`. Nested
+    /// links (e.g. `store list`'s `<d cmd=...>a <a ...>item</a> ...</d>`) are
+    /// two different links; a stack lets each text span attach the INNERMOST
+    /// open link, and pop-on-close restores the outer command for the text
+    /// that follows the inner link. `current_link_data` mirrors the top.
+    pub(crate) link_stack: Vec<LinkData>,
     pub(crate) current_preset_id: Option<String>, // Current preset ID (e.g., "speech", "monsterbold")
     // Menu tracking
     current_menu_id: Option<String>, // ID of menu being parsed
@@ -426,6 +432,7 @@ impl XmlParser {
             link_depth: 0,
             spell_depth: 0,
             current_link_data: None,
+            link_stack: Vec::new(),
             current_preset_id: None,
             current_menu_id: None,
             current_menu_coords: Vec::new(),
@@ -2348,6 +2355,20 @@ impl XmlParser {
         }
     }
 
+    /// Mirror the OUTERMOST open link into `current_link_data`, which is what
+    /// text spans attach. For nested links (`store list`'s
+    /// `<d cmd=...>a <a ...>item</a> ...</d>`) the enclosing `<d>` command is
+    /// the actionable one — clicking the inner item text fires the outer
+    /// command, matching Wrayth — so the wrapper wins over the inner `<a>`.
+    /// Empty sentinels (a bare `<a>` with no exist/noun) are skipped.
+    fn sync_current_link_from_stack(&mut self) {
+        self.current_link_data = self
+            .link_stack
+            .iter()
+            .find(|d| !d.exist_id.is_empty())
+            .cloned();
+    }
+
     fn handle_d_tag(&mut self, tag: &str) {
         // <d cmd='look' fg='#FFFFFF'>LOOK</d> - direct command tag
         // <d>SKILLS BASE</d> - direct command (uses text content as command)
@@ -2364,14 +2385,17 @@ impl XmlParser {
         // Extract optional cmd attribute
         let cmd = Self::extract_attribute(tag, "cmd");
 
-        // Create link data for this direct command
-        // For <d>, we use a special exist_id to indicate it's a direct command
-        self.current_link_data = Some(LinkData {
+        // Push link data for this direct command onto the link stack (so a
+        // nested <a> inside a <d> doesn't clobber the outer command).
+        // For <d>, we use a special exist_id to indicate it's a direct command.
+        let data = LinkData {
             exist_id: String::from("_direct_"), // Special marker for direct commands
             noun: cmd.clone().unwrap_or_default(), // Store cmd in noun field temporarily
             text: String::new(),                // Will be populated as text is rendered
             coord: None,                        // <d> tags don't use coords
-        });
+        };
+        self.link_stack.push(data);
+        self.sync_current_link_from_stack();
 
         // Don't apply color if we're inside monsterbold (bold has priority)
         if !self.bold_stack.is_empty() {
@@ -2405,20 +2429,19 @@ impl XmlParser {
             self.link_depth -= 1;
         }
 
-        // For <d> tags without cmd attribute, populate noun from text content
-        if self.link_depth == 0 {
-            if let Some(ref mut link_data) = self.current_link_data {
-                if link_data.noun.is_empty() && !link_data.text.is_empty() {
-                    link_data.noun = link_data.text.clone();
-                    tracing::debug!("Populated <d> tag noun from text: '{}'", link_data.noun);
-                }
+        // Pop this <d>'s entry off the link stack and restore the enclosing
+        // link (if any) as the current one — so text after a nested <a> gets
+        // the outer <d> command back.
+        if let Some(mut popped) = self.link_stack.pop() {
+            // For <d> tags without a cmd attribute, the command IS the text
+            // content; populate noun from it (matches the historical
+            // single-slot behavior, kept for logging/consumers).
+            if popped.noun.is_empty() && !popped.text.is_empty() {
+                popped.noun = popped.text.clone();
+                tracing::debug!("Populated <d> tag noun from text: '{}'", popped.noun);
             }
         }
-
-        // Clear link data when closing d tag
-        if self.link_depth == 0 {
-            self.current_link_data = None;
-        }
+        self.sync_current_link_from_stack();
 
         // Pop color if we added one
         if !self.color_stack.is_empty() {
@@ -2436,14 +2459,29 @@ impl XmlParser {
         let noun = Self::extract_attribute(tag, "noun");
         let coord = Self::extract_attribute(tag, "coord");
 
-        if let (Some(exist), Some(n)) = (exist_id, noun) {
-            self.current_link_data = Some(LinkData {
+        // Push one entry per <a> open so the link stack stays balanced with
+        // link_depth (and pop-on-close restores the enclosing link). A bare
+        // <a> with no exist/noun pushes an empty sentinel — text inside it is
+        // still a Link span (link_depth), but carries no clickable data, and
+        // popping it restores the outer link for following text.
+        let data = match (exist_id, noun) {
+            (Some(exist), Some(n)) => LinkData {
                 exist_id: exist,
                 noun: n,
                 text: String::new(), // Will be populated as text is rendered
                 coord,               // Optional coord for direct commands
-            });
-        }
+            },
+            _ => LinkData {
+                exist_id: String::new(),
+                noun: String::new(),
+                text: String::new(),
+                coord: None,
+            },
+        };
+        self.link_stack.push(data);
+        // Mirror the OUTERMOST link (the enclosing <d> wins over this <a>);
+        // an all-empty stack surfaces as None.
+        self.sync_current_link_from_stack();
 
         // But don't apply color if we're inside monsterbold (bold has priority)
         if !self.bold_stack.is_empty() {
@@ -2477,10 +2515,10 @@ impl XmlParser {
             self.link_depth -= 1;
         }
 
-        // Clear link data when closing link tag
-        if self.link_depth == 0 {
-            self.current_link_data = None;
-        }
+        // Pop this <a>'s entry and restore the enclosing link (if any) as the
+        // current one, so text after a nested link keeps the outer link.
+        self.link_stack.pop();
+        self.sync_current_link_from_stack();
 
         // Only pop color if we're not inside monsterbold (matching handle_link_open behavior)
         if self.bold_stack.is_empty() && !self.color_stack.is_empty() {
@@ -2637,10 +2675,20 @@ impl XmlParser {
         // Decode HTML entities
         let content = Self::decode_entities(content);
 
-        // If we're inside a link (<a> or <d> tag), append this text to the link's text field
+        // If we're inside a link (<a> or <d> tag), append this text to the
+        // OUTERMOST open link's text field — the one that wins and is
+        // surfaced on the span — and keep the mirrored `current_link_data` in
+        // sync so the span below clones the up-to-date text.
         if self.link_depth > 0 {
-            if let Some(ref mut link_data) = self.current_link_data {
+            if let Some(link_data) = self
+                .link_stack
+                .iter_mut()
+                .find(|d| !d.exist_id.is_empty())
+            {
                 link_data.text.push_str(&content);
+            }
+            if let Some(ref mut mirror) = self.current_link_data {
+                mirror.text.push_str(&content);
             }
         }
 
@@ -3402,6 +3450,57 @@ mod tests {
         // The text content is stored in link.text instead.
         assert_eq!(link.noun, "");
         assert_eq!(link.text, "SKILLS BASE");
+    }
+
+    #[test]
+    fn test_nested_d_and_a_links_outer_command_wins() {
+        // From `store list`: a <d> command link wrapping an item <a> link.
+        // The <d> is the actionable link but carries no clickable text of its
+        // own; the inner <a> supplies the visible text. In Wrayth, clicking
+        // that text fires the OUTER <d> command (store SHEATH clear), not the
+        // item's <a> menu — so every span here, item text included, must
+        // carry the enclosing <d> command. A single-slot model let the inner
+        // <a> clobber the outer <d>; the link-data stack + outermost-wins
+        // mirror fixes it.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<d cmd=\"store SHEATH clear\">a <a exist=\"18540109\" noun=\"bandolier\">quilled iron boar hide bandolier</a> shrouded by impaled leaves</d>",
+        );
+
+        let text: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::Text { content, link_data, span_type, .. } => {
+                    Some((content.as_str(), link_data.clone(), *span_type))
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Every span (leading "a ", the bandolier item text, and the trailing
+        // "shrouded…") is a Link carrying the outer <d> store command.
+        assert!(!text.is_empty(), "expected link spans");
+        for (content, link, span_type) in &text {
+            assert_eq!(*span_type, SpanType::Link, "span {content:?} not a link");
+            let link = link
+                .as_ref()
+                .unwrap_or_else(|| panic!("span {content:?} lost its link_data"));
+            assert_eq!(
+                link.exist_id, "_direct_",
+                "span {content:?} should carry the <d> command, not the <a> item"
+            );
+            assert_eq!(
+                link.noun, "store SHEATH clear",
+                "span {content:?} should run the store command"
+            );
+        }
+
+        // Sanity: the visible item text is present as one of the spans.
+        assert!(
+            text.iter()
+                .any(|(c, _, _)| *c == "quilled iron boar hide bandolier"),
+            "item text span missing: {text:?}"
+        );
     }
 
     // ==================== Prompt Parsing ====================
