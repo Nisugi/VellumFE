@@ -166,6 +166,7 @@ enum FieldRef {
     MiniVitalsManaColor,
     MiniVitalsStaminaColor,
     MiniVitalsSpiritColor,
+    MiniVitalsDepletedColor,
     MiniVitalsEditBarOrder,
     // Betrayer widget fields
     BetrayerShowItems,
@@ -279,6 +280,7 @@ impl FieldRef {
             FieldRef::MiniVitalsManaColor => 102,
             FieldRef::MiniVitalsStaminaColor => 103,
             FieldRef::MiniVitalsSpiritColor => 104,
+            FieldRef::MiniVitalsDepletedColor => 122,
             FieldRef::MiniVitalsEditBarOrder => 115,
             FieldRef::BetrayerShowItems => 111,
             FieldRef::BetrayerBarColor => 112,
@@ -1464,6 +1466,7 @@ pub struct WindowEditor {
     minivitals_mana_color_input: TextArea<'static>,
     minivitals_stamina_color_input: TextArea<'static>,
     minivitals_spirit_color_input: TextArea<'static>,
+    minivitals_depleted_color_input: TextArea<'static>,
 
     // Betrayer widget
     betrayer_show_items: bool,
@@ -1818,6 +1821,7 @@ impl WindowEditor {
                 fields.push(FieldRef::MiniVitalsCurrentOnly);
                 // Bar order and colors editor (handles all 5 bars)
                 fields.push(FieldRef::MiniVitalsEditBarOrder);
+                fields.push(FieldRef::MiniVitalsDepletedColor);
             }
             WindowDef::Betrayer { .. } => {
                 // Betrayer widget - show_items toggle and bar color
@@ -2272,6 +2276,7 @@ impl WindowEditor {
             minivitals_mana_color,
             minivitals_stamina_color,
             minivitals_spirit_color,
+            minivitals_depleted_color,
         ) = if let crate::config::WindowDef::MiniVitals { data, .. } = &window_def {
             (
                 data.numbers_only,
@@ -2280,9 +2285,11 @@ impl WindowEditor {
                 data.mana_color.clone().unwrap_or_else(|| "#08086d".to_string()),
                 data.stamina_color.clone().unwrap_or_else(|| "#bd7b00".to_string()),
                 data.spirit_color.clone().unwrap_or_else(|| "#6e727c".to_string()),
+                // No default: empty means "use the window background"
+                data.depleted_color.clone().unwrap_or_default(),
             )
         } else {
-            (false, false, "#6e0202".to_string(), "#08086d".to_string(), "#bd7b00".to_string(), "#6e727c".to_string())
+            (false, false, "#6e0202".to_string(), "#08086d".to_string(), "#bd7b00".to_string(), "#6e727c".to_string(), String::new())
         };
 
         let mut minivitals_health_color_input = Self::create_textarea();
@@ -2293,6 +2300,8 @@ impl WindowEditor {
         minivitals_stamina_color_input.insert_str(&minivitals_stamina_color);
         let mut minivitals_spirit_color_input = Self::create_textarea();
         minivitals_spirit_color_input.insert_str(&minivitals_spirit_color);
+        let mut minivitals_depleted_color_input = Self::create_textarea();
+        minivitals_depleted_color_input.insert_str(&minivitals_depleted_color);
 
         // Betrayer widget fields
         let (betrayer_show_items, betrayer_bar_color) =
@@ -2425,6 +2434,7 @@ impl WindowEditor {
             minivitals_mana_color_input,
             minivitals_stamina_color_input,
             minivitals_spirit_color_input,
+            minivitals_depleted_color_input,
             betrayer_show_items,
             betrayer_bar_color_input,
             text_compact,
@@ -2758,6 +2768,7 @@ impl WindowEditor {
             minivitals_mana_color_input: Self::create_textarea(),
             minivitals_stamina_color_input: Self::create_textarea(),
             minivitals_spirit_color_input: Self::create_textarea(),
+            minivitals_depleted_color_input: Self::create_textarea(),
             betrayer_show_items: true,
             betrayer_bar_color_input: Self::create_textarea(),
             text_compact,
@@ -3587,6 +3598,9 @@ impl WindowEditor {
             }
             _ if id == FieldRef::MiniVitalsSpiritColor.legacy_field_id() => {
                 self.minivitals_spirit_color_input.input(input);
+            }
+            _ if id == FieldRef::MiniVitalsDepletedColor.legacy_field_id() => {
+                self.minivitals_depleted_color_input.input(input);
             }
             _ if id == FieldRef::EncumColorLight.legacy_field_id() => {
                 self.encum_color_light_input.input(input);
@@ -4736,6 +4750,11 @@ impl WindowEditor {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
             data.spirit_color = self.minivitals_spirit_color_input
+                .lines()
+                .get(0)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            data.depleted_color = self.minivitals_depleted_color_input
                 .lines()
                 .get(0)
                 .map(|s| s.trim().to_string())
@@ -7279,6 +7298,19 @@ impl WindowEditor {
                     is_focus(FieldRef::MiniVitalsEditBarOrder, self.focused_field),
                 );
                 self.field_click_areas.push((special_row + 1, left_x, FieldRef::MiniVitalsEditBarOrder));
+                // Depleted (unfilled) cell color; empty = window background
+                self.render_color_field(
+                    FieldRef::MiniVitalsDepletedColor.legacy_field_id(),
+                    "Depleted",
+                    &self.minivitals_depleted_color_input,
+                    right_x,
+                    special_row + 1,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::MiniVitalsDepletedColor, self.focused_field),
+                );
+                self.field_click_areas.push((special_row + 1, right_x, FieldRef::MiniVitalsDepletedColor));
             }
             WindowDef::Betrayer { .. } => {
                 // Betrayer widget: show_items toggle and bar color
