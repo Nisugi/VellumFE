@@ -1057,6 +1057,15 @@ impl VellumGuiApp {
                                     }
                                 });
                             ui.end_row();
+                            ui.label("Depleted color")
+                                .on_hover_text("Color of the unfilled portion of each bar.");
+                            // Buffered through a plain string; empty = theme track color.
+                            let mut depleted =
+                                vitals.depleted_color.clone().unwrap_or_default();
+                            super::color_field(ui, &mut depleted);
+                            vitals.depleted_color = Some(depleted.trim().to_string())
+                                .filter(|value| !value.is_empty());
+                            ui.end_row();
                         });
                     ui.label("Bars shown (in display order):");
                     let bars = &mut vitals.bars;

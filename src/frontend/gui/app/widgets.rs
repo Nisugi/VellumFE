@@ -1055,12 +1055,23 @@ impl VellumGuiApp {
         }
 
         let bar_height = config.bar_height.clamp(8.0, 60.0);
+        // egui's ProgressBar paints its trough with extreme_bg_color, so a
+        // configured depleted color is applied by overriding the visuals of
+        // the Ui the bars render into. styled_progress_bar also reads it for
+        // empty-bar fill and text contrast, which keeps those consistent.
+        let depleted_bg = config
+            .depleted_color
+            .as_deref()
+            .and_then(super::theme::resolve_color);
         match config.orientation {
             VitalsOrientation::Horizontal => {
                 ui.columns(bars.len(), |columns| {
                     for (column, (id, fraction, text, fill)) in
                         columns.iter_mut().zip(bars.into_iter())
                     {
+                        if let Some(depleted) = depleted_bg {
+                            column.visuals_mut().extreme_bg_color = depleted;
+                        }
                         let fraction = Self::animated_fraction(column, id, fraction);
                         let bar = Self::styled_progress_bar(column, settings, fraction, fill, text);
                         column.add_sized([column.available_width().max(40.0), bar_height], bar);
@@ -1068,6 +1079,9 @@ impl VellumGuiApp {
                 });
             }
             VitalsOrientation::Vertical => {
+                if let Some(depleted) = depleted_bg {
+                    ui.visuals_mut().extreme_bg_color = depleted;
+                }
                 for (id, fraction, text, fill) in bars {
                     let fraction = Self::animated_fraction(ui, id, fraction);
                     let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);

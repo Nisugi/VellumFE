@@ -233,6 +233,11 @@ pub struct VitalsConfig {
     /// Enabled bars, in display order
     #[serde(default = "default_vital_bars")]
     pub bars: Vec<VitalKind>,
+
+    /// Color for the unfilled (depleted) portion of each bar, as a hex or
+    /// palette-name string. None follows the theme's track color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depleted_color: Option<String>,
 }
 
 fn default_vitals_bar_height() -> f32 {
@@ -255,6 +260,7 @@ impl Default for VitalsConfig {
             bar_height: default_vitals_bar_height(),
             text_format: VitalsTextFormat::default(),
             bars: default_vital_bars(),
+            depleted_color: None,
         }
     }
 }
