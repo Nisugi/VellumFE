@@ -106,6 +106,9 @@ pub enum UiAction {
     Skins,
     SetSkin(String),
     MakeSkin(String),
+    /// Write a skin (panel + frame images and manifest) rendered from the
+    /// current harmony recipe.
+    HarmonySkin(String),
     ReloadSkin,
 
     // Terminal palette (TUI)
@@ -200,6 +203,9 @@ impl UiAction {
         }
         if let Some(name) = body.strip_prefix("makeskin:") {
             return Some(UiAction::MakeSkin(name.to_string()));
+        }
+        if let Some(name) = body.strip_prefix("harmonyskin:") {
+            return Some(UiAction::HarmonySkin(name.to_string()));
         }
         if let Some(name) = body.strip_prefix("editwindow:") {
             return Some(UiAction::EditWindow(Some(name.to_string())));
@@ -360,6 +366,7 @@ impl std::fmt::Display for UiAction {
             UiAction::Skins => write!(f, "action:skins"),
             UiAction::SetSkin(name) => write!(f, "action:setskin:{name}"),
             UiAction::MakeSkin(name) => write!(f, "action:makeskin:{name}"),
+            UiAction::HarmonySkin(name) => write!(f, "action:harmonyskin:{name}"),
             UiAction::ReloadSkin => write!(f, "action:reloadskin"),
             UiAction::SetPalette => write!(f, "action:setpalette"),
             UiAction::ResetPalette => write!(f, "action:resetpalette"),
@@ -463,6 +470,7 @@ mod tests {
             UiAction::Skins,
             UiAction::SetSkin("wrayth".into()),
             UiAction::MakeSkin("mine".into()),
+            UiAction::HarmonySkin("mine".into()),
             UiAction::ReloadSkin,
             UiAction::SetPalette,
             UiAction::ResetPalette,

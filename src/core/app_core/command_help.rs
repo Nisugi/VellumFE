@@ -290,8 +290,8 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             ),
             entry!(
                 &["harmony"],
-                "[scheme|schemes]",
-                "Generate preset colors from the active theme"
+                "[scheme|schemes|skin <name>]",
+                "Generate preset colors from the active theme; 'skin' writes matching panel/frame images"
             ),
         ],
     },

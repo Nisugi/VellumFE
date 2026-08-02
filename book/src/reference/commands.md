@@ -110,6 +110,7 @@ default layouts.
 | `.setpalette` | | Load palette into terminal slots (TUI, 256-color mode) |
 | `.resetpalette` | | Reset the terminal palette (TUI) |
 | `.harmony [scheme]` | | Generate the game-text preset colors from the active theme (`.harmony schemes` lists the schemes; the GUI Colors editor's Generate tab adds seed swatches, pins, and a live preview) |
+| `.harmony skin <name>` | | Write a matching skin — panel backgrounds and nine-slice frames rendered from the same harmony — to `global/skins/<name>/`; activate with `.setskin <name>` (GUI) |
 
 ## Text-to-Speech
 

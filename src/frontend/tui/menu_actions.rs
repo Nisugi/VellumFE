@@ -561,6 +561,7 @@ pub fn handle_ui_action(
         UiAction::Skins
         | UiAction::SetSkin(_)
         | UiAction::MakeSkin(_)
+        | UiAction::HarmonySkin(_)
         | UiAction::ReloadSkin => {
             // Skins are image-based GUI decoration; the terminal frontend
             // has no image pipeline, so just point the user at the GUI.

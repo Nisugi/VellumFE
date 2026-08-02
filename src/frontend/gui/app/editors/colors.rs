@@ -58,6 +58,11 @@ struct HarmonyGenState {
     pins: std::collections::HashMap<String, String>,
     /// Role whose alternate-hue chips are open in the preview, if any.
     explore: Option<String>,
+    skin_name: String,
+    skin_panel: crate::core::harmony_skin::PanelSpec,
+    skin_frame: crate::core::harmony_skin::FrameSpec,
+    /// Cached preview textures keyed by a hash of everything they depend on.
+    skin_preview: Option<(u64, Vec<egui::TextureHandle>)>,
 }
 
 impl HarmonyGenState {
@@ -92,6 +97,10 @@ impl HarmonyGenState {
                     room_title_spread: recipe.room_title_spread,
                     pins: recipe.pins,
                     explore: None,
+                    skin_name: "harmony".to_string(),
+                    skin_panel: Default::default(),
+                    skin_frame: Default::default(),
+                    skin_preview: None,
                 }
             }
             None => Self {
@@ -105,6 +114,10 @@ impl HarmonyGenState {
                 room_title_spread: defaults.room_title_spread,
                 pins: std::collections::HashMap::new(),
                 explore: None,
+                skin_name: "harmony".to_string(),
+                skin_panel: Default::default(),
+                skin_frame: Default::default(),
+                skin_preview: None,
             },
         }
     }
@@ -1229,6 +1242,149 @@ impl VellumGuiApp {
                     });
             });
 
+        // Matching skin: panel + frame images rendered from the same
+        // harmony, so the chrome and the words belong together.
+        let mut skin_write: Option<(
+            String,
+            crate::core::harmony_skin::SkinColors,
+            crate::core::harmony_skin::PanelSpec,
+            crate::core::harmony_skin::FrameSpec,
+        )> = None;
+        ui.separator();
+        egui::CollapsingHeader::new("Matching skin")
+            .default_open(false)
+            .show(ui, |ui| {
+                use crate::core::harmony_skin::{
+                    render_frame, render_panel, GradientKind, SkinColors,
+                };
+                ui.weak(
+                    "Panel and frame images colored from this harmony. Written to \
+                     global/skins/<name>/; activate with .setskin <name>.",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Gradient:");
+                    egui::ComboBox::from_id_salt("harmony_skin_gradient")
+                        .selected_text(gen.skin_panel.gradient.name())
+                        .show_ui(ui, |ui| {
+                            for kind in GradientKind::ALL {
+                                ui.selectable_value(
+                                    &mut gen.skin_panel.gradient,
+                                    kind,
+                                    kind.name(),
+                                );
+                            }
+                        });
+                });
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_panel.fade_depth, 0.0..=60.0)
+                        .text("fade depth"),
+                );
+                ui.add(egui::Slider::new(&mut gen.skin_panel.vignette, 0.0..=90.0).text("vignette"));
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_panel.scanlines, 0.0..=40.0).text("scanlines"),
+                );
+                ui.add(egui::Slider::new(&mut gen.skin_frame.width, 0.0..=6.0).text("frame line"));
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_frame.radius, 0.0..=14.0).text("corner radius"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_frame.stub, 0.0..=14.0).text("accent stubs"),
+                );
+                ui.add(egui::Slider::new(&mut gen.skin_frame.slice, 1.0..=15.0).text("slice"));
+                if gen.skin_frame.slice_clips_corners() {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "slice is under radius + line - corners will clip",
+                    );
+                }
+
+                let colors = SkinColors::derive(
+                    &params.background,
+                    &params.seed,
+                    gen.skin_panel.fade_depth,
+                );
+                // Regenerate the four preview textures only when an input
+                // changed; uploading textures every frame would thrash.
+                let hash = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    format!("{:?}{:?}{:?}", colors, gen.skin_panel, gen.skin_frame).hash(&mut hasher);
+                    hasher.finish()
+                };
+                if gen.skin_preview.as_ref().map(|(h, _)| *h) != Some(hash) {
+                    let jobs: [(&str, u32, Vec<u8>); 4] = [
+                        (
+                            "harmony_skin_panel",
+                            96,
+                            render_panel(96, &colors.panel_top, &colors.panel_bottom, &gen.skin_panel),
+                        ),
+                        (
+                            "harmony_skin_deep",
+                            96,
+                            render_panel(
+                                96,
+                                &crate::core::harmony_skin::darken(
+                                    &colors.panel_top,
+                                    crate::core::harmony_skin::DEEP_OFFSET,
+                                ),
+                                &crate::core::harmony_skin::darken(
+                                    &colors.panel_bottom,
+                                    crate::core::harmony_skin::DEEP_OFFSET,
+                                ),
+                                &gen.skin_panel,
+                            ),
+                        ),
+                        (
+                            "harmony_skin_frame",
+                            64,
+                            render_frame(64, &colors.line, None, &gen.skin_frame),
+                        ),
+                        (
+                            "harmony_skin_frame_accent",
+                            64,
+                            render_frame(64, &colors.line, Some(&colors.accent), &gen.skin_frame),
+                        ),
+                    ];
+                    let textures = jobs
+                        .into_iter()
+                        .map(|(id, size, rgba)| {
+                            ui.ctx().load_texture(
+                                id,
+                                egui::ColorImage::from_rgba_unmultiplied(
+                                    [size as usize, size as usize],
+                                    &rgba,
+                                ),
+                                egui::TextureOptions::NEAREST,
+                            )
+                        })
+                        .collect();
+                    gen.skin_preview = Some((hash, textures));
+                }
+                if let Some((_, textures)) = &gen.skin_preview {
+                    ui.horizontal(|ui| {
+                        for texture in textures {
+                            ui.image((texture.id(), egui::vec2(64.0, 64.0)));
+                        }
+                    });
+                    ui.weak("panel - deep panel - frame - accented frame");
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label("Skin name:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut gen.skin_name).desired_width(140.0),
+                    );
+                    if ui.button("Write skin files").clicked() {
+                        skin_write = Some((
+                            gen.skin_name.clone(),
+                            colors.clone(),
+                            gen.skin_panel.clone(),
+                            gen.skin_frame.clone(),
+                        ));
+                    }
+                });
+            });
+
         ui.separator();
         ui.horizontal(|ui| {
             if ui.button("Apply").clicked() {
@@ -1239,6 +1395,10 @@ impl VellumGuiApp {
             }
             ui.weak("Apply rewrites the preset colors; the previous colors.toml is kept as .bak.");
         });
+
+        if let Some((name, colors, panel, frame)) = skin_write {
+            self.write_harmony_skin_files(&name, &params, &colors, &panel, &frame);
+        }
 
         if apply_clicked {
             let recipe = crate::config::HarmonyRecipe {

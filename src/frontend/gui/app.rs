@@ -2244,6 +2244,61 @@ impl VellumGuiApp {
         }
     }
 
+    /// Handle `action:harmonyskin:<name>` (`.harmony skin <name>`): render
+    /// the panel + frame images from the current harmony recipe and write
+    /// the skin. Uses default texture/frame settings; the Colors editor's
+    /// Generate tab offers the tunable version.
+    fn write_harmony_skin_default(&mut self, name: &str) {
+        use crate::core::harmony_skin::{FrameSpec, PanelSpec, SkinColors};
+        let params = self.app_core.harmony_params();
+        let panel = PanelSpec::default();
+        let frame = FrameSpec::default();
+        let colors = SkinColors::derive(&params.background, &params.seed, panel.fade_depth);
+        self.write_harmony_skin_files(name, &params, &colors, &panel, &frame);
+    }
+
+    /// Shared writer for both the action handler and the Generate tab:
+    /// renders the four images, builds the manifest, writes the skin
+    /// directory, and reports.
+    pub(in crate::frontend::gui) fn write_harmony_skin_files(
+        &mut self,
+        name: &str,
+        params: &crate::core::harmony::HarmonyParams,
+        colors: &crate::core::harmony_skin::SkinColors,
+        panel: &crate::core::harmony_skin::PanelSpec,
+        frame: &crate::core::harmony_skin::FrameSpec,
+    ) {
+        let images = crate::core::harmony_skin::render_skin_assets(colors, panel, frame);
+        let manifest = crate::config::skins::harmony_skin_manifest(
+            name.trim(),
+            params.scheme.name(),
+            &params.seed,
+            &colors.panel_top,
+            &colors.panel_bottom,
+            &colors.line,
+            &colors.accent,
+            frame.slice,
+        );
+        match crate::config::skins::write_harmony_skin(name, &manifest, &images) {
+            Ok(path) => {
+                self.app_core.add_system_message(&format!(
+                    "Harmony skin '{}' written to {}",
+                    name.trim(),
+                    path.display()
+                ));
+                self.app_core.add_system_message(&format!(
+                    "Activate with .setskin {} (frames 'harmony' and 'harmony-accent' \
+                     are also assignable per window).",
+                    name.trim()
+                ));
+            }
+            Err(err) => {
+                self.app_core
+                    .add_system_message(&format!("Cannot write harmony skin: {}", err));
+            }
+        }
+    }
+
     fn save_config_after_skin_change(&mut self) {
         if let Err(err) = self
             .app_core
@@ -4944,6 +4999,7 @@ impl VellumGuiApp {
             A::SetSkin(name) => self.apply_skin_by_name(&name),
             A::Skins => self.list_skins_to_window(),
             A::MakeSkin(name) => self.make_skin_scaffold(&name),
+            A::HarmonySkin(name) => self.write_harmony_skin_default(&name),
             A::ReloadSkin => match self.ui_settings.active_skin.clone() {
                 Some(name) => {
                     self.skin_state.force_reload();
