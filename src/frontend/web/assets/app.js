@@ -16,10 +16,20 @@ const STREAM_LABELS = {
   familiar: "Familiar",
   death: "Deaths",
   logons: "Arrivals",
+  inv: "Inventory",
+  whisper: "Whispers",
+  talk: "Talk",
+  speech: "Speech",
+  lnet: "LNet",
 };
+// Streams that never get a prose chip: duplicates of main, or data that
+// feeds a dedicated widget/drawer section rather than reading as prose.
+// `inv` and the social streams (whisper/talk/speech/lnet) are intentionally
+// NOT hidden — they get chips so a phone-only player can read carried items
+// and social traffic that host routing might otherwise strand.
 const HIDDEN_STREAMS = new Set([
-  "room", "inv", "spells", "percWindow", "bounty", "society", "assess",
-  "speech", "whisper", "talk", "experience",
+  "room", "spells", "percWindow", "bounty", "society", "assess",
+  "experience",
 ]);
 
 const pane = document.getElementById("text-pane");
@@ -1750,6 +1760,8 @@ function setRoomEntities(entities) {
     syncInteractFocus();
     renderInteract();
   }
+  // The status drawer shows a Players section fed from here.
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
 }
 
 /// Entities for one category, in display order: { key, label } plus
@@ -2889,9 +2901,11 @@ function openSettingsSheet() {
   sheetButton("Highlight rules (global)", () => openHighlightList("global"));
   sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
   sheetButton("Colors (global)", () => openColorsEditor("global"));
-  for (const file of EDITOR_FILES) {
-    sheetButton(file.label, () => openConfigEditor(file));
-  }
+  // Raw-TOML editing is an escape hatch, not a front door — editing TOML on
+  // a soft keyboard is a footgun and the structured editors above cover the
+  // same ground. Tuck the four file buttons behind one disclosure so they're
+  // reachable for import/export power users without crowding the main sheet.
+  sheetButton("Advanced: edit config files…", openAdvancedConfigSheet);
   // Viewing a desktop server from inside the app shell: the way home.
   // (The shell swaps the WebView back to its embedded login page.)
   if (inShell && location.hostname !== "127.0.0.1") {
@@ -2899,6 +2913,18 @@ function openSettingsSheet() {
       location.href = "vellum://local";
     });
   }
+}
+
+// Advanced raw-TOML config editing, one step removed from the main sheet.
+// Import/export of desktop configs lives here; the structured Highlight and
+// Colors editors on the main sheet are the primary path.
+function openAdvancedConfigSheet() {
+  openSheet("Advanced: config files");
+  sheetNote("Raw TOML — the structured editors are easier and safer.", false);
+  for (const file of EDITOR_FILES) {
+    sheetButton(file.label.replace(/^Advanced:\s*/, ""), () => openConfigEditor(file));
+  }
+  sheetButton("‹ Back to settings", openSettingsSheet);
 }
 
 document.getElementById("settings-btn").addEventListener("click", openSettingsSheet);
@@ -3272,11 +3298,14 @@ function playRemoteSound(d) {
 // usually allow it too; if a strict autoplay policy still rejects play(),
 // nothing appears.
 
-const MUSIC_OFF_KEY = "vellum-login-music-off";
-let musicOff = false;
+// Login music is OPT-IN on the phone: a phone auto-playing the Wizard FE
+// theme on every connect is a surprise-audio liability (public spaces,
+// battery). Stored as an explicit opt-IN flag; absent = off.
+const MUSIC_ON_KEY = "vellum-login-music-on";
+let musicOff = true;
 try {
-  musicOff = !!localStorage.getItem(MUSIC_OFF_KEY);
-} catch { /* default on */ }
+  musicOff = !localStorage.getItem(MUSIC_ON_KEY);
+} catch { /* default off */ }
 
 const musicBar = document.getElementById("music-bar");
 let loginMusic = null; // Audio element while playing
@@ -3294,9 +3323,9 @@ function setMusicOff(off) {
   musicOff = off;
   try {
     if (off) {
-      localStorage.setItem(MUSIC_OFF_KEY, "1");
+      localStorage.removeItem(MUSIC_ON_KEY);
     } else {
-      localStorage.removeItem(MUSIC_OFF_KEY);
+      localStorage.setItem(MUSIC_ON_KEY, "1");
     }
   } catch { /* private mode */ }
   if (off) stopLoginMusic();
@@ -4717,6 +4746,27 @@ function renderStatusDrawer() {
         row.appendChild(status);
       }
       row.addEventListener("click", () => tapCreature(t));
+      section.appendChild(row);
+    }
+    panel.appendChild(section);
+  }
+
+  // Players in the room: a standalone "who's here" list. The data already
+  // rides RemoteDelta::Entities (interact mode consumes it too); each row
+  // opens the player's noun menu via the same link-tap path as a target.
+  if (roomEntities.players.length) {
+    panel.appendChild(sectionTitle("Players"));
+    const section = document.createElement("div");
+    section.className = "status-section";
+    for (const p of roomEntities.players) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "status-row target-row";
+      const name = document.createElement("span");
+      name.textContent = p.label;
+      row.appendChild(name);
+      row.addEventListener("click", () =>
+        tapCreature({ id: p.id, noun: p.noun, name: p.label }));
       section.appendChild(row);
     }
     panel.appendChild(section);
