@@ -62,11 +62,30 @@ pub fn resolve_status(
             state_matched: true,
         };
     }
+    // No condition matched: pick the static icon by active/inactive. Active
+    // uses `icon_ref` (the "active/Y" icon); inactive uses `inactive_icon_ref`
+    // — which defaults to None, i.e. NO image while inactive (inactive art is
+    // opt-in, never a dimmed copy of the active icon).
     ResolvedStatusArt {
-        icon: template.icon_ref.clone(),
+        icon: static_status_icon(template, active),
         text: template.icon.clone(),
         color: static_status_color(template, active),
         state_matched: false,
+    }
+}
+
+/// The template's static icon for the active/inactive state. Active → the
+/// `icon_ref` (Y icon); inactive → `inactive_icon_ref` (N icon), which is
+/// None by default so an inactive indicator shows no image unless one was
+/// explicitly chosen.
+fn static_status_icon(
+    template: &crate::config::IndicatorTemplateEntry,
+    active: bool,
+) -> Option<crate::data::IconRef> {
+    if active {
+        template.icon_ref.clone()
+    } else {
+        template.inactive_icon_ref.clone()
     }
 }
 
@@ -412,6 +431,40 @@ mod tests {
         assert!(matches!(active.icon, Some(crate::data::IconRef::Image { .. })));
         let inactive = resolve_status(&t, false, &gs, 0, None);
         assert_eq!(inactive.color.as_deref(), Some("#555555"));
+    }
+
+    #[test]
+    fn resolve_status_active_uses_icon_ref_inactive_uses_inactive_icon_ref() {
+        let gs = GameState::new();
+        // No inactive icon set → active shows icon_ref, inactive shows NOTHING
+        // (inactive art is opt-in, never a dimmed copy of the active icon).
+        let t = template_with_states(vec![]);
+        assert!(
+            matches!(
+                resolve_status(&t, true, &gs, 0, None).icon,
+                Some(crate::data::IconRef::Image { .. })
+            ),
+            "active should use icon_ref"
+        );
+        assert!(
+            resolve_status(&t, false, &gs, 0, None).icon.is_none(),
+            "inactive should be blank when no inactive_icon_ref is set"
+        );
+
+        // With an inactive icon configured, inactive shows THAT image.
+        let mut t2 = template_with_states(vec![]);
+        t2.inactive_icon_ref = Some(crate::data::IconRef::Image {
+            path: "statusicons/bleeding_off.png".to_string(),
+        });
+        let inactive = resolve_status(&t2, false, &gs, 0, None);
+        assert!(
+            matches!(
+                inactive.icon,
+                Some(crate::data::IconRef::Image { ref path }) if path.ends_with("bleeding_off.png")
+            ),
+            "inactive should use the configured inactive_icon_ref, got {:?}",
+            inactive.icon
+        );
     }
 
     #[test]

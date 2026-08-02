@@ -42,10 +42,16 @@ pub struct IndicatorTemplateEntry {
     /// back-compat; `icon_ref` takes precedence for GUI art.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
-    /// Pickable default GUI icon (pool image / sheet cell). Resolved before
+    /// Pickable ACTIVE GUI icon (pool image / sheet cell): shown when the
+    /// indicator is active (game Y, or a matched condition). Resolved before
     /// the legacy `icon` string and the id-keyed skin/pictogram fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_ref: Option<crate::data::IconRef>,
+    /// Pickable INACTIVE GUI icon: shown when the indicator is inactive (game
+    /// N). None = show NO image while inactive (blank) — inactive art is
+    /// opt-in, never a dimmed copy of the active icon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_icon_ref: Option<crate::data::IconRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1636,6 +1642,7 @@ impl Config {
                     title: base.title.clone(),
                     icon: data.icon,
                     icon_ref: None,
+                    inactive_icon_ref: None,
                     inactive_color: data.inactive_color,
                     active_color: data.active_color,
                     default_status: data.default_status,

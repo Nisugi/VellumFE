@@ -1412,24 +1412,35 @@ impl VellumGuiApp {
                     Color32::from_rgb(0x55, 0x55, 0x55)
                 }
             });
-        // Icon precedence: a resolved IconRef (state icon or template default)
-        // via the skin/pool, then the id-keyed skin sprite, then the built-in
-        // pictogram; custom ids without art keep the text. "Gray when
-        // inactive" swaps the inactive sprite for its grayscale twin at full
-        // strength instead of the alpha dim. An explicit IconRef::None
-        // suppresses art (renders the artless fallback).
+        // Icon precedence: a resolved IconRef (state icon or template active
+        // icon) via the skin/pool, then — only when ACTIVE — the id-keyed skin
+        // sprite and the built-in pictogram; custom ids without art keep the
+        // text. When INACTIVE with no configured inactive icon (resolved.icon
+        // is None), render NOTHING: inactive art is opt-in, never a dimmed
+        // copy or a fallback pictogram. "Gray when inactive" still applies to
+        // a configured inactive sprite.
+        let inactive_blank = !indicator.active && resolved.icon.is_none();
+        // Nothing to draw and no active pictogram to fall back to: leave the
+        // cell blank (inactive with no configured inactive icon).
+        if inactive_blank {
+            return;
+        }
         let mut grayed = false;
         let sprite = match &resolved.icon {
-            Some(icon) => skin_art.and_then(|art| art.resolve_icon_ref(icon, &indicator.indicator_id)),
-            None => skin_art.and_then(|art| {
+            Some(icon) => skin_art.and_then(|art| {
                 if !indicator.active && gray_inactive {
-                    if let Some(icon) = art.icon_gray(&indicator.indicator_id) {
+                    // Grayscale twin of the configured inactive sprite, if any.
+                    if let Some(gray) = art.icon_gray(&indicator.indicator_id) {
                         grayed = true;
-                        return Some(icon);
+                        return Some(gray);
                     }
                 }
-                art.icon(&indicator.indicator_id)
+                art.resolve_icon_ref(icon, &indicator.indicator_id)
             }),
+            // Active + no explicit icon: fall through to the id-keyed skin
+            // sprite (and the built-in pictogram below) so "Default (by id)"
+            // shows the built-in art.
+            None => skin_art.and_then(|art| art.icon(&indicator.indicator_id)),
         };
         if sprite.is_some() || super::status_icons::supported(&indicator.indicator_id) {
             let side = ui

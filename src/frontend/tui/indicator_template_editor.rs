@@ -303,6 +303,9 @@ impl IndicatorTemplateEditor {
             .iter()
             .find(|tpl| tpl.key().eq_ignore_ascii_case(&key));
         let icon_ref = prior.and_then(|tpl| tpl.icon_ref.clone());
+        // GUI-only image fields (active/inactive icons) are carried through
+        // untouched — the TUI edits text/glyph/colors, never images.
+        let inactive_icon_ref = prior.and_then(|tpl| tpl.inactive_icon_ref.clone());
         let states = prior.map(|tpl| tpl.states.clone()).unwrap_or_default();
 
         let entry = IndicatorTemplateEntry {
@@ -311,6 +314,7 @@ impl IndicatorTemplateEditor {
             title: if title.is_empty() { None } else { Some(title) },
             icon: if icon.is_empty() { None } else { Some(icon) },
             icon_ref,
+            inactive_icon_ref,
             inactive_color: if inactive_color.is_empty() {
                 None
             } else {

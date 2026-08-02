@@ -31,8 +31,10 @@ pub(in super::super) struct IndicatorTemplatesEditorState {
 struct EntryBuffer {
     id: String,
     enabled: bool,
-    /// GUI: default image icon (pool image / sheet cell).
+    /// GUI: ACTIVE (Y) image icon (pool image / sheet cell).
     icon_ref: Option<crate::data::IconRef>,
+    /// GUI: INACTIVE (N) image icon; None = show nothing while inactive.
+    inactive_icon_ref: Option<crate::data::IconRef>,
     /// GUI: condition-driven image states (first match wins).
     states: Vec<crate::config::StatusIconState>,
     // --- TUI-owned, carried through untouched ---
@@ -51,6 +53,7 @@ impl EntryBuffer {
             id: entry.id.clone(),
             enabled: entry.enabled,
             icon_ref: entry.icon_ref.clone(),
+            inactive_icon_ref: entry.inactive_icon_ref.clone(),
             states: entry.states.clone(),
             name: entry.name.clone(),
             title: entry.title.clone(),
@@ -67,6 +70,7 @@ impl EntryBuffer {
             id: id.trim().to_string(),
             enabled: true,
             icon_ref: None,
+            inactive_icon_ref: None,
             states: Vec::new(),
             name: None,
             title: None,
@@ -85,6 +89,7 @@ impl EntryBuffer {
             title: self.title.clone(),
             icon: self.icon.clone(),
             icon_ref: self.icon_ref.clone(),
+            inactive_icon_ref: self.inactive_icon_ref.clone(),
             inactive_color: self.inactive_color.clone(),
             active_color: self.active_color.clone(),
             default_status: self.default_status.clone(),
@@ -307,72 +312,40 @@ impl VellumGuiApp {
                                         }
                                     });
                                     ui.separator();
-                                    ui.horizontal(|ui| {
-                                        ui.label("Default icon");
-                                        match super::icon_ref_picker(
-                                            ui,
-                                            format!("status_default_icon_{}", entry.id),
-                                            entry.icon_ref.as_ref(),
-                                            &pool_images,
-                                            &sheets,
-                                            Some("Default (by id)"),
-                                            None,
-                                            Some("None (no art)"),
-                                        ) {
-                                            Some(super::IconRefPick::Unset) => {
-                                                entry.icon_ref = None
-                                            }
-                                            Some(super::IconRefPick::Ref(picked)) => {
-                                                entry.icon_ref = Some(picked)
-                                            }
-                                            None => {}
-                                        }
-                                        if let Some(crate::data::IconRef::SheetCell {
-                                            cell,
-                                            ..
-                                        }) = &mut entry.icon_ref
-                                        {
-                                            let mut value = (*cell).max(1);
-                                            if ui
-                                                .add(
-                                                    egui::DragValue::new(&mut value)
-                                                        .range(1..=9999)
-                                                        .prefix("#"),
-                                                )
-                                                .changed()
-                                            {
-                                                *cell = value;
-                                            }
-                                        }
-                                    });
-                                    // Visual cell grid for the default icon when
-                                    // it's a sheet ref — click a sprite instead of
-                                    // guessing its number (same picker as hotbars).
-                                    if let (
-                                        Some(art),
-                                        Some(crate::data::IconRef::SheetCell { sheet, cell }),
-                                    ) = (art.as_ref(), &mut entry.icon_ref)
-                                    {
-                                        if let Some(count) = art.sheet_cell_count(sheet) {
-                                            egui::CollapsingHeader::new("Pick cell from sheet")
-                                                .id_salt(format!("status_default_grid_{}", entry.id))
-                                                .show(ui, |ui| {
-                                                    super::sheet_cell_grid(
-                                                        ui,
-                                                        &format!("status_default_{}", entry.id),
-                                                        sheet,
-                                                        cell,
-                                                        art,
-                                                        count,
-                                                        false,
-                                                    );
-                                                });
-                                        }
-                                    }
+                                    // Active (Y) icon: shown when the game
+                                    // reports this indicator active. "Default
+                                    // (by id)" falls back to the built-in
+                                    // pictogram / skin sprite named for the id.
+                                    Self::render_icon_picker_row(
+                                        ui,
+                                        &format!("status_active_icon_{}", entry.id),
+                                        "Active icon (Y)",
+                                        &mut entry.icon_ref,
+                                        Some("Default (by id)"),
+                                        Some("None (no art)"),
+                                        &pool_images,
+                                        &sheets,
+                                        art.as_deref(),
+                                    );
+                                    // Inactive (N) icon: shown when the game
+                                    // reports this indicator inactive. Defaults
+                                    // to no image — inactive art is opt-in, not
+                                    // a dimmed copy of the active icon.
+                                    Self::render_icon_picker_row(
+                                        ui,
+                                        &format!("status_inactive_icon_{}", entry.id),
+                                        "Inactive icon (N)",
+                                        &mut entry.inactive_icon_ref,
+                                        Some("None (blank)"),
+                                        None,
+                                        &pool_images,
+                                        &sheets,
+                                        art.as_deref(),
+                                    );
                                     ui.weak(
-                                        "Shown when no condition below matches. \
-                                         'Default (by id)' falls back to the skin/pool \
-                                         icon named for this id.",
+                                        "Active shows when the game reports this status on \
+                                         (Y); inactive when off (N). Inactive is blank unless \
+                                         you set an image. Conditions below override both.",
                                     );
                                     ui.separator();
                                     ui.strong("Conditions (first match wins)");
@@ -637,6 +610,60 @@ impl VellumGuiApp {
 
         if open {
             self.indicator_templates_editor = Some(state);
+        }
+    }
+
+    /// One labelled image-icon picker row: the IconRef combo, an inline
+    /// `#cell` spinner for sheet refs, and a collapsing visual cell grid.
+    /// Shared by the Active (Y) and Inactive (N) icon rows.
+    #[allow(clippy::too_many_arguments)]
+    fn render_icon_picker_row(
+        ui: &mut egui::Ui,
+        id_salt: &str,
+        label: &str,
+        icon: &mut Option<crate::data::IconRef>,
+        unset_label: Option<&str>,
+        none_label: Option<&str>,
+        pool_images: &[(String, String)],
+        sheets: &[String],
+        art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            match super::icon_ref_picker(
+                ui,
+                format!("{id_salt}_picker"),
+                icon.as_ref(),
+                pool_images,
+                sheets,
+                unset_label,
+                None,
+                none_label,
+            ) {
+                Some(super::IconRefPick::Unset) => *icon = None,
+                Some(super::IconRefPick::Ref(picked)) => *icon = Some(picked),
+                None => {}
+            }
+            if let Some(crate::data::IconRef::SheetCell { cell, .. }) = icon {
+                let mut value = (*cell).max(1);
+                if ui
+                    .add(egui::DragValue::new(&mut value).range(1..=9999).prefix("#"))
+                    .changed()
+                {
+                    *cell = value;
+                }
+            }
+        });
+        // Visual cell grid for sheet refs — click a sprite instead of typing
+        // its number (same picker as the hotbar editor).
+        if let (Some(art), Some(crate::data::IconRef::SheetCell { sheet, cell })) = (art, icon) {
+            if let Some(count) = art.sheet_cell_count(sheet) {
+                egui::CollapsingHeader::new("Pick cell from sheet")
+                    .id_salt(format!("{id_salt}_grid_header"))
+                    .show(ui, |ui| {
+                        super::sheet_cell_grid(ui, id_salt, sheet, cell, art, count, false);
+                    });
+            }
         }
     }
 
