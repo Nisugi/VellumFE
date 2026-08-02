@@ -109,6 +109,7 @@ default layouts.
 | `.addspellcolor` | `.newspellcolor` | Add a spell color entry |
 | `.setpalette` | | Load palette into terminal slots (TUI, 256-color mode) |
 | `.resetpalette` | | Reset the terminal palette (TUI) |
+| `.harmony [scheme]` | | Generate the game-text preset colors from the active theme (`.harmony schemes` lists the schemes; the GUI Colors editor's Generate tab adds seed swatches, pins, and a live preview) |
 
 ## Text-to-Speech
 

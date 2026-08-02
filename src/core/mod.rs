@@ -14,6 +14,7 @@ pub mod foreach;
 pub mod game_objects;
 pub mod gameobj_data;
 pub mod ghost_rooms;
+pub mod harmony;
 pub mod highlight_engine;
 pub mod hotbar;
 pub mod input_router;

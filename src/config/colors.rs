@@ -165,6 +165,41 @@ impl UiColors {
     }
 }
 
+/// Stored harmony-generation recipe (seed, scheme, controls, pins).
+/// Generation is deterministic from this tuple, so a generated look stays
+/// reproducible and re-tunable instead of frozen as opaque hex. Written by
+/// `.harmony` / the GUI Generate tab; scheme is a `core::harmony::Scheme`
+/// name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HarmonyRecipe {
+    pub seed: String,
+    pub background: String,
+    pub scheme: String,
+    #[serde(default = "harmony_default_variance")]
+    pub variance: f64,
+    #[serde(default = "harmony_default_min_contrast")]
+    pub min_contrast: f64,
+    #[serde(default = "harmony_default_separation")]
+    pub separation: f64,
+    #[serde(default = "harmony_default_room_spread")]
+    pub room_title_spread: f64,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pins: HashMap<String, String>,
+}
+
+fn harmony_default_variance() -> f64 {
+    1.0
+}
+fn harmony_default_min_contrast() -> f64 {
+    4.5
+}
+fn harmony_default_separation() -> f64 {
+    0.09
+}
+fn harmony_default_room_spread() -> f64 {
+    2.5
+}
+
 /// Color configuration - separate file (colors.toml)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColorConfig {
@@ -180,6 +215,9 @@ pub struct ColorConfig {
     // Color palette for .colors browser
     #[serde(default)]
     pub color_palette: Vec<PaletteColor>,
+    /// Last harmony-generation recipe, if the presets were ever generated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harmony: Option<HarmonyRecipe>,
 }
 
 impl Default for UiColors {
@@ -208,6 +246,7 @@ impl Default for ColorConfig {
                 ui: UiColors::default(),
                 spell_colors: Vec::new(),
                 color_palette: Vec::new(),
+                harmony: None,
             }
         })
     }
@@ -272,6 +311,7 @@ impl ColorConfig {
                 ui: UiColors::default(),
                 spell_colors: Vec::new(),
                 color_palette: Vec::new(),
+                harmony: None,
             })
         }
     }
@@ -327,6 +367,11 @@ impl ColorConfig {
         // Merge character color_palette (replace entire list if not empty)
         if !char_colors.color_palette.is_empty() {
             colors.color_palette = char_colors.color_palette;
+        }
+
+        // Character harmony recipe overrides the global one, if present
+        if char_colors.harmony.is_some() {
+            colors.harmony = char_colors.harmony;
         }
 
         tracing::debug!(
@@ -404,6 +449,130 @@ impl ColorConfig {
 
         colors.save(character)?;
         tracing::info!("Saved palette color '{}' to character colors", color.name);
+        Ok(())
+    }
+
+    /// Apply generated preset colors in-memory. Named palette entries that a
+    /// preset references are recolored in place (so slot-mode terminals and
+    /// every other consumer of the name update together); presets whose value
+    /// is a literal hex get the new hex directly. When two roles share one
+    /// palette entry (links and commands both ship pointing at "Link"), the
+    /// first role keeps the shared entry and later roles switch their preset
+    /// to a literal hex so both generated colors survive.
+    ///
+    /// Returns the palette-entry recolors performed as `(name, hex)` — the
+    /// character-scope shadow logic in `persist_generated_presets` needs them.
+    pub fn apply_generated_presets(
+        &mut self,
+        colors: &[(String, String)],
+        room_bg: &str,
+    ) -> Vec<(String, String)> {
+        let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut palette_updates: Vec<(String, String)> = Vec::new();
+        let mut apply_one = |cfg: &mut Self, role: &str, hex: &str, is_bg: bool| {
+            let current = cfg.presets.get(role).and_then(|preset| {
+                if is_bg {
+                    preset.bg.clone()
+                } else {
+                    preset.fg.clone()
+                }
+            });
+            let mut resolved_via_palette = false;
+            if let Some(name) = current.as_deref().filter(|v| !v.starts_with('#')) {
+                let key = name.to_lowercase();
+                if let Some(entry) = cfg
+                    .color_palette
+                    .iter_mut()
+                    .find(|entry| entry.name.to_lowercase() == key)
+                {
+                    if claimed.insert(key) {
+                        entry.color = hex.to_string();
+                        palette_updates.push((entry.name.clone(), hex.to_string()));
+                        resolved_via_palette = true;
+                    }
+                }
+            }
+            if !resolved_via_palette {
+                let preset = cfg.presets.entry(role.to_string()).or_insert(PresetColor {
+                    fg: None,
+                    bg: None,
+                });
+                if is_bg {
+                    preset.bg = Some(hex.to_string());
+                } else {
+                    preset.fg = Some(hex.to_string());
+                }
+            }
+        };
+        for (role, hex) in colors {
+            apply_one(self, role, hex, false);
+        }
+        apply_one(self, "roomName", room_bg, true);
+        palette_updates
+    }
+
+    /// Persist a generated color set (and its recipe) honoring the global +
+    /// character scope split. The full set lands in the global file; the
+    /// character file is touched only where it already shadows the result —
+    /// a non-empty character palette replaces the whole global list (so its
+    /// matching entries are recolored and missing ones added), and per-key
+    /// character preset overrides win over global (so those keys get the hex
+    /// directly). Both writes are atomic with .bak backups.
+    pub fn persist_generated_presets(
+        colors: &[(String, String)],
+        room_bg: &str,
+        recipe: &HarmonyRecipe,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let mut global = Self::load_common_colors()?;
+        let palette_updates = global.apply_generated_presets(colors, room_bg);
+        global.harmony = Some(recipe.clone());
+        global.save_common()?;
+
+        let mut chara = Self::load_character_colors_only(character)?;
+        let mut char_dirty = false;
+
+        // A non-empty character palette shadows the ENTIRE global list, so
+        // the recolors above would be invisible: mirror them here, adding
+        // entries the character list lacks (keeping the name indirection).
+        if !chara.color_palette.is_empty() {
+            for (name, hex) in &palette_updates {
+                let key = name.to_lowercase();
+                match chara
+                    .color_palette
+                    .iter_mut()
+                    .find(|entry| entry.name.to_lowercase() == key)
+                {
+                    Some(entry) => entry.color = hex.clone(),
+                    None => chara
+                        .color_palette
+                        .push(PaletteColor::new(name, hex, "presets")),
+                }
+            }
+            char_dirty = true;
+        }
+
+        // Character preset keys override global per-key: give literal-hex
+        // (or empty) overrides the generated hex. Name-valued overrides
+        // resolve through the palette, which the updates above already cover.
+        let mut override_role = |chara: &mut Self, role: &str, hex: &str, is_bg: bool| {
+            if let Some(preset) = chara.presets.get_mut(role) {
+                let value = if is_bg { &mut preset.bg } else { &mut preset.fg };
+                if !value.as_deref().is_some_and(|v| !v.starts_with('#')) {
+                    *value = Some(hex.to_string());
+                    return true;
+                }
+            }
+            false
+        };
+        for (role, hex) in colors {
+            char_dirty |= override_role(&mut chara, role, hex, false);
+        }
+        char_dirty |= override_role(&mut chara, "roomName", room_bg, true);
+
+        if char_dirty {
+            chara.save(character)?;
+        }
         Ok(())
     }
 
@@ -520,6 +689,100 @@ impl Config {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod harmony_apply_tests {
+    use super::*;
+
+    fn generated() -> Vec<(String, String)> {
+        [
+            ("links", "#111111"),
+            ("commands", "#222222"),
+            ("speech", "#333333"),
+            ("roomName", "#444444"),
+            ("target_indicator", "#bb2211"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect()
+    }
+
+    fn palette_hex(cfg: &ColorConfig, name: &str) -> String {
+        cfg.color_palette
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("palette entry '{name}' missing"))
+            .color
+            .clone()
+    }
+
+    #[test]
+    fn named_palette_entries_are_recolored_in_place() {
+        // The shipped defaults: presets.speech -> palette "Speech" etc.
+        let mut cfg = ColorConfig::default();
+        cfg.apply_generated_presets(&generated(), "#0a0a14");
+        assert_eq!(palette_hex(&cfg, "Speech"), "#333333");
+        assert_eq!(palette_hex(&cfg, "Room Name"), "#444444");
+        assert_eq!(palette_hex(&cfg, "Room Name BG"), "#0a0a14");
+        // Name indirection preserved: the preset still points at the name.
+        assert_eq!(cfg.presets["speech"].fg.as_deref(), Some("Speech"));
+        assert_eq!(cfg.presets["roomName"].bg.as_deref(), Some("Room Name BG"));
+    }
+
+    #[test]
+    fn shared_palette_entry_first_role_wins_later_roles_go_literal() {
+        // links and commands both ship pointing at palette "Link"; the two
+        // generated colors must BOTH survive.
+        let mut cfg = ColorConfig::default();
+        cfg.apply_generated_presets(&generated(), "#0a0a14");
+        assert_eq!(palette_hex(&cfg, "Link"), "#111111", "links claims the entry");
+        assert_eq!(
+            cfg.presets["commands"].fg.as_deref(),
+            Some("#222222"),
+            "commands switches to a literal hex"
+        );
+    }
+
+    #[test]
+    fn literal_hex_presets_are_overwritten_directly() {
+        // target_indicator ships as a literal (8-digit) hex, not a name.
+        let mut cfg = ColorConfig::default();
+        cfg.apply_generated_presets(&generated(), "#0a0a14");
+        assert_eq!(cfg.presets["target_indicator"].fg.as_deref(), Some("#bb2211"));
+    }
+
+    #[test]
+    fn missing_preset_keys_are_created() {
+        let mut cfg = ColorConfig::default();
+        cfg.presets.remove("speech");
+        cfg.apply_generated_presets(&generated(), "#0a0a14");
+        assert_eq!(cfg.presets["speech"].fg.as_deref(), Some("#333333"));
+    }
+
+    #[test]
+    fn recipe_survives_a_toml_round_trip() {
+        let mut cfg = ColorConfig::default();
+        cfg.harmony = Some(HarmonyRecipe {
+            seed: "#bf616a".into(),
+            background: "#2e3440".into(),
+            scheme: "triadic".into(),
+            variance: 1.4,
+            min_contrast: 7.0,
+            separation: 0.04,
+            room_title_spread: 2.5,
+            pins: std::iter::once(("speech".to_string(), "#12ab34".to_string())).collect(),
+        });
+        let text = toml::to_string_pretty(&cfg).expect("serialize with recipe");
+        let back: ColorConfig = toml::from_str(&text).expect("parse back");
+        let recipe = back.harmony.expect("recipe kept");
+        assert_eq!(recipe.seed, "#bf616a");
+        assert_eq!(recipe.scheme, "triadic");
+        assert_eq!(recipe.pins["speech"], "#12ab34");
+        // And absent stays absent (no empty [harmony] table emitted).
+        let cfg2 = ColorConfig::default();
+        assert!(!toml::to_string_pretty(&cfg2).unwrap().contains("[harmony]"));
     }
 }
 

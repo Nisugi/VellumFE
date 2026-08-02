@@ -1475,6 +1475,136 @@ impl AppCore {
         self.tick_foreach();
     }
 
+    /// `.harmony [scheme|schemes]` — regenerate the game-text preset colors
+    /// from the active theme with the harmony engine (`core::harmony`). The
+    /// GUI Colors editor's Generate tab is the interactive version; this
+    /// command gives the TUI the same engine with sensible defaults.
+    fn handle_harmony(&mut self, args: &[String]) {
+        use crate::config::{ColorConfig, HarmonyRecipe};
+        use crate::core::harmony::{self, HarmonyParams, Scheme};
+
+        if args.first().is_some_and(|a| a.eq_ignore_ascii_case("schemes")) {
+            self.add_system_message("=== Harmony schemes ===");
+            for scheme in Scheme::ALL {
+                self.add_system_message(&format!(
+                    "  {:<14} {}",
+                    scheme.name(),
+                    scheme.description()
+                ));
+            }
+            self.add_system_message(
+                "Usage: .harmony [scheme] - regenerate preset colors from the active theme",
+            );
+            return;
+        }
+
+        let theme = self.config.get_theme();
+        let background = theme.background_primary.to_hex();
+        // A stored recipe re-tunes the same look; ignore it once the theme
+        // background changed, since its seed was chosen against the old one.
+        let recipe = self
+            .config
+            .colors
+            .harmony
+            .clone()
+            .filter(|r| r.background.eq_ignore_ascii_case(&background));
+
+        let scheme = match args.first() {
+            Some(arg) => match Scheme::parse(arg) {
+                Some(scheme) => scheme,
+                None => {
+                    self.add_system_message(&format!(
+                        "Unknown scheme '{}'. Try .harmony schemes for the list.",
+                        arg
+                    ));
+                    return;
+                }
+            },
+            None => recipe
+                .as_ref()
+                .and_then(|r| Scheme::parse(&r.scheme))
+                .unwrap_or(Scheme::Triadic),
+        };
+        let seed = recipe
+            .as_ref()
+            .map(|r| r.seed.clone())
+            .or_else(|| theme.seed_swatches().into_iter().next())
+            .unwrap_or_else(|| theme.link_color.to_hex());
+
+        let defaults = HarmonyParams::default();
+        let params = HarmonyParams {
+            seed: seed.clone(),
+            background: background.clone(),
+            scheme,
+            variance: recipe.as_ref().map_or(defaults.variance, |r| r.variance),
+            min_contrast: recipe
+                .as_ref()
+                .map_or(defaults.min_contrast, |r| r.min_contrast),
+            separation: recipe
+                .as_ref()
+                .map_or(defaults.separation, |r| r.separation),
+            room_title_spread: recipe
+                .as_ref()
+                .map_or(defaults.room_title_spread, |r| r.room_title_spread),
+            pins: recipe.as_ref().map(|r| r.pins.clone()).unwrap_or_default(),
+        };
+
+        let result = harmony::generate(&params);
+        let new_recipe = HarmonyRecipe {
+            seed: params.seed.clone(),
+            background: params.background.clone(),
+            scheme: params.scheme.name().to_string(),
+            variance: params.variance,
+            min_contrast: params.min_contrast,
+            separation: params.separation,
+            room_title_spread: params.room_title_spread,
+            pins: params.pins.clone(),
+        };
+        let character = self.config.character.clone();
+        if let Err(err) = ColorConfig::persist_generated_presets(
+            &result.colors,
+            &result.room_bg,
+            &new_recipe,
+            character.as_deref(),
+        ) {
+            self.add_system_message(&format!("Harmony generation failed to save: {}", err));
+            return;
+        }
+        self.reload_colors();
+
+        self.add_system_message(&format!(
+            "=== Harmony: {} from seed {} on {} ===",
+            params.scheme.name(),
+            params.seed,
+            params.background
+        ));
+        for (role, hex) in &result.colors {
+            let contrast = harmony::wcag_contrast(hex, &params.background);
+            let pinned = if params.pins.contains_key(role) {
+                "  (pinned)"
+            } else {
+                ""
+            };
+            self.add_system_message(&format!(
+                "  {:<17} {}  {:.1}:1{}",
+                role, hex, contrast, pinned
+            ));
+        }
+        let plate_contrast = result
+            .color_for("roomName")
+            .map(|room| harmony::wcag_contrast(room, &result.room_bg))
+            .unwrap_or(1.0);
+        self.add_system_message(&format!(
+            "  {:<17} {}  {:.1}:1 vs room title (plate)",
+            "roomName bg", result.room_bg, plate_contrast
+        ));
+        self.add_system_message(
+            "Presets updated (previous colors.toml kept as .bak). \
+             .harmony schemes lists schemes; the GUI Colors editor's Generate \
+             tab offers seeds, pins, and preview.",
+        );
+    }
+
     fn handle_dot_command(&mut self, command: &str) -> Result<CommandOutcome> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
@@ -2007,6 +2137,10 @@ impl AppCore {
             }
             "resetpalette" => {
                 return Ok(CommandOutcome::Ui(UiAction::ResetPalette));
+            }
+            "harmony" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                self.handle_harmony(&args);
             }
 
             // Themes

@@ -288,6 +288,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "",
                 "Reset terminal palette to defaults (TUI)"
             ),
+            entry!(
+                &["harmony"],
+                "[scheme|schemes]",
+                "Generate preset colors from the active theme"
+            ),
         ],
     },
     CommandHelpSection {
