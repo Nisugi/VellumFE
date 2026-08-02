@@ -1200,6 +1200,8 @@ mod tests {
 
         let serialized = toml::to_string(&MiniVitalsWidgetData::default()).unwrap();
         assert!(!serialized.contains("depleted_color"));
+    }
+}
 
 #[cfg(test)]
 mod dashboard_layout_tests {
