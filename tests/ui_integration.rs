@@ -2520,6 +2520,9 @@ fn make_highlight_pattern(
         replace: None,
         stream: None,
         window: None,
+        set_status: None,
+        status_duration: None,
+        clear_status: None,
         compiled_regex: None,
     }
 }

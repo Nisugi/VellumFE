@@ -260,6 +260,9 @@ async fn async_run(
 
     // Create core application state
     let mut app_core = AppCore::new(config)?;
+    // The TUI has no fallback input bar (the GUI does), so the command
+    // input window renders even when the layout marks it hidden.
+    app_core.force_show_command_input = true;
 
     // Start the web frontend sidecar if enabled (off by default). The
     // server runs as a tokio task; core feeds it via the attached sink,
@@ -449,6 +452,16 @@ async fn async_run(
             }
         }
 
+        // Debounced layout autosave: window moves/resizes/edits write the
+        // profile auto-save slot once the layout has been stable for a few
+        // seconds, so they survive the console X button and crashes instead
+        // of only a clean quit.
+        app_core.tick_layout_autosave();
+
+        // Prime the item classifier while &mut is available; the render
+        // sync (hotbar/hand conditions) reads the immutable cache.
+        let _ = app_core.gameobj_data();
+
         // Drain the map worker + mapdb updater and tick the walk executor
         // (time-based waits like roundtime need a clock even when the game
         // is quiet), then send whatever travel queued through the same path
@@ -457,14 +470,37 @@ async fn async_run(
         app_core.poll_map();
         for command in app_core.take_outbound() {
             match app_core.send_command(command) {
-                Ok(out) if !out.is_empty() && !out.starts_with("action:") => {
+                Ok(crate::data::CommandOutcome::Game(out)) => {
                     app_core
                         .perf_stats
                         .record_bytes_sent((out.len() + 1) as u64);
                     let _ = command_tx.send(out);
                 }
+                // Travel never produces UI actions; drop defensively.
                 Ok(_) => {}
                 Err(e) => tracing::warn!("travel command failed: {e}"),
+            }
+        }
+
+        // Feed-injected dot-commands (<vellumCmd> from Lich scripts) run
+        // through the same dispatch as typed dot-commands; UI outcomes
+        // route into the action handler like menu picks do. (Game
+        // outcomes are deliberately not forwarded — vellumCmd is a
+        // dot-command channel, not a command injector.)
+        for command in app_core.take_pending_client_commands() {
+            match app_core.send_command(command) {
+                Ok(crate::data::CommandOutcome::Ui(action)) => {
+                    if let Err(e) = crate::frontend::tui::menu_actions::handle_ui_action(
+                        &mut app_core,
+                        &mut frontend,
+                        action,
+                    ) {
+                        tracing::warn!("vellumCmd action failed: {e}");
+                    }
+                    app_core.needs_render = true;
+                }
+                Ok(_) => app_core.needs_render = true,
+                Err(e) => tracing::warn!("vellumCmd failed: {e}"),
             }
         }
 
@@ -770,13 +806,11 @@ async fn async_run(
                     app_core
                         .perf_stats
                         .record_bytes_received((line.len() + 1) as u64);
-                    let parse_start = Instant::now();
-                    // Process incoming server data through parser
+                    // Process incoming server data through parser (parse
+                    // timing is recorded inside process_server_data).
                     if let Err(e) = app_core.process_server_data(&line) {
                         tracing::error!("Error processing server data: {}", e);
                     }
-                    let parse_duration = parse_start.elapsed();
-                    app_core.perf_stats.record_parse(parse_duration);
 
                     // Adjust content-driven window sizes (e.g., Betrayer auto-resize)
                     app_core.adjust_content_driven_windows();

@@ -44,6 +44,9 @@ struct HighlightFormState {
     replace: String,
     stream: String,
     window: String,
+    set_status: String,
+    status_duration: String,
+    clear_status: String,
     is_global: bool,
     error: Option<String>,
 }
@@ -71,6 +74,9 @@ impl HighlightFormState {
             replace: String::new(),
             stream: String::new(),
             window: String::new(),
+            set_status: String::new(),
+            status_duration: String::new(),
+            clear_status: String::new(),
             is_global: true,
             error: None,
         }
@@ -101,6 +107,12 @@ impl HighlightFormState {
             replace: pattern.replace.clone().unwrap_or_default(),
             stream: pattern.stream.clone().unwrap_or_default(),
             window: pattern.window.clone().unwrap_or_default(),
+            set_status: pattern.set_status.clone().unwrap_or_default(),
+            status_duration: pattern
+                .status_duration
+                .map(|secs| secs.to_string())
+                .unwrap_or_default(),
+            clear_status: pattern.clear_status.clone().unwrap_or_default(),
             is_global,
             error: None,
         }
@@ -135,6 +147,14 @@ impl HighlightFormState {
                     .map(|volume| volume.clamp(0.0, 1.0))?,
             ),
         };
+        let status_duration = match self.status_duration.trim() {
+            "" => None,
+            text => Some(
+                text.parse::<f32>()
+                    .map_err(|_| "Status duration must be a number of seconds.".to_string())
+                    .map(|secs| secs.max(0.0))?,
+            ),
+        };
 
         Ok((
             name,
@@ -160,6 +180,9 @@ impl HighlightFormState {
                 replace: opt(&self.replace),
                 stream: opt(&self.stream),
                 window: opt(&self.window),
+                set_status: opt(&self.set_status),
+                status_duration,
+                clear_status: opt(&self.clear_status),
                 compiled_regex: None,
             },
         ))
@@ -240,6 +263,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Highlights")
             .id(egui::Id::new("gui_highlight_browser"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(460.0)
             .default_height(420.0)
@@ -357,6 +381,7 @@ impl VellumGuiApp {
             };
             egui::Window::new(title)
                 .id(egui::Id::new("gui_highlight_form"))
+                .order(egui::Order::Foreground)
                 .open(&mut form_open)
                 .default_width(420.0)
                 .show(ctx, |ui| {
@@ -438,6 +463,26 @@ impl VellumGuiApp {
                                     ui.end_row();
                                     ui.label("Window");
                                     ui.text_edit_singleline(&mut form.window);
+                                    ui.end_row();
+                                    ui.label("Set status")
+                                        .on_hover_text(
+                                            "Custom status id to activate on match; indicator \
+                                             and dashboard widgets with this id light up.",
+                                        );
+                                    ui.text_edit_singleline(&mut form.set_status);
+                                    ui.end_row();
+                                    ui.label("Status duration")
+                                        .on_hover_text(
+                                            "Seconds until the set status clears itself; empty \
+                                             = stays on until a clear-status rule matches.",
+                                        );
+                                    ui.text_edit_singleline(&mut form.status_duration);
+                                    ui.end_row();
+                                    ui.label("Clear status")
+                                        .on_hover_text(
+                                            "Custom status id to deactivate on match.",
+                                        );
+                                    ui.text_edit_singleline(&mut form.clear_status);
                                     ui.end_row();
                                 });
 

@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use super::AppCore;
+use crate::data::{CommandOutcome, ShellZoneTarget, UiAction, ZoneOp};
 
 /// Compass/vertical movement words — everything else in a room's wayto
 /// edges is a "portal" (go door, climb stair, enter hole, ...).
@@ -92,9 +93,7 @@ fn split_sleep_macro(
 
 impl AppCore {
     /// Send command to server
-    pub fn send_command(&mut self, command: String) -> Result<String> {
-        use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
-
+    pub fn send_command(&mut self, command: String) -> Result<CommandOutcome> {
         // Macro sleep segments: `look\rs2.5\rhide` pauses 2.5s between the
         // commands (paused segments go out via take_outbound when due).
         // Only strings containing a sleep segment take this path — plain
@@ -105,12 +104,15 @@ impl AppCore {
             }
             return match immediate {
                 Some(text) => self.send_command(text),
-                None => Ok(String::new()),
+                None => Ok(CommandOutcome::Handled),
             };
         }
 
-        // Check for dot commands (local client commands)
+        // Check for dot commands (local client commands). They never reach
+        // the server, but they're still user input — echo them like any
+        // other command instead of executing silently.
         if command.starts_with('.') {
+            self.echo_command_to_main(&command);
             return self.handle_dot_command(&command);
         }
 
@@ -127,108 +129,119 @@ impl AppCore {
         }
 
         // Echo command to windows subscribed to "main" stream
-        if self.config.ui.command_echo && !command.is_empty() {
-            // Get windows subscribed to "main" stream
-            let subscribers: Vec<String> = self
+        self.echo_command_to_main(&command);
+
+        // Command history is now managed by the CommandInput widget
+
+        // Return command for network layer to send (network layer adds newline)
+        Ok(CommandOutcome::Game(command))
+    }
+
+    /// Echo a user-entered command to every window subscribed to "main"
+    /// (prompt + command in the configured echo color), honoring the
+    /// `command_echo` setting. Shared by the server send path and dot
+    /// commands, which execute locally but should still show what was typed.
+    pub(crate) fn echo_command_to_main(&mut self, command: &str) {
+        use crate::data::{SpanType, StyledLine, TextSegment, WindowContent};
+
+        if !self.config.ui.command_echo || command.is_empty() {
+            return;
+        }
+        // Get windows subscribed to "main" stream
+        let subscribers: Vec<String> = self
+            .message_processor
+            .get_stream_subscribers("main")
+            .to_vec();
+
+        tracing::info!(
+            "[SEND_COMMAND] Echoing command to {} windows subscribed to 'main': {:?}",
+            subscribers.len(),
+            subscribers
+        );
+
+        // Build the styled line once
+        let mut segments = Vec::new();
+
+        // Add prompt with per-character coloring (same as prompt rendering)
+        tracing::debug!(
+            "[SEND_COMMAND] Building styled line with prompt: '{}'",
+            self.game_state.last_prompt
+        );
+        for ch in self.game_state.last_prompt.chars() {
+            // Prebuilt prompt color map (see MessageProcessor::build_prompt_color_map)
+            let color = self
                 .message_processor
-                .get_stream_subscribers("main")
-                .to_vec();
+                .prompt_char_color(ch)
+                .map(str::to_string)
+                .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
 
-            tracing::info!(
-                "[SEND_COMMAND] Echoing command to {} windows subscribed to 'main': {:?}",
-                subscribers.len(),
-                subscribers
-            );
-
-            // Build the styled line once
-            let mut segments = Vec::new();
-
-            // Add prompt with per-character coloring (same as prompt rendering)
-            tracing::debug!(
-                "[SEND_COMMAND] Building styled line with prompt: '{}'",
-                self.game_state.last_prompt
-            );
-            for ch in self.game_state.last_prompt.chars() {
-                // Prebuilt prompt color map (see MessageProcessor::build_prompt_color_map)
-                let color = self
-                    .message_processor
-                    .prompt_char_color(ch)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| "#808080".to_string()); // Default dark gray
-
-                segments.push(TextSegment {
-                    text: ch.to_string(),
-                    fg: Some(color),
-                    bg: None,
-                    bold: false,
-                    mono: false,
-                    span_type: SpanType::Normal,
-                    link_data: None,
-                });
-            }
-
-            // Add the command text (in default color)
             segments.push(TextSegment {
-                text: command.clone(),
-                fg: Some("#ffffff".to_string()), // White text for command
+                text: ch.to_string(),
+                fg: Some(color),
                 bg: None,
                 bold: false,
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
             });
+        }
 
-            let styled_line = StyledLine {
-                segments,
-                stream: String::from("main"),
-                timestamp: None,
-            };
+        // Add the command text in the configured echo color
+        segments.push(TextSegment {
+            text: command.to_string(),
+            fg: Some(self.config.colors.ui.command_echo_color.clone()),
+            bg: None,
+            bold: false,
+            mono: false,
+            span_type: SpanType::Normal,
+            link_data: None,
+        });
 
-            // Echo bypasses the message pipeline, so mirror it to remote
-            // clients explicitly (they see the same echo as local windows)
-            if let Some(remote) = self.message_processor.remote.as_mut() {
-                remote.push_text("main", std::sync::Arc::new(styled_line.clone()));
-            }
+        let styled_line = StyledLine {
+            segments,
+            stream: String::from("main"),
+            timestamp: None,
+        };
 
-            // Add the styled line to each subscriber window
-            for window_name in subscribers {
-                if let Some(window) = self.ui_state.windows.get_mut(&window_name) {
-                    match &mut window.content {
-                        WindowContent::Text(ref mut content) => {
-                            content.add_line(styled_line.clone());
-                            tracing::info!(
-                                "[SEND_COMMAND] Added command echo to text window '{}'",
-                                window_name
-                            );
-                        }
-                        WindowContent::TabbedText(ref mut tabbed_content) => {
-                            // Find tab(s) subscribed to "main" stream and add the line
-                            for tab in tabbed_content.tabs.iter_mut() {
-                                if tab
-                                    .definition
-                                    .streams
-                                    .iter()
-                                    .any(|s| s.eq_ignore_ascii_case("main"))
-                                {
-                                    tab.content.add_line(styled_line.clone());
-                                    tracing::info!(
-                                        "[SEND_COMMAND] Added command echo to tabbed window '{}' tab '{}'",
-                                        window_name,
-                                        tab.definition.name
-                                    );
-                                }
+        // Echo bypasses the message pipeline, so mirror it to remote
+        // clients explicitly (they see the same echo as local windows)
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_text("main", std::sync::Arc::new(styled_line.clone()));
+        }
+
+        // Add the styled line to each subscriber window
+        for window_name in subscribers {
+            if let Some(window) = self.ui_state.windows.get_mut(&window_name) {
+                match &mut window.content {
+                    WindowContent::Text(ref mut content) => {
+                        content.add_line(styled_line.clone());
+                        tracing::info!(
+                            "[SEND_COMMAND] Added command echo to text window '{}'",
+                            window_name
+                        );
+                    }
+                    WindowContent::TabbedText(ref mut tabbed_content) => {
+                        // Find tab(s) subscribed to "main" stream and add the line
+                        for tab in tabbed_content.tabs.iter_mut() {
+                            if tab
+                                .definition
+                                .streams
+                                .iter()
+                                .any(|s| s.eq_ignore_ascii_case("main"))
+                            {
+                                tab.content.add_line(styled_line.clone());
+                                tracing::info!(
+                                    "[SEND_COMMAND] Added command echo to tabbed window '{}' tab '{}'",
+                                    window_name,
+                                    tab.definition.name
+                                );
                             }
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
         }
-
-        // Command history is now managed by the CommandInput widget
-
-        // Return command for network layer to send (network layer adds newline)
-        Ok(command)
     }
 
     /// `.webinfo`: the phone-onboarding pairing URL and QR code.
@@ -500,23 +513,47 @@ impl AppCore {
         } else {
             crate::core::uipack::PARTS.iter().map(|s| s.to_string()).collect()
         };
+        self.uiexport_pack(&name, &parts, None, extra_files);
+    }
+
+    /// Build a pack; shared by `.uiexport` and the pack editor panels
+    /// (which pass an explicit destination folder). Returns success.
+    pub fn uiexport_pack(
+        &mut self,
+        name: &str,
+        parts: &[String],
+        dest_dir: Option<std::path::PathBuf>,
+        extra_files: Vec<(String, Vec<u8>)>,
+    ) -> bool {
         let layout_toml = self.layout.clone().to_share_toml().ok();
         let base = match crate::config::Config::base_dir() {
             Ok(base) => base,
             Err(e) => {
                 self.add_system_message(&format!("Export failed: {e:#}"));
-                return;
+                return false;
             }
         };
-        match crate::core::uipack::export(
-            &base,
-            &name,
-            &parts,
-            self.config.character.as_deref(),
+        let quickbars_toml = toml::to_string_pretty(&crate::core::uipack::QuickbarsFile {
+            quickbars: self.config.quickbars.clone(),
+        })
+        .ok();
+        let settings_toml = toml::to_string_pretty(
+            &crate::core::uipack::ShareableSettings::from_config(&self.config),
+        )
+        .ok();
+        let request = crate::core::uipack::ExportRequest {
+            name,
+            parts,
+            character: self.config.character.as_deref(),
             layout_toml,
-            self.config.active_skin.as_deref(),
-            &extra_files,
-        ) {
+            active_skin: self.config.active_skin.as_deref(),
+            active_theme: Some(self.config.active_theme.as_str()),
+            quickbars_toml,
+            settings_toml,
+            extra_files: &extra_files,
+            dest_dir: dest_dir.as_deref(),
+        };
+        match crate::core::uipack::export(&base, &request) {
             Ok((path, included)) => {
                 self.add_system_message(&format!(
                     "Exported UI pack '{}' ({}) to {}",
@@ -527,8 +564,12 @@ impl AppCore {
                 self.add_system_message(
                     "Share the file anywhere — it carries no account or connection settings.",
                 );
+                true
             }
-            Err(e) => self.add_system_message(&format!("Export failed: {e:#}")),
+            Err(e) => {
+                self.add_system_message(&format!("Export failed: {e:#}"));
+                false
+            }
         }
     }
 
@@ -575,7 +616,7 @@ impl AppCore {
                             .unwrap_or_default()
                     ));
                     self.add_system_message(&format!(
-                        "{} file(s). Run `.uiimport {} apply` to install — replaced files are backed up.",
+                        "{} file(s). Run `.uiimport {} apply [parts...]` to install — replaced files are backed up.",
                         preview.entries.len(),
                         target
                     ));
@@ -585,7 +626,33 @@ impl AppCore {
             return None;
         }
 
-        match crate::core::uipack::apply(&base, &path, self.config.character.as_deref()) {
+        // `.uiimport <name> apply [parts...]` — extra args limit the
+        // install to those parts.
+        let selected: Option<Vec<String>> = (args.len() > 2)
+            .then(|| args[2..].iter().map(|s| s.to_lowercase()).collect());
+        self.uiimport_apply(&path, selected.as_deref())
+    }
+
+    /// Install a pack from a resolved path; shared by `.uiimport ... apply`
+    /// and the pack editor panels. `selected` limits to those parts.
+    pub fn uiimport_apply(
+        &mut self,
+        path: &std::path::Path,
+        selected: Option<&[String]>,
+    ) -> Option<(String, Vec<u8>)> {
+        let base = match crate::config::Config::base_dir() {
+            Ok(base) => base,
+            Err(e) => {
+                self.add_system_message(&format!("Import failed: {e:#}"));
+                return None;
+            }
+        };
+        match crate::core::uipack::apply(
+            &base,
+            path,
+            self.config.character.as_deref(),
+            selected,
+        ) {
             Ok(outcome) => {
                 for note in &outcome.notes {
                     self.add_system_message(&format!("uiimport: {note}"));
@@ -595,6 +662,35 @@ impl AppCore {
                         "Replaced files backed up to {}",
                         dir.display()
                     ));
+                }
+                // Config-merging parts first, so the hot reloads below see
+                // the merged state.
+                if let Some(text) = &outcome.quickbars_toml {
+                    match toml::from_str::<crate::core::uipack::QuickbarsFile>(text) {
+                        Ok(file) => {
+                            self.config.quickbars = file.quickbars;
+                            let _ = self.save_config();
+                            self.add_system_message("Quickbars installed.");
+                        }
+                        Err(e) => self.add_system_message(&format!(
+                            "Pack's quickbars did not parse: {e:#}"
+                        )),
+                    }
+                }
+                if let Some(text) = &outcome.settings_toml {
+                    match toml::from_str::<crate::core::uipack::ShareableSettings>(text) {
+                        Ok(settings) => {
+                            settings.apply_to(&mut self.config);
+                            let _ = self.save_config();
+                            self.apply_tts_settings();
+                            self.add_system_message(
+                                "General settings installed (connection settings are never touched; some take effect on restart).",
+                            );
+                        }
+                        Err(e) => self.add_system_message(&format!(
+                            "Pack's settings did not parse: {e:#}"
+                        )),
+                    }
                 }
                 // Hot-reload everything the pack can touch.
                 self.reload_keybinds();
@@ -623,11 +719,17 @@ impl AppCore {
                         "Active skin set to '{skin}' (the GUI applies it on next load or via Settings > Appearance)"
                     ));
                 }
+                if let Some(theme) = &outcome.theme {
+                    self.config.active_theme = theme.clone();
+                    let _ = self.save_config();
+                    self.add_system_message(&format!("Active theme set to '{theme}'."));
+                }
                 if let Some(layout) = &outcome.layout_name {
                     self.add_system_message(&format!(
                         "TUI layout installed — load it with .loadlayout {layout}"
                     ));
                 }
+                self.needs_render = true;
                 let pack_name = path
                     .file_stem()
                     .map(|s| s.to_string_lossy().to_string())
@@ -765,6 +867,167 @@ impl AppCore {
 
     /// `.mapdb` — map data management from any frontend. Subcommands:
     /// `status` (default), `download`, `remove`, `repo <owner/repo>`.
+    /// The `.jinx` asset-manager command. Network operations run off-thread
+    /// (`jinx_worker`); `repo` list/add/rm/change edit `repos.toml` inline.
+    fn handle_jinx(&mut self, args: &[String]) {
+        use crate::core::jinx::worker::Request;
+
+        // Keep the worker's repo-seed gate current with the character's game.
+        // (parse_jinx_flags is a free fn below so it can be unit-tested.)
+        let game = self.game_type();
+        self.jinx_worker.set_game(game);
+
+        // Split flags (--repo=NAME, --force, --dry-run) from positional args.
+        let (flags, pos) = match parse_jinx_flags(args) {
+            Ok(parsed) => parsed,
+            Err(bad) => {
+                self.add_system_message(&format!("[jinx] unknown flag '{bad}'"));
+                return;
+            }
+        };
+        let JinxFlags { only_repo, force, dry_run } = flags;
+
+        let sub = pos.first().copied().unwrap_or("help");
+        match sub {
+            "help" | "?" => self.jinx_help(),
+
+            // --- repo management: inline, no network ---
+            "repo" => self.handle_jinx_repo(&pos[1..]),
+
+            // --- network commands: off-thread ---
+            "list" => {
+                let ack = self.jinx_worker.start(Request::List { only_repo });
+                self.add_system_message(&ack);
+            }
+            "search" => match pos.get(1) {
+                Some(pattern) => {
+                    let ack = self
+                        .jinx_worker
+                        .start(Request::Search { pattern: pattern.to_string() });
+                    self.add_system_message(&ack);
+                }
+                None => self.add_system_message("[jinx] usage: .jinx search <pattern>"),
+            },
+            "info" => match pos.get(1) {
+                Some(name) => {
+                    let ack = self.jinx_worker.start(Request::Info {
+                        name: name.to_string(),
+                        only_repo,
+                    });
+                    self.add_system_message(&ack);
+                }
+                None => self.add_system_message("[jinx] usage: .jinx info <name>"),
+            },
+            "install" => match pos.get(1) {
+                Some(name) => {
+                    let ack = self.jinx_worker.start(Request::Install {
+                        name: name.to_string(),
+                        only_repo,
+                        overwrite: force,
+                    });
+                    self.add_system_message(&ack);
+                }
+                None => self.add_system_message("[jinx] usage: .jinx install <name> [--repo=<r>]"),
+            },
+            "update" => match pos.get(1) {
+                // Update is install with overwrite; a bare `.jinx update`
+                // updates everything (auto-update).
+                Some(name) => {
+                    let ack = self.jinx_worker.start(Request::Install {
+                        name: name.to_string(),
+                        only_repo,
+                        overwrite: true,
+                    });
+                    self.add_system_message(&ack);
+                }
+                None => {
+                    let ack = self.jinx_worker.start(Request::AutoUpdate { dry_run });
+                    self.add_system_message(&ack);
+                }
+            },
+            "auto-update" => {
+                let ack = self.jinx_worker.start(Request::AutoUpdate { dry_run });
+                self.add_system_message(&ack);
+            }
+
+            other => {
+                self.add_system_message(&format!("[jinx] unknown command '{other}'"));
+                self.jinx_help();
+            }
+        }
+    }
+
+    /// `.jinx repo ...` — list/add/rm/change repository sources, edited inline
+    /// on `repos.toml` (no network). Seeding uses the character's game.
+    fn handle_jinx_repo(&mut self, args: &[&str]) {
+        let game = self.game_type();
+        let mut list = match crate::core::jinx::repo::RepoList::load_or_seed(game) {
+            Ok(l) => l,
+            Err(e) => {
+                self.add_system_message(&format!("[jinx] cannot load repos: {e}"));
+                return;
+            }
+        };
+        match args.first().copied().unwrap_or("list") {
+            "list" => {
+                for repo in &list.repos {
+                    self.add_system_message(&format!("  {} — {}", repo.name, repo.url));
+                }
+                if list.repos.is_empty() {
+                    self.add_system_message("[jinx] no repositories configured");
+                }
+            }
+            "add" => match (args.get(1), args.get(2)) {
+                (Some(name), Some(url)) => match list.add(name, url) {
+                    Ok(()) => match list.save() {
+                        Ok(()) => self.add_system_message(&format!("[jinx] added repo '{name}'")),
+                        Err(e) => self.add_system_message(&format!("[jinx] save failed: {e}")),
+                    },
+                    Err(e) => self.add_system_message(&format!("[jinx] {e}")),
+                },
+                _ => self.add_system_message("[jinx] usage: .jinx repo add <name> <https-url>"),
+            },
+            "rm" | "remove" => match args.get(1) {
+                Some(name) => match list.remove(name) {
+                    Ok(()) => match list.save() {
+                        Ok(()) => self.add_system_message(&format!("[jinx] removed repo '{name}'")),
+                        Err(e) => self.add_system_message(&format!("[jinx] save failed: {e}")),
+                    },
+                    Err(e) => self.add_system_message(&format!("[jinx] {e}")),
+                },
+                None => self.add_system_message("[jinx] usage: .jinx repo rm <name>"),
+            },
+            "change" => match (args.get(1), args.get(2)) {
+                (Some(name), Some(url)) => match list.change(name, url) {
+                    Ok(()) => match list.save() {
+                        Ok(()) => self.add_system_message(&format!("[jinx] repo '{name}' -> {url}")),
+                        Err(e) => self.add_system_message(&format!("[jinx] save failed: {e}")),
+                    },
+                    Err(e) => self.add_system_message(&format!("[jinx] {e}")),
+                },
+                _ => self.add_system_message("[jinx] usage: .jinx repo change <name> <https-url>"),
+            },
+            other => self.add_system_message(&format!(
+                "[jinx] unknown repo command '{other}' (list|add|rm|change)"
+            )),
+        }
+    }
+
+    fn jinx_help(&mut self) {
+        for line in [
+            "[jinx] asset manager — download skins, icons, layouts, game data",
+            "  .jinx list [--repo=<r>]        list available assets",
+            "  .jinx search <pattern>         search asset names",
+            "  .jinx info <name>              show details",
+            "  .jinx install <name> [--force] install an asset",
+            "  .jinx update [<name>]          update one asset, or all if omitted",
+            "  .jinx auto-update [--dry-run]  update every installed asset",
+            "  .jinx repo list|add|rm|change  manage repositories",
+        ] {
+            self.add_system_message(line);
+        }
+    }
+
     fn handle_mapdb(&mut self, args: &[String]) {
         use crate::core::mapdb_update::UpdateStatus;
         match args.first().map(String::as_str).unwrap_or("status") {
@@ -1212,12 +1475,168 @@ impl AppCore {
         self.tick_foreach();
     }
 
-    fn handle_dot_command(&mut self, command: &str) -> Result<String> {
+    /// Harmony parameters for this session: the stored recipe when it was
+    /// generated against the current theme background (so a saved look stays
+    /// re-tunable), else theme-derived defaults seeded from the most vivid
+    /// theme swatch. Shared by `.harmony`, `.harmony skin`, and the GUI
+    /// Generate tab's action handler.
+    pub fn harmony_params(&self) -> crate::core::harmony::HarmonyParams {
+        use crate::core::harmony::{HarmonyParams, Scheme};
+        let theme = self.config.get_theme();
+        let background = theme.background_primary.to_hex();
+        // A stored recipe re-tunes the same look; ignore it once the theme
+        // background changed, since its seed was chosen against the old one.
+        let recipe = self
+            .config
+            .colors
+            .harmony
+            .clone()
+            .filter(|r| r.background.eq_ignore_ascii_case(&background));
+        let seed = recipe
+            .as_ref()
+            .map(|r| r.seed.clone())
+            .or_else(|| theme.seed_swatches().into_iter().next())
+            .unwrap_or_else(|| theme.link_color.to_hex());
+        let defaults = HarmonyParams::default();
+        HarmonyParams {
+            seed,
+            background,
+            scheme: recipe
+                .as_ref()
+                .and_then(|r| Scheme::parse(&r.scheme))
+                .unwrap_or(defaults.scheme),
+            variance: recipe.as_ref().map_or(defaults.variance, |r| r.variance),
+            min_contrast: recipe
+                .as_ref()
+                .map_or(defaults.min_contrast, |r| r.min_contrast),
+            separation: recipe
+                .as_ref()
+                .map_or(defaults.separation, |r| r.separation),
+            room_title_spread: recipe
+                .as_ref()
+                .map_or(defaults.room_title_spread, |r| r.room_title_spread),
+            pins: recipe.as_ref().map(|r| r.pins.clone()).unwrap_or_default(),
+        }
+    }
+
+    /// `.harmony [scheme|schemes]` — regenerate the game-text preset colors
+    /// from the active theme with the harmony engine (`core::harmony`). The
+    /// GUI Colors editor's Generate tab is the interactive version; this
+    /// command gives the TUI the same engine with sensible defaults.
+    fn handle_harmony(&mut self, args: &[String]) {
+        use crate::config::{ColorConfig, HarmonyRecipe};
+        use crate::core::harmony::{self, Scheme};
+
+        if args.first().is_some_and(|a| a.eq_ignore_ascii_case("schemes")) {
+            self.add_system_message("=== Harmony schemes ===");
+            for scheme in Scheme::ALL {
+                self.add_system_message(&format!(
+                    "  {:<14} {}",
+                    scheme.name(),
+                    scheme.description()
+                ));
+            }
+            self.add_system_message(
+                "Usage: .harmony [scheme] - regenerate preset colors from the active \
+                 theme; .harmony skin <name> - write a matching skin",
+            );
+            return;
+        }
+
+        let mut params = self.harmony_params();
+        if let Some(arg) = args.first() {
+            match Scheme::parse(arg) {
+                Some(scheme) => params.scheme = scheme,
+                None => {
+                    self.add_system_message(&format!(
+                        "Unknown scheme '{}'. Try .harmony schemes for the list.",
+                        arg
+                    ));
+                    return;
+                }
+            }
+        }
+
+        let result = harmony::generate(&params);
+        let new_recipe = HarmonyRecipe {
+            seed: params.seed.clone(),
+            background: params.background.clone(),
+            scheme: params.scheme.name().to_string(),
+            variance: params.variance,
+            min_contrast: params.min_contrast,
+            separation: params.separation,
+            room_title_spread: params.room_title_spread,
+            pins: params.pins.clone(),
+        };
+        let character = self.config.character.clone();
+        if let Err(err) = ColorConfig::persist_generated_presets(
+            &result.colors,
+            &result.room_bg,
+            &result.prompts,
+            &new_recipe,
+            character.as_deref(),
+        ) {
+            self.add_system_message(&format!("Harmony generation failed to save: {}", err));
+            return;
+        }
+        self.reload_colors();
+
+        self.add_system_message(&format!(
+            "=== Harmony: {} from seed {} on {} ===",
+            params.scheme.name(),
+            params.seed,
+            params.background
+        ));
+        for (role, hex) in &result.colors {
+            let contrast = harmony::wcag_contrast(hex, &params.background);
+            let pinned = if params.pins.contains_key(role) {
+                "  (pinned)"
+            } else {
+                ""
+            };
+            self.add_system_message(&format!(
+                "  {:<17} {}  {:.1}:1{}",
+                role, hex, contrast, pinned
+            ));
+        }
+        let plate_contrast = result
+            .color_for("roomName")
+            .map(|room| harmony::wcag_contrast(room, &result.room_bg))
+            .unwrap_or(1.0);
+        self.add_system_message(&format!(
+            "  {:<17} {}  {:.1}:1 vs room title (plate)",
+            "roomName bg", result.room_bg, plate_contrast
+        ));
+        for (character, hex) in &result.prompts {
+            let label = harmony::PROMPT_ROLES
+                .iter()
+                .find(|r| r.character == character)
+                .map(|r| r.label)
+                .unwrap_or("prompt");
+            self.add_system_message(&format!(
+                "  {:<17} {}  {:.1}:1  (prompt '{}')",
+                label,
+                hex,
+                harmony::wcag_contrast(hex, &params.background),
+                character
+            ));
+        }
+        self.add_system_message(
+            "Presets updated (previous colors.toml kept as .bak). \
+             .harmony schemes lists schemes; the GUI Colors editor's Generate \
+             tab offers seeds, pins, and preview.",
+        );
+    }
+
+    fn handle_dot_command(&mut self, command: &str) -> Result<CommandOutcome> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
         tracing::debug!("handle_dot_command: '{}'", command);
 
         match cmd.as_str() {
+            // === COMMAND ARMS BEGIN === (command_help.rs tripwire: every
+            // top-level arm literal here must have a help-table row, and
+            // vice versa; the test extracts them from this source span)
             // Application commands
             "quit" | "q" => {
                 self.quit();
@@ -1242,23 +1661,27 @@ impl AppCore {
             }
 
             // Toggle categorized container-look display (sorter.lic's
-            // native cousin). Persisted like any UI setting.
+            // native cousin). Persisted like any UI setting; `.sorter
+            // edit` opens the rules/order/labels editor.
             "sorter" => {
                 let sub = parts.get(1).map(|s| s.to_lowercase());
                 let target = match sub.as_deref() {
                     Some("on") => true,
                     Some("off") => false,
-                    None => !self.config.ui.sorter_enabled,
+                    Some("edit") => {
+                        return Ok(CommandOutcome::Ui(UiAction::SorterEdit));
+                    }
+                    None => !self.config.sorter.enabled,
                     Some(other) => {
                         self.add_system_message(&format!(
-                            "Usage: .sorter [on|off] (currently {}), got '{}'",
-                            if self.config.ui.sorter_enabled { "on" } else { "off" },
+                            "Usage: .sorter [on|off|edit] (currently {}), got '{}'",
+                            if self.config.sorter.enabled { "on" } else { "off" },
                             other
                         ));
-                        return Ok(String::new());
+                        return Ok(CommandOutcome::Handled);
                     }
                 };
-                self.config.ui.sorter_enabled = target;
+                self.config.sorter.enabled = target;
                 self.message_processor.set_sorter_enabled(target);
                 match self.save_config() {
                     Ok(()) => self.add_system_message(&format!(
@@ -1299,6 +1722,20 @@ impl AppCore {
                 self.handle_mapdb(&args);
             }
 
+            // Asset manager (the native jinx client): download and update
+            // skins, icon maps, layouts, and game data from federated repos.
+            // Network work runs off-thread (see jinx_worker); repo edits are
+            // instant and inline.
+            "jinx" => {
+                let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                // `.jinx gui` opens the native asset panel (GUI-only); every
+                // other subcommand runs inline / off-thread here.
+                if args.first().map(|s| s.as_str()) == Some("gui") {
+                    return Ok(CommandOutcome::Ui(UiAction::JinxPanel));
+                }
+                self.handle_jinx(&args);
+            }
+
             // Data-pack assets (gameobj-data.xml, ...): source tier + age.
             // `.data reload` re-resolves mid-session, e.g. after Lich's
             // `;repo` refreshed its copy. Settings panel surface is owed;
@@ -1334,8 +1771,27 @@ impl AppCore {
                              ({types} types)."
                         ));
                     }
+                    // `.data update <name>` is a domain-specific alias over the
+                    // asset manager: download the named game-data file from a
+                    // repo (off-thread), landing it in the local-store tier the
+                    // data pack already reads. The post-install effect reloads.
+                    "update" => match parts.get(2) {
+                        Some(name) => {
+                            self.jinx_worker.set_game(self.game_type());
+                            let ack = self.jinx_worker.start(
+                                crate::core::jinx::worker::Request::Install {
+                                    name: name.to_string(),
+                                    only_repo: None,
+                                    overwrite: true,
+                                },
+                            );
+                            self.add_system_message(&ack);
+                        }
+                        None => self
+                            .add_system_message("Usage: .data update <name> (e.g. gameobj-data.xml)"),
+                    },
                     _ => {
-                        self.add_system_message("Usage: .data [status|reload]");
+                        self.add_system_message("Usage: .data [status|reload|update <name>]");
                     }
                 }
             }
@@ -1370,20 +1826,20 @@ impl AppCore {
                 self.show_webinfo();
             }
 
-            // Shareable UI packs: export the files that make this UI /
-            // preview + apply a shared one. The GUI intercepts both to
-            // add / install its live layout alongside.
+            // Shareable UI packs: capability hooks too — the GUI adds /
+            // installs its live layout alongside the core pack, the TUI
+            // and headless run the plain core pack.
             "uiexport" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-                self.uiexport_with(&args, Vec::new());
+                return Ok(CommandOutcome::Ui(UiAction::UiExport(args)));
             }
             "uiimport" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
-                if self.uiimport(&args).is_some() {
-                    self.add_system_message(
-                        "This pack also carries a GUI layout — run the import in the GUI to install it.",
-                    );
-                }
+                return Ok(CommandOutcome::Ui(UiAction::UiImport(args)));
+            }
+            // The guided panel over .uiexport/.uiimport (desktop frontends).
+            "packs" | "packeditor" => {
+                return Ok(CommandOutcome::Ui(UiAction::PackEditor));
             }
 
             // Text-to-speech control from any frontend (the GUI also has
@@ -1398,36 +1854,82 @@ impl AppCore {
             "portal" => {
                 let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
                 if let Some(command) = self.handle_portal_command(&args) {
-                    return Ok(command);
+                    return Ok(CommandOutcome::Game(command));
                 }
             }
 
-            // Layout commands. The TUI intercepts both in
-            // handle_command_submission with the real terminal size, so these
-            // fallbacks only run in frontends without a cell grid (GUI,
-            // headless), where TOML cell layouts don't apply.
+            // Toggling is core-side (the overlay window lives in ui_state,
+            // shared by every frontend); `dump` is a UiAction so each
+            // frontend can append its own report sections.
+            "performance" | "perf" => {
+                if parts.get(1).map(|s| s.eq_ignore_ascii_case("dump")) == Some(true) {
+                    return Ok(CommandOutcome::Ui(UiAction::PerformanceDump));
+                }
+                let enabled = self.toggle_performance_overlay();
+                self.add_system_message(if enabled {
+                    "Performance monitor shown (.performance again to hide, .performance dump for a report)."
+                } else {
+                    "Performance monitor hidden."
+                });
+                return Ok(CommandOutcome::Handled);
+            }
+
+            // Layout commands are capability hooks (parity plan D3): core
+            // owns the command names, each frontend owns its persistence
+            // model — TOML cell layouts in the TUI, window-snapshot
+            // checkpoints in the GUI, a "needs the desktop client"
+            // answer on phones.
             "savelayout" => {
-                let name = parts.get(1).unwrap_or(&"default");
-                tracing::info!("[APP_CORE] User entered .savelayout command: '{}'", name);
-                let width = self.layout.terminal_width.unwrap_or(80);
-                let height = self.layout.terminal_height.unwrap_or(24);
-                self.save_layout(name, width, height);
-                self.add_system_message(&format!(
-                    "Saved TUI layout '{}' at {}x{} cells (this frontend has no terminal grid; the GUI saves its own window layout automatically).",
-                    name, width, height
-                ));
+                return Ok(CommandOutcome::Ui(UiAction::SaveLayout(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             "loadlayout" => {
-                self.add_system_message(
-                    "TOML layouts are a TUI feature. The GUI manages its own window layout and saves it automatically.",
-                );
+                // `.loadlayout <name> [--keep-skin]` — the flag keeps the
+                // loader's appearance (skin/theme/art) and takes only the
+                // arrangement. Lenient spellings: --keep-skin / --keep-skins /
+                // --keep_my_skins / --keepskin all normalize the same.
+                let mut name = None;
+                let mut keep_skin = false;
+                for part in &parts[1..] {
+                    let normalized: String = part
+                        .trim_start_matches('-')
+                        .chars()
+                        .filter(|c| c.is_ascii_alphanumeric())
+                        .collect::<String>()
+                        .to_ascii_lowercase();
+                    if part.starts_with('-')
+                        && matches!(normalized.as_str(), "keepskin" | "keepskins" | "keepmyskins")
+                    {
+                        keep_skin = true;
+                    } else if name.is_none() {
+                        name = Some(part.to_string());
+                    }
+                }
+                // The flag is meaningless without a name (bare form lists).
+                let keep_skin = keep_skin && name.is_some();
+                return Ok(CommandOutcome::Ui(UiAction::LoadLayout { name, keep_skin }));
             }
             "layouts" => {
-                self.list_layouts();
+                return Ok(CommandOutcome::Ui(UiAction::ListLayouts));
             }
             "resize" => {
-                self.resize_to_current_terminal();
+                return Ok(CommandOutcome::Ui(UiAction::ResizeLayout));
             }
+            // Bake the current GUI appearance into a skin. Core knows the
+            // command so the TUI can answer "GUI-only" instead of
+            // "Unknown command".
+            "saveskin" => match parts.get(1) {
+                Some(name) => {
+                    return Ok(CommandOutcome::Ui(UiAction::SaveSkin(name.to_string())));
+                }
+                None => {
+                    self.add_system_message(
+                        "Usage: .saveskin <name> — bakes the current appearance \
+                         (doll, compass, status icons, frames, backgrounds) into a skin.",
+                    );
+                }
+            },
 
             // Window management commands
             "windows" => {
@@ -1443,9 +1945,11 @@ impl AppCore {
             // Lich WebUI bridge: no args -> handshake + page picker;
             // ".webui <script/page>" -> open that page as a native panel.
             "webui" => match parts.get(1) {
-                None => return Ok("action:webui".to_string()),
-                Some(&"off") => return Ok("action:webui:off".to_string()),
-                Some(page) => return Ok(format!("action:webui:open:{}", page)),
+                None => return Ok(CommandOutcome::Ui(UiAction::WebUiPicker)),
+                Some(&"off") => return Ok(CommandOutcome::Ui(UiAction::WebUiOff)),
+                Some(page) => {
+                    return Ok(CommandOutcome::Ui(UiAction::WebUiOpen(page.to_string())))
+                }
             },
             "addwindow" => {
                 if parts.len() >= 6 {
@@ -1461,7 +1965,7 @@ impl AppCore {
                     self.add_window(name, widget_type, x, y, width, height);
                 } else if parts.len() == 1 {
                     // No arguments - open widget picker
-                    return Ok("action:addwindow".to_string());
+                    return Ok(CommandOutcome::Ui(UiAction::AddWindowPicker));
                 } else {
                     self.add_system_message(
                         "Usage: .addwindow <name> <type> <x> <y> <width> [height]",
@@ -1493,17 +1997,15 @@ impl AppCore {
 
             // Highlights
             "highlights" | "hl" => {
-                return Ok("action:highlights".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Highlights));
             }
             "addhighlight" | "addhl" => {
-                return Ok("action:addhighlight".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddHighlight));
             }
             "edithighlight" | "edithl" => {
-                if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:edithighlight:{}", name));
-                } else {
-                    return Ok("action:edithighlight".to_string());
-                }
+                return Ok(CommandOutcome::Ui(UiAction::EditHighlight(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             "testline" => {
                 if let Some(text) = parts.get(1) {
@@ -1557,26 +2059,31 @@ impl AppCore {
 
             // Keybinds
             "keybinds" | "kb" => {
-                return Ok("action:keybinds".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Keybinds));
             }
             // Menu keybinds (nav/action keys active while a menu has focus)
             "menukeybinds" | "menukb" => {
-                return Ok("action:menukeybinds".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::MenuKeybinds));
             }
             // Controller bindings editor (GUI)
             "controller" => {
-                return Ok("action:controller".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Controller));
             }
             // Hotbars (hotkey bar definitions)
             "hotbars" | "hotbar" => {
-                return Ok("action:hotbars".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Hotbars));
+            }
+            // Indicator template builder: create/edit every status indicator,
+            // its conditions, and condition-driven icons in one place.
+            "indicators" | "indicator" => {
+                return Ok(CommandOutcome::Ui(UiAction::EditIndicators));
             }
             // Streams (per-stream routing: every known stream and where it goes)
             "streams" => {
-                return Ok("action:streams".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Streams));
             }
             "addkeybind" | "addkey" => {
-                return Ok("action:addkeybind".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddKeybind));
             }
             "savekeybinds" | "savekb" => {
                 let name = parts.get(1).unwrap_or(&"default");
@@ -1633,97 +2140,151 @@ impl AppCore {
 
             // Colors
             "colors" | "colorpalette" => {
-                return Ok("action:colors".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Colors));
             }
             "addcolor" | "createcolor" => {
-                return Ok("action:addcolor".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddColor));
             }
             "uicolors" => {
-                return Ok("action:uicolors".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::UiColors));
             }
             "spellcolors" => {
-                return Ok("action:spellcolors".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::SpellColors));
             }
             "addspellcolor" | "newspellcolor" => {
-                return Ok("action:addspellcolor".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::AddSpellColor));
             }
             // Terminal palette commands (for 256-color mode)
             "setpalette" => {
-                return Ok("action:setpalette".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::SetPalette));
             }
             "resetpalette" => {
-                return Ok("action:resetpalette".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::ResetPalette));
+            }
+            "harmony" => {
+                if parts.get(1).is_some_and(|s| s.eq_ignore_ascii_case("skin")) {
+                    match parts.get(2) {
+                        Some(name) => {
+                            return Ok(CommandOutcome::Ui(UiAction::HarmonySkin(
+                                name.to_string(),
+                            )));
+                        }
+                        None => self.add_system_message(
+                            "Usage: .harmony skin <name> - write a skin (panel + frame \
+                             images) rendered from the harmony recipe",
+                        ),
+                    }
+                } else {
+                    let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+                    self.handle_harmony(&args);
+                }
             }
 
             // Themes
             "themes" => {
-                return Ok("action:themes".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Themes));
             }
             "settheme" | "theme" => {
                 if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:settheme:{}", name));
+                    return Ok(CommandOutcome::Ui(UiAction::SetTheme(name.to_string())));
                 } else {
                     self.add_system_message("Usage: .settheme <name>");
                 }
             }
             "edittheme" => {
-                return Ok("action:edittheme".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::EditTheme));
             }
 
             // Skins (GUI graphics layered on top of themes)
             "skins" => {
-                return Ok("action:skins".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Skins));
             }
             "setskin" | "skin" => {
                 if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:setskin:{}", name));
+                    return Ok(CommandOutcome::Ui(UiAction::SetSkin(name.to_string())));
                 } else {
                     self.add_system_message("Usage: .setskin <name> (or .setskin none to disable)");
                 }
             }
             "makeskin" => {
                 if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:makeskin:{}", name));
+                    return Ok(CommandOutcome::Ui(UiAction::MakeSkin(name.to_string())));
                 } else {
                     self.add_system_message("Usage: .makeskin <name> - create a starter skin");
                 }
             }
             "reloadskin" => {
-                return Ok("action:reloadskin".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::ReloadSkin));
             }
 
             // Tab navigation
             "nexttab" => {
-                return Ok("action:nexttab".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::NextTab));
             }
             "prevtab" => {
-                return Ok("action:prevtab".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::PrevTab));
             }
             "gonew" | "nextunread" => {
-                return Ok("action:nextunread".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::NextUnread));
             }
 
             // Settings
             "settings" => {
-                return Ok("action:settings".to_string());
+                return Ok(CommandOutcome::Ui(UiAction::Settings));
             }
 
             // Window editor
             "editwindow" | "editwin" => {
-                if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:editwindow:{}", name));
-                } else {
-                    // Open window picker
-                    return Ok("action:editwindow".to_string());
-                }
+                // No name = open the picker.
+                return Ok(CommandOutcome::Ui(UiAction::EditWindow(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             "hidewindow" | "hidewin" => {
-                if let Some(name) = parts.get(1) {
-                    return Ok(format!("action:hidewindow:{}", name));
-                } else {
-                    // Open window picker
-                    return Ok("action:hidewindow".to_string());
+                // No name = open the picker.
+                return Ok(CommandOutcome::Ui(UiAction::HideWindow(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
+            }
+
+            // Shell zones (GUI): show/hide/toggle the header, footer, and
+            // sidebars. Plain `.header` toggles, so a single keybind or
+            // hotbar button can flip a zone; on/off variants let macros
+            // force a known state.
+            "header" | "footer" | "leftbar" | "rightbar" => {
+                let zone = ShellZoneTarget::parse(&cmd)
+                    .expect("arm matches exactly the four zone command names");
+                match parts.get(1).map(|s| s.to_ascii_lowercase()).as_deref() {
+                    None | Some("toggle") => {
+                        return Ok(CommandOutcome::Ui(UiAction::Zone {
+                            zone,
+                            op: ZoneOp::Toggle,
+                        }));
+                    }
+                    Some("on") | Some("show") => {
+                        return Ok(CommandOutcome::Ui(UiAction::Zone { zone, op: ZoneOp::On }));
+                    }
+                    Some("off") | Some("hide") => {
+                        return Ok(CommandOutcome::Ui(UiAction::Zone {
+                            zone,
+                            op: ZoneOp::Off,
+                        }));
+                    }
+                    Some(other) => {
+                        self.add_system_message(&format!(
+                            "Usage: .{} [on|off|toggle] (got '{}')",
+                            cmd, other
+                        ));
+                    }
                 }
+            }
+
+            // Snap diagnostics (GUI): toggle a per-frame trace of the
+            // center-window snap engine (gesture classification,
+            // canonical vs rendered rects, engaged guides) into
+            // vellum-fe.log. Lines are tagged 'snapdbg'.
+            "snapdebug" => {
+                return Ok(CommandOutcome::Ui(UiAction::SnapDebug));
             }
 
             // Reload config from disk
@@ -1759,11 +2320,23 @@ impl AppCore {
                 self.toggle_transparent_background_all();
             }
 
-            // Lock/unlock all windows (toggle)
+            // Lock/unlock every window at once. THE lock flag is the shared
+            // layout's `WindowBase::locked` — the same one `.lockwindow`,
+            // the GUI context menu, and the TUI window editor write — so
+            // global and per-window locks compose and both frontends
+            // enforce the result.
             "lockwindows" | "lockall" | "unlockwindows" | "unlockall" => {
-                // Check if any window is currently locked
-                let any_locked = self.layout.windows.iter().any(|w| w.base().locked);
-                let new_state = !any_locked;
+                let forced = if cmd.starts_with("unlock") {
+                    Some(false)
+                } else {
+                    match parts.get(1).map(|s| s.to_ascii_lowercase()).as_deref() {
+                        Some("on") | Some("lock") => Some(true),
+                        Some("off") | Some("unlock") => Some(false),
+                        _ => None, // bare = toggle
+                    }
+                };
+                let new_state = forced
+                    .unwrap_or_else(|| !self.layout.windows.iter().any(|w| w.base().locked));
                 for window in &mut self.layout.windows {
                     window.base_mut().locked = new_state;
                 }
@@ -1772,24 +2345,58 @@ impl AppCore {
                 } else {
                     self.add_system_message("All windows unlocked (can be moved/resized)");
                 }
+                self.schedule_layout_autosave();
                 self.needs_render = true;
             }
 
-            // The old all-or-nothing container discovery toggle is retired:
-            // container windows are now per-container choices in the
-            // known-windows list, so alias .containers to that.
-            "containers" => {
-                self.add_system_message(
-                    "Container windows are now per-container: tick them in the known-windows list.",
-                );
-                let items = self.build_known_windows_menu();
-                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
-                    items,
-                    (40, 12),
-                ));
-                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
-                self.needs_render = true;
-            }
+            // One window by layout name: `.lockwindow main [on|off]` (bare
+            // toggles); `.unlockwindow main` forces off.
+            "lockwindow" | "unlockwindow" => match parts.get(1) {
+                None => {
+                    self.add_system_message(
+                        "Usage: .lockwindow <window> [on|off] — .unlockwindow <window> forces off",
+                    );
+                }
+                Some(name) => {
+                    let forced = if cmd == "unlockwindow" {
+                        Some(false)
+                    } else {
+                        match parts.get(2).map(|s| s.to_ascii_lowercase()).as_deref() {
+                            Some("on") | Some("lock") => Some(true),
+                            Some("off") | Some("unlock") => Some(false),
+                            _ => None,
+                        }
+                    };
+                    let target = name.to_ascii_lowercase();
+                    match self
+                        .layout
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.base().name.to_ascii_lowercase() == target)
+                    {
+                        Some(window) => {
+                            let new_state = forced.unwrap_or(!window.base().locked);
+                            window.base_mut().locked = new_state;
+                            let display = window.base().name.clone();
+                            self.add_system_message(&format!(
+                                "Window '{}' {}",
+                                display,
+                                if new_state {
+                                    "locked (cannot be moved/resized)"
+                                } else {
+                                    "unlocked (can be moved/resized)"
+                                },
+                            ));
+                            self.schedule_layout_autosave();
+                            self.needs_render = true;
+                        }
+                        None => {
+                            self.add_system_message(&format!("No window named '{}'", name));
+                        }
+                    }
+                }
+            },
+
             "hidecontainers" => {
                 // No args = close all, with arg = close matching container
                 let args = parts.get(1..).unwrap_or(&[]).join(" ");
@@ -1820,20 +2427,7 @@ impl AppCore {
                 self.needs_render = true;
             }
 
-            // Known-windows list: the windows the game has offered
-            // (containers/dialogs/streams), each togglable show/hide. On the
-            // GUI this opens its checkbox panel; on the TUI it's a popup menu.
-            // (`.windows` is taken by list_windows above — use .knownwindows.)
-            "knownwindows" => {
-                let items = self.build_known_windows_menu();
-                self.ui_state.popup_menu = Some(crate::data::ui_state::PopupMenu::new(
-                    items,
-                    (40, 12),
-                ));
-                self.ui_state.input_mode = crate::data::ui_state::InputMode::Menu;
-                self.needs_render = true;
-            }
-
+            // === COMMAND ARMS END ===
             _ => {
                 self.add_system_message(&format!("Unknown command: {}", command));
                 self.add_system_message("Type .help for list of commands");
@@ -1843,7 +2437,140 @@ impl AppCore {
         // Command input is now managed by the CommandInput widget
 
         // Don't send anything to server
-        Ok(String::new())
+        Ok(CommandOutcome::Handled)
+    }
+}
+
+/// Parsed `.jinx` flags, split from the positional args.
+#[derive(Debug)]
+struct JinxFlags {
+    only_repo: Option<String>,
+    force: bool,
+    dry_run: bool,
+}
+
+/// Split `.jinx` args into flags and positionals. Returns `Err(flag)` for an
+/// unrecognized `--flag`. A free function so it's unit-testable without an
+/// `AppCore`.
+fn parse_jinx_flags(args: &[String]) -> Result<(JinxFlags, Vec<&str>), String> {
+    let mut flags = JinxFlags {
+        only_repo: None,
+        force: false,
+        dry_run: false,
+    };
+    let mut pos: Vec<&str> = Vec::new();
+    for arg in args {
+        if let Some(rest) = arg.strip_prefix("--repo=") {
+            flags.only_repo = Some(rest.to_string());
+        } else if arg == "--force" {
+            flags.force = true;
+        } else if arg == "--dry-run" {
+            flags.dry_run = true;
+        } else if arg.starts_with("--") {
+            return Err(arg.clone());
+        } else {
+            pos.push(arg);
+        }
+    }
+    Ok((flags, pos))
+}
+
+#[cfg(test)]
+mod jinx_command_tests {
+    use super::*;
+
+    fn args(s: &str) -> Vec<String> {
+        s.split_whitespace().map(String::from).collect()
+    }
+
+    #[test]
+    fn flags_split_from_positionals() {
+        let a = args("install parchment --repo=skins --force");
+        let (flags, pos) = parse_jinx_flags(&a).unwrap();
+        assert_eq!(pos, ["install", "parchment"]);
+        assert_eq!(flags.only_repo.as_deref(), Some("skins"));
+        assert!(flags.force);
+        assert!(!flags.dry_run);
+    }
+
+    #[test]
+    fn dry_run_and_bare_positionals() {
+        let a = args("auto-update --dry-run");
+        let (flags, pos) = parse_jinx_flags(&a).unwrap();
+        assert_eq!(pos, ["auto-update"]);
+        assert!(flags.dry_run);
+        assert!(flags.only_repo.is_none());
+
+        let b = args("list");
+        let (_, pos) = parse_jinx_flags(&b).unwrap();
+        assert_eq!(pos, ["list"]);
+    }
+
+    #[test]
+    fn unknown_flag_is_rejected() {
+        let a = args("install x --bogus");
+        let err = parse_jinx_flags(&a).unwrap_err();
+        assert_eq!(err, "--bogus");
+    }
+}
+
+#[cfg(test)]
+mod command_echo_tests {
+    use super::*;
+    use crate::config::PromptColor;
+    use crate::data::{WindowContent, WindowState};
+
+    #[test]
+    fn sent_command_echo_uses_configured_color_and_respects_prompt_styles_and_toggle() {
+        let mut core = AppCore::new_for_test();
+        core.config.colors.ui.command_echo_color = "#123456".to_string();
+        core.config.colors.prompt_colors = vec![
+            PromptColor {
+                character: "R".to_string(),
+                fg: Some("#aa0000".to_string()),
+                bg: None,
+                color: None,
+            },
+            PromptColor {
+                character: ">".to_string(),
+                fg: Some("#00aa00".to_string()),
+                bg: None,
+                color: None,
+            },
+        ];
+        core.message_processor.apply_config(core.config.clone());
+        core.game_state.last_prompt = "R>".to_string();
+
+        let mut main_window = WindowState::new_text("main", 100);
+        if let WindowContent::Text(content) = &mut main_window.content {
+            content.streams = vec!["main".to_string()];
+        }
+        core.ui_state.windows.insert("main".to_string(), main_window);
+        core.message_processor
+            .update_text_stream_subscribers(&core.ui_state);
+
+        core.send_command("look".to_string()).unwrap();
+
+        let WindowContent::Text(content) = &core.ui_state.windows["main"].content else {
+            panic!("main should be a text window");
+        };
+        assert_eq!(content.lines.len(), 1);
+        let segments = &content.lines[0].segments;
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].text, "R");
+        assert_eq!(segments[0].fg.as_deref(), Some("#aa0000"));
+        assert_eq!(segments[1].text, ">");
+        assert_eq!(segments[1].fg.as_deref(), Some("#00aa00"));
+        assert_eq!(segments[2].text, "look");
+        assert_eq!(segments[2].fg.as_deref(), Some("#123456"));
+
+        core.config.ui.command_echo = false;
+        core.send_command("glance".to_string()).unwrap();
+
+        let WindowContent::Text(content) = &core.ui_state.windows["main"].content else {
+            panic!("main should be a text window");
+        };
+        assert_eq!(content.lines.len(), 1);
     }
 }
 
@@ -2313,264 +3040,144 @@ mod tests {
         }
     }
 
-    // ========== Action string generation tests ==========
+    // ========== Typed UI-action outcome tests ==========
+    //
+    // These exercise the REAL dispatcher (send_command) instead of a
+    // hand-maintained mirror of it: the old `get_expected_action` helper
+    // was a third copy of the emit mapping and could drift exactly like
+    // the frontend string-matches did.
 
-    /// Helper to determine what action string a command would return
-    fn get_expected_action(cmd: &str, args: &[String]) -> Option<String> {
-        match cmd {
-            "highlights" | "hl" => Some("action:highlights".to_string()),
-            "addhighlight" | "addhl" => Some("action:addhighlight".to_string()),
-            "edithighlight" | "edithl" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:edithighlight:{}", name))
-                } else {
-                    Some("action:edithighlight".to_string())
-                }
-            }
-            "keybinds" | "kb" => Some("action:keybinds".to_string()),
-            "hotbars" | "hotbar" => Some("action:hotbars".to_string()),
-            "streams" => Some("action:streams".to_string()),
-            "addkeybind" | "addkey" => Some("action:addkeybind".to_string()),
-            "colors" | "colorpalette" => Some("action:colors".to_string()),
-            "addcolor" | "createcolor" => Some("action:addcolor".to_string()),
-            "uicolors" => Some("action:uicolors".to_string()),
-            "spellcolors" => Some("action:spellcolors".to_string()),
-            "addspellcolor" | "newspellcolor" => Some("action:addspellcolor".to_string()),
-            "themes" => Some("action:themes".to_string()),
-            "settheme" | "theme" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:settheme:{}", name))
-                } else {
-                    None // Shows usage message instead
-                }
-            }
-            "edittheme" => Some("action:edittheme".to_string()),
-            "skins" => Some("action:skins".to_string()),
-            "setskin" | "skin" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:setskin:{}", name))
-                } else {
-                    None // Shows usage message instead
-                }
-            }
-            "makeskin" => args
-                .first()
-                .map(|name| format!("action:makeskin:{}", name)),
-            "reloadskin" => Some("action:reloadskin".to_string()),
-            "nexttab" => Some("action:nexttab".to_string()),
-            "prevtab" => Some("action:prevtab".to_string()),
-            "gonew" | "nextunread" => Some("action:nextunread".to_string()),
-            "settings" => Some("action:settings".to_string()),
-            "editwindow" | "editwin" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:editwindow:{}", name))
-                } else {
-                    Some("action:editwindow".to_string())
-                }
-            }
-            "hidewindow" | "hidewin" => {
-                if let Some(name) = args.first() {
-                    Some(format!("action:hidewindow:{}", name))
-                } else {
-                    Some("action:hidewindow".to_string())
-                }
-            }
-            "addwindow" if args.is_empty() => Some("action:addwindow".to_string()),
-            _ => None,
+    use crate::core::AppCore;
+    use crate::data::{CommandOutcome, UiAction};
+
+    fn ui_outcome(command: &str) -> CommandOutcome {
+        let mut core = AppCore::new_for_test();
+        core.send_command(command.to_string())
+            .expect("command should not error")
+    }
+
+    #[test]
+    fn editor_commands_return_their_ui_actions() {
+        let cases: Vec<(&str, UiAction)> = vec![
+            (".highlights", UiAction::Highlights),
+            (".hl", UiAction::Highlights),
+            (".addhighlight", UiAction::AddHighlight),
+            (
+                ".edithighlight bandits",
+                UiAction::EditHighlight(Some("bandits".into())),
+            ),
+            (".edithighlight", UiAction::EditHighlight(None)),
+            (".keybinds", UiAction::Keybinds),
+            (".kb", UiAction::Keybinds),
+            (".hotbars", UiAction::Hotbars),
+            (".streams", UiAction::Streams),
+            (".addkeybind", UiAction::AddKeybind),
+            (".colors", UiAction::Colors),
+            (".addcolor", UiAction::AddColor),
+            (".uicolors", UiAction::UiColors),
+            (".spellcolors", UiAction::SpellColors),
+            (".addspellcolor", UiAction::AddSpellColor),
+            (".themes", UiAction::Themes),
+            (".settheme gruvbox", UiAction::SetTheme("gruvbox".into())),
+            (".theme gruvbox", UiAction::SetTheme("gruvbox".into())),
+            (".edittheme", UiAction::EditTheme),
+            (".skins", UiAction::Skins),
+            (".setskin wrayth", UiAction::SetSkin("wrayth".into())),
+            (".makeskin mine", UiAction::MakeSkin("mine".into())),
+            (".reloadskin", UiAction::ReloadSkin),
+            (".nexttab", UiAction::NextTab),
+            (".prevtab", UiAction::PrevTab),
+            (".gonew", UiAction::NextUnread),
+            (".nextunread", UiAction::NextUnread),
+            (".settings", UiAction::Settings),
+            (".editwindow main", UiAction::EditWindow(Some("main".into()))),
+            (".editwindow", UiAction::EditWindow(None)),
+            (".hidewindow main", UiAction::HideWindow(Some("main".into()))),
+            (".hidewindow", UiAction::HideWindow(None)),
+            (".hidewin main", UiAction::HideWindow(Some("main".into()))),
+            (".addwindow", UiAction::AddWindowPicker),
+            (".menukeybinds", UiAction::MenuKeybinds),
+            (".controller", UiAction::Controller),
+            (".snapdebug", UiAction::SnapDebug),
+            (".webui", UiAction::WebUiPicker),
+            (".webui off", UiAction::WebUiOff),
+            (".webui bigshot", UiAction::WebUiOpen("bigshot".into())),
+            (".sorter edit", UiAction::SorterEdit),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(
+                ui_outcome(command),
+                CommandOutcome::Ui(expected),
+                "wrong outcome for {command}"
+            );
         }
     }
 
     #[test]
-    fn test_action_highlights() {
-        let (cmd, args) = parse_dot_command(".highlights");
+    fn zone_commands_return_zone_actions() {
+        use crate::data::{ShellZoneTarget, ZoneOp};
         assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:highlights".to_string())
+            ui_outcome(".header"),
+            CommandOutcome::Ui(UiAction::Zone {
+                zone: ShellZoneTarget::Header,
+                op: ZoneOp::Toggle
+            })
+        );
+        assert_eq!(
+            ui_outcome(".leftbar on"),
+            CommandOutcome::Ui(UiAction::Zone {
+                zone: ShellZoneTarget::LeftBar,
+                op: ZoneOp::On
+            })
+        );
+        assert_eq!(
+            ui_outcome(".footer hide"),
+            CommandOutcome::Ui(UiAction::Zone {
+                zone: ShellZoneTarget::Footer,
+                op: ZoneOp::Off
+            })
         );
     }
 
     #[test]
-    fn test_action_highlights_alias() {
-        let (cmd, args) = parse_dot_command(".hl");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:highlights".to_string())
-        );
+    fn loadlayout_parses_keep_skin_flag() {
+        // `.loadlayout <name> [--keep-skin]` — lenient flag spellings, any
+        // argument order; the flag is meaningless without a name.
+        let cases: Vec<(&str, Option<&str>, bool)> = vec![
+            (".loadlayout combat", Some("combat"), false),
+            (".loadlayout combat --keep-skin", Some("combat"), true),
+            (".loadlayout --keep-skin combat", Some("combat"), true),
+            (".loadlayout combat --keep_my_skins", Some("combat"), true),
+            (".loadlayout combat --keepskin", Some("combat"), true),
+            (".loadlayout combat --keep-skins", Some("combat"), true),
+            (".loadlayout", None, false),
+            (".loadlayout --keep-skin", None, false), // flag without a name is dropped
+        ];
+        for (command, name, keep_skin) in cases {
+            assert_eq!(
+                ui_outcome(command),
+                CommandOutcome::Ui(UiAction::LoadLayout {
+                    name: name.map(str::to_string),
+                    keep_skin,
+                }),
+                "wrong outcome for {command}"
+            );
+        }
     }
 
     #[test]
-    fn test_action_keybinds() {
-        let (cmd, args) = parse_dot_command(".keybinds");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:keybinds".to_string())
-        );
+    fn usage_paths_are_handled_not_actions() {
+        // Missing required args show usage instead of emitting an action.
+        assert_eq!(ui_outcome(".settheme"), CommandOutcome::Handled);
+        assert_eq!(ui_outcome(".setskin"), CommandOutcome::Handled);
+        assert_eq!(ui_outcome(".makeskin"), CommandOutcome::Handled);
+        // Unknown commands are handled (with a help hint), never sent.
+        assert_eq!(ui_outcome(".nonexistent"), CommandOutcome::Handled);
     }
 
     #[test]
-    fn test_action_streams() {
-        let (cmd, args) = parse_dot_command(".streams");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:streams".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_colors() {
-        let (cmd, args) = parse_dot_command(".colors");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:colors".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_themes() {
-        let (cmd, args) = parse_dot_command(".themes");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:themes".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_settheme_with_name() {
-        let (cmd, args) = parse_dot_command(".settheme dark");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:settheme:dark".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_settheme_without_name() {
-        let (cmd, args) = parse_dot_command(".settheme");
-        assert_eq!(get_expected_action(&cmd, &args), None);
-    }
-
-    #[test]
-    fn test_action_editwindow_with_name() {
-        let (cmd, args) = parse_dot_command(".editwindow main");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:editwindow:main".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_editwindow_without_name() {
-        let (cmd, args) = parse_dot_command(".editwindow");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:editwindow".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_hidewindow_with_name() {
-        let (cmd, args) = parse_dot_command(".hidewindow main");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:hidewindow:main".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_hidewindow_without_name() {
-        let (cmd, args) = parse_dot_command(".hidewindow");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:hidewindow".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_hidewin_alias() {
-        let (cmd, args) = parse_dot_command(".hidewin chat");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:hidewindow:chat".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_edithighlight_with_name() {
-        let (cmd, args) = parse_dot_command(".edithighlight combat");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:edithighlight:combat".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_edithighlight_without_name() {
-        let (cmd, args) = parse_dot_command(".edithighlight");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:edithighlight".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_addwindow_no_args_opens_picker() {
-        let (cmd, args) = parse_dot_command(".addwindow");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:addwindow".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_addwindow_with_args_does_not_return_action() {
-        // When addwindow has args, it creates window directly (no action string)
-        let (cmd, args) = parse_dot_command(".addwindow main text 0 0 80");
-        assert_eq!(get_expected_action(&cmd, &args), None);
-    }
-
-    #[test]
-    fn test_action_settings() {
-        let (cmd, args) = parse_dot_command(".settings");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:settings".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_nexttab() {
-        let (cmd, args) = parse_dot_command(".nexttab");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:nexttab".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_prevtab() {
-        let (cmd, args) = parse_dot_command(".prevtab");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:prevtab".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_nextunread() {
-        let (cmd, args) = parse_dot_command(".nextunread");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:nextunread".to_string())
-        );
-    }
-
-    #[test]
-    fn test_action_gonew() {
-        let (cmd, args) = parse_dot_command(".gonew");
-        assert_eq!(
-            get_expected_action(&cmd, &args),
-            Some("action:nextunread".to_string())
-        );
+    fn game_commands_pass_through_as_game_outcomes() {
+        assert_eq!(ui_outcome("look"), CommandOutcome::Game("look".to_string()));
     }
 
     // ========== Addwindow argument parsing tests ==========
@@ -2642,7 +3249,8 @@ mod tests {
     fn test_unknown_command() {
         let (cmd, _) = parse_dot_command(".nonexistent");
         assert_eq!(cmd, "nonexistent");
-        assert_eq!(get_expected_action(&cmd, &[]), None);
+        // The Handled outcome for unknown commands is asserted in
+        // usage_paths_are_handled_not_actions.
     }
 
     // ========== Command detection tests ==========
@@ -2693,12 +3301,12 @@ mod foreach_tests {
         let mut core = AppCore::new_for_test();
         for cmd in [
             ".menu",
-            ".knownwindows",
             ".windows",
             "", // empty-menu placeholder command
             "__SUBMENU__windows",
-            "__TOGGLE_OFFER__stow",
+            "__TOGGLE_WINDOW__stow",
             "menu:windows",
+            "menu:knownwindows",
         ] {
             let _ = core.send_command(cmd.to_string());
         }

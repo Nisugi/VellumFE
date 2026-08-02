@@ -121,6 +121,9 @@ pub fn import_wrayth_settings(xml: &str) -> Result<WraythImport> {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         };
         let key = unique_key(&format!("wrayth_names_{:02}", i + 1), &mut used_keys);
@@ -269,6 +272,9 @@ fn convert_entry(
         replace: None,
         stream: None,
         window: None,
+        set_status: None,
+        status_duration: None,
+        clear_status: None,
         compiled_regex: None,
     }
 }

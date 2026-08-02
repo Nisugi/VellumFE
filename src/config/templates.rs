@@ -7,6 +7,26 @@
 use super::*;
 use crate::data::geometry::{Col, Height, Row, Width};
 
+/// One condition-driven status icon state, mirroring `HandIconState`: while
+/// its `when` holds, its icon/text/color override the template's static
+/// defaults. First match wins across the `states` list. This is what lets a
+/// status show one icon at rank 1 and another at rank 2 (e.g. an injury
+/// threshold), or a different icon per game state generally.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StatusIconState {
+    pub when: super::Condition,
+    /// GUI icon while the state holds (pool image / sheet cell /
+    /// `IconRef::None` for no art). None = keep the resolved default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<crate::data::IconRef>,
+    /// TUI text glyph while the state holds (the TUI renders no images).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Color override while the state holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
 /// Globally available indicator template definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IndicatorTemplateEntry {
@@ -18,8 +38,20 @@ pub struct IndicatorTemplateEntry {
     /// Optional display title
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Legacy text-glyph icon (TUI prefix / GUI fallback). Kept for
+    /// back-compat; `icon_ref` takes precedence for GUI art.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Pickable ACTIVE GUI icon (pool image / sheet cell): shown when the
+    /// indicator is active (game Y, or a matched condition). Resolved before
+    /// the legacy `icon` string and the id-keyed skin/pictogram fallback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_ref: Option<crate::data::IconRef>,
+    /// Pickable INACTIVE GUI icon: shown when the indicator is inactive (game
+    /// N). None = show NO image while inactive (blank) — inactive art is
+    /// opt-in, never a dimmed copy of the active icon.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_icon_ref: Option<crate::data::IconRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,6 +60,10 @@ pub struct IndicatorTemplateEntry {
     pub default_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_color: Option<String>,
+    /// Condition-driven icon states (first match wins), overriding the static
+    /// icon/colors above while a state holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<StatusIconState>,
     /// Enabled flag; if false, this template is skipped on load
     #[serde(
         default = "default_template_enabled",
@@ -114,7 +150,8 @@ impl Config {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: crate::config::WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,
@@ -285,21 +322,20 @@ impl Config {
                 },
                 data: PerformanceWidgetData {
                     enabled: true,
-                    show_fps: false,
-                    show_frame_times: false,
-                    show_render_times: false,
-                    show_ui_times: false,
-                    show_wrap_times: false,
-                    show_net: false,
-                    show_parse: false,
-                    show_events: false,
-                    show_memory: false,
-                    show_lines: false,
+                    show_fps: true,
+                    show_render_times: true,
+                    show_ui_times: true,
+                    show_wrap_times: true,
+                    show_net: true,
+                    show_parse: true,
+                    show_events: true,
+                    show_cpu: true,
+                    show_memory: true,
+                    show_lines: true,
                     show_uptime: true,
-                    show_jitter: false,
-                    show_frame_spikes: false,
-                    show_event_lag: false,
-                    show_memory_delta: false,
+                    show_spike_log: true,
+                    show_per_window: true,
+                    sparklines: true,
                 },
             }),
 
@@ -431,7 +467,11 @@ impl Config {
                 data: DashboardWidgetData {
                     layout: default_dashboard_layout(),
                     spacing: default_dashboard_spacing(),
-                    hide_inactive: default_dashboard_hide_inactive(),
+                    // New dashboards hide inactive statuses by default so the
+                    // grid isn't a wall of dim icons; users can uncheck it in
+                    // the dashboard editor. (The serde LOAD default stays
+                    // false so existing saved layouts keep what they had.)
+                    hide_inactive: true,
                     indicators: Vec::new(),
                 },
             }),
@@ -878,6 +918,7 @@ impl Config {
                     icon: Some("L:".to_string()),
                     icon_color: None,
                     text_color: None,
+                    states: Vec::new(),
                 },
             }),
 
@@ -898,6 +939,7 @@ impl Config {
                     icon: Some("R:".to_string()),
                     icon_color: None,
                     text_color: None,
+                    states: Vec::new(),
                 },
             }),
 
@@ -918,6 +960,7 @@ impl Config {
                     icon: Some("S:".to_string()),
                     icon_color: None,
                     text_color: None,
+                    states: Vec::new(),
                 },
             }),
 
@@ -1599,10 +1642,13 @@ impl Config {
                     name: Some(base.name),
                     title: base.title.clone(),
                     icon: data.icon,
+                    icon_ref: None,
+                    inactive_icon_ref: None,
                     inactive_color: data.inactive_color,
                     active_color: data.active_color,
                     default_status: data.default_status,
                     default_color: data.default_color,
+                    states: Vec::new(),
                     enabled: true,
                 });
             }
@@ -1786,7 +1832,7 @@ impl Config {
                         !layout
                             .windows
                             .iter()
-                            .any(|w| w.name() == *name && w.base().visible)
+                            .any(|w| w.name() == *name && w.base().visibility.is_shown())
                     })
                     .collect();
                 (category, available)
@@ -1815,7 +1861,7 @@ impl Config {
         include_hidden: bool,
     ) -> HashMap<WidgetCategory, Vec<String>> {
         let all_by_category = Self::get_templates_by_category();
-        let included = |w: &crate::config::WindowDef| include_hidden || w.base().visible;
+        let included = |w: &crate::config::WindowDef| include_hidden || w.base().visibility.is_shown();
 
         let mut visible_by_category: HashMap<WidgetCategory, Vec<String>> = all_by_category
             .into_iter()
@@ -1902,7 +1948,7 @@ impl Config {
         layout
             .windows
             .iter()
-            .filter(|w| w.base().visible)
+            .filter(|w| w.base().visibility.is_shown())
             .map(|w| w.name().to_string())
             .collect()
     }

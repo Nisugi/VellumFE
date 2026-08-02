@@ -116,19 +116,6 @@
 # --- GemStone IV Specific ---
 # betrayer_active_color = "#ff4040"  # Highlight color for active Betrayer items
 #
-# --- Dialog Blocklist ---
-# Prevent these openDialog windows from auto-opening (still parse their data).
-# Useful if you prefer to view this data in dedicated widgets instead.
-#
-# open_dialog_blocklist = [
-#   "bank",
-#   "combat",
-#   "injuries",
-#   "espMasterDialog",
-#   "espMasterData",
-#   "mapMaster",
-# ]
-#
 # --- Performance Overlay (Debug) ---
 # Press F3 or use .perf command to toggle
 #

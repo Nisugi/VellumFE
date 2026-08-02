@@ -295,11 +295,26 @@ impl IndicatorTemplateEditor {
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
 
+        // Preserve GUI-authored fields the TUI form does not edit (pickable
+        // icon + condition-driven states) so a TUI edit never wipes them —
+        // the same wipe-bug class fixed for highlight status actions.
+        let prior = self
+            .templates
+            .iter()
+            .find(|tpl| tpl.key().eq_ignore_ascii_case(&key));
+        let icon_ref = prior.and_then(|tpl| tpl.icon_ref.clone());
+        // GUI-only image fields (active/inactive icons) are carried through
+        // untouched — the TUI edits text/glyph/colors, never images.
+        let inactive_icon_ref = prior.and_then(|tpl| tpl.inactive_icon_ref.clone());
+        let states = prior.map(|tpl| tpl.states.clone()).unwrap_or_default();
+
         let entry = IndicatorTemplateEntry {
             id: id.clone(),
             name: Some(key.clone()),
             title: if title.is_empty() { None } else { Some(title) },
             icon: if icon.is_empty() { None } else { Some(icon) },
+            icon_ref,
+            inactive_icon_ref,
             inactive_color: if inactive_color.is_empty() {
                 None
             } else {
@@ -312,6 +327,7 @@ impl IndicatorTemplateEditor {
             },
             default_status: None,
             default_color: None,
+            states,
             enabled: true,
         };
 

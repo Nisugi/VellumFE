@@ -52,13 +52,13 @@ impl Default for DotStylePayload {
     }
 }
 
-/// Resolve the payload for the active skin; `base: false` when no skin is
-/// active, it has no doll art, or anything fails to load.
+/// Resolve the payload for the active doll; `base: false` when nothing is
+/// selected (no override, no skin doll) or anything fails to load.
 pub fn active_payload() -> DollSkinPayload {
-    let Some((manifest, root)) = load_active_manifest() else {
+    let Some((doll, root)) = active_doll() else {
         return DollSkinPayload::default();
     };
-    payload_from_doll(&manifest.injury_doll, Some(&root))
+    payload_from_doll(&doll, Some(&root))
 }
 
 /// Build the payload from a manifest's doll section. `root` (the skin
@@ -124,8 +124,8 @@ pub fn payload_from_doll(doll: &InjuryDollSkin, root: Option<&Path>) -> DollSkin
 /// (the latter with part + level). None when no skin is active or the
 /// manifest has no such image.
 pub fn image_path(kind: &str, part: Option<&str>, level: Option<u8>) -> Option<PathBuf> {
-    let (manifest, root) = load_active_manifest()?;
-    let doll = &manifest.injury_doll;
+    let (doll, root) = active_doll()?;
+    let doll = &doll;
     let relative = match kind {
         "base" => doll.base.clone()?,
         "overlay" => {
@@ -142,21 +142,33 @@ pub fn image_path(kind: &str, part: Option<&str>, level: Option<u8>) -> Option<P
     Some(resolve_image(&root, &relative))
 }
 
-/// Manifest image path -> filesystem path (absolute paths allowed, same
-/// rule as the GUI texture loader).
+/// Manifest image path -> filesystem path (absolute paths allowed, plus
+/// the shared image pool — same rule as the GUI texture loader).
 fn resolve_image(root: &Path, image: &str) -> PathBuf {
-    let raw = Path::new(image);
-    if raw.is_absolute() {
-        raw.to_path_buf()
-    } else {
-        root.join(raw)
-    }
+    skins::resolve_image_path(root, image)
 }
 
-fn load_active_manifest() -> Option<(skins::SkinManifest, PathBuf)> {
+/// The doll the frontends should show: the config.doll_image override
+/// (pool image + sidecar calibration, mirroring the GUI's resolution),
+/// else the active skin's `[injury_doll]` section.
+fn active_doll() -> Option<(InjuryDollSkin, PathBuf)> {
     let config = crate::config::Config::load().ok()?;
+    if let Some(image) = config.doll_image {
+        let root = crate::config::Config::global_images_dir().ok()?;
+        let abs = skins::resolve_image_path(&root, &image);
+        let sidecar: crate::config::pool::DollSidecar =
+            crate::config::pool::read_sidecar(&abs).unwrap_or_default();
+        let doll = InjuryDollSkin {
+            base: Some(image),
+            anchors: sidecar.anchors,
+            dots: sidecar.dots,
+            parts: Default::default(),
+        };
+        return Some((doll, root));
+    }
     let name = config.active_skin?;
-    skins::load_manifest(&name).ok()
+    let (manifest, root) = skins::load_manifest(&name).ok()?;
+    Some((manifest.injury_doll, root))
 }
 
 #[cfg(test)]

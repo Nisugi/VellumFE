@@ -2,7 +2,7 @@
 //!
 //! ## File Locations
 //!
-//! Per-character GUI state:
+//! Per-character GUI state (live autosave slot):
 //! ```text
 //! ~/.vellum-fe/gui/<profile>/<character>/layout_v1.json
 //! ```
@@ -12,12 +12,17 @@
 //! ~/.vellum-fe/gui/<profile>/<character>/layout_v1.bak.json
 //! ```
 //!
+//! Named checkpoints (`.savelayout <name>`) live in the shared pool
+//! `~/.vellum-fe/layouts/<name>.json`, next to the TUI's `<name>.toml`
+//! layouts — any character can load a layout any character saved.
+//!
 //! ## Schema Versioning
 //!
 //! Layout files are versioned via `schema_version` field. The migration system
 //! allows loading older versions and upgrading to current.
 
 use super::tab_id::TabKey;
+use crate::config::is_valid_layout_name;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -74,6 +79,35 @@ pub struct TabSettings {
     #[serde(default)]
     pub accent_color: Option<String>,
 
+    /// Corner radius override for this window's frame; None follows the
+    /// global `GuiUiSettings::window_corner_radius`. Skin border art still
+    /// forces square corners.
+    #[serde(default)]
+    pub corner_radius: Option<f32>,
+
+    /// Skin frame override: None follows the skin's own per-window
+    /// mapping, "none" disables the frame for this window, anything else
+    /// names a `[frames.*]` entry in the active skin (unknown names fall
+    /// back to the skin's mapping).
+    #[serde(default)]
+    pub skin_frame: Option<String>,
+
+    /// Background override: None follows the skin's per-window mapping,
+    /// "none" disables the background, anything else is a pool-relative
+    /// image path ("backgrounds/parchment.png").
+    #[serde(default)]
+    pub background_image: Option<String>,
+
+    /// Title bar height override in points; None follows the global
+    /// `GuiUiSettings::title_bar_height` (where 0 = derive from the font).
+    #[serde(default)]
+    pub title_bar_height: Option<f32>,
+
+    /// Title alignment override ("left" | "center" | "right"); None follows
+    /// the global setting.
+    #[serde(default)]
+    pub title_bar_align: Option<String>,
+
     /// Whether to wrap text at window boundary
     #[serde(default = "default_wrap_text")]
     pub wrap_text: bool,
@@ -98,6 +132,11 @@ impl Default for TabSettings {
             font_secondary: FontRef::SystemDefault,
             text_size: None,
             accent_color: None,
+            corner_radius: None,
+            skin_frame: None,
+            background_image: None,
+            title_bar_height: None,
+            title_bar_align: None,
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
             map_zoom: None,
@@ -223,13 +262,40 @@ impl Default for VitalsConfig {
 /// A group of windows locked together and rendered as one window.
 ///
 /// The first member is the leader: the group renders in the leader's slot
-/// and zone. Members split the content area along `orientation`.
+/// and zone. Members split the content area along `orientation` into
+/// slots; a member listed in `merged` shares its predecessor's slot,
+/// stacking along the perpendicular axis (side-by-side group → merged
+/// members stack vertically inside their column, and vice versa). An
+/// empty `merged` reproduces the old flat one-member-per-slot layout, so
+/// existing saved groups load unchanged.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabGroup {
     pub members: Vec<TabKey>,
-    /// true = members side by side; false = stacked vertically
+    /// true = slots side by side; false = slots stacked vertically
     #[serde(default)]
     pub horizontal: bool,
+    /// Members that render in the same slot as the member before them.
+    /// Stale keys (no longer members) are ignored; the first member is
+    /// never merged (it has no predecessor).
+    #[serde(default)]
+    pub merged: Vec<TabKey>,
+    /// Slots (keyed by their first member) whose content anchors to the
+    /// END of the perpendicular axis: leftover space goes above a column's
+    /// members (bottom-anchored) / left of a row's members (right-anchored)
+    /// instead of after them. Only matters for slots with no flexible
+    /// member to absorb the leftover. Stale keys are ignored.
+    #[serde(default)]
+    pub end_anchored: Vec<TabKey>,
+    /// Per-member relative size weight for FLEXIBLE members (buffs, spells,
+    /// doll, text) along the group's stack axis. A member absent from this
+    /// map, or with a non-positive weight, defaults to 1.0. The leftover
+    /// (after fixed bars take their natural height) splits in proportion to
+    /// these weights, so e.g. buffs=2.0 / cooldowns=1.0 gives buffs twice
+    /// the height of cooldowns. Empty = the historical equal split, so
+    /// existing saved groups load unchanged. Fixed one-row members ignore
+    /// their weight. Stale keys are ignored.
+    #[serde(default)]
+    pub weights: Vec<(TabKey, f32)>,
 }
 
 /// Application-wide GUI sizing/accessibility settings.
@@ -247,9 +313,19 @@ pub struct GuiUiSettings {
     #[serde(default = "default_text_size")]
     pub text_size: f32,
 
-    /// Title bar text size, in points; title bar height follows it.
+    /// Title bar text size, in points; by default the bar height follows it.
     #[serde(default = "default_title_font_size")]
     pub title_font_size: f32,
+
+    /// Exact title bar height in points for game windows, independent of
+    /// the title text size. 0 = derive the height from the title font.
+    #[serde(default)]
+    pub title_bar_height: f32,
+
+    /// Title text alignment in game-window title bars:
+    /// "left" | "center" | "right".
+    #[serde(default = "default_title_bar_align")]
+    pub title_bar_align: String,
 
     /// Height of one active-effect bar row, in points.
     #[serde(default = "default_effects_bar_height")]
@@ -265,6 +341,12 @@ pub struct GuiUiSettings {
     #[serde(default = "default_bar_corner_radius")]
     pub bar_corner_radius: f32,
 
+    /// Corner radius for window frames. 0 = square Wrayth-style corners;
+    /// 6 matches egui's default rounding. Windows with skin border art
+    /// always render square so the art isn't clipped.
+    #[serde(default = "default_window_corner_radius")]
+    pub window_corner_radius: f32,
+
     /// Automatically switch bar text between light and dark when the
     /// configured color would be unreadable against the bar fill.
     #[serde(default = "default_true")]
@@ -273,6 +355,165 @@ pub struct GuiUiSettings {
     /// Vitals window layout and bar selection.
     #[serde(default)]
     pub vitals: VitalsConfig,
+
+    /// Active skin (directory name under ~/.vellum-fe/global/skins/);
+    /// None = plain theme colors. Lives in the layout so checkpoints
+    /// carry their skin; config.active_skin is kept as a mirror for the
+    /// web doll endpoint and the headless/TUI frontends.
+    #[serde(default)]
+    pub active_skin: Option<String>,
+
+    /// Theme (preset or custom name) at save time, so a checkpoint loaded on
+    /// another profile reproduces the saver's look. The live source of truth
+    /// is config.active_theme; the save path stamps this and the load path
+    /// mirrors it back into config. None = legacy file from before themes
+    /// rode with layouts — loading one keeps the current theme.
+    #[serde(default)]
+    pub active_theme: Option<String>,
+
+    /// Injury doll image override as a pool-relative path
+    /// ("dolls/dwarf_ranger.png"); None follows the active skin's
+    /// `[injury_doll]` (or the vector doll with no skin). Calibration for a
+    /// pool doll lives in its sidecar toml. Mirrored to config.doll_image
+    /// for the web doll endpoint, like active_skin.
+    #[serde(default)]
+    pub doll_image: Option<String>,
+
+    /// Status icon art selection (pool set + per-indicator overrides).
+    #[serde(default)]
+    pub status_icons: StatusIconSettings,
+
+    /// Compass art set from the pool (`compass/<set>_<role>.png`, roles
+    /// rose/n/ne/.../out); None follows the active skin's `[compass]`.
+    #[serde(default)]
+    pub compass_set: Option<String>,
+
+    /// Global default frame for windows without a per-window override (a
+    /// skin `[frames.*]` name or pool frame stem). Precedence: window
+    /// override > this > the skin's own per-window mapping; a per-window
+    /// "none" still removes the frame.
+    #[serde(default)]
+    pub default_frame: Option<String>,
+
+    /// Global default background (pool-relative path, or "none" to
+    /// suppress skin backgrounds everywhere). Same precedence as
+    /// `default_frame`.
+    #[serde(default)]
+    pub default_background: Option<String>,
+
+    /// Render the injury doll's art (base + overlays) in grayscale; the
+    /// generated wound/scar dots keep their colors. Off = no gray twins
+    /// are ever built.
+    #[serde(default)]
+    pub doll_grayscale: bool,
+
+    /// Zone boundary lines (header/footer edges, sidebar dividers). They
+    /// clash with skin frames, so they can be shown only while a resize
+    /// strip is hovered, or hidden entirely — resizing works in every mode
+    /// through the invisible drag strips.
+    #[serde(default)]
+    pub zone_separators: ZoneSeparatorStyle,
+
+    /// Snap-to-edge docking for freely placed Center windows: while a
+    /// window is dragged or resized, its moving edges snap to pane bounds,
+    /// sibling edges, and center lines. Shift suspends it for one drag.
+    #[serde(default = "default_true")]
+    pub snap_enabled: bool,
+
+    /// Snap engage distance in points; 0 also disables snapping.
+    #[serde(default = "default_snap_radius")]
+    pub snap_radius: f32,
+
+    /// Snap to sibling window edges (butt together / align flush).
+    #[serde(default = "default_true")]
+    pub snap_to_siblings: bool,
+
+    /// Snap to the center pane's four edges.
+    #[serde(default = "default_true")]
+    pub snap_to_bounds: bool,
+
+    /// Snap to the pane's horizontal/vertical center lines. Off by
+    /// default: center candidates near real edge targets make the engaged
+    /// line flip while dragging. Sibling centers are not candidates at all.
+    #[serde(default)]
+    pub snap_to_centers: bool,
+
+    /// Grid pitch in points, relative to the pane origin; 0 = no grid.
+    #[serde(default)]
+    pub snap_grid: f32,
+
+    /// With a grid set, moving a window also pulls each edge to its
+    /// nearest grid line — the window resizes to conform to the grid
+    /// instead of only repositioning.
+    #[serde(default)]
+    pub snap_move_sizes_to_grid: bool,
+
+    /// Draw a dashed guide line with the matched coordinate while a snap
+    /// is engaged.
+    #[serde(default = "default_true")]
+    pub snap_show_guides: bool,
+
+    /// Hand widget icon size in points (left/right/spell hand art). Rows
+    /// grow to fit; the default matches Wrayth, whose hand icons span
+    /// about two text lines.
+    #[serde(default = "default_hand_icon_size")]
+    pub hand_icon_size: f32,
+}
+
+/// How the shell draws the boundary between zones.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ZoneSeparatorStyle {
+    /// Always drawn in the theme's separator color (the classic look).
+    #[default]
+    Shown,
+    /// Invisible until the pointer hovers/drags a zone resize strip, then
+    /// drawn along that boundary so resize stays discoverable.
+    Hover,
+    /// Never drawn; the resize strips still work (cursor still changes).
+    Hidden,
+}
+
+/// Which art status indicators use, resolved ahead of the built-in vector
+/// pictograms: an optional statusicons pool set supplies defaults by glyph
+/// name, and per-indicator overrides pin any icon reference.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct StatusIconSettings {
+    /// Pool set (the `<set>_` filename prefix in global/images/statusicons);
+    /// None = no pool defaults (skin `[icons]` / vector only).
+    #[serde(default)]
+    pub set: Option<String>,
+    /// Indicator id (any case) -> icon override. `Default` entries are
+    /// dropped on save; absence means "no override".
+    #[serde(default)]
+    pub overrides: std::collections::HashMap<String, crate::data::IconRef>,
+    /// Inactive statuses render their icon in grayscale (instead of the
+    /// default alpha dim). Off = no gray twins are ever built (unless a
+    /// per-indicator override below turns one on).
+    #[serde(default)]
+    pub gray_inactive: bool,
+
+    /// Per-indicator exceptions to `gray_inactive` (indicator id → force
+    /// on/off). Absent = follow the global toggle.
+    #[serde(default)]
+    pub gray_overrides: std::collections::HashMap<String, bool>,
+}
+
+impl StatusIconSettings {
+    /// Whether this indicator grays out when inactive: its override if it
+    /// has one, else the global toggle.
+    pub fn gray_for(&self, indicator_id: &str) -> bool {
+        self.gray_overrides
+            .get(indicator_id)
+            .or_else(|| self.gray_overrides.get(&indicator_id.to_ascii_uppercase()))
+            .copied()
+            .unwrap_or(self.gray_inactive)
+    }
+
+    /// Whether ANY indicator needs a gray twin built.
+    pub fn any_gray(&self) -> bool {
+        self.gray_inactive || self.gray_overrides.values().any(|on| *on)
+    }
 }
 
 fn default_zoom_factor() -> f32 {
@@ -287,6 +528,10 @@ fn default_title_font_size() -> f32 {
     13.0
 }
 
+fn default_title_bar_align() -> String {
+    "center".to_string()
+}
+
 fn default_effects_bar_height() -> f32 {
     18.0
 }
@@ -299,8 +544,20 @@ fn default_bar_corner_radius() -> f32 {
     2.0
 }
 
+fn default_window_corner_radius() -> f32 {
+    6.0
+}
+
 fn default_true() -> bool {
     true
+}
+
+fn default_snap_radius() -> f32 {
+    8.0
+}
+
+fn default_hand_icon_size() -> f32 {
+    30.0
 }
 
 impl Default for GuiUiSettings {
@@ -309,11 +566,32 @@ impl Default for GuiUiSettings {
             zoom_factor: default_zoom_factor(),
             text_size: default_text_size(),
             title_font_size: default_title_font_size(),
+            title_bar_height: 0.0,
+            title_bar_align: default_title_bar_align(),
             effects_bar_height: default_effects_bar_height(),
             density: default_density(),
             bar_corner_radius: default_bar_corner_radius(),
+            window_corner_radius: default_window_corner_radius(),
             auto_contrast_bar_text: default_true(),
             vitals: VitalsConfig::default(),
+            active_skin: None,
+            active_theme: None,
+            doll_image: None,
+            status_icons: StatusIconSettings::default(),
+            compass_set: None,
+            default_frame: None,
+            default_background: None,
+            doll_grayscale: false,
+            zone_separators: ZoneSeparatorStyle::default(),
+            snap_enabled: default_true(),
+            snap_radius: default_snap_radius(),
+            snap_to_siblings: default_true(),
+            snap_to_bounds: default_true(),
+            snap_to_centers: false,
+            snap_grid: 0.0,
+            snap_move_sizes_to_grid: false,
+            snap_show_guides: default_true(),
+            hand_icon_size: default_hand_icon_size(),
         }
     }
 }
@@ -383,12 +661,22 @@ pub struct MainViewportState {
     #[serde(default)]
     pub outer_pos: Option<[f32; 2]>,
 
-    /// Inner (client area) size [width, height]
+    /// Inner (client area) size [width, height]. When `maximized`, this is
+    /// the last UN-maximized size (the restore geometry), NOT the canvas the
+    /// rects were captured against — see `canvas_size`.
     pub inner_size: [f32; 2],
 
     /// Whether the window was maximized
     #[serde(default)]
     pub maximized: bool,
+
+    /// The ACTUAL inner size at save time, even while maximized. This is the
+    /// reference canvas for rescaling the saved rects; using `inner_size`
+    /// for a maximized save scaled rects from the smaller restore size and
+    /// blew them past the screen. None = file predates the field; fall back
+    /// to `inner_size`.
+    #[serde(default)]
+    pub canvas_size: Option<[f32; 2]>,
 }
 
 /// Per-tab settings entry for serialization.
@@ -444,6 +732,16 @@ pub struct GuiLayoutFileV1 {
     /// Main OS window geometry, restored at launch
     #[serde(default)]
     pub main_viewport: Option<MainViewportState>,
+
+    /// Full core window definitions captured at save time. The dock snapshot
+    /// only references windows by TabKey; without the defs, loading a named
+    /// layout into a profile that lacks those windows (a fresh character)
+    /// would silently drop them. `.loadlayout` recreates any missing window
+    /// from this list before reconciling the arrangement. Empty on files
+    /// saved before this field existed (serde default), which fall back to
+    /// the old arrangement-only behavior.
+    #[serde(default)]
+    pub window_defs: Vec<crate::config::WindowDef>,
 }
 
 impl GuiLayoutFileV1 {
@@ -461,6 +759,7 @@ impl GuiLayoutFileV1 {
             ui_settings: GuiUiSettings::default(),
             detached_viewports: HashMap::new(),
             main_viewport: None,
+            window_defs: Vec::new(),
         }
     }
 
@@ -731,59 +1030,48 @@ fn write_layout_atomically(
 // (`layout_v1.json`): loading one replaces the live arrangement, and the
 // autosave keeps writing the live slot afterward — fiddling never rewrites
 // a checkpoint.
+//
+// Checkpoints live in the SHARED pool `~/.vellum-fe/layouts/` next to the
+// TUI's TOML layouts (`<name>.json` vs `<name>.toml`), so — exactly like
+// the TUI — any character can load a layout any character saved. Loading
+// already tolerates foreign checkpoints: the profile/character stamp is
+// not validated and unknown tabs drop out during reconciliation.
 
-/// Directory holding a character's named layout checkpoints.
-pub fn named_layouts_dir(profile: &str, character: &str) -> Result<PathBuf> {
-    Ok(layout_dir(profile, character)?.join("layouts"))
+/// Directory holding named layout checkpoints: the shared pool, common to
+/// every profile and character.
+pub fn named_layouts_dir() -> Result<PathBuf> {
+    crate::config::Config::layouts_dir()
 }
 
-/// True when a checkpoint name is safe to use as a file stem (also blocks
-/// path traversal, since names become `<name>.json`).
-pub fn is_valid_layout_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// Save a snapshot as a named checkpoint.
-pub fn save_named_layout(
-    layout: &GuiLayoutFileV1,
-    profile: &str,
-    character: &str,
-    name: &str,
-) -> Result<()> {
+/// Save a snapshot as a named checkpoint in the shared pool.
+pub fn save_named_layout(layout: &GuiLayoutFileV1, name: &str) -> Result<()> {
     if !is_valid_layout_name(name) {
         anyhow::bail!("Layout names use letters, digits, '-' and '_' only");
     }
-    let dir = named_layouts_dir(profile, character)?;
-    std::fs::create_dir_all(&dir).context("Failed to create named layouts directory")?;
+    let dir = named_layouts_dir()?;
+    std::fs::create_dir_all(&dir).context("Failed to create layouts directory")?;
     let path = dir.join(format!("{name}.json"));
     write_layout_atomically(layout, &dir, &format!("{name}.tmp.json"), &path)?;
     tracing::info!("Saved named GUI layout to {:?}", path);
     Ok(())
 }
 
-/// Load a named checkpoint (with schema migration).
-///
-/// Unlike the live slot, the profile/character stamp is not validated:
-/// a checkpoint copied from another character loads fine — tabs that don't
-/// exist in this session are dropped during reconciliation.
-pub fn load_named_layout(profile: &str, character: &str, name: &str) -> Result<GuiLayoutFileV1> {
+/// Load a named checkpoint from the shared pool (with schema migration).
+pub fn load_named_layout(name: &str) -> Result<GuiLayoutFileV1> {
     if !is_valid_layout_name(name) {
         anyhow::bail!("Layout names use letters, digits, '-' and '_' only");
     }
-    let path = named_layouts_dir(profile, character)?.join(format!("{name}.json"));
+    let path = named_layouts_dir()?.join(format!("{name}.json"));
     if !path.exists() {
         anyhow::bail!("No saved layout named '{name}'");
     }
+    tracing::info!("Loading named GUI layout from {:?}", path);
     load_from_path(&path)
 }
 
-/// List a character's named checkpoints, sorted.
-pub fn list_named_layouts(profile: &str, character: &str) -> Vec<String> {
-    let Ok(dir) = named_layouts_dir(profile, character) else {
+/// List the shared pool's named checkpoints, sorted.
+pub fn list_named_layouts() -> Vec<String> {
+    let Ok(dir) = named_layouts_dir() else {
         return Vec::new();
     };
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -803,9 +1091,206 @@ pub fn list_named_layouts(profile: &str, character: &str) -> Vec<String> {
     names
 }
 
+// ---- Legacy checkpoint migration -------------------------------------------
+//
+// Before the shared pool, checkpoints were buried per character at
+// `gui/<profile>/<character>/layouts/<name>.json`, invisible to everyone
+// else. Sweep every profile and character at startup and move them into
+// the pool. The sweep runs each launch (a cheap read_dir when nothing is
+// left), which also rescues checkpoints written by an old build run after
+// the first migration.
+
+/// Move all legacy per-character checkpoints into the shared pool.
+///
+/// Returns `(old_name, pool_name)` per moved file. A name already taken in
+/// the pool by identical content is deduplicated silently; different
+/// content lands as `<name>_<character>` (then `_2`, `_3`, ...).
+pub fn migrate_legacy_named_layouts() -> Vec<(String, String)> {
+    let Ok(base) = crate::config::Config::base_dir() else {
+        return Vec::new();
+    };
+    migrate_legacy_named_layouts_in(&base)
+}
+
+/// Testable body of [`migrate_legacy_named_layouts`], rooted at `base`
+/// instead of the real config dir.
+fn migrate_legacy_named_layouts_in(base: &std::path::Path) -> Vec<(String, String)> {
+    let pool = base.join("layouts");
+    let mut moved = Vec::new();
+    let Ok(profiles) = std::fs::read_dir(base.join("gui")) else {
+        return moved;
+    };
+    for profile in profiles.flatten() {
+        let Ok(characters) = std::fs::read_dir(profile.path()) else {
+            continue;
+        };
+        for character in characters.flatten() {
+            let legacy = character.path().join("layouts");
+            if !legacy.is_dir() {
+                continue;
+            }
+            let character_name = character.file_name().to_string_lossy().to_string();
+            let Ok(entries) = std::fs::read_dir(&legacy) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let src = entry.path();
+                if src.extension().and_then(|e| e.to_str()) != Some("json") {
+                    continue;
+                }
+                let Some(stem) = src.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                // Skips stray `<name>.tmp.json` leftovers too (their stem
+                // contains a '.').
+                if !is_valid_layout_name(stem) {
+                    continue;
+                }
+                if let Some(pool_name) = move_into_pool(&src, &pool, stem, &character_name) {
+                    moved.push((stem.to_string(), pool_name));
+                }
+            }
+            // Best-effort: an emptied legacy dir disappears; one with
+            // strays stays behind harmlessly.
+            let _ = std::fs::remove_dir(&legacy);
+        }
+    }
+    moved
+}
+
+/// Move one legacy checkpoint into the pool, resolving name collisions.
+/// Returns the pool name it ended up under, or None when it was a
+/// duplicate of an existing pool file (source still removed) or could not
+/// be moved.
+fn move_into_pool(
+    src: &std::path::Path,
+    pool: &std::path::Path,
+    stem: &str,
+    character: &str,
+) -> Option<String> {
+    if std::fs::create_dir_all(pool).is_err() {
+        return None;
+    }
+    let suffix: String = character
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(20)
+        .collect();
+    let suffix = if suffix.is_empty() {
+        "legacy".to_string()
+    } else {
+        suffix
+    };
+    let base_stem: String = stem.chars().take(40).collect();
+    let mut candidates = vec![stem.to_string(), format!("{base_stem}_{suffix}")];
+    for n in 2..=9 {
+        candidates.push(format!("{base_stem}_{suffix}_{n}"));
+    }
+    for candidate in candidates {
+        let dest = pool.join(format!("{candidate}.json"));
+        if dest.exists() {
+            // Same bytes already pooled (e.g. the same checkpoint saved by
+            // several characters): drop the copy.
+            let same = match (std::fs::read(src), std::fs::read(&dest)) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            };
+            if same {
+                let _ = std::fs::remove_file(src);
+                return None;
+            }
+            continue;
+        }
+        let renamed = std::fs::rename(src, &dest).is_ok()
+            || (std::fs::copy(src, &dest).is_ok() && std::fs::remove_file(src).is_ok());
+        if renamed {
+            tracing::info!("Migrated legacy GUI layout {:?} -> {:?}", src, dest);
+            return Some(candidate);
+        }
+        return None;
+    }
+    tracing::warn!("Could not find a free pool name for legacy layout {:?}", src);
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn legacy_checkpoint(base: &std::path::Path, profile: &str, character: &str, name: &str) {
+        let dir = base.join("gui").join(profile).join(character).join("layouts");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut layout = GuiLayoutFileV1::new(profile, character);
+        layout.saved_at_utc = format!("stamp-{profile}-{character}-{name}");
+        std::fs::write(
+            dir.join(format!("{name}.json")),
+            serde_json::to_string_pretty(&layout).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_migrate_legacy_checkpoints_into_pool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        legacy_checkpoint(base, "prime", "Alpha", "combat");
+        legacy_checkpoint(base, "prime", "Beta", "town");
+
+        let moved = migrate_legacy_named_layouts_in(base);
+        assert_eq!(moved.len(), 2);
+
+        let pool = base.join("layouts");
+        assert!(pool.join("combat.json").exists());
+        assert!(pool.join("town.json").exists());
+        // Legacy dirs emptied out and removed
+        assert!(!base.join("gui/prime/Alpha/layouts").exists());
+        assert!(!base.join("gui/prime/Beta/layouts").exists());
+        // Live autosave slots untouched by the sweep
+        assert!(base.join("gui/prime/Alpha").exists());
+
+        // Re-running is a no-op
+        assert!(migrate_legacy_named_layouts_in(base).is_empty());
+    }
+
+    #[test]
+    fn test_migrate_legacy_checkpoint_collision_gets_character_suffix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        // Two characters saved DIFFERENT content under the same name
+        legacy_checkpoint(base, "prime", "Alpha", "combat");
+        legacy_checkpoint(base, "prime", "Beta", "combat");
+
+        let moved = migrate_legacy_named_layouts_in(base);
+        assert_eq!(moved.len(), 2);
+
+        let pool = base.join("layouts");
+        assert!(pool.join("combat.json").exists());
+        assert!(
+            pool.join("combat_Alpha.json").exists() || pool.join("combat_Beta.json").exists(),
+            "loser of the name race lands under a character suffix"
+        );
+    }
+
+    #[test]
+    fn test_migrate_legacy_checkpoint_identical_content_deduped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let dir_a = base.join("gui/prime/Alpha/layouts");
+        let dir_b = base.join("gui/prime/Beta/layouts");
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+        let layout = GuiLayoutFileV1::new("prime", "Shared");
+        let bytes = serde_json::to_string_pretty(&layout).unwrap();
+        std::fs::write(dir_a.join("combat.json"), &bytes).unwrap();
+        std::fs::write(dir_b.join("combat.json"), &bytes).unwrap();
+
+        let moved = migrate_legacy_named_layouts_in(base);
+        // Only the first copy counts as moved; the twin is dropped.
+        assert_eq!(moved.len(), 1);
+        assert!(base.join("layouts/combat.json").exists());
+        assert!(!base.join("layouts/combat_Alpha.json").exists());
+        assert!(!base.join("layouts/combat_Beta.json").exists());
+    }
 
     #[test]
     fn test_layout_name_validation() {
@@ -871,6 +1356,11 @@ mod tests {
             font_secondary: FontRef::SystemDefault,
             text_size: None,
             accent_color: None,
+            corner_radius: None,
+            skin_frame: None,
+            background_image: None,
+            title_bar_height: None,
+            title_bar_align: None,
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
             map_zoom: None,
@@ -1090,6 +1580,11 @@ mod tests {
                 font_secondary: FontRef::Named("Consolas".to_string()),
                 text_size: Some(16.0),
                 accent_color: Some("#4784d9".to_string()),
+                corner_radius: None,
+                skin_frame: None,
+                background_image: None,
+                title_bar_height: None,
+                title_bar_align: None,
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
                 map_zoom: None,

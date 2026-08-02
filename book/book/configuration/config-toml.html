@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f875b337.js";
+            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba9683ee.js"></script>
+        <script src="../toc-a6416afc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -215,12 +215,13 @@ min_command_length = 3          # Min length to save in history
 
 # Drag modifier for moving windows
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
-
-# Prevent specific server dialogs from auto-opening windows
-# (default blocks combat, injuries, stance, minivitals, and other
-# dialogs that have dedicated widgets)
-open_dialog_blocklist = ["combat", "injuries", "stance"]
 </code></pre>
+<blockquote>
+<p>Every game window (dialogs, panels, streams, containers) is <strong>hidden by
+default</strong> and never auto-opens until you show it in the Windows list
+(<strong>Windows → Show/Hide windows</strong>). There is no dialog blocklist — hidden
+windows simply stay hidden even when the game re-sends them.</p>
+</blockquote>
 <h3 id="color-modes"><a class="header" href="#color-modes">Color Modes</a></h3>
 <div class="table-wrapper">
 <table>
@@ -379,15 +380,6 @@ enabled = false
 # dir = "logs"
 # timestamps = true
 # max_lines_per_file = 30000
-</code></pre>
-<h2 id="layout-mappings"><a class="header" href="#layout-mappings">Layout Mappings</a></h2>
-<p>Automatically switch layouts based on terminal size:</p>
-<pre><code class="language-toml">[[layout_mappings]]
-min_width = 80
-min_height = 24
-max_width = 120
-max_height = 40
-layout = "compact"
 </code></pre>
 <h2 id="event-patterns"><a class="header" href="#event-patterns">Event Patterns</a></h2>
 <p>Regex patterns that drive countdown timers. The defaults cover standard

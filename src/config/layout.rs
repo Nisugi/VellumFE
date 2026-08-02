@@ -107,7 +107,7 @@ fn default_windows() -> Vec<WindowDef> {
 
 impl Layout {
     /// Load layout from file using new profile-based structure
-    /// Priority: ~/.vellum-fe/{character}/layout.toml → ~/.vellum-fe/layouts/layout.toml → embedded
+    /// Priority: character auto-save → saved "default" checkpoint → default profile auto-save → embedded
     pub fn load(character: Option<&str>) -> Result<Self> {
         let (layout, _base_name) = Self::load_with_terminal_size(character, None)?;
         Ok(layout)
@@ -116,17 +116,17 @@ impl Layout {
     /// Load layout with terminal size for auto-selection
     /// Returns (layout, base_layout_name) where base_layout_name is the source layout file name (without .toml)
     ///
-    /// New structure:
-    /// 1. ~/.vellum-fe/{character}/layout.toml (auto-save from exit)
-    /// 2. ~/.vellum-fe/default/layouts/default.toml (shared default)
-    /// 3. Embedded default
+    /// Priority:
+    /// 1. ~/.vellum-fe/profiles/{character}/layout.toml (auto-save from exit)
+    /// 2. ~/.vellum-fe/layouts/default.toml (checkpoint written by .savelayout)
+    /// 3. ~/.vellum-fe/profiles/default/layout.toml (default profile auto-save)
+    /// 4. Embedded default
     pub fn load_with_terminal_size(
         character: Option<&str>,
         terminal_size: Option<(u16, u16)>,
     ) -> Result<(Self, Option<String>)> {
         let profile_dir = Config::profile_dir(character)?;
-        let default_profile_dir = Config::profile_dir(None)?; // ~/.vellum-fe/default/
-        let _shared_layouts_dir = Config::layouts_dir()?; // ~/.vellum-fe/layouts/ (templates only)
+        let default_profile_dir = Config::profile_dir(None)?; // ~/.vellum-fe/profiles/default/
 
         // 1. Try character auto-save layout: ~/.vellum-fe/{character}/layout.toml
         let auto_layout_path = profile_dir.join("layout.toml");
@@ -163,7 +163,41 @@ impl Layout {
             return Ok((layout, Some(base_name)));
         }
 
-        // 2. Try default profile auto-save layout: ~/.vellum-fe/default/layout.toml
+        // 2. No auto-save yet: fall back to the "default" checkpoint written by
+        //    .savelayout (~/.vellum-fe/layouts/default.toml). A parse failure
+        //    here falls through to the next candidate instead of aborting
+        //    startup — this file is user-shareable and may be hand-edited.
+        if let Ok(checkpoint_path) = Config::layout_path("default") {
+            if checkpoint_path.exists() {
+                match Self::load_from_file(&checkpoint_path) {
+                    Ok(mut layout) => {
+                        tracing::info!(
+                            "No auto-save layout; loading saved 'default' checkpoint from {:?}",
+                            checkpoint_path
+                        );
+                        if let Some((curr_width, curr_height)) = terminal_size {
+                            if let (Some(layout_width), Some(layout_height)) =
+                                (layout.terminal_width, layout.terminal_height)
+                            {
+                                if curr_width != layout_width || curr_height != layout_height {
+                                    layout.scale_to_terminal_size(curr_width, curr_height);
+                                }
+                            }
+                        }
+                        return Ok((layout, Some("default".to_string())));
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Saved 'default' checkpoint at {:?} failed to load ({}); trying next fallback",
+                            checkpoint_path,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
+        // 3. Try default profile auto-save layout: ~/.vellum-fe/profiles/default/layout.toml
         let default_path = default_profile_dir.join("layout.toml");
         if default_path.exists() {
             tracing::info!(
@@ -174,7 +208,7 @@ impl Layout {
             return Ok((layout, Some("layout".to_string())));
         }
 
-        // 3. Fall back to embedded default (should have been extracted by extract_defaults())
+        // 4. Fall back to embedded default (should have been extracted by extract_defaults())
         tracing::warn!(
             "No layout found, using embedded default (this should have been extracted!)"
         );
@@ -353,6 +387,14 @@ impl Layout {
             layout.terminal_height
         );
 
+        // Migration: the default layouts used to ship explicit border
+        // colors (grey everywhere, purple society), which were extracted
+        // verbatim into user files — masking the theme's border color on
+        // every window and making the one window WITHOUT a baked color
+        // look broken. Only user-chosen colors should override the theme,
+        // so the known shipped values normalize back to "unset".
+        Self::normalize_legacy_border_colors(&mut layout);
+
         // Migration: Ensure command_input exists in windows array with valid values
         if let Some(idx) = layout
             .windows
@@ -401,6 +443,26 @@ impl Layout {
         }
 
         Ok(layout)
+    }
+
+    /// Border colors the default layouts used to ship. Windows carrying
+    /// exactly one of these were extracted defaults, not user choices, so
+    /// they reset to unset and follow the theme's border color. A user who
+    /// deliberately wants one of these exact values can re-pick it in the
+    /// editor (any other hex is never touched).
+    fn normalize_legacy_border_colors(layout: &mut Layout) {
+        const LEGACY_DEFAULTS: [&str; 2] = ["#808080", "#9370DB"];
+        for window in &mut layout.windows {
+            let base = window.base_mut();
+            if let Some(color) = &base.border_color {
+                if LEGACY_DEFAULTS
+                    .iter()
+                    .any(|legacy| color.eq_ignore_ascii_case(legacy))
+                {
+                    base.border_color = None;
+                }
+            }
+        }
     }
 
     /// Save layout to file
@@ -482,11 +544,12 @@ impl Layout {
         // Normalize windows before saving (convert None colors to "-")
         self.normalize_windows_for_save();
 
-        // Save to shared layouts directory: ~/.vellum-fe/default/layouts/{name}.toml
-        let layouts_dir = Config::layouts_dir()?;
-        fs::create_dir_all(&layouts_dir)?;
-
-        let layout_path = layouts_dir.join(format!("{}.toml", name));
+        // Save to shared layouts directory: ~/.vellum-fe/layouts/{name}.toml
+        // (layout_path validates the name so it can't escape the pool)
+        let layout_path = Config::layout_path(name)?;
+        if let Some(dir) = layout_path.parent() {
+            fs::create_dir_all(dir)?;
+        }
         let toml_string = self.to_toml_string_preserving()?;
         write_atomic(&layout_path, toml_string).context("Failed to write layout file")?;
 
@@ -661,7 +724,7 @@ impl Layout {
         // Check if window already exists in layout
         if let Some(existing) = self.windows.iter_mut().find(|w| w.name() == name) {
             // Just make it visible
-            existing.base_mut().visible = true;
+            existing.base_mut().visibility = crate::config::WindowVisibility::Shown;
             tracing::info!("Window '{}' already exists, setting visible=true", name);
             return Ok(());
         }
@@ -683,12 +746,69 @@ impl Layout {
         }
 
         // Set visible
-        window_def.base_mut().visible = true;
+        window_def.base_mut().visibility = crate::config::WindowVisibility::Shown;
 
         // Add to layout
         self.windows.push(window_def);
         tracing::info!("Added window '{}' from template", name);
         Ok(())
+    }
+
+    /// Whether any layout window is bound to `id` (regardless of source
+    /// kind or visibility). This is the U2 "does the game already have a
+    /// home for this feed?" check that replaces name-matching.
+    pub fn has_window_bound_to(&self, id: &str) -> bool {
+        self.windows
+            .iter()
+            .any(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+    }
+
+    /// Names of all layout windows bound to `id` (1-to-many: several
+    /// windows may share one game feed).
+    pub fn windows_bound_to(&self, id: &str) -> Vec<String> {
+        self.windows
+            .iter()
+            .filter(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+            .map(|w| w.name().to_string())
+            .collect()
+    }
+
+    /// Register a window the game just announced (dialog/stream/container)
+    /// as a persistent, HIDDEN, bound layout entry — so it's known forever
+    /// and appears in the Windows list, but doesn't render or auto-spawn
+    /// until the user shows it. No-op if a window already bound to this id
+    /// exists (the game only ever has one home per feed to create). The
+    /// `template_name` is the widget template to instantiate; the window is
+    /// renamed to a stable `binding-derived` name and tagged with `binding`.
+    /// Returns the window name if one was created.
+    pub fn register_discovered_window(
+        &mut self,
+        binding: crate::config::WindowBinding,
+        template_name: &str,
+    ) -> Option<String> {
+        if self.has_window_bound_to(binding.id()) {
+            return None;
+        }
+        // Prefer a registered template; fall back to a blank widget of the
+        // type (e.g. "dialogpanel" has no template entry but is a valid
+        // widget type built via WindowDef::blank). Borrow a default base
+        // from a always-present template for the blank path.
+        let name = binding.id().to_string();
+        let mut window_def = match Config::get_window_template(template_name) {
+            Some(def) => def,
+            None => {
+                let base = Config::get_window_template("text_custom")
+                    .map(|d| d.base().clone())?;
+                crate::config::WindowDef::blank(template_name, base)?
+            }
+        };
+        window_def.base_mut().name = name.clone();
+        window_def.base_mut().binding = Some(binding);
+        // Discovered windows start Hidden: known but not shown/auto-spawned.
+        window_def.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        self.windows.push(window_def);
+        tracing::info!("Registered discovered window '{}' (hidden)", name);
+        Some(name)
     }
 
     /// Hide a window (set visible = false)
@@ -699,7 +819,7 @@ impl Layout {
             .find(|w| w.name() == name)
             .ok_or_else(|| anyhow::anyhow!("Window not found: {}", name))?;
 
-        window.base_mut().visible = false;
+        window.base_mut().visibility = crate::config::WindowVisibility::Hidden;
         tracing::info!("Window '{}' hidden (visible=false)", name);
         Ok(())
     }
@@ -748,6 +868,109 @@ rows = 10
 cols = 120
 zoom = 3
 "#;
+
+    #[test]
+    fn legacy_shipped_border_colors_normalize_to_unset() {
+        let toml = r##"
+[[windows]]
+widget_type = "text"
+name = "main"
+row = 0
+col = 0
+rows = 30
+cols = 120
+border_color = "#808080"
+
+[[windows]]
+widget_type = "text"
+name = "society"
+row = 30
+col = 0
+rows = 10
+cols = 120
+border_color = "#9370db"
+
+[[windows]]
+widget_type = "text"
+name = "custom"
+row = 40
+col = 0
+rows = 10
+cols = 120
+border_color = "#807f80"
+"##;
+        let mut layout = Layout::parse_tolerant(toml, "test").unwrap();
+        Layout::normalize_legacy_border_colors(&mut layout);
+        // Extracted defaults (any case) reset to unset → theme wins...
+        assert_eq!(layout.windows[0].base().border_color, None);
+        assert_eq!(layout.windows[1].base().border_color, None);
+        // ...but a genuinely user-chosen color is never touched.
+        assert_eq!(
+            layout.windows[2].base().border_color.as_deref(),
+            Some("#807f80")
+        );
+    }
+
+    #[test]
+    fn discovered_windows_persist_binding_and_visibility() {
+        // U4: a discovered stream + dialog panel become bound Hidden layout
+        // entries; they must survive a save→reload round-trip with their
+        // binding, visibility, and feed wiring intact.
+        use crate::config::{WindowBinding, WindowVisibility};
+        let mut layout = Layout {
+            windows: Vec::new(),
+            terminal_width: Some(80),
+            terminal_height: Some(24),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+        };
+        layout
+            .register_discovered_window(WindowBinding::Stream("thoughts".into()), "text_custom");
+        layout
+            .register_discovered_window(WindowBinding::Dialog("combat".into()), "dialogpanel");
+        // Wire the feeds the way register_window_discovery does.
+        for w in layout.windows.iter_mut() {
+            match w {
+                WindowDef::Text { base, data } if base.name == "thoughts" => {
+                    data.streams.push("thoughts".into());
+                }
+                WindowDef::DialogPanel { base, data } if base.name == "combat" => {
+                    data.dialog_id = "combat".into();
+                }
+                _ => {}
+            }
+        }
+
+        // Round-trip through TOML.
+        let toml = toml::to_string_pretty(&layout).expect("serialize");
+        let reloaded = Layout::parse_tolerant(&toml, "roundtrip").expect("reload");
+
+        // Both windows survived, bound + hidden.
+        assert!(reloaded.has_window_bound_to("thoughts"));
+        assert!(reloaded.has_window_bound_to("combat"));
+        for id in ["thoughts", "combat"] {
+            let w = reloaded
+                .windows
+                .iter()
+                .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+                .unwrap();
+            assert_eq!(w.base().visibility, WindowVisibility::Hidden, "{id}");
+        }
+        // Feed wiring survived.
+        let thoughts = reloaded.windows.iter().find(|w| w.name() == "thoughts").unwrap();
+        if let WindowDef::Text { data, .. } = thoughts {
+            assert!(data.streams.contains(&"thoughts".to_string()));
+        } else {
+            panic!("thoughts should be a text window");
+        }
+        let combat = reloaded.windows.iter().find(|w| w.name() == "combat").unwrap();
+        if let WindowDef::DialogPanel { data, .. } = combat {
+            assert_eq!(data.dialog_id, "combat");
+        } else {
+            panic!("combat should be a dialog panel");
+        }
+    }
 
     #[test]
     fn tolerant_parse_skips_unknown_widget_types() {
@@ -922,7 +1145,8 @@ zoom = 3
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,

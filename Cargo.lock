@@ -698,7 +698,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.2.0",
+ "unicode-width 0.1.14",
 ]
 
 [[package]]
@@ -931,7 +931,7 @@ dependencies = [
 [[package]]
 name = "crossterm"
 version = "0.29.0"
-source = "git+https://github.com/justinpopa/crossterm.git?branch=dev#81f85a4348d16cb6033d429b08cea1d261d7be5a"
+source = "git+https://github.com/Nisugi/crossterm.git?branch=dev#b3033f492a4e3bdd8d87f1c82ab5f3ba636019d4"
 dependencies = [
  "bitflags 2.13.0",
  "crossterm_winapi",
@@ -1215,7 +1215,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "ecolor"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "bytemuck",
  "emath",
@@ -1224,7 +1224,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1259,7 +1259,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "accesskit",
  "ahash",
@@ -1277,7 +1277,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1296,7 +1296,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "arboard",
  "bytemuck",
@@ -1316,7 +1316,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1336,7 +1336,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "emath"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "bytemuck",
 ]
@@ -1372,7 +1372,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1396,7 +1396,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.35.0"
-source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#426ef990b683b8d2a7ad6682ba8056964f17dcf2"
+source = "git+https://github.com/Nisugi/egui.git?branch=numpad-support#ae435c6b975c94cecbdbd6ebd695b0e62cf5858c"
 
 [[package]]
 name = "equivalent"
@@ -1712,7 +1712,7 @@ dependencies = [
  "vec_map",
  "wasm-bindgen",
  "web-sys",
- "windows 0.62.0",
+ "windows 0.52.0",
 ]
 
 [[package]]
@@ -2044,7 +2044,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -5082,7 +5082,7 @@ dependencies = [
 
 [[package]]
 name = "vellum-fe"
-version = "0.3.0-beta.16"
+version = "0.3.0-beta.27"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -5115,6 +5115,7 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "sha1",
  "skrifa",
  "sysinfo",
  "tempfile",

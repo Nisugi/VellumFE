@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-f875b337.js";
+            window.path_to_searchindex_js = "searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-ba9683ee.js"></script>
+        <script src="toc-a6416afc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -560,23 +560,48 @@ are a separate format and can’t be loaded here (<code>.resize</code> is also
 TUI-only).</p>
 <h2 id="windows-and-zones"><a class="header" href="#windows-and-zones">Windows and Zones</a></h2>
 <p>The GUI arranges windows in five zones: header, footer, left sidebar,
-center, and right sidebar. Toggle zones from the top toolbar.</p>
+center, and right sidebar. Toggle zones from the top toolbar. Every zone
+is a free canvas: windows go exactly where you drag them, may overlap,
+and remember their spot.</p>
 <ul>
-<li><strong>Move a window</strong>: drag its title bar (free placement in the center), or
-<strong>Alt+drag</strong> the window body to move it between zones.</li>
+<li><strong>Move a window</strong>: drag it anywhere — body or title bar (interactive
+content like text selection and links still wins over the drag). To
+move a window <strong>between zones</strong>, <strong>Alt+drag</strong> it; the drop point
+becomes its new position. Within its zone, just drag it.</li>
 <li><strong>Resize</strong>: drag any window edge or corner.</li>
-<li><strong>Add/hide windows</strong>: the <strong>Windows</strong> menu in the toolbar — add from
-categorized templates, toggle visibility, or reassign a window’s zone.</li>
+<li><strong>Snapping</strong>: while you drag or resize, edges snap to the zone’s
+bounds, to other windows in the same zone, and (optionally) to a grid.
+Engaged snaps draw a guide line with the matched coordinate, and the
+grid shows as a faint overlay during the gesture. <strong>Hold Shift</strong> to
+place a window freely. Tune it under <strong>Settings → GUI</strong>: snap distance,
+targets (other windows / pane edges / pane center), grid pitch, and
+<strong>Grid sizing</strong> (moves also pull each edge onto the grid, so windows
+conform to it as you drag).</li>
+<li><strong>Sidebar width</strong>: drag the strip on the sidebar/center boundary — it
+stays grabbable even with a window parked flush against it. Header and
+footer heights have their own edge handles.</li>
+<li><strong>Lock Window</strong> (context menu) pins a window’s position and size;
+<code>.lockwindows</code> locks everything at once.</li>
+<li><strong>The Windows manager</strong>: the <strong>Windows</strong> button in the toolbar opens one
+window listing everything the client knows about — layout widgets, game
+dialogs, streams, and containers — grouped by category and collapsible.
+Each row has a <strong>show/hide checkbox</strong> and a <strong>Zone</strong> selector; <strong>➕ Add
+window…</strong> creates a new one (custom windows open the editor). Hidden
+windows stay hidden even when the game re-sends them (there is no dialog
+blocklist — hiding is the control).</li>
 <li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
 Window…</strong>, which opens the window editor; title bars can be hidden
-per-window. Overlapping windows in the center area offer <strong>Send to
-Back</strong>, dropping the window behind any it covers so a buried one can be
-reached (clicking a window still raises it to the front).</li>
+per-window. Overlapping windows offer <strong>Send to Back</strong>, dropping the
+window behind any it covers so a buried one can be reached (clicking a
+window still raises it to the front).</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
 sessions), or locked together into tab groups that move as a unit. The
-context menu reorders group members (<strong>Move Up / Move Down</strong>) and can
-ungroup one member or the whole group.</li>
+context menu reorders group members (⬆ / ⬇) and can ungroup one member
+or the whole group.</li>
 </ul>
+<p>Layouts saved by older versions arranged sidebar windows in a fixed
+stack; they convert to freely placed windows automatically the first
+time each sidebar is shown, keeping their on-screen positions.</p>
 <h2 id="the-map"><a class="header" href="#the-map">The Map</a></h2>
 <p>The GUI renders a live <a href="#map-1">map</a> of your surroundings: a
 mini map widget that follows your character (click a room to walk there),
@@ -1156,12 +1181,13 @@ relogging all night.</p>
 │   ├── colors.toml
 │   ├── hotbars.toml
 │   ├── macros.toml
-│   └── sounds/           # Sound files for highlight alerts
+│   ├── sounds/           # Sound files for highlight alerts
+│   ├── skins/            # GUI skins (one folder per skin: skin.toml + images)
+│   └── images/           # Shared image pool (icons/, frames/, dolls/, compass/, backgrounds/)
 ├── layouts/              # Saved layouts (.savelayout / .loadlayout)
 ├── profiles/
 │   └── CharName/         # Per-character overrides + auto-saved layout.toml
 ├── themes/               # Custom themes (.edittheme saves here)
-├── skins/                # GUI skins (one folder per skin: skin.toml + images)
 └── vellum-fe.log
 </code></pre>
 <p>Files in <code>profiles/&lt;name&gt;/</code> override the matching global file for that character.</p>
@@ -1249,12 +1275,13 @@ min_command_length = 3          # Min length to save in history
 
 # Drag modifier for moving windows
 drag_modifier_key = "ctrl"      # ctrl, alt, or shift
-
-# Prevent specific server dialogs from auto-opening windows
-# (default blocks combat, injuries, stance, minivitals, and other
-# dialogs that have dedicated widgets)
-open_dialog_blocklist = ["combat", "injuries", "stance"]
 </code></pre>
+<blockquote>
+<p>Every game window (dialogs, panels, streams, containers) is <strong>hidden by
+default</strong> and never auto-opens until you show it in the Windows list
+(<strong>Windows → Show/Hide windows</strong>). There is no dialog blocklist — hidden
+windows simply stay hidden even when the game re-sends them.</p>
+</blockquote>
 <h3 id="color-modes"><a class="header" href="#color-modes">Color Modes</a></h3>
 <div class="table-wrapper">
 <table>
@@ -1413,15 +1440,6 @@ enabled = false
 # dir = "logs"
 # timestamps = true
 # max_lines_per_file = 30000
-</code></pre>
-<h2 id="layout-mappings"><a class="header" href="#layout-mappings">Layout Mappings</a></h2>
-<p>Automatically switch layouts based on terminal size:</p>
-<pre><code class="language-toml">[[layout_mappings]]
-min_width = 80
-min_height = 24
-max_width = 120
-max_height = 40
-layout = "compact"
 </code></pre>
 <h2 id="event-patterns"><a class="header" href="#event-patterns">Event Patterns</a></h2>
 <p>Regex patterns that drive countdown timers. The defaults cover standard
@@ -2345,9 +2363,10 @@ label; icons are ignored there, and the GUI falls back to text when no
 registered sheet matches.</p>
 <p>Sheets live in one of two places:</p>
 <ul>
-<li><strong>Shared store</strong> (<code>~/.vellum-fe/global/icons/</code> with an <code>icons.toml</code>
-manifest) — available to every skin, and with no skin active at all.
-This is the default and the right choice for personal icon sets.</li>
+<li><strong>Shared store</strong> (<code>~/.vellum-fe/global/images/icons/</code> with an
+<code>icons.toml</code> manifest) — available to every skin, and with no skin
+active at all. This is the default and the right choice for personal
+icon sets.</li>
 <li><strong>Active skin</strong> (the skin’s <code>[sheets]</code> table in <code>skin.toml</code>, see the
 skin docs) — travels with the skin; a skin sheet overrides a shared
 sheet with the same name.</li>
@@ -2381,7 +2400,7 @@ border_dir = "radial"         # horizontal (default) | vertical |
 can swap the icon (a different cell, or the same cell grayscaled) via
 <code>[bars.buttons.states.style.icon]</code> — dimmed states automatically use the
 grayscale variant. The sheet entry itself — in the shared store’s
-<code>icons.toml</code> (paths relative to <code>global/icons/</code>) or a skin’s <code>skin.toml</code>
+<code>icons.toml</code> (paths relative to <code>global/images/icons/</code>) or a skin’s <code>skin.toml</code>
 (paths relative to the skin directory) — looks the same either way:</p>
 <pre><code class="language-toml">[sheets.rogue]
 path = "icons/rogue.png"      # image path; absolute paths allowed
@@ -3833,20 +3852,18 @@ title = "Known Spells"
 <h1 id="containers"><a class="header" href="#containers">Containers</a></h1>
 <p>Displays contents of open containers (bags, backpacks, chests).</p>
 <h2 id="basic-usage-17"><a class="header" href="#basic-usage-17">Basic Usage</a></h2>
-<p>Container windows are per-container choices in the <strong>known windows</strong> list.
+<p>Container windows are per-container choices in the <strong>Windows</strong> list.
 Every container the game mentions (a <code>LOOK IN</code>, opening a bag, the stow
 feed) is added to the list automatically; tick its row to open a window
 for it, untick to close it again.</p>
-<pre><code>.knownwindows
-</code></pre>
-<p>opens the list (<code>.containers</code> is an alias). On the GUI the same list is a
-checkbox panel. <code>.hidecontainers [title]</code> closes container windows
-without changing anything else.</p>
+<p>Open the list from the menu: <strong>Windows → Show/Hide windows</strong> (TUI popup
+menu; on the GUI the same list is a checkbox panel). <code>.hidecontainers  [title]</code> closes container windows without changing anything else.</p>
 <p>Your choice is remembered for the session: a ticked container’s window
-re-opens whenever the game mentions it again.</p>
+re-opens whenever the game mentions it again. Containers are session-only
+and are not saved across relogs.</p>
 <h2 id="behavior"><a class="header" href="#behavior">Behavior</a></h2>
 <ol>
-<li>Look in a container (<code>look in backpack</code>) — it appears in the known
+<li>Look in a container (<code>look in backpack</code>) — it appears in the Windows
 windows list</li>
 <li>Tick it — a window appears showing contents</li>
 <li>Contents refresh as the game re-sends them; untick to close</li>
@@ -4018,9 +4035,16 @@ cols = 60     # Width
 .layouts                # list saved layouts
 .resize                 # refit layout to the current terminal size
 </code></pre>
-<p>Window positions also auto-save per character. You can switch layouts
-automatically by terminal size with <code>layout_mappings</code> in
-<a href="#configtoml">config.toml</a>.</p>
+<p>Window positions also auto-save per character: any layout change (moving
+or resizing a window, editing its streams, adding or hiding windows) is
+written to the per-character auto-save a few seconds later, and
+<code>.savelayout</code> / <code>.loadlayout</code> update it immediately — so your layout
+comes back on next launch even if the session ends without a clean
+<code>.quit</code> (closed terminal, crash). On startup the client loads the
+per-character auto-save first, falling back to your saved <code>default</code>
+layout (<code>.savelayout</code> with no name) if no auto-save exists. Use
+<code>.resize</code> to refit the current layout to the terminal, or
+<code>.loadlayout &lt;name&gt;</code> to switch layouts.</p>
 <p>The same three commands work in the <a href="#desktop-gui">Desktop GUI</a>
 on its own layout format: named checkpoints of the GUI arrangement,
 saved per character under <code>~/.vellum-fe/gui/</code>, applied live by
@@ -4181,6 +4205,28 @@ stream = "thoughts"       # only applies to the thoughts stream
 <p>For replacement patterns, <code>window = "..."</code> limits the <em>replacement</em> to one
 window by name (colors still apply everywhere). Both filter fields are
 editable in the TUI highlight form (<code>.edithighlight</code>).</p>
+<h2 id="custom-statuses"><a class="header" href="#custom-statuses">Custom Statuses</a></h2>
+<p>A rule can drive a status icon of your own invention. Set these in the
+GUI highlight editor:</p>
+<ul>
+<li><strong>Set status</strong> — a status id to activate when the rule matches
+(e.g. <code>POISONED</code>).</li>
+<li><strong>Status duration</strong> — seconds until it clears itself; leave empty to
+keep it on until a clearing rule matches.</li>
+<li><strong>Clear status</strong> — a status id to deactivate on match.</li>
+</ul>
+<p>Any indicator or dashboard entry whose id matches lights up, exactly
+like the game’s built-in statuses — so it gets skin/pool icon art, the
+per-indicator icon picker, grayscale-when-inactive, and TUI glyphs for
+free. Typical use: regex a spell’s wear-off message into a status so
+you can <em>see</em> the buff drop:</p>
+<pre><code class="language-toml">[silver_lace_down]
+pattern = "The silvery luminescence fades"
+set_status = "SILVERLACE_DOWN"
+status_duration = 30.0
+</code></pre>
+<p>Then add an indicator window with id <code>SILVERLACE_DOWN</code> (Indicator
+Templates editor) and pick an icon for it.</p>
 <h2 id="test-your-patterns"><a class="header" href="#test-your-patterns">Test Your Patterns</a></h2>
 <p>Don’t wait for the game — inject a line:</p>
 <pre><code>.testline The death cry of Grimswarm echoes!
@@ -4404,27 +4450,40 @@ load) falls back to that.</p>
 .setskin parchment
 .setskin none     # back to plain theme rendering
 </code></pre>
-<p>The active skin is remembered in your config. <code>.skin</code> is an alias. The
-GUI settings editor (<code>.settings</code>) has a Skin section with the same
-picker, an “Open skins folder” button, and a “Create” button.</p>
+<p>The active skin is remembered in your GUI layout, so layout checkpoints
+carry it (see below). <code>.skin</code> is an alias. The GUI settings editor
+(<code>.settings</code>) has a Skin section with the same picker, an “Open skins
+folder” button, and a “Create” button.</p>
 <h2 id="making-a-skin"><a class="header" href="#making-a-skin">Making a Skin</a></h2>
+<p>No art skills needed — <a href="#generating-skin-art-with-ai">Generating Skin Art with AI</a>
+is a working prompt kit for producing every image below with an image
+model, including the keying script that turns black backgrounds into
+real transparency.</p>
 <p>The quickest start:</p>
 <pre><code>.makeskin myskin
 </code></pre>
-<p>This creates <code>~/.vellum-fe/skins/myskin/skin.toml</code> with <strong>every section
-present but commented out</strong> — uncomment a line, point it at a PNG, done.
-It never overwrites an existing skin.</p>
+<p>This creates <code>~/.vellum-fe/global/skins/myskin/skin.toml</code> with <strong>every
+section present but commented out</strong> — uncomment a line, point it at a
+PNG, done. It never overwrites an existing skin.</p>
 <p>While a skin is active, edits to its <code>skin.toml</code> <strong>hot-reload within a
 second</strong>. Edited <em>images</em> don’t touch the manifest, so after swapping an
 image file run <code>.reloadskin</code> to force a full reload.</p>
-<p>A skin is a folder under <code>~/.vellum-fe/skins/&lt;name&gt;/</code> containing a
+<p>A skin is a folder under <code>~/.vellum-fe/global/skins/&lt;name&gt;/</code> containing a
 <code>skin.toml</code> manifest plus image files (PNG, JPEG, WebP, or BMP):</p>
-<pre><code>~/.vellum-fe/skins/parchment/
+<pre><code>~/.vellum-fe/global/skins/parchment/
 ├── skin.toml
 └── bg/
     ├── paper.png
     └── vellum.png
 </code></pre>
+<p>Art that several skins share belongs in the image pool at
+<code>~/.vellum-fe/global/images/</code> (subfolders: <code>icons/</code>, <code>frames/</code>,
+<code>dolls/</code>, <code>compass/</code>, <code>backgrounds/</code>). Relative manifest paths look in
+the skin folder first, then the pool, so
+<code>image = "backgrounds/paper.png"</code> works from any skin without copying
+the file. The applied skin is remembered in the GUI layout —
+<code>.savelayout</code> checkpoints carry their skin, and <code>.loadlayout</code> brings it
+back (a checkpoint saved without a skin keeps the current one).</p>
 <pre><code class="language-toml">[meta]
 name = "Parchment"
 description = "Warm paper backgrounds for text windows"
@@ -4452,6 +4511,56 @@ image = "borders/frame.png"
 slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
 scale = 1.0                # source pixels -&gt; screen points
 </code></pre>
+<h2 id="named-frames-per-window-picker"><a class="header" href="#named-frames-per-window-picker">Named Frames (Per-Window Picker)</a></h2>
+<p><code>[window.&lt;name&gt;.border]</code> bakes the frame choice into the skin. To let
+players mix frames themselves, name them under <code>[frames.*]</code>:</p>
+<pre><code class="language-toml">[frames.ornate]
+image = "borders/ornate.png"
+slice = [16, 16, 16, 16]
+scale = 0.75
+
+[frames.plain]
+image = "borders/plain.png"
+slice = [6, 6, 6, 6]
+</code></pre>
+<p>Every named frame shows up in each window’s right-click menu under
+<strong>Appearance → Skin frame</strong> (also in the Window Editor’s Appearance
+section), alongside <strong>Skin default</strong> (follow the skin’s own
+<code>[window.*]</code> mapping) and <strong>None</strong> (no frame on this window). The
+choice is saved per window in the GUI layout, so it survives restarts
+and travels with <code>.savelayout</code> checkpoints. If a layout names a frame
+the active skin doesn’t define, the window falls back to the skin’s
+default mapping.</p>
+<p>The name <code>none</code> is reserved — a <code>[frames.none]</code> entry is ignored.</p>
+<h2 id="no-skin-required-the-image-pool"><a class="header" href="#no-skin-required-the-image-pool">No Skin Required: the Image Pool</a></h2>
+<p>Everything above describes skins, but <strong>none of it requires one</strong>. Art
+installed into the shared pool (<code>~/.vellum-fe/global/images/&lt;category&gt;/</code>,
+usually via <code>.jinx install</code>) is selectable straight from the GUI:</p>
+<ul>
+<li><strong>Injury doll</strong> — right-click the injuries window → Appearance →
+<em>Doll image</em> lists every doll in the pool; <em>Calibrate doll…</em> places the
+wound anchors, saved into the image’s sidecar toml so the calibration
+travels with the art (Jinx dolls can ship pre-calibrated). A
+<em>Grayscale doll art</em> checkbox desaturates the art (dots keep their
+colors); the grayscale copy is built only while it’s checked.</li>
+<li><strong>Frames</strong> — the per-window <em>Skin frame</em> picker lists pool frames
+(those with a slice/scale sidecar) alongside the skin’s <code>[frames.*]</code>.</li>
+<li><strong>Backgrounds</strong> — every window’s Appearance menu has a <em>Background</em>
+picker over <code>backgrounds/</code> pool images.</li>
+<li><strong>Compass</strong> — the compass window’s Appearance menu picks a pool set
+(<code>compass/&lt;set&gt;_&lt;role&gt;.png</code>, roles <code>rose</code>, <code>n</code> … <code>nw</code>, <code>up</code>, <code>down</code>,
+<code>out</code>).</li>
+<li><strong>Status icons</strong> — the Indicator Templates editor picks a pool set
+(<code>statusicons/&lt;set&gt;_&lt;glyph&gt;.png</code>, glyph = indicator id) plus
+per-indicator overrides: any pool image or a hotbar sheet cell. A
+<em>Grayscale when inactive</em> checkbox shows the desaturated icon for
+inactive statuses instead of fading it.</li>
+</ul>
+<p>All of these choices live in your GUI layout (checkpoints and
+<code>.uiexport</code> carry them). When an arrangement is worth sharing,
+<strong><code>.saveskin &lt;name&gt;</code></strong> compiles it into <code>global/skins/&lt;name&gt;/skin.toml</code>
+referencing the pool art — a publishable skin, without hand-writing any
+TOML.</p>
 <h2 id="status-icons"><a class="header" href="#status-icons">Status Icons</a></h2>
 <p>Replace the built-in vector pictograms in the dashboard and indicator
 widgets, keyed by indicator id (case-insensitive):</p>
@@ -4522,6 +4631,479 @@ injury3 = "doll/nerves_i3.png"
 <li>Absolute image paths are allowed on purpose, so a skin can point at art
 from another install (e.g. your local Wrayth graphics) without copying.</li>
 <li>Every piece is optional — a skin can be nothing but one background.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="generating-skin-art-with-ai"><a class="header" href="#generating-skin-art-with-ai">Generating Skin Art with AI</a></h1>
+<p>Every image slot a <a href="#skins-gui-graphics">skin</a> can fill — window backgrounds,
+nine-slice frames, status icons, hotbar icon sheets, the compass, the
+injury doll — can be produced with an image model like Gemini in an
+afternoon, without drawing anything. This chapter is a working prompt
+kit: the technique, per-asset prompts, and the post-processing that
+turns raw generations into game-ready PNGs.</p>
+<p>The prompts below produce a dark-fantasy hand-painted look; swap the
+style language for your own. The <em>technique</em> — style anchor, black
+keying, batching, image conditioning — applies to any style.</p>
+<h2 id="the-three-rules"><a class="header" href="#the-three-rules">The three rules</a></h2>
+<ol>
+<li><strong>Anchor style with an image, not adjectives.</strong> Generate one image
+you love, then attach it to every later request (“in the exact style
+of the attached reference”). Consistency comes from image
+conditioning; repeating adjectives drifts.</li>
+<li><strong>Never ask for a transparent background.</strong> Image models cannot emit
+an alpha channel — they ignore you or paint a fake checkerboard. Ask
+for a <strong>solid pure black background</strong> and key it out afterward (see
+<a href="#post-processing-dekeypy">Post-processing</a>).</li>
+<li><strong>Reject gloss immediately.</strong> Shine creeps back with each generation
+unless the NO-gloss lines stay in the prompt (for matte styles).</li>
+</ol>
+<h2 id="master-style-block"><a class="header" href="#master-style-block">Master style block</a></h2>
+<p>Prepend something like this to every prompt, with your style anchor
+attached:</p>
+<blockquote>
+<p>Art direction: dark-fantasy medieval game asset in the exact style of
+the attached reference image — hand-painted illustration with clean
+dark ink outlines, muted desaturated earth tones (olive greens, worn
+browns, iron greys, dull brass), weathered matte surfaces. Absolutely
+NO gloss, NO shiny highlights, NO glow, NO bloom, NO lens flare, NO
+neon or saturated colors. Lighting is flat and diffuse. Solid PURE
+BLACK background — no scenery, no ground shadow, no vignette, no
+gradient. No text, no watermark, no border.</p>
+</blockquote>
+<p>Models approximate canvas sizes; aspect ratio is what they honor. The
+skin loader scales everything and doll anchors are fractional, so exact
+pixel dimensions never matter — internal consistency is everything.</p>
+<h2 id="compass-12-images-one-shared-canvas"><a class="header" href="#compass-12-images-one-shared-canvas">Compass (12 images, one shared canvas)</a></h2>
+<p>The widget stacks per-direction overlays on the rose, so registration
+matters more than beauty. Generate two “master” states; cut the 11
+overlays from the all-lit master in an editor (models cannot guarantee
+pixel registration across separate generations — don’t fight it).</p>
+<p><strong>Prompt A — the rose (base, everything unlit):</strong></p>
+<blockquote>
+<p>A square compass rose for a fantasy game UI, viewed flat from directly
+above. An aged dark-iron ring with a worn brass center hub. Eight
+directional pointers (N, NE, E, SE, S, SW, W, NW) as tarnished
+arrowheads radiating from the hub, plus a small UP chevron at the top
+inside the ring and a small DOWN chevron at the bottom inside the
+ring. ALL pointers, both chevrons, and the hub are in a dormant, unlit
+state: dark gunmetal, barely distinguishable from the ring. Square
+canvas, composition perfectly centered and symmetrical.</p>
+</blockquote>
+<p><strong>Prompt B — all-lit master (same composition):</strong></p>
+<blockquote>
+<p>The IDENTICAL compass rose, same canvas, same composition, same
+camera — but every pointer, both chevrons, and the center hub are now
+in an active state: dull ember-copper with a faint warm edge, still
+matte, like heated iron cooling — NOT glowing, NOT shiny.</p>
+</blockquote>
+<p>Slice each lit pointer out of B onto a transparent canvas → <code>n.png</code>,
+<code>ne.png</code> … <code>nw.png</code>, <code>up.png</code>, <code>down.png</code>, <code>out.png</code> (the hub). Rose
+from A → <code>rose.png</code>. If a generation drifts, regenerate B by attaching A
+and asking for “the same image with all pointers lit.”</p>
+<p>Manifest section: <code>[compass]</code> — see <a href="#skins-gui-graphics">Skins</a>. Pool folder:
+<code>~/.vellum-fe/global/images/compass/</code>.</p>
+<h2 id="status-icons-16-glyphs-one-sprite-sheet"><a class="header" href="#status-icons-16-glyphs-one-sprite-sheet">Status icons (16 glyphs, one sprite sheet)</a></h2>
+<p>One sheet keeps the style uniform; slice into individual PNGs after.</p>
+<blockquote>
+<p>A 4x4 grid sprite sheet of sixteen square fantasy game status icons,
+uniform in style, stroke weight, and visual density, each a single
+bold pictogram readable at 20 pixels. Flat matte colors from the
+reference palette, one restrained accent color where meaning demands
+it. Cells in row-major order:</p>
+<ol>
+<li>an open left hand, palm out</li>
+<li>an open right hand, palm out</li>
+<li>a hand with a subtle rune circle above the palm (spellcasting hand)</li>
+<li>a standing figure</li>
+<li>a kneeling figure</li>
+<li>a sitting cross-legged figure</li>
+<li>a figure lying prone</li>
+<li>a skull (dead)</li>
+<li>stars circling a tilted head (stunned)</li>
+<li>a falling blood drop (bleeding), dull crimson accent</li>
+<li>a hooded figure half-dissolved into shadow (hidden)</li>
+<li>a dotted outline of a figure (invisible)</li>
+<li>a figure wrapped in spiderweb strands (webbed)</li>
+<li>a serpent coiled around a drop (poisoned), dull green accent</li>
+<li>a gaunt face with sunken cheeks (diseased), pale ochre accent</li>
+<li>two linked shackle rings (group-joined)</li>
+</ol>
+</blockquote>
+<p>Slice to <code>lefthand.png</code>, <code>righthand.png</code>, <code>spellhand.png</code>,
+<code>standing.png</code>, <code>kneeling.png</code>, <code>sitting.png</code>, <code>prone.png</code>, <code>dead.png</code>,
+<code>stunned.png</code>, <code>bleeding.png</code>, <code>hidden.png</code>, <code>invisible.png</code>,
+<code>webbed.png</code>, <code>poisoned.png</code>, <code>diseased.png</code>, <code>joined.png</code> — these names
+match the <code>[icons]</code> manifest keys.</p>
+<h2 id="injury-dolls-one-base-image-per-raceclass"><a class="header" href="#injury-dolls-one-base-image-per-raceclass">Injury dolls (one base image per race/class)</a></h2>
+<p>The app draws wounds itself as dots at calibrated anchor points, so the
+art must expose every anchored body part. The requirements below are
+non-negotiable — bake them into the prompt. Swap the {RACE} / {CLASS}
+slots (GemStone IV races: Human, Giantman, Dwarf, Halfling, Elf, Dark
+Elf, Half-Elf, Sylvankind, Forest Gnome, Burghal Gnome, Half-Krolvin,
+Erithian, Aelotoi).</p>
+<blockquote>
+<p>A full-body character portrait of a {RACE} {CLASS} from a fantasy
+world, in the exact painted style, palette, framing, and proportional
+scale of the attached reference image. Requirements, all mandatory:</p>
+<ul>
+<li>standing straight, facing the viewer directly, perfectly front-on</li>
+<li>arms relaxed and held slightly away from the torso so upper arms,
+forearms, and both open hands are fully visible and do not overlap
+the body</li>
+<li>legs slightly apart, both feet visible</li>
+<li>head bare or with headwear that leaves the face open: BOTH eyes
+must be clearly visible, open, and unobstructed</li>
+<li>neck visible between head and collar</li>
+<li>the full figure fits inside the frame with a small margin — nothing
+cropped</li>
+<li>portrait orientation, roughly 3:4</li>
+<li>muted, weathered, matte clothing appropriate to a {CLASS}; no shiny
+armor, no glowing effects, no magic auras</li>
+<li>solid pure black background, no ground shadow</li>
+</ul>
+</blockquote>
+<p>After dropping one into a skin, run Settings → Skin → “Calibrate injury
+doll” and click through the parts — anchors are stored as fractions of
+the image, so exact pixel size never matters. Generate dolls on demand
+for characters that exist; the calibrator makes each new doll a
+two-minute job. The greyscale <code>_grey.png</code> variant from post-processing
+makes colored wound dots pop.</p>
+<h2 id="window-frames-nine-slice-borders"><a class="header" href="#window-frames-nine-slice-borders">Window frames (nine-slice borders)</a></h2>
+<p>The renderer slices the image into nine regions from the manifest’s
+<code>slice</code> insets: corners draw at fixed size, the four straight runs
+stretch along one axis, and the center is never drawn. That dictates
+the art:</p>
+<ul>
+<li>The frame must run <strong>flush to all four canvas edges</strong>, with a roughly
+<strong>uniform band thickness</strong> (target ~1/8 of the canvas width).</li>
+<li>Corner ornament is free — it draws unstretched. The straight runs
+between corners must be <strong>continuous, uniform material</strong> (riveted
+iron, wood grain along the run, plain rope) with no medallions or
+creatures mid-run: anything distinct there gets stretched.</li>
+<li>Corner caps <strong>thicker than the runs are fine</strong> — real generations
+come back that way and it looks good. Set <code>slice</code> to the <em>cap</em> size;
+the black between the runs’ inner edge and the cap depth becomes
+transparent in post and simply never draws.</li>
+<li>Inspect the inner corners at full zoom before accepting — models like
+to drop small “glint” artifacts there, and anything inside the corner
+squares gets drawn over window content. A clean corner can be
+mirrored over a blemished one in an editor (the bands line up by
+construction).</li>
+</ul>
+<p><strong>Prompt:</strong></p>
+<blockquote>
+<p>A square ornamental window frame for a fantasy game UI, viewed flat.
+An aged dark-iron band with worn brass corner caps, riveted along its
+length. The frame runs flush to all four edges of the canvas with a
+uniform thickness on all sides, about one eighth of the canvas wide.
+Corner ornamentation stays within the corner squares; the four
+straight runs between corners are plain, continuous, evenly textured
+metal with no emblems or breaks. The inner edge of the frame is a
+crisp straight line. The center of the frame is empty pure black.</p>
+</blockquote>
+<p>Frames need the keying pass with a twist: the center is a sealed pocket
+the edge flood can’t reach, so seed it explicitly and use a low
+threshold so near-black seams in the art survive:</p>
+<pre><code>python dekey.py frame.png --seed 1024,1024 --threshold 12 --no-grey
+</code></pre>
+<p>Worked example (a 2048px generation with ~307px caps and ~240px runs):</p>
+<pre><code class="language-toml">[window.default.border]
+image = "frames/frame_iron.png"
+slice = [310.0, 310.0, 310.0, 310.0]  # measure the CAPS in source pixels
+scale = 0.045                         # 2048px source -&gt; ~14pt caps on screen
+</code></pre>
+<p>Measure the caps once in an editor, set <code>slice</code> to that, then tune
+<code>scale</code> by eye. Pool folder: <code>~/.vellum-fe/global/images/frames/</code>.</p>
+<h2 id="window-background-textures"><a class="header" href="#window-background-textures">Window background textures</a></h2>
+<p>Backgrounds sit <strong>behind text</strong>, so restraint is the whole game: low
+contrast, no focal points, no vignette (windows crop the image at
+arbitrary aspect ratios with <code>fit = "cover"</code>, so nothing about the
+composition may matter). The manifest’s <code>scrim</code> paints a theme-colored
+wash on top for readability — author the texture legible-ish and let
+scrim do the rest.</p>
+<blockquote>
+<p>A flat, even, borderless surface texture for a game UI background:
+{aged parchment with faint fiber flecks | worn dark leather with fine
+grain | rough hewn dark stone}. Perfectly uniform lighting across the
+whole canvas — no vignette, no hotspot, no directional shadow, no
+focal detail anywhere. Very low contrast, subtle texture only.
+Landscape orientation.</p>
+</blockquote>
+<p>Don’t ask for “seamless/tileable” — image models can’t actually do it
+and the seam will show. Use <code>fit = "cover"</code> and generate generously
+sized. Backgrounds are opaque by design — no keying pass.</p>
+<pre><code class="language-toml">[window.default.background]
+image = "backgrounds/leather.png"
+fit = "cover"
+opacity = 1.0
+scrim = 0.35
+</code></pre>
+<h2 id="hotbar-icon-sheets"><a class="header" href="#hotbar-icon-sheets">Hotbar icon sheets</a></h2>
+<p>Hotbar buttons pull from <code>[sheets]</code> sprite sheets: square cells, <strong>no
+padding</strong>, indexed 1-based left→right then top→bottom (64px cells by
+default). Models keep style coherent across about 16 icons per
+generation, so build sheets from 4x4 grids — reuse the status-icon
+prompt frame with new cell contents (ability and spell pictograms).</p>
+<p>After acceptance, resample the image so cells land exactly on the cell
+size (a 4x4 sheet → 256x256 for 64px cells) — the loader tiles by pixel
+arithmetic, and drifted cell boundaries bleed neighbors into buttons.
+Keep a note of which cell is which when you slice; the index is the
+only key.</p>
+<pre><code class="language-toml">[sheets.combat]
+path = "icons/combat.png"
+cell = 64
+</code></pre>
+<h2 id="post-processing-dekeypy"><a class="header" href="#post-processing-dekeypy">Post-processing (dekey.py)</a></h2>
+<p>Every keyed image (compass, icons, dolls, frames — not backgrounds)
+goes through the same script to turn the black background into a real
+alpha channel. It flood-fills from the image edges, so black ink lines
+and dark clothing <em>inside</em> a figure survive; only background connected
+to the border becomes transparent. It also emits a greyscale twin
+derived from the same pixels (never generate a greyscale variant
+separately — it will not match).</p>
+<pre><code>python dekey.py TheImage.png                  # -&gt; _alpha.png + _grey.png
+python dekey.py TheImage.png --threshold 40   # if a dark halo remains
+python dekey.py frame.png --seed 1024,1024 --threshold 12 --no-grey
+</code></pre>
+<p>Save this as <code>dekey.py</code> (needs Python with <code>Pillow</code>:
+<code>pip install Pillow</code>):</p>
+<pre><code class="language-python">#!/usr/bin/env python3
+"""Give AI-generated skin art a REAL alpha channel."""
+
+import argparse
+import sys
+from collections import deque
+from pathlib import Path
+
+from PIL import Image, ImageOps
+
+
+def dekey(img, threshold, seeds=()):
+    img = img.convert("RGBA")
+    w, h = img.size
+    px = img.load()
+
+    def is_bg(x, y):
+        r, g, b, _ = px[x, y]
+        return r &lt;= threshold and g &lt;= threshold and b &lt;= threshold
+
+    seen = bytearray(w * h)
+    queue = deque()
+    for x in range(w):
+        for y in (0, h - 1):
+            if is_bg(x, y) and not seen[y * w + x]:
+                seen[y * w + x] = 1
+                queue.append((x, y))
+    for y in range(h):
+        for x in (0, w - 1):
+            if is_bg(x, y) and not seen[y * w + x]:
+                seen[y * w + x] = 1
+                queue.append((x, y))
+    for x, y in seeds:
+        if not (0 &lt;= x &lt; w and 0 &lt;= y &lt; h):
+            raise SystemExit(f"seed {x},{y} outside {w}x{h} image")
+        if not is_bg(x, y):
+            raise SystemExit(f"seed {x},{y} is not background")
+        if not seen[y * w + x]:
+            seen[y * w + x] = 1
+            queue.append((x, y))
+
+    while queue:
+        x, y = queue.popleft()
+        px[x, y] = (0, 0, 0, 0)
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 &lt;= nx &lt; w and 0 &lt;= ny &lt; h and not seen[ny * w + nx] and is_bg(nx, ny):
+                seen[ny * w + nx] = 1
+                queue.append((nx, ny))
+    return img
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("input", type=Path)
+    ap.add_argument("--threshold", type=int, default=30,
+                    help="max RGB channel value treated as background")
+    ap.add_argument("--no-grey", action="store_true", help="skip greyscale variant")
+    ap.add_argument("--seed", action="append", default=[], metavar="X,Y",
+                    help="extra interior flood seed (repeatable); needed for "
+                         "closed frames whose center the edge flood cannot reach")
+    args = ap.parse_args()
+
+    seeds = []
+    for spec in args.seed:
+        try:
+            x, y = (int(part) for part in spec.split(","))
+        except ValueError:
+            ap.error(f"--seed wants X,Y integers, got {spec!r}")
+        seeds.append((x, y))
+
+    img = dekey(Image.open(args.input), args.threshold, seeds)
+    out_alpha = args.input.with_name(args.input.stem + "_alpha.png")
+    img.save(out_alpha)
+    print(f"wrote {out_alpha}")
+
+    if not args.no_grey:
+        grey = ImageOps.grayscale(img).convert("RGBA")
+        grey.putalpha(img.getchannel("A"))
+        out_grey = args.input.with_name(args.input.stem + "_grey.png")
+        grey.save(out_grey)
+        print(f"wrote {out_grey}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+</code></pre>
+<h2 id="workflow-notes"><a class="header" href="#workflow-notes">Workflow notes</a></h2>
+<ul>
+<li>Always attach the previous batch’s accepted output as a reference
+when generating siblings.</li>
+<li>If a result comes back with scenery or a non-black background, ask to
+“re-render the same image on a solid pure black background” rather
+than regenerating fresh.</li>
+<li>Not every widget is skinnable: progress bars, countdown timers, the
+command input, title bars, and scroll bars have no manifest slots
+today. Check <a href="#skins-gui-graphics">Skins</a> for the current surface before
+generating art for something.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="submitting-art-to-the-community-repo"><a class="header" href="#submitting-art-to-the-community-repo">Submitting Art to the Community Repo</a></h1>
+<p>Made a nice injury doll, window frame, or icon sheet? The community
+asset repository accepts submissions from anyone with a GitHub account —
+no git knowledge required. You fill out a short form, attach your image,
+and a robot does the rest: it cleans the image up, checks the name isn’t
+taken, and stages it for a quick human review. Once approved, it’s live
+for every VellumFE user.</p>
+<p>The whole thing runs on GitHub’s issue system:</p>
+<p><strong><a href="https://github.com/Nisugi/vellum-assets/issues/new/choose">Submit art here → github.com/Nisugi/vellum-assets/issues/new/choose</a></strong></p>
+<h2 id="what-can-be-submitted"><a class="header" href="#what-can-be-submitted">What can be submitted</a></h2>
+<p>Each kind of art has its own form, which asks only for what that kind
+needs:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Form</th><th>What it is</th><th>One submission is…</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Injury doll</strong></td><td>a full-body character image for the injury display</td><td>one image</td></tr>
+<tr><td><strong>Hotbar icon sheet</strong></td><td>a grid of square ability icons for hotbar buttons</td><td>one sheet image</td></tr>
+<tr><td><strong>Window frame</strong></td><td>an ornamental nine-slice border drawn around windows</td><td>one image</td></tr>
+<tr><td><strong>Window background</strong></td><td>a flat texture that sits behind window text</td><td>one image</td></tr>
+<tr><td><strong>Compass art</strong></td><td>a compass rose and/or its lit direction overlays</td><td>an image or a zip</td></tr>
+<tr><td><strong>Status icons</strong></td><td>the glyph set for stance and conditions</td><td>an image or a zip</td></tr>
+<tr><td><strong>Hand icons</strong></td><td>left, right, and spell hand icons for the hands widget</td><td>an image or a zip</td></tr>
+</tbody>
+</table>
+</div>
+<p>Full skins (complete graphics themes) and layouts aren’t submitted
+through these forms — they’re folders rather than single images, and go
+in by pull request instead; see the
+<a href="https://github.com/Nisugi/vellum-assets/blob/main/SUBMISSIONS.md">contributor notes in the asset repository</a>.</p>
+<h2 id="the-black-background-trick"><a class="header" href="#the-black-background-trick">The black-background trick</a></h2>
+<p>Game art needs transparency — a doll or a frame has to sit on top of
+whatever is behind it. But AI image generators <em>cannot</em> produce
+transparency; ask for it and you’ll get a fake checkerboard. So the
+pipeline uses a convention borrowed from film: <strong>paint your art on a
+solid pure-black background, and the submission robot turns the black
+into real transparency for you.</strong></p>
+<p>It’s smarter than “delete everything black.” The robot flood-fills
+inward from the edges of the canvas, so only background <em>connected to
+the border</em> is removed — black ink outlines, dark hair, and iron armor
+inside your artwork are untouched. (For window frames it also clears
+the enclosed center pocket, and treads gently around near-black
+metalwork.)</p>
+<p>Two consequences worth knowing:</p>
+<ul>
+<li>If your image <strong>already has real transparency</strong> — you cleaned it up
+yourself in an editor — the robot detects that and leaves it alone.
+(Detection requires meaningful transparency; a few stray transparent
+pixels from an export won’t disable keying. Filling in the threshold
+field always forces a re-key either way.)</li>
+<li><strong>Don’t submit greyscale variants</strong> of anything. VellumFE desaturates
+art at runtime when it needs to (the injury doll base, dormant
+states), so only the color version is ever stored.</li>
+</ul>
+<p>Window backgrounds are the one exception to all of this: they must be
+<strong>fully opaque</strong>, and transparency in one gets a submission rejected.</p>
+<h3 id="if-the-cleanup-comes-out-wrong"><a class="header" href="#if-the-cleanup-comes-out-wrong">If the cleanup comes out wrong</a></h3>
+<p>The pull request the robot opens shows your processed images — look at
+them. Two failure modes, one knob:</p>
+<ul>
+<li>a <strong>dark halo</strong> clinging around your art means the cutoff was too
+strict — edit your issue and set <strong>Background threshold (advanced)</strong>
+to something higher, like <code>40</code>;</li>
+<li><strong>dark details getting erased</strong> where they touch the background means
+it was too loose — set it lower, like <code>15</code>.</li>
+</ul>
+<p>Every edit to the issue re-runs the robot and updates the pull request
+in place, so you can tune until it looks right. Leave the field blank
+to use the defaults, which are right for most art.</p>
+<p>For art direction — style, palette, and ready-to-use generation prompts
+that produce correctly black-keyed images — see
+<a href="#generating-skin-art-with-ai">Generating Skin Art with AI</a>.</p>
+<h2 id="names"><a class="header" href="#names">Names</a></h2>
+<p>Every asset needs a name: lowercase letters, numbers, <code>_</code> and <code>-</code> only
+(the form explains this too). Names are <strong>first come, first served</strong> —
+if <code>elf_wizard</code> is taken in the dolls category, the robot will tell you
+and you just pick another.</p>
+<p>For the two zip categories, files inside your zip must be named for
+their <strong>role</strong> so the client knows what each image is:</p>
+<ul>
+<li><strong>Compass</strong>: <code>rose</code> (the base), <code>n</code> <code>ne</code> <code>e</code> <code>se</code> <code>s</code> <code>sw</code> <code>w</code> <code>nw</code>
+(lit pointers), <code>up</code> <code>down</code> (chevrons), <code>out</code> (the hub)</li>
+<li><strong>Status icons</strong>: <code>standing</code> <code>kneeling</code> <code>sitting</code> <code>prone</code> <code>dead</code>
+<code>stunned</code> <code>bleeding</code> <code>hidden</code> <code>invisible</code> <code>webbed</code> <code>poisoned</code>
+<code>diseased</code> <code>joined</code></li>
+<li><strong>Hand icons</strong>: <code>lefthand</code> <code>righthand</code> <code>spellhand</code></li>
+</ul>
+<p>Name each file either <code>&lt;role&gt;.png</code> or <code>&lt;anything&gt;_&lt;role&gt;.png</code> — both
+work. A partial set is fine (just a rose, say). Files named for a bare
+role take your set name as prefix, so <code>emberiron</code> + <code>rose.png</code> is
+published as <code>emberiron_rose.png</code>; files with their own prefix keep it,
+so one zip can carry <code>ember_spellhand.png</code> and <code>frost_spellhand.png</code> as
+two separate assets. You don’t need a zip at all for one image — attach
+it directly and pick its role in the form’s dropdown.</p>
+<h2 id="what-happens-after-you-click-submit"><a class="header" href="#what-happens-after-you-click-submit">What happens after you click Submit</a></h2>
+<ol>
+<li>Within a minute or two, the robot processes your submission and
+comments on your issue with the result.</li>
+<li><strong>Accepted</strong> — it opens a pull request with your finished, cleaned-up
+files. A maintainer eyeballs the art (that’s the whole review) and
+merges. The site rebuilds itself, and your asset is live in the
+gallery and in everyone’s <code>.jinx list</code>, credited to you.</li>
+<li><strong>Rejected</strong> — the comment says exactly what’s wrong: name taken,
+file the wrong shape, no attachment found, a zip filename that
+doesn’t match a role. <strong>Edit your issue to fix it</strong> — don’t open a
+new one — and the robot automatically re-runs on the edit.</li>
+</ol>
+<p>Nothing is ever published automatically; a person approves every
+submission before it goes live.</p>
+<h2 id="per-category-fine-print"><a class="header" href="#per-category-fine-print">Per-category fine print</a></h2>
+<ul>
+<li><strong>Injury dolls</strong> — front-facing, standing straight, arms slightly away
+from the torso, both hands, both feet, and both eyes visible, full
+figure in frame, roughly 3:4 portrait. The
+<a href="#generating-skin-art-with-ai">prompt kit</a> bakes all of this in.</li>
+<li><strong>Hotbar icon sheets</strong> — square cells, no padding between them, and
+the form asks for your <strong>cell size</strong> in pixels. Cell boundaries must
+land exactly on multiples of that size, or buttons will bleed into
+their neighbors. Sheets are used as-is — no background removal.</li>
+<li><strong>Window frames</strong> — uniform band thickness, ornament confined to the
+corners, continuous plain material along the straight runs (they get
+stretched), pure-black center. The renderer slices the frame at the
+<strong>corner cap size</strong> — the smallest square, anchored at a canvas
+corner, that contains the corner ornament. <strong>The robot measures this
+automatically</strong> from your image; the number it found is shown in the
+pull request. If it looks wrong, measure the caps yourself in an
+editor and put the pixel value in the form’s cap-size field to
+override.</li>
+<li><strong>Compass overlays</strong> — the lit pointers are stacked on top of the rose
+at runtime, so they must be registered pixel-perfect against it.
+Generate them from one master image; don’t generate each separately.</li>
+<li><strong>Status icons</strong> — one bold pictogram per glyph, readable at 20
+pixels.</li>
+<li><strong>Backgrounds</strong> — perfectly even lighting, no vignette, no focal
+point anywhere, very low contrast. Windows crop backgrounds at
+arbitrary shapes, so no part of the composition may matter.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="command-reference"><a class="header" href="#command-reference">Command Reference</a></h1>
@@ -4696,7 +5278,6 @@ layout.toml).</p>
 </thead>
 <tbody>
 <tr><td><code>.transparent</code></td><td></td><td>Toggle transparent window backgrounds (TUI)</td></tr>
-<tr><td><code>.knownwindows</code></td><td><code>.containers</code></td><td>Known windows list: every game-offered window (containers/dialogs/streams) with a show/hide checkbox per row</td></tr>
 <tr><td><code>.hidecontainers [title]</code></td><td></td><td>Close container windows (all, or one by title)</td></tr>
 <tr><td><code>.reloadmacros</code></td><td></td><td>Reload macros.toml and push to connected phones</td></tr>
 <tr><td><code>.webinfo</code></td><td></td><td>Show the phone pairing URL / app link and open their QR codes</td></tr>
@@ -4993,8 +5574,7 @@ Yes — files in <code>profiles/&lt;name&gt;/</code> override the global ones wh
 with <code>--character</code> (or <code>--profile</code>).</p>
 <p><strong>Can I have multiple layouts?</strong>
 Yes: <code>.savelayout hunting</code>, then <code>.loadlayout hunting</code> — in both the TUI
-and the GUI (each keeps its own set). In the TUI you can also switch
-automatically by terminal size with <code>layout_mappings</code> in config.toml.</p>
+and the GUI (each keeps its own set).</p>
 <p><strong>How do I reset to defaults?</strong>
 Delete the file (or the whole <code>~/.vellum-fe/</code> directory); defaults are
 recreated on next launch.</p>

@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f875b337.js";
+            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba9683ee.js"></script>
+        <script src="../toc-a6416afc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -223,9 +223,16 @@ cols = 60     # Width
 .layouts                # list saved layouts
 .resize                 # refit layout to the current terminal size
 </code></pre>
-<p>Window positions also auto-save per character. You can switch layouts
-automatically by terminal size with <code>layout_mappings</code> in
-<a href="../configuration/config-toml.html">config.toml</a>.</p>
+<p>Window positions also auto-save per character: any layout change (moving
+or resizing a window, editing its streams, adding or hiding windows) is
+written to the per-character auto-save a few seconds later, and
+<code>.savelayout</code> / <code>.loadlayout</code> update it immediately — so your layout
+comes back on next launch even if the session ends without a clean
+<code>.quit</code> (closed terminal, crash). On startup the client loads the
+per-character auto-save first, falling back to your saved <code>default</code>
+layout (<code>.savelayout</code> with no name) if no auto-save exists. Use
+<code>.resize</code> to refit the current layout to the terminal, or
+<code>.loadlayout &lt;name&gt;</code> to switch layouts.</p>
 <p>The same three commands work in the <a href="../frontends/gui.html">Desktop GUI</a>
 on its own layout format: named checkpoints of the GUI arrangement,
 saved per character under <code>~/.vellum-fe/gui/</code>, applied live by

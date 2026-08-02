@@ -111,9 +111,10 @@ registered sheet matches.
 
 Sheets live in one of two places:
 
-- **Shared store** (`~/.vellum-fe/global/icons/` with an `icons.toml`
-  manifest) — available to every skin, and with no skin active at all.
-  This is the default and the right choice for personal icon sets.
+- **Shared store** (`~/.vellum-fe/global/images/icons/` with an
+  `icons.toml` manifest) — available to every skin, and with no skin
+  active at all. This is the default and the right choice for personal
+  icon sets.
 - **Active skin** (the skin's `[sheets]` table in `skin.toml`, see the
   skin docs) — travels with the skin; a skin sheet overrides a shared
   sheet with the same name.
@@ -150,7 +151,7 @@ With `icon_mode = "icon"` the label moves into the hover tooltip. States
 can swap the icon (a different cell, or the same cell grayscaled) via
 `[bars.buttons.states.style.icon]` — dimmed states automatically use the
 grayscale variant. The sheet entry itself — in the shared store's
-`icons.toml` (paths relative to `global/icons/`) or a skin's `skin.toml`
+`icons.toml` (paths relative to `global/images/icons/`) or a skin's `skin.toml`
 (paths relative to the skin directory) — looks the same either way:
 
 ```toml

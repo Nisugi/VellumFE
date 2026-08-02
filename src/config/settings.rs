@@ -97,8 +97,8 @@ pub struct UiConfig {
     /// Draw emoji in color in the GUI (monochrome when off)
     #[serde(default = "default_true")]
     pub color_emoji: bool,
-    /// Categorize "look in container" output by item type (`.sorter`,
-    /// the native sorter.lic)
+    /// LEGACY: migrated to `[sorter].enabled` at load (`SorterConfig`);
+    /// kept readable one release so old files carry their value over.
     #[serde(default)]
     pub sorter_enabled: bool,
     // Performance stats settings
@@ -112,11 +112,9 @@ pub struct UiConfig {
     pub perf_stats_width: u16,
     #[serde(default = "default_perf_stats_height")]
     pub perf_stats_height: u16,
-    // Performance overlay metric toggles
+    // Performance monitor metric toggles (ids match performance::PERF_METRICS)
     #[serde(default = "default_true")]
     pub perf_show_fps: bool,
-    #[serde(default)]
-    pub perf_show_frame_times: bool,
     #[serde(default = "default_true")]
     pub perf_show_render_times: bool,
     #[serde(default = "default_true")]
@@ -130,19 +128,20 @@ pub struct UiConfig {
     #[serde(default = "default_true")]
     pub perf_show_events: bool,
     #[serde(default = "default_true")]
+    pub perf_show_cpu: bool,
+    #[serde(default = "default_true")]
     pub perf_show_memory: bool,
     #[serde(default = "default_true")]
     pub perf_show_lines: bool,
     #[serde(default = "default_true")]
     pub perf_show_uptime: bool,
-    #[serde(default)]
-    pub perf_show_jitter: bool,
-    #[serde(default)]
-    pub perf_show_frame_spikes: bool,
-    #[serde(default)]
-    pub perf_show_event_lag: bool,
     #[serde(default = "default_true")]
-    pub perf_show_memory_delta: bool,
+    pub perf_show_spike_log: bool,
+    #[serde(default = "default_true")]
+    pub perf_show_per_window: bool,
+    /// Draw block-character trend sparklines next to rows that have them.
+    #[serde(default = "default_true")]
+    pub perf_sparklines: bool,
     // Color rendering mode
     #[serde(default)]
     pub color_mode: ColorMode, // "direct" (true color) or "slot" (256-color palette)
@@ -151,14 +150,60 @@ pub struct UiConfig {
     pub timestamp_position: TimestampPosition, // "start" or "end" (default: end)
     #[serde(default = "default_betrayer_active_color")]
     pub betrayer_active_color: Option<String>,
-    #[serde(default = "default_open_dialog_blocklist")]
-    pub open_dialog_blocklist: Vec<String>,
     #[serde(default)]
     pub focus: FocusConfig, // Tab focus behavior and order
     /// Terminal title template with variables: {character}, {room}, {health}, {mana}, {stamina}, {unread}
     /// Empty string = don't modify terminal title
     #[serde(default)]
     pub terminal_title: String,
+}
+
+impl UiConfig {
+    /// Current state of a performance-metric toggle by registry id (the
+    /// `<id>` in `ui.perf_show_<id>`, plus "sparklines"). Unknown ids read
+    /// as false.
+    pub fn perf_metric_enabled(&self, id: &str) -> bool {
+        match id {
+            "fps" => self.perf_show_fps,
+            "render_times" => self.perf_show_render_times,
+            "ui_times" => self.perf_show_ui_times,
+            "wrap_times" => self.perf_show_wrap_times,
+            "net" => self.perf_show_net,
+            "parse" => self.perf_show_parse,
+            "events" => self.perf_show_events,
+            "cpu" => self.perf_show_cpu,
+            "memory" => self.perf_show_memory,
+            "lines" => self.perf_show_lines,
+            "uptime" => self.perf_show_uptime,
+            "spike_log" => self.perf_show_spike_log,
+            "per_window" => self.perf_show_per_window,
+            "sparklines" => self.perf_sparklines,
+            _ => false,
+        }
+    }
+
+    /// Flip a performance-metric toggle by id; returns false for unknown ids.
+    pub fn toggle_perf_metric(&mut self, id: &str) -> bool {
+        let field = match id {
+            "fps" => &mut self.perf_show_fps,
+            "render_times" => &mut self.perf_show_render_times,
+            "ui_times" => &mut self.perf_show_ui_times,
+            "wrap_times" => &mut self.perf_show_wrap_times,
+            "net" => &mut self.perf_show_net,
+            "parse" => &mut self.perf_show_parse,
+            "events" => &mut self.perf_show_events,
+            "cpu" => &mut self.perf_show_cpu,
+            "memory" => &mut self.perf_show_memory,
+            "lines" => &mut self.perf_show_lines,
+            "uptime" => &mut self.perf_show_uptime,
+            "spike_log" => &mut self.perf_show_spike_log,
+            "per_window" => &mut self.perf_show_per_window,
+            "sparklines" => &mut self.perf_sparklines,
+            _ => return false,
+        };
+        *field = !*field;
+        true
+    }
 }
 
 impl Default for UiConfig {
@@ -183,24 +228,22 @@ impl Default for UiConfig {
             perf_stats_width: default_perf_stats_width(),
             perf_stats_height: default_perf_stats_height(),
             perf_show_fps: true,
-            perf_show_frame_times: false,
             perf_show_render_times: true,
             perf_show_ui_times: true,
             perf_show_wrap_times: true,
             perf_show_net: true,
             perf_show_parse: true,
             perf_show_events: true,
+            perf_show_cpu: true,
             perf_show_memory: true,
             perf_show_lines: true,
             perf_show_uptime: true,
-            perf_show_jitter: false,
-            perf_show_frame_spikes: false,
-            perf_show_event_lag: false,
-            perf_show_memory_delta: true,
+            perf_show_spike_log: true,
+            perf_show_per_window: true,
+            perf_sparklines: true,
             color_mode: ColorMode::default(),
             timestamp_position: TimestampPosition::default(),
             betrayer_active_color: default_betrayer_active_color(),
-            open_dialog_blocklist: default_open_dialog_blocklist(),
             focus: FocusConfig::default(),
             terminal_title: String::new(),
         }
@@ -643,6 +686,80 @@ impl StreamsConfig {
                 self.routes.insert(id, StreamRoute::Discard);
             }
         }
+    }
+}
+
+/// `[sorter]` — categorized container looks (`.sorter`, sorter.lic's
+/// native cousin). The transform lives in `core/sorter.rs`; the editor is
+/// `.sorter edit`. `ui.sorter_enabled` is the legacy home of `enabled`
+/// and migrates here at load.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SorterConfig {
+    /// Master switch (`.sorter [on|off]`).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Show "(n)" duplicate counts and the "(total)" in category labels.
+    #[serde(default = "default_true")]
+    pub show_counts: bool,
+    /// Render category labels monsterbold (sorter.lic style).
+    #[serde(default = "default_true")]
+    pub bold_labels: bool,
+    /// Item order within a category: "last_word" (sorter.lic style),
+    /// "alpha", or "none" (keep the look's order).
+    #[serde(default = "default_sorter_item_sort")]
+    pub item_sort: String,
+    /// Explicit category display order; categories not listed follow in
+    /// first-seen order after the listed ones.
+    #[serde(default)]
+    pub category_order: Vec<String>,
+    /// Display renames, keyed by category name ("gem" -> "Gems").
+    #[serde(default)]
+    pub labels: std::collections::BTreeMap<String, String>,
+    /// User rules, checked BEFORE the gameobj data pack; first matching
+    /// rule wins. Items are never hidden — only re-categorized.
+    #[serde(default)]
+    pub rules: Vec<SorterRule>,
+}
+
+/// One user categorization rule. Both matchers empty = matches everything
+/// (a catch-all the user can order last).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SorterRule {
+    /// Case-insensitive substring of the item's display name; empty = any.
+    #[serde(rename = "match", default)]
+    pub name_match: String,
+    /// Exact noun (case-insensitive); empty = any.
+    #[serde(default)]
+    pub noun: String,
+    /// Target category. New names create new buckets.
+    pub category: String,
+}
+
+fn default_sorter_item_sort() -> String {
+    "last_word".to_string()
+}
+
+impl Default for SorterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_counts: true,
+            bold_labels: true,
+            item_sort: default_sorter_item_sort(),
+            category_order: Vec::new(),
+            labels: std::collections::BTreeMap::new(),
+            rules: Vec::new(),
+        }
+    }
+}
+
+impl SorterRule {
+    /// True when this rule matches the item. Empty matchers are wildcards.
+    pub fn matches(&self, name: &str, noun: &str) -> bool {
+        let name_ok = self.name_match.is_empty()
+            || name.to_lowercase().contains(&self.name_match.to_lowercase());
+        let noun_ok = self.noun.is_empty() || noun.eq_ignore_ascii_case(&self.noun);
+        name_ok && noun_ok
     }
 }
 

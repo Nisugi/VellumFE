@@ -36,10 +36,13 @@ fn get_action_context(mode: &InputMode) -> ActionContext {
         | InputMode::IndicatorTemplateEditor => ActionContext::Browser,
 
         // Form widgets
+        // (PackEditor handles raw keys itself; grouped here so the
+        // context mapping stays total)
         InputMode::HighlightForm
         | InputMode::KeybindForm
         | InputMode::ColorForm
         | InputMode::SpellColorForm
+        | InputMode::PackEditor
         | InputMode::ThemeEditor => ActionContext::Form,
 
         // Settings editor (hybrid - has both navigation and inline editing)

@@ -94,6 +94,26 @@ pub enum SettingScope {
     CharacterOnly,
 }
 
+/// Which frontends a setting applies to. Settings editors hide entries
+/// that are out of scope for their frontend, so a toggle can never sit in
+/// an editor where it does nothing (the perf-monitor drift bug class).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrontendScope {
+    All,
+    Tui,
+    Gui,
+}
+
+impl FrontendScope {
+    pub fn includes_tui(self) -> bool {
+        matches!(self, FrontendScope::All | FrontendScope::Tui)
+    }
+
+    pub fn includes_gui(self) -> bool {
+        matches!(self, FrontendScope::All | FrontendScope::Gui)
+    }
+}
+
 /// One registered setting.
 pub struct SettingDef {
     /// Dotted serde path within config.toml (e.g. "ui.buffer_size").
@@ -105,6 +125,8 @@ pub struct SettingDef {
     pub scope: SettingScope,
     /// Never shown back to the user in clear text by generated UIs.
     pub sensitive: bool,
+    /// Which frontends this setting is meaningful in.
+    pub frontend: FrontendScope,
     pub get: fn(&Config) -> SettingValue,
     pub set: fn(&mut Config, &SettingValue) -> Result<(), String>,
 }
@@ -123,27 +145,36 @@ pub const EXEMPT_PREFIXES: &[&str] = &[
     "go2.pathcodes",              // captured maze routes, never hand-edited
     "tts.substitutions",          // pattern/replacement pairs; Accessibility panel
     "streams.routes",             // per-stream route map; dedicated Streams panel editor later
+    "ui.sorter_enabled",          // legacy home of sorter.enabled; migrated at load
+    "sorter.category_order",      // ordered list; `.sorter edit` editor
+    "sorter.labels",              // rename map; `.sorter edit` editor
+    "sorter.rules",               // structured rules; `.sorter edit` editor
 ];
 
 macro_rules! bool_entry {
-    ($key:literal, $label:literal, $cat:literal, $desc:literal, $($f:tt)+) => {
+    ([$front:ident] $key:literal, $label:literal, $cat:literal, $desc:literal, $($f:tt)+) => {
         SettingDef {
             key: $key, label: $label, category: $cat, description: $desc,
             kind: SettingKind::Bool, scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::$front,
             get: |c| SettingValue::Bool(c.$($f)+),
             set: |c, v| { c.$($f)+ = v.as_bool()?; Ok(()) },
         }
     };
+    ($key:literal, $label:literal, $cat:literal, $desc:literal, $($f:tt)+) => {
+        bool_entry!([All] $key, $label, $cat, $desc, $($f)+)
+    };
 }
 
 macro_rules! int_entry {
-    ($key:literal, $label:literal, $cat:literal, $desc:literal, $min:literal..=$max:literal, $ty:ty, $($f:tt)+) => {
+    ([$front:ident] $key:literal, $label:literal, $cat:literal, $desc:literal, $min:literal..=$max:literal, $ty:ty, $($f:tt)+) => {
         SettingDef {
             key: $key, label: $label, category: $cat, description: $desc,
             kind: SettingKind::Int { min: $min, max: $max },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::$front,
             get: |c| SettingValue::Int(c.$($f)+ as i64),
             set: |c, v| {
                 let raw = v.as_int()?;
@@ -155,6 +186,9 @@ macro_rules! int_entry {
             },
         }
     };
+    ($key:literal, $label:literal, $cat:literal, $desc:literal, $min:literal..=$max:literal, $ty:ty, $($f:tt)+) => {
+        int_entry!([All] $key, $label, $cat, $desc, $min..=$max, $ty, $($f)+)
+    };
 }
 
 macro_rules! float_entry {
@@ -164,6 +198,7 @@ macro_rules! float_entry {
             kind: SettingKind::Float { min: $min, max: $max },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Float(c.$($f)+ as f64),
             set: |c, v| {
                 let raw = v.as_float()?;
@@ -183,6 +218,7 @@ macro_rules! text_entry {
             key: $key, label: $label, category: $cat, description: $desc,
             kind: SettingKind::Text, scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.$($f)+.clone()),
             set: |c, v| { c.$($f)+ = v.as_text()?; Ok(()) },
         }
@@ -195,6 +231,7 @@ macro_rules! opt_text_entry {
             key: $key, label: $label, category: $cat, description: $desc,
             kind: SettingKind::OptionalText, scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.$($f)+.clone().unwrap_or_default()),
             set: |c, v| {
                 let text = v.as_text()?;
@@ -212,6 +249,7 @@ macro_rules! enum_entry {
             kind: SettingKind::Enum { options: $options },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.$($f)+.clone()),
             set: |c, v| {
                 let text = v.as_text()?;
@@ -232,6 +270,7 @@ macro_rules! list_entry {
             key: $key, label: $label, category: $cat, description: $desc,
             kind: SettingKind::List, scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::List(c.$($f)+.clone()),
             set: |c, v| { c.$($f)+ = v.as_list()?; Ok(()) },
         }
@@ -249,6 +288,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Text,
             scope: SettingScope::CharacterOnly,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.connection.host.clone()),
             set: |c, v| { c.connection.host = v.as_text()?; Ok(()) },
         },
@@ -260,6 +300,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Int { min: 1, max: 65535 },
             scope: SettingScope::CharacterOnly,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Int(c.connection.port as i64),
             set: |c, v| {
                 let raw = v.as_int()?;
@@ -278,6 +319,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::OptionalText,
             scope: SettingScope::CharacterOnly,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.connection.character.clone().unwrap_or_default()),
             set: |c, v| {
                 let text = v.as_text()?;
@@ -294,6 +336,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::OptionalText,
             scope: SettingScope::CharacterOnly,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.connection.account.clone().unwrap_or_default()),
             set: |c, v| {
                 let text = v.as_text()?;
@@ -310,6 +353,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::OptionalText,
             scope: SettingScope::CharacterOnly,
             sensitive: true,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.connection.password.clone().unwrap_or_default()),
             set: |c, v| {
                 let text = v.as_text()?;
@@ -326,6 +370,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::OptionalText,
             scope: SettingScope::CharacterOnly,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.connection.game.clone().unwrap_or_default()),
             set: |c, v| {
                 let text = v.as_text()?;
@@ -350,20 +395,28 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Render :grin:-style shortcodes in incoming text as emoji", ui.emoji_shortcodes),
         bool_entry!("ui.color_emoji", "Color Emoji", "UI",
             "Draw emoji in color in the GUI (monochrome when off)", ui.color_emoji),
-        bool_entry!("ui.sorter_enabled", "Sort Container Looks", "UI",
-            "Categorize 'look in container' output by item type (.sorter)", ui.sorter_enabled),
+        bool_entry!("sorter.enabled", "Sort Container Looks", "UI",
+            "Categorize 'look in container' output by item type (.sorter; rules/order/renames in '.sorter edit')",
+            sorter.enabled),
+        bool_entry!("sorter.show_counts", "Sorter Counts", "UI",
+            "Show duplicate counts and category totals in sorted container looks", sorter.show_counts),
+        bool_entry!("sorter.bold_labels", "Sorter Bold Labels", "UI",
+            "Render sorted-look category labels in monsterbold", sorter.bold_labels),
+        enum_entry!("sorter.item_sort", "Sorter Item Order", "UI",
+            "Item order within a category: last_word (sorter.lic style), alpha, or none (look order)",
+            &["last_word", "alpha", "none"], sorter.item_sort),
         text_entry!("ui.terminal_title", "Terminal Title", "UI",
             "Terminal title template ({character}, {room}, {health}, ...); empty leaves the title alone",
             ui.terminal_title),
         opt_text_entry!("ui.betrayer_active_color", "Betrayer Active Color", "UI",
             "Highlight color for active Betrayer panel items", ui.betrayer_active_color),
-        list_entry!("ui.open_dialog_blocklist", "Dialog Blocklist", "UI",
-            "openDialog windows prevented from auto-opening", ui.open_dialog_blocklist),
         // ---- Appearance ---------------------------------------------
         text_entry!("active_theme", "Active Theme", "Appearance",
             "Currently active theme name", active_theme),
         opt_text_entry!("active_skin", "Active Skin", "Appearance",
-            "GUI skin directory under ~/.vellum-fe/skins (empty = plain theme colors)", active_skin),
+            "GUI skin directory under ~/.vellum-fe/global/skins (empty = plain theme colors)", active_skin),
+        opt_text_entry!("doll_image", "Injury Doll Image", "Appearance",
+            "Injury doll override as a pool path (dolls/<file>.png); empty = the active skin's doll", doll_image),
         // ---- Terminal (TUI) -----------------------------------------
         SettingDef {
             key: "ui.color_mode",
@@ -373,6 +426,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Enum { options: &["direct", "slot", "indexed"] },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.ui.color_mode.to_string()),
             set: |c, v| {
                 c.ui.color_mode = match v.as_text()?.as_str() {
@@ -392,6 +446,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Enum { options: &["start", "end"] },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Text(c.ui.timestamp_position.to_string()),
             set: |c, v| {
                 c.ui.timestamp_position = match v.as_text()?.as_str() {
@@ -419,47 +474,47 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Widget types reachable via Tab", ui.focus.types),
         list_entry!("ui.focus.exclude", "Focus Exclude", "Focus",
             "Window names excluded from Tab focus", ui.focus.exclude),
-        // ---- Performance overlay ------------------------------------
-        bool_entry!("ui.performance_stats_enabled", "Performance Overlay", "Performance",
-            "Show the performance stats overlay", ui.performance_stats_enabled),
-        int_entry!("ui.perf_stats_x", "Overlay X", "Performance",
-            "Performance overlay column", 0..=1000, u16, ui.perf_stats_x),
-        int_entry!("ui.perf_stats_y", "Overlay Y", "Performance",
-            "Performance overlay row", 0..=1000, u16, ui.perf_stats_y),
-        int_entry!("ui.perf_stats_width", "Overlay Width", "Performance",
-            "Performance overlay width", 10..=200, u16, ui.perf_stats_width),
-        int_entry!("ui.perf_stats_height", "Overlay Height", "Performance",
-            "Performance overlay height", 5..=100, u16, ui.perf_stats_height),
-        bool_entry!("ui.perf_show_fps", "Show FPS", "Performance",
-            "Overlay: frames per second", ui.perf_show_fps),
-        bool_entry!("ui.perf_show_frame_times", "Show Frame Times", "Performance",
-            "Overlay: per-frame timings", ui.perf_show_frame_times),
+        // ---- Performance monitor ------------------------------------
+        // Metric toggles mirror performance::PERF_METRICS ids; the
+        // registry test in performance.rs fails the build if they drift.
+        bool_entry!("ui.performance_stats_enabled", "Performance Monitor", "Performance",
+            "Show the performance monitor window", ui.performance_stats_enabled),
+        int_entry!([Tui] "ui.perf_stats_x", "Overlay X", "Performance",
+            "Performance overlay column (TUI cells)", 0..=1000, u16, ui.perf_stats_x),
+        int_entry!([Tui] "ui.perf_stats_y", "Overlay Y", "Performance",
+            "Performance overlay row (TUI cells)", 0..=1000, u16, ui.perf_stats_y),
+        int_entry!([Tui] "ui.perf_stats_width", "Overlay Width", "Performance",
+            "Performance overlay width (TUI cells)", 10..=200, u16, ui.perf_stats_width),
+        int_entry!([Tui] "ui.perf_stats_height", "Overlay Height", "Performance",
+            "Performance overlay height (TUI cells)", 5..=100, u16, ui.perf_stats_height),
+        bool_entry!("ui.perf_show_fps", "Show Draws/s", "Performance",
+            "Monitor: frame draws per second", ui.perf_show_fps),
         bool_entry!("ui.perf_show_render_times", "Show Render Times", "Performance",
-            "Overlay: render timings", ui.perf_show_render_times),
-        bool_entry!("ui.perf_show_ui_times", "Show UI Times", "Performance",
-            "Overlay: UI update timings", ui.perf_show_ui_times),
-        bool_entry!("ui.perf_show_wrap_times", "Show Wrap Times", "Performance",
-            "Overlay: text wrap timings", ui.perf_show_wrap_times),
+            "Monitor: frame paint cost (avg/p95/max)", ui.perf_show_render_times),
+        bool_entry!([Tui] "ui.perf_show_ui_times", "Show Draw Times", "Performance",
+            "Monitor: widget draw pass, before terminal flush", ui.perf_show_ui_times),
+        bool_entry!([Tui] "ui.perf_show_wrap_times", "Show Wrap Times", "Performance",
+            "Monitor: text wrap timings", ui.perf_show_wrap_times),
         bool_entry!("ui.perf_show_net", "Show Network", "Performance",
-            "Overlay: network throughput", ui.perf_show_net),
+            "Monitor: network throughput", ui.perf_show_net),
         bool_entry!("ui.perf_show_parse", "Show Parse", "Performance",
-            "Overlay: parser timings", ui.perf_show_parse),
+            "Monitor: parser timings and element rates", ui.perf_show_parse),
         bool_entry!("ui.perf_show_events", "Show Events", "Performance",
-            "Overlay: event counts", ui.perf_show_events),
+            "Monitor: event processing and queue depth", ui.perf_show_events),
+        bool_entry!("ui.perf_show_cpu", "Show CPU", "Performance",
+            "Monitor: process and system CPU usage", ui.perf_show_cpu),
         bool_entry!("ui.perf_show_memory", "Show Memory", "Performance",
-            "Overlay: memory usage", ui.perf_show_memory),
-        bool_entry!("ui.perf_show_lines", "Show Lines", "Performance",
-            "Overlay: buffered line counts", ui.perf_show_lines),
+            "Monitor: process RSS and virtual memory", ui.perf_show_memory),
+        bool_entry!("ui.perf_show_lines", "Show Buffers", "Performance",
+            "Monitor: buffered line and window counts", ui.perf_show_lines),
         bool_entry!("ui.perf_show_uptime", "Show Uptime", "Performance",
-            "Overlay: session uptime", ui.perf_show_uptime),
-        bool_entry!("ui.perf_show_jitter", "Show Jitter", "Performance",
-            "Overlay: frame jitter", ui.perf_show_jitter),
-        bool_entry!("ui.perf_show_frame_spikes", "Show Frame Spikes", "Performance",
-            "Overlay: frame spike counter", ui.perf_show_frame_spikes),
-        bool_entry!("ui.perf_show_event_lag", "Show Event Lag", "Performance",
-            "Overlay: event loop lag", ui.perf_show_event_lag),
-        bool_entry!("ui.perf_show_memory_delta", "Show Memory Delta", "Performance",
-            "Overlay: memory growth since start", ui.perf_show_memory_delta),
+            "Monitor: session uptime", ui.perf_show_uptime),
+        bool_entry!("ui.perf_show_spike_log", "Show Spike Log", "Performance",
+            "Monitor: recent slow frames/events with context", ui.perf_show_spike_log),
+        bool_entry!("ui.perf_show_per_window", "Show Window Costs", "Performance",
+            "Monitor: most expensive windows to render", ui.perf_show_per_window),
+        bool_entry!("ui.perf_sparklines", "Sparklines", "Performance",
+            "Monitor: draw trend sparklines next to rows", ui.perf_sparklines),
         // ---- Sound ---------------------------------------------------
         bool_entry!("sound.enabled", "Sound Enabled", "Sound",
             "Enable the audio system (off skips audio init entirely)", sound.enabled),
@@ -473,6 +528,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Int { min: 0, max: 60000 },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Int(c.sound.cooldown_ms as i64),
             set: |c, v| {
                 let raw = v.as_int()?;
@@ -493,6 +549,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Int { min: 0, max: 600000 },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Int(c.sound.startup_music_delay_ms as i64),
             set: |c, v| {
                 let raw = v.as_int()?;
@@ -548,6 +605,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Int { min: 100, max: 600000 },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Int(c.logging.flush_interval_ms as i64),
             set: |c, v| {
                 let raw = v.as_int()?;
@@ -593,6 +651,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Int { min: 1, max: 65535 },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Int(c.web.port as i64),
             set: |c, v| {
                 let raw = v.as_int()?;
@@ -613,6 +672,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Bool,
             scope: SettingScope::CharacterOnly,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Bool(c.web.pinned),
             set: |c, v| { c.web.pinned = v.as_bool()?; Ok(()) },
         },
@@ -631,6 +691,7 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             kind: SettingKind::Int { min: 0, max: 32 },
             scope: SettingScope::GlobalOrCharacter,
             sensitive: false,
+            frontend: FrontendScope::All,
             get: |c| SettingValue::Int(c.web.story_size.map_or(0, |v| v as i64)),
             set: |c, v| {
                 let raw = v.as_int()?;

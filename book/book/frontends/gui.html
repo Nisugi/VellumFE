@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f875b337.js";
+            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba9683ee.js"></script>
+        <script src="../toc-a6416afc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -200,23 +200,48 @@ are a separate format and can’t be loaded here (<code>.resize</code> is also
 TUI-only).</p>
 <h2 id="windows-and-zones"><a class="header" href="#windows-and-zones">Windows and Zones</a></h2>
 <p>The GUI arranges windows in five zones: header, footer, left sidebar,
-center, and right sidebar. Toggle zones from the top toolbar.</p>
+center, and right sidebar. Toggle zones from the top toolbar. Every zone
+is a free canvas: windows go exactly where you drag them, may overlap,
+and remember their spot.</p>
 <ul>
-<li><strong>Move a window</strong>: drag its title bar (free placement in the center), or
-<strong>Alt+drag</strong> the window body to move it between zones.</li>
+<li><strong>Move a window</strong>: drag it anywhere — body or title bar (interactive
+content like text selection and links still wins over the drag). To
+move a window <strong>between zones</strong>, <strong>Alt+drag</strong> it; the drop point
+becomes its new position. Within its zone, just drag it.</li>
 <li><strong>Resize</strong>: drag any window edge or corner.</li>
-<li><strong>Add/hide windows</strong>: the <strong>Windows</strong> menu in the toolbar — add from
-categorized templates, toggle visibility, or reassign a window’s zone.</li>
+<li><strong>Snapping</strong>: while you drag or resize, edges snap to the zone’s
+bounds, to other windows in the same zone, and (optionally) to a grid.
+Engaged snaps draw a guide line with the matched coordinate, and the
+grid shows as a faint overlay during the gesture. <strong>Hold Shift</strong> to
+place a window freely. Tune it under <strong>Settings → GUI</strong>: snap distance,
+targets (other windows / pane edges / pane center), grid pitch, and
+<strong>Grid sizing</strong> (moves also pull each edge onto the grid, so windows
+conform to it as you drag).</li>
+<li><strong>Sidebar width</strong>: drag the strip on the sidebar/center boundary — it
+stays grabbable even with a window parked flush against it. Header and
+footer heights have their own edge handles.</li>
+<li><strong>Lock Window</strong> (context menu) pins a window’s position and size;
+<code>.lockwindows</code> locks everything at once.</li>
+<li><strong>The Windows manager</strong>: the <strong>Windows</strong> button in the toolbar opens one
+window listing everything the client knows about — layout widgets, game
+dialogs, streams, and containers — grouped by category and collapsible.
+Each row has a <strong>show/hide checkbox</strong> and a <strong>Zone</strong> selector; <strong>➕ Add
+window…</strong> creates a new one (custom windows open the editor). Hidden
+windows stay hidden even when the game re-sends them (there is no dialog
+blocklist — hiding is the control).</li>
 <li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
 Window…</strong>, which opens the window editor; title bars can be hidden
-per-window. Overlapping windows in the center area offer <strong>Send to
-Back</strong>, dropping the window behind any it covers so a buried one can be
-reached (clicking a window still raises it to the front).</li>
+per-window. Overlapping windows offer <strong>Send to Back</strong>, dropping the
+window behind any it covers so a buried one can be reached (clicking a
+window still raises it to the front).</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
 sessions), or locked together into tab groups that move as a unit. The
-context menu reorders group members (<strong>Move Up / Move Down</strong>) and can
-ungroup one member or the whole group.</li>
+context menu reorders group members (⬆ / ⬇) and can ungroup one member
+or the whole group.</li>
 </ul>
+<p>Layouts saved by older versions arranged sidebar windows in a fixed
+stack; they convert to freely placed windows automatically the first
+time each sidebar is shown, keeping their on-screen positions.</p>
 <h2 id="the-map"><a class="header" href="#the-map">The Map</a></h2>
 <p>The GUI renders a live <a href="../widgets/map.html">map</a> of your surroundings: a
 mini map widget that follows your character (click a room to walk there),

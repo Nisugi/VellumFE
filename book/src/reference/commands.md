@@ -41,7 +41,8 @@ command `quit` also saves your settings on the way out.)
 | `.rename <window> <new title>` | | Rename a window's title |
 | `.border <window> <style> [color]` | | Set border sides: `all`, `none`, `top`, `bottom`, `left`, `right` |
 | `.lockwindows` | `.lockall`, `.unlockwindows`, `.unlockall` | Toggle move/resize lock on all windows |
-| `.savelayout [name]` | | Save the current layout under a name (each frontend keeps its own: TUI `.toml` grids, GUI checkpoints) |
+| `.performance [dump]` | `.perf` | Toggle the [performance monitor](./performance.md); `dump` writes a diagnostic report file |
+| `.savelayout [name]` | | Save the current layout under a name in the shared `~/.vellum-fe/layouts/` folder, loadable by any character (each frontend has its own format: TUI `.toml` grids, GUI `.json` checkpoints) |
 | `.loadlayout <name>` | | Load a saved layout; in the GUI it applies live to the running session |
 | `.layouts` | | List saved layouts for this frontend |
 | `.resize` | | Refit layout to the current terminal size (TUI) |
@@ -53,9 +54,10 @@ command `quit` also saves your settings on the way out.)
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `.uiexport <name> [parts...]` | | Bundle the files that make your UI into `~/.vellum-fe/exports/<name>.vellumpack` — a single shareable file. Parts: `layout` (TUI grid + the GUI's live arrangement when exported from the GUI), `highlights`, `keybinds`, `hotbars`, `colors`, `macros`, `skin` (the active skin's whole folder). Default: all. Connection settings and passwords are never included. |
-| `.uiimport <name\|file>` | | Preview a pack: its parts, skin, and file count |
-| `.uiimport <name\|file> apply` | | Install a pack: replaced files are backed up to `~/.vellum-fe/backups/`, everything hot-reloads, and layouts land as named checkpoints (`.loadlayout <packname>`). Skins extract and activate. Unknown or unsafe entries in a pack are skipped, never written. |
+| `.packs` | `.packeditor` | Open the pack editor panel (TUI and GUI): pick parts with checkboxes, export to a folder of your choice, and import from `~/.vellum-fe/imports/` (a dropdown lists any `.vellumpack` you drop there) or a pasted path, with a preview and per-part install selection. |
+| `.uiexport <name> [parts...]` | | Bundle the files that make your UI into `~/.vellum-fe/exports/<name>.vellumpack` — a single shareable file. Parts: `layout` (TUI grid + the GUI's live arrangement when exported from the GUI), `highlights`, `keybinds`, `controller`, `hotbars`, `colors`, `macros`, `skin` (the active skin's whole folder), `theme` (the active theme, including its file for custom themes), `sounds` (the shared sound folder), `quickbars`, and `settings` (general settings: UI options, sound/TTS prefs, stream routes — never connection or account data). Default: all. Connection settings and passwords are never included. |
+| `.uiimport <name\|file>` | | Preview a pack: its parts, skin, theme, and file count. Names resolve from `~/.vellum-fe/imports/` and `exports/`. |
+| `.uiimport <name\|file> apply [parts...]` | | Install a pack (optionally only the listed parts): replaced files are backed up to `~/.vellum-fe/backups/`, everything hot-reloads, and layouts land as named checkpoints (`.loadlayout <packname>`). Skins and themes activate; quickbars and settings merge into your config without touching connection data. Unknown or unsafe entries in a pack are skipped, never written. |
 
 Post packs in the community Discord — favorites can become shipped
 default layouts.
@@ -107,6 +109,8 @@ default layouts.
 | `.addspellcolor` | `.newspellcolor` | Add a spell color entry |
 | `.setpalette` | | Load palette into terminal slots (TUI, 256-color mode) |
 | `.resetpalette` | | Reset the terminal palette (TUI) |
+| `.harmony [scheme]` | | Generate the game-text preset colors from the active theme (`.harmony schemes` lists the schemes; the GUI Colors editor's Generate tab adds seed swatches, pins, and a live preview) |
+| `.harmony skin <name>` | | Write a matching skin — panel backgrounds and nine-slice frames rendered from the same harmony — to `global/skins/<name>/`; activate with `.setskin <name>` (GUI) |
 
 ## Text-to-Speech
 
@@ -132,7 +136,6 @@ layout.toml).
 | Command | Aliases | Description |
 |---------|---------|-------------|
 | `.transparent` | | Toggle transparent window backgrounds (TUI) |
-| `.knownwindows` | `.containers` | Known windows list: every game-offered window (containers/dialogs/streams) with a show/hide checkbox per row |
 | `.hidecontainers [title]` | | Close container windows (all, or one by title) |
 | `.reloadmacros` | | Reload macros.toml and push to connected phones |
 | `.webinfo` | | Show the phone pairing URL / app link and open their QR codes |

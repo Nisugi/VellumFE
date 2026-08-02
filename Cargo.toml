@@ -3,10 +3,12 @@ members = ["android/rust", "ios/rust"]
 
 [package]
 name = "vellum-fe"
-version = "0.3.0-beta.16"
+version = "0.3.0-beta.27"
 edition = "2021"
 authors = ["Nisugi"]
 description = "Modern, high-performance multi-frontend (TUI/GUI) client for GemStone IV"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Nisugi/VellumFE"
 
 [[bin]]
 name = "vellum-fe"
@@ -22,7 +24,9 @@ anyhow = "1"
 
 # Terminal UI
 ratatui = { version = "0.29", optional = true }
-crossterm = { git = "https://github.com/justinpopa/crossterm.git", branch = "dev", features = ["event-stream"], optional = true }
+# Nisugi fork of justinpopa's keypad-aware fork; same content today, ours so
+# phase-2 work (Windows VT input for numpad under Alacritty/ConPTY) has a home.
+crossterm = { git = "https://github.com/Nisugi/crossterm.git", branch = "dev", features = ["event-stream"], optional = true }
 tui-textarea = { version = "0.7", optional = true }
 
 # GUI (numpad-aware fork)
@@ -99,6 +103,11 @@ chrono = "0.4"
 # Clipboard
 arboard = { version = "3", optional = true }
 base64 = "0.22.1"
+# SHA1 for the asset-manager (jinx) digest: repositories publish
+# base64(SHA1(bytes)) per asset (Jinx calls the field "md5"); we recompute
+# and compare byte-for-byte with Ruby's Digest::SHA1.base64digest. Already
+# in the lock via tokio-tungstenite's handshake — pinned here for direct use.
+sha1 = "0.10"
 sysinfo = { version = "0.30", optional = true }
 
 # URL opening (for LaunchURL)
@@ -141,6 +150,13 @@ windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
     "Win32_Security",
 ]}
+
+# Optimize dependencies even in dev builds: our code stays opt-level 0 for
+# fast incremental compiles and clean debugging, but egui rendering and PNG
+# decoding (skin loads froze the debug build for ~15s unoptimized) run at
+# near-release speed.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 opt-level = 3

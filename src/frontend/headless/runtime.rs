@@ -645,13 +645,26 @@ pub async fn async_run(
         app_core.poll_map();
         for command in app_core.take_outbound() {
             match app_core.send_command(command) {
-                Ok(out) if !out.is_empty() && !out.starts_with("action:") => {
+                Ok(crate::data::CommandOutcome::Game(out)) => {
                     if let Some(conn) = supervisor.connection.as_ref() {
                         let _ = conn.command_tx.send(out);
                     }
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!("travel command failed: {e}"),
+            }
+        }
+
+        // Feed-injected dot-commands (<vellumCmd> from Lich scripts):
+        // same core path as typed input; UI actions need a local UI and
+        // are quietly skipped here.
+        for command in app_core.take_pending_client_commands() {
+            match app_core.send_command(command) {
+                Ok(crate::data::CommandOutcome::Ui(action)) => {
+                    tracing::debug!("vellumCmd UI action skipped headless: {action}");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("vellumCmd failed: {e}"),
             }
         }
 
@@ -724,6 +737,8 @@ pub async fn async_run(
         }
 
         app_core.poll_tts_events();
+        // Debounced layout autosave (layout dot-commands from web clients).
+        app_core.tick_layout_autosave();
         // Flush coalesced state deltas to web clients once per batch.
         app_core.flush_remote_state();
     }
@@ -752,12 +767,31 @@ fn dispatch_command(
         return false;
     }
     match app_core.send_command(command) {
-        Ok(outbound) => {
-            if outbound.is_empty() || outbound.starts_with("__") {
-                return false;
+        Ok(crate::data::CommandOutcome::Handled) => false,
+        // UI packs are core-side work; everything else needs a local UI.
+        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::UiExport(args))) => {
+            app_core.uiexport_with(&args, Vec::new());
+            false
+        }
+        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::UiImport(args))) => {
+            if app_core.uiimport(&args).is_some() {
+                app_core.add_system_message(
+                    "This pack also carries a GUI layout — run the import in the GUI to install it.",
+                );
             }
-            if outbound.starts_with("action:") || outbound.starts_with("menu:") {
-                app_core.add_system_message("That action needs the desktop client.");
+            false
+        }
+        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::PerformanceDump)) => {
+            app_core.write_perf_dump(crate::performance::PerfFrontend::Headless, None);
+            false
+        }
+        Ok(crate::data::CommandOutcome::Ui(_)) => {
+            app_core.add_system_message("That action needs the desktop client.");
+            false
+        }
+        Ok(crate::data::CommandOutcome::Game(outbound)) => {
+            if outbound.is_empty() || outbound.starts_with("__") || outbound.starts_with("menu:")
+            {
                 return false;
             }
             let is_quit = outbound.trim().eq_ignore_ascii_case("quit");
@@ -1036,11 +1070,10 @@ fn handle_server_message(app_core: &mut AppCore, msg: ServerMessage) -> bool {
             app_core
                 .perf_stats
                 .record_bytes_received((line.len() + 1) as u64);
-            let parse_start = Instant::now();
+            // Parse timing is recorded inside process_server_data.
             if let Err(e) = app_core.process_server_data(&line) {
                 tracing::error!("Error processing server data: {}", e);
             }
-            app_core.perf_stats.record_parse(parse_start.elapsed());
 
             // Content-driven sizing still runs: it feeds stream routing
             // decisions, not just TUI pane geometry.

@@ -9,6 +9,7 @@
 //! ~/.vellum-fe/profiles/{character}/hotbars.toml. A character bar with the
 //! same name replaces the global bar wholesale; character-only bars append.
 
+use super::conditions::{Cmp, Condition, EffectCategory, NameMatch, VitalKind, VitalUnit};
 use crate::config::Config;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -76,16 +77,20 @@ pub struct HotbarButton {
     pub icon_mode: IconMode,
 }
 
-/// A sprite-sheet cell reference plus optional visual effects, barbar-style.
-/// Sheets are registered in the active skin's `[sheets]` table and sliced
-/// into fixed-size cells indexed 1-based, left→right then top→bottom.
+/// A button-face icon: an `IconRef` (sheet cell, pool image, ...) plus
+/// optional visual effects, barbar-style. Sheet cells reference the active
+/// skin's `[sheets]` table, sliced into fixed-size cells indexed 1-based,
+/// left→right then top→bottom.
+///
+/// Serde: writes the modern nested shape (`icon = { ... }`); still reads the
+/// legacy flat `sheet`/`cell` fields older hotbars.toml files carry.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "HotbarIconDe")]
 pub struct HotbarIcon {
-    /// Sheet name from the active skin's `[sheets]` table.
-    pub sheet: String,
-    /// 1-based cell index into the sheet.
-    pub cell: u32,
-    /// Render the cell desaturated (barbar's `gs` variant).
+    /// The icon art reference (sheet cell or pool image).
+    pub icon: crate::data::IconRef,
+    /// Render desaturated (barbar's `gs` variant). Sheet cells only —
+    /// pool images fall back to their color version.
     #[serde(default)]
     pub grayscale: bool,
     /// Solid border color drawn over the icon (hex or palette name).
@@ -101,6 +106,78 @@ pub struct HotbarIcon {
     /// Gradient direction; only meaningful with `border_end`.
     #[serde(default)]
     pub border_dir: GradientDir,
+}
+
+/// Deserialization compatibility shim: modern nested `icon = {...}` or the
+/// legacy flat `sheet`/`cell` pair, both with the shared effect fields.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum HotbarIconDe {
+    Modern {
+        icon: crate::data::IconRef,
+        #[serde(default)]
+        grayscale: bool,
+        #[serde(default)]
+        border: Option<String>,
+        #[serde(default)]
+        border_width: Option<u8>,
+        #[serde(default)]
+        border_end: Option<String>,
+        #[serde(default)]
+        border_dir: GradientDir,
+    },
+    Legacy {
+        sheet: String,
+        cell: u32,
+        #[serde(default)]
+        grayscale: bool,
+        #[serde(default)]
+        border: Option<String>,
+        #[serde(default)]
+        border_width: Option<u8>,
+        #[serde(default)]
+        border_end: Option<String>,
+        #[serde(default)]
+        border_dir: GradientDir,
+    },
+}
+
+impl From<HotbarIconDe> for HotbarIcon {
+    fn from(de: HotbarIconDe) -> Self {
+        match de {
+            HotbarIconDe::Modern {
+                icon,
+                grayscale,
+                border,
+                border_width,
+                border_end,
+                border_dir,
+            } => HotbarIcon {
+                icon,
+                grayscale,
+                border,
+                border_width,
+                border_end,
+                border_dir,
+            },
+            HotbarIconDe::Legacy {
+                sheet,
+                cell,
+                grayscale,
+                border,
+                border_width,
+                border_end,
+                border_dir,
+            } => HotbarIcon {
+                icon: crate::data::IconRef::SheetCell { sheet, cell },
+                grayscale,
+                border,
+                border_width,
+                border_end,
+                border_dir,
+            },
+        }
+    }
 }
 
 /// Gradient direction for two-color icon borders (barbar's cg dirs:
@@ -146,7 +223,7 @@ pub enum HotbarCountdownSource {
 /// A condition → appearance rule.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HotbarButtonState {
-    pub when: HotbarCondition,
+    pub when: Condition,
     #[serde(default)]
     pub style: HotbarStyle,
     /// Per-state countdown override (barbar-style state timers). When the
@@ -177,152 +254,6 @@ pub struct HotbarStyle {
     /// button-level icon when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<HotbarIcon>,
-}
-
-/// Structured condition vocabulary. Editors build these from dropdowns and
-/// limit group nesting to one level; the evaluator is recursive so deeper
-/// hand-authored files still evaluate.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum HotbarCondition {
-    All {
-        conditions: Vec<HotbarCondition>,
-    },
-    Any {
-        conditions: Vec<HotbarCondition>,
-    },
-    EffectActive {
-        category: EffectCategory,
-        name: String,
-        #[serde(default)]
-        name_match: NameMatch,
-    },
-    EffectInactive {
-        category: EffectCategory,
-        name: String,
-        #[serde(default)]
-        name_match: NameMatch,
-    },
-    /// Remaining seconds of an effect compared against a threshold.
-    /// False when the effect is absent or has no parseable expiry.
-    EffectTime {
-        category: EffectCategory,
-        name: String,
-        #[serde(default)]
-        name_match: NameMatch,
-        cmp: HotbarCmp,
-        seconds: i64,
-    },
-    RtActive,
-    CtActive,
-    /// Status indicator by id: standing, kneeling, sitting, prone, stunned,
-    /// bleeding, hidden, invisible, webbed, joined, dead.
-    Indicator {
-        id: String,
-        #[serde(default = "default_true")]
-        active: bool,
-    },
-    Vital {
-        vital: VitalKind,
-        cmp: HotbarCmp,
-        value: u32,
-        #[serde(default)]
-        unit: VitalUnit,
-    },
-    /// The bundled spell table (effect-list.xml) lists static costs for
-    /// this spell number and current absolute vitals cover them. Fails
-    /// closed: unknown numbers, formula costs, and missing vitals data
-    /// all evaluate false. No Lich required.
-    SpellAffordable { number: u16 },
-}
-
-fn default_true() -> bool {
-    true
-}
-
-/// Effect dialog categories, matching the GameState.effects HashMap keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EffectCategory {
-    Buffs,
-    Debuffs,
-    Cooldowns,
-    ActiveSpells,
-}
-
-impl EffectCategory {
-    /// Key into `GameState.effects`.
-    pub fn state_key(&self) -> &'static str {
-        match self {
-            Self::Buffs => "Buffs",
-            Self::Debuffs => "Debuffs",
-            Self::Cooldowns => "Cooldowns",
-            Self::ActiveSpells => "ActiveSpells",
-        }
-    }
-
-    pub const ALL: [EffectCategory; 4] = [
-        Self::Buffs,
-        Self::Debuffs,
-        Self::Cooldowns,
-        Self::ActiveSpells,
-    ];
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NameMatch {
-    #[default]
-    Exact,
-    Contains,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HotbarCmp {
-    #[serde(rename = "<")]
-    Lt,
-    #[serde(rename = "<=")]
-    Le,
-    #[serde(rename = ">")]
-    Gt,
-    #[serde(rename = ">=")]
-    Ge,
-}
-
-impl HotbarCmp {
-    pub fn eval(&self, lhs: i64, rhs: i64) -> bool {
-        match self {
-            Self::Lt => lhs < rhs,
-            Self::Le => lhs <= rhs,
-            Self::Gt => lhs > rhs,
-            Self::Ge => lhs >= rhs,
-        }
-    }
-
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            Self::Lt => "<",
-            Self::Le => "<=",
-            Self::Gt => ">",
-            Self::Ge => ">=",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VitalKind {
-    Health,
-    Mana,
-    Stamina,
-    Spirit,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VitalUnit {
-    #[default]
-    Percent,
-    Absolute,
 }
 
 impl Config {
@@ -540,14 +471,14 @@ dim = true
         assert_eq!(hide.states.len(), 2);
         assert!(matches!(
             hide.states[0].when,
-            HotbarCondition::All { ref conditions } if conditions.len() == 1
+            Condition::All { ref conditions } if conditions.len() == 1
         ));
         assert_eq!(hide.states[0].style.label.as_deref(), Some("Hidden"));
         // Nested group inside "any"
-        if let HotbarCondition::Any { conditions } = &hide.states[1].when {
+        if let Condition::Any { conditions } = &hide.states[1].when {
             assert_eq!(conditions.len(), 3);
-            assert!(matches!(conditions[0], HotbarCondition::RtActive));
-            assert!(matches!(conditions[2], HotbarCondition::All { .. }));
+            assert!(matches!(conditions[0], Condition::RtActive));
+            assert!(matches!(conditions[2], Condition::All { .. }));
         } else {
             panic!("expected any group");
         }
@@ -555,12 +486,12 @@ dim = true
 
         let spell = &bar.buttons[1];
         assert!(matches!(spell.countdown, Some(HotbarCountdownSource::Roundtime) | Some(HotbarCountdownSource::Casttime)));
-        if let HotbarCondition::All { conditions } = &spell.states[0].when {
+        if let Condition::All { conditions } = &spell.states[0].when {
             assert!(matches!(
                 conditions[0],
-                HotbarCondition::Vital {
+                Condition::Vital {
                     vital: VitalKind::Mana,
-                    cmp: HotbarCmp::Lt,
+                    cmp: Cmp::Lt,
                     value: 9,
                     unit: VitalUnit::Absolute,
                 }
@@ -612,7 +543,14 @@ dim = true
         let button = &config.bars[0].buttons[0];
         assert_eq!(button.icon_mode, IconMode::IconAndLabel);
         let icon = button.icon.as_ref().expect("button icon");
-        assert_eq!((icon.sheet.as_str(), icon.cell), ("rogue", 5));
+        // Legacy flat sheet/cell fields migrate into the IconRef shape.
+        assert_eq!(
+            icon.icon,
+            crate::data::IconRef::SheetCell {
+                sheet: "rogue".to_string(),
+                cell: 5
+            }
+        );
         assert!(!icon.grayscale);
         assert_eq!(icon.border.as_deref(), Some("#00ff00"));
         assert_eq!(icon.border_width, Some(3));
@@ -620,7 +558,14 @@ dim = true
         assert_eq!(icon.border_dir, GradientDir::Radial);
         let state = &button.states[0];
         let state_icon = state.style.icon.as_ref().expect("state icon");
-        assert_eq!((state_icon.cell, state_icon.grayscale), (6, true));
+        assert_eq!(
+            state_icon.icon,
+            crate::data::IconRef::SheetCell {
+                sheet: "rogue".to_string(),
+                cell: 6
+            }
+        );
+        assert!(state_icon.grayscale);
         assert_eq!(state_icon.border_dir, GradientDir::Horizontal); // default
         assert!(matches!(
             state.countdown,
@@ -726,18 +671,53 @@ dim = true
         // name_match defaults to Exact; style defaults empty/dim=false
         assert!(matches!(
             button.states[0].when,
-            HotbarCondition::EffectActive { name_match: NameMatch::Exact, .. }
+            Condition::EffectActive { name_match: NameMatch::Exact, .. }
         ));
         assert_eq!(button.states[0].style, HotbarStyle::default());
     }
 
     #[test]
     fn cmp_eval() {
-        assert!(HotbarCmp::Lt.eval(1, 2));
-        assert!(!HotbarCmp::Lt.eval(2, 2));
-        assert!(HotbarCmp::Le.eval(2, 2));
-        assert!(HotbarCmp::Gt.eval(3, 2));
-        assert!(!HotbarCmp::Gt.eval(2, 2));
-        assert!(HotbarCmp::Ge.eval(2, 2));
+        assert!(Cmp::Lt.eval(1, 2));
+        assert!(!Cmp::Lt.eval(2, 2));
+        assert!(Cmp::Le.eval(2, 2));
+        assert!(Cmp::Gt.eval(3, 2));
+        assert!(!Cmp::Gt.eval(2, 2));
+        assert!(Cmp::Ge.eval(2, 2));
+    }
+
+    #[test]
+    fn hotbar_icon_reads_legacy_flat_shape_and_round_trips_modern() {
+        // Legacy hotbars.toml carried flat sheet/cell fields.
+        let legacy: HotbarIcon = toml::from_str(
+            "sheet = \"runes\"\ncell = 3\ngrayscale = true\nborder = \"#ff0000\"",
+        )
+        .unwrap();
+        assert_eq!(
+            legacy.icon,
+            crate::data::IconRef::SheetCell {
+                sheet: "runes".to_string(),
+                cell: 3
+            }
+        );
+        assert!(legacy.grayscale);
+        assert_eq!(legacy.border.as_deref(), Some("#ff0000"));
+
+        // Saves write the modern nested IconRef shape, which reads back equal.
+        let out = toml::to_string(&legacy).unwrap();
+        assert!(out.contains("sheet_cell"), "modern shape expected: {out}");
+        let modern: HotbarIcon = toml::from_str(&out).unwrap();
+        assert_eq!(modern, legacy);
+
+        // Pool-image refs survive the same path.
+        let image = HotbarIcon {
+            icon: crate::data::IconRef::Image {
+                path: "icons/rune_stone.png".to_string(),
+            },
+            ..Default::default()
+        };
+        let out = toml::to_string(&image).unwrap();
+        let back: HotbarIcon = toml::from_str(&out).unwrap();
+        assert_eq!(back, image);
     }
 }

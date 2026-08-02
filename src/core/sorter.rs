@@ -93,6 +93,7 @@ pub fn transform(
     segments: &[TextSegment],
     full_text: &str,
     data: &GameObjData,
+    config: &crate::config::SorterConfig,
 ) -> Option<Vec<Vec<TextSegment>>> {
     if !is_container_look(full_text) {
         return None;
@@ -114,8 +115,14 @@ pub fn transform(
             .as_ref()
             .map(|l| l.noun.as_str())
             .unwrap_or("");
-        let category = data
-            .classify(item.text.trim(), noun)
+        // User rules first (first matching rule wins), then the data
+        // pack, then the catch-all. Items are never dropped.
+        let category = config
+            .rules
+            .iter()
+            .find(|rule| rule.matches(item.text.trim(), noun))
+            .map(|rule| rule.category.clone())
+            .or_else(|| data.classify(item.text.trim(), noun))
             .unwrap_or_else(|| "other".to_string());
         let bucket = match buckets.iter_mut().find(|b| b.category == category) {
             Some(bucket) => bucket,
@@ -149,24 +156,56 @@ pub fn transform(
     }
     header.push(TextSegment::plain(":"));
 
+    // Explicit category_order first (in listed order); everything not
+    // listed keeps first-seen order after them (stable sort).
+    if !config.category_order.is_empty() {
+        let position = |category: &str| {
+            config
+                .category_order
+                .iter()
+                .position(|c| c.eq_ignore_ascii_case(category))
+                .unwrap_or(usize::MAX)
+        };
+        buckets.sort_by_key(|bucket| position(&bucket.category));
+    }
+
     let mut lines = vec![header];
     for bucket in &mut buckets {
-        // sorter.lic sorts within a category by the name's last word.
-        bucket
-            .items
-            .sort_by_key(|e| e.key.rsplit(' ').next().unwrap_or("").to_string());
+        match config.item_sort.as_str() {
+            "alpha" => bucket.items.sort_by(|a, b| a.key.cmp(&b.key)),
+            "none" => {}
+            // "last_word" (and anything unknown): sorter.lic's convention.
+            _ => bucket
+                .items
+                .sort_by_key(|e| e.key.rsplit(' ').next().unwrap_or("").to_string()),
+        }
+        let display = config
+            .labels
+            .get(&bucket.category)
+            .filter(|label| !label.trim().is_empty())
+            .cloned()
+            .unwrap_or_else(|| bucket.category.clone());
         let total: usize = bucket.items.iter().map(|e| e.count).sum();
-        let mut line = vec![TextSegment {
-            text: format!("  {} ({}): ", bucket.category, total),
-            span_type: SpanType::Monsterbold,
-            ..Default::default()
+        let label_text = if config.show_counts {
+            format!("  {} ({}): ", display, total)
+        } else {
+            format!("  {}: ", display)
+        };
+        let mut line = vec![if config.bold_labels {
+            TextSegment {
+                text: label_text,
+                span_type: SpanType::Monsterbold,
+                ..Default::default()
+            }
+        } else {
+            TextSegment::plain(label_text)
         }];
         for (idx, entry) in bucket.items.iter().enumerate() {
             if idx > 0 {
                 line.push(TextSegment::plain(", "));
             }
             line.push(entry.segment.clone());
-            if entry.count > 1 {
+            if entry.count > 1 && config.show_counts {
                 line.push(TextSegment::plain(format!(" ({})", entry.count)));
             }
         }
@@ -239,10 +278,14 @@ mod tests {
         .is_none());
     }
 
+    fn config() -> crate::config::SorterConfig {
+        crate::config::SorterConfig::default()
+    }
+
     #[test]
     fn categorizes_counts_and_keeps_links() {
         let (segments, text) = look_line();
-        let lines = transform(&segments, &text, &data()).unwrap();
+        let lines = transform(&segments, &text, &data(), &config()).unwrap();
 
         // Header keeps the container link and drops the item list.
         let header: String = lines[0].iter().map(|s| s.text.as_str()).collect();
@@ -265,13 +308,14 @@ mod tests {
     #[test]
     fn ignores_non_look_lines_and_dual_surface() {
         let data = data();
+        let cfg = config();
         let plain = [TextSegment::plain("You pick up a rock.")];
-        assert!(transform(&plain, "You pick up a rock.", &data).is_none());
+        assert!(transform(&plain, "You pick up a rock.", &data, &cfg).is_none());
 
         // "In the X ... On the X ..." combined lines pass through.
         let (segments, _) = look_line();
         let text = "In the counter you see a rock. On the counter you see a rock.";
-        assert!(transform(&segments, text, &data).is_none());
+        assert!(transform(&segments, text, &data, &cfg).is_none());
 
         // A look with no item links (empty container phrasing) passes.
         let empty = vec![
@@ -280,6 +324,69 @@ mod tests {
             TextSegment::plain(" you see nothing."),
         ];
         let text: String = empty.iter().map(|s| s.text.as_str()).collect();
-        assert!(transform(&empty, &text, &data).is_none());
+        assert!(transform(&empty, &text, &data, &cfg).is_none());
+    }
+
+    fn line_text(line: &[TextSegment]) -> String {
+        line.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    #[test]
+    fn user_rules_beat_the_data_pack_first_match_wins() {
+        let mut cfg = config();
+        cfg.rules = vec![
+            crate::config::SorterRule {
+                name_match: String::new(),
+                noun: "lockpick".to_string(),
+                category: "tools".to_string(),
+            },
+            // Later rule also matching sapphires by substring must lose to
+            // the data pack? No — rules beat the pack; ordering among
+            // rules: first match wins, so this one reroutes sapphires.
+            crate::config::SorterRule {
+                name_match: "sapphire".to_string(),
+                noun: String::new(),
+                category: "loot".to_string(),
+            },
+        ];
+        let (segments, text) = look_line();
+        let lines = transform(&segments, &text, &data(), &cfg).unwrap();
+        let all: Vec<String> = lines.iter().map(|l| line_text(l)).collect();
+        // Sapphires rerouted to "loot" (rule beats data pack "gem");
+        // crystal stays gem; lockpick lands in "tools" via noun rule.
+        assert!(all.iter().any(|l| l.starts_with("  loot (2): blue sapphire (2)")));
+        assert!(all.iter().any(|l| l.starts_with("  gem (1): quartz crystal")));
+        assert!(all.iter().any(|l| l.starts_with("  tools (1): copper lockpick")));
+    }
+
+    #[test]
+    fn category_order_labels_and_formatting_knobs() {
+        let mut cfg = config();
+        cfg.category_order = vec!["other".to_string(), "gem".to_string()];
+        cfg.labels
+            .insert("gem".to_string(), "Gems".to_string());
+        cfg.show_counts = false;
+        cfg.bold_labels = false;
+        cfg.item_sort = "alpha".to_string();
+        let (segments, text) = look_line();
+        let lines = transform(&segments, &text, &data(), &cfg).unwrap();
+        // "other" ordered before "gem"; label renamed; no counts anywhere;
+        // plain (not monsterbold) labels; alpha item order (blue < quartz).
+        assert_eq!(line_text(&lines[1]), "  other: copper lockpick");
+        assert_eq!(line_text(&lines[2]), "  Gems: blue sapphire, quartz crystal");
+        assert_eq!(lines[2][0].span_type, SpanType::default());
+    }
+
+    #[test]
+    fn item_sort_none_keeps_look_order() {
+        let mut cfg = config();
+        cfg.item_sort = "none".to_string();
+        let (segments, text) = look_line();
+        let lines = transform(&segments, &text, &data(), &cfg).unwrap();
+        // Look order: sapphire before crystal (sorter.lic order flips them).
+        assert_eq!(
+            line_text(&lines[1]),
+            "  gem (3): blue sapphire (2), quartz crystal"
+        );
     }
 }

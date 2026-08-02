@@ -474,6 +474,10 @@ impl VellumGuiApp {
             self.app_core
                 .message_processor
                 .update_text_stream_subscribers(&self.app_core.ui_state);
+            // Compaction happens at ingestion; re-feed a bounty window from
+            // the cached bounty data so the condense toggle applies now
+            // instead of on the next bounty update.
+            self.app_core.refresh_bounty_window(name);
             // Persist content settings to the layout definition too (streams
             // previously mutated live state only and were lost on restart).
             match self
@@ -500,7 +504,7 @@ impl VellumGuiApp {
                 }
                 _ => {}
             }
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(feed) = &state.feed {
@@ -574,7 +578,7 @@ impl VellumGuiApp {
                     _ => {}
                 }
             }
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(category) = &state.effects_category {
@@ -602,7 +606,7 @@ impl VellumGuiApp {
             self.app_core
                 .message_processor
                 .update_text_stream_subscribers(&self.app_core.ui_state);
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(room) = &state.room {
@@ -617,7 +621,7 @@ impl VellumGuiApp {
                 data.show_objs = room.show_objs;
                 data.show_players = room.show_players;
                 data.show_exits = room.show_exits;
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -632,7 +636,7 @@ impl VellumGuiApp {
                 data.show_body_part_count = targets.show_appendages;
                 data.status_position = Some(targets.status_position.clone())
                     .filter(|position| !position.is_empty());
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -655,7 +659,7 @@ impl VellumGuiApp {
                 };
                 data.mind_bar_color = opt(&experience.mind_bar_color);
                 data.exp_bar_color = opt(&experience.exp_bar_color);
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -669,7 +673,7 @@ impl VellumGuiApp {
             {
                 data.show_bar = encum.show_bar;
                 data.show_label = encum.show_label;
-                self.app_core.layout_modified_since_save = true;
+                self.app_core.schedule_layout_autosave();
             }
         }
 
@@ -684,7 +688,7 @@ impl VellumGuiApp {
                 if def.base().tts_speak != tts_speak {
                     def.base_mut().tts_speak = tts_speak;
                     self.app_core.refresh_tts_windows();
-                    self.app_core.layout_modified_since_save = true;
+                    self.app_core.schedule_layout_autosave();
                 }
             }
         }
@@ -699,7 +703,7 @@ impl VellumGuiApp {
             {
                 if def.base().locked != locked {
                     def.base_mut().locked = locked;
-                    self.app_core.layout_modified_since_save = true;
+                    self.app_core.schedule_layout_autosave();
                 }
             }
         }
@@ -728,7 +732,7 @@ impl VellumGuiApp {
             data.tabs = new_tabs;
             // Rebuild live tabs (and the stream routing index) from the def.
             self.app_core.sync_tabbed_window_tabs(name);
-            self.app_core.layout_modified_since_save = true;
+            self.app_core.schedule_layout_autosave();
         }
 
         if let Some(vitals) = &state.vitals {
@@ -765,7 +769,9 @@ impl VellumGuiApp {
         // after the UI closure (the closure only borrows self immutably).
         let mut changed_global: Vec<&'static str> = Vec::new();
         // Snapshot outside the closure: the closure borrows self immutably.
-        let seen_streams = if state.supports_streams {
+        // Available for single-stream text windows AND tabbed windows (each
+        // tab picks streams from it).
+        let seen_streams = if state.supports_streams || state.tabs.is_some() {
             self.app_core.message_processor.seen_streams()
         } else {
             Vec::new()
@@ -778,26 +784,13 @@ impl VellumGuiApp {
             .skin_state
             .widget_art()
             .is_some_and(|art| art.doll_base.is_some());
-        // Appearance overrides (title bar, text size, font, accent, wrap)
-        // live on the window's tab, not in the buffered editor state; the
-        // Appearance section applies them immediately, like the same
-        // controls in the window's right-click menu.
-        let appearance_tab = state.selected.as_ref().and_then(|name| {
-            self.app_core
-                .ui_state
-                .windows
-                .get(name)
-                .and_then(|window| Self::tab_key_for_window(name, window))
-        });
-        let appearance_view = appearance_tab
-            .as_ref()
-            .map(|key| self.appearance_view_for_tab(key));
-        let mut appearance_command = None;
-
         egui::Window::new("Window Editor")
             .id(egui::Id::new("gui_window_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
-            .default_width(380.0)
+            // Wide enough for the Tabs grid (Name + Streams + Quiet/TS +
+            // reorder + Remove) so the Name field isn't squeezed to a few chars.
+            .default_width(560.0)
             .show(ctx, |ui| {
                 if state.selected.is_none() {
                     ui.weak("Pick a window to edit.");
@@ -1065,24 +1058,56 @@ impl VellumGuiApp {
                                 });
                             ui.end_row();
                         });
-                    ui.label("Bars shown:");
+                    ui.label("Bars shown (in display order):");
                     let bars = &mut vitals.bars;
-                    for kind in VitalKind::all() {
-                        let mut enabled = bars.contains(&kind);
-                        if ui.checkbox(&mut enabled, kind.label()).changed() {
-                            if enabled {
-                                bars.push(kind);
-                                // Keep display order canonical regardless of
-                                // toggle order.
-                                bars.sort_by_key(|entry| {
-                                    VitalKind::all()
-                                        .iter()
-                                        .position(|k| k == entry)
-                                        .unwrap_or(usize::MAX)
-                                });
-                            } else {
-                                bars.retain(|entry| entry != &kind);
+                    // Enabled bars keep their stored order — it IS the
+                    // display order (top-to-bottom stacked, left-to-right
+                    // in one row). Moves/removes are deferred so the list
+                    // isn't mutated mid-iteration.
+                    let bar_count = bars.len();
+                    let mut move_op: Option<(usize, bool)> = None;
+                    let mut remove_index: Option<usize> = None;
+                    for (index, kind) in bars.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            let mut enabled = true;
+                            if ui.checkbox(&mut enabled, kind.label()).changed() {
+                                remove_index = Some(index);
                             }
+                            // Geometric triangles render in the bundled
+                            // fonts; the ↑/↓ arrow block is tofu.
+                            if ui
+                                .add_enabled(index > 0, egui::Button::new("▲").small())
+                                .on_hover_text("Move up")
+                                .clicked()
+                            {
+                                move_op = Some((index, true));
+                            }
+                            if ui
+                                .add_enabled(
+                                    index + 1 < bar_count,
+                                    egui::Button::new("▼").small(),
+                                )
+                                .on_hover_text("Move down")
+                                .clicked()
+                            {
+                                move_op = Some((index, false));
+                            }
+                        });
+                    }
+                    if let Some(index) = remove_index {
+                        bars.remove(index);
+                    } else if let Some((index, up)) = move_op {
+                        let target = if up { index - 1 } else { index + 1 };
+                        bars.swap(index, target);
+                    }
+                    // Disabled bars: enabling appends at the end of the order.
+                    for kind in VitalKind::all() {
+                        if bars.contains(&kind) {
+                            continue;
+                        }
+                        let mut enabled = false;
+                        if ui.checkbox(&mut enabled, kind.label()).changed() {
+                            bars.push(kind);
                         }
                     }
                 }
@@ -1240,19 +1265,44 @@ impl VellumGuiApp {
                             for (index, tab) in tabs.iter_mut().enumerate() {
                                 ui.add(
                                     egui::TextEdit::singleline(&mut tab.name)
-                                        .desired_width(90.0),
+                                        .desired_width(120.0)
+                                        .clip_text(false),
                                 );
-                                ui.add(
-                                    egui::TextEdit::singleline(&mut tab.streams)
-                                        .desired_width(160.0),
-                                );
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut tab.streams)
+                                            .desired_width(210.0)
+                                            .hint_text("stream ids, comma-separated"),
+                                    );
+                                    // Pick a seen stream to add to THIS tab.
+                                    if !seen_streams.is_empty() {
+                                        ui.menu_button("+", |ui| {
+                                            ui.set_min_width(180.0);
+                                            for (id, label) in &seen_streams {
+                                                let text = match label {
+                                                    Some(label) => format!("{} ({})", id, label),
+                                                    None => id.clone(),
+                                                };
+                                                if ui.button(text).clicked() {
+                                                    append_stream_id(&mut tab.streams, id);
+                                                    ui.close();
+                                                }
+                                            }
+                                        })
+                                        .response
+                                        .on_hover_text("Add a seen stream to this tab");
+                                    }
+                                });
                                 ui.checkbox(&mut tab.ignore_activity, "")
                                     .on_hover_text("Don't mark this tab unread on activity.");
                                 ui.checkbox(&mut tab.show_timestamps, "")
                                     .on_hover_text("Show per-line timestamps on this tab.");
                                 ui.horizontal(|ui| {
+                                    // Geometric triangles render in the bundled
+                                    // fonts; the ↑/↓ arrow block is tofu.
                                     if ui
-                                        .add_enabled(index > 0, egui::Button::new("↑").small())
+                                        .add_enabled(index > 0, egui::Button::new("▲").small())
+                                        .on_hover_text("Move up")
                                         .clicked()
                                     {
                                         move_op = Some((index, true));
@@ -1260,8 +1310,9 @@ impl VellumGuiApp {
                                     if ui
                                         .add_enabled(
                                             index + 1 < tab_count,
-                                            egui::Button::new("↓").small(),
+                                            egui::Button::new("▼").small(),
                                         )
+                                        .on_hover_text("Move down")
                                         .clicked()
                                     {
                                         move_op = Some((index, false));
@@ -1288,15 +1339,8 @@ impl VellumGuiApp {
                     }
                 }
 
-                if let Some(view) = &appearance_view {
-                    ui.separator();
-                    ui.collapsing("Appearance", |ui| {
-                        ui.weak("Applies immediately; also in the window's right-click menu.");
-                        if let Some(command) = Self::render_appearance_controls(ui, view) {
-                            appearance_command = Some(command);
-                        }
-                    });
-                }
+                ui.separator();
+                ui.weak("Appearance options are in the window's right-click menu.");
 
                 if state.is_injury_doll {
                     ui.separator();
@@ -1353,10 +1397,6 @@ impl VellumGuiApp {
 
         if calibrate_doll_clicked {
             self.open_doll_calibration();
-        }
-
-        if let (Some(key), Some(command)) = (appearance_tab.as_ref(), appearance_command) {
-            self.apply_appearance_command(key, command);
         }
 
         // Apply the global targets edits: write through the registry setter

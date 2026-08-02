@@ -112,6 +112,84 @@ impl AppTheme {
         }
     }
 
+    /// Every color the theme defines, as hex strings. Raw material for
+    /// `seed_swatches`; order follows the struct's sections.
+    fn all_color_hexes(&self) -> Vec<String> {
+        [
+            self.window_border,
+            self.window_border_focused,
+            self.window_background,
+            self.window_title,
+            self.text_primary,
+            self.text_secondary,
+            self.text_disabled,
+            self.text_selected,
+            self.background_primary,
+            self.background_secondary,
+            self.background_selected,
+            self.background_hover,
+            self.editor_border,
+            self.editor_label,
+            self.editor_label_focused,
+            self.editor_text,
+            self.editor_cursor,
+            self.editor_status,
+            self.editor_background,
+            self.browser_border,
+            self.browser_title,
+            self.browser_item_normal,
+            self.browser_item_selected,
+            self.browser_item_focused,
+            self.browser_background,
+            self.browser_scrollbar,
+            self.form_border,
+            self.form_label,
+            self.form_label_focused,
+            self.form_field_background,
+            self.form_field_text,
+            self.form_checkbox_checked,
+            self.form_checkbox_unchecked,
+            self.form_error,
+            self.menu_border,
+            self.menu_background,
+            self.menu_item_normal,
+            self.menu_item_selected,
+            self.menu_item_focused,
+            self.menu_separator,
+            self.status_info,
+            self.status_success,
+            self.status_warning,
+            self.status_error,
+            self.status_background,
+            self.button_normal,
+            self.button_hover,
+            self.button_active,
+            self.button_disabled,
+            self.command_echo,
+            self.selection_background,
+            self.link_color,
+            self.speech_color,
+            self.whisper_color,
+            self.thought_color,
+            self.injury_default_color,
+        ]
+        .iter()
+        .map(|c| c.to_hex())
+        .collect()
+    }
+
+    /// Curated seed candidates for harmony generation: the theme's distinct,
+    /// vivid colors, most vivid first, filtered so every chip is a safe seed
+    /// against this theme's primary background (near-grays and background
+    /// shades never appear). See `core::harmony::filter_seed_swatches`.
+    pub fn seed_swatches(&self) -> Vec<String> {
+        crate::core::harmony::filter_seed_swatches(
+            &self.all_color_hexes(),
+            &self.background_primary.to_hex(),
+            12,
+        )
+    }
+
     /// Convert EditorTheme colors to use AppTheme
     pub fn to_editor_theme(&self) -> EditorTheme {
         EditorTheme {
@@ -3803,6 +3881,38 @@ impl Default for AppTheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ==================== seed_swatches Tests ====================
+
+    #[test]
+    fn seed_swatches_are_curated_for_every_builtin_theme() {
+        use crate::core::harmony::{delta_e, hex_to_lch};
+        for (name, theme) in ThemePresets::all() {
+            let bg = theme.background_primary.to_hex();
+            let swatches = theme.seed_swatches();
+            assert!(
+                !swatches.is_empty(),
+                "theme '{name}' offers no seed swatches"
+            );
+            assert!(swatches.len() <= 12, "theme '{name}' strip overflows");
+            // Gray chips are allowed only when the theme has no vivid colors
+            // at all (e.g. the built-in monochrome theme).
+            let theme_has_vivid = swatches
+                .iter()
+                .any(|hex| hex_to_lch(hex).expect("valid hex")[1] >= 0.04);
+            for hex in &swatches {
+                let chroma = hex_to_lch(hex).expect("valid hex")[1];
+                assert!(
+                    chroma >= 0.04 || !theme_has_vivid,
+                    "'{name}' shows near-gray chip {hex}"
+                );
+                assert!(
+                    delta_e(hex, &bg) >= 0.15,
+                    "'{name}' shows background-shade chip {hex}"
+                );
+            }
+        }
+    }
 
     // ==================== indexed_color_to_rgb Tests ====================
 

@@ -34,13 +34,41 @@ pub struct SkinTexture {
     pub size: egui::Vec2,
 }
 
+/// One icon lookup as rendering needs it: a texture region (full image or
+/// a sheet cell) plus its source-pixel size for aspect fitting.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedIcon {
+    pub texture: egui::TextureId,
+    /// Source-pixel size of the drawn region (aspect fitting).
+    pub size: egui::Vec2,
+    pub uv: egui::Rect,
+}
+
+/// How one indicator id's icon resolves: a standalone sprite, or a sheet
+/// cell looked up at call time (so it tracks sheet hot-reloads).
+#[derive(Debug, Clone)]
+enum IconSlot {
+    Sprite(SkinTexture),
+    Sheet { sheet: String, cell: u32 },
+}
+
 /// Widget sprite art resolved from the active skin. Shared into
 /// `WidgetRenderSettings` behind an Arc so every render path (including
 /// detached viewports) reads the same lookup tables.
 #[derive(Debug, Default)]
 pub struct SkinWidgetArt {
-    /// Indicator id (stored UPPERCASE) -> icon sprite.
-    icons: HashMap<String, SkinTexture>,
+    /// Indicator id (stored UPPERCASE) -> icon slot (skin `[icons]`, pool
+    /// set art, and per-indicator overrides, pre-merged at build).
+    icons: HashMap<String, IconSlot>,
+    /// Grayscale icon twins; populated only while "gray when inactive" is
+    /// on (lazy — no setting, no twins).
+    icons_gray: HashMap<String, IconSlot>,
+    /// Pool images referenced by hand-widget icon states, keyed by
+    /// lowercase pool-relative path.
+    pool_icons: HashMap<String, SkinTexture>,
+    /// Grayscale doll art; populated only while "grayscale doll" is on.
+    pub doll_base_gray: Option<SkinTexture>,
+    doll_parts_gray: HashMap<String, HashMap<u8, SkinTexture>>,
     pub compass_rose: Option<SkinTexture>,
     /// Direction key (lowercase "n".."nw", "up", ...) -> lit overlay.
     compass_dirs: HashMap<String, SkinTexture>,
@@ -95,8 +123,86 @@ impl ResolvedDotStyle {
 }
 
 impl SkinWidgetArt {
-    pub fn icon(&self, id: &str) -> Option<SkinTexture> {
-        self.icons.get(&id.to_ascii_uppercase()).copied()
+    pub fn icon(&self, id: &str) -> Option<ResolvedIcon> {
+        match self.icons.get(&id.to_ascii_uppercase())? {
+            IconSlot::Sprite(texture) => Some(ResolvedIcon {
+                texture: texture.texture,
+                size: texture.size,
+                uv: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            }),
+            IconSlot::Sheet { sheet, cell } => {
+                let (texture, uv) = self.sheet_cell(sheet, *cell, false)?;
+                Some(ResolvedIcon {
+                    texture: texture.texture,
+                    size: egui::vec2(
+                        texture.size.x * uv.width(),
+                        texture.size.y * uv.height(),
+                    ),
+                    uv,
+                })
+            }
+        }
+    }
+
+    /// Resolve an arbitrary `IconRef` (hand-widget icon states): `Default`
+    /// follows the widget's own icon id through the normal precedence,
+    /// `None` is explicitly artless, images come from the pre-declared
+    /// hand-state pool loads, sheet cells from the shared sheets.
+    pub fn resolve_icon_ref(
+        &self,
+        icon: &crate::data::IconRef,
+        own_id: &str,
+    ) -> Option<ResolvedIcon> {
+        match icon {
+            crate::data::IconRef::Default => self.icon(own_id),
+            crate::data::IconRef::None => None,
+            crate::data::IconRef::Image { path } => self
+                .pool_icons
+                .get(&path.to_ascii_lowercase())
+                .map(|texture| ResolvedIcon {
+                    texture: texture.texture,
+                    size: texture.size,
+                    uv: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                }),
+            crate::data::IconRef::SheetCell { sheet, cell } => {
+                let (texture, uv) =
+                    self.sheet_cell(&sheet.to_ascii_lowercase(), *cell, false)?;
+                Some(ResolvedIcon {
+                    texture: texture.texture,
+                    size: egui::vec2(
+                        texture.size.x * uv.width(),
+                        texture.size.y * uv.height(),
+                    ),
+                    uv,
+                })
+            }
+        }
+    }
+
+    /// Texture + uv for an `IconRef`, `sheet_cell`-style, for button-face
+    /// painting (hotbar icons). Sheet cells honor `gray`; pool images fall
+    /// back to color. `Default`/`None` resolve to nothing here — button
+    /// faces have no "own id" to follow.
+    pub fn icon_ref_texture(
+        &self,
+        icon: &crate::data::IconRef,
+        gray: bool,
+    ) -> Option<(SkinTexture, egui::Rect)> {
+        match icon {
+            crate::data::IconRef::SheetCell { sheet, cell } => {
+                self.sheet_cell(&sheet.to_ascii_lowercase(), *cell, gray)
+            }
+            crate::data::IconRef::Image { path } => self
+                .pool_icons
+                .get(&path.to_ascii_lowercase())
+                .map(|texture| {
+                    (
+                        *texture,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    )
+                }),
+            crate::data::IconRef::Default | crate::data::IconRef::None => None,
+        }
     }
 
     pub fn compass_dir(&self, direction: &str) -> Option<SkinTexture> {
@@ -105,6 +211,37 @@ impl SkinWidgetArt {
 
     pub fn doll_overlay(&self, part: &str, level: u8) -> Option<SkinTexture> {
         self.doll_parts
+            .get(&part.to_ascii_lowercase())
+            .and_then(|levels| levels.get(&level))
+            .copied()
+    }
+
+    /// Grayscale icon twin; None unless "gray when inactive" is enabled
+    /// (callers fall back to the color icon).
+    pub fn icon_gray(&self, id: &str) -> Option<ResolvedIcon> {
+        match self.icons_gray.get(&id.to_ascii_uppercase())? {
+            IconSlot::Sprite(texture) => Some(ResolvedIcon {
+                texture: texture.texture,
+                size: texture.size,
+                uv: egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            }),
+            IconSlot::Sheet { sheet, cell } => {
+                let (texture, uv) = self.sheet_cell(sheet, *cell, true)?;
+                Some(ResolvedIcon {
+                    texture: texture.texture,
+                    size: egui::vec2(
+                        texture.size.x * uv.width(),
+                        texture.size.y * uv.height(),
+                    ),
+                    uv,
+                })
+            }
+        }
+    }
+
+    /// Grayscale doll overlay twin; None unless "grayscale doll" is on.
+    pub fn doll_overlay_gray(&self, part: &str, level: u8) -> Option<SkinTexture> {
+        self.doll_parts_gray
             .get(&part.to_ascii_lowercase())
             .and_then(|levels| levels.get(&level))
             .copied()
@@ -130,6 +267,7 @@ impl SkinWidgetArt {
             && self.doll_base.is_none()
             && self.doll_parts.is_empty()
             && self.sheets.is_empty()
+            && self.pool_icons.is_empty()
     }
 
     /// Registered hotbar sheet names (lowercased), sorted for editor lists.
@@ -214,6 +352,38 @@ pub struct SkinState {
     applied: bool,
     /// skin.toml mtime at load, for hot-reload detection.
     manifest_mtime: Option<std::time::SystemTime>,
+    /// Injury doll override as a pool-relative path (from
+    /// ui_settings.doll_image); replaces the skin's `[injury_doll]` when
+    /// set — its calibration comes from the image's sidecar toml.
+    doll_override: Option<String>,
+    /// Pool frames referenced by window overrides (lowercase stems). Only
+    /// these load textures — pool frame art can be megabytes, so the
+    /// picker lists names without loading (`frame_names`).
+    needed_pool_frames: Vec<String>,
+    /// Pool background images referenced by window overrides (pool-relative
+    /// paths); like frames, only referenced ones load.
+    needed_pool_backgrounds: Vec<String>,
+    /// Pool images referenced by hand-widget icon states (pool-relative
+    /// paths); like backgrounds, only referenced ones load.
+    needed_pool_icons: Vec<String>,
+    /// Active statusicons pool set (lowercase `<set>_` prefix).
+    statusicon_set: Option<String>,
+    /// Compass pool set override (lowercase prefix); replaces the skin's
+    /// `[compass]` when its rose is present.
+    compass_set: Option<String>,
+    /// Build grayscale twins for status icons ("gray when inactive").
+    gray_status_icons: bool,
+    /// Build grayscale twins for doll art ("grayscale doll").
+    gray_doll: bool,
+    /// Resolved compass set: lowercase role ("rose", "n", ...) -> pool path.
+    pool_compass: HashMap<String, String>,
+    /// Per-indicator icon overrides (UPPERCASE id; `Default` never stored).
+    statusicon_overrides: HashMap<String, crate::data::IconRef>,
+    /// Resolved pool set art: UPPERCASE glyph id -> pool-relative path.
+    pool_status_icons: HashMap<String, String>,
+    /// Loaded pool frames: lowercase stem -> spec whose `image` is the
+    /// pool-relative texture key.
+    pool_frames: HashMap<String, skins::BorderSpec>,
     /// Lowercased names of sheets that came from the shared icon store
     /// (global/icons) rather than the skin itself.
     shared_sheet_names: std::collections::HashSet<String>,
@@ -221,14 +391,34 @@ pub struct SkinState {
     shared_manifest_mtime: Option<std::time::SystemTime>,
     /// Last hot-reload poll, so the mtime stat runs at most once a second.
     last_mtime_check: Option<std::time::Instant>,
+    /// Appearance-picker preview textures (pool-relative path → ≤48px
+    /// thumb). Never cleared: thumbs are tiny (~16KB VRAM each) and pool
+    /// paths are skin-independent. `None` records a decode failure.
+    thumbnails: HashMap<String, Option<egui::TextureHandle>>,
+    /// New thumbnail decodes still allowed this frame (reset by
+    /// `apply_if_changed`); menus fill in over a few frames instead of
+    /// hitching once on a big pool.
+    thumb_budget: u32,
 }
 
 impl SkinState {
-    /// Load or unload to match `active` (from config). Call once per frame;
-    /// does nothing when the active skin hasn't changed and its skin.toml
-    /// is untouched (edits to the manifest hot-reload within a second).
-    pub fn apply_if_changed(&mut self, ctx: &egui::Context, active: Option<&str>) {
-        if self.applied && self.loaded_id.as_deref() == active {
+    /// Load or unload to match `active` (from config) and the doll override
+    /// (from the layout's appearance settings). Call once per frame; does
+    /// nothing when neither changed and skin.toml is untouched (edits to
+    /// the manifest hot-reload within a second).
+    pub fn apply_if_changed(
+        &mut self,
+        ctx: &egui::Context,
+        active: Option<&str>,
+        doll_override: Option<&str>,
+    ) {
+        // Per-frame decode allowance for picker thumbnails (this runs
+        // once per frame regardless of skin changes).
+        self.thumb_budget = 3;
+        if self.applied
+            && self.loaded_id.as_deref() == active
+            && self.doll_override.as_deref() == doll_override
+        {
             if !self.manifest_changed_on_disk() {
                 return;
             }
@@ -236,7 +426,11 @@ impl SkinState {
         }
         self.applied = true;
         self.loaded_id = active.map(str::to_owned);
+        self.doll_override = doll_override.map(str::to_owned);
         self.manifest = SkinManifest::default();
+        self.pool_frames = load_pool_frames(&self.needed_pool_frames);
+        self.pool_status_icons = load_pool_set("statusicons", self.statusicon_set.as_deref());
+        self.pool_compass = load_pool_set("compass", self.compass_set.as_deref());
         self.textures.clear();
         self.widget_art = None;
         self.manifest_mtime = None;
@@ -294,6 +488,92 @@ impl SkinState {
         self.applied = false;
     }
 
+    /// Declare the status-icon config (pool set + per-indicator overrides,
+    /// from ui_settings). Call before `apply_if_changed`; changes trigger a
+    /// reload so the needed textures come in.
+    pub fn set_status_icon_config(
+        &mut self,
+        set: Option<&str>,
+        overrides: &HashMap<String, crate::data::IconRef>,
+    ) {
+        let set = set.map(|s| s.to_ascii_lowercase());
+        let overrides: HashMap<String, crate::data::IconRef> = overrides
+            .iter()
+            .filter(|(_, icon)| **icon != crate::data::IconRef::Default)
+            .map(|(id, icon)| (id.to_ascii_uppercase(), icon.clone()))
+            .collect();
+        if set != self.statusicon_set || overrides != self.statusicon_overrides {
+            self.statusicon_set = set;
+            self.statusicon_overrides = overrides;
+            self.applied = false;
+        }
+    }
+
+    /// Declare which pool backgrounds window overrides reference. Call
+    /// before `apply_if_changed`; a change triggers a reload.
+    pub fn set_needed_pool_backgrounds(&mut self, paths: impl IntoIterator<Item = String>) {
+        let mut paths: Vec<String> = paths
+            .into_iter()
+            .filter(|path| !path.eq_ignore_ascii_case("none"))
+            .collect();
+        paths.sort();
+        paths.dedup();
+        if paths != self.needed_pool_backgrounds {
+            self.needed_pool_backgrounds = paths;
+            self.applied = false;
+        }
+    }
+
+    /// Declare which pool images hand-widget icon states reference. Call
+    /// before `apply_if_changed`; a change triggers a reload.
+    pub fn set_needed_pool_icons(&mut self, paths: impl IntoIterator<Item = String>) {
+        let mut paths: Vec<String> = paths.into_iter().collect();
+        paths.sort();
+        paths.dedup();
+        if paths != self.needed_pool_icons {
+            self.needed_pool_icons = paths;
+            self.applied = false;
+        }
+    }
+
+    /// Declare which grayscale twins settings demand. Twins are built only
+    /// while a checkbox asks for them (checked + saved -> next frame) and
+    /// dropped when it clears — nobody pays for gray they don't use.
+    pub fn set_grayscale(&mut self, status_icons: bool, doll: bool) {
+        if status_icons != self.gray_status_icons || doll != self.gray_doll {
+            self.gray_status_icons = status_icons;
+            self.gray_doll = doll;
+            self.applied = false;
+        }
+    }
+
+    /// Declare the compass pool set (from ui_settings.compass_set). Call
+    /// before `apply_if_changed`; a change triggers a reload.
+    pub fn set_compass_set(&mut self, set: Option<&str>) {
+        let set = set.map(|s| s.to_ascii_lowercase());
+        if set != self.compass_set {
+            self.compass_set = set;
+            self.applied = false;
+        }
+    }
+
+
+    /// Declare which pool frames window overrides reference (any case).
+    /// Call before `apply_if_changed`; a changed set triggers a reload so
+    /// the newly-needed textures come in (and dropped ones free up).
+    pub fn set_needed_pool_frames(&mut self, names: impl IntoIterator<Item = String>) {
+        let mut names: Vec<String> = names
+            .into_iter()
+            .map(|name| name.to_ascii_lowercase())
+            .collect();
+        names.sort();
+        names.dedup();
+        if names != self.needed_pool_frames {
+            self.needed_pool_frames = names;
+            self.applied = false;
+        }
+    }
+
     /// True when the active skin's manifest or the shared icons.toml mtime
     /// differs from what was loaded. Rate-limited to one stat per second.
     fn manifest_changed_on_disk(&mut self) -> bool {
@@ -337,6 +617,19 @@ impl SkinState {
         &self.manifest.injury_doll
     }
 
+    /// The active doll override (pool-relative path), if one is set.
+    pub fn doll_override(&self) -> Option<&str> {
+        self.doll_override.as_deref()
+    }
+
+    /// Absolute path of the active doll override's image, for sidecar
+    /// reads/writes.
+    pub fn doll_override_abs_path(&self) -> Option<std::path::PathBuf> {
+        self.doll_override
+            .as_deref()
+            .map(|path| skins::resolve_image_path(&self.root, path))
+    }
+
     fn build_widget_art(&self) -> Option<std::sync::Arc<SkinWidgetArt>> {
         let tex = |path: &String| {
             self.textures
@@ -351,7 +644,49 @@ impl SkinState {
         let mut art = SkinWidgetArt::default();
         for (id, path) in &self.manifest.icons {
             if let Some(texture) = tex(path) {
-                art.icons.insert(id.to_ascii_uppercase(), texture);
+                art.icons
+                    .insert(id.to_ascii_uppercase(), IconSlot::Sprite(texture));
+            }
+        }
+        // Pool set art fills ids the skin doesn't define (skin wins).
+        for (id, path) in &self.pool_status_icons {
+            if let Some(texture) = tex(path) {
+                art.icons
+                    .entry(id.to_ascii_uppercase())
+                    .or_insert(IconSlot::Sprite(texture));
+            }
+        }
+        // Per-indicator overrides beat both.
+        for (id, icon) in &self.statusicon_overrides {
+            match icon {
+                crate::data::IconRef::Default => {}
+                // Explicit "no art": drop whatever the skin/pool resolved so
+                // the widget falls back to its artless rendering. Gray twins
+                // mirror art.icons below, so the removal propagates.
+                crate::data::IconRef::None => {
+                    art.icons.remove(id);
+                }
+                crate::data::IconRef::Image { path } => {
+                    if let Some(texture) = tex(path) {
+                        art.icons.insert(id.clone(), IconSlot::Sprite(texture));
+                    }
+                }
+                crate::data::IconRef::SheetCell { sheet, cell } => {
+                    art.icons.insert(
+                        id.clone(),
+                        IconSlot::Sheet {
+                            sheet: sheet.to_ascii_lowercase(),
+                            cell: *cell,
+                        },
+                    );
+                }
+            }
+        }
+        // Hand-widget icon-state images (pre-declared pool loads).
+        for path in &self.needed_pool_icons {
+            if let Some(texture) = tex(path) {
+                art.pool_icons
+                    .insert(path.to_ascii_lowercase(), texture);
             }
         }
         for (name, spec) in &self.manifest.sheets {
@@ -375,6 +710,29 @@ impl SkinState {
             if let Some(texture) = tex(path) {
                 art.compass_dirs
                     .insert(direction.to_ascii_lowercase(), texture);
+            }
+        }
+        // A compass pool set with a rose replaces the skin's compass
+        // wholesale (rose + direction overlays are same-canvas art; mixing
+        // sources would misalign them). The "none" sentinel (picker "None")
+        // strips compass art entirely so the widget draws its vector rose.
+        if self
+            .compass_set
+            .as_deref()
+            .is_some_and(|set| set.eq_ignore_ascii_case("none"))
+        {
+            art.compass_rose = None;
+            art.compass_dirs.clear();
+        } else if let Some(rose) = self.pool_compass.get("rose").and_then(tex) {
+            art.compass_rose = Some(rose);
+            art.compass_dirs.clear();
+            for (role, path) in &self.pool_compass {
+                if role == "rose" {
+                    continue;
+                }
+                if let Some(texture) = tex(path) {
+                    art.compass_dirs.insert(role.clone(), texture);
+                }
             }
         }
         art.doll_base = self.manifest.injury_doll.base.as_ref().and_then(tex);
@@ -404,6 +762,99 @@ impl SkinState {
             }
         }
 
+        // A doll override replaces the skin's `[injury_doll]` wholesale:
+        // base from the pool image, anchors/dots from its sidecar, severity
+        // rendered as generated dots (pool dolls carry no overlay art).
+        // The "none" sentinel (picker "None") strips doll art entirely so
+        // the widget draws its built-in vector body.
+        if let Some(path) = &self.doll_override {
+            if path.eq_ignore_ascii_case("none") {
+                art.doll_base = None;
+                art.doll_parts.clear();
+                art.doll_anchors.clear();
+            } else if let Some(texture) = tex(path) {
+                art.doll_base = Some(texture);
+                art.doll_parts.clear();
+                art.doll_anchors.clear();
+                let abs = skins::resolve_image_path(&self.root, path);
+                match crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(&abs)
+                {
+                    Some(sidecar) => {
+                        for (part, anchor) in &sidecar.anchors {
+                            art.doll_anchors.insert(
+                                part.to_ascii_lowercase(),
+                                egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
+                            );
+                        }
+                        art.doll_dots = ResolvedDotStyle::from_spec(&sidecar.dots);
+                    }
+                    None => art.doll_dots = ResolvedDotStyle::default(),
+                }
+            }
+        }
+
+        // Grayscale twins mirror whatever resolved above, keyed by the same
+        // ids; sheet-cell slots resolve their gray at lookup (sheets keep
+        // their own twins).
+        if self.gray_status_icons {
+            for (id, slot) in art.icons.clone() {
+                match slot {
+                    IconSlot::Sprite(_) => {
+                        // Find the color slot's source path back through the
+                        // same precedence and fetch its twin.
+                        let path = self
+                            .statusicon_overrides
+                            .get(&id)
+                            .and_then(|icon| match icon {
+                                crate::data::IconRef::Image { path } => Some(path.clone()),
+                                _ => None,
+                            })
+                            .or_else(|| {
+                                self.manifest
+                                    .icons
+                                    .iter()
+                                    .find(|(icon_id, _)| icon_id.eq_ignore_ascii_case(&id))
+                                    .map(|(_, path)| path.clone())
+                            })
+                            .or_else(|| {
+                                self.pool_status_icons
+                                    .iter()
+                                    .find(|(glyph, _)| glyph.eq_ignore_ascii_case(&id))
+                                    .map(|(_, path)| path.clone())
+                            });
+                        if let Some(texture) = path.and_then(|p| tex(&format!("{p}#gray"))) {
+                            art.icons_gray.insert(id, IconSlot::Sprite(texture));
+                        }
+                    }
+                    IconSlot::Sheet { .. } => {
+                        art.icons_gray.insert(id, slot);
+                    }
+                }
+            }
+        }
+        if self.gray_doll {
+            let base_path = self
+                .doll_override
+                .clone()
+                .or_else(|| self.manifest.injury_doll.base.clone());
+            art.doll_base_gray = base_path.and_then(|p| tex(&format!("{p}#gray")));
+            if self.doll_override.is_none() {
+                for (part, levels) in &self.manifest.injury_doll.parts {
+                    for (key, path) in levels {
+                        let Some(level) = skins::severity_level_from_key(key) else {
+                            continue;
+                        };
+                        if let Some(texture) = tex(&format!("{path}#gray")) {
+                            art.doll_parts_gray
+                                .entry(part.to_ascii_lowercase())
+                                .or_default()
+                                .insert(level, texture);
+                        }
+                    }
+                }
+            }
+        }
+
         if art.is_empty() {
             None
         } else {
@@ -425,6 +876,21 @@ impl SkinState {
                     .chain(window.border.as_ref().map(|border| border.image.clone()))
             })
             .collect();
+        images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
+        images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
+        images.extend(self.needed_pool_backgrounds.iter().cloned());
+        images.extend(self.needed_pool_icons.iter().cloned());
+        images.extend(self.doll_override.iter().cloned());
+        images.extend(self.pool_status_icons.values().cloned());
+        images.extend(self.pool_compass.values().cloned());
+        images.extend(
+            self.statusicon_overrides
+                .values()
+                .filter_map(|icon| match icon {
+                    crate::data::IconRef::Image { path } => Some(path.clone()),
+                    _ => None,
+                }),
+        );
         images.extend(self.manifest.icons.values().cloned());
         images.extend(self.manifest.sheets.values().map(|s| s.path.clone()));
         images.extend(self.manifest.compass.rose.iter().cloned());
@@ -460,6 +926,49 @@ impl SkinState {
             };
             self.textures.insert(key, handle);
         }
+        // Lazy grayscale twins: built only for what the checkboxes demand
+        // (status icons when "gray inactive" is on, doll art when
+        // "grayscale doll" is on). Unchecking rebuilds without them.
+        let mut gray_paths: Vec<String> = Vec::new();
+        if self.gray_status_icons {
+            gray_paths.extend(self.manifest.icons.values().cloned());
+            gray_paths.extend(self.pool_status_icons.values().cloned());
+            gray_paths.extend(
+                self.statusicon_overrides
+                    .values()
+                    .filter_map(|icon| match icon {
+                        crate::data::IconRef::Image { path } => Some(path.clone()),
+                        _ => None,
+                    }),
+            );
+        }
+        if self.gray_doll {
+            match &self.doll_override {
+                Some(path) => gray_paths.push(path.clone()),
+                None => {
+                    gray_paths.extend(self.manifest.injury_doll.base.iter().cloned());
+                    gray_paths.extend(
+                        self.manifest
+                            .injury_doll
+                            .parts
+                            .values()
+                            .flat_map(|levels| levels.values().cloned()),
+                    );
+                }
+            }
+        }
+        for path in gray_paths {
+            let key = format!("{path}#gray");
+            if self.textures.contains_key(&key) {
+                continue;
+            }
+            let handle = if matches!(self.textures.get(&path), Some(Some(_))) {
+                load_texture_desaturated(ctx, &self.root, &path, skin_name)
+            } else {
+                None
+            };
+            self.textures.insert(key, handle);
+        }
     }
 
     /// Resolve the background for a window, falling back to the manifest's
@@ -484,12 +993,67 @@ impl SkinState {
         })
     }
 
+    /// Background resolution honoring a per-window override: "none" kills
+    /// the background, a pool-relative path renders that image with
+    /// readable defaults (cover fit, a light theme scrim), anything else
+    /// falls back to the skin's own per-window mapping.
+    pub fn background_for_with_override(
+        &self,
+        window_name: &str,
+        background_override: Option<&str>,
+    ) -> Option<ResolvedBackground> {
+        match background_override {
+            Some(path) if path.eq_ignore_ascii_case("none") => None,
+            Some(path) => {
+                let texture = self.textures.get(path)?.as_ref()?;
+                Some(ResolvedBackground {
+                    texture: texture.id(),
+                    tex_size: texture.size_vec2(),
+                    fit: BackgroundFit::Cover,
+                    tint: egui::Color32::WHITE,
+                    // Text stays readable over arbitrary pool art; skins
+                    // that want exact control keep using their manifest.
+                    scrim_alpha: (0.25 * 255.0) as u8,
+                })
+            }
+            None => self.background_for(window_name),
+        }
+    }
+
     /// Resolve the nine-slice border for a window, falling back to the
     /// manifest's "default" entry (independently of the background, so a
     /// window can override one without losing the other).
     pub fn border_for(&self, window_name: &str) -> Option<ResolvedBorder> {
-        let spec =
-            skins::window_field(&self.manifest, window_name, |window| window.border.as_ref())?;
+        self.resolve_border(skins::window_field(&self.manifest, window_name, |window| {
+            window.border.as_ref()
+        })?)
+    }
+
+    /// Border resolution honoring a per-window user override: "none" kills
+    /// the frame, a named `[frames.*]` entry replaces it, and an unknown
+    /// name (stale layout, switched skin) falls back to the skin's own
+    /// per-window mapping — as does no override at all.
+    pub fn border_for_with_override(
+        &self,
+        window_name: &str,
+        frame_override: Option<&str>,
+    ) -> Option<ResolvedBorder> {
+        match frame_override {
+            Some(name) if name.eq_ignore_ascii_case(skins::NO_FRAME) => None,
+            Some(name) => skins::named_frame(&self.manifest, name)
+                .and_then(|spec| self.resolve_border(spec))
+                .or_else(|| {
+                    // Pool frame (skinless or supplementing the skin).
+                    self.pool_frames
+                        .get(&name.to_ascii_lowercase())
+                        .and_then(|spec| self.resolve_border(spec))
+                })
+                .or_else(|| self.border_for(window_name)),
+            None => self.border_for(window_name),
+        }
+    }
+
+    fn resolve_border(&self, spec: &skins::BorderSpec) -> Option<ResolvedBorder> {
         let texture = self.textures.get(&spec.image)?.as_ref()?;
         Some(ResolvedBorder {
             texture: texture.id(),
@@ -498,6 +1062,111 @@ impl SkinState {
             scale: spec.scale.max(0.05),
         })
     }
+
+    /// A small preview texture for Appearance pickers (aspect kept,
+    /// longest edge ≤ 48px). Budgeted: a handful of new decodes per
+    /// frame — callers get None until a later frame fills the cache, and
+    /// a repaint is requested so open menus fill in on their own.
+    pub fn thumbnail(
+        &mut self,
+        ctx: &egui::Context,
+        image_path: &str,
+    ) -> Option<(egui::TextureId, egui::Vec2)> {
+        if let Some(entry) = self.thumbnails.get(image_path) {
+            return entry.as_ref().map(|t| (t.id(), t.size_vec2()));
+        }
+        if self.thumb_budget == 0 {
+            ctx.request_repaint();
+            return None;
+        }
+        self.thumb_budget -= 1;
+        let handle = load_thumbnail_impl(ctx, &self.root, image_path);
+        let out = handle.as_ref().map(|t| (t.id(), t.size_vec2()));
+        self.thumbnails.insert(image_path.to_string(), handle);
+        ctx.request_repaint();
+        out
+    }
+
+    /// Frames the Appearance picker offers: the active skin's `[frames.*]`
+    /// plus every pool frame with a sidecar (names only — textures load
+    /// lazily for frames actually assigned). Skin names win collisions.
+    pub fn frame_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .manifest
+            .frames
+            .keys()
+            .filter(|name| !name.eq_ignore_ascii_case(skins::NO_FRAME))
+            .cloned()
+            .collect();
+        for image in crate::config::pool::list_category("frames") {
+            let stem = image.stem();
+            if stem.eq_ignore_ascii_case(skins::NO_FRAME) {
+                continue;
+            }
+            // Without a slice/scale sidecar the frame can't nine-slice;
+            // leave it out rather than offering a dead entry.
+            if !image.sidecar_path().is_file() {
+                continue;
+            }
+            if !names.iter().any(|name| name.eq_ignore_ascii_case(stem)) {
+                names.push(stem.to_owned());
+            }
+        }
+        names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        names
+    }
+}
+
+/// Resolve one pool set: `<set>_<suffix>.png` -> lowercase suffix -> pool
+/// path (glyph ids for statusicons, roles for compass). No set = empty.
+fn load_pool_set(category: &str, set: Option<&str>) -> HashMap<String, String> {
+    let mut entries = HashMap::new();
+    let Some(set) = set else {
+        return entries;
+    };
+    for image in crate::config::pool::list_category(category) {
+        let Some((prefix, suffix)) = image.stem().split_once('_') else {
+            continue;
+        };
+        if prefix.eq_ignore_ascii_case(set) && !suffix.is_empty() {
+            entries.insert(suffix.to_ascii_lowercase(), image.pool_path.clone());
+        }
+    }
+    entries
+}
+
+/// Load the specs (not textures) for the needed pool frames: match stems
+/// case-insensitively, take slice/scale from each image's sidecar. Frames
+/// without a usable sidecar are skipped with a warning.
+fn load_pool_frames(needed: &[String]) -> HashMap<String, skins::BorderSpec> {
+    let mut frames = HashMap::new();
+    if needed.is_empty() {
+        return frames;
+    }
+    for image in crate::config::pool::list_category("frames") {
+        let stem = image.stem().to_ascii_lowercase();
+        if !needed.contains(&stem) {
+            continue;
+        }
+        let Some(sidecar) =
+            crate::config::pool::read_sidecar::<crate::config::pool::FrameSidecar>(&image.abs_path)
+        else {
+            tracing::warn!(
+                "pool frame '{}' has no sidecar with slice/scale; skipping",
+                image.file_name
+            );
+            continue;
+        };
+        frames.insert(
+            stem,
+            skins::BorderSpec {
+                image: image.pool_path.clone(),
+                slice: sidecar.slice.insets(),
+                scale: sidecar.effective_scale(),
+            },
+        );
+    }
+    frames
 }
 
 /// mtime of the shared icon store's manifest, if it exists.
@@ -551,6 +1220,28 @@ fn load_texture_desaturated(
     load_texture_impl(ctx, root, image_path, skin_name, true)
 }
 
+/// Decode + downscale one image into a picker thumbnail texture. Quieter
+/// than the full loader (a broken pool image just shows no preview).
+fn load_thumbnail_impl(
+    ctx: &egui::Context,
+    root: &Path,
+    image_path: &str,
+) -> Option<egui::TextureHandle> {
+    const THUMB_EDGE: u32 = 48;
+    let path = skins::resolve_image_path(root, image_path);
+    let bytes = std::fs::read(&path).ok()?;
+    let decoded = image::load_from_memory(&bytes).ok()?;
+    // `thumbnail` is the image crate's fast aspect-preserving resize.
+    let rgba = decoded.thumbnail(THUMB_EDGE, THUMB_EDGE).to_rgba8();
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+    Some(ctx.load_texture(
+        format!("thumb:{image_path}"),
+        color_image,
+        egui::TextureOptions::LINEAR,
+    ))
+}
+
 fn load_texture_impl(
     ctx: &egui::Context,
     root: &Path,
@@ -558,14 +1249,8 @@ fn load_texture_impl(
     skin_name: &str,
     desaturate: bool,
 ) -> Option<egui::TextureHandle> {
-    let path = {
-        let raw = Path::new(image_path);
-        if raw.is_absolute() {
-            raw.to_path_buf()
-        } else {
-            root.join(raw)
-        }
-    };
+    // Skin folder first, then the shared image pool (global/images/).
+    let path = skins::resolve_image_path(root, image_path);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -600,35 +1285,42 @@ fn load_texture_impl(
     ))
 }
 
-/// Paint a window background into `rect`, clipped to it. `scrim_color`
-/// supplies the scrim's RGB (normally the theme's window fill) so the
-/// overlay darkens/lightens toward the theme rather than plain black.
-pub fn paint_background(
-    painter: &egui::Painter,
+/// Build the shapes that paint a window background into `rect`. The caller
+/// paints them through a painter clipped to `rect` — normally deferred via
+/// a reserved shape slot (`Painter::add(Noop)` + `Painter::set`) so the
+/// art lands behind the window's content yet is sized from the content's
+/// final extent, not the pre-layout available rect (which can overshoot an
+/// auto-sized window's frame). `scrim_color` supplies the scrim's RGB
+/// (normally the theme's window fill) so the overlay darkens/lightens
+/// toward the theme rather than plain black.
+pub fn background_shapes(
     rect: egui::Rect,
     bg: &ResolvedBackground,
     scrim_color: egui::Color32,
-) {
+) -> Vec<egui::Shape> {
+    let mut shapes = Vec::new();
     if !rect.is_positive() || bg.tex_size.x <= 0.0 || bg.tex_size.y <= 0.0 {
-        return;
+        return shapes;
     }
-    let painter = painter.with_clip_rect(rect);
     let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let image = |dest: egui::Rect, uv: egui::Rect| {
+        let mut mesh = egui::Mesh::with_texture(bg.texture);
+        mesh.add_rect_with_uv(dest, uv, bg.tint);
+        egui::Shape::mesh(mesh)
+    };
     match bg.fit {
         BackgroundFit::Stretch => {
-            painter.image(bg.texture, rect, full_uv, bg.tint);
+            shapes.push(image(rect, full_uv));
         }
         BackgroundFit::Cover => {
-            let uv = cover_uv(bg.tex_size, rect.size());
-            painter.image(bg.texture, rect, uv, bg.tint);
+            shapes.push(image(rect, cover_uv(bg.tex_size, rect.size())));
         }
         BackgroundFit::Contain => {
-            let dest = contain_dest(bg.tex_size, rect);
-            painter.image(bg.texture, dest, full_uv, bg.tint);
+            shapes.push(image(contain_dest(bg.tex_size, rect), full_uv));
         }
         BackgroundFit::Center => {
             let dest = egui::Rect::from_center_size(rect.center(), bg.tex_size);
-            painter.image(bg.texture, dest, full_uv, bg.tint);
+            shapes.push(image(dest, full_uv));
         }
         BackgroundFit::Tile => {
             // Cap the grid so a tiny tile in a huge window can't explode the
@@ -640,8 +1332,7 @@ pub fn paint_background(
                 for col in 0..cols {
                     let min = rect.min
                         + egui::vec2(col as f32 * bg.tex_size.x, row as f32 * bg.tex_size.y);
-                    let dest = egui::Rect::from_min_size(min, bg.tex_size);
-                    painter.image(bg.texture, dest, full_uv, bg.tint);
+                    shapes.push(image(egui::Rect::from_min_size(min, bg.tex_size), full_uv));
                 }
             }
         }
@@ -653,8 +1344,9 @@ pub fn paint_background(
             scrim_color.b(),
             bg.scrim_alpha,
         );
-        painter.rect_filled(rect, 0.0, scrim);
+        shapes.push(egui::Shape::rect_filled(rect, 0.0, scrim));
     }
+    shapes
 }
 
 /// Largest rect with the sprite's aspect ratio centered inside `rect`.
@@ -663,6 +1355,21 @@ pub fn paint_background(
 /// same-canvas art stays aligned.
 pub fn sprite_dest(sprite: &SkinTexture, rect: egui::Rect) -> egui::Rect {
     contain_dest(sprite.size, rect)
+}
+
+/// Largest rect with the icon's aspect ratio centered inside `rect`.
+pub fn icon_dest(icon: &ResolvedIcon, rect: egui::Rect) -> egui::Rect {
+    contain_dest(icon.size, rect)
+}
+
+/// Paint a resolved icon (full image or sheet cell) into `dest`.
+pub fn paint_icon(
+    painter: &egui::Painter,
+    dest: egui::Rect,
+    icon: &ResolvedIcon,
+    tint: egui::Color32,
+) {
+    painter.image(icon.texture, dest, icon.uv, tint);
 }
 
 /// Paint a sprite stretched into `dest` (use `sprite_dest` for aspect fit).
@@ -855,8 +1562,8 @@ pub fn register_sheet(
 }
 
 /// Register a hotbar icon sprite sheet into the shared store
-/// (`global\icons\`), where every skin — and a skinless setup — can use it.
-/// Creates the store and its icons.toml on first use.
+/// (`global/images/icons/`), where every skin — and a skinless setup —
+/// can use it. Creates the store and its icons.toml on first use.
 pub fn register_sheet_shared(
     sheet_name: &str,
     source: &Path,
@@ -953,22 +1660,36 @@ fn register_sheet_impl(
 
 /// Paint a nine-slice border into `rect`: corners at fixed size, edges
 /// stretched along their axis, center left empty so the window fill or
-/// background image shows through.
-pub fn paint_nine_slice(painter: &egui::Painter, rect: egui::Rect, border: &ResolvedBorder) {
+/// background image shows through. `sides` is [top, right, bottom, left]
+/// (matching the slice order): hidden sides draw nothing — their corners
+/// vanish with them, and the surviving perpendicular rails extend to the
+/// window edge.
+pub fn paint_nine_slice(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    border: &ResolvedBorder,
+    sides: [bool; 4],
+) {
     let full_alpha = egui::Color32::WHITE;
-    for (dest, uv) in nine_slice_patches(border.tex_size, border.slice, border.scale, rect) {
+    for (dest, uv) in nine_slice_patches(border.tex_size, border.slice, border.scale, rect, sides)
+    {
         painter.image(border.texture, dest, uv, full_alpha);
     }
 }
 
 /// The eight border patches as (destination rect, UV rect) pairs. Slice
 /// insets larger than the destination shrink proportionally so opposite
-/// borders never overlap. Degenerate patches (zero-size) are skipped.
+/// borders never overlap. Degenerate patches (zero-size) are skipped —
+/// which is also how hidden sides work: zeroing a side's on-screen inset
+/// collapses its edge and both its corners to zero-size rects, while the
+/// perpendicular edges (which span between the insets) automatically
+/// stretch into the freed space.
 fn nine_slice_patches(
     tex: egui::Vec2,
     slice: [f32; 4],
     scale: f32,
     rect: egui::Rect,
+    sides: [bool; 4],
 ) -> Vec<(egui::Rect, egui::Rect)> {
     if tex.x <= 0.0 || tex.y <= 0.0 || !rect.is_positive() {
         return Vec::new();
@@ -976,15 +1697,15 @@ fn nine_slice_patches(
     let [top, right, bottom, left] = slice.map(|inset| inset.max(0.0));
 
     // On-screen border thicknesses, shrunk if the rect is too small.
-    let mut dt = top * scale;
-    let mut db = bottom * scale;
+    let mut dt = if sides[0] { top * scale } else { 0.0 };
+    let mut db = if sides[2] { bottom * scale } else { 0.0 };
     if dt + db > rect.height() {
         let shrink = rect.height() / (dt + db);
         dt *= shrink;
         db *= shrink;
     }
-    let mut dl = left * scale;
-    let mut dr = right * scale;
+    let mut dl = if sides[3] { left * scale } else { 0.0 };
+    let mut dr = if sides[1] { right * scale } else { 0.0 };
     if dl + dr > rect.width() {
         let shrink = rect.width() / (dl + dr);
         dl *= shrink;
@@ -1046,7 +1767,7 @@ fn contain_dest(tex: egui::Vec2, rect: egui::Rect) -> egui::Rect {
 }
 
 /// Parse "#rrggbb" (or "rrggbb") into an opaque color.
-fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
+pub fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
     let hex = input.trim().trim_start_matches('#');
     if hex.len() != 6 {
         return None;
@@ -1139,7 +1860,8 @@ mod tests {
     #[test]
     fn nine_slice_patches_cover_border_not_center() {
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
-        let patches = nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect);
+        let patches =
+            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect, [true; 4]);
         assert_eq!(patches.len(), 8);
 
         // Top-left corner: fixed 8x8 at the origin, UV = top-left quarter.
@@ -1157,7 +1879,8 @@ mod tests {
         // 8px insets at scale 1 into a 10px-tall rect: top+bottom shrink to
         // 5px each instead of overlapping.
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 10.0));
-        let patches = nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect);
+        let patches =
+            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0, 8.0, 8.0, 8.0], 1.0, rect, [true; 4]);
         let max_bottom_of_top_row = patches
             .iter()
             .filter(|(dest, _)| dest.min.y == 0.0)
@@ -1167,11 +1890,45 @@ mod tests {
     }
 
     #[test]
+    fn nine_slice_patches_hidden_side_drops_edge_and_corners_and_extends_rails() {
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
+        // Hide the top: [top, right, bottom, left].
+        let patches = nine_slice_patches(
+            egui::vec2(32.0, 32.0),
+            [8.0, 8.0, 8.0, 8.0],
+            1.0,
+            rect,
+            [false, true, true, true],
+        );
+        // Top edge + both top corners gone.
+        assert_eq!(patches.len(), 5);
+        assert!(patches.iter().all(|(dest, _)| dest.min.y == 0.0 || dest.min.y >= 72.0));
+        // The left rail now runs from the very top of the window.
+        let left_rail = patches
+            .iter()
+            .find(|(dest, _)| dest.min.x == 0.0 && dest.min.y == 0.0 && dest.height() > 8.0)
+            .expect("left rail present");
+        assert_eq!(left_rail.0.height(), 72.0);
+        // All sides hidden = nothing drawn.
+        assert!(nine_slice_patches(
+            egui::vec2(32.0, 32.0),
+            [8.0; 4],
+            1.0,
+            rect,
+            [false; 4]
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn nine_slice_patches_empty_on_degenerate_input() {
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
-        assert!(nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect).is_empty());
+        assert!(nine_slice_patches(egui::vec2(0.0, 32.0), [8.0; 4], 1.0, rect, [true; 4]).is_empty());
         let empty_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(0.0, 0.0));
-        assert!(nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, empty_rect).is_empty());
+        assert!(
+            nine_slice_patches(egui::vec2(32.0, 32.0), [8.0; 4], 1.0, empty_rect, [true; 4])
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1339,7 +2096,8 @@ cell = 32
             texture: egui::TextureId::default(),
             size: egui::vec2(16.0, 16.0),
         };
-        art.icons.insert("KNEELING".to_string(), texture);
+        art.icons
+            .insert("KNEELING".to_string(), IconSlot::Sprite(texture));
         art.compass_dirs.insert("ne".to_string(), texture);
         art.doll_parts
             .entry("leftarm".to_string())

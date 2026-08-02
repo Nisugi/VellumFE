@@ -35,10 +35,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-f875b337.js";
+            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-ba9683ee.js"></script>
+        <script src="../toc-a6416afc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -190,27 +190,40 @@ load) falls back to that.</p>
 .setskin parchment
 .setskin none     # back to plain theme rendering
 </code></pre>
-<p>The active skin is remembered in your config. <code>.skin</code> is an alias. The
-GUI settings editor (<code>.settings</code>) has a Skin section with the same
-picker, an “Open skins folder” button, and a “Create” button.</p>
+<p>The active skin is remembered in your GUI layout, so layout checkpoints
+carry it (see below). <code>.skin</code> is an alias. The GUI settings editor
+(<code>.settings</code>) has a Skin section with the same picker, an “Open skins
+folder” button, and a “Create” button.</p>
 <h2 id="making-a-skin"><a class="header" href="#making-a-skin">Making a Skin</a></h2>
+<p>No art skills needed — <a href="./skin-art-prompts.html">Generating Skin Art with AI</a>
+is a working prompt kit for producing every image below with an image
+model, including the keying script that turns black backgrounds into
+real transparency.</p>
 <p>The quickest start:</p>
 <pre><code>.makeskin myskin
 </code></pre>
-<p>This creates <code>~/.vellum-fe/skins/myskin/skin.toml</code> with <strong>every section
-present but commented out</strong> — uncomment a line, point it at a PNG, done.
-It never overwrites an existing skin.</p>
+<p>This creates <code>~/.vellum-fe/global/skins/myskin/skin.toml</code> with <strong>every
+section present but commented out</strong> — uncomment a line, point it at a
+PNG, done. It never overwrites an existing skin.</p>
 <p>While a skin is active, edits to its <code>skin.toml</code> <strong>hot-reload within a
 second</strong>. Edited <em>images</em> don’t touch the manifest, so after swapping an
 image file run <code>.reloadskin</code> to force a full reload.</p>
-<p>A skin is a folder under <code>~/.vellum-fe/skins/&lt;name&gt;/</code> containing a
+<p>A skin is a folder under <code>~/.vellum-fe/global/skins/&lt;name&gt;/</code> containing a
 <code>skin.toml</code> manifest plus image files (PNG, JPEG, WebP, or BMP):</p>
-<pre><code>~/.vellum-fe/skins/parchment/
+<pre><code>~/.vellum-fe/global/skins/parchment/
 ├── skin.toml
 └── bg/
     ├── paper.png
     └── vellum.png
 </code></pre>
+<p>Art that several skins share belongs in the image pool at
+<code>~/.vellum-fe/global/images/</code> (subfolders: <code>icons/</code>, <code>frames/</code>,
+<code>dolls/</code>, <code>compass/</code>, <code>backgrounds/</code>). Relative manifest paths look in
+the skin folder first, then the pool, so
+<code>image = "backgrounds/paper.png"</code> works from any skin without copying
+the file. The applied skin is remembered in the GUI layout —
+<code>.savelayout</code> checkpoints carry their skin, and <code>.loadlayout</code> brings it
+back (a checkpoint saved without a skin keeps the current one).</p>
 <pre><code class="language-toml">[meta]
 name = "Parchment"
 description = "Warm paper backgrounds for text windows"
@@ -238,6 +251,56 @@ image = "borders/frame.png"
 slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
 scale = 1.0                # source pixels -&gt; screen points
 </code></pre>
+<h2 id="named-frames-per-window-picker"><a class="header" href="#named-frames-per-window-picker">Named Frames (Per-Window Picker)</a></h2>
+<p><code>[window.&lt;name&gt;.border]</code> bakes the frame choice into the skin. To let
+players mix frames themselves, name them under <code>[frames.*]</code>:</p>
+<pre><code class="language-toml">[frames.ornate]
+image = "borders/ornate.png"
+slice = [16, 16, 16, 16]
+scale = 0.75
+
+[frames.plain]
+image = "borders/plain.png"
+slice = [6, 6, 6, 6]
+</code></pre>
+<p>Every named frame shows up in each window’s right-click menu under
+<strong>Appearance → Skin frame</strong> (also in the Window Editor’s Appearance
+section), alongside <strong>Skin default</strong> (follow the skin’s own
+<code>[window.*]</code> mapping) and <strong>None</strong> (no frame on this window). The
+choice is saved per window in the GUI layout, so it survives restarts
+and travels with <code>.savelayout</code> checkpoints. If a layout names a frame
+the active skin doesn’t define, the window falls back to the skin’s
+default mapping.</p>
+<p>The name <code>none</code> is reserved — a <code>[frames.none]</code> entry is ignored.</p>
+<h2 id="no-skin-required-the-image-pool"><a class="header" href="#no-skin-required-the-image-pool">No Skin Required: the Image Pool</a></h2>
+<p>Everything above describes skins, but <strong>none of it requires one</strong>. Art
+installed into the shared pool (<code>~/.vellum-fe/global/images/&lt;category&gt;/</code>,
+usually via <code>.jinx install</code>) is selectable straight from the GUI:</p>
+<ul>
+<li><strong>Injury doll</strong> — right-click the injuries window → Appearance →
+<em>Doll image</em> lists every doll in the pool; <em>Calibrate doll…</em> places the
+wound anchors, saved into the image’s sidecar toml so the calibration
+travels with the art (Jinx dolls can ship pre-calibrated). A
+<em>Grayscale doll art</em> checkbox desaturates the art (dots keep their
+colors); the grayscale copy is built only while it’s checked.</li>
+<li><strong>Frames</strong> — the per-window <em>Skin frame</em> picker lists pool frames
+(those with a slice/scale sidecar) alongside the skin’s <code>[frames.*]</code>.</li>
+<li><strong>Backgrounds</strong> — every window’s Appearance menu has a <em>Background</em>
+picker over <code>backgrounds/</code> pool images.</li>
+<li><strong>Compass</strong> — the compass window’s Appearance menu picks a pool set
+(<code>compass/&lt;set&gt;_&lt;role&gt;.png</code>, roles <code>rose</code>, <code>n</code> … <code>nw</code>, <code>up</code>, <code>down</code>,
+<code>out</code>).</li>
+<li><strong>Status icons</strong> — the Indicator Templates editor picks a pool set
+(<code>statusicons/&lt;set&gt;_&lt;glyph&gt;.png</code>, glyph = indicator id) plus
+per-indicator overrides: any pool image or a hotbar sheet cell. A
+<em>Grayscale when inactive</em> checkbox shows the desaturated icon for
+inactive statuses instead of fading it.</li>
+</ul>
+<p>All of these choices live in your GUI layout (checkpoints and
+<code>.uiexport</code> carry them). When an arrangement is worth sharing,
+<strong><code>.saveskin &lt;name&gt;</code></strong> compiles it into <code>global/skins/&lt;name&gt;/skin.toml</code>
+referencing the pool art — a publishable skin, without hand-writing any
+TOML.</p>
 <h2 id="status-icons"><a class="header" href="#status-icons">Status Icons</a></h2>
 <p>Replace the built-in vector pictograms in the dashboard and indicator
 widgets, keyed by indicator id (case-insensitive):</p>
@@ -318,7 +381,7 @@ from another install (e.g. your local Wrayth graphics) without copying.</li>
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../reference/commands.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../customization/skin-art-prompts.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -332,7 +395,7 @@ from another install (e.g. your local Wrayth graphics) without copying.</li>
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../reference/commands.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../customization/skin-art-prompts.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

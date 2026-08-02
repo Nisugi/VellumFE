@@ -17,11 +17,17 @@ load) falls back to that.
 .setskin none     # back to plain theme rendering
 ```
 
-The active skin is remembered in your config. `.skin` is an alias. The
-GUI settings editor (`.settings`) has a Skin section with the same
-picker, an "Open skins folder" button, and a "Create" button.
+The active skin is remembered in your GUI layout, so layout checkpoints
+carry it (see below). `.skin` is an alias. The GUI settings editor
+(`.settings`) has a Skin section with the same picker, an "Open skins
+folder" button, and a "Create" button.
 
 ## Making a Skin
+
+No art skills needed — [Generating Skin Art with AI](./skin-art-prompts.md)
+is a working prompt kit for producing every image below with an image
+model, including the keying script that turns black backgrounds into
+real transparency.
 
 The quickest start:
 
@@ -29,24 +35,33 @@ The quickest start:
 .makeskin myskin
 ```
 
-This creates `~/.vellum-fe/skins/myskin/skin.toml` with **every section
-present but commented out** — uncomment a line, point it at a PNG, done.
-It never overwrites an existing skin.
+This creates `~/.vellum-fe/global/skins/myskin/skin.toml` with **every
+section present but commented out** — uncomment a line, point it at a
+PNG, done. It never overwrites an existing skin.
 
 While a skin is active, edits to its `skin.toml` **hot-reload within a
 second**. Edited *images* don't touch the manifest, so after swapping an
 image file run `.reloadskin` to force a full reload.
 
-A skin is a folder under `~/.vellum-fe/skins/<name>/` containing a
+A skin is a folder under `~/.vellum-fe/global/skins/<name>/` containing a
 `skin.toml` manifest plus image files (PNG, JPEG, WebP, or BMP):
 
 ```
-~/.vellum-fe/skins/parchment/
+~/.vellum-fe/global/skins/parchment/
 ├── skin.toml
 └── bg/
     ├── paper.png
     └── vellum.png
 ```
+
+Art that several skins share belongs in the image pool at
+`~/.vellum-fe/global/images/` (subfolders: `icons/`, `frames/`,
+`dolls/`, `compass/`, `backgrounds/`). Relative manifest paths look in
+the skin folder first, then the pool, so
+`image = "backgrounds/paper.png"` works from any skin without copying
+the file. The applied skin is remembered in the GUI layout —
+`.savelayout` checkpoints carry their skin, and `.loadlayout` brings it
+back (a checkpoint saved without a skin keeps the current one).
 
 ```toml
 [meta]
@@ -78,6 +93,64 @@ image = "borders/frame.png"
 slice = [12, 12, 12, 12]   # insets in source pixels: top, right, bottom, left
 scale = 1.0                # source pixels -> screen points
 ```
+
+## Named Frames (Per-Window Picker)
+
+`[window.<name>.border]` bakes the frame choice into the skin. To let
+players mix frames themselves, name them under `[frames.*]`:
+
+```toml
+[frames.ornate]
+image = "borders/ornate.png"
+slice = [16, 16, 16, 16]
+scale = 0.75
+
+[frames.plain]
+image = "borders/plain.png"
+slice = [6, 6, 6, 6]
+```
+
+Every named frame shows up in each window's right-click menu under
+**Appearance → Skin frame** (also in the Window Editor's Appearance
+section), alongside **Skin default** (follow the skin's own
+`[window.*]` mapping) and **None** (no frame on this window). The
+choice is saved per window in the GUI layout, so it survives restarts
+and travels with `.savelayout` checkpoints. If a layout names a frame
+the active skin doesn't define, the window falls back to the skin's
+default mapping.
+
+The name `none` is reserved — a `[frames.none]` entry is ignored.
+
+## No Skin Required: the Image Pool
+
+Everything above describes skins, but **none of it requires one**. Art
+installed into the shared pool (`~/.vellum-fe/global/images/<category>/`,
+usually via `.jinx install`) is selectable straight from the GUI:
+
+- **Injury doll** — right-click the injuries window → Appearance →
+  *Doll image* lists every doll in the pool; *Calibrate doll…* places the
+  wound anchors, saved into the image's sidecar toml so the calibration
+  travels with the art (Jinx dolls can ship pre-calibrated). A
+  *Grayscale doll art* checkbox desaturates the art (dots keep their
+  colors); the grayscale copy is built only while it's checked.
+- **Frames** — the per-window *Skin frame* picker lists pool frames
+  (those with a slice/scale sidecar) alongside the skin's `[frames.*]`.
+- **Backgrounds** — every window's Appearance menu has a *Background*
+  picker over `backgrounds/` pool images.
+- **Compass** — the compass window's Appearance menu picks a pool set
+  (`compass/<set>_<role>.png`, roles `rose`, `n` … `nw`, `up`, `down`,
+  `out`).
+- **Status icons** — the Indicator Templates editor picks a pool set
+  (`statusicons/<set>_<glyph>.png`, glyph = indicator id) plus
+  per-indicator overrides: any pool image or a hotbar sheet cell. A
+  *Grayscale when inactive* checkbox shows the desaturated icon for
+  inactive statuses instead of fading it.
+
+All of these choices live in your GUI layout (checkpoints and
+`.uiexport` carry them). When an arrangement is worth sharing,
+**`.saveskin <name>`** compiles it into `global/skins/<name>/skin.toml`
+referencing the pool art — a publishable skin, without hand-writing any
+TOML.
 
 ## Status Icons
 

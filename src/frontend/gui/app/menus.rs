@@ -24,7 +24,6 @@ pub(super) struct GuiMenuCommand {
 pub(super) struct GuiWindowMenuRequest {
     pub(super) tab_key: TabKey,
     pub(super) zone: GuiShellZone,
-    pub(super) allow_reorder: bool,
     pub(super) position: Pos2,
     /// The window's rendered rect at the time of the right-click; seeds the
     /// stored rect for Move mode when the window was never moved before.
@@ -37,16 +36,17 @@ pub(super) enum GuiWindowMenuCommand {
     Edit,
     Hide,
     Detach,
-    /// Send this floating (Center-zone) window behind any windows it
-    /// overlaps, so a covered window can be reached. Live-session only,
-    /// like egui's built-in click-to-raise.
+    /// Send this floating window behind any windows it overlaps in its
+    /// zone, so a covered window can be reached. Live-session only, like
+    /// egui's built-in click-to-raise.
     SendToBack,
     /// Start Move mode: the window follows the cursor (title bar stays as-is)
     /// until a click places it or Esc cancels.
     StartMove,
+    /// Toggle the per-window position/size lock: locked windows ignore
+    /// drag and resize gestures (Move Window above stays available).
+    ToggleLock,
     ToggleTitleBar,
-    MoveUp,
-    MoveDown,
     MoveTo(GuiShellZone),
     /// Per-window text size override; None reverts to the global size.
     /// Unlike the other commands this keeps the menu open (slider drags
@@ -58,6 +58,52 @@ pub(super) enum GuiWindowMenuCommand {
     SetFont(Option<String>),
     /// Per-window border accent color; None reverts to the theme border.
     SetAccent(Option<[u8; 3]>),
+    /// Per-window frame corner radius; None reverts to the global setting.
+    /// Keeps the menu open like SetTextSize.
+    SetCornerRadius(Option<f32>),
+    /// Per-window skin frame: a named `[frames.*]` entry, "none" for no
+    /// frame, or None to revert to the skin's own per-window mapping.
+    SetSkinFrame(Option<String>),
+    /// Global injury doll image override (pool-relative path); None reverts
+    /// to the active skin's doll.
+    SetDollImage(Option<String>),
+    /// Open the doll calibrator (injury doll windows).
+    CalibrateDoll,
+    /// Open the hand-icons editor (hand windows): status-driven icon
+    /// states (empty hand, held weapon, prepared spell, ...).
+    EditHandIcons,
+    /// Open the dashboard editor (dashboard windows): which status ids to
+    /// show plus layout/spacing/hide-inactive.
+    EditDashboard,
+    /// Render doll art in grayscale (dots keep their colors).
+    SetDollGrayscale(bool),
+    /// Global compass art set from the pool; None reverts to the skin's.
+    SetCompassSet(Option<String>),
+    /// Icon for one hand window (LEFTHAND/RIGHTHAND/SPELLHAND); None
+    /// reverts to the skin default. Stored as a per-indicator override so
+    /// the whole IconRef machinery (pool images, sheet cells) applies.
+    SetHandIcon {
+        hand_id: String,
+        icon: Option<crate::data::IconRef>,
+    },
+    /// Per-window background: pool image path, "none" for no background,
+    /// or None to revert to the skin's per-window mapping.
+    SetBackground(Option<String>),
+    /// Per-window title bar height; None reverts to the global setting.
+    /// Keeps the menu open like SetTextSize.
+    SetTitleBarHeight(Option<f32>),
+    /// Per-window title alignment ("left" | "center" | "right"); None
+    /// reverts to the global setting.
+    SetTitleBarAlign(Option<String>),
+    /// Border on/off for the shared layout def (also drives the TUI).
+    SetShowBorder(bool),
+    /// Border style name for the shared layout def ("single", "double", ...).
+    SetBorderStyle(String),
+    /// Which edges draw a border, for the shared layout def.
+    SetBorderSides(crate::config::BorderSides),
+    /// Content alignment for the shared layout def ("center", "bottom-left",
+    /// ...); None reverts to the default top-left flow.
+    SetContentAlign(Option<String>),
     /// Lock this window together with another one.
     GroupWith(TabKey),
     /// Remove one specific member from this window's group.
@@ -73,24 +119,67 @@ pub(super) enum GuiWindowMenuCommand {
     SetGroupOrientation(bool),
     /// Move a group member one step up/down in the group's render order.
     MoveGroupMember { member: TabKey, up: bool },
+    /// Toggle whether a member shares its predecessor's slot (stacking
+    /// along the perpendicular axis) instead of opening its own.
+    ToggleMemberMerge(TabKey),
+    /// Toggle whether the slot this member opens anchors its content to
+    /// the end of the perpendicular axis (bottom of a column).
+    ToggleSlotAnchor(TabKey),
+    /// Set a member's relative size weight along the group's stack axis.
+    SetMemberWeight { member: TabKey, weight: f32 },
 }
 
 /// Everything the window context menu needs to render, resolved up front so
 /// the menu body stays a static fn.
 struct WindowMenuView<'a> {
     zone: GuiShellZone,
-    allow_reorder: bool,
+    /// Position/size lock state, rendered as a checked row.
+    locked: bool,
     appearance: WindowAppearanceView,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
     /// Members of this window's group in render order (empty when ungrouped).
     group_members: &'a [(TabKey, String)],
+    /// Members sharing their predecessor's slot (subset of group_members).
+    group_merged: &'a [TabKey],
+    /// Slot-opening members whose slot content anchors to the end.
+    group_end_anchored: &'a [TabKey],
+    /// Per-member relative size weights (defaults to 1.0 when absent).
+    group_weights: &'a [(TabKey, f32)],
     /// Windows this one could be grouped with (visible, ungrouped).
     group_candidates: &'a [(TabKey, String)],
 }
 
-/// Per-window appearance state, shared between the context menu's Appearance
-/// section and the Window Editor (see `appearance_view_for_tab`).
+/// A picker row with a fixed-width preview slot before the label: the
+/// thumbnail paints centered in the slot when loaded; the slot is
+/// reserved either way so labels align while thumbs stream in (the
+/// SkinState cache decodes a few per frame). Returns true on click.
+fn thumbed_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    stem: &str,
+    thumb: Option<(egui::TextureId, egui::Vec2)>,
+) -> bool {
+    const EDGE: f32 = 20.0;
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(EDGE), egui::Sense::hover());
+        if let Some((id, size)) = thumb {
+            let scale = (EDGE / size.x.max(size.y)).min(1.0);
+            let draw_rect = egui::Rect::from_center_size(rect.center(), size * scale);
+            ui.painter().image(
+                id,
+                draw_rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+        ui.selectable_label(selected, stem).clicked()
+    })
+    .inner
+}
+
+/// Per-window appearance state for the context menu's Appearance section,
+/// attached and detached alike (see `appearance_view_for_tab`).
 pub(super) struct WindowAppearanceView {
     title_bar_hidden: bool,
     text_size_override: Option<f32>,
@@ -104,6 +193,65 @@ pub(super) struct WindowAppearanceView {
     wrap_text: bool,
     current_font: Option<String>,
     accent_color: Option<Color32>,
+    /// Per-window frame corner radius override; None follows the global.
+    corner_radius_override: Option<f32>,
+    global_corner_radius: f32,
+    /// Named frames the active skin offers; the picker hides when the skin
+    /// neither names frames nor draws a border on this window.
+    skin_frames: Vec<String>,
+    /// Per-window skin frame override; None follows the skin's mapping.
+    skin_frame_override: Option<String>,
+    /// Whether the skin resolves a border for this window by default (so
+    /// "None" is worth offering even without named frames).
+    has_skin_border: bool,
+    /// Injury doll widget: offer the pool doll picker + calibrator.
+    is_doll: bool,
+    /// Pool doll images as (pool-relative path, display stem, thumbnail).
+    doll_images: Vec<(String, String, Option<(egui::TextureId, egui::Vec2)>)>,
+    /// Global doll override (pool-relative path); None = skin default.
+    doll_override: Option<String>,
+    /// Grayscale doll art toggle (global).
+    doll_grayscale: bool,
+    /// Compass widget: offer the pool compass-set picker.
+    is_compass: bool,
+    /// Dashboard widget: offer the "Edit Dashboard…" pop-out.
+    is_dashboard: bool,
+    /// Pool compass sets.
+    compass_sets: Vec<String>,
+    /// Global compass set override; None = skin default.
+    compass_override: Option<String>,
+    /// Hand widget: which hand this window is (LEFTHAND/RIGHTHAND/
+    /// SPELLHAND); None for non-hand windows.
+    hand_id: Option<String>,
+    /// Pool hand images as (pool-relative path, display stem, thumbnail).
+    hand_images: Vec<(String, String, Option<(egui::TextureId, egui::Vec2)>)>,
+    /// This hand's current icon override; None = skin default.
+    hand_icon_override: Option<crate::data::IconRef>,
+    /// Pool background images as (pool-relative path, display stem,
+    /// thumbnail).
+    background_images: Vec<(String, String, Option<(egui::TextureId, egui::Vec2)>)>,
+    /// Per-window background override; None = skin default.
+    background_override: Option<String>,
+    /// Whether the skin resolves a background for this window by default.
+    has_skin_background: bool,
+    /// Per-window title bar height override; None follows the global.
+    title_bar_height_override: Option<f32>,
+    /// Global title bar height; 0 = derived from the title font.
+    global_title_bar_height: f32,
+    /// Per-window title alignment override; None follows the global.
+    title_align_override: Option<String>,
+    /// Border fields from the shared layout def; None when the window has
+    /// no def (border controls are hidden then).
+    border: Option<BorderView>,
+    /// Content alignment from the shared layout def (text-list widgets).
+    content_align: Option<String>,
+}
+
+/// Snapshot of a layout def's border configuration.
+pub(super) struct BorderView {
+    show_border: bool,
+    style: String,
+    sides: crate::config::BorderSides,
 }
 
 /// Preset border accent colors offered in the window context menu.
@@ -228,23 +376,74 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::Hide => {
-                // Hiding a grouped window hides the whole group; otherwise
-                // the group would keep rendering without its leader.
+                // Hide IS the Windows-window uncheck (one visibility layer):
+                // core WindowVisibility flips, auto-spawn is suppressed, and
+                // the catalog checkbox reflects it. Hiding a grouped window
+                // hides every member — same as unchecking each in the catalog
+                // (which, like this, dissolves the group).
                 let members = self
                     .group_for_tab(&request.tab_key)
                     .map(|group| group.members.clone());
                 match members {
                     Some(members) => {
                         for member in members {
-                            self.hide_tab(member);
+                            self.core_hide_tab(&member);
                         }
                     }
-                    None => self.hide_tab(request.tab_key.clone()),
+                    None => self.core_hide_tab(&request.tab_key.clone()),
                 }
             }
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),
             GuiWindowMenuCommand::SendToBack => {
                 self.send_window_to_back(ctx, &request.tab_key);
+            }
+            GuiWindowMenuCommand::ToggleLock => {
+                // Writes the shared layout's `locked` — the single lock
+                // store `.lockwindows` / `.lockwindow` / the TUI use — so
+                // a menu lock is cleared by `.unlockall` and vice versa.
+                let new_state = !self.window_locked(&request.tab_key);
+                let window_name = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone());
+                let mut stored = false;
+                if let Some(name) = window_name {
+                    if let Some(window) = self
+                        .app_core
+                        .layout
+                        .windows
+                        .iter_mut()
+                        .find(|window| window.name() == name)
+                    {
+                        window.base_mut().locked = new_state;
+                        stored = true;
+                    }
+                }
+                if stored {
+                    self.app_core.schedule_layout_autosave();
+                    self.layout_dirty = true;
+                } else {
+                    self.app_core
+                        .add_system_message("This window has no layout entry to lock.");
+                }
+            }
+            GuiWindowMenuCommand::EditHandIcons => {
+                if let Some(name) = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone())
+                {
+                    self.open_hand_icons_editor(name);
+                }
+            }
+            GuiWindowMenuCommand::EditDashboard => {
+                if let Some(name) = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone())
+                {
+                    self.open_dashboard_editor(name);
+                }
             }
             GuiWindowMenuCommand::StartMove => {
                 // Windows that were never repositioned have no stored rect;
@@ -255,19 +454,8 @@ impl VellumGuiApp {
                 self.window_move_state = Some(GuiWindowMoveState {
                     tab_key: request.tab_key.clone(),
                     original_rect: self.main_window_rects.get(&request.tab_key).copied(),
-                    original_order: None,
                     just_started: true,
                 });
-            }
-            GuiWindowMenuCommand::MoveUp => {
-                if request.allow_reorder {
-                    self.move_tab_within_zone(&request.tab_key, request.zone, true);
-                }
-            }
-            GuiWindowMenuCommand::MoveDown => {
-                if request.allow_reorder {
-                    self.move_tab_within_zone(&request.tab_key, request.zone, false);
-                }
             }
             GuiWindowMenuCommand::MoveTo(target) => {
                 if target != request.zone {
@@ -279,6 +467,20 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetWrapText(_)
             | GuiWindowMenuCommand::SetFont(_)
             | GuiWindowMenuCommand::SetAccent(_)
+            | GuiWindowMenuCommand::SetCornerRadius(_)
+            | GuiWindowMenuCommand::SetSkinFrame(_)
+            | GuiWindowMenuCommand::SetDollImage(_)
+            | GuiWindowMenuCommand::CalibrateDoll
+            | GuiWindowMenuCommand::SetDollGrayscale(_)
+            | GuiWindowMenuCommand::SetCompassSet(_)
+            | GuiWindowMenuCommand::SetHandIcon { .. }
+            | GuiWindowMenuCommand::SetBackground(_)
+            | GuiWindowMenuCommand::SetTitleBarHeight(_)
+            | GuiWindowMenuCommand::SetTitleBarAlign(_)
+            | GuiWindowMenuCommand::SetShowBorder(_)
+            | GuiWindowMenuCommand::SetBorderStyle(_)
+            | GuiWindowMenuCommand::SetBorderSides(_)
+            | GuiWindowMenuCommand::SetContentAlign(_)
             | GuiWindowMenuCommand::SetMapZoom(_) => {
                 let tab_key = request.tab_key.clone();
                 self.apply_appearance_command(&tab_key, command);
@@ -331,12 +533,58 @@ impl VellumGuiApp {
                     }
                 }
             }
+            GuiWindowMenuCommand::ToggleMemberMerge(member) => {
+                if let Some(group) = self
+                    .tab_groups
+                    .iter_mut()
+                    .find(|group| group.members.contains(&member))
+                {
+                    if let Some(index) = group.merged.iter().position(|key| *key == member) {
+                        group.merged.remove(index);
+                    } else {
+                        group.merged.push(member);
+                    }
+                    self.layout_dirty = true;
+                }
+            }
+            GuiWindowMenuCommand::ToggleSlotAnchor(member) => {
+                if let Some(group) = self
+                    .tab_groups
+                    .iter_mut()
+                    .find(|group| group.members.contains(&member))
+                {
+                    if let Some(index) =
+                        group.end_anchored.iter().position(|key| *key == member)
+                    {
+                        group.end_anchored.remove(index);
+                    } else {
+                        group.end_anchored.push(member);
+                    }
+                    self.layout_dirty = true;
+                }
+            }
+            GuiWindowMenuCommand::SetMemberWeight { member, weight } => {
+                if let Some(group) = self
+                    .tab_groups
+                    .iter_mut()
+                    .find(|group| group.members.contains(&member))
+                {
+                    // Weight 1.0 is the neutral default — drop the entry
+                    // rather than storing it, so a reset-to-1 group serializes
+                    // exactly like a never-weighted one.
+                    group.weights.retain(|(key, _)| *key != member);
+                    if (weight - 1.0).abs() > f32::EPSILON && weight > 0.0 {
+                        group.weights.push((member, weight));
+                    }
+                    self.layout_dirty = true;
+                }
+            }
         }
     }
 
     /// Apply an appearance-only command for `tab_key`. Split out from
-    /// `apply_window_menu_command` because the Window Editor's Appearance
-    /// section drives the same commands without a menu request.
+    /// `apply_window_menu_command` so callers without a menu request (the
+    /// detached-window dispatch) can drive the same commands.
     pub(super) fn apply_appearance_command(
         &mut self,
         tab_key: &TabKey,
@@ -384,6 +632,102 @@ impl VellumGuiApp {
                     color.map(|[r, g, b]| format!("#{:02x}{:02x}{:02x}", r, g, b));
                 self.layout_dirty = true;
             }
+            GuiWindowMenuCommand::SetCornerRadius(radius) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .corner_radius = radius;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetSkinFrame(frame) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .skin_frame = frame;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetDollImage(image) => {
+                self.set_doll_image(image);
+            }
+            GuiWindowMenuCommand::CalibrateDoll => {
+                self.open_doll_calibration();
+            }
+            GuiWindowMenuCommand::SetDollGrayscale(gray) => {
+                self.ui_settings.doll_grayscale = gray;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetCompassSet(set) => {
+                self.ui_settings.compass_set = set;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetHandIcon { hand_id, icon } => {
+                match icon {
+                    Some(icon) => {
+                        self.ui_settings
+                            .status_icons
+                            .overrides
+                            .insert(hand_id, icon);
+                    }
+                    None => {
+                        self.ui_settings.status_icons.overrides.remove(&hand_id);
+                    }
+                }
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetBackground(background) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .background_image = background;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetTitleBarHeight(height) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .title_bar_height = height;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetTitleBarAlign(align) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .title_bar_align = align;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetShowBorder(show) => {
+                self.with_layout_def_for_tab(tab_key, |def| {
+                    def.base_mut().show_border = show;
+                });
+            }
+            GuiWindowMenuCommand::SetBorderStyle(style) => {
+                self.with_layout_def_for_tab(tab_key, |def| {
+                    def.base_mut().border_style = style;
+                });
+            }
+            GuiWindowMenuCommand::SetBorderSides(sides) => {
+                self.with_layout_def_for_tab(tab_key, |def| {
+                    def.base_mut().border_sides = sides;
+                });
+            }
+            GuiWindowMenuCommand::SetContentAlign(align) => {
+                self.with_layout_def_for_tab(tab_key, |def| {
+                    def.base_mut().content_align = align.clone();
+                });
+                // The renderer reads the live window state each frame; push
+                // the change there too so it applies without a recreate.
+                if let Some(window_name) = self
+                    .available_tabs
+                    .get(tab_key)
+                    .map(|tab| tab.window_name.clone())
+                {
+                    if let Some(window) =
+                        self.app_core.ui_state.windows.get_mut(&window_name)
+                    {
+                        window.content_align = align;
+                    }
+                }
+            }
             GuiWindowMenuCommand::SetMapZoom(zoom) => {
                 self.tab_settings
                     .entry(tab_key.clone())
@@ -395,9 +739,14 @@ impl VellumGuiApp {
         }
     }
 
-    /// Resolve the current appearance state for `tab_key`, shared by the
-    /// context menu and the Window Editor.
-    pub(super) fn appearance_view_for_tab(&self, tab_key: &TabKey) -> WindowAppearanceView {
+    /// Resolve the current appearance state for `tab_key` for the window
+    /// context menu (attached and detached). Needs `&mut self` + ctx for
+    /// the picker thumbnails (budgeted decode cache on SkinState).
+    pub(super) fn appearance_view_for_tab(
+        &mut self,
+        ctx: &egui::Context,
+        tab_key: &TabKey,
+    ) -> WindowAppearanceView {
         let current_font = self.font_ref_for_tab(tab_key).and_then(|font| match font {
             FontRef::Named(name) => Some(name),
             _ => None,
@@ -418,6 +767,52 @@ impl VellumGuiApp {
                     | WidgetType::Container
             )
         );
+        let is_doll = widget_type == Some(WidgetType::InjuryDoll);
+        // Pool scan only for doll windows — no disk walk for every menu.
+        let doll_images = if is_doll {
+            crate::config::pool::list_category("dolls")
+                .iter()
+                .map(|image| {
+                    let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
+                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let is_compass = widget_type == Some(WidgetType::Compass);
+        let compass_sets = if is_compass {
+            crate::config::pool::set_names("compass")
+        } else {
+            Vec::new()
+        };
+        // Which hand a hand window is, by the same name rule the renderer
+        // uses (left/right substrings, else spell).
+        let hand_id = (widget_type == Some(WidgetType::Hand))
+            .then(|| {
+                self.available_tabs.get(tab_key).map(|tab| {
+                    let name = tab.window_name.to_ascii_lowercase();
+                    if name.contains("left") {
+                        "LEFTHAND".to_string()
+                    } else if name.contains("right") {
+                        "RIGHTHAND".to_string()
+                    } else {
+                        "SPELLHAND".to_string()
+                    }
+                })
+            })
+            .flatten();
+        let hand_images = if hand_id.is_some() {
+            crate::config::pool::list_category("hands")
+                .iter()
+                .map(|image| {
+                    let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
+                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         WindowAppearanceView {
             title_bar_hidden: self.title_bar_hidden(tab_key),
             text_size_override: self.text_size_override_for_tab(tab_key),
@@ -431,6 +826,67 @@ impl VellumGuiApp {
             wrap_text: self.effective_wrap_text(tab_key),
             current_font,
             accent_color: self.accent_color_for_tab(tab_key),
+            corner_radius_override: self.corner_radius_override_for_tab(tab_key),
+            global_corner_radius: self.ui_settings.window_corner_radius,
+            skin_frames: self.skin_state.frame_names(),
+            skin_frame_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.skin_frame.clone()),
+            has_skin_border: self
+                .available_tabs
+                .get(tab_key)
+                .and_then(|tab| self.skin_state.border_for(&tab.window_name))
+                .is_some(),
+            is_doll,
+            doll_images,
+            doll_override: self.ui_settings.doll_image.clone(),
+            doll_grayscale: self.ui_settings.doll_grayscale,
+            is_compass,
+            is_dashboard: widget_type == Some(WidgetType::Dashboard),
+            compass_sets,
+            compass_override: self.ui_settings.compass_set.clone(),
+            hand_icon_override: hand_id.as_ref().and_then(|id| {
+                self.ui_settings.status_icons.overrides.get(id).cloned()
+            }),
+            hand_id,
+            hand_images,
+            background_images: crate::config::pool::list_category("backgrounds")
+                .iter()
+                .map(|image| {
+                    let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
+                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                })
+                .collect(),
+            background_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.background_image.clone()),
+            has_skin_background: self
+                .available_tabs
+                .get(tab_key)
+                .and_then(|tab| self.skin_state.background_for(&tab.window_name))
+                .is_some(),
+            title_bar_height_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.title_bar_height),
+            global_title_bar_height: self.ui_settings.title_bar_height,
+            title_align_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.title_bar_align.clone()),
+            border: self.layout_def_for_tab(tab_key).map(|def| {
+                let base = def.base();
+                BorderView {
+                    show_border: base.show_border,
+                    style: base.border_style.clone(),
+                    sides: base.border_sides.clone(),
+                }
+            }),
+            content_align: self
+                .layout_def_for_tab(tab_key)
+                .and_then(|def| def.base().content_align.clone()),
         }
     }
 
@@ -465,14 +921,27 @@ impl VellumGuiApp {
                     .collect()
             })
             .unwrap_or_default();
+        let (group_merged, group_end_anchored, group_weights) = self
+            .group_for_tab(&request.tab_key)
+            .map(|group| {
+                (
+                    group.merged.clone(),
+                    group.end_anchored.clone(),
+                    group.weights.clone(),
+                )
+            })
+            .unwrap_or_default();
         let view = WindowMenuView {
             zone: request.zone,
-            allow_reorder: request.allow_reorder,
-            appearance: self.appearance_view_for_tab(&request.tab_key),
+            locked: self.window_locked(&request.tab_key),
+            appearance: self.appearance_view_for_tab(ctx, &request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
                 .map(|group| group.horizontal),
             group_members: &group_members,
+            group_merged: &group_merged,
+            group_end_anchored: &group_end_anchored,
+            group_weights: &group_weights,
             group_candidates: &group_candidates,
         };
 
@@ -501,12 +970,33 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetGroupOrientation(_)
                     | GuiWindowMenuCommand::MoveGroupMember { .. }
                     | GuiWindowMenuCommand::UngroupMember(_)
+                    | GuiWindowMenuCommand::ToggleMemberMerge(_)
+                    | GuiWindowMenuCommand::ToggleSlotAnchor(_)
+                    | GuiWindowMenuCommand::SetMemberWeight { .. }
+                    | GuiWindowMenuCommand::SetCornerRadius(_)
+                    | GuiWindowMenuCommand::SetSkinFrame(_)
+                    | GuiWindowMenuCommand::SetDollImage(_)
+                    | GuiWindowMenuCommand::SetDollGrayscale(_)
+                    | GuiWindowMenuCommand::SetCompassSet(_)
+                    | GuiWindowMenuCommand::SetHandIcon { .. }
+                    | GuiWindowMenuCommand::SetBackground(_)
+                    | GuiWindowMenuCommand::SetTitleBarHeight(_)
+                    | GuiWindowMenuCommand::SetTitleBarAlign(_)
+                    | GuiWindowMenuCommand::SetShowBorder(_)
+                    | GuiWindowMenuCommand::SetBorderStyle(_)
+                    | GuiWindowMenuCommand::SetBorderSides(_)
+                    | GuiWindowMenuCommand::SetContentAlign(_)
+                    | GuiWindowMenuCommand::SetFont(_)
             );
             self.apply_window_menu_command(ctx, &request, command);
             if !keep_open {
                 self.window_context_menu = None;
-                return;
             }
+            // Either way this frame's click has been consumed by a control;
+            // skip the click-outside check so picking from a combo popup
+            // (whose options render outside the menu rect) doesn't also
+            // count as a click-outside and close the menu.
+            return;
         }
 
         // The click that opened the menu is still visible in this frame's
@@ -653,6 +1143,34 @@ impl VellumGuiApp {
         self.app_core.ui_state.input_mode = InputMode::Menu;
     }
 
+    /// The Layouts submenu, GUI edition: core's builder lists the TUI's
+    /// TOML cell layouts, which don't apply here, so this lists the GUI's
+    /// JSON checkpoints from the same shared ~/.vellum-fe/layouts/ pool.
+    fn build_gui_layouts_submenu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
+        let mut items: Vec<crate::data::ui_state::PopupMenuItem> =
+            list_named_layouts()
+                .into_iter()
+                .map(|name| crate::data::ui_state::PopupMenuItem {
+                    text: name.clone(),
+                    command: format!("action:layout:load:{}", name),
+                    disabled: false,
+                })
+                .collect();
+        if items.is_empty() {
+            items.push(crate::data::ui_state::PopupMenuItem {
+                text: "No layouts found (.savelayout <name>)".to_string(),
+                command: String::new(),
+                disabled: true,
+            });
+        }
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: "Close menu".to_string(),
+            command: String::new(),
+            disabled: true,
+        });
+        items
+    }
+
     fn handle_popup_menu_command(&mut self, menu_command: GuiMenuCommand) {
         let command = menu_command.command;
 
@@ -662,12 +1180,17 @@ impl VellumGuiApp {
             // highlights/keybinds/layouts/windows) are built on demand by
             // build_submenu. Try the cache first, then fall back — without
             // the fallback the whole .menu tree is dead in the GUI.
-            let items = self
-                .app_core
-                .menu_categories
-                .get(category)
-                .cloned()
-                .unwrap_or_else(|| self.app_core.build_submenu(category));
+            // Layouts are frontend-owned (core would list the TUI's TOML
+            // cell layouts), so the GUI builds that one itself.
+            let items = if category == "layouts" {
+                self.build_gui_layouts_submenu()
+            } else {
+                self.app_core
+                    .menu_categories
+                    .get(category)
+                    .cloned()
+                    .unwrap_or_else(|| self.app_core.build_submenu(category))
+            };
             if items.is_empty() {
                 tracing::warn!("Missing GUI menu category: {}", category);
             } else {
@@ -677,7 +1200,18 @@ impl VellumGuiApp {
         }
 
         if let Some(submenu) = command.strip_prefix("menu:") {
-            let items = self.app_core.build_submenu(submenu);
+            // The GUI shows the show/hide list as its richer checkbox panel
+            // rather than a nested menu (the TUI uses the menu form).
+            if submenu == "knownwindows" {
+                self.open_known_windows_editor();
+                self.close_menus_to_normal();
+                return;
+            }
+            let items = if submenu == "layouts" {
+                self.build_gui_layouts_submenu()
+            } else {
+                self.app_core.build_submenu(submenu)
+            };
             if items.is_empty() {
                 self.app_core
                     .add_system_message(&format!("Menu '{}' has no entries.", submenu));
@@ -690,8 +1224,9 @@ impl VellumGuiApp {
 
         if command.starts_with("action:") {
             if !self.handle_action_string(&command) {
+                // Every real action parses; this is a menu-wiring bug.
                 self.app_core
-                    .add_system_message(&format!("GUI action not implemented yet: {}", command));
+                    .add_system_message(&format!("Unknown action: {}", command));
             }
             // Actions open editors/panels that own input next — leave
             // interact mode rather than fighting them for the keyboard.
@@ -770,13 +1305,11 @@ impl VellumGuiApp {
             return;
         }
 
-        // Known-windows list: flip this offer's show/hide and close the
-        // menu like any other menu action (re-opening as a child layer
-        // stacked a fresh copy of the list on every activation). Bulk
-        // toggling lives in the known-windows checkbox panel.
-        if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-            let offer_id = offer_id.to_string();
-            self.app_core.toggle_window_offer(&offer_id);
+        // Windows list: flip this window's show/hide and close the menu
+        // like any other menu action. (U3: keyed on window name.)
+        if let Some(name) = command.strip_prefix("__TOGGLE_WINDOW__") {
+            let name = name.to_string();
+            self.app_core.toggle_known_window(&name);
             self.close_menus_restore();
             self.app_core.needs_render = true;
             return;
@@ -925,19 +1458,66 @@ impl VellumGuiApp {
         if ui.selectable_label(false, "Edit Window…").clicked() {
             return Some(GuiWindowMenuCommand::Edit);
         }
+        // Widget tools sit next to Edit: they open something, unlike the
+        // settings grouped under Appearance.
+        if view.appearance.is_map
+            && ui.selectable_label(false, "Open Map Explorer").clicked()
+        {
+            return Some(GuiWindowMenuCommand::OpenMapExplorer);
+        }
+        if view.appearance.is_doll
+            && ui.selectable_label(false, "Calibrate doll…").clicked()
+        {
+            return Some(GuiWindowMenuCommand::CalibrateDoll);
+        }
+        if view.appearance.is_dashboard
+            && ui
+                .selectable_label(false, "Edit dashboard…")
+                .on_hover_text("Which statuses to show, plus layout and spacing")
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::EditDashboard);
+        }
+        if view.appearance.hand_id.is_some()
+            && ui
+                .selectable_label(false, "Hand icons…")
+                .on_hover_text(
+                    "Status-driven icons: empty hand, held weapon, prepared spell, ...",
+                )
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::EditHandIcons);
+        }
         if ui.selectable_label(false, "Hide").clicked() {
             return Some(GuiWindowMenuCommand::Hide);
         }
         if ui.selectable_label(false, "Detach").clicked() {
             return Some(GuiWindowMenuCommand::Detach);
         }
-        if ui.selectable_label(false, "Move Window").clicked() {
-            return Some(GuiWindowMenuCommand::StartMove);
-        }
-        if view.appearance.is_map
-            && ui.selectable_label(false, "Open Map Explorer").clicked()
+        // Stacking matters wherever windows float freely and can overlap —
+        // every zone except the packed sidebars.
+        if matches!(
+            view.zone,
+            GuiShellZone::Center | GuiShellZone::Header | GuiShellZone::Footer
+        ) && ui
+            .selectable_label(false, "Send to Back")
+            .on_hover_text("Drop this window behind any it overlaps")
+            .clicked()
         {
-            return Some(GuiWindowMenuCommand::OpenMapExplorer);
+            return Some(GuiWindowMenuCommand::SendToBack);
+        }
+        if ui
+            .selectable_label(
+                view.locked,
+                if view.locked { "Unlock Window" } else { "Lock Window" },
+            )
+            .on_hover_text(
+                "Locked windows ignore dragging and resizing. \
+                 Arrange ▸ Move Window still works deliberately.",
+            )
+            .clicked()
+        {
+            return Some(GuiWindowMenuCommand::ToggleLock);
         }
         ui.separator();
         // Everything below folds into sections so the menu opens short.
@@ -945,24 +1525,8 @@ impl VellumGuiApp {
         // stays stable while a slider or palette inside a section is in use.
         let mut command = None;
         ui.collapsing("Arrange", |ui| {
-            if view.allow_reorder {
-                if ui.selectable_label(false, "Move Up").clicked() {
-                    command = Some(GuiWindowMenuCommand::MoveUp);
-                }
-                if ui.selectable_label(false, "Move Down").clicked() {
-                    command = Some(GuiWindowMenuCommand::MoveDown);
-                }
-            }
-            // Stacking only matters where windows float and overlap — the
-            // Center zone. Docked strips (header/footer/sidebars) never
-            // overlap.
-            if view.zone == GuiShellZone::Center
-                && ui
-                    .selectable_label(false, "Send to Back")
-                    .on_hover_text("Drop this window behind any it overlaps")
-                    .clicked()
-            {
-                command = Some(GuiWindowMenuCommand::SendToBack);
+            if ui.selectable_label(false, "Move Window").clicked() {
+                command = Some(GuiWindowMenuCommand::StartMove);
             }
             ui.label("Move to");
             for target in GuiShellZone::all() {
@@ -999,6 +1563,7 @@ impl VellumGuiApp {
                         ui.label("Order");
                         let last = view.group_members.len() - 1;
                         for (index, (key, title)) in view.group_members.iter().enumerate() {
+                            let merged = index > 0 && view.group_merged.contains(key);
                             ui.horizontal(|ui| {
                                 if ui
                                     .add_enabled(index > 0, egui::Button::new("⬆").small())
@@ -1026,16 +1591,80 @@ impl VellumGuiApp {
                                     command =
                                         Some(GuiWindowMenuCommand::UngroupMember(key.clone()));
                                 }
+                                if merged {
+                                    // Visual cue: this member lives in the
+                                    // slot opened by the member above it.
+                                    ui.label("└");
+                                }
                                 ui.label(title);
                             });
+                            ui.indent((key, "group_slot_controls"), |ui| {
+                                if index > 0 {
+                                    let label = if horizontal {
+                                        "Share column with the window above"
+                                    } else {
+                                        "Share row with the window above"
+                                    };
+                                    let mut flag = merged;
+                                    if ui.checkbox(&mut flag, label).changed() {
+                                        command = Some(
+                                            GuiWindowMenuCommand::ToggleMemberMerge(key.clone()),
+                                        );
+                                    }
+                                }
+                                if horizontal && !merged {
+                                    let mut anchored = view.group_end_anchored.contains(key);
+                                    if ui
+                                        .checkbox(&mut anchored, "Anchor column to bottom")
+                                        .on_hover_text(
+                                            "Leftover column space goes above these \
+                                             windows instead of below them.",
+                                        )
+                                        .changed()
+                                    {
+                                        command = Some(
+                                            GuiWindowMenuCommand::ToggleSlotAnchor(key.clone()),
+                                        );
+                                    }
+                                }
+                                // Relative size weight along the stack axis:
+                                // a member with weight 2 takes twice the
+                                // growable space of a weight-1 sibling (buffs
+                                // 6 lines / cooldowns 3). Only flexible
+                                // members grow, so this is inert for one-row
+                                // widgets (bars/timers), which is why it's
+                                // always offered — no need to know which is
+                                // which. Merged members size on the OTHER
+                                // axis, so hide it for them.
+                                if !merged {
+                                    let mut weight = view
+                                        .group_weights
+                                        .iter()
+                                        .find(|(k, _)| k == key)
+                                        .map(|(_, w)| *w)
+                                        .filter(|w| *w > 0.0)
+                                        .unwrap_or(1.0);
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(&mut weight, 0.25..=4.0)
+                                                .text("size weight")
+                                                .step_by(0.25),
+                                        )
+                                        .on_hover_text(
+                                            "Relative share of the group's growable \
+                                             space. 2 = twice a sibling at 1. \
+                                             One-row widgets ignore this.",
+                                        )
+                                        .changed()
+                                    {
+                                        command = Some(GuiWindowMenuCommand::SetMemberWeight {
+                                            member: key.clone(),
+                                            weight,
+                                        });
+                                    }
+                                }
+                            });
                         }
-                    }
-                    if ui
-                        .selectable_label(false, "Dissolve group")
-                        .on_hover_text("Ungroup all members; every window stands alone again")
-                        .clicked()
-                    {
-                        command = Some(GuiWindowMenuCommand::DissolveGroup);
                     }
                 }
                 if !view.group_candidates.is_empty() {
@@ -1051,44 +1680,36 @@ impl VellumGuiApp {
                             }
                         });
                 }
+                // Destructive action last, set off from the rest.
+                if view.group_horizontal.is_some() {
+                    ui.separator();
+                    if ui
+                        .selectable_label(false, "Dissolve group")
+                        .on_hover_text("Ungroup all members; every window stands alone again")
+                        .clicked()
+                    {
+                        command = Some(GuiWindowMenuCommand::DissolveGroup);
+                    }
+                }
             });
         }
         command
     }
 
-    /// Per-window appearance controls, shared between the context menu's
-    /// Appearance section and the Window Editor. Returns a command to run
-    /// through `apply_appearance_command`; live controls (sliders, swatches)
-    /// emit one every frame their value changes.
+    /// Per-window appearance controls: widget-specific settings first (map
+    /// zoom, doll, compass, hand icon), then Text / Title bar / Frame
+    /// subsections. The context menu is their only home (attached and
+    /// detached windows both route here). Returns a command to run through
+    /// `apply_appearance_command`; live controls (sliders, swatches) emit
+    /// one every frame their value changes.
     pub(super) fn render_appearance_controls(
         ui: &mut egui::Ui,
         view: &WindowAppearanceView,
     ) -> Option<GuiWindowMenuCommand> {
         let mut command = None;
-        let mut show_title_bar = !view.title_bar_hidden;
-        if ui.checkbox(&mut show_title_bar, "Title bar").changed() {
-            command = Some(GuiWindowMenuCommand::ToggleTitleBar);
-        }
-        let mut override_enabled = view.text_size_override.is_some();
-        if ui
-            .checkbox(&mut override_enabled, "Custom text size")
-            .changed()
-        {
-            command = Some(GuiWindowMenuCommand::SetTextSize(if override_enabled {
-                Some(view.text_size_override.unwrap_or(view.global_text_size))
-            } else {
-                None
-            }));
-        }
-        if let Some(current) = view.text_size_override {
-            let mut value = current;
-            if ui
-                .add(egui::Slider::new(&mut value, 8.0..=32.0).step_by(0.5))
-                .changed()
-            {
-                command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
-            }
-        }
+        // Widget-specific settings surface first — for a map or doll window
+        // they are the reason the menu was opened. General settings follow,
+        // grouped into Text / Title bar / Frame subsections.
         if view.is_map {
             let mut has_override = view.map_zoom.is_some();
             if ui.checkbox(&mut has_override, "Custom map zoom").changed() {
@@ -1106,64 +1727,494 @@ impl VellumGuiApp {
                 }
             }
         }
-        if view.supports_wrap {
-            let mut wrap = view.wrap_text;
-            if ui.checkbox(&mut wrap, "Word wrap").changed() {
-                command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
+        if view.is_doll {
+            ui.horizontal(|ui| {
+                ui.label("Doll image");
+                let selected_label = match view.doll_override.as_deref() {
+                    None => "Skin default",
+                    Some(path) if path.eq_ignore_ascii_case("none") => "None",
+                    Some(path) => view
+                        .doll_images
+                        .iter()
+                        .find(|(pool_path, _, _)| pool_path == path)
+                        .map(|(_, stem, _)| stem.as_str())
+                        // Stale override (image removed): show the raw path.
+                        .unwrap_or(path),
+                };
+                egui::ComboBox::from_id_salt("gui_window_doll_image")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(view.doll_override.is_none(), "Skin default")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetDollImage(None));
+                        }
+                        let none_selected = view
+                            .doll_override
+                            .as_deref()
+                            .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                        if ui
+                            .selectable_label(none_selected, "None")
+                            .on_hover_text("No doll art; draw the built-in vector body")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetDollImage(Some(
+                                "none".to_string(),
+                            )));
+                        }
+                        for (path, stem, thumb) in &view.doll_images {
+                            let selected = view.doll_override.as_deref() == Some(path.as_str());
+                            if thumbed_row(ui, selected, stem, *thumb) {
+                                command =
+                                    Some(GuiWindowMenuCommand::SetDollImage(Some(path.clone())));
+                            }
+                        }
+                    });
+            });
+            if view.doll_images.is_empty() {
+                ui.weak("No dolls in the pool — install some with .jinx list / .jinx install");
             }
-        }
-        ui.collapsing("Font", |ui| {
-            // Filter box: system font lists run to hundreds of families.
-            // Ids derive from ui.id() so the menu's and the editor's copies
-            // of this section don't share state.
-            let filter_id = ui.id().with("font_filter");
-            let mut filter: String =
-                ui.data_mut(|data| data.get_temp(filter_id).unwrap_or_default());
+            let mut gray = view.doll_grayscale;
             if ui
-                .add(egui::TextEdit::singleline(&mut filter).hint_text("Filter fonts"))
+                .checkbox(&mut gray, "Grayscale doll art")
+                .on_hover_text(
+                    "Render the doll's base and overlays desaturated; wound/scar dots keep \
+                     their colors. The grayscale copy is built only while this is on.",
+                )
                 .changed()
             {
-                ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+                command = Some(GuiWindowMenuCommand::SetDollGrayscale(gray));
             }
-            let filter_lower = filter.to_lowercase();
-            egui::ScrollArea::vertical()
-                .id_salt("font_list")
-                .max_height(180.0)
-                .show(ui, |ui| {
-                    if ui
-                        .selectable_label(view.current_font.is_none(), "Default")
-                        .clicked()
-                    {
-                        command = Some(GuiWindowMenuCommand::SetFont(None));
-                    }
-                    for family in theme::system_font_families() {
-                        if !filter_lower.is_empty()
-                            && !family.to_lowercase().contains(&filter_lower)
+        }
+        if view.is_compass {
+            ui.horizontal(|ui| {
+                ui.label("Compass art");
+                let selected_label = match view.compass_override.as_deref() {
+                    None => "Skin default",
+                    Some(set) if set.eq_ignore_ascii_case("none") => "None",
+                    Some(set) => set,
+                };
+                egui::ComboBox::from_id_salt("gui_window_compass_set")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(view.compass_override.is_none(), "Skin default")
+                            .clicked()
                         {
-                            continue;
+                            command = Some(GuiWindowMenuCommand::SetCompassSet(None));
                         }
-                        let selected = view.current_font.as_deref() == Some(family.as_str());
-                        if ui.selectable_label(selected, family).clicked() {
-                            command = Some(GuiWindowMenuCommand::SetFont(Some(family.clone())));
+                        let none_selected = view
+                            .compass_override
+                            .as_deref()
+                            .is_some_and(|set| set.eq_ignore_ascii_case("none"));
+                        if ui
+                            .selectable_label(none_selected, "None")
+                            .on_hover_text("No compass art; draw the built-in vector rose")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetCompassSet(Some(
+                                "none".to_string(),
+                            )));
                         }
+                        for set in &view.compass_sets {
+                            let selected = view.compass_override.as_deref() == Some(set.as_str());
+                            if ui.selectable_label(selected, set).clicked() {
+                                command =
+                                    Some(GuiWindowMenuCommand::SetCompassSet(Some(set.clone())));
+                            }
+                        }
+                    });
+            });
+            if view.compass_sets.is_empty() {
+                ui.weak("No compass sets in the pool — install with .jinx");
+            }
+        }
+        if let Some(hand_id) = &view.hand_id {
+            ui.horizontal(|ui| {
+                ui.label("Hand icon");
+                let selected_label = match &view.hand_icon_override {
+                    None => "Skin default".to_string(),
+                    Some(crate::data::IconRef::Default) => "Skin default".to_string(),
+                    Some(crate::data::IconRef::None) => "None".to_string(),
+                    Some(crate::data::IconRef::Image { path }) => view
+                        .hand_images
+                        .iter()
+                        .find(|(pool_path, _, _)| pool_path == path)
+                        .map(|(_, stem, _)| stem.clone())
+                        .unwrap_or_else(|| path.clone()),
+                    Some(crate::data::IconRef::SheetCell { sheet, cell }) => {
+                        format!("{sheet} #{cell}")
                     }
-                });
-        });
-        ui.label("Accent color");
-        ui.horizontal(|ui| {
-            for color in ACCENT_PALETTE {
-                let fill = Color32::from_rgb(color[0], color[1], color[2]);
-                let selected = view.accent_color == Some(fill);
-                let mut button = egui::Button::new("  ").fill(fill);
-                if selected {
-                    button = button.stroke(egui::Stroke::new(2.0, ui.visuals().text_color()));
+                };
+                egui::ComboBox::from_id_salt("gui_window_hand_icon")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(view.hand_icon_override.is_none(), "Skin default")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetHandIcon {
+                                hand_id: hand_id.clone(),
+                                icon: None,
+                            });
+                        }
+                        let none_selected = matches!(
+                            &view.hand_icon_override,
+                            Some(crate::data::IconRef::None)
+                        );
+                        if ui
+                            .selectable_label(none_selected, "None")
+                            .on_hover_text("No icon art; show the text fallback")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetHandIcon {
+                                hand_id: hand_id.clone(),
+                                icon: Some(crate::data::IconRef::None),
+                            });
+                        }
+                        for (path, stem, thumb) in &view.hand_images {
+                            let selected = matches!(
+                                &view.hand_icon_override,
+                                Some(crate::data::IconRef::Image { path: current })
+                                    if current == path
+                            );
+                            if thumbed_row(ui, selected, stem, *thumb) {
+                                command = Some(GuiWindowMenuCommand::SetHandIcon {
+                                    hand_id: hand_id.clone(),
+                                    icon: Some(crate::data::IconRef::Image {
+                                        path: path.clone(),
+                                    }),
+                                });
+                            }
+                        }
+                    });
+            });
+            if view.hand_images.is_empty() {
+                ui.weak("No hand icons in the pool — install with .jinx");
+            }
+        }
+        ui.collapsing("Text", |ui| {
+            ui.collapsing("Font", |ui| {
+                // Filter box: system font lists run to hundreds of families.
+                // Ids derive from ui.id() so the menu's and the detached
+                // menu's copies of this section don't share state.
+                let filter_id = ui.id().with("font_filter");
+                let mut filter: String =
+                    ui.data_mut(|data| data.get_temp(filter_id).unwrap_or_default());
+                if ui
+                    .add(egui::TextEdit::singleline(&mut filter).hint_text("Filter fonts"))
+                    .changed()
+                {
+                    ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
                 }
-                if ui.add(button).clicked() {
-                    command = Some(GuiWindowMenuCommand::SetAccent(Some(color)));
+                let filter_lower = filter.to_lowercase();
+                egui::ScrollArea::vertical()
+                    .id_salt("font_list")
+                    .max_height(180.0)
+                    .show(ui, |ui| {
+                        if ui
+                            .selectable_label(view.current_font.is_none(), "Default")
+                            .clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetFont(None));
+                        }
+                        for family in theme::system_font_families() {
+                            if !filter_lower.is_empty()
+                                && !family.to_lowercase().contains(&filter_lower)
+                            {
+                                continue;
+                            }
+                            let selected = view.current_font.as_deref() == Some(family.as_str());
+                            if ui.selectable_label(selected, family).clicked() {
+                                command =
+                                    Some(GuiWindowMenuCommand::SetFont(Some(family.clone())));
+                            }
+                        }
+                    });
+            });
+            let mut override_enabled = view.text_size_override.is_some();
+            if ui
+                .checkbox(&mut override_enabled, "Custom text size")
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetTextSize(if override_enabled {
+                    Some(view.text_size_override.unwrap_or(view.global_text_size))
+                } else {
+                    None
+                }));
+            }
+            if let Some(current) = view.text_size_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 8.0..=32.0).step_by(0.5))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetTextSize(Some(value)));
                 }
             }
-            if view.accent_color.is_some() && ui.small_button("✕").clicked() {
-                command = Some(GuiWindowMenuCommand::SetAccent(None));
+            if view.supports_wrap {
+                let mut wrap = view.wrap_text;
+                if ui.checkbox(&mut wrap, "Word wrap").changed() {
+                    command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Content alignment");
+                    const ALIGNS: [(Option<&str>, &str); 10] = [
+                        (None, "Default (top left)"),
+                        (Some("top-left"), "Top left"),
+                        (Some("top"), "Top center"),
+                        (Some("top-right"), "Top right"),
+                        (Some("left"), "Middle left"),
+                        (Some("center"), "Center"),
+                        (Some("right"), "Middle right"),
+                        (Some("bottom-left"), "Bottom left"),
+                        (Some("bottom"), "Bottom center"),
+                        (Some("bottom-right"), "Bottom right"),
+                    ];
+                    let current = view.content_align.as_deref();
+                    let selected_label = ALIGNS
+                        .iter()
+                        .find(|(value, _)| *value == current)
+                        .map(|(_, label)| *label)
+                        .unwrap_or("Default (top left)");
+                    egui::ComboBox::from_id_salt("gui_window_content_align")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            for (value, label) in ALIGNS {
+                                if ui.selectable_label(current == value, label).clicked() {
+                                    command = Some(GuiWindowMenuCommand::SetContentAlign(
+                                        value.map(str::to_string),
+                                    ));
+                                }
+                            }
+                        });
+                });
+            }
+        });
+        ui.collapsing("Title bar", |ui| {
+            let mut show_title_bar = !view.title_bar_hidden;
+            if ui.checkbox(&mut show_title_bar, "Show title bar").changed() {
+                command = Some(GuiWindowMenuCommand::ToggleTitleBar);
+            }
+            ui.horizontal(|ui| {
+                ui.label("Title alignment");
+                let current = view.title_align_override.as_deref();
+                let selected_label = match current {
+                    Some("left") => "Left",
+                    Some("center") => "Center",
+                    Some("right") => "Right",
+                    _ => "Default",
+                };
+                egui::ComboBox::from_id_salt("gui_window_title_align")
+                    .selected_text(selected_label)
+                    .show_ui(ui, |ui| {
+                        for (value, label) in [
+                            (None, "Default"),
+                            (Some("left"), "Left"),
+                            (Some("center"), "Center"),
+                            (Some("right"), "Right"),
+                        ] {
+                            if ui.selectable_label(current == value, label).clicked() {
+                                command = Some(GuiWindowMenuCommand::SetTitleBarAlign(
+                                    value.map(str::to_string),
+                                ));
+                            }
+                        }
+                    });
+            });
+            let mut tb_enabled = view.title_bar_height_override.is_some();
+            if ui
+                .checkbox(&mut tb_enabled, "Custom title bar height")
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetTitleBarHeight(if tb_enabled {
+                    let seed = if view.global_title_bar_height > 0.0 {
+                        view.global_title_bar_height
+                    } else {
+                        18.0
+                    };
+                    Some(view.title_bar_height_override.unwrap_or(seed))
+                } else {
+                    None
+                }));
+            }
+            if let Some(current) = view.title_bar_height_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 12.0..=32.0).step_by(1.0))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetTitleBarHeight(Some(value)));
+                }
+            }
+        });
+        ui.collapsing("Frame", |ui| {
+            if let Some(border) = &view.border {
+                let mut show_border = border.show_border;
+                if ui.checkbox(&mut show_border, "Border").changed() {
+                    command = Some(GuiWindowMenuCommand::SetShowBorder(show_border));
+                }
+                if border.show_border {
+                    const BORDER_STYLES: [(&str, &str); 6] = [
+                        ("single", "Single"),
+                        ("double", "Double"),
+                        ("thick", "Thick"),
+                        ("rounded", "Rounded"),
+                        ("quadrant_inside", "Quadrant inside"),
+                        ("quadrant_outside", "Quadrant outside"),
+                    ];
+                    let current = border.style.to_ascii_lowercase();
+                    let current_label = BORDER_STYLES
+                        .iter()
+                        .find(|(key, _)| *key == current)
+                        .map(|(_, label)| *label)
+                        .unwrap_or("Single");
+                    egui::ComboBox::from_id_salt("gui_window_border_style")
+                        .selected_text(current_label)
+                        .show_ui(ui, |ui| {
+                            for (key, label) in BORDER_STYLES {
+                                if ui.selectable_label(current == key, label).clicked() {
+                                    command = Some(GuiWindowMenuCommand::SetBorderStyle(
+                                        key.to_string(),
+                                    ));
+                                }
+                            }
+                        });
+                    ui.horizontal(|ui| {
+                        let mut sides = border.sides.clone();
+                        let mut changed = false;
+                        changed |= ui.checkbox(&mut sides.top, "Top").changed();
+                        changed |= ui.checkbox(&mut sides.bottom, "Bottom").changed();
+                        changed |= ui.checkbox(&mut sides.left, "Left").changed();
+                        changed |= ui.checkbox(&mut sides.right, "Right").changed();
+                        if changed {
+                            command = Some(GuiWindowMenuCommand::SetBorderSides(sides));
+                        }
+                    });
+                }
+            }
+            let mut radius_enabled = view.corner_radius_override.is_some();
+            if ui
+                .checkbox(&mut radius_enabled, "Custom corner radius")
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetCornerRadius(if radius_enabled {
+                    Some(view.corner_radius_override.unwrap_or(view.global_corner_radius))
+                } else {
+                    None
+                }));
+            }
+            if let Some(current) = view.corner_radius_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 0.0..=12.0).step_by(0.5))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
+                }
+            }
+            ui.label("Accent color");
+            ui.horizontal(|ui| {
+                for color in ACCENT_PALETTE {
+                    let fill = Color32::from_rgb(color[0], color[1], color[2]);
+                    let selected = view.accent_color == Some(fill);
+                    let mut button = egui::Button::new("  ").fill(fill);
+                    if selected {
+                        button =
+                            button.stroke(egui::Stroke::new(2.0, ui.visuals().text_color()));
+                    }
+                    if ui.add(button).clicked() {
+                        command = Some(GuiWindowMenuCommand::SetAccent(Some(color)));
+                    }
+                }
+                if view.accent_color.is_some() && ui.small_button("✕").clicked() {
+                    command = Some(GuiWindowMenuCommand::SetAccent(None));
+                }
+            });
+            if !view.skin_frames.is_empty() || view.has_skin_border {
+                const NO_FRAME: &str = crate::config::skins::NO_FRAME;
+                ui.horizontal(|ui| {
+                    ui.label("Skin frame");
+                    let current = view.skin_frame_override.as_deref();
+                    let selected_label = match current {
+                        None => "Skin default",
+                        Some(name) if name.eq_ignore_ascii_case(NO_FRAME) => "None",
+                        Some(name) => name,
+                    };
+                    egui::ComboBox::from_id_salt("gui_window_skin_frame")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(current.is_none(), "Skin default")
+                                .clicked()
+                            {
+                                command = Some(GuiWindowMenuCommand::SetSkinFrame(None));
+                            }
+                            let none_selected = current
+                                .is_some_and(|name| name.eq_ignore_ascii_case(NO_FRAME));
+                            if ui.selectable_label(none_selected, "None").clicked() {
+                                command = Some(GuiWindowMenuCommand::SetSkinFrame(Some(
+                                    NO_FRAME.to_string(),
+                                )));
+                            }
+                            for name in &view.skin_frames {
+                                let selected =
+                                    current.is_some_and(|value| value.eq_ignore_ascii_case(name));
+                                if ui.selectable_label(selected, name).clicked() {
+                                    command = Some(GuiWindowMenuCommand::SetSkinFrame(Some(
+                                        name.clone(),
+                                    )));
+                                }
+                            }
+                        });
+                });
+            }
+            if !view.background_images.is_empty() || view.has_skin_background {
+                ui.horizontal(|ui| {
+                    ui.label("Background");
+                    let selected_label = match view.background_override.as_deref() {
+                        None => "Skin default",
+                        Some(path) if path.eq_ignore_ascii_case("none") => "None",
+                        Some(path) => view
+                            .background_images
+                            .iter()
+                            .find(|(pool_path, _, _)| pool_path == path)
+                            .map(|(_, stem, _)| stem.as_str())
+                            .unwrap_or(path),
+                    };
+                    egui::ComboBox::from_id_salt("gui_window_background")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(
+                                    view.background_override.is_none(),
+                                    "Skin default",
+                                )
+                                .clicked()
+                            {
+                                command = Some(GuiWindowMenuCommand::SetBackground(None));
+                            }
+                            let none_selected = view
+                                .background_override
+                                .as_deref()
+                                .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                            if ui.selectable_label(none_selected, "None").clicked() {
+                                command = Some(GuiWindowMenuCommand::SetBackground(Some(
+                                    "none".to_string(),
+                                )));
+                            }
+                            for (path, stem, thumb) in &view.background_images {
+                                let selected =
+                                    view.background_override.as_deref() == Some(path.as_str());
+                                if thumbed_row(ui, selected, stem, *thumb) {
+                                    command = Some(GuiWindowMenuCommand::SetBackground(Some(
+                                        path.clone(),
+                                    )));
+                                }
+                            }
+                        });
+                });
             }
         });
         command

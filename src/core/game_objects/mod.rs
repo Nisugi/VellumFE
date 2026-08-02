@@ -346,6 +346,19 @@ impl GameObjects {
         }
     }
 
+    /// Update one hand from the `<left>`/`<right>` feed; None = empty.
+    /// The tags arrive independently, so this never touches the other hand.
+    pub fn set_hand(&mut self, hand: Hand, item: Option<GameItem>) {
+        let slot = match hand {
+            Hand::Left => &mut self.left_hand,
+            Hand::Right => &mut self.right_hand,
+        };
+        if *slot != item {
+            *slot = item;
+            self.generation += 1;
+        }
+    }
+
     /// Record mark/registration status for an item (from an INV FULL scan).
     pub fn set_status(&mut self, item_id: String, status: ItemStatus) {
         self.statuses.insert(item_id, status);

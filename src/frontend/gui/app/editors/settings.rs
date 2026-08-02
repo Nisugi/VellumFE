@@ -142,10 +142,15 @@ fn ordered_categories() -> Vec<&'static str> {
         .iter()
         .copied()
         .filter(|cat| !CATEGORIES_IN_WINDOW_EDITOR.contains(cat))
-        .filter(|cat| registry::registry().iter().any(|def| def.category == *cat))
+        .filter(|cat| {
+            registry::registry()
+                .iter()
+                .any(|def| def.category == *cat && def.frontend.includes_gui())
+        })
         .collect();
     let mut extras: Vec<&'static str> = registry::registry()
         .iter()
+        .filter(|def| def.frontend.includes_gui())
         .map(|def| def.category)
         .filter(|cat| {
             !CATEGORY_ORDER.contains(cat) && !CATEGORIES_IN_WINDOW_EDITOR.contains(cat)
@@ -176,6 +181,12 @@ pub(in super::super) struct SettingsEditorState {
     /// Voices the engine reported when the editor opened (empty when TTS
     /// is off or the platform doesn't enumerate).
     tts_voices: Vec<String>,
+    /// Frame names (active skin ∪ pool) for the global default-frame
+    /// combo, captured when the editor opened.
+    frame_names: Vec<String>,
+    /// Pool backgrounds as (pool path, display stem) for the global
+    /// default-background combo.
+    background_images: Vec<(String, String)>,
     /// Pronunciation substitutions (pattern, replacement) — registry-exempt
     /// structured data with bespoke rows.
     tts_subs: Vec<(String, String)>,
@@ -190,6 +201,7 @@ impl SettingsEditorState {
         theme_names: Vec<String>,
         skin_names: Vec<String>,
         tts_voices: Vec<String>,
+        frame_names: Vec<String>,
         gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
     ) -> Self {
         Self {
@@ -201,6 +213,11 @@ impl SettingsEditorState {
             new_skin_name: String::new(),
             skin_error: None,
             tts_voices,
+            frame_names,
+            background_images: crate::config::pool::list_category("backgrounds")
+                .iter()
+                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .collect(),
             tts_subs: config
                 .tts
                 .substitutions
@@ -237,6 +254,9 @@ impl SettingsEditorState {
                     .iter()
                     .filter(|def| def.category == category)
                     .filter(|def| !HIDDEN_KEYS.contains(&def.key))
+                    // TUI-scoped settings (cell-grid geometry, terminal-only
+                    // metrics) have no effect here; hide them.
+                    .filter(|def| def.frontend.includes_gui())
                     .collect();
                 for def in defs {
                     self.render_setting_row(ui, def);
@@ -428,6 +448,8 @@ fn category_intro(category: &str) -> Option<&'static str> {
 fn render_gui_section(
     ui: &mut egui::Ui,
     gui_settings: &mut crate::frontend::gui::persistence::GuiUiSettings,
+    frame_names: &[String],
+    background_images: &[(String, String)],
 ) {
     ui.label(
         "Sizing applies to the GUI only and is saved per character. \
@@ -441,10 +463,46 @@ fn render_gui_section(
         ui.add(egui::Slider::new(&mut gui_settings.text_size, 8.0..=32.0).step_by(0.5));
         ui.end_row();
         ui.label("Title bar size");
-        ui.add(egui::Slider::new(&mut gui_settings.title_font_size, 8.0..=40.0).step_by(0.5));
+        ui.add(egui::Slider::new(&mut gui_settings.title_font_size, 8.0..=40.0).step_by(0.5))
+            .on_hover_text("Title text size in points.");
+        ui.end_row();
+        ui.label("Title bar height");
+        ui.add(egui::Slider::new(&mut gui_settings.title_bar_height, 0.0..=32.0).step_by(1.0))
+            .on_hover_text(
+                "Exact title bar height for game windows; the title text \
+                 keeps its own size and is vertically centered. \
+                 0 = follow the title text size.",
+            );
+        ui.end_row();
+        ui.label("Title alignment");
+        egui::ComboBox::from_id_salt("settings_title_bar_align")
+            .selected_text(match gui_settings.title_bar_align.as_str() {
+                "left" => "Left",
+                "right" => "Right",
+                _ => "Center",
+            })
+            .show_ui(ui, |ui| {
+                for (value, label) in
+                    [("left", "Left"), ("center", "Center"), ("right", "Right")]
+                {
+                    if ui
+                        .selectable_label(gui_settings.title_bar_align == value, label)
+                        .clicked()
+                    {
+                        gui_settings.title_bar_align = value.to_string();
+                    }
+                }
+            });
         ui.end_row();
         ui.label("Effect bar height");
         ui.add(egui::Slider::new(&mut gui_settings.effects_bar_height, 10.0..=60.0).step_by(1.0));
+        ui.end_row();
+        ui.label("Hand icon size");
+        ui.add(egui::Slider::new(&mut gui_settings.hand_icon_size, 16.0..=48.0).step_by(1.0))
+            .on_hover_text(
+                "Size of the left/right/spell hand icons in points. \
+                 Hand rows grow to fit.",
+            );
         ui.end_row();
         ui.label("Density");
         ui.add(egui::Slider::new(&mut gui_settings.density, 0.5..=2.0).step_by(0.05))
@@ -460,6 +518,14 @@ fn render_gui_section(
                  0 = square (Wrayth-style).",
             );
         ui.end_row();
+        ui.label("Window corners");
+        ui.add(egui::Slider::new(&mut gui_settings.window_corner_radius, 0.0..=12.0).step_by(0.5))
+            .on_hover_text(
+                "Corner radius for window frames. \
+                 0 = square (Wrayth-style). Windows framed by skin \
+                 border art always render square.",
+            );
+        ui.end_row();
         ui.label("Bar text contrast");
         ui.checkbox(&mut gui_settings.auto_contrast_bar_text, "Auto light/dark")
             .on_hover_text(
@@ -467,6 +533,198 @@ fn render_gui_section(
                  configured color would be unreadable against \
                  the bar fill.",
             );
+        ui.end_row();
+        ui.label("Zone separators");
+        {
+            use crate::frontend::gui::persistence::ZoneSeparatorStyle;
+            const STYLES: [(ZoneSeparatorStyle, &str); 3] = [
+                (ZoneSeparatorStyle::Shown, "Shown"),
+                (ZoneSeparatorStyle::Hover, "On hover"),
+                (ZoneSeparatorStyle::Hidden, "Hidden"),
+            ];
+            let current_label = STYLES
+                .iter()
+                .find(|(style, _)| *style == gui_settings.zone_separators)
+                .map(|(_, label)| *label)
+                .unwrap_or("Shown");
+            egui::ComboBox::from_id_salt("settings_zone_separators")
+                .selected_text(current_label)
+                .show_ui(ui, |ui| {
+                    for (style, label) in STYLES {
+                        if ui
+                            .selectable_label(gui_settings.zone_separators == style, label)
+                            .clicked()
+                        {
+                            gui_settings.zone_separators = style;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Boundary lines between the header/footer/sidebar zones \
+                     and the center. Hidden or hover-only keeps the edges \
+                     draggable for resizing — handy when skin frames make \
+                     the lines look out of place.",
+                );
+        }
+        ui.end_row();
+        ui.label("Window snapping");
+        ui.checkbox(&mut gui_settings.snap_enabled, "Snap windows to edges")
+            .on_hover_text(
+                "Windows snap to each other and to their pane's edges \
+                 while you drag or resize them — in the center, header, \
+                 and footer alike (windows only snap against neighbors in \
+                 the same pane). Hold Shift during a drag to place a \
+                 window freely.",
+            );
+        ui.end_row();
+        if gui_settings.snap_enabled {
+            ui.label("Snap distance");
+            ui.add(egui::Slider::new(&mut gui_settings.snap_radius, 0.0..=24.0).step_by(1.0))
+                .on_hover_text(
+                    "How close an edge must get, in points, before it \
+                     snaps. Trackpads and high-DPI displays usually want \
+                     more than a mouse. 0 disables snapping.",
+                );
+            ui.end_row();
+            ui.label("Snap targets");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut gui_settings.snap_to_siblings, "Other windows")
+                    .on_hover_text(
+                        "Butt two windows together or align them flush \
+                         along the same edge.",
+                    );
+                ui.checkbox(&mut gui_settings.snap_to_bounds, "Pane edges");
+                ui.checkbox(&mut gui_settings.snap_to_centers, "Pane center")
+                    .on_hover_text(
+                        "The pane's horizontal and vertical center lines. \
+                         Off by default: center lines close to real edge \
+                         targets make snapping feel jumpy.",
+                    );
+            });
+            ui.end_row();
+            ui.label("Snap grid");
+            ui.add(egui::Slider::new(&mut gui_settings.snap_grid, 0.0..=48.0).step_by(4.0))
+                .on_hover_text(
+                    "Also snap edges to a grid of this pitch in points, \
+                     anchored at the pane's top-left. While you drag, the \
+                     grid shows as a faint overlay. 0 = no grid.",
+                );
+            ui.end_row();
+            ui.label("Grid sizing");
+            ui.add_enabled(
+                gui_settings.snap_grid > 0.0,
+                egui::Checkbox::new(
+                    &mut gui_settings.snap_move_sizes_to_grid,
+                    "Moving also sizes to grid",
+                ),
+            )
+            .on_hover_text(
+                "With a grid set, moving a window pulls each edge to its \
+                 nearest grid line — the window resizes to fit the grid. \
+                 Off = moving only repositions.",
+            );
+            ui.end_row();
+            ui.label("Snap guides");
+            ui.checkbox(&mut gui_settings.snap_show_guides, "Show alignment guides")
+                .on_hover_text(
+                    "Draw a dashed line with the matched coordinate while \
+                     a snap is engaged.",
+                );
+            ui.end_row();
+        }
+
+        // Global appearance defaults: applied to every window without its
+        // own Appearance-menu choice (per-window picks always win).
+        ui.label("Default frame");
+        {
+            let selected = match gui_settings.default_frame.as_deref() {
+                None => "Skin default".to_string(),
+                Some(name) if name.eq_ignore_ascii_case("none") => "None".to_string(),
+                Some(name) => name.to_string(),
+            };
+            egui::ComboBox::from_id_salt("settings_default_frame")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(gui_settings.default_frame.is_none(), "Skin default")
+                        .clicked()
+                    {
+                        gui_settings.default_frame = None;
+                    }
+                    let none_active = gui_settings
+                        .default_frame
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("none"));
+                    if ui.selectable_label(none_active, "None").clicked() {
+                        gui_settings.default_frame = Some("none".to_string());
+                    }
+                    for name in frame_names {
+                        let active = gui_settings
+                            .default_frame
+                            .as_deref()
+                            .is_some_and(|current| current.eq_ignore_ascii_case(name));
+                        if ui.selectable_label(active, name).clicked() {
+                            gui_settings.default_frame = Some(name.clone());
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Frame for every window without its own Appearance > \
+                     Skin frame choice. None hides frames everywhere by \
+                     default; per-window picks always win.",
+                );
+        }
+        ui.end_row();
+
+        ui.label("Default background");
+        {
+            let selected = match gui_settings.default_background.as_deref() {
+                None => "Skin default",
+                Some(path) if path.eq_ignore_ascii_case("none") => "None",
+                Some(path) => background_images
+                    .iter()
+                    .find(|(pool_path, _)| pool_path == path)
+                    .map(|(_, stem)| stem.as_str())
+                    .unwrap_or(path),
+            };
+            egui::ComboBox::from_id_salt("settings_default_background")
+                .selected_text(selected.to_string())
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(
+                            gui_settings.default_background.is_none(),
+                            "Skin default",
+                        )
+                        .clicked()
+                    {
+                        gui_settings.default_background = None;
+                    }
+                    let none_active = gui_settings
+                        .default_background
+                        .as_deref()
+                        .is_some_and(|path| path.eq_ignore_ascii_case("none"));
+                    if ui.selectable_label(none_active, "None").clicked() {
+                        gui_settings.default_background = Some("none".to_string());
+                    }
+                    for (path, stem) in background_images {
+                        let active = gui_settings
+                            .default_background
+                            .as_deref()
+                            .is_some_and(|current| current == path);
+                        if ui.selectable_label(active, stem).clicked() {
+                            gui_settings.default_background = Some(path.clone());
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Background image for every window without its own \
+                     Appearance > Background choice; per-window picks \
+                     always win.",
+                );
+        }
         ui.end_row();
     });
     ui.weak(
@@ -493,6 +751,7 @@ impl VellumGuiApp {
             theme_names,
             crate::config::skins::list_skins(),
             self.app_core.tts_manager.available_voices(),
+            self.skin_state.frame_names(),
             self.ui_settings.clone(),
         ));
     }
@@ -513,12 +772,16 @@ impl VellumGuiApp {
         // makes sense once the selection has been saved and its doll base
         // art actually loaded.
         let mut calibrate_doll_clicked = false;
+        // "Save current appearance": bakes the live appearance into the
+        // typed skin name via the same path as the .saveskin command.
+        let mut save_skin_name: Option<String> = None;
         // Test button applies the panel's live values and speaks a sample
         // without waiting for Save.
         let mut tts_test_clicked = false;
         // `.data reload` action from the Data panel (re-resolves the shared
         // item database used by .foreach/.sorter).
         let mut data_reload_clicked = false;
+        let mut open_jinx_clicked = false;
         let can_calibrate_doll = self
             .skin_state
             .widget_art()
@@ -534,6 +797,7 @@ impl VellumGuiApp {
         let saved_target_count = self.app_core.config.go2.saved.len();
         egui::Window::new("Settings")
             .id(egui::Id::new("gui_settings_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(440.0)
             .collapsible(false)
@@ -563,7 +827,7 @@ impl VellumGuiApp {
                                             if ui
                                                 .button("Open skins folder")
                                                 .on_hover_text(
-                                                    "Skins live in ~/.vellum-fe/skins/<name>/",
+                                                    "Skins live in ~/.vellum-fe/global/skins/<name>/",
                                                 )
                                                 .clicked()
                                             {
@@ -620,6 +884,33 @@ impl VellumGuiApp {
                                                     }
                                                 }
                                             }
+                                            if ui
+                                                .button("Save current appearance")
+                                                .on_hover_text(
+                                                    "Bake the live appearance (doll, \
+                                                     status icons, frames, backgrounds, \
+                                                     compass) into a skin with this \
+                                                     name — same as .saveskin <name>.",
+                                                )
+                                                .clicked()
+                                            {
+                                                let name =
+                                                    state.new_skin_name.trim().to_string();
+                                                if name.is_empty() {
+                                                    state.skin_error = Some(
+                                                        "Enter a skin name first."
+                                                            .to_string(),
+                                                    );
+                                                } else {
+                                                    save_skin_name = Some(name.clone());
+                                                    if !state.skin_names.contains(&name) {
+                                                        state.skin_names.push(name);
+                                                        state.skin_names.sort();
+                                                    }
+                                                    state.new_skin_name.clear();
+                                                    state.skin_error = None;
+                                                }
+                                            }
                                         });
                                         if let Some(error) = &state.skin_error {
                                             ui.colored_label(
@@ -652,7 +943,12 @@ impl VellumGuiApp {
                                     // the per-character GUI layout file, not
                                     // config.toml; keep it next to Appearance.
                                     ui.collapsing("GUI", |ui| {
-                                        render_gui_section(ui, &mut state.gui_settings);
+                                        render_gui_section(
+                                            ui,
+                                            &mut state.gui_settings,
+                                            &state.frame_names,
+                                            &state.background_images,
+                                        );
                                     });
                                 }
                                 "Speech" => {
@@ -887,6 +1183,21 @@ impl VellumGuiApp {
                             });
                         });
 
+                        ui.collapsing("Assets (Jinx)", |ui| {
+                            ui.label(
+                                "Install and update game data, skins, layouts, \
+                                 icons, sounds and other assets from repositories \
+                                 — VellumFE's own asset manager (no Lich needed).",
+                            );
+                            if ui
+                                .button("Open asset manager")
+                                .on_hover_text("Browse repos and install/update assets (.jinx gui)")
+                                .clicked()
+                            {
+                                open_jinx_clicked = true;
+                            }
+                        });
+
                         if !state.errors.is_empty() {
                             ui.separator();
                             for error in &state.errors {
@@ -916,11 +1227,19 @@ impl VellumGuiApp {
         if calibrate_doll_clicked {
             self.open_doll_calibration();
         }
+        if let Some(name) = save_skin_name {
+            // Same typed path as the .saveskin command (validation,
+            // compile, system-message feedback).
+            self.handle_ui_action(crate::data::UiAction::SaveSkin(name));
+        }
         if data_reload_clicked {
             let types = self.app_core.reload_data_pack();
             self.app_core.add_system_message(&format!(
                 "Data pack reloaded ({types} item types)."
             ));
+        }
+        if open_jinx_clicked {
+            self.open_jinx_panel();
         }
         if tts_test_clicked {
             let rate = state.float_draft("tts.rate") as f32;
@@ -994,10 +1313,16 @@ impl VellumGuiApp {
                 }
             }
 
-            // Side effects for the keys that just changed. Theme and skin
-            // need no explicit hook: apply_theme_if_changed and
-            // skin_state.apply_if_changed watch config.active_theme /
-            // active_skin every frame.
+            // Side effects for the keys that just changed. Theme needs no
+            // explicit hook: apply_theme_if_changed watches
+            // config.active_theme every frame. The skin's home is the GUI
+            // layout (ui_settings.active_skin); the registry draft wrote
+            // the config mirror, so copy it over — apply_if_changed then
+            // swaps the art next frame.
+            if applied.iter().any(|key| *key == "active_skin") {
+                self.ui_settings.active_skin = self.app_core.config.active_skin.clone();
+                self.layout_dirty = true;
+            }
             if applied
                 .iter()
                 .any(|key| key.starts_with("map.") || *key == "connection.game")
@@ -1013,15 +1338,18 @@ impl VellumGuiApp {
 
             // GUI sizing lives in the per-character layout file; force the
             // zoom/title-bar values to re-apply on the next frame. Vitals
-            // options are edited in the Window Editor now — preserve the
-            // live values rather than restoring this editor's stale
-            // open-time snapshot.
+            // options are edited in the Window Editor now, and the active
+            // skin was routed above — preserve the live values for both
+            // rather than restoring this editor's stale open-time snapshot.
             let vitals = self.ui_settings.vitals.clone();
+            let active_skin = self.ui_settings.active_skin.clone();
             self.ui_settings = state.gui_settings.clone();
             self.ui_settings.vitals = vitals;
+            self.ui_settings.active_skin = active_skin;
             self.zoom_applied = false;
             self.applied_title_font_size = None;
             self.applied_density = None;
+            self.applied_window_corner_radius = None;
             self.layout_dirty = true;
 
             if errors.is_empty() {
@@ -1079,12 +1407,12 @@ mod tests {
         );
         drafts.insert("sound.enabled", DraftValue::Bool(!config.sound.enabled));
         drafts.insert(
-            "ui.open_dialog_blocklist",
+            "ui.focus.types",
             DraftValue::List("alpha\n beta \n".to_string()),
         );
         assert_eq!(
             changed_keys(&config, &drafts),
-            ["sound.enabled", "ui.buffer_size", "ui.open_dialog_blocklist"]
+            ["sound.enabled", "ui.buffer_size", "ui.focus.types"]
         );
     }
 

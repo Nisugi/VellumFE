@@ -14,38 +14,10 @@ use std::collections::HashMap;
 use super::colors::parse_color_to_ratatui;
 use super::crossterm_bridge;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum DashboardLayout {
-    Horizontal,
-    Vertical,
-    Grid { rows: usize, cols: usize },
-    Flow,
-}
-
-impl DashboardLayout {
-    pub fn from_str(value: &str) -> Self {
-        let lower = value.to_lowercase();
-        if lower.starts_with("grid") {
-            if let Some(spec) = lower.split(':').nth(1) {
-                let parts: Vec<_> = spec.split('x').collect();
-                if parts.len() == 2 {
-                    if let (Ok(r), Ok(c)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
-                        if r > 0 && c > 0 {
-                            return DashboardLayout::Grid { rows: r, cols: c };
-                        }
-                    }
-                }
-            }
-        }
-
-        match lower.as_str() {
-            "vertical" => DashboardLayout::Vertical,
-            "flow" => DashboardLayout::Flow,
-            "horizontal" => DashboardLayout::Horizontal,
-            _ => DashboardLayout::Horizontal,
-        }
-    }
-}
+// Layout enum + parser are shared with the GUI so both frontends interpret
+// `dashboard_layout` identically; re-exported here so `dashboard::DashboardLayout`
+// stays the TUI's local name.
+pub use crate::config::DashboardLayout;
 
 #[derive(Debug, Clone)]
 pub struct DashboardIndicator {

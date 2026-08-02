@@ -27,9 +27,12 @@ impl Config {
         let mut config: Config = toml::from_str(&contents)
             .context(format!("Failed to parse config file: {:?}", path))?;
 
-        // Same legacy drop-list migration as load_with_options (in-memory
-        // only; never writes files).
+        // Same legacy migrations as load_with_options (in-memory only;
+        // never writes files).
         config.streams.migrate_drop_list_to_routes();
+        if std::mem::take(&mut config.ui.sorter_enabled) {
+            config.sorter.enabled = true;
+        }
 
         // Override port from command line (if specified)
         if let Some(port) = port_override {
@@ -271,12 +274,84 @@ impl Config {
             tracing::info!("Created empty history.txt at {:?}", history_path);
         }
 
+        // Skins and shared images consolidated under global/: move the
+        // legacy top-level skins/ and the flat global/icons + global/dolls
+        // pools into global/skins and global/images/<category>.
+        Self::migrate_skins_and_images_to_global();
+
         // Merge newly shipped default highlights/keybinds/hotbars into the
         // extracted files (tombstoned: user deletions stay deleted), and
         // refresh managed data files the user never modified.
         super::defaults_refresh::refresh_shipped_defaults()?;
 
         Ok(())
+    }
+
+    /// One-time move of the pre-2026-07 skin/image layout into the
+    /// consolidated one:
+    ///   ~/.vellum-fe/skins/         -> ~/.vellum-fe/global/skins/
+    ///   ~/.vellum-fe/global/icons/  -> ~/.vellum-fe/global/images/icons/
+    ///   ~/.vellum-fe/global/dolls/  -> ~/.vellum-fe/global/images/dolls/
+    /// Best-effort by design: a failed rename logs and leaves the source in
+    /// place (colliding entries stay put rather than overwrite). Afterwards
+    /// the image-pool category folders are created so the structure is
+    /// discoverable.
+    fn migrate_skins_and_images_to_global() {
+        let (Ok(base), Ok(global), Ok(images), Ok(skins)) = (
+            Self::config_dir(),
+            Self::global_dir(),
+            Self::global_images_dir(),
+            Self::skins_dir(),
+        ) else {
+            return;
+        };
+        Self::move_legacy_dir(&base.join("skins"), &skins);
+        Self::move_legacy_dir(&global.join("icons"), &images.join("icons"));
+        Self::move_legacy_dir(&global.join("dolls"), &images.join("dolls"));
+        for category in Self::IMAGE_CATEGORIES {
+            let _ = fs::create_dir_all(images.join(category));
+        }
+    }
+
+    /// Move a legacy directory to its new home. Whole-directory rename when
+    /// the destination doesn't exist yet; otherwise per-entry moves that
+    /// skip name collisions (the old dir is removed only if that empties it).
+    fn move_legacy_dir(old: &std::path::Path, new: &std::path::Path) {
+        if !old.is_dir() {
+            return;
+        }
+        if !new.exists() {
+            if let Some(parent) = new.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            match fs::rename(old, new) {
+                Ok(()) => tracing::info!("Migrated {:?} -> {:?}", old, new),
+                Err(err) => tracing::warn!("Could not migrate {:?} -> {:?}: {}", old, new, err),
+            }
+            return;
+        }
+        let Ok(entries) = fs::read_dir(old) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let dest = new.join(entry.file_name());
+            if dest.exists() {
+                tracing::warn!(
+                    "Not migrating {:?}: {:?} already exists",
+                    entry.path(),
+                    dest
+                );
+                continue;
+            }
+            match fs::rename(entry.path(), &dest) {
+                Ok(()) => tracing::info!("Migrated {:?} -> {:?}", entry.path(), dest),
+                Err(err) => {
+                    tracing::warn!("Could not migrate {:?} -> {:?}: {}", entry.path(), dest, err)
+                }
+            }
+        }
+        // Gone once empty; harmless no-op otherwise.
+        let _ = fs::remove_dir(old);
     }
 
     /// The top-level TOML keys that belong to controller.toml. Kept in sync
@@ -442,6 +517,9 @@ impl Config {
         // and the merge silently dropped it on the next load.
         self.active_skin = character_config.active_skin;
 
+        // Doll image override: same restart-amnesia trap as active_skin.
+        self.doll_image = character_config.doll_image;
+
         // Streams config: character overrides global
         self.streams = character_config.streams;
 
@@ -457,6 +535,9 @@ impl Config {
         self.web = character_config.web;
         self.map = character_config.map;
         self.go2 = character_config.go2;
+
+        // Sorter (rules/order/labels/format): character overrides global.
+        self.sorter = character_config.sorter;
     }
 
     pub fn load_with_options(character: Option<&str>, port_override: Option<u16>) -> Result<Self> {
@@ -473,6 +554,13 @@ impl Config {
         // source of truth. In-memory only — load never writes files; the
         // next sparse save carries routes and ages the old key out.
         config.streams.migrate_drop_list_to_routes();
+
+        // Legacy ui.sorter_enabled becomes [sorter].enabled. In-memory
+        // only, like the streams migration; the next sparse save carries
+        // [sorter] and ages the old key out.
+        if std::mem::take(&mut config.ui.sorter_enabled) {
+            config.sorter.enabled = true;
+        }
 
         // Override port from command line (if specified)
         if let Some(port) = port_override {
@@ -670,25 +758,23 @@ impl Default for Config {
                 perf_stats_width: default_perf_stats_width(),
                 perf_stats_height: default_perf_stats_height(),
                 perf_show_fps: true,
-                perf_show_frame_times: false,
                 perf_show_render_times: true,
                 perf_show_ui_times: true,
                 perf_show_wrap_times: true,
                 perf_show_net: true,
                 perf_show_parse: true,
                 perf_show_events: true,
+                perf_show_cpu: true,
                 perf_show_memory: true,
                 perf_show_lines: true,
                 perf_show_uptime: true,
-                perf_show_jitter: false,
-                perf_show_frame_spikes: false,
-                perf_show_event_lag: false,
-                perf_show_memory_delta: true,
+                perf_show_spike_log: true,
+                perf_show_per_window: true,
+                perf_sparklines: true,
                 color_mode: ColorMode::default(),
                 timestamp_position: TimestampPosition::default(),
                 command_echo: default_command_echo(),
                 betrayer_active_color: default_betrayer_active_color(),
-                open_dialog_blocklist: default_open_dialog_blocklist(),
                 focus: FocusConfig::default(),
                 terminal_title: String::new(),
             },
@@ -710,6 +796,7 @@ impl Default for Config {
             target_list: TargetListConfig::default(),
             logging: LoggingConfig::default(),
             streams: StreamsConfig::default(), // Stream routing config
+            sorter: SorterConfig::default(),
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default
@@ -722,6 +809,7 @@ impl Default for Config {
             menu_keybinds: MenuKeybinds::default(),
             active_theme: default_theme_name(),
             active_skin: None,
+            doll_image: None,
         }
     }
 }
@@ -743,7 +831,6 @@ mod tests {
         let code = Config::default();
         assert_eq!(shipped.connection.port, code.connection.port);
         assert_eq!(shipped.ui.buffer_size, code.ui.buffer_size);
-        assert_eq!(shipped.ui.open_dialog_blocklist, code.ui.open_dialog_blocklist);
         // The [ui.focus] section must actually land in ui.focus (regression
         // guard for the commented-header bug).
         assert_eq!(shipped.ui.focus.types, code.ui.focus.types);

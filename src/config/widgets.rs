@@ -7,6 +7,100 @@
 use super::*;
 use crate::data::geometry::{Height, Width};
 
+/// A window's persisted show/hide state. Replaces the old `visible: bool`.
+/// `Hidden` means BOTH "don't render" AND "suppress the game from
+/// auto-spawning it" — the unified-windows rule. `Ephemeral` marks a
+/// session-only window (containers) that is never persisted and is wiped
+/// on relog; it renders like `Shown` while alive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WindowVisibility {
+    #[default]
+    Shown,
+    Hidden,
+    Ephemeral,
+}
+
+impl WindowVisibility {
+    /// Whether the window should render.
+    pub fn is_shown(&self) -> bool {
+        matches!(self, WindowVisibility::Shown | WindowVisibility::Ephemeral)
+    }
+    /// Whether the game may auto-(re)spawn this window. Hidden suppresses it.
+    pub fn allows_autospawn(&self) -> bool {
+        !matches!(self, WindowVisibility::Hidden)
+    }
+    /// Whether this window persists to layout.toml. Ephemeral does not.
+    pub fn is_persistent(&self) -> bool {
+        !matches!(self, WindowVisibility::Ephemeral)
+    }
+}
+
+// Serde: persist as a lowercase string ("shown"/"hidden"/"ephemeral"), but
+// ALSO accept the legacy `visible = true|false` bool so old layout.toml
+// files keep loading. Ephemeral is never written (those windows aren't
+// persisted), so it only appears at runtime.
+impl serde::Serialize for WindowVisibility {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            WindowVisibility::Shown => "shown",
+            WindowVisibility::Hidden => "hidden",
+            WindowVisibility::Ephemeral => "ephemeral",
+        })
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WindowVisibility {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Compat {
+            Bool(bool),
+            Str(String),
+        }
+        match Compat::deserialize(d)? {
+            // Legacy layout.toml: visible = true|false.
+            Compat::Bool(true) => Ok(WindowVisibility::Shown),
+            Compat::Bool(false) => Ok(WindowVisibility::Hidden),
+            Compat::Str(s) => match s.to_ascii_lowercase().as_str() {
+                "shown" | "visible" | "true" => Ok(WindowVisibility::Shown),
+                "hidden" | "false" => Ok(WindowVisibility::Hidden),
+                "ephemeral" => Ok(WindowVisibility::Ephemeral),
+                other => Err(D::Error::custom(format!(
+                    "invalid window visibility '{}'",
+                    other
+                ))),
+            },
+        }
+    }
+}
+
+/// What game source a window is bound to, so the client can find the ONE
+/// (or several) windows a dialog/stream/container feed belongs to by id,
+/// independent of the user's display name. This is the identity that
+/// prevents duplicate auto-spawns and lets multiple windows share a feed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "lowercase")]
+pub enum WindowBinding {
+    /// A game dialog id (expr, stance, combat, encum, ...).
+    Dialog(String),
+    /// A game stream id (thoughts, loot, bounty, ...).
+    Stream(String),
+    /// A container id (session-only; not persisted).
+    Container(String),
+}
+
+impl WindowBinding {
+    /// The bound game id, whatever the source kind.
+    pub fn id(&self) -> &str {
+        match self {
+            WindowBinding::Dialog(id)
+            | WindowBinding::Stream(id)
+            | WindowBinding::Container(id) => id,
+        }
+    }
+}
+
 /// Border sides configuration - which borders to show
 /// Serializes to/from array of strings in TOML: ["left", "right", "top", "bottom"]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -253,9 +347,17 @@ pub struct WindowBase {
     pub min_cols: Option<u16>,
     #[serde(default)]
     pub max_cols: Option<u16>,
-    /// Whether this window is currently visible (defaults to true for backwards compatibility)
-    #[serde(default = "default_true")]
-    pub visible: bool,
+    /// Persisted show/hide state. Replaces the legacy `visible: bool`;
+    /// serde reads either the new `visibility = "shown"|"hidden"` string
+    /// or the old `visible = true|false` bool (via the alias + the enum's
+    /// Deserialize compat), defaulting to Shown.
+    #[serde(default, alias = "visible")]
+    pub visibility: WindowVisibility,
+    /// Game source this window is bound to (dialog/stream/container id), so
+    /// feeds resolve to the right window(s) regardless of display name.
+    /// None for hand-placed/custom windows with no game binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<WindowBinding>,
     /// Content alignment within widget area
     #[serde(default)]
     pub content_align: Option<String>,
@@ -491,6 +593,44 @@ pub struct IndicatorWidgetData {
     pub default_color: Option<String>,  // legacy
 }
 
+/// Resolved dashboard layout, parsed from the config `layout` string. Shared
+/// so both frontends interpret `dashboard_layout` identically (the config
+/// stores the raw string; each renderer parses it through here).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DashboardLayout {
+    Horizontal,
+    Vertical,
+    Grid { rows: usize, cols: usize },
+    Flow,
+}
+
+impl DashboardLayout {
+    /// Parse a `dashboard_layout` string: `horizontal`/`vertical`/`flow`, or
+    /// `grid:RxC` (e.g. `grid:2x3`). Anything unrecognized falls back to
+    /// horizontal.
+    pub fn from_str(value: &str) -> Self {
+        let lower = value.to_lowercase();
+        if lower.starts_with("grid") {
+            if let Some(spec) = lower.split(':').nth(1) {
+                let parts: Vec<_> = spec.split('x').collect();
+                if parts.len() == 2 {
+                    if let (Ok(r), Ok(c)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+                        if r > 0 && c > 0 {
+                            return DashboardLayout::Grid { rows: r, cols: c };
+                        }
+                    }
+                }
+            }
+        }
+        match lower.as_str() {
+            "vertical" => DashboardLayout::Vertical,
+            "flow" => DashboardLayout::Flow,
+            "horizontal" => DashboardLayout::Horizontal,
+            _ => DashboardLayout::Horizontal,
+        }
+    }
+}
+
 /// Dashboard widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DashboardWidgetData {
@@ -518,6 +658,34 @@ pub struct DashboardIndicatorDef {
     pub icon: String,
     #[serde(default)]
     pub colors: Vec<String>,
+    /// Optional layer-stack group. Entries sharing a `stack` name render into
+    /// ONE cell, their active icons painted over each other (Wrayth-style:
+    /// blood/poison/disease share a square, each PNG authored to sit in a
+    /// different part of it so they don't collide). Empty = its own cell.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stack: String,
+}
+
+impl DashboardWidgetData {
+    /// Number of rendered cells: unstacked entries each count once; entries
+    /// sharing a `stack` name collapse into one cell. Used for row-count
+    /// height math in both frontends so a stacked dashboard hugs its content.
+    pub fn cell_count(&self) -> usize {
+        let mut seen: Vec<String> = Vec::new();
+        let mut count = 0;
+        for def in &self.indicators {
+            if def.stack.is_empty() {
+                count += 1;
+            } else {
+                let key = def.stack.to_lowercase();
+                if !seen.contains(&key) {
+                    seen.push(key);
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
 }
 
 fn default_indicator_active_color() -> Option<String> {
@@ -540,6 +708,27 @@ pub struct HandWidgetData {
     /// Text color override (also overrides link color if set)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_color: Option<String>,
+    /// Status-driven icon states, first match wins (hotbar-style). A
+    /// matched state's icon/text replace the static icon while its
+    /// condition holds; no match falls through to the static settings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub states: Vec<HandIconState>,
+}
+
+/// One condition-driven hand icon state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HandIconState {
+    pub when: super::Condition,
+    /// GUI icon while the state holds (pool image / sheet cell /
+    /// `IconRef::None` for no art). None = keep the resolved default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<crate::data::IconRef>,
+    /// TUI text prefix while the state holds (the TUI renders no images).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Icon color override while the state holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_color: Option<String>,
 }
 
 /// Active effects widget specific data
@@ -556,8 +745,6 @@ pub struct PerformanceWidgetData {
     #[serde(default = "default_true")]
     pub show_fps: bool,
     #[serde(default = "default_true")]
-    pub show_frame_times: bool,
-    #[serde(default = "default_true")]
     pub show_render_times: bool,
     #[serde(default = "default_true")]
     pub show_ui_times: bool,
@@ -570,19 +757,42 @@ pub struct PerformanceWidgetData {
     #[serde(default = "default_true")]
     pub show_events: bool,
     #[serde(default = "default_true")]
+    pub show_cpu: bool,
+    #[serde(default = "default_true")]
     pub show_memory: bool,
     #[serde(default = "default_true")]
     pub show_lines: bool,
     #[serde(default = "default_true")]
     pub show_uptime: bool,
     #[serde(default = "default_true")]
-    pub show_jitter: bool,
+    pub show_spike_log: bool,
     #[serde(default = "default_true")]
-    pub show_frame_spikes: bool,
+    pub show_per_window: bool,
+    /// Draw trend sparklines next to rows that have a series.
     #[serde(default = "default_true")]
-    pub show_event_lag: bool,
-    #[serde(default = "default_true")]
-    pub show_memory_delta: bool,
+    pub sparklines: bool,
+}
+
+impl Default for PerformanceWidgetData {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            show_fps: true,
+            show_render_times: true,
+            show_ui_times: true,
+            show_wrap_times: true,
+            show_net: true,
+            show_parse: true,
+            show_events: true,
+            show_cpu: true,
+            show_memory: true,
+            show_lines: true,
+            show_uptime: true,
+            show_spike_log: true,
+            show_per_window: true,
+            sparklines: true,
+        }
+    }
 }
 
 /// Targets widget specific data
@@ -990,5 +1200,112 @@ mod tests {
 
         let serialized = toml::to_string(&MiniVitalsWidgetData::default()).unwrap();
         assert!(!serialized.contains("depleted_color"));
+
+#[cfg(test)]
+mod dashboard_layout_tests {
+    use super::*;
+
+    #[test]
+    fn parses_named_layouts() {
+        assert_eq!(DashboardLayout::from_str("horizontal"), DashboardLayout::Horizontal);
+        assert_eq!(DashboardLayout::from_str("VERTICAL"), DashboardLayout::Vertical);
+        assert_eq!(DashboardLayout::from_str("Flow"), DashboardLayout::Flow);
+    }
+
+    #[test]
+    fn parses_grid_spec() {
+        assert_eq!(
+            DashboardLayout::from_str("grid:2x3"),
+            DashboardLayout::Grid { rows: 2, cols: 3 }
+        );
+    }
+
+    #[test]
+    fn unrecognized_and_bad_grid_fall_back_to_horizontal() {
+        assert_eq!(DashboardLayout::from_str("nonsense"), DashboardLayout::Horizontal);
+        assert_eq!(DashboardLayout::from_str("grid:0x3"), DashboardLayout::Horizontal);
+        assert_eq!(DashboardLayout::from_str("grid:2"), DashboardLayout::Horizontal);
+    }
+
+    #[test]
+    fn cell_count_collapses_stack_groups() {
+        let ind = |id: &str, stack: &str| DashboardIndicatorDef {
+            id: id.to_string(),
+            icon: String::new(),
+            colors: Vec::new(),
+            stack: stack.to_string(),
+        };
+        let data = DashboardWidgetData {
+            layout: "grid:2x3".to_string(),
+            spacing: 0,
+            hide_inactive: true,
+            indicators: vec![
+                ind("BLEEDING", "affliction"),
+                ind("POISONED", "affliction"),
+                ind("DISEASED", "affliction"),
+                ind("STUNNED", ""),
+                ind("WEBBED", ""),
+            ],
+        };
+        // Three afflictions collapse to one cell; two singletons = 3 cells.
+        assert_eq!(data.cell_count(), 3);
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    // A minimal WindowBase TOML: only name (everything else defaults).
+    fn parse_base(extra: &str) -> WindowBase {
+        let toml = format!("name = \"w\"\n{}", extra);
+        toml::from_str(&toml).expect("valid WindowBase toml")
+    }
+
+    #[test]
+    fn legacy_visible_bool_still_loads() {
+        // Existing layout.toml files carry `visible = true|false`.
+        assert_eq!(parse_base("visible = true").visibility, WindowVisibility::Shown);
+        assert_eq!(parse_base("visible = false").visibility, WindowVisibility::Hidden);
+        // Absent → default Shown.
+        assert_eq!(parse_base("").visibility, WindowVisibility::Shown);
+    }
+
+    #[test]
+    fn new_visibility_string_loads_and_roundtrips() {
+        assert_eq!(parse_base("visibility = \"hidden\"").visibility, WindowVisibility::Hidden);
+        assert_eq!(parse_base("visibility = \"shown\"").visibility, WindowVisibility::Shown);
+        // Round-trip through TOML preserves it.
+        let mut base = parse_base("");
+        base.visibility = WindowVisibility::Hidden;
+        let s = toml::to_string(&base).unwrap();
+        assert!(s.contains("visibility = \"hidden\""), "serialized: {s}");
+        assert_eq!(toml::from_str::<WindowBase>(&s).unwrap().visibility, WindowVisibility::Hidden);
+    }
+
+    #[test]
+    fn visibility_semantics() {
+        assert!(WindowVisibility::Shown.is_shown());
+        assert!(WindowVisibility::Ephemeral.is_shown());
+        assert!(!WindowVisibility::Hidden.is_shown());
+        // Hidden is the ONLY state that blocks the game from auto-spawning.
+        assert!(WindowVisibility::Shown.allows_autospawn());
+        assert!(WindowVisibility::Ephemeral.allows_autospawn());
+        assert!(!WindowVisibility::Hidden.allows_autospawn());
+        // Ephemeral is the only non-persistent state.
+        assert!(WindowVisibility::Shown.is_persistent());
+        assert!(WindowVisibility::Hidden.is_persistent());
+        assert!(!WindowVisibility::Ephemeral.is_persistent());
+    }
+
+    #[test]
+    fn binding_roundtrips_and_is_omitted_when_none() {
+        let base = parse_base("binding = { kind = \"dialog\", id = \"expr\" }");
+        assert_eq!(base.binding, Some(WindowBinding::Dialog("expr".to_string())));
+        assert_eq!(base.binding.as_ref().unwrap().id(), "expr");
+        // None binding is skip-serialized (keeps layout.toml clean).
+        let none = parse_base("");
+        assert!(none.binding.is_none());
+        assert!(!toml::to_string(&none).unwrap().contains("binding"));
     }
 }

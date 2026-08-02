@@ -15,7 +15,7 @@ fn find_next_available_slot(palette: &[crate::config::PaletteColor]) -> Option<u
 }
 
 /// Assign the next available slot to a color if it doesn't have one
-fn auto_assign_slot(mut color: crate::config::PaletteColor, palette: &[crate::config::PaletteColor]) -> crate::config::PaletteColor {
+pub(super) fn auto_assign_slot(mut color: crate::config::PaletteColor, palette: &[crate::config::PaletteColor]) -> crate::config::PaletteColor {
     if color.slot.is_none() {
         color.slot = find_next_available_slot(palette);
         if let Some(slot) = color.slot {
@@ -28,10 +28,14 @@ fn auto_assign_slot(mut color: crate::config::PaletteColor, palette: &[crate::co
 /// Find the topmost window at the given screen coordinates.
 /// Ephemeral windows (container discovery) have higher z-order and are checked first.
 /// Returns the window name, defaulting to "main" if no window contains the point.
-fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> String {
+/// Topmost window whose rect contains `(x, y)`, falling back to "main".
+/// Ephemeral windows render on top so they win; otherwise any visible window
+/// containing the point. Takes `&UiState` (not the whole AppCore) so the pure
+/// hit-test can be unit-tested without a live core.
+fn find_topmost_window_at(ui_state: &crate::data::ui_state::UiState, x: u16, y: u16) -> String {
     // First check ephemeral windows (they're rendered on top)
-    for window_name in &app_core.ui_state.ephemeral_windows {
-        if let Some(window) = app_core.ui_state.windows.get(window_name) {
+    for window_name in &ui_state.ephemeral_windows {
+        if let Some(window) = ui_state.windows.get(window_name) {
             if !window.visible {
                 continue;
             }
@@ -47,8 +51,8 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
     }
 
     // Then check regular windows
-    for (name, window) in &app_core.ui_state.windows {
-        if !window.visible || app_core.ui_state.ephemeral_windows.contains(name) {
+    for (name, window) in &ui_state.windows {
+        if !window.visible || ui_state.ephemeral_windows.contains(name) {
             continue;
         }
         let pos = &window.position;
@@ -65,13 +69,51 @@ fn find_topmost_window_at(app_core: &crate::core::AppCore, x: u16, y: u16) -> St
     "main".to_string()
 }
 
+/// Which drag operation a mouse-down at `(x, y)` starts on a window occupying
+/// `(win_x, win_y, width, height)`, or None for a plain body click. Pure edge
+/// geometry, matching the TUI's border-as-handle convention:
+/// - top row → Move
+/// - right column → ResizeRight (and the bottom-right cell → ResizeBottomRight)
+/// - bottom row → ResizeBottom
+/// A locked window resizes nowhere (only Move via the top row). The bottom row
+/// only acts as a resize handle when height > 2, so a 1-2 row widget's bottom
+/// row stays content, not a handle. Right needs width > 1 for the same reason.
+fn resize_op_at(
+    win_x: u16,
+    win_y: u16,
+    width: u16,
+    height: u16,
+    locked: bool,
+    x: u16,
+    y: u16,
+) -> Option<crate::data::DragOperation> {
+    use crate::data::DragOperation;
+    let right_col = win_x + width - 1;
+    let bottom_row = win_y + height - 1;
+    let has_horizontal_space = width > 1;
+    let can_resize_bottom = !locked && height > 2;
+    let can_resize_right = !locked;
+
+    if has_horizontal_space && can_resize_bottom && x == right_col && y == bottom_row {
+        Some(DragOperation::ResizeBottomRight)
+    } else if can_resize_right && has_horizontal_space && x == right_col {
+        Some(DragOperation::ResizeRight)
+    } else if can_resize_bottom && y == bottom_row {
+        Some(DragOperation::ResizeBottom)
+    } else if y == win_y {
+        Some(DragOperation::Move)
+    } else {
+        None
+    }
+}
+
 // TUI-specific methods (not part of Frontend trait)
 impl TuiFrontend {
     /// Write the in-memory color config to the profile colors.toml, matching
     /// the GUI colors editor's persist path. Without this, spell-color and UI
     /// color edits lived only in memory and vanished on restart or
     /// `.reload colors`.
-    fn persist_colors(app_core: &mut crate::core::AppCore) {
+    pub(super) fn persist_colors(app_core: &mut crate::core::AppCore) {
         let character = app_core.config.character.clone();
         if let Err(err) = app_core.config.colors.save(character.as_deref()) {
             tracing::error!("Failed to save colors: {}", err);
@@ -85,7 +127,7 @@ impl TuiFrontend {
     /// resolves palette names to hex, then REPLACES the edited entry in place
     /// (`edit_index`) or appends a new one — the old code always pushed, so
     /// editing a range left a duplicate behind.
-    fn handle_spell_color_form_result(
+    pub(super) fn handle_spell_color_form_result(
         &mut self,
         app_core: &mut crate::core::AppCore,
         result: crate::frontend::tui::spell_color_form::SpellColorFormResult,
@@ -137,7 +179,7 @@ impl TuiFrontend {
     /// are addressed the same way the browser builds them: category "UI"
     /// (named UiColors fields), "PRESETS" (preset map key), or "PROMPT"
     /// ("Prompt (c)" per prompt character).
-    fn apply_ui_color_edit(
+    pub(super) fn apply_ui_color_edit(
         app_core: &mut crate::core::AppCore,
         category: &str,
         name: &str,
@@ -155,6 +197,7 @@ impl TuiFrontend {
                     "Border" => colors.ui.border_color = value,
                     "Command Echo" => colors.ui.command_echo_color = value,
                     "Focused Border" => colors.ui.focused_border_color = value,
+                    "System Messages" => colors.ui.system_message_color = value,
                     "Text" => colors.ui.text_color = value,
                     "Text Selection" => colors.ui.selection_bg_color = value,
                     "Textarea Background" => colors.ui.textarea_background = value,
@@ -272,6 +315,1548 @@ impl TuiFrontend {
         app_core.ui_state.input_mode = InputMode::Menu;
     }
 
+    /// Route a mouse event to the open highlight browser (list of rules).
+    /// Returns `Ok(None)` when closed; `Ok(Some(..))` when it consumed the
+    /// event. Edit/Delete/Add/Close run as simulated key presses.
+    fn handle_highlight_browser_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut browser) = self.highlight_browser {
+            use crate::frontend::tui::highlight_browser::HighlightBrowserMouseAction;
+
+            // Determine scroll direction
+            let scroll_direction: i8 = match kind {
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
+                _ => 0,
+            };
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                _ => HighlightBrowserMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                HighlightBrowserMouseAction::Edit => {
+                    // Trigger edit via simulated Enter key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightBrowserMouseAction::Delete => {
+                    // Trigger delete via simulated Delete key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Delete,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightBrowserMouseAction::Add => {
+                    // Trigger add via simulated 'a' key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('a'),
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightBrowserMouseAction::Close => {
+                    // Trigger close via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightBrowserMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Route a mouse event to the open keybind browser; Edit/Delete/Add/Close run as simulated key presses. Ok(None) when closed.
+    fn handle_keybind_browser_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut browser) = self.keybind_browser {
+            use crate::frontend::tui::keybind_browser::KeybindBrowserMouseAction;
+
+            // Determine scroll direction
+            let scroll_direction: i8 = match kind {
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
+                _ => 0,
+            };
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                _ => KeybindBrowserMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                KeybindBrowserMouseAction::Edit => {
+                    // Trigger edit via simulated Enter key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::Delete => {
+                    // Trigger delete via simulated Delete key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Delete,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::Add => {
+                    // Trigger add via simulated 'a' key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('a'),
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::Close => {
+                    // Trigger close via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindBrowserMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Route a mouse event to the open keybind form; Save/Cancel run as simulated key presses. Ok(None) when closed.
+    fn handle_keybind_form_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut form) = self.keybind_form {
+            use crate::frontend::tui::keybind_form::KeybindFormMouseAction;
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, false, area)
+                }
+                _ => KeybindFormMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                KeybindFormMouseAction::Save => {
+                    // Trigger save via simulated Ctrl+S key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('s'),
+                        KeyModifiers::CTRL,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindFormMouseAction::Delete => {
+                    // Trigger delete via simulated Ctrl+D key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('d'),
+                        KeyModifiers::CTRL,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindFormMouseAction::Cancel => {
+                    // Trigger cancel via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                KeybindFormMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Route a mouse event to the open color palette browser; actions run as simulated key presses. Ok(None) when closed.
+    fn handle_color_palette_browser_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut browser) = self.color_palette_browser {
+            use crate::frontend::tui::color_palette_browser::ColorPaletteBrowserMouseAction;
+
+            // Determine scroll direction
+            let scroll_direction: i8 = match kind {
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
+                _ => 0,
+            };
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    browser.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                _ => ColorPaletteBrowserMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                ColorPaletteBrowserMouseAction::Edit => {
+                    // Trigger edit via simulated Enter key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                ColorPaletteBrowserMouseAction::Delete => {
+                    // Trigger delete via simulated Delete key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Delete,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                ColorPaletteBrowserMouseAction::Add => {
+                    // Trigger add via simulated 'a' key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('a'),
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                ColorPaletteBrowserMouseAction::ToggleFavorite => {
+                    // Favorite already toggled in handle_mouse, just trigger save via 'f' key
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('f'),
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                ColorPaletteBrowserMouseAction::Close => {
+                    // Trigger close via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                ColorPaletteBrowserMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Route a mouse event to the open color form; Save/Cancel run as simulated key presses. Ok(None) when closed.
+    fn handle_color_form_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut form) = self.color_form {
+            use crate::frontend::tui::color_form::ColorFormMouseAction;
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, false, area)
+                }
+                _ => ColorFormMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                ColorFormMouseAction::Save => {
+                    // Trigger save via simulated Ctrl+S key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('s'),
+                        KeyModifiers::CTRL,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                ColorFormMouseAction::Cancel => {
+                    // Trigger cancel via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                ColorFormMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Route a mouse event to the open settings editor; actions run as simulated key presses. Ok(None) when closed.
+    fn handle_settings_editor_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut editor) = self.settings_editor {
+            use crate::frontend::tui::settings_editor::SettingsEditorMouseAction;
+
+            // Determine scroll direction
+            let scroll_direction: i8 = match kind {
+                MouseEventKind::ScrollUp => -1,
+                MouseEventKind::ScrollDown => 1,
+                _ => 0,
+            };
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    editor.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    editor.handle_mouse(x, y, true, scroll_direction, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    editor.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    editor.handle_mouse(x, y, false, scroll_direction, area)
+                }
+                _ => SettingsEditorMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                SettingsEditorMouseAction::EditValue => {
+                    // Trigger edit via simulated Enter key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                SettingsEditorMouseAction::ToggleScope => {
+                    // Trigger scope toggle via simulated 'g' key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('g'),
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                SettingsEditorMouseAction::Close => {
+                    // Trigger close via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                SettingsEditorMouseAction::SelectRow | SettingsEditorMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Route a mouse event to the open highlight form. Returns `Ok(None)`
+    /// when the form is closed so the caller falls through; `Ok(Some(..))`
+    /// when the form consumed the event (Save/Cancel run as simulated key
+    /// presses through `handle_menu_action_fn`).
+    fn handle_highlight_form_mouse(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        kind: &crate::data::input::MouseEventKind,
+        x: u16,
+        y: u16,
+        handle_menu_action_fn: &impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<Option<(bool, Option<String>)>> {
+        use crate::data::input::MouseEventKind;
+
+        let (width, height) = self.size();
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+
+        if let Some(ref mut form) = self.highlight_form {
+            use crate::frontend::tui::highlight_form::HighlightFormMouseAction;
+
+            let action = match kind {
+                MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, true, area)
+                }
+                MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
+                    form.handle_mouse(x, y, false, area)
+                }
+                _ => HighlightFormMouseAction::None,
+            };
+
+            app_core.needs_render = true;
+
+            match action {
+                HighlightFormMouseAction::Save => {
+                    // Trigger save via simulated Ctrl+S key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Char('s'),
+                        KeyModifiers::CTRL,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightFormMouseAction::Cancel => {
+                    // Trigger cancel via simulated Esc key press
+                    use crate::data::input::KeyCode;
+                    use crate::data::input::KeyModifiers;
+                    let _ = self.handle_key_event(
+                        KeyCode::Esc,
+                        KeyModifiers::NONE,
+                        app_core,
+                        handle_menu_action_fn,
+                    );
+                    return Ok(Some((true, None)));
+                }
+                HighlightFormMouseAction::None => {
+                    return Ok(Some((true, None)));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Scroll the topmost window under the cursor. `delta` is positive to
+    /// scroll up (toward older lines), negative to scroll down.
+    fn handle_mouse_scroll(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+        delta: i32,
+    ) -> Result<(bool, Option<String>)> {
+        // Find topmost window at mouse position (ephemeral windows have higher z-order)
+        let target_window = find_topmost_window_at(&app_core.ui_state, x, y);
+        self.scroll_window(&target_window, delta);
+        app_core.needs_render = true;
+        Ok((true, None))
+    }
+
+    /// Right-click handling: performance-overlay metrics menu, then window
+    /// title-bar context menus. Returns `(false, None)` when the click hits
+    /// nothing actionable so the caller can fall through.
+    fn handle_mouse_down_right(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+    ) -> Result<(bool, Option<String>)> {
+        use crate::data::ui_state::InputMode;
+
+        // Right-click on performance overlay: show metrics toggle menu
+        if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
+            let pos = &window.position;
+            if x >= pos.x.get() && x < pos.x.get() + pos.width.get()
+               && y >= pos.y.get() && y < pos.y.get() + pos.height.get() {
+                // Build performance metrics context menu
+                let items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
+                app_core.ui_state.popup_menu =
+                    Some(crate::data::ui_state::PopupMenu::new(items, (x, y + 1)));
+                app_core.ui_state.input_mode = InputMode::Menu;
+                app_core.needs_render = true;
+                return Ok((true, None));
+            }
+        }
+
+        // Right-click: show context menu for window title bars
+        for (name, window) in &app_core.ui_state.windows {
+            let pos = &window.position;
+            // Check if click is on the title bar (top row of window)
+            if y == pos.y.get() && x >= pos.x.get() && x < pos.x.get() + pos.width.get() {
+                // Build context menu items
+                let mut items = Vec::new();
+
+                // Don't allow closing the main window
+                if name != "main" && name != "command_input" {
+                    items.push(crate::data::ui_state::PopupMenuItem {
+                        text: "Close Window".to_string(),
+                        command: format!("__CLOSE_WINDOW__{}", name),
+                        disabled: false,
+                    });
+                }
+
+                items.push(crate::data::ui_state::PopupMenuItem {
+                    text: "Edit Window...".to_string(),
+                    command: format!("action:editwindow:{}", name),
+                    disabled: false,
+                });
+
+                items.push(crate::data::ui_state::PopupMenuItem {
+                    text: "Open Menu".to_string(),
+                    command: ".menu".to_string(),
+                    disabled: false,
+                });
+
+                if !items.is_empty() {
+                    // Position menu just below click point
+                    app_core.ui_state.popup_menu =
+                        Some(crate::data::ui_state::PopupMenu::new(items, (x, y + 1)));
+                    app_core.ui_state.input_mode = InputMode::Menu;
+                    app_core.needs_render = true;
+                    return Ok((true, None));
+                }
+            }
+        }
+
+        Ok((false, None))
+    }
+
+    /// Left-button release: finalize link drag-and-drop, commit window
+    /// drag/resize moves, and close text selections. Returns the command
+    /// (if any) produced by a completed link drop.
+    fn handle_mouse_up_left(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+    ) -> Result<(bool, Option<String>)> {
+        let mut command_to_send: Option<String> = None;
+
+        if let Some(link_drag) = app_core.ui_state.link_drag_state.take() {
+            let dx = (x as i16 - link_drag.start_pos.0 as i16).abs();
+            let dy = (y as i16 - link_drag.start_pos.1 as i16).abs();
+
+            if dx > 2 || dy > 2 {
+                let mut drop_target_hand: Option<String> = None;
+                let mut drop_target_id: Option<String> = None;
+
+                for (name, window) in &app_core.ui_state.windows {
+                    let pos = &window.position;
+                    if x >= pos.x.get()
+                        && x < pos.x.get() + pos.width.get()
+                        && y >= pos.y.get()
+                        && y < pos.y.get() + pos.height.get()
+                    {
+                        // First check if this is a hand widget (left or right only)
+                        if name == "left_hand" || name == "left" {
+                            drop_target_hand = Some("left".to_string());
+                            break;
+                        } else if name == "right_hand" || name == "right" {
+                            drop_target_hand = Some("right".to_string());
+                            break;
+                        }
+
+                        let window_rect = ratatui::layout::Rect {
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
+                        };
+
+                        // Inventory window: check link first, fallback to wear
+                        if matches!(window.content, crate::data::WindowContent::Inventory(_)) {
+                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                                drop_target_id = Some(target_link.exist_id);
+                            } else {
+                                drop_target_hand = Some("wear".to_string());
+                            }
+                            break;
+                        }
+
+                        // Container windows: check link first, fallback to container
+                        if let crate::data::WindowContent::Container { ref container_title } = window.content {
+                            // First: try to find a link at the drop position (nested container)
+                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                                drop_target_id = Some(target_link.exist_id);
+                            } else {
+                                // Fallback: the window's container as a
+                                // game-command target (command_target is
+                                // stow-correct; plain id would be "#stow").
+                                if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
+                                    drop_target_id = Some(container_data.command_target());
+                                }
+                            }
+                            break;  // Container window handled
+                        }
+
+                        // Items window: check link first, fallback to drop
+                        if matches!(window.content, crate::data::WindowContent::Items) {
+                            if let Some(target_link) = self.link_at_position(name, x, y, window_rect) {
+                                drop_target_id = Some(target_link.exist_id);
+                            }
+                            // No else - if no link clicked, fall through to "drop" at line ~1782
+                            break;  // Items window handled
+                        }
+
+                        // Otherwise check if we dropped on a link (non-container windows)
+                        if let Some(target_link) =
+                            self.link_at_position(name, x, y, window_rect)
+                        {
+                            drop_target_id = Some(target_link.exist_id);
+                            break;
+                        }
+                    }
+                }
+
+                let command = if let Some(hand_type) = drop_target_hand {
+                    format!(
+                        "_drag #{} {}\n",
+                        link_drag.link_data.exist_id, hand_type
+                    )
+                } else if let Some(target_id) = drop_target_id {
+                    format!(
+                        "_drag #{} #{}\n",
+                        link_drag.link_data.exist_id, target_id
+                    )
+                } else {
+                    format!("_drag #{} drop\n", link_drag.link_data.exist_id)
+                };
+                command_to_send = Some(command);
+            }
+        } else if let Some(pending_click) =
+            app_core.ui_state.pending_link_click.take()
+        {
+            let dx = (x as i16 - pending_click.click_pos.0 as i16).abs();
+            let dy = (y as i16 - pending_click.click_pos.1 as i16).abs();
+
+            if dx <= 2 && dy <= 2 {
+                // Web links open in the default browser, nothing goes upstream
+                if pending_click.link_data.exist_id == crate::data::URL_LINK_SENTINEL {
+                    if crate::data::is_web_url(&pending_click.link_data.noun) {
+                        if let Err(err) =
+                            crate::platform::open_url(&pending_click.link_data.noun)
+                        {
+                            app_core.add_system_message(&format!(
+                                "Cannot open {}: {}",
+                                pending_click.link_data.noun, err
+                            ));
+                        }
+                    }
+                // Handle <d> tags differently (direct commands vs context menus)
+                } else if pending_click.link_data.exist_id == "_direct_" {
+                    // <d> tag: Send text/noun as direct command
+                    let command = if !pending_click.link_data.noun.is_empty() {
+                        format!("{}\n", pending_click.link_data.noun)
+                    // Use cmd attribute
+                    } else {
+                        format!("{}\n", pending_click.link_data.text)
+                        // Use text content
+                    };
+                    tracing::info!(
+                        "Executing <d> direct command: {}",
+                        command.trim()
+                    );
+                    command_to_send = Some(command);
+                } else if let Some(ref coord) = pending_click.link_data.coord {
+                    // Link has coord field: Look up command in cmdlist and send directly
+                    if let Some(ref cmdlist) = app_core.cmdlist {
+                        if let Some(entry) = cmdlist.get(coord) {
+                            // Substitute placeholders in command
+                            let command = crate::cmdlist::CmdList::substitute_command(
+                                &entry.command,
+                                &pending_click.link_data.noun,
+                                &pending_click.link_data.exist_id,
+                                None,
+                            );
+                            tracing::info!(
+                                "Executing cmdlist command for '{}' (coord: {}): {}",
+                                pending_click.link_data.text,
+                                coord,
+                                command.trim()
+                            );
+                            command_to_send = Some(format!("{}\n", command));
+                        } else {
+                            tracing::warn!(
+                                "Coord {} not found in cmdlist for '{}'",
+                                coord,
+                                pending_click.link_data.text
+                            );
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Cmdlist not loaded - cannot resolve coord {} for '{}'",
+                            coord,
+                            pending_click.link_data.text
+                        );
+                    }
+                } else {
+                    // Regular <a> tag without coord: Request context menu
+                    let command = app_core.request_menu(
+                        pending_click.link_data.exist_id.clone(),
+                        pending_click.link_data.noun.clone(),
+                        pending_click.click_pos,
+                    );
+                    tracing::info!(
+                        "Sending _menu command for '{}' (exist_id: {})",
+                        pending_click.link_data.noun,
+                        pending_click.link_data.exist_id
+                    );
+                    command_to_send = Some(command);
+                }
+            } else {
+                tracing::debug!(
+                    "Link click cancelled - dragged {} pixels",
+                    dx.max(dy)
+                );
+            }
+        }
+
+        // Sync UI state positions back to layout WindowDefs after mouse resize/move
+        let mut window_layout_changed = false;
+        if let Some(drag_state) = &app_core.ui_state.mouse_drag {
+            if let Some(window) =
+                app_core.ui_state.get_window(&drag_state.window_name)
+            {
+                // Find the corresponding WindowDef in layout and update it
+                if let Some(window_def) = app_core
+                    .layout
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.name() == drag_state.window_name)
+                {
+                    let base = window_def.base_mut();
+                    base.col = window.position.x;
+                    base.row = window.position.y;
+                    base.cols = window.position.width;
+                    base.rows = window.position.height;
+                    tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
+                        drag_state.window_name, base.col.get(), base.row.get(), base.cols.get(), base.rows.get());
+                    window_layout_changed = true;
+                }
+
+                // Save ephemeral container window positions to widget_state.toml
+                if app_core.ui_state.ephemeral_windows.contains(&drag_state.window_name) {
+                    use crate::config::{Config, DialogPosition};
+                    let pos = DialogPosition {
+                        x: window.position.x.get(),
+                        y: window.position.y.get(),
+                        width: Some(window.position.width.get()),
+                        height: Some(window.position.height.get()),
+                    };
+                    app_core.saved_dialog_positions.containers.insert(
+                        drag_state.window_name.clone(),
+                        pos,
+                    );
+                    // Save to disk asynchronously (best-effort)
+                    let character = app_core.config.character.clone();
+                    let positions = app_core.saved_dialog_positions.clone();
+                    std::thread::spawn(move || {
+                        if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
+                            tracing::warn!("Failed to save container positions: {}", e);
+                        }
+                    });
+                    tracing::debug!("Saved ephemeral container position for '{}'", drag_state.window_name);
+                }
+            }
+        }
+
+        if window_layout_changed {
+            app_core.schedule_layout_autosave();
+        }
+
+        app_core.ui_state.mouse_drag = None;
+        app_core.ui_state.selection_drag_start = None;
+
+        // Handle text selection copy to clipboard
+        if let Some(ref selection) = app_core.ui_state.selection_state {
+            let auto_copy = app_core.config.ui.selection_auto_copy;
+
+            if auto_copy && !selection.is_empty() {
+                // Extract text from selection using the stored window name
+                let (start, end) = selection.normalized_range();
+                let window_name = &selection.window_name;
+
+                if let Some(text) = self.extract_selection_text(
+                    window_name, start.line, start.col, end.line, end.col,
+                ) {
+                    // Copy to clipboard
+                    match crate::clipboard::copy(&text) {
+                        Ok(()) => {
+                            tracing::info!(
+                                "Copied {} chars to clipboard from '{}'",
+                                text.len(),
+                                window_name
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to copy to clipboard: {}", e);
+                        }
+                    }
+                }
+            }
+            // Clear selection and unfreeze text window
+            if auto_copy {
+                // Unfreeze the text window before clearing selection
+                let window_to_unfreeze = selection.window_name.clone();
+                if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_to_unfreeze) {
+                    text_window.unfreeze_and_apply_pending();
+                } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_to_unfreeze) {
+                    tabbed_window.unfreeze_and_apply_pending();
+                }
+                app_core.ui_state.selection_state = None;
+            }
+            app_core.needs_render = true;
+        }
+
+
+        Ok((true, command_to_send))
+    }
+
+    /// Left-button drag: move an in-progress link drag, apply a window
+    /// move/resize gesture, or extend a text selection. `window_names` is
+    /// the caller's sorted window-name slice, used to index selections.
+    fn handle_mouse_drag_left(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+        window_names: &[String],
+    ) -> Result<(bool, Option<String>)> {
+        if let Some(ref mut link_drag) = app_core.ui_state.link_drag_state {
+            link_drag.current_pos = (x, y);
+            app_core.needs_render = true;
+        } else if let Some(drag_state) = app_core.ui_state.mouse_drag.clone() {
+            let dx = x as i32 - drag_state.start_pos.0 as i32;
+            let dy = y as i32 - drag_state.start_pos.1 as i32;
+
+            // Get terminal size for clamping windows within bounds
+            let (term_width, term_height) = self.size();
+
+            let (min_width_constraint, min_height_constraint) =
+                app_core.window_min_size(&drag_state.window_name);
+
+            if let Some(window) =
+                app_core.ui_state.get_window_mut(&drag_state.window_name)
+            {
+                // Geometry lives in the pure, unit-tested
+                // apply_window_drag (data/window.rs). The original
+                // window position at drag-start is `original_window_pos`
+                // (x, y, width, height).
+                let (ox, oy, ow, oh) = drag_state.original_window_pos;
+                window.position = crate::data::window::apply_window_drag(
+                    drag_state.operation,
+                    crate::data::WindowPosition {
+                        x: crate::data::geometry::Col::new(ox),
+                        y: crate::data::geometry::Row::new(oy),
+                        width: crate::data::geometry::Width::new(ow),
+                        height: crate::data::geometry::Height::new(oh),
+                    },
+                    dx,
+                    dy,
+                    min_width_constraint,
+                    min_height_constraint,
+                    term_width,
+                    term_height,
+                );
+                app_core.needs_render = true;
+            }
+        } else if app_core.ui_state.pending_link_click.is_some() {
+            app_core.ui_state.pending_link_click = None;
+        } else if let Some(_drag_start) = app_core.ui_state.selection_drag_start
+        {
+            // Update text selection on drag
+            if let Some(ref mut selection) = app_core.ui_state.selection_state {
+                // Find which window we're dragging in
+                for (name, window) in &app_core.ui_state.windows {
+                    let pos = &window.position;
+                    if x >= pos.x.get()
+                        && x < pos.x.get() + pos.width.get()
+                        && y >= pos.y.get()
+                        && y < pos.y.get() + pos.height.get()
+                    {
+                        let window_rect = ratatui::layout::Rect {
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
+                        };
+                        if let Some((line, col)) = self
+                            .mouse_to_text_coords(name, x, y, window_rect)
+                        {
+                            let window_index =
+                                window_names.binary_search(name).unwrap_or(0);
+                            selection.update_end(window_index, line, col);
+                            app_core.needs_render = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        Ok((true, None))
+    }
+
+    /// Left-button press: the main click hit-test. Handles menu clicks,
+    /// link activation/drag-start, window drag/resize initiation, text
+    /// selection start, and focus changes. `window_names` is the caller's
+    /// sorted window-name slice; `handle_menu_action_fn` runs menu commands.
+    fn handle_mouse_down_left(
+        &mut self,
+        app_core: &mut crate::core::AppCore,
+        x: u16,
+        y: u16,
+        modifiers: &crate::data::input::KeyModifiers,
+        window_names: &[String],
+        handle_menu_action_fn: impl Fn(&mut crate::core::AppCore, &mut Self, &str) -> Result<()>,
+    ) -> Result<(bool, Option<String>)> {
+        use crate::data::ui_state::InputMode;
+        use crate::data::{DragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
+        use ratatui::layout::Rect;
+
+        // If in menu mode, handle menu clicks first
+        if app_core.ui_state.input_mode == InputMode::Menu {
+            let mut clicked_item = None;
+            let (screen_width, screen_height) = self.size();
+
+            // Helper to calculate menu area with screen bounds
+            let calc_menu_area = |menu: &crate::data::ui_state::PopupMenu| -> (u16, u16, u16, u16) {
+                let pos = menu.get_position();
+                let menu_height = menu.get_items().len() as u16 + 2; // +2 for borders
+                let menu_width = menu
+                    .get_items()
+                    .iter()
+                    .map(|item| item.text.len())
+                    .max()
+                    .unwrap_or(10)
+                    as u16
+                    + 4; // +4 for borders and padding
+                let max_x = screen_width.saturating_sub(menu_width);
+                let max_y = screen_height.saturating_sub(menu_height);
+                let menu_x = pos.0.min(max_x);
+                let menu_y = pos.1.min(max_y);
+                (menu_x, menu_y, menu_width, menu_height)
+            };
+
+            // Check menus from DEEPEST to SHALLOWEST (deep_submenu first, popup_menu last)
+            // This ensures clicks on submenus are handled before checking parent menus
+
+            // Level 4: deep_submenu (deepest)
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.deep_submenu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit deep_submenu item at index {}", index);
+                    }
+                }
+            }
+
+            // Level 3: nested_submenu
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.nested_submenu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit nested_submenu item at index {}", index);
+                    }
+                }
+            }
+
+            // Level 2: submenu
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.submenu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit submenu item at index {}", index);
+                    }
+                }
+            }
+
+            // Level 1: popup_menu (shallowest)
+            if clicked_item.is_none() {
+                if let Some(ref menu) = app_core.ui_state.popup_menu {
+                    let menu_area = calc_menu_area(menu);
+                    if let Some(index) = menu.check_click(x, y, menu_area) {
+                        clicked_item = menu.get_items().get(index).cloned();
+                        tracing::debug!("Click hit popup_menu item at index {}", index);
+                    }
+                }
+            }
+
+            if let Some(item) = clicked_item {
+                let command = item.command.clone();
+                tracing::info!(
+                    "Menu item clicked: {} (command: {})",
+                    item.text,
+                    command
+                );
+
+                // Dispatch through the same path as keyboard Enter so
+                // mouse and keyboard menus can never diverge.
+                let result =
+                    self.handle_menu_command(command, app_core, &handle_menu_action_fn)?;
+                return Ok((true, result));
+            } else {
+                // Click outside menu - close it
+                app_core.ui_state.popup_menu = None;
+                app_core.ui_state.submenu = None;
+                app_core.ui_state.nested_submenu = None;
+                app_core.ui_state.deep_submenu = None;
+                app_core.ui_state.input_mode = InputMode::Normal;
+                app_core.needs_render = true;
+            }
+
+            // Don't process other clicks while in menu mode
+            return Ok((true, None));
+        }
+
+        // Mouse down handling (find links, start drags)
+        // Unfreeze any frozen text window before clearing selection
+        if let Some(ref selection) = app_core.ui_state.selection_state {
+            if let Some(text_window) = self.widget_manager.text_windows.get_mut(&selection.window_name) {
+                text_window.unfreeze_and_apply_pending();
+            } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&selection.window_name) {
+                tabbed_window.unfreeze_and_apply_pending();
+            }
+        }
+        app_core.ui_state.selection_state = None;
+
+        let topmost_window = find_topmost_window_at(&app_core.ui_state, x, y);
+        let (is_quickbar, window_pos) = app_core
+            .ui_state
+            .get_window(&topmost_window)
+            .map(|window| (window.widget_type == WidgetType::Quickbar, Some(window.position.clone())))
+            .unwrap_or((false, None));
+
+        if is_quickbar {
+            if let Some(quickbar_widget) =
+                self.widget_manager.quickbar_widgets.get_mut(&topmost_window)
+            {
+                let window_pos = window_pos.unwrap_or(crate::data::WindowPosition {
+                    x: crate::data::geometry::Col::new(0),
+                    y: crate::data::geometry::Row::new(0),
+                    width: crate::data::geometry::Width::new(0),
+                    height: crate::data::geometry::Height::new(0),
+                });
+                let rect = Rect {
+                    x: window_pos.x.get(),
+                    y: window_pos.y.get(),
+                    width: window_pos.width.get(),
+                    height: window_pos.height.get(),
+                };
+                if let Some(action) = quickbar_widget.handle_click(x, y, rect) {
+                    app_core.needs_render = true;
+                    match action {
+                        crate::frontend::tui::quickbar::QuickbarAction::OpenSwitcher => {
+                            self.open_quickbar_switcher(app_core, window_pos);
+                            app_core.needs_render = true;
+                            return Ok((true, None));
+                        }
+                        crate::frontend::tui::quickbar::QuickbarAction::ExecuteCommand(command) => {
+                            return Ok((true, Some(command)));
+                        }
+                        crate::frontend::tui::quickbar::QuickbarAction::MenuRequest { exist, noun } => {
+                            let command = app_core.request_menu(exist, noun, (x, y));
+                            return Ok((true, Some(command)));
+                        }
+                    }
+                }
+            }
+        }
+
+        let is_hotkeybar = app_core
+            .ui_state
+            .get_window(&topmost_window)
+            .map(|window| window.widget_type == WidgetType::Hotkeybar)
+            .unwrap_or(false);
+        if is_hotkeybar {
+            if let Some(bar_widget) = self
+                .widget_manager
+                .hotkey_bar_widgets
+                .get_mut(&topmost_window)
+            {
+                let window_pos = app_core
+                    .ui_state
+                    .get_window(&topmost_window)
+                    .map(|w| w.position.clone())
+                    .unwrap_or(crate::data::WindowPosition {
+                        x: crate::data::geometry::Col::new(0),
+                        y: crate::data::geometry::Row::new(0),
+                        width: crate::data::geometry::Width::new(0),
+                        height: crate::data::geometry::Height::new(0),
+                    });
+                let rect = Rect {
+                    x: window_pos.x.get(),
+                    y: window_pos.y.get(),
+                    width: window_pos.width.get(),
+                    height: window_pos.height.get(),
+                };
+                if let Some(command) = bar_widget.handle_click(x, y, rect) {
+                    app_core.needs_render = true;
+                    return Ok((true, Some(format!("{}\n", command))));
+                }
+            }
+        }
+
+        let mut found_window = None;
+        let mut drag_op = None;
+        let mut handled_tab_click: Option<(String, usize)> = None;
+
+        // Use topmost window for click processing (respects z-order for overlapping windows)
+        let clicked_window_name = Some(topmost_window.clone());
+
+        tracing::debug!(
+            "Mouse down at ({}, {}), topmost_window='{}'",
+            x, y, topmost_window
+        );
+
+        if let Some(window) = app_core.ui_state.get_window(&topmost_window) {
+            tracing::debug!(
+                "  Window pos: y={}, height={}, click_y={}, is_top_row={}",
+                window.position.y.get(), window.position.height.get(), y, y == window.position.y.get()
+            );
+            let pos = &window.position;
+            let name = &topmost_window;
+
+            // Check if window is locked (affects resize handle detection)
+            let is_window_locked = app_core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.base().name == *name)
+                .is_some_and(|w| w.base().locked);
+
+            // Handle tabbed text tab switching on click
+            if window.widget_type == WidgetType::TabbedText {
+                let rect = Rect {
+                    x: pos.x.get(),
+                    y: pos.y.get(),
+                    width: pos.width.get(),
+                    height: pos.height.get(),
+                };
+                if let Some(new_index) =
+                    self.handle_tabbed_click(name, rect, x, y)
+                {
+                    handled_tab_click = Some((name.clone(), new_index));
+                }
+            }
+
+            if handled_tab_click.is_none() {
+                if let Some(op) = resize_op_at(
+                    pos.x.get(),
+                    pos.y.get(),
+                    pos.width.get(),
+                    pos.height.get(),
+                    is_window_locked,
+                    x,
+                    y,
+                ) {
+                    drag_op = Some(op);
+                    found_window = Some(name.clone());
+                }
+            }
+        }
+
+        if let Some((win_name, new_index)) = handled_tab_click {
+            // Focus the tabbed window when clicking its tabs
+            app_core.ui_state.set_focus(Some(win_name.clone()));
+
+            if let Some(window_state) = app_core.ui_state.get_window_mut(&win_name) {
+                if let crate::data::WindowContent::TabbedText(tabbed) =
+                    &mut window_state.content
+                {
+                    if new_index < tabbed.tabs.len() {
+                        tabbed.active_tab_index = new_index;
+                    }
+                }
+            }
+            app_core.needs_render = true;
+            return Ok((true, None));
+        }
+
+        if let (Some(window_name), Some(operation)) = (found_window.clone(), drag_op.clone()) {
+            // Check if window is locked
+            let is_locked = app_core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.base().name == window_name)
+                .is_some_and(|w| w.base().locked);
+
+            // For Move operations, handle links based on modifiers and lock state:
+            // - Ctrl+click on link: ALWAYS starts link drag (regardless of lock)
+            // - Click on link + locked window: opens menu (can't move anyway)
+            // - Click on link + unlocked window: starts window move (repositioning)
+            let mut handled_as_link = false;
+            if operation == DragOperation::Move {
+                let has_ctrl = modifiers.ctrl;
+
+                // Check for links if Ctrl is held OR window is locked
+                if has_ctrl || is_locked {
+                    if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                        let pos = &window.position;
+                        let window_rect = ratatui::layout::Rect {
+                            x: pos.x.get(),
+                            y: pos.y.get(),
+                            width: pos.width.get(),
+                            height: pos.height.get(),
+                        };
+
+                        if let Some(link_data) =
+                            self.link_at_position(&window_name, x, y, window_rect)
+                        {
+                            if has_ctrl {
+                                // Ctrl+click always starts link drag
+                                app_core.ui_state.link_drag_state =
+                                    Some(LinkDragState {
+                                        link_data,
+                                        start_pos: (x, y),
+                                        current_pos: (x, y),
+                                    });
+                            } else {
+                                // Locked window without Ctrl: open menu
+                                app_core.ui_state.pending_link_click =
+                                    Some(PendingLinkClick {
+                                        link_data,
+                                        click_pos: (x, y),
+                                    });
+                            }
+                            handled_as_link = true;
+                        }
+                    }
+                }
+            }
+
+            // Only start window drag if not locked and not handled as link
+            if !handled_as_link && !is_locked {
+                if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                    let pos = &window.position;
+                    app_core.ui_state.mouse_drag = Some(MouseDragState {
+                        operation,
+                        window_name,
+                        start_pos: (x, y),
+                        original_window_pos: (pos.x.get(), pos.y.get(), pos.width.get(), pos.height.get()),
+                    });
+                }
+            }
+        } else if let Some(window_name) = clicked_window_name {
+            // Check if this window should receive focus (text/tabbedtext only)
+            let should_focus = app_core
+                .ui_state
+                .get_window(&window_name)
+                .map(|w| matches!(w.widget_type, WidgetType::Text | WidgetType::TabbedText))
+                .unwrap_or(false);
+
+            if let Some(window) = app_core.ui_state.get_window(&window_name) {
+                let pos = &window.position;
+                let window_rect = ratatui::layout::Rect {
+                    x: pos.x.get(),
+                    y: pos.y.get(),
+                    width: pos.width.get(),
+                    height: pos.height.get(),
+                };
+
+                tracing::debug!(
+                    "Non-drag click on '{}' at ({}, {}), window_rect: y={}, height={}",
+                    window_name, x, y, window_rect.y, window_rect.height
+                );
+
+                if let Some(link_data) =
+                    self.link_at_position(&window_name, x, y, window_rect)
+                {
+                    tracing::debug!("  Found link: {}", link_data.noun);
+                    let has_ctrl = modifiers.ctrl;
+
+                    if has_ctrl {
+                        app_core.ui_state.link_drag_state =
+                            Some(LinkDragState {
+                                link_data,
+                                start_pos: (x, y),
+                                current_pos: (x, y),
+                            });
+                    } else {
+                        app_core.ui_state.pending_link_click =
+                            Some(PendingLinkClick {
+                                link_data,
+                                click_pos: (x, y),
+                            });
+                    }
+                } else {
+                    // Start text selection
+                    app_core.ui_state.selection_drag_start = Some((x, y));
+
+                    // Convert mouse coords to text coords for selection
+                    if let Some((line, col)) = self.mouse_to_text_coords(
+                        &window_name,
+                        x,
+                        y,
+                        window_rect,
+                    ) {
+                        // Find window index from the stable (sorted) ordering
+                        let window_index = window_names
+                            .binary_search(&window_name)
+                            .unwrap_or(0);
+                        app_core.ui_state.selection_state =
+                            Some(crate::selection::SelectionState::new(
+                                window_index,
+                                line,
+                                col,
+                                window_name.clone(),
+                            ));
+
+                        // Freeze the text window if it's scrolled back
+                        // This prevents new lines from shifting selection indices
+                        if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_name) {
+                            if text_window.is_scrolled_back() {
+                                text_window.freeze_for_selection();
+                            }
+                        } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_name) {
+                            if tabbed_window.is_scrolled_back() {
+                                tabbed_window.freeze_for_selection();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Apply focus after borrow on windows ends
+            if should_focus {
+                app_core.ui_state.set_focus(Some(window_name));
+            }
+        }
+        Ok((true, None))
+    }
+
     /// Handle mouse events (extracted from main.rs Phase 4.1)
     /// Returns (handled, optional_command)
     pub fn handle_mouse_event(
@@ -282,7 +1867,7 @@ impl TuiFrontend {
     ) -> Result<(bool, Option<String>)> {
         use crate::data::ui_state::InputMode;
         use crate::data::input::MouseEventKind;
-        use crate::data::{DragOperation, DialogDragState, DialogDragOperation, LinkDragState, MouseDragState, PendingLinkClick, window::WidgetType};
+        use crate::data::{DialogDragState, DialogDragOperation};
         use crate::frontend::tui::dialog;
         use ratatui::layout::Rect;
 
@@ -300,640 +1885,73 @@ impl TuiFrontend {
             }
         }
 
-        // Stable window index = position in the sorted name list. A binary
-        // search at the two use sites replaces the HashMap previously built
-        // on every mouse event.
-        let mut window_names: Vec<&String> = app_core.ui_state.windows.keys().collect();
-        window_names.sort();
-
         // Handle window editor mouse events first (if open)
         if self.window_editor.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut window_editor) = self.window_editor {
-                use crate::frontend::tui::window_editor::WindowEditorMouseAction;
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        let action = window_editor.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        action
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        let action = window_editor.handle_mouse(*x, *y, true, area);
-                        app_core.needs_render = true;
-                        action
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        let action = window_editor.handle_mouse(*x, *y, false, area);
-                        app_core.needs_render = true;
-                        action
-                    }
-                    _ => WindowEditorMouseAction::None,
-                };
-
-                // Handle Save/Cancel actions from mouse clicks
-                match action {
-                    WindowEditorMouseAction::Save => {
-                        // Trigger save via simulated Ctrl+S key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_window_editor_keys(
-                            KeyCode::Char('s'),
-                            KeyModifiers::CTRL,
-                            app_core,
-                        );
-                        return Ok((true, None));
-                    }
-                    WindowEditorMouseAction::Cancel => {
-                        // Trigger cancel via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_window_editor_keys(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                        );
-                        return Ok((true, None));
-                    }
-                    WindowEditorMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) = self.handle_window_editor_mouse(mouse_event, app_core)? {
+                return Ok(result);
             }
         }
 
         // Handle highlight form mouse events
         if self.highlight_form.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut form) = self.highlight_form {
-                use crate::frontend::tui::highlight_form::HighlightFormMouseAction;
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, false, area)
-                    }
-                    _ => HighlightFormMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    HighlightFormMouseAction::Save => {
-                        // Trigger save via simulated Ctrl+S key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('s'),
-                            KeyModifiers::CTRL,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightFormMouseAction::Cancel => {
-                        // Trigger cancel via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightFormMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_highlight_form_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
         // Handle highlight browser mouse events
         if self.highlight_browser.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut browser) = self.highlight_browser {
-                use crate::frontend::tui::highlight_browser::HighlightBrowserMouseAction;
-
-                // Determine scroll direction
-                let scroll_direction: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    _ => HighlightBrowserMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    HighlightBrowserMouseAction::Edit => {
-                        // Trigger edit via simulated Enter key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Enter,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightBrowserMouseAction::Delete => {
-                        // Trigger delete via simulated Delete key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Delete,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightBrowserMouseAction::Add => {
-                        // Trigger add via simulated 'a' key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('a'),
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightBrowserMouseAction::Close => {
-                        // Trigger close via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    HighlightBrowserMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_highlight_browser_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
         // Handle keybind browser mouse events
         if self.keybind_browser.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut browser) = self.keybind_browser {
-                use crate::frontend::tui::keybind_browser::KeybindBrowserMouseAction;
-
-                // Determine scroll direction
-                let scroll_direction: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    _ => KeybindBrowserMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    KeybindBrowserMouseAction::Edit => {
-                        // Trigger edit via simulated Enter key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Enter,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::Delete => {
-                        // Trigger delete via simulated Delete key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Delete,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::Add => {
-                        // Trigger add via simulated 'a' key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('a'),
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::Close => {
-                        // Trigger close via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindBrowserMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_keybind_browser_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
         // Handle keybind form mouse events
         if self.keybind_form.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut form) = self.keybind_form {
-                use crate::frontend::tui::keybind_form::KeybindFormMouseAction;
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, false, area)
-                    }
-                    _ => KeybindFormMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    KeybindFormMouseAction::Save => {
-                        // Trigger save via simulated Ctrl+S key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('s'),
-                            KeyModifiers::CTRL,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindFormMouseAction::Delete => {
-                        // Trigger delete via simulated Ctrl+D key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('d'),
-                            KeyModifiers::CTRL,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindFormMouseAction::Cancel => {
-                        // Trigger cancel via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    KeybindFormMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_keybind_form_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
         // Handle color palette browser mouse events
         if self.color_palette_browser.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut browser) = self.color_palette_browser {
-                use crate::frontend::tui::color_palette_browser::ColorPaletteBrowserMouseAction;
-
-                // Determine scroll direction
-                let scroll_direction: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        browser.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    _ => ColorPaletteBrowserMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    ColorPaletteBrowserMouseAction::Edit => {
-                        // Trigger edit via simulated Enter key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Enter,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    ColorPaletteBrowserMouseAction::Delete => {
-                        // Trigger delete via simulated Delete key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Delete,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    ColorPaletteBrowserMouseAction::Add => {
-                        // Trigger add via simulated 'a' key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('a'),
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    ColorPaletteBrowserMouseAction::ToggleFavorite => {
-                        // Favorite already toggled in handle_mouse, just trigger save via 'f' key
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('f'),
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    ColorPaletteBrowserMouseAction::Close => {
-                        // Trigger close via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    ColorPaletteBrowserMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_color_palette_browser_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
         // Handle color form mouse events
         if self.color_form.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut form) = self.color_form {
-                use crate::frontend::tui::color_form::ColorFormMouseAction;
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, false, area)
-                    }
-                    _ => ColorFormMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    ColorFormMouseAction::Save => {
-                        // Trigger save via simulated Ctrl+S key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('s'),
-                            KeyModifiers::CTRL,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    ColorFormMouseAction::Cancel => {
-                        // Trigger cancel via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    ColorFormMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_color_form_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
         // Handle settings editor mouse events
         if self.settings_editor.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            };
-
-            if let Some(ref mut editor) = self.settings_editor {
-                use crate::frontend::tui::settings_editor::SettingsEditorMouseAction;
-
-                // Determine scroll direction
-                let scroll_direction: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-
-                let action = match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                        editor.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        editor.handle_mouse(*x, *y, true, scroll_direction, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        editor.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                        editor.handle_mouse(*x, *y, false, scroll_direction, area)
-                    }
-                    _ => SettingsEditorMouseAction::None,
-                };
-
-                app_core.needs_render = true;
-
-                match action {
-                    SettingsEditorMouseAction::EditValue => {
-                        // Trigger edit via simulated Enter key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Enter,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    SettingsEditorMouseAction::ToggleScope => {
-                        // Trigger scope toggle via simulated 'g' key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Char('g'),
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    SettingsEditorMouseAction::Close => {
-                        // Trigger close via simulated Esc key press
-                        use crate::data::input::KeyCode;
-                        use crate::data::input::KeyModifiers;
-                        let _ = self.handle_key_event(
-                            KeyCode::Esc,
-                            KeyModifiers::NONE,
-                            app_core,
-                            &handle_menu_action_fn,
-                        );
-                        return Ok((true, None));
-                    }
-                    SettingsEditorMouseAction::SelectRow | SettingsEditorMouseAction::None => {
-                        return Ok((true, None));
-                    }
-                }
+            if let Some(result) =
+                self.handle_settings_editor_mouse(app_core, kind, *x, *y, &handle_menu_action_fn)?
+            {
+                return Ok(result);
             }
         }
 
@@ -941,48 +1959,15 @@ impl TuiFrontend {
         // the browser; every other mouse event is consumed while open so
         // clicks don't fall through to the windows underneath.
         if self.spell_color_form.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
-            if let Some(ref mut form) = self.spell_color_form {
-                match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left)
-                    | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, true, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                        form.handle_mouse(*x, *y, false, area)
-                    }
-                    _ => {}
-                }
+            if let Some(result) = self.handle_spell_color_form_mouse(mouse_event, app_core)? {
+                return Ok(result);
             }
-            app_core.needs_render = true;
-            return Ok((true, None));
         }
 
         if self.spell_color_browser.is_some() {
-            let (width, height) = self.size();
-            let area = ratatui::layout::Rect { x: 0, y: 0, width, height };
-            if let Some(ref mut browser) = self.spell_color_browser {
-                let scroll: i8 = match kind {
-                    MouseEventKind::ScrollUp => -1,
-                    MouseEventKind::ScrollDown => 1,
-                    _ => 0,
-                };
-                match kind {
-                    MouseEventKind::Down(crate::data::input::MouseButton::Left)
-                    | MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                        browser.handle_mouse(*x, *y, true, scroll, area)
-                    }
-                    MouseEventKind::Up(crate::data::input::MouseButton::Left)
-                    | MouseEventKind::ScrollUp
-                    | MouseEventKind::ScrollDown => {
-                        browser.handle_mouse(*x, *y, false, scroll, area)
-                    }
-                    _ => {}
-                }
+            if let Some(result) = self.handle_spell_color_browser_mouse(mouse_event, app_core)? {
+                return Ok(result);
             }
-            app_core.needs_render = true;
-            return Ok((true, None));
         }
 
         if app_core.ui_state.input_mode == InputMode::Dialog {
@@ -1212,1024 +2197,37 @@ impl TuiFrontend {
             return Ok((true, command_to_send));
         }
 
+        // Stable window index = position in the sorted name list. A binary
+        // search at the two use sites replaces the HashMap previously built
+        // on every mouse event.
+        let mut window_names: Vec<String> = app_core.ui_state.windows.keys().cloned().collect();
+        window_names.sort();
+
         match kind {
             MouseEventKind::ScrollUp => {
-                // Find topmost window at mouse position (ephemeral windows have higher z-order)
-                let target_window = find_topmost_window_at(app_core, *x, *y);
-                self.scroll_window(&target_window, 10);
-                app_core.needs_render = true;
-                return Ok((true, None));
+                return self.handle_mouse_scroll(app_core, *x, *y, 10);
             }
             MouseEventKind::ScrollDown => {
-                // Find topmost window at mouse position (ephemeral windows have higher z-order)
-                let target_window = find_topmost_window_at(app_core, *x, *y);
-                self.scroll_window(&target_window, -10);
-                app_core.needs_render = true;
-                return Ok((true, None));
+                return self.handle_mouse_scroll(app_core, *x, *y, -10);
             }
             MouseEventKind::Down(crate::data::input::MouseButton::Left) => {
-                // If in menu mode, handle menu clicks first
-                if app_core.ui_state.input_mode == InputMode::Menu {
-                    let mut clicked_item = None;
-                    let (screen_width, screen_height) = self.size();
-
-                    // Helper to calculate menu area with screen bounds
-                    let calc_menu_area = |menu: &crate::data::ui_state::PopupMenu| -> (u16, u16, u16, u16) {
-                        let pos = menu.get_position();
-                        let menu_height = menu.get_items().len() as u16 + 2; // +2 for borders
-                        let menu_width = menu
-                            .get_items()
-                            .iter()
-                            .map(|item| item.text.len())
-                            .max()
-                            .unwrap_or(10)
-                            as u16
-                            + 4; // +4 for borders and padding
-                        let max_x = screen_width.saturating_sub(menu_width);
-                        let max_y = screen_height.saturating_sub(menu_height);
-                        let menu_x = pos.0.min(max_x);
-                        let menu_y = pos.1.min(max_y);
-                        (menu_x, menu_y, menu_width, menu_height)
-                    };
-
-                    // Check menus from DEEPEST to SHALLOWEST (deep_submenu first, popup_menu last)
-                    // This ensures clicks on submenus are handled before checking parent menus
-
-                    // Level 4: deep_submenu (deepest)
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.deep_submenu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit deep_submenu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    // Level 3: nested_submenu
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.nested_submenu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit nested_submenu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    // Level 2: submenu
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.submenu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit submenu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    // Level 1: popup_menu (shallowest)
-                    if clicked_item.is_none() {
-                        if let Some(ref menu) = app_core.ui_state.popup_menu {
-                            let menu_area = calc_menu_area(menu);
-                            if let Some(index) = menu.check_click(*x, *y, menu_area) {
-                                clicked_item = menu.get_items().get(index).cloned();
-                                tracing::debug!("Click hit popup_menu item at index {}", index);
-                            }
-                        }
-                    }
-
-                    if let Some(item) = clicked_item {
-                        let command = item.command.clone();
-                        tracing::info!(
-                            "Menu item clicked: {} (command: {})",
-                            item.text,
-                            command
-                        );
-
-                        // Handle command same way as Enter key
-                        if let Some(submenu_name) = command.strip_prefix("menu:") {
-                            // Config menu submenu - build nested submenu
-                            tracing::debug!("Clicked config submenu: {}", submenu_name);
-
-                            // Build the appropriate submenu items
-                            let items = match submenu_name {
-                                "addwindow" | "widgetpicker" => app_core.build_add_window_menu(),
-                                "editwindow" => app_core.build_edit_window_menu(),
-                                "hidewindow" => app_core.build_hide_window_menu(),
-                                "layouts" => app_core.build_layouts_submenu(),
-                                _ => Vec::new(),
-                            };
-
-                            if !items.is_empty() {
-                                // Get position from existing submenu (if any) or popup_menu
-                                let position = app_core
-                                    .ui_state
-                                    .submenu
-                                    .as_ref()
-                                    .map(|m| m.get_position())
-                                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                                    .unwrap_or((40, 12));
-                                let nested_pos = (position.0 + 2, position.1);
-
-                                // Create nested_submenu since we already have submenu
-                                app_core.ui_state.nested_submenu =
-                                    Some(crate::data::ui_state::PopupMenu::new(
-                                        items,
-                                        nested_pos,
-                                    ));
-                                tracing::info!("Opened nested submenu from menu: {}", submenu_name);
-                            } else {
-                                tracing::warn!("No items for menu submenu: {}", submenu_name);
-                            }
-                        } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-                            // Known-windows list: flip this offer's show/hide
-                            // and close the menu like any other menu action —
-                            // bulk toggling lives in the GUI checkbox panel.
-                            let offer_id = offer_id.to_string();
-                            app_core.toggle_window_offer(&offer_id);
-                            app_core.ui_state.popup_menu = None;
-                            app_core.ui_state.submenu = None;
-                            app_core.ui_state.nested_submenu = None;
-                            app_core.ui_state.deep_submenu = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                            app_core.needs_render = true;
-                            return Ok((true, None));
-                        } else if let Some(category) = command.strip_prefix("__SUBMENU__") {
-                            // Context menu or .menu submenu
-                            // Try build_submenu first (for .menu categories)
-                            let items = app_core.build_submenu(category);
-                            let items = if !items.is_empty() {
-                                items
-                            } else if let Some(items) = app_core.menu_categories.get(category) {
-                                items.clone()
-                            } else {
-                                Vec::new()
-                            };
-
-                            if !items.is_empty() {
-                                let position = app_core
-                                    .ui_state
-                                    .popup_menu
-                                    .as_ref()
-                                    .map(|m| m.get_position())
-                                    .unwrap_or((40, 12));
-                                let submenu_pos = (position.0 + 2, position.1);
-                                app_core.ui_state.submenu =
-                                    Some(crate::data::ui_state::PopupMenu::new(
-                                        items,
-                                        submenu_pos,
-                                    ));
-                                tracing::info!(
-                                    "Opened submenu: {}",
-                                    category
-                                );
-                            }
-                        } else if !command.is_empty() {
-                            // Close menu first
-                            app_core.ui_state.popup_menu = None;
-                            app_core.ui_state.submenu = None;
-                            app_core.ui_state.nested_submenu = None;
-                            app_core.ui_state.deep_submenu = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-
-                            // Handle window close command from right-click menu
-                            if let Some(window_name) = command.strip_prefix("__CLOSE_WINDOW__") {
-                                // Check if it's an ephemeral window
-                                if app_core.ui_state.ephemeral_windows.contains(window_name) {
-                                    app_core.ui_state.remove_window(window_name);
-                                    app_core.ui_state.ephemeral_windows.remove(window_name);
-                                    app_core.add_system_message(&format!(
-                                        "Closed container window: {}",
-                                        window_name
-                                    ));
-                                } else {
-                                    // Regular window - just hide it
-                                    app_core.hide_window(window_name);
-                                }
-                                app_core.needs_render = true;
-                                return Ok((true, None));
-                            }
-
-                            // Handle perf menu close
-                            if command == "__PERF_MENU_CLOSE__" {
-                                app_core.ui_state.popup_menu = None;
-                                app_core.ui_state.input_mode = InputMode::Normal;
-                                app_core.needs_render = true;
-                                return Ok((true, None));
-                            }
-
-                            // Handle performance metric toggle from right-click menu
-                            if let Some(metric) = command.strip_prefix("__TOGGLE_PERF__") {
-                                match metric {
-                                    "fps" => app_core.config.ui.perf_show_fps = !app_core.config.ui.perf_show_fps,
-                                    "frame_times" => app_core.config.ui.perf_show_frame_times = !app_core.config.ui.perf_show_frame_times,
-                                    "render_times" => app_core.config.ui.perf_show_render_times = !app_core.config.ui.perf_show_render_times,
-                                    "ui_times" => app_core.config.ui.perf_show_ui_times = !app_core.config.ui.perf_show_ui_times,
-                                    "wrap_times" => app_core.config.ui.perf_show_wrap_times = !app_core.config.ui.perf_show_wrap_times,
-                                    "net" => app_core.config.ui.perf_show_net = !app_core.config.ui.perf_show_net,
-                                    "parse" => app_core.config.ui.perf_show_parse = !app_core.config.ui.perf_show_parse,
-                                    "events" => app_core.config.ui.perf_show_events = !app_core.config.ui.perf_show_events,
-                                    "memory" => app_core.config.ui.perf_show_memory = !app_core.config.ui.perf_show_memory,
-                                    "lines" => app_core.config.ui.perf_show_lines = !app_core.config.ui.perf_show_lines,
-                                    "uptime" => app_core.config.ui.perf_show_uptime = !app_core.config.ui.perf_show_uptime,
-                                    "jitter" => app_core.config.ui.perf_show_jitter = !app_core.config.ui.perf_show_jitter,
-                                    "frame_spikes" => app_core.config.ui.perf_show_frame_spikes = !app_core.config.ui.perf_show_frame_spikes,
-                                    "event_lag" => app_core.config.ui.perf_show_event_lag = !app_core.config.ui.perf_show_event_lag,
-                                    "memory_delta" => app_core.config.ui.perf_show_memory_delta = !app_core.config.ui.perf_show_memory_delta,
-                                    _ => {}
-                                }
-                                // Re-apply enabled flags to perf_stats collector
-                                let data = app_core.perf_overlay_data(true);
-                                app_core.perf_stats.apply_enabled_from(&data);
-                                // Rebuild menu with updated checkmarks (keep it open)
-                                if let Some(ref mut menu) = app_core.ui_state.popup_menu {
-                                    menu.items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
-                                    // Keep selection in bounds
-                                    if menu.selected >= menu.items.len() {
-                                        menu.selected = menu.items.len().saturating_sub(1);
-                                    }
-                                }
-                                app_core.needs_render = true;
-                                return Ok((true, None));
-                            }
-
-                            // Check if this is an internal action or game command
-                            if command.starts_with("action:") {
-                                // Internal action - handle it
-                                if let Err(e) = handle_menu_action_fn(app_core, self, &command) {
-                                    tracing::error!("Menu action error: {}", e);
-                                }
-                                app_core.needs_render = true;
-                                return Ok((true, None));
-                            } else if command.starts_with(".") {
-                                // Dot command - close menu and process through normal dot command handler
-                                app_core.ui_state.popup_menu = None;
-                                app_core.ui_state.submenu = None;
-                                app_core.ui_state.nested_submenu = None;
-                                app_core.ui_state.deep_submenu = None;
-                                app_core.ui_state.input_mode = InputMode::Normal;
-                                // Process the dot command (e.g., .menu, .help)
-                                if let Err(e) = app_core.send_command(command.to_string()) {
-                                    tracing::error!("Dot command error: {}", e);
-                                }
-                                app_core.needs_render = true;
-                                return Ok((true, None));
-                            } else {
-                                if let Some(id) = command.strip_prefix("_qlink change ") {
-                                    let id = id.trim();
-                                    if !id.is_empty() {
-                                        app_core.ui_state.active_quickbar_id = Some(id.to_string());
-                                        if !app_core.ui_state.quickbar_order.contains(&id.to_string()) {
-                                            app_core.ui_state.quickbar_order.push(id.to_string());
-                                        }
-                                    }
-                                }
-                                // Game command - return it for sending to server
-                                app_core.needs_render = true;
-                                return Ok((true, Some(format!("{}\n", command))));
-                            }
-                        }
-                        app_core.needs_render = true;
-                    } else {
-                        // Click outside menu - close it
-                        app_core.ui_state.popup_menu = None;
-                        app_core.ui_state.submenu = None;
-                        app_core.ui_state.nested_submenu = None;
-                        app_core.ui_state.deep_submenu = None;
-                        app_core.ui_state.input_mode = InputMode::Normal;
-                        app_core.needs_render = true;
-                    }
-
-                    // Don't process other clicks while in menu mode
-                    return Ok((true, None));
-                }
-
-                // Mouse down handling (find links, start drags)
-                // Unfreeze any frozen text window before clearing selection
-                if let Some(ref selection) = app_core.ui_state.selection_state {
-                    if let Some(text_window) = self.widget_manager.text_windows.get_mut(&selection.window_name) {
-                        text_window.unfreeze_and_apply_pending();
-                    } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&selection.window_name) {
-                        tabbed_window.unfreeze_and_apply_pending();
-                    }
-                }
-                app_core.ui_state.selection_state = None;
-
-                let topmost_window = find_topmost_window_at(app_core, *x, *y);
-                let (is_quickbar, window_pos) = app_core
-                    .ui_state
-                    .get_window(&topmost_window)
-                    .map(|window| (window.widget_type == WidgetType::Quickbar, Some(window.position.clone())))
-                    .unwrap_or((false, None));
-
-                if is_quickbar {
-                    if let Some(quickbar_widget) =
-                        self.widget_manager.quickbar_widgets.get_mut(&topmost_window)
-                    {
-                        let window_pos = window_pos.unwrap_or(crate::data::WindowPosition {
-                            x: crate::data::geometry::Col::new(0),
-                            y: crate::data::geometry::Row::new(0),
-                            width: crate::data::geometry::Width::new(0),
-                            height: crate::data::geometry::Height::new(0),
-                        });
-                        let rect = Rect {
-                            x: window_pos.x.get(),
-                            y: window_pos.y.get(),
-                            width: window_pos.width.get(),
-                            height: window_pos.height.get(),
-                        };
-                        if let Some(action) = quickbar_widget.handle_click(*x, *y, rect) {
-                            app_core.needs_render = true;
-                            match action {
-                                crate::frontend::tui::quickbar::QuickbarAction::OpenSwitcher => {
-                                    self.open_quickbar_switcher(app_core, window_pos);
-                                    app_core.needs_render = true;
-                                    return Ok((true, None));
-                                }
-                                crate::frontend::tui::quickbar::QuickbarAction::ExecuteCommand(command) => {
-                                    return Ok((true, Some(command)));
-                                }
-                                crate::frontend::tui::quickbar::QuickbarAction::MenuRequest { exist, noun } => {
-                                    let command = app_core.request_menu(exist, noun, (*x, *y));
-                                    return Ok((true, Some(command)));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let is_hotkeybar = app_core
-                    .ui_state
-                    .get_window(&topmost_window)
-                    .map(|window| window.widget_type == WidgetType::Hotkeybar)
-                    .unwrap_or(false);
-                if is_hotkeybar {
-                    if let Some(bar_widget) = self
-                        .widget_manager
-                        .hotkey_bar_widgets
-                        .get_mut(&topmost_window)
-                    {
-                        let window_pos = app_core
-                            .ui_state
-                            .get_window(&topmost_window)
-                            .map(|w| w.position.clone())
-                            .unwrap_or(crate::data::WindowPosition {
-                                x: crate::data::geometry::Col::new(0),
-                                y: crate::data::geometry::Row::new(0),
-                                width: crate::data::geometry::Width::new(0),
-                                height: crate::data::geometry::Height::new(0),
-                            });
-                        let rect = Rect {
-                            x: window_pos.x.get(),
-                            y: window_pos.y.get(),
-                            width: window_pos.width.get(),
-                            height: window_pos.height.get(),
-                        };
-                        if let Some(command) = bar_widget.handle_click(*x, *y, rect) {
-                            app_core.needs_render = true;
-                            return Ok((true, Some(format!("{}\n", command))));
-                        }
-                    }
-                }
-
-                let mut found_window = None;
-                let mut drag_op = None;
-                let mut handled_tab_click: Option<(String, usize)> = None;
-
-                // Use topmost window for click processing (respects z-order for overlapping windows)
-                let clicked_window_name = Some(topmost_window.clone());
-
-                tracing::debug!(
-                    "Mouse down at ({}, {}), topmost_window='{}'",
-                    *x, *y, topmost_window
+                return self.handle_mouse_down_left(
+                    app_core,
+                    *x,
+                    *y,
+                    modifiers,
+                    &window_names,
+                    handle_menu_action_fn,
                 );
-
-                if let Some(window) = app_core.ui_state.get_window(&topmost_window) {
-                    tracing::debug!(
-                        "  Window pos: y={}, height={}, click_y={}, is_top_row={}",
-                        window.position.y.get(), window.position.height.get(), *y, *y == window.position.y.get()
-                    );
-                    let pos = &window.position;
-                    let name = &topmost_window;
-
-                    // Check if window is locked (affects resize handle detection)
-                    let is_window_locked = app_core
-                        .layout
-                        .windows
-                        .iter()
-                        .find(|w| w.base().name == *name)
-                        .is_some_and(|w| w.base().locked);
-
-                    // Handle tabbed text tab switching on click
-                    if window.widget_type == WidgetType::TabbedText {
-                        let rect = Rect {
-                            x: pos.x.get(),
-                            y: pos.y.get(),
-                            width: pos.width.get(),
-                            height: pos.height.get(),
-                        };
-                        if let Some(new_index) =
-                            self.handle_tabbed_click(name, rect, *x, *y)
-                        {
-                            handled_tab_click = Some((name.clone(), new_index));
-                        }
-                    }
-
-                    if handled_tab_click.is_none() {
-                        let right_col = pos.x.get() + pos.width.get() - 1;
-                        let bottom_row = pos.y.get() + pos.height.get() - 1;
-                        let has_horizontal_space = pos.width.get() > 1;
-                        // Only use bottom row as resize handle if:
-                        // 1. Window is NOT locked (locked windows can't be resized anyway)
-                        // 2. Window has enough height (> 2) so there's content area between
-                        //    top row (move) and bottom row (resize). For small widgets (height <= 2),
-                        //    bottom row IS the content area.
-                        let can_resize_bottom = !is_window_locked && pos.height.get() > 2;
-                        let can_resize_right = !is_window_locked;
-
-                        if has_horizontal_space
-                            && can_resize_bottom
-                            && *x == right_col
-                            && *y == bottom_row
-                        {
-                            drag_op = Some(DragOperation::ResizeBottomRight);
-                            found_window = Some(name.clone());
-                        } else if can_resize_right && has_horizontal_space && *x == right_col {
-                            drag_op = Some(DragOperation::ResizeRight);
-                            found_window = Some(name.clone());
-                        } else if can_resize_bottom && *y == bottom_row {
-                            drag_op = Some(DragOperation::ResizeBottom);
-                            found_window = Some(name.clone());
-                        } else if *y == pos.y.get() {
-                            drag_op = Some(DragOperation::Move);
-                            found_window = Some(name.clone());
-                        }
-                    }
-                }
-
-                if let Some((win_name, new_index)) = handled_tab_click {
-                    // Focus the tabbed window when clicking its tabs
-                    app_core.ui_state.set_focus(Some(win_name.clone()));
-
-                    if let Some(window_state) = app_core.ui_state.get_window_mut(&win_name) {
-                        if let crate::data::WindowContent::TabbedText(tabbed) =
-                            &mut window_state.content
-                        {
-                            if new_index < tabbed.tabs.len() {
-                                tabbed.active_tab_index = new_index;
-                            }
-                        }
-                    }
-                    app_core.needs_render = true;
-                    return Ok((true, None));
-                }
-
-                if let (Some(window_name), Some(operation)) = (found_window.clone(), drag_op.clone()) {
-                    // Check if window is locked
-                    let is_locked = app_core
-                        .layout
-                        .windows
-                        .iter()
-                        .find(|w| w.base().name == window_name)
-                        .is_some_and(|w| w.base().locked);
-
-                    // For Move operations, handle links based on modifiers and lock state:
-                    // - Ctrl+click on link: ALWAYS starts link drag (regardless of lock)
-                    // - Click on link + locked window: opens menu (can't move anyway)
-                    // - Click on link + unlocked window: starts window move (repositioning)
-                    let mut handled_as_link = false;
-                    if operation == DragOperation::Move {
-                        let has_ctrl = modifiers.ctrl;
-
-                        // Check for links if Ctrl is held OR window is locked
-                        if has_ctrl || is_locked {
-                            if let Some(window) = app_core.ui_state.get_window(&window_name) {
-                                let pos = &window.position;
-                                let window_rect = ratatui::layout::Rect {
-                                    x: pos.x.get(),
-                                    y: pos.y.get(),
-                                    width: pos.width.get(),
-                                    height: pos.height.get(),
-                                };
-
-                                if let Some(link_data) =
-                                    self.link_at_position(&window_name, *x, *y, window_rect)
-                                {
-                                    if has_ctrl {
-                                        // Ctrl+click always starts link drag
-                                        app_core.ui_state.link_drag_state =
-                                            Some(LinkDragState {
-                                                link_data,
-                                                start_pos: (*x, *y),
-                                                current_pos: (*x, *y),
-                                            });
-                                    } else {
-                                        // Locked window without Ctrl: open menu
-                                        app_core.ui_state.pending_link_click =
-                                            Some(PendingLinkClick {
-                                                link_data,
-                                                click_pos: (*x, *y),
-                                            });
-                                    }
-                                    handled_as_link = true;
-                                }
-                            }
-                        }
-                    }
-
-                    // Only start window drag if not locked and not handled as link
-                    if !handled_as_link && !is_locked {
-                        if let Some(window) = app_core.ui_state.get_window(&window_name) {
-                            let pos = &window.position;
-                            app_core.ui_state.mouse_drag = Some(MouseDragState {
-                                operation,
-                                window_name,
-                                start_pos: (*x, *y),
-                                original_window_pos: (pos.x.get(), pos.y.get(), pos.width.get(), pos.height.get()),
-                            });
-                        }
-                    }
-                } else if let Some(window_name) = clicked_window_name {
-                    // Check if this window should receive focus (text/tabbedtext only)
-                    let should_focus = app_core
-                        .ui_state
-                        .get_window(&window_name)
-                        .map(|w| matches!(w.widget_type, WidgetType::Text | WidgetType::TabbedText))
-                        .unwrap_or(false);
-
-                    if let Some(window) = app_core.ui_state.get_window(&window_name) {
-                        let pos = &window.position;
-                        let window_rect = ratatui::layout::Rect {
-                            x: pos.x.get(),
-                            y: pos.y.get(),
-                            width: pos.width.get(),
-                            height: pos.height.get(),
-                        };
-
-                        tracing::debug!(
-                            "Non-drag click on '{}' at ({}, {}), window_rect: y={}, height={}",
-                            window_name, *x, *y, window_rect.y, window_rect.height
-                        );
-
-                        if let Some(link_data) =
-                            self.link_at_position(&window_name, *x, *y, window_rect)
-                        {
-                            tracing::debug!("  Found link: {}", link_data.noun);
-                            let has_ctrl = modifiers.ctrl;
-
-                            if has_ctrl {
-                                app_core.ui_state.link_drag_state =
-                                    Some(LinkDragState {
-                                        link_data,
-                                        start_pos: (*x, *y),
-                                        current_pos: (*x, *y),
-                                    });
-                            } else {
-                                app_core.ui_state.pending_link_click =
-                                    Some(PendingLinkClick {
-                                        link_data,
-                                        click_pos: (*x, *y),
-                                    });
-                            }
-                        } else {
-                            // Start text selection
-                            app_core.ui_state.selection_drag_start = Some((*x, *y));
-
-                            // Convert mouse coords to text coords for selection
-                            if let Some((line, col)) = self.mouse_to_text_coords(
-                                &window_name,
-                                *x,
-                                *y,
-                                window_rect,
-                            ) {
-                                // Find window index from the stable (sorted) ordering
-                                let window_index = window_names
-                                    .binary_search(&&window_name)
-                                    .unwrap_or(0);
-                                app_core.ui_state.selection_state =
-                                    Some(crate::selection::SelectionState::new(
-                                        window_index,
-                                        line,
-                                        col,
-                                        window_name.clone(),
-                                    ));
-
-                                // Freeze the text window if it's scrolled back
-                                // This prevents new lines from shifting selection indices
-                                if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_name) {
-                                    if text_window.is_scrolled_back() {
-                                        text_window.freeze_for_selection();
-                                    }
-                                } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_name) {
-                                    if tabbed_window.is_scrolled_back() {
-                                        tabbed_window.freeze_for_selection();
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Apply focus after borrow on windows ends
-                    if should_focus {
-                        app_core.ui_state.set_focus(Some(window_name));
-                    }
-                }
-                return Ok((true, None));
             }
             MouseEventKind::Drag(crate::data::input::MouseButton::Left) => {
-                if let Some(ref mut link_drag) = app_core.ui_state.link_drag_state {
-                    link_drag.current_pos = (*x, *y);
-                    app_core.needs_render = true;
-                } else if let Some(drag_state) = app_core.ui_state.mouse_drag.clone() {
-                    let dx = *x as i32 - drag_state.start_pos.0 as i32;
-                    let dy = *y as i32 - drag_state.start_pos.1 as i32;
-
-                    // Get terminal size for clamping windows within bounds
-                    let (term_width, term_height) = self.size();
-
-                    let (min_width_constraint, min_height_constraint) =
-                        app_core.window_min_size(&drag_state.window_name);
-
-                    if let Some(window) =
-                        app_core.ui_state.get_window_mut(&drag_state.window_name)
-                    {
-                        // Geometry lives in the pure, unit-tested
-                        // apply_window_drag (data/window.rs). The original
-                        // window position at drag-start is `original_window_pos`
-                        // (x, y, width, height).
-                        let (ox, oy, ow, oh) = drag_state.original_window_pos;
-                        window.position = crate::data::window::apply_window_drag(
-                            drag_state.operation,
-                            crate::data::WindowPosition {
-                                x: crate::data::geometry::Col::new(ox),
-                                y: crate::data::geometry::Row::new(oy),
-                                width: crate::data::geometry::Width::new(ow),
-                                height: crate::data::geometry::Height::new(oh),
-                            },
-                            dx,
-                            dy,
-                            min_width_constraint,
-                            min_height_constraint,
-                            term_width,
-                            term_height,
-                        );
-                        app_core.needs_render = true;
-                    }
-                } else if app_core.ui_state.pending_link_click.is_some() {
-                    app_core.ui_state.pending_link_click = None;
-                } else if let Some(_drag_start) = app_core.ui_state.selection_drag_start
-                {
-                    // Update text selection on drag
-                    if let Some(ref mut selection) = app_core.ui_state.selection_state {
-                        // Find which window we're dragging in
-                        for (name, window) in &app_core.ui_state.windows {
-                            let pos = &window.position;
-                            if *x >= pos.x.get()
-                                && *x < pos.x.get() + pos.width.get()
-                                && *y >= pos.y.get()
-                                && *y < pos.y.get() + pos.height.get()
-                            {
-                                let window_rect = ratatui::layout::Rect {
-                                    x: pos.x.get(),
-                                    y: pos.y.get(),
-                                    width: pos.width.get(),
-                                    height: pos.height.get(),
-                                };
-                                if let Some((line, col)) = self
-                                    .mouse_to_text_coords(name, *x, *y, window_rect)
-                                {
-                                    let window_index =
-                                        window_names.binary_search(&name).unwrap_or(0);
-                                    selection.update_end(window_index, line, col);
-                                    app_core.needs_render = true;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                return Ok((true, None));
+                return self.handle_mouse_drag_left(app_core, *x, *y, &window_names);
             }
             MouseEventKind::Up(crate::data::input::MouseButton::Left) => {
-                let mut command_to_send: Option<String> = None;
-
-                if let Some(link_drag) = app_core.ui_state.link_drag_state.take() {
-                    let dx = (*x as i16 - link_drag.start_pos.0 as i16).abs();
-                    let dy = (*y as i16 - link_drag.start_pos.1 as i16).abs();
-
-                    if dx > 2 || dy > 2 {
-                        let mut drop_target_hand: Option<String> = None;
-                        let mut drop_target_id: Option<String> = None;
-
-                        for (name, window) in &app_core.ui_state.windows {
-                            let pos = &window.position;
-                            if *x >= pos.x.get()
-                                && *x < pos.x.get() + pos.width.get()
-                                && *y >= pos.y.get()
-                                && *y < pos.y.get() + pos.height.get()
-                            {
-                                // First check if this is a hand widget (left or right only)
-                                if name == "left_hand" || name == "left" {
-                                    drop_target_hand = Some("left".to_string());
-                                    break;
-                                } else if name == "right_hand" || name == "right" {
-                                    drop_target_hand = Some("right".to_string());
-                                    break;
-                                }
-
-                                let window_rect = ratatui::layout::Rect {
-                                    x: pos.x.get(),
-                                    y: pos.y.get(),
-                                    width: pos.width.get(),
-                                    height: pos.height.get(),
-                                };
-
-                                // Inventory window: check link first, fallback to wear
-                                if matches!(window.content, crate::data::WindowContent::Inventory(_)) {
-                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
-                                        drop_target_id = Some(target_link.exist_id);
-                                    } else {
-                                        drop_target_hand = Some("wear".to_string());
-                                    }
-                                    break;
-                                }
-
-                                // Container windows: check link first, fallback to container
-                                if let crate::data::WindowContent::Container { ref container_title } = window.content {
-                                    // First: try to find a link at the drop position (nested container)
-                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
-                                        drop_target_id = Some(target_link.exist_id);
-                                    } else {
-                                        // Fallback: the window's container as a
-                                        // game-command target (command_target is
-                                        // stow-correct; plain id would be "#stow").
-                                        if let Some(container_data) = app_core.game_state.objects.find_container(container_title) {
-                                            drop_target_id = Some(container_data.command_target());
-                                        }
-                                    }
-                                    break;  // Container window handled
-                                }
-
-                                // Items window: check link first, fallback to drop
-                                if matches!(window.content, crate::data::WindowContent::Items) {
-                                    if let Some(target_link) = self.link_at_position(name, *x, *y, window_rect) {
-                                        drop_target_id = Some(target_link.exist_id);
-                                    }
-                                    // No else - if no link clicked, fall through to "drop" at line ~1782
-                                    break;  // Items window handled
-                                }
-
-                                // Otherwise check if we dropped on a link (non-container windows)
-                                if let Some(target_link) =
-                                    self.link_at_position(name, *x, *y, window_rect)
-                                {
-                                    drop_target_id = Some(target_link.exist_id);
-                                    break;
-                                }
-                            }
-                        }
-
-                        let command = if let Some(hand_type) = drop_target_hand {
-                            format!(
-                                "_drag #{} {}\n",
-                                link_drag.link_data.exist_id, hand_type
-                            )
-                        } else if let Some(target_id) = drop_target_id {
-                            format!(
-                                "_drag #{} #{}\n",
-                                link_drag.link_data.exist_id, target_id
-                            )
-                        } else {
-                            format!("_drag #{} drop\n", link_drag.link_data.exist_id)
-                        };
-                        command_to_send = Some(command);
-                    }
-                } else if let Some(pending_click) =
-                    app_core.ui_state.pending_link_click.take()
-                {
-                    let dx = (*x as i16 - pending_click.click_pos.0 as i16).abs();
-                    let dy = (*y as i16 - pending_click.click_pos.1 as i16).abs();
-
-                    if dx <= 2 && dy <= 2 {
-                        // Handle <d> tags differently (direct commands vs context menus)
-                        if pending_click.link_data.exist_id == "_direct_" {
-                            // <d> tag: Send text/noun as direct command
-                            let command = if !pending_click.link_data.noun.is_empty() {
-                                format!("{}\n", pending_click.link_data.noun)
-                            // Use cmd attribute
-                            } else {
-                                format!("{}\n", pending_click.link_data.text)
-                                // Use text content
-                            };
-                            tracing::info!(
-                                "Executing <d> direct command: {}",
-                                command.trim()
-                            );
-                            command_to_send = Some(command);
-                        } else if let Some(ref coord) = pending_click.link_data.coord {
-                            // Link has coord field: Look up command in cmdlist and send directly
-                            if let Some(ref cmdlist) = app_core.cmdlist {
-                                if let Some(entry) = cmdlist.get(coord) {
-                                    // Substitute placeholders in command
-                                    let command = crate::cmdlist::CmdList::substitute_command(
-                                        &entry.command,
-                                        &pending_click.link_data.noun,
-                                        &pending_click.link_data.exist_id,
-                                        None,
-                                    );
-                                    tracing::info!(
-                                        "Executing cmdlist command for '{}' (coord: {}): {}",
-                                        pending_click.link_data.text,
-                                        coord,
-                                        command.trim()
-                                    );
-                                    command_to_send = Some(format!("{}\n", command));
-                                } else {
-                                    tracing::warn!(
-                                        "Coord {} not found in cmdlist for '{}'",
-                                        coord,
-                                        pending_click.link_data.text
-                                    );
-                                }
-                            } else {
-                                tracing::warn!(
-                                    "Cmdlist not loaded - cannot resolve coord {} for '{}'",
-                                    coord,
-                                    pending_click.link_data.text
-                                );
-                            }
-                        } else {
-                            // Regular <a> tag without coord: Request context menu
-                            let command = app_core.request_menu(
-                                pending_click.link_data.exist_id.clone(),
-                                pending_click.link_data.noun.clone(),
-                                pending_click.click_pos,
-                            );
-                            tracing::info!(
-                                "Sending _menu command for '{}' (exist_id: {})",
-                                pending_click.link_data.noun,
-                                pending_click.link_data.exist_id
-                            );
-                            command_to_send = Some(command);
-                        }
-                    } else {
-                        tracing::debug!(
-                            "Link click cancelled - dragged {} pixels",
-                            dx.max(dy)
-                        );
-                    }
-                }
-
-                // Sync UI state positions back to layout WindowDefs after mouse resize/move
-                if let Some(drag_state) = &app_core.ui_state.mouse_drag {
-                    if let Some(window) =
-                        app_core.ui_state.get_window(&drag_state.window_name)
-                    {
-                        // Find the corresponding WindowDef in layout and update it
-                        if let Some(window_def) = app_core
-                            .layout
-                            .windows
-                            .iter_mut()
-                            .find(|w| w.name() == drag_state.window_name)
-                        {
-                            let base = window_def.base_mut();
-                            base.col = window.position.x;
-                            base.row = window.position.y;
-                            base.cols = window.position.width;
-                            base.rows = window.position.height;
-                            tracing::info!("Synced mouse resize/move for '{}' to layout: pos=({},{}) size={}x{}",
-                                drag_state.window_name, base.col.get(), base.row.get(), base.cols.get(), base.rows.get());
-                            app_core.layout_modified_since_save = true;
-                        }
-
-                        // Save ephemeral container window positions to widget_state.toml
-                        if app_core.ui_state.ephemeral_windows.contains(&drag_state.window_name) {
-                            use crate::config::{Config, DialogPosition};
-                            let pos = DialogPosition {
-                                x: window.position.x.get(),
-                                y: window.position.y.get(),
-                                width: Some(window.position.width.get()),
-                                height: Some(window.position.height.get()),
-                            };
-                            app_core.saved_dialog_positions.containers.insert(
-                                drag_state.window_name.clone(),
-                                pos,
-                            );
-                            // Save to disk asynchronously (best-effort)
-                            let character = app_core.config.character.clone();
-                            let positions = app_core.saved_dialog_positions.clone();
-                            std::thread::spawn(move || {
-                                if let Err(e) = Config::save_dialog_positions(character.as_deref(), &positions) {
-                                    tracing::warn!("Failed to save container positions: {}", e);
-                                }
-                            });
-                            tracing::debug!("Saved ephemeral container position for '{}'", drag_state.window_name);
-                        }
-                    }
-                }
-
-                app_core.ui_state.mouse_drag = None;
-                app_core.ui_state.selection_drag_start = None;
-
-                // Handle text selection copy to clipboard
-                if let Some(ref selection) = app_core.ui_state.selection_state {
-                    let auto_copy = app_core.config.ui.selection_auto_copy;
-
-                    if auto_copy && !selection.is_empty() {
-                        // Extract text from selection using the stored window name
-                        let (start, end) = selection.normalized_range();
-                        let window_name = &selection.window_name;
-
-                        if let Some(text) = self.extract_selection_text(
-                            window_name, start.line, start.col, end.line, end.col,
-                        ) {
-                            // Copy to clipboard
-                            match crate::clipboard::copy(&text) {
-                                Ok(()) => {
-                                    tracing::info!(
-                                        "Copied {} chars to clipboard from '{}'",
-                                        text.len(),
-                                        window_name
-                                    );
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to copy to clipboard: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    // Clear selection and unfreeze text window
-                    if auto_copy {
-                        // Unfreeze the text window before clearing selection
-                        let window_to_unfreeze = selection.window_name.clone();
-                        if let Some(text_window) = self.widget_manager.text_windows.get_mut(&window_to_unfreeze) {
-                            text_window.unfreeze_and_apply_pending();
-                        } else if let Some(tabbed_window) = self.widget_manager.tabbed_text_windows.get_mut(&window_to_unfreeze) {
-                            tabbed_window.unfreeze_and_apply_pending();
-                        }
-                        app_core.ui_state.selection_state = None;
-                    }
-                    app_core.needs_render = true;
-                }
-
-                return Ok((true, command_to_send));
+                return self.handle_mouse_up_left(app_core, *x, *y);
             }
             MouseEventKind::Down(crate::data::input::MouseButton::Right) => {
-                // Right-click on performance overlay: show metrics toggle menu
-                if let Some(window) = app_core.ui_state.windows.get("performance_overlay") {
-                    let pos = &window.position;
-                    if *x >= pos.x.get() && *x < pos.x.get() + pos.width.get()
-                       && *y >= pos.y.get() && *y < pos.y.get() + pos.height.get() {
-                        // Build performance metrics context menu
-                        let items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
-                        app_core.ui_state.popup_menu =
-                            Some(crate::data::ui_state::PopupMenu::new(items, (*x, *y + 1)));
-                        app_core.ui_state.input_mode = InputMode::Menu;
-                        app_core.needs_render = true;
-                        return Ok((true, None));
-                    }
-                }
-
-                // Right-click: show context menu for window title bars
-                for (name, window) in &app_core.ui_state.windows {
-                    let pos = &window.position;
-                    // Check if click is on the title bar (top row of window)
-                    if *y == pos.y.get() && *x >= pos.x.get() && *x < pos.x.get() + pos.width.get() {
-                        // Build context menu items
-                        let mut items = Vec::new();
-
-                        // Don't allow closing the main window
-                        if name != "main" && name != "command_input" {
-                            items.push(crate::data::ui_state::PopupMenuItem {
-                                text: "Close Window".to_string(),
-                                command: format!("__CLOSE_WINDOW__{}", name),
-                                disabled: false,
-                            });
-                        }
-
-                        items.push(crate::data::ui_state::PopupMenuItem {
-                            text: "Edit Window...".to_string(),
-                            command: format!("action:editwindow:{}", name),
-                            disabled: false,
-                        });
-
-                        items.push(crate::data::ui_state::PopupMenuItem {
-                            text: "Open Menu".to_string(),
-                            command: ".menu".to_string(),
-                            disabled: false,
-                        });
-
-                        if !items.is_empty() {
-                            // Position menu just below click point
-                            app_core.ui_state.popup_menu =
-                                Some(crate::data::ui_state::PopupMenu::new(items, (*x, *y + 1)));
-                            app_core.ui_state.input_mode = InputMode::Menu;
-                            app_core.needs_render = true;
-                            return Ok((true, None));
-                        }
-                    }
-                }
+                return self.handle_mouse_down_right(app_core, *x, *y);
             }
             _ => {}
         }
@@ -2248,7 +2246,6 @@ impl TuiFrontend {
     ) -> Result<Option<String>> {
         use crate::data::ui_state::InputMode;
         use crate::data::input::{KeyCode, KeyModifiers};
-        use crate::core::input_router;
 
         tracing::debug!(
             "Key event: code={:?}, modifiers={:?}, input_mode={:?}",
@@ -2274,1582 +2271,23 @@ impl TuiFrontend {
                 return Ok(result);
             }
             InputMode::HighlightBrowser => {
-                if let Some(ref mut browser) = self.highlight_browser {
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextItem
-                        | crate::core::menu_actions::MenuAction::NavigateDown => browser.navigate_down(),
-                        crate::core::menu_actions::MenuAction::PreviousItem
-                        | crate::core::menu_actions::MenuAction::NavigateUp => browser.navigate_up(),
-                        crate::core::menu_actions::MenuAction::NextPage => {
-                            browser.next_page()
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousPage => {
-                            browser.previous_page()
-                        }
-                        crate::core::menu_actions::MenuAction::Save => {
-                            // Ctrl+S: persist highlights, refresh caches, close browser
-                            if let Err(e) =
-                                app_core.config.save_highlights(app_core.config.character.as_deref())
-                            {
-                                app_core.add_system_message(&format!(
-                                    "Failed to save highlights: {}",
-                                    e
-                                ));
-                            } else {
-                                app_core.add_system_message("Highlights saved");
-                                crate::config::Config::compile_highlight_patterns(
-                                    &mut app_core.config.highlights,
-                                );
-                                app_core
-                                    .message_processor
-                                    .apply_config(app_core.config.clone());
-                                // Highlights now updated in core via apply_config()
-                            }
-                            self.highlight_browser = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        crate::core::menu_actions::MenuAction::Edit => {
-                            if let Some(name) = browser.get_selected() {
-                                if let Some(pattern) = app_core.config.highlights.get(&name) {
-                                    // Default to global if unknown
-                                    let is_global = browser.get_selected_is_global().unwrap_or(true);
-                                    let mut form = crate::frontend::tui::highlight_form::HighlightFormWidget::new_edit(
-                                        name, pattern,
-                                    );
-                                    form.set_scope(is_global);
-                                    form.set_rumble_options(app_core.config.controller_rumble.pattern_names());
-                                    self.highlight_form = Some(form);
-                                    app_core.ui_state.input_mode = InputMode::HighlightForm;
-                                }
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::New
-                        | crate::core::menu_actions::MenuAction::Add => {
-                            let mut form =
-                                crate::frontend::tui::highlight_form::HighlightFormWidget::new();
-                            form.set_rumble_options(app_core.config.controller_rumble.pattern_names());
-                            self.highlight_form = Some(form);
-                            app_core.ui_state.input_mode = InputMode::HighlightForm;
-                        }
-                        crate::core::menu_actions::MenuAction::Delete => {
-                            if let Some(name) = browser.get_selected() {
-                                // Default to global if unknown
-                                let is_global = browser.get_selected_is_global().unwrap_or(true);
-                                // Delete from appropriate file based on scope
-                                if let Err(e) = crate::config::Config::delete_single_highlight(
-                                    &name,
-                                    is_global,
-                                    app_core.config.character.as_deref(),
-                                ) {
-                                    app_core.add_system_message(&format!(
-                                        "Failed to delete highlight: {}",
-                                        e
-                                    ));
-                                } else {
-                                    let scope = if is_global { "global" } else { "character" };
-                                    app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
-                                    // Update in-memory config
-                                    app_core.config.highlights.remove(&name);
-                                    crate::config::Config::compile_highlight_patterns(
-                                        &mut app_core.config.highlights,
-                                    );
-                                    app_core
-                                        .message_processor
-                                        .apply_config(app_core.config.clone());
-                                    // Refresh browser with source tracking
-                                    let global = crate::config::Config::load_common_highlights().unwrap_or_default();
-                                    let character = crate::config::Config::load_character_highlights_only(
-                                        app_core.config.character.as_deref()
-                                    ).unwrap_or_default();
-                                    browser.update_items_with_source(&global, &character);
-                                }
-                                tracing::info!("Deleted highlight: {} (global={})", name, is_global);
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.highlight_browser = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        _ => {}
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
+                return self.handle_highlight_browser_mode_keys(code, modifiers, app_core);
             }
-            InputMode::KeybindBrowser => {
-                if let Some(ref mut browser) = self.keybind_browser {
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextItem
-                        | crate::core::menu_actions::MenuAction::NavigateDown => browser.navigate_down(),
-                        crate::core::menu_actions::MenuAction::PreviousItem
-                        | crate::core::menu_actions::MenuAction::NavigateUp => browser.navigate_up(),
-                        crate::core::menu_actions::MenuAction::NextPage => {
-                            browser.next_page()
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousPage => {
-                            browser.previous_page()
-                        }
-                        crate::core::menu_actions::MenuAction::ToggleFilter => {
-                            browser.toggle_filter()
-                        }
-                        crate::core::menu_actions::MenuAction::Select
-                        | crate::core::menu_actions::MenuAction::Edit => {
-                            if let Some(entry) = browser.get_selected_entry() {
-                                use crate::frontend::tui::keybind_form::KeybindActionType;
-                                let action_type = if entry.action_type == "Action" {
-                                    KeybindActionType::Action
-                                } else {
-                                    KeybindActionType::Macro
-                                };
-                                self.keybind_form = Some(
-                                    crate::frontend::tui::keybind_form::KeybindFormWidget::new_edit(
-                                        entry.key_combo.clone(),
-                                        action_type,
-                                        entry.action_value.clone(),
-                                        entry.is_global,
-                                    ),
-                                );
-                                app_core.ui_state.input_mode = InputMode::KeybindForm;
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::New
-                        | crate::core::menu_actions::MenuAction::Add => {
-                            self.keybind_form =
-                                Some(crate::frontend::tui::keybind_form::KeybindFormWidget::new());
-                            app_core.ui_state.input_mode = InputMode::KeybindForm;
-                        }
-                        crate::core::menu_actions::MenuAction::Delete => {
-                            if let Some(entry) = browser.get_selected_entry() {
-                                let key_combo = entry.key_combo.clone();
-                                // Remove from the file the entry came from, or the
-                                // reload below immediately resurrects it in the list
-                                if let Err(e) = crate::config::Config::delete_single_keybind(
-                                    &key_combo,
-                                    entry.is_global,
-                                    app_core.config.character.as_deref(),
-                                ) {
-                                    tracing::error!("Failed to delete keybind '{}': {}", key_combo, e);
-                                }
-                                app_core.config.keybinds.remove(&key_combo);
-                                app_core.rebuild_keybind_map();
-                                // Reload with source tracking for proper [G]/[C] display
-                                let global_keybinds = crate::config::Config::load_common_keybinds()
-                                    .unwrap_or_default();
-                                let character_keybinds = crate::config::Config::load_character_keybinds_only(
-                                    app_core.config.character.as_deref()
-                                ).unwrap_or_default();
-                                browser.update_items_with_source(&global_keybinds, &character_keybinds);
-                                tracing::info!("Deleted keybind: {}", key_combo);
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.keybind_browser = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        _ => {}
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::HotbarEditor => {
-                if let Some(mut editor) = self.hotbar_editor.take() {
-                    let ct_event = crossterm::event::KeyEvent::new(
-                        super::crossterm_bridge::to_crossterm_keycode(code),
-                        super::crossterm_bridge::to_crossterm_modifiers(modifiers),
-                    );
-                    match editor.handle_key(ct_event, &app_core.config) {
-                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::None => {
-                            self.hotbar_editor = Some(editor);
-                        }
-                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::Close => {
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::SaveBar(
-                            bar,
-                            is_global,
-                        ) => {
-                            match crate::config::Config::save_hotbar(
-                                &bar,
-                                is_global,
-                                app_core.config.character.as_deref(),
-                            ) {
-                                Ok(()) => app_core.reload_hotbars(),
-                                Err(e) => app_core.add_system_message(&format!(
-                                    "Failed to save hotbar: {}",
-                                    e
-                                )),
-                            }
-                            editor.refresh_bars(&app_core.config);
-                            self.hotbar_editor = Some(editor);
-                        }
-                        crate::frontend::tui::hotbar_editor::HotbarEditorResult::DeleteBar(
-                            name,
-                        ) => {
-                            let character = app_core.config.character.clone();
-                            let (in_global, in_character) =
-                                crate::config::Config::hotbar_scope(&name, character.as_deref());
-                            let mut failed = false;
-                            if in_character {
-                                if let Err(e) = crate::config::Config::delete_hotbar(
-                                    &name,
-                                    false,
-                                    character.as_deref(),
-                                ) {
-                                    app_core.add_system_message(&format!(
-                                        "Failed to delete hotbar: {}",
-                                        e
-                                    ));
-                                    failed = true;
-                                }
-                            }
-                            if in_global && !failed {
-                                if let Err(e) = crate::config::Config::delete_hotbar(
-                                    &name,
-                                    true,
-                                    character.as_deref(),
-                                ) {
-                                    app_core.add_system_message(&format!(
-                                        "Failed to delete hotbar: {}",
-                                        e
-                                    ));
-                                }
-                            }
-                            app_core.reload_hotbars();
-                            editor.refresh_bars(&app_core.config);
-                            self.hotbar_editor = Some(editor);
-                        }
-                    }
-                    app_core.needs_render = true;
-                } else {
-                    app_core.ui_state.input_mode = InputMode::Normal;
-                }
-                return Ok(None);
-            }
-            InputMode::ColorPaletteBrowser => {
-                if let Some(ref mut browser) = self.color_palette_browser {
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextItem
-                        | crate::core::menu_actions::MenuAction::NavigateDown => browser.navigate_down(),
-                        crate::core::menu_actions::MenuAction::PreviousItem
-                        | crate::core::menu_actions::MenuAction::NavigateUp => browser.navigate_up(),
-                        crate::core::menu_actions::MenuAction::NextPage => {
-                            browser.next_page()
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousPage => {
-                            browser.previous_page()
-                        }
-                        crate::core::menu_actions::MenuAction::Select
-                        | crate::core::menu_actions::MenuAction::Edit => {
-                            if let Some(color) = browser.get_selected_color() {
-                                let is_global = browser.get_selected_is_global().unwrap_or(true);
-                                self.color_form = Some(
-                                    crate::frontend::tui::color_form::ColorForm::new_edit_with_scope(
-                                        color,
-                                        is_global,
-                                    ),
-                                );
-                                app_core.ui_state.input_mode = InputMode::ColorForm;
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::New
-                        | crate::core::menu_actions::MenuAction::Add => {
-                            self.color_form =
-                                Some(crate::frontend::tui::color_form::ColorForm::new_create());
-                            app_core.ui_state.input_mode = InputMode::ColorForm;
-                        }
-                        crate::core::menu_actions::MenuAction::Delete => {
-                            if let Some(color_name) = browser.get_selected() {
-                                let is_global = browser.get_selected_is_global().unwrap_or(true);
-
-                                // Delete from appropriate file based on scope
-                                if let Err(e) = crate::config::ColorConfig::delete_single_palette_color(
-                                    &color_name,
-                                    is_global,
-                                    app_core.config.character.as_deref(),
-                                ) {
-                                    tracing::error!("Failed to delete color: {}", e);
-                                }
-
-                                // Reload colors to update in-memory state
-                                if let Ok(colors) = crate::config::ColorConfig::load_with_merge(
-                                    app_core.config.character.as_deref()
-                                ) {
-                                    app_core.config.colors = colors;
-                                }
-
-                                // Refresh browser with updated colors
-                                let global_colors = crate::config::ColorConfig::load_common_colors()
-                                    .map(|c| c.color_palette)
-                                    .unwrap_or_default();
-                                let char_colors = crate::config::ColorConfig::load_character_colors_only(
-                                    app_core.config.character.as_deref()
-                                )
-                                    .map(|c| c.color_palette)
-                                    .unwrap_or_default();
-                                browser.update_items_with_source(&global_colors, &char_colors);
-
-                                tracing::info!("Deleted color: {} ({})", color_name, if is_global { "global" } else { "character" });
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.color_palette_browser = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        _ => {}
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::UIColorsBrowser => {
-                if let Some(ref mut browser) = self.uicolors_browser {
-                    // The inline editor owns the keyboard while open.
-                    if browser.editor.is_some() {
-                        let ct_event = crossterm::event::KeyEvent::new(
-                            super::crossterm_bridge::to_crossterm_keycode(code),
-                            super::crossterm_bridge::to_crossterm_modifiers(modifiers),
-                        );
-                        let result = browser
-                            .editor
-                            .as_mut()
-                            .and_then(|editor| editor.handle_key(ct_event));
-                        match result {
-                            Some(super::uicolors_browser::UIColorEditorResult::Save {
-                                fg,
-                                bg,
-                            }) => {
-                                // save_editor closes the editor and reports
-                                // which entry was being edited.
-                                if let Some((category, name, _, _)) = browser.save_editor() {
-                                    Self::apply_ui_color_edit(
-                                        app_core, &category, &name, fg, bg,
-                                    );
-                                    browser.refresh(&app_core.config.colors);
-                                }
-                            }
-                            Some(super::uicolors_browser::UIColorEditorResult::Cancel) => {
-                                browser.close_editor();
-                            }
-                            None => {}
-                        }
-                        app_core.needs_render = true;
-                        return Ok(None);
-                    }
-
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextItem
-                        | crate::core::menu_actions::MenuAction::NavigateDown => browser.navigate_down(),
-                        crate::core::menu_actions::MenuAction::PreviousItem
-                        | crate::core::menu_actions::MenuAction::NavigateUp => browser.navigate_up(),
-                        crate::core::menu_actions::MenuAction::NextPage => {
-                            browser.next_page()
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousPage => {
-                            browser.previous_page()
-                        }
-                        crate::core::menu_actions::MenuAction::Select
-                        | crate::core::menu_actions::MenuAction::Edit => {
-                            let textarea_bg =
-                                app_core.config.colors.ui.textarea_background.clone();
-                            browser.open_editor(&textarea_bg);
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.uicolors_browser = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        _ => {}
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::SpellColorsBrowser => {
-                if let Some(ref mut browser) = self.spell_color_browser {
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextItem
-                        | crate::core::menu_actions::MenuAction::NavigateDown => browser.navigate_down(),
-                        crate::core::menu_actions::MenuAction::PreviousItem
-                        | crate::core::menu_actions::MenuAction::NavigateUp => browser.navigate_up(),
-                        crate::core::menu_actions::MenuAction::NextPage => {
-                            browser.next_page()
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousPage => {
-                            browser.previous_page()
-                        }
-                        crate::core::menu_actions::MenuAction::Select
-                        | crate::core::menu_actions::MenuAction::Edit => {
-                            if let Some(index) = browser.get_selected() {
-                                let spell_color =
-                                    app_core.config.colors.spell_colors.get(index).cloned();
-                                if let Some(sc) = spell_color {
-                                    self.spell_color_form = Some(
-                                        crate::frontend::tui::spell_color_form::SpellColorFormWidget::new_edit(
-                                            index, &sc,
-                                        ),
-                                    );
-                                    app_core.ui_state.input_mode = InputMode::SpellColorForm;
-                                }
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::New
-                        | crate::core::menu_actions::MenuAction::Add => {
-                            self.spell_color_form = Some(
-                                crate::frontend::tui::spell_color_form::SpellColorFormWidget::new(
-                                ),
-                            );
-                            app_core.ui_state.input_mode = InputMode::SpellColorForm;
-                        }
-                        crate::core::menu_actions::MenuAction::Delete => {
-                            if let Some(index) = browser.get_selected() {
-                                if index < app_core.config.colors.spell_colors.len() {
-                                    app_core.config.colors.spell_colors.remove(index);
-                                    Self::persist_colors(app_core);
-                                    browser
-                                        .update_items(&app_core.config.colors.spell_colors);
-                                    tracing::info!("Deleted spell color range at index {}", index);
-                                }
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.spell_color_browser = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        _ => {}
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::ThemeBrowser => {
-                if let Some(ref mut browser) = self.theme_browser {
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextItem
-                        | crate::core::menu_actions::MenuAction::NavigateDown => browser.navigate_down(),
-                        crate::core::menu_actions::MenuAction::PreviousItem
-                        | crate::core::menu_actions::MenuAction::NavigateUp => browser.navigate_up(),
-                        crate::core::menu_actions::MenuAction::NextPage => {
-                            browser.next_page()
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousPage => {
-                            browser.previous_page()
-                        }
-                        crate::core::menu_actions::MenuAction::Select => {
-                            if let Some(theme_name) = browser.get_selected() {
-                                app_core.config.active_theme = theme_name.clone();
-                                let theme = app_core.config.get_theme();
-                                self.update_theme_cache(theme_name, theme);
-                                self.theme_browser = None;
-                                app_core.ui_state.input_mode = InputMode::Normal;
-                                tracing::info!("Switched to theme: {}", app_core.config.active_theme);
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::Edit => {
-                            if let Some(theme) = browser.get_selected_theme() {
-                                self.theme_editor =
-                                    Some(crate::frontend::tui::theme_editor::ThemeEditor::new_edit(theme));
-                                self.theme_browser = None;
-                                app_core.ui_state.input_mode = InputMode::ThemeEditor;
-                            }
-                        }
-                        crate::core::menu_actions::MenuAction::New
-                        | crate::core::menu_actions::MenuAction::Add => {
-                            self.theme_editor =
-                                Some(crate::frontend::tui::theme_editor::ThemeEditor::new_create());
-                            self.theme_browser = None;
-                            app_core.ui_state.input_mode = InputMode::ThemeEditor;
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.theme_browser = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        _ => {}
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::SettingsEditor => {
-                if let Some(ref mut editor) = self.settings_editor {
-                    // First let the editor handle input directly
-                    // Convert our KeyCode/KeyModifiers to crossterm's
-                    let crossterm_code = super::crossterm_bridge::to_crossterm_keycode(code);
-                    let crossterm_modifiers = super::crossterm_bridge::to_crossterm_modifiers(modifiers);
-                    let key_event = crossterm::event::KeyEvent::new(crossterm_code, crossterm_modifiers);
-                    let handled = editor.handle_input(key_event);
-
-                    if handled {
-                        // Check if this was a value change - apply to config immediately
-                        for err in editor.apply_to_config(&mut app_core.config) {
-                            app_core.add_system_message(&format!("Setting rejected: {}", err));
-                        }
-                        app_core.needs_render = true;
-                        return Ok(None);
-                    }
-
-                    // Check for Ctrl+S to save all settings
-                    if modifiers.ctrl && matches!(code, KeyCode::Char('s') | KeyCode::Char('S')) {
-                        // Apply and save all settings with their scopes
-                        for err in editor.apply_to_config(&mut app_core.config) {
-                            app_core.add_system_message(&format!("Setting rejected: {}", err));
-                        }
-
-                        // Get all items and save each with its scope
-                        let items_to_save: Vec<_> = editor.all_items()
-                            .map(|item| (item.key.clone(), item.is_global))
-                            .collect();
-
-                        let mut save_errors = Vec::new();
-                        for (key, is_global) in items_to_save {
-                            if let Err(e) = app_core.config.save_single_setting(
-                                &key,
-                                is_global,
-                                app_core.config.character.as_deref(),
-                            ) {
-                                save_errors.push(format!("{}: {}", key, e));
-                            }
-                        }
-
-                        if save_errors.is_empty() {
-                            app_core.add_system_message("Settings saved");
-                        } else {
-                            app_core.add_system_message(&format!(
-                                "Some settings failed to save: {}",
-                                save_errors.join(", ")
-                            ));
-                        }
-                        app_core.needs_render = true;
-                        return Ok(None);
-                    }
-
-                    // Handle Cancel/Escape to close editor
-                    if matches!(code, KeyCode::Esc) {
-                        // Apply changes to in-memory config before closing
-                        for err in editor.apply_to_config(&mut app_core.config) {
-                            app_core.add_system_message(&format!("Setting rejected: {}", err));
-                        }
-                        self.settings_editor = None;
-                        app_core.ui_state.input_mode = InputMode::Normal;
-                    }
-
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::HighlightForm => {
-                if let Some(ref mut form) = self.highlight_form {
-                    use crate::frontend::tui::widget_traits::{
-                        FieldNavigable, TextEditable, Toggleable,
-                    };
-
-                    // Fast-path Ctrl+S even if keybinds are overridden/misparsed
-                    if modifiers.ctrl && matches!(code, KeyCode::Char(c) if c == 's' || c == 'S') {
-                        if let Some(result) = form.handle_action(crate::core::menu_actions::MenuAction::Save) {
-                            match result {
-                                crate::frontend::tui::highlight_form::FormResult::Save { name, mut pattern, is_global } => {
-                                    if let Some(ref fg) = pattern.fg {
-                                        pattern.fg = Some(app_core.config.resolve_palette_color(fg));
-                                    }
-                                    if let Some(ref bg) = pattern.bg {
-                                        pattern.bg = Some(app_core.config.resolve_palette_color(bg));
-                                    }
-                                    // Save to appropriate file based on scope
-                                    if let Err(e) = crate::config::Config::save_single_highlight(
-                                        &name,
-                                        &pattern,
-                                        is_global,
-                                        app_core.config.character.as_deref(),
-                                    ) {
-                                        app_core.add_system_message(&format!(
-                                            "Failed to save highlight: {}",
-                                            e
-                                        ));
-                                    } else {
-                                        let scope = if is_global { "global" } else { "character" };
-                                        app_core.add_system_message(&format!("Highlight saved to {} config", scope));
-                                        // Update in-memory config
-                                        app_core.config.highlights.insert(name.clone(), pattern);
-                                        crate::config::Config::compile_highlight_patterns(
-                                            &mut app_core.config.highlights,
-                                        );
-                                        app_core
-                                            .message_processor
-                                            .apply_config(app_core.config.clone());
-                                        // Refresh browser with source tracking
-                                        if let Some(ref mut browser) = self.highlight_browser {
-                                            let global = crate::config::Config::load_common_highlights().unwrap_or_default();
-                                            let character = crate::config::Config::load_character_highlights_only(
-                                                app_core.config.character.as_deref()
-                                            ).unwrap_or_default();
-                                            browser.update_items_with_source(&global, &character);
-                                        }
-                                    }
-                                    tracing::info!("Saved highlight: {} (global={})", name, is_global);
-                                    self.highlight_form = None;
-                                    app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                        InputMode::HighlightBrowser
-                                    } else {
-                                        InputMode::Normal
-                                    };
-                                }
-                                _ => {}
-                            }
-                        }
-                        app_core.needs_render = true;
-                        return Ok(None);
-                    }
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextField => form.next_field(),
-                        crate::core::menu_actions::MenuAction::PreviousField => {
-                            form.previous_field()
-                        }
-                        crate::core::menu_actions::MenuAction::SelectAll => form.select_all(),
-                        crate::core::menu_actions::MenuAction::Copy => {
-                            let _ = form.copy_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Cut => {
-                            let _ = form.cut_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Paste => {
-                            let _ = form.paste_from_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Toggle => {
-                            form.toggle_focused();
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.highlight_form = None;
-                            app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                InputMode::HighlightBrowser
-                            } else {
-                                InputMode::Normal
-                            };
-                        }
-                        crate::core::menu_actions::MenuAction::NavigateUp |
-                        crate::core::menu_actions::MenuAction::NavigateDown |
-                        crate::core::menu_actions::MenuAction::CycleBackward |
-                        crate::core::menu_actions::MenuAction::CycleForward |
-                        crate::core::menu_actions::MenuAction::Select |
-                        crate::core::menu_actions::MenuAction::Save |
-                        crate::core::menu_actions::MenuAction::Delete => {
-                            // Handle navigation, cycling, and save/delete via handle_action
-                    if let Some(result) = form.handle_action(action.clone()) {
-                        match result {
-                            crate::frontend::tui::highlight_form::FormResult::Save {
-                                name,
-                                mut pattern,
-                                is_global,
-                            } => {
-                                // Resolve palette color names to hex codes
-                                if let Some(ref fg) = pattern.fg {
-                                    pattern.fg = Some(app_core.config.resolve_palette_color(fg));
-                                }
-                                if let Some(ref bg) = pattern.bg {
-                                    pattern.bg = Some(app_core.config.resolve_palette_color(bg));
-                                }
-
-                                // Save to appropriate file based on scope
-                                if let Err(e) = crate::config::Config::save_single_highlight(
-                                    &name,
-                                    &pattern,
-                                    is_global,
-                                    app_core.config.character.as_deref(),
-                                ) {
-                                    app_core.add_system_message(&format!(
-                                        "Failed to save highlight: {}",
-                                        e
-                                    ));
-                                } else {
-                                    let scope = if is_global { "global" } else { "character" };
-                                    app_core.add_system_message(&format!("Highlight saved to {} config", scope));
-                                    // Update in-memory config
-                                    app_core.config.highlights.insert(name.clone(), pattern);
-                                    crate::config::Config::compile_highlight_patterns(
-                                        &mut app_core.config.highlights,
-                                    );
-                                    app_core
-                                        .message_processor
-                                        .apply_config(app_core.config.clone());
-                                    // Refresh browser with source tracking
-                                    if let Some(ref mut browser) = self.highlight_browser {
-                                        let global = crate::config::Config::load_common_highlights().unwrap_or_default();
-                                        let character = crate::config::Config::load_character_highlights_only(
-                                            app_core.config.character.as_deref()
-                                        ).unwrap_or_default();
-                                        browser.update_items_with_source(&global, &character);
-                                    }
-                                }
-                                tracing::info!("Saved highlight: {} (global={})", name, is_global);
-                                self.highlight_form = None;
-                                app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                    InputMode::HighlightBrowser
-                                } else {
-                                    InputMode::Normal
-                                };
-                            }
-                            crate::frontend::tui::highlight_form::FormResult::Delete { name, is_global } => {
-                                // Delete from appropriate file based on scope
-                                if let Err(e) = crate::config::Config::delete_single_highlight(
-                                    &name,
-                                    is_global,
-                                    app_core.config.character.as_deref(),
-                                ) {
-                                    app_core.add_system_message(&format!(
-                                        "Failed to delete highlight: {}",
-                                        e
-                                    ));
-                                } else {
-                                    let scope = if is_global { "global" } else { "character" };
-                                    app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
-                                    // Update in-memory config
-                                    app_core.config.highlights.remove(&name);
-                                    crate::config::Config::compile_highlight_patterns(
-                                        &mut app_core.config.highlights,
-                                    );
-                                    app_core
-                                        .message_processor
-                                        .apply_config(app_core.config.clone());
-                                    // Refresh browser with source tracking
-                                    if let Some(ref mut browser) = self.highlight_browser {
-                                        let global = crate::config::Config::load_common_highlights().unwrap_or_default();
-                                        let character = crate::config::Config::load_character_highlights_only(
-                                            app_core.config.character.as_deref()
-                                        ).unwrap_or_default();
-                                        browser.update_items_with_source(&global, &character);
-                                    }
-                                }
-                                tracing::info!("Deleted highlight: {} (global={})", name, is_global);
-                                self.highlight_form = None;
-                                app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                    InputMode::HighlightBrowser
-                                } else {
-                                    InputMode::Normal
-                                };
-                            }
-                            crate::frontend::tui::highlight_form::FormResult::Cancel => {
-                                self.highlight_form = None;
-                                app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                    InputMode::HighlightBrowser
-                                } else {
-                                    InputMode::Normal
-                                };
-                            }
-                        }
-                            }
-                        }
-                        _ => {
-                            use crate::frontend::tui::crossterm_bridge;
-                            let ct_code = crossterm_bridge::to_crossterm_keycode(code);
-                            let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
-                            let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
-                            if let Some(result) = form.handle_key(key) {
-                                match result {
-                                    crate::frontend::tui::highlight_form::FormResult::Save {
-                                        name,
-                                        mut pattern,
-                                        is_global,
-                                    } => {
-                                        // Resolve palette color names to hex codes
-                                        if let Some(ref fg) = pattern.fg {
-                                            pattern.fg = Some(app_core.config.resolve_palette_color(fg));
-                                        }
-                                        if let Some(ref bg) = pattern.bg {
-                                            pattern.bg = Some(app_core.config.resolve_palette_color(bg));
-                                        }
-
-                                        // Save to appropriate file based on scope
-                                        if let Err(e) = crate::config::Config::save_single_highlight(
-                                            &name,
-                                            &pattern,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            app_core.add_system_message(&format!(
-                                                "Failed to save highlight: {}",
-                                                e
-                                            ));
-                                        } else {
-                                            let scope = if is_global { "global" } else { "character" };
-                                            app_core.add_system_message(&format!("Highlight saved to {} config", scope));
-                                            // Update in-memory config
-                                            app_core.config.highlights.insert(name.clone(), pattern);
-                                            crate::config::Config::compile_highlight_patterns(
-                                                &mut app_core.config.highlights,
-                                            );
-                                            app_core
-                                                .message_processor
-                                                .apply_config(app_core.config.clone());
-                                            // Refresh browser with source tracking
-                                            if let Some(ref mut browser) = self.highlight_browser {
-                                                let global = crate::config::Config::load_common_highlights().unwrap_or_default();
-                                                let character = crate::config::Config::load_character_highlights_only(
-                                                    app_core.config.character.as_deref()
-                                                ).unwrap_or_default();
-                                                browser.update_items_with_source(&global, &character);
-                                            }
-                                        }
-                                        tracing::info!("Saved highlight: {} (global={})", name, is_global);
-                                        self.highlight_form = None;
-                                        app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                            InputMode::HighlightBrowser
-                                        } else {
-                                            InputMode::Normal
-                                        };
-                                    }
-                                    crate::frontend::tui::highlight_form::FormResult::Delete { name, is_global } => {
-                                        // Delete from appropriate file based on scope
-                                        if let Err(e) = crate::config::Config::delete_single_highlight(
-                                            &name,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            app_core.add_system_message(&format!(
-                                                "Failed to delete highlight: {}",
-                                                e
-                                            ));
-                                        } else {
-                                            let scope = if is_global { "global" } else { "character" };
-                                            app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
-                                            // Update in-memory config
-                                            app_core.config.highlights.remove(&name);
-                                            crate::config::Config::compile_highlight_patterns(
-                                                &mut app_core.config.highlights,
-                                            );
-                                            app_core
-                                                .message_processor
-                                                .apply_config(app_core.config.clone());
-                                            // Refresh browser with source tracking
-                                            if let Some(ref mut browser) = self.highlight_browser {
-                                                let global = crate::config::Config::load_common_highlights().unwrap_or_default();
-                                                let character = crate::config::Config::load_character_highlights_only(
-                                                    app_core.config.character.as_deref()
-                                                ).unwrap_or_default();
-                                                browser.update_items_with_source(&global, &character);
-                                            }
-                                        }
-                                        tracing::info!("Deleted highlight: {} (global={})", name, is_global);
-                                        self.highlight_form = None;
-                                        app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                            InputMode::HighlightBrowser
-                                        } else {
-                                            InputMode::Normal
-                                        };
-                                    }
-                                    crate::frontend::tui::highlight_form::FormResult::Cancel => {
-                                        self.highlight_form = None;
-                                        app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
-                                            InputMode::HighlightBrowser
-                                        } else {
-                                            InputMode::Normal
-                                        };
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::KeybindForm => {
-                if let Some(ref mut form) = self.keybind_form {
-                    use crate::frontend::tui::widget_traits::{
-                        FieldNavigable, TextEditable, Toggleable,
-                    };
-                    use crate::frontend::tui::keybind_form::ActionSection;
-
-                    let ctrl_only = matches!(modifiers, KeyModifiers { ctrl: true, shift: false, alt: false });
-
-                    if ctrl_only {
-                        match code {
-                            KeyCode::Char('1') => {
-                                form.go_to_section(ActionSection::CommandInput);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('2') => {
-                                form.go_to_section(ActionSection::CommandHistory);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('3') => {
-                                form.go_to_section(ActionSection::WindowScrolling);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('4') => {
-                                form.go_to_section(ActionSection::TabNavigation);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('5') => {
-                                form.go_to_section(ActionSection::Search);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('6') => {
-                                form.go_to_section(ActionSection::Clipboard);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('7') => {
-                                form.go_to_section(ActionSection::TTS);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('8') => {
-                                form.go_to_section(ActionSection::SystemToggles);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            KeyCode::Char('m') | KeyCode::Char('M') => {
-                                form.go_to_section(ActionSection::Meta);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    // Section navigation removed - not applicable to simple form widget
-                    // (This code was likely meant for KeybindBrowser, not KeybindForm)
-
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextField => form.next_field(),
-                        crate::core::menu_actions::MenuAction::PreviousField => {
-                            form.previous_field()
-                        }
-                        crate::core::menu_actions::MenuAction::SelectAll => form.select_all(),
-                        crate::core::menu_actions::MenuAction::Copy => {
-                            let _ = form.copy_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Cut => {
-                            let _ = form.cut_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Paste => {
-                            let _ = form.paste_from_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Toggle => {
-                            form.toggle_focused();
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.keybind_form = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        // Route navigation, cycling, select, save, and delete through handle_action
-                        crate::core::menu_actions::MenuAction::NavigateUp
-                        | crate::core::menu_actions::MenuAction::NavigateDown
-                        | crate::core::menu_actions::MenuAction::CycleBackward
-                        | crate::core::menu_actions::MenuAction::CycleForward
-                        | crate::core::menu_actions::MenuAction::Select
-                        | crate::core::menu_actions::MenuAction::Save
-                        | crate::core::menu_actions::MenuAction::Delete => {
-                            if let Some(result) = form.handle_action(action.clone()) {
-                                match result {
-                                    crate::frontend::tui::keybind_form::KeybindFormResult::Save {
-                                        key_combo,
-                                        action_type,
-                                        value,
-                                        is_global,
-                                    } => {
-                                        use crate::frontend::tui::keybind_form::KeybindActionType;
-                                        let action = match action_type {
-                                            KeybindActionType::Action => {
-                                                crate::config::KeyBindAction::Action(value)
-                                            }
-                                            KeybindActionType::Macro => {
-                                                crate::config::KeyBindAction::Macro(
-                                                    crate::config::MacroAction { macro_text: value },
-                                                )
-                                            }
-                                        };
-                                        // Save to correct file based on scope
-                                        if let Err(e) = crate::config::Config::save_single_keybind(
-                                            &key_combo,
-                                            &action,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            tracing::error!("Failed to save keybind to file: {}", e);
-                                        }
-                                        // Also update in-memory config
-                                        app_core.config.keybinds.insert(key_combo.clone(), action);
-                                        app_core.rebuild_keybind_map();
-                                        self.keybind_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved keybind: {} (global={})", key_combo, is_global);
-                                    }
-                                    crate::frontend::tui::keybind_form::KeybindFormResult::Delete {
-                                        key_combo,
-                                        is_global,
-                                    } => {
-                                        // Delete from correct file based on scope
-                                        if let Err(e) = crate::config::Config::delete_single_keybind(
-                                            &key_combo,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            tracing::error!("Failed to delete keybind from file: {}", e);
-                                        }
-                                        // Also update in-memory config
-                                        app_core.config.keybinds.remove(&key_combo);
-                                        app_core.rebuild_keybind_map();
-                                        self.keybind_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Deleted keybind: {} (global={})", key_combo, is_global);
-                                    }
-                                    crate::frontend::tui::keybind_form::KeybindFormResult::Cancel => {
-                                        self.keybind_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            use crate::frontend::tui::crossterm_bridge;
-                            let ct_code = crossterm_bridge::to_crossterm_keycode(code);
-                            let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
-                            let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
-                            if let Some(result) = form.handle_key(key) {
-                                match result {
-                                    crate::frontend::tui::keybind_form::KeybindFormResult::Save {
-                                        key_combo,
-                                        action_type,
-                                        value,
-                                        is_global,
-                                    } => {
-                                        use crate::frontend::tui::keybind_form::KeybindActionType;
-                                        let action = match action_type {
-                                            KeybindActionType::Action => {
-                                                crate::config::KeyBindAction::Action(value)
-                                            }
-                                            KeybindActionType::Macro => {
-                                                crate::config::KeyBindAction::Macro(
-                                                    crate::config::MacroAction { macro_text: value },
-                                                )
-                                            }
-                                        };
-                                        // Save to correct file based on scope
-                                        if let Err(e) = crate::config::Config::save_single_keybind(
-                                            &key_combo,
-                                            &action,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            tracing::error!("Failed to save keybind to file: {}", e);
-                                        }
-                                        // Also update in-memory config
-                                        app_core.config.keybinds.insert(key_combo.clone(), action);
-                                        app_core.rebuild_keybind_map();
-                                        self.keybind_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved keybind: {} (global={})", key_combo, is_global);
-                                    }
-                                    crate::frontend::tui::keybind_form::KeybindFormResult::Delete {
-                                        key_combo,
-                                        is_global,
-                                    } => {
-                                        // Delete from correct file based on scope
-                                        if let Err(e) = crate::config::Config::delete_single_keybind(
-                                            &key_combo,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            tracing::error!("Failed to delete keybind from file: {}", e);
-                                        }
-                                        // Also update in-memory config
-                                        app_core.config.keybinds.remove(&key_combo);
-                                        app_core.rebuild_keybind_map();
-                                        self.keybind_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Deleted keybind: {} (global={})", key_combo, is_global);
-                                    }
-                                    crate::frontend::tui::keybind_form::KeybindFormResult::Cancel => {
-                                        self.keybind_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::ColorForm => {
-                if let Some(ref mut form) = self.color_form {
-                    use crate::frontend::tui::widget_traits::{
-                        FieldNavigable, TextEditable, Toggleable,
-                    };
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextField => form.next_field(),
-                        crate::core::menu_actions::MenuAction::PreviousField => {
-                            form.previous_field()
-                        }
-                        crate::core::menu_actions::MenuAction::SelectAll => form.select_all(),
-                        crate::core::menu_actions::MenuAction::Copy => {
-                            let _ = form.copy_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Cut => {
-                            let _ = form.cut_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Paste => {
-                            let _ = form.paste_from_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Toggle => {
-                            form.toggle_focused();
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.color_form = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        crate::core::menu_actions::MenuAction::Select |
-                        crate::core::menu_actions::MenuAction::Save => {
-                            // Handle Select (Enter) and Save (Ctrl+S) via handle_action
-                            if let Some(result) = form.handle_action(action.clone()) {
-                                match result {
-                                    crate::frontend::tui::color_form::FormAction::Save {
-                                        color,
-                                        original_name,
-                                        is_global,
-                                    } => {
-                                        // Save to appropriate file based on scope
-                                        let color_with_slot = auto_assign_slot(color.clone(), &app_core.config.colors.color_palette);
-                                        if let Err(e) = crate::config::ColorConfig::save_single_palette_color(
-                                            &color_with_slot,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            tracing::error!("Failed to save color: {}", e);
-                                        }
-
-                                        // Handle rename: delete old name if changed
-                                        if let Some(ref old_name) = original_name {
-                                            if old_name != &color.name {
-                                                let _ = crate::config::ColorConfig::delete_single_palette_color(
-                                                    old_name,
-                                                    is_global,
-                                                    app_core.config.character.as_deref(),
-                                                );
-                                            }
-                                        }
-
-                                        // Reload colors to update in-memory state
-                                        if let Ok(colors) = crate::config::ColorConfig::load_with_merge(
-                                            app_core.config.character.as_deref()
-                                        ) {
-                                            app_core.config.colors = colors;
-                                        }
-
-                                        // Refresh browser if open
-                                        if let Some(ref mut browser) = self.color_palette_browser {
-                                            let global_colors = crate::config::ColorConfig::load_common_colors()
-                                                .map(|c| c.color_palette)
-                                                .unwrap_or_default();
-                                            let char_colors = crate::config::ColorConfig::load_character_colors_only(
-                                                app_core.config.character.as_deref()
-                                            )
-                                                .map(|c| c.color_palette)
-                                                .unwrap_or_default();
-                                            browser.update_items_with_source(&global_colors, &char_colors);
-                                        }
-
-                                        self.color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved color: {} ({})", color.name, if is_global { "global" } else { "character" });
-                                    }
-                                    crate::frontend::tui::color_form::FormAction::Delete => {
-                                        self.color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                    crate::frontend::tui::color_form::FormAction::Cancel => {
-                                        self.color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                    crate::frontend::tui::color_form::FormAction::Error(_) => {}
-                                }
-                            }
-                        }
-                        _ => {
-                            use crate::frontend::tui::crossterm_bridge;
-                            let ct_code = crossterm_bridge::to_crossterm_keycode(code);
-                            let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
-                            let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
-                            if let Some(result) = form.handle_input(key) {
-                                match result {
-                                    crate::frontend::tui::color_form::FormAction::Save {
-                                        color,
-                                        original_name,
-                                        is_global,
-                                    } => {
-                                        // Save to appropriate file based on scope
-                                        let color_with_slot = auto_assign_slot(color.clone(), &app_core.config.colors.color_palette);
-                                        if let Err(e) = crate::config::ColorConfig::save_single_palette_color(
-                                            &color_with_slot,
-                                            is_global,
-                                            app_core.config.character.as_deref(),
-                                        ) {
-                                            tracing::error!("Failed to save color: {}", e);
-                                        }
-
-                                        // Handle rename: delete old name if changed
-                                        if let Some(ref old_name) = original_name {
-                                            if old_name != &color.name {
-                                                let _ = crate::config::ColorConfig::delete_single_palette_color(
-                                                    old_name,
-                                                    is_global,
-                                                    app_core.config.character.as_deref(),
-                                                );
-                                            }
-                                        }
-
-                                        // Reload colors to update in-memory state
-                                        if let Ok(colors) = crate::config::ColorConfig::load_with_merge(
-                                            app_core.config.character.as_deref()
-                                        ) {
-                                            app_core.config.colors = colors;
-                                        }
-
-                                        // Refresh browser if open
-                                        if let Some(ref mut browser) = self.color_palette_browser {
-                                            let global_colors = crate::config::ColorConfig::load_common_colors()
-                                                .map(|c| c.color_palette)
-                                                .unwrap_or_default();
-                                            let char_colors = crate::config::ColorConfig::load_character_colors_only(
-                                                app_core.config.character.as_deref()
-                                            )
-                                                .map(|c| c.color_palette)
-                                                .unwrap_or_default();
-                                            browser.update_items_with_source(&global_colors, &char_colors);
-                                        }
-
-                                        self.color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        tracing::info!("Saved color: {} ({})", color.name, if is_global { "global" } else { "character" });
-                                    }
-                                    crate::frontend::tui::color_form::FormAction::Delete => {
-                                        self.color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                    crate::frontend::tui::color_form::FormAction::Cancel => {
-                                        self.color_form = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                    crate::frontend::tui::color_form::FormAction::Error(_) => {}
-                                }
-                            }
-                        }
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::SpellColorForm => {
-                if let Some(ref mut form) = self.spell_color_form {
-                    use crate::frontend::tui::widget_traits::{FieldNavigable, TextEditable};
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextField => form.next_field(),
-                        crate::core::menu_actions::MenuAction::PreviousField => {
-                            form.previous_field()
-                        }
-                        crate::core::menu_actions::MenuAction::SelectAll => form.select_all(),
-                        crate::core::menu_actions::MenuAction::Copy => {
-                            let _ = form.copy_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Cut => {
-                            let _ = form.cut_to_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Paste => {
-                            let _ = form.paste_from_clipboard();
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.spell_color_form = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        // Route navigation, select, save, and delete through handle_action
-                        crate::core::menu_actions::MenuAction::NavigateUp
-                        | crate::core::menu_actions::MenuAction::NavigateDown
-                        | crate::core::menu_actions::MenuAction::Select
-                        | crate::core::menu_actions::MenuAction::Save
-                        | crate::core::menu_actions::MenuAction::Delete => {
-                            if let Some(result) = form.handle_action(action.clone()) {
-                                self.handle_spell_color_form_result(app_core, result);
-                            }
-                        }
-                        _ => {
-                            use crate::frontend::tui::crossterm_bridge;
-                            let ct_code = crossterm_bridge::to_crossterm_keycode(code);
-                            let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
-                            let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
-                            if let Some(result) = form.input(key) {
-                                self.handle_spell_color_form_result(app_core, result);
-                            }
-                        }
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::MenuKeybindEditor => {
-                if let Some(ref mut editor) = self.menu_keybind_editor {
-                    // While capturing, the next key press IS the binding — take
-                    // it verbatim (including Esc/Enter, which are valid menu
-                    // keys) rather than routing it as a menu action.
-                    if editor.is_capturing() {
-                        let key_event = crate::data::input::KeyEvent { code, modifiers };
-                        let key = crate::core::menu_actions::key_event_to_string(key_event);
-                        editor.apply_captured_key(key);
-                        app_core.needs_render = true;
-                        return Ok(None);
-                    }
-
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-                    match action {
-                        crate::core::menu_actions::MenuAction::NavigateUp
-                        | crate::core::menu_actions::MenuAction::PreviousItem => {
-                            editor.navigate_up()
-                        }
-                        crate::core::menu_actions::MenuAction::NavigateDown
-                        | crate::core::menu_actions::MenuAction::NextItem => {
-                            editor.navigate_down()
-                        }
-                        crate::core::menu_actions::MenuAction::Select
-                        | crate::core::menu_actions::MenuAction::Edit => editor.arm_capture(),
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.menu_keybind_editor = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                        }
-                        crate::core::menu_actions::MenuAction::Save => {
-                            // Validate, then persist to the chosen scope.
-                            let validation = crate::config::menu_keybind_validator::validate_menu_keybinds(&editor.working);
-                            if validation.has_errors() {
-                                let first = validation
-                                    .errors()
-                                    .first()
-                                    .map(|e| e.message())
-                                    .unwrap_or_default();
-                                editor.set_status(format!("Cannot save: {}", first));
-                            } else {
-                                let character = app_core.config.character.clone();
-                                match crate::config::Config::save_menu_keybinds(
-                                    &editor.working,
-                                    editor.is_global,
-                                    character.as_deref(),
-                                ) {
-                                    Ok(()) => {
-                                        app_core.config.menu_keybinds = editor.working.clone();
-                                        self.menu_keybind_editor = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                        app_core.add_system_message("Menu keybinds saved.");
-                                    }
-                                    Err(err) => editor
-                                        .set_status(format!("Save failed: {}", err)),
-                                }
-                            }
-                        }
-                        _ => {
-                            // Plain 'd' resets the selected row to default; 'g'
-                            // toggles scope. These aren't menu-nav actions, so
-                            // they fall through to here.
-                            if modifiers.is_empty() {
-                                match code {
-                                    crate::data::input::KeyCode::Char('d')
-                                    | crate::data::input::KeyCode::Char('D') => {
-                                        editor.reset_selected_to_default()
-                                    }
-                                    crate::data::input::KeyCode::Char('g')
-                                    | crate::data::input::KeyCode::Char('G') => {
-                                        editor.toggle_scope()
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                    app_core.needs_render = true;
-                }
-                return Ok(None);
-            }
-            InputMode::ThemeEditor => {
-                if let Some(ref mut editor) = self.theme_editor {
-                    use crate::core::input_router;
-
-                    // Ctrl+1-6 section jumping (high priority)
-                    if modifiers.ctrl {
-                        match code {
-                            crate::data::input::KeyCode::Char(c @ '1'..='6') => {
-                                let section = c.to_digit(10).expect("char '1'..='6' is always a digit") as usize;
-                                editor.jump_to_section(section);
-                                app_core.needs_render = true;
-                                return Ok(None);
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    let key_event = crate::data::input::KeyEvent { code, modifiers };
-                    let action = input_router::route_input(
-                        &key_event,
-                        &app_core.ui_state.input_mode,
-                        &app_core.config,
-                    );
-
-                    match action {
-                        crate::core::menu_actions::MenuAction::NextField => {
-                            editor.next_field();
-                            app_core.needs_render = true;
-                        }
-                        crate::core::menu_actions::MenuAction::PreviousField => {
-                            editor.previous_field();
-                            app_core.needs_render = true;
-                        }
-                        crate::core::menu_actions::MenuAction::Cancel => {
-                            self.theme_editor = None;
-                            app_core.ui_state.input_mode = InputMode::Normal;
-                            app_core.needs_render = true;
-                        }
-                        // Route navigation and save through handle_action
-                        crate::core::menu_actions::MenuAction::NavigateUp
-                        | crate::core::menu_actions::MenuAction::NavigateDown
-                        | crate::core::menu_actions::MenuAction::Save => {
-                            if let Some(result) = editor.handle_action(action.clone()) {
-                                match result {
-                                    crate::frontend::tui::theme_editor::ThemeEditorResult::Save(mut theme_data) => {
-                                        // Resolve palette color names to hex codes
-                                        theme_data.resolve_palette_colors(&app_core.config);
-
-                                        match theme_data.save_to_file(app_core.config.character.as_deref()) {
-                                            Ok(path) => {
-                                                tracing::info!("Saved custom theme '{}' to {:?}", theme_data.name, path);
-                                                app_core.add_system_message(&format!(
-                                                    "Saved custom theme: {}",
-                                                    theme_data.name
-                                                ));
-
-                                                if let Some(_app_theme) = theme_data.to_app_theme() {
-                                                    app_core.config.active_theme = theme_data.name.clone();
-                                                    let theme = app_core.config.get_theme();
-                                                    self.update_theme_cache(theme_data.name.clone(), theme);
-                                                    app_core.needs_render = true;
-                                                }
-                                            }
-                                            Err(e) => {
-                                                tracing::error!("Failed to save custom theme: {}", e);
-                                                app_core.add_system_message(&format!("Error saving theme: {}", e));
-                                            }
-                                        }
-                                        self.theme_editor = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                    crate::frontend::tui::theme_editor::ThemeEditorResult::Cancel => {
-                                        self.theme_editor = None;
-                                        app_core.ui_state.input_mode = InputMode::Normal;
-                                    }
-                                }
-                            }
-                        }
-                        _ => {
-                            use crate::frontend::tui::crossterm_bridge;
-                            let ct_code = crossterm_bridge::to_crossterm_keycode(code);
-                            let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
-                            let key = crossterm::event::KeyEvent::new(ct_code, ct_mods);
-                            let _ = editor.handle_input(key);
-                            app_core.needs_render = true;
-                        }
-                    }
-                }
-                return Ok(None);
-            }
-            InputMode::IndicatorTemplateEditor => {
-                if let Some(ref mut editor) = self.indicator_template_editor {
-                    let result = editor.handle_key(code, modifiers);
-                    app_core.needs_render = true;
-                    if matches!(
-                        result,
-                        crate::frontend::tui::indicator_template_editor::EditorAction::Close
-                    ) {
-                        self.indicator_template_editor = None;
-                        app_core.ui_state.input_mode = InputMode::Normal;
-                    }
-                } else {
-                    app_core.ui_state.input_mode = InputMode::Normal;
-                }
-                return Ok(None);
-            }
+            InputMode::KeybindBrowser => return self.handle_keybind_browser_mode_keys(code, modifiers, app_core),
+            InputMode::HotbarEditor => return self.handle_hotbar_editor_mode_keys(code, modifiers, app_core),
+            InputMode::ColorPaletteBrowser => return self.handle_color_palette_browser_mode_keys(code, modifiers, app_core),
+            InputMode::UIColorsBrowser => return self.handle_uicolors_browser_mode_keys(code, modifiers, app_core),
+            InputMode::SpellColorsBrowser => return self.handle_spell_colors_browser_mode_keys(code, modifiers, app_core),
+            InputMode::ThemeBrowser => return self.handle_theme_browser_mode_keys(code, modifiers, app_core),
+            InputMode::SettingsEditor => return self.handle_settings_editor_mode_keys(code, modifiers, app_core),
+            InputMode::PackEditor => return self.handle_pack_editor_mode_keys(code, modifiers, app_core),
+            InputMode::HighlightForm => return self.handle_highlight_form_mode_keys(code, modifiers, app_core),
+            InputMode::KeybindForm => return self.handle_keybind_form_mode_keys(code, modifiers, app_core),
+            InputMode::ColorForm => return self.handle_color_form_mode_keys(code, modifiers, app_core),
+            InputMode::SpellColorForm => return self.handle_spell_color_form_mode_keys(code, modifiers, app_core),
+            InputMode::MenuKeybindEditor => return self.handle_menu_keybind_editor_mode_keys(code, modifiers, app_core),
+            InputMode::ThemeEditor => return self.handle_theme_editor_mode_keys(code, modifiers, app_core),
+            InputMode::IndicatorTemplateEditor => return self.handle_indicator_template_editor_mode_keys(code, modifiers, app_core),
             _ => {}
         }
 
@@ -4166,6 +2604,73 @@ impl TuiFrontend {
         Ok(None)
     }
 
+    /// Add a window from the add-window menu (`__ADD__<name>`): create it,
+    /// mirror it into UI state at the current terminal size, and open its
+    /// editor. Template names may auto-rename (spacer, tabbedtext_custom, …),
+    /// so the actual def is looked up by name then falls back to the last
+    /// window added.
+    fn menu_add_window(&mut self, window_name: &str, app_core: &mut crate::core::AppCore) {
+        use crate::data::ui_state::InputMode;
+        match app_core.layout.add_window(window_name) {
+            Ok(_) => {
+                let (width, height) = self.size();
+                let window_def = app_core
+                    .layout
+                    .get_window(window_name)
+                    .cloned()
+                    .or_else(|| app_core.layout.windows.last().cloned());
+                if let Some(window_def) = window_def {
+                    let actual_name = window_def.name().to_string();
+                    app_core.add_new_window(&window_def, width, height);
+                    app_core.schedule_layout_autosave();
+                    app_core.add_system_message(&format!("Window '{}' added", actual_name));
+                    tracing::info!("Added window: {}", actual_name);
+                    self.window_editor =
+                        Some(crate::frontend::tui::window_editor::WindowEditor::new(window_def));
+                    app_core.ui_state.input_mode = InputMode::WindowEditor;
+                } else {
+                    app_core.add_system_message(&format!(
+                        "Window '{}' added but couldn't retrieve definition",
+                        window_name
+                    ));
+                    app_core.ui_state.input_mode = InputMode::Normal;
+                }
+            }
+            Err(e) => {
+                app_core.add_system_message(&format!("Failed to add window: {}", e));
+                tracing::error!("Failed to add window '{}': {}", window_name, e);
+            }
+        }
+        app_core.ui_state.close_all_menus();
+        app_core.needs_render = true;
+    }
+
+    /// Start a blank/custom window editor for a widget type
+    /// (`__ADD_CUSTOM__<type>`), naming it `custom_<type>[_n]` uniquely.
+    /// No-op if a window editor is already open.
+    fn menu_add_custom_window(&mut self, widget_type: &str, app_core: &mut crate::core::AppCore) {
+        use crate::data::ui_state::InputMode;
+        use crate::frontend::tui::window_editor::WindowEditor;
+        if self.window_editor.is_some() {
+            tracing::debug!("Window editor already open, ignoring add custom request");
+            return;
+        }
+        let mut editor = WindowEditor::new_window(widget_type.to_string());
+        let base = format!("custom_{}", widget_type);
+        let mut candidate = base.clone();
+        let mut idx = 1;
+        while app_core.layout.get_window(&candidate).is_some() {
+            candidate = format!("{}_{}", base, idx);
+            idx += 1;
+        }
+        editor.set_name(&candidate);
+        self.window_editor = Some(editor);
+        app_core.ui_state.popup_menu = None;
+        app_core.ui_state.submenu = None;
+        app_core.ui_state.input_mode = InputMode::WindowEditor;
+        app_core.needs_render = true;
+    }
+
     /// Handle menu command execution (extracted from main.rs Phase 4.2)
     fn handle_menu_command(
         &mut self,
@@ -4184,6 +2689,7 @@ impl TuiFrontend {
                 "widgetpicker" | "addwindow" => app_core.build_add_window_menu(),
                 "hidewindow" => app_core.build_hide_window_menu(),
                 "editwindow" => app_core.build_edit_window_menu(),
+                "knownwindows" => app_core.build_known_windows_menu(),
                 _ => {
                     app_core.ui_state.popup_menu = None;
                     app_core.ui_state.input_mode = InputMode::Normal;
@@ -4246,17 +2752,10 @@ impl TuiFrontend {
             if items.is_empty() {
                 app_core.ui_state.deep_submenu = None;
             } else {
-                // Category menu is at nested_submenu (level 3), so template menu goes to deep_submenu (level 4)
-                let parent_pos = app_core
-                    .ui_state
-                    .nested_submenu
-                    .as_ref()
-                    .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                    .unwrap_or((40, 12));
-                app_core.ui_state.deep_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                // Category menu is at nested_submenu (level 3); the template
+                // menu opens one level deeper (deep_submenu).
+                let pos = app_core.ui_state.child_menu_pos();
+                app_core.ui_state.deep_submenu = Some(PopupMenu::new(items, pos));
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_INDICATORS" {
@@ -4269,17 +2768,8 @@ impl TuiFrontend {
             if items.is_empty() {
                 app_core.ui_state.deep_submenu = None;
             } else {
-                let parent_pos = app_core
-                    .ui_state
-                    .deep_submenu
-                    .as_ref()
-                    .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.nested_submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                    .unwrap_or((40, 12));
-                app_core.ui_state.deep_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                let pos = app_core.ui_state.child_menu_pos();
+                app_core.ui_state.deep_submenu = Some(PopupMenu::new(items, pos));
             }
             app_core.needs_render = true;
         } else if let Some(category_str) = command.strip_prefix("__SUBMENU_HIDE__") {
@@ -4288,17 +2778,8 @@ impl TuiFrontend {
             if items.is_empty() {
                 app_core.ui_state.deep_submenu = None;
             } else {
-                // Category menu is at nested_submenu (level 3), so template menu goes to deep_submenu (level 4)
-                let parent_pos = app_core
-                    .ui_state
-                    .nested_submenu
-                    .as_ref()
-                    .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                    .unwrap_or((40, 12));
-                app_core.ui_state.deep_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                let pos = app_core.ui_state.child_menu_pos();
+                app_core.ui_state.deep_submenu = Some(PopupMenu::new(items, pos));
             }
             app_core.needs_render = true;
         } else if let Some(category_str) = command.strip_prefix("__SUBMENU_EDIT__") {
@@ -4307,17 +2788,8 @@ impl TuiFrontend {
             if items.is_empty() {
                 app_core.ui_state.deep_submenu = None;
             } else {
-                // Category menu is at nested_submenu (level 3), so template menu goes to deep_submenu (level 4)
-                let parent_pos = app_core
-                    .ui_state
-                    .nested_submenu
-                    .as_ref()
-                    .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                    .unwrap_or((40, 12));
-                app_core.ui_state.deep_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                let pos = app_core.ui_state.child_menu_pos();
+                app_core.ui_state.deep_submenu = Some(PopupMenu::new(items, pos));
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_HIDE_INDICATORS" {
@@ -4326,24 +2798,15 @@ impl TuiFrontend {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible && matches!(w.widget_type(), "indicator"))
+                .filter(|w| w.base().visibility.is_shown() && matches!(w.widget_type(), "indicator"))
                 .map(|w| w.name().to_string())
                 .collect::<Vec<String>>();
             let items = app_core.build_indicator_hide_menu(&indicators);
             if items.is_empty() {
                 app_core.ui_state.deep_submenu = None;
             } else {
-                let parent_pos = app_core
-                    .ui_state
-                    .deep_submenu
-                    .as_ref()
-                    .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.nested_submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                    .unwrap_or((40, 12));
-                app_core.ui_state.deep_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                let pos = app_core.ui_state.child_menu_pos();
+                app_core.ui_state.deep_submenu = Some(PopupMenu::new(items, pos));
             }
             app_core.needs_render = true;
         } else if command == "__SUBMENU_EDIT_INDICATORS" {
@@ -4360,100 +2823,25 @@ impl TuiFrontend {
             if items.is_empty() {
                 app_core.ui_state.deep_submenu = None;
             } else {
-                let parent_pos = app_core
-                    .ui_state
-                    .deep_submenu
-                    .as_ref()
-                    .map(|m| m.get_position())
-                    .or_else(|| app_core.ui_state.nested_submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.submenu.as_ref().map(|m| m.get_position()))
-                    .or_else(|| app_core.ui_state.popup_menu.as_ref().map(|m| m.get_position()))
-                    .unwrap_or((40, 12));
-                app_core.ui_state.deep_submenu =
-                    Some(PopupMenu::new(items, (parent_pos.0 + 2, parent_pos.1)));
+                let pos = app_core.ui_state.child_menu_pos();
+                app_core.ui_state.deep_submenu = Some(PopupMenu::new(items, pos));
             }
             app_core.needs_render = true;
         } else if command == "__INDICATOR_EDITOR" {
             self.indicator_template_editor =
                 Some(crate::frontend::tui::indicator_template_editor::IndicatorTemplateEditor::new());
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
-            app_core.ui_state.deep_submenu = None;
+            app_core.ui_state.close_all_menus();
             app_core.ui_state.input_mode = crate::data::ui_state::InputMode::IndicatorTemplateEditor;
             app_core.needs_render = true;
         } else if let Some(widget_type) = command.strip_prefix("__ADD_CUSTOM__") {
-            // Start a new blank/custom window editor for this widget type
-            // Safeguard: prevent opening if a window editor is already open
-            if self.window_editor.is_some() {
-                tracing::debug!("Window editor already open, ignoring add custom request");
-            } else {
-                use crate::frontend::tui::window_editor::WindowEditor;
-                let mut editor = WindowEditor::new_window(widget_type.to_string());
-
-                // Generate a unique name like custom_<type>[_n]
-                let base = format!("custom_{}", widget_type);
-                let mut candidate = base.clone();
-                let mut idx = 1;
-                while app_core.layout.get_window(&candidate).is_some() {
-                    candidate = format!("{}_{}", base, idx);
-                    idx += 1;
-                }
-                editor.set_name(&candidate);
-
-                self.window_editor = Some(editor);
-                app_core.ui_state.popup_menu = None;
-                app_core.ui_state.submenu = None;
-                app_core.ui_state.input_mode = InputMode::WindowEditor;
-                app_core.needs_render = true;
-            }
+            self.menu_add_custom_window(widget_type, app_core);
         } else if let Some(window_name) = command.strip_prefix("__ADD__") {
-            match app_core.layout.add_window(window_name) {
-                Ok(_) => {
-                    let (width, height) = self.size();
-                    // Only add the NEW window to UI state, don't overwrite existing windows
-                    // (sync_layout_to_ui_state was overwriting all windows, resetting user changes)
-
-                    // For templates with auto-generated names (spacer, tabbedtext_custom, etc.)
-                    // we need to get the last window in the layout since the template name
-                    // differs from the actual window name (e.g., "tabbedtext_custom" → "custom-tabbedtext-1")
-                    // First try direct lookup, then fallback to last window if template doesn't match
-                    let window_def = app_core.layout.get_window(window_name).cloned()
-                        .or_else(|| app_core.layout.windows.last().cloned());
-
-                    if let Some(window_def) = window_def {
-                        let actual_name = window_def.name().to_string();
-                        app_core.add_new_window(&window_def, width, height);
-                        app_core.layout_modified_since_save = true;
-                        app_core.add_system_message(&format!("Window '{}' added", actual_name));
-                        tracing::info!("Added window: {}", actual_name);
-
-                        // Immediately open editor for the newly added window
-                        self.window_editor = Some(
-                            crate::frontend::tui::window_editor::WindowEditor::new(window_def)
-                        );
-                        app_core.ui_state.input_mode = InputMode::WindowEditor;
-                    } else {
-                        // Fallback to normal mode if something goes wrong
-                        app_core.add_system_message(&format!("Window '{}' added but couldn't retrieve definition", window_name));
-                        app_core.ui_state.input_mode = InputMode::Normal;
-                    }
-                }
-                Err(e) => {
-                    app_core.add_system_message(&format!("Failed to add window: {}", e));
-                    tracing::error!("Failed to add window '{}': {}", window_name, e);
-                }
-            }
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
-            app_core.ui_state.deep_submenu = None;
-            app_core.needs_render = true;
+            self.menu_add_window(window_name, app_core);
         } else if let Some(window_name) = command.strip_prefix("__HIDE__") {
             match app_core.layout.hide_window(window_name) {
                 Ok(_) => {
                     app_core.ui_state.remove_window(window_name);
-                    app_core.layout_modified_since_save = true;
+                    app_core.schedule_layout_autosave();
                     app_core.add_system_message(&format!("Window '{}' hidden", window_name));
                     tracing::info!("Hidden window: {}", window_name);
                     app_core.layout.remove_window_if_default(window_name);
@@ -4481,17 +2869,11 @@ impl TuiFrontend {
                 app_core.add_system_message(&format!("Window '{}' not found", window_name));
                 tracing::warn!("Window '{}' not found in layout", window_name);
             }
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
-            app_core.ui_state.deep_submenu = None;
+            app_core.ui_state.close_all_menus();
             app_core.needs_render = true;
         } else if let Some(window_name) = command.strip_prefix("__CLOSE_WINDOW__") {
             // Handle window close from right-click menu
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
-            app_core.ui_state.deep_submenu = None;
+            app_core.ui_state.close_all_menus();
             app_core.ui_state.input_mode = InputMode::Normal;
 
             // Check if it's an ephemeral window
@@ -4504,17 +2886,12 @@ impl TuiFrontend {
                 app_core.hide_window(window_name);
             }
             app_core.needs_render = true;
-        } else if let Some(offer_id) = command.strip_prefix("__TOGGLE_OFFER__") {
-            // Known-windows list (keyboard Enter): flip the offer's
-            // show/hide and close the menu like any other menu action —
-            // bulk toggling lives in the GUI checkbox panel. (The mouse
-            // path has its own copy.)
-            let offer_id = offer_id.to_string();
-            app_core.toggle_window_offer(&offer_id);
-            app_core.ui_state.popup_menu = None;
-            app_core.ui_state.submenu = None;
-            app_core.ui_state.nested_submenu = None;
-            app_core.ui_state.deep_submenu = None;
+        } else if let Some(name) = command.strip_prefix("__TOGGLE_WINDOW__") {
+            // Windows list (keyboard Enter): flip this window's show/hide
+            // and close the menu (U3, keyed on window name).
+            let name = name.to_string();
+            app_core.toggle_known_window(&name);
+            app_core.ui_state.close_all_menus();
             app_core.ui_state.input_mode = InputMode::Normal;
             app_core.needs_render = true;
         } else if command == "__PERF_MENU_CLOSE__" {
@@ -4523,28 +2900,11 @@ impl TuiFrontend {
             app_core.ui_state.input_mode = InputMode::Normal;
             app_core.needs_render = true;
         } else if let Some(metric) = command.strip_prefix("__TOGGLE_PERF__") {
-            // Handle performance overlay metric toggle from right-click menu
-            match metric {
-                "fps" => app_core.config.ui.perf_show_fps = !app_core.config.ui.perf_show_fps,
-                "frame_times" => app_core.config.ui.perf_show_frame_times = !app_core.config.ui.perf_show_frame_times,
-                "render_times" => app_core.config.ui.perf_show_render_times = !app_core.config.ui.perf_show_render_times,
-                "ui_times" => app_core.config.ui.perf_show_ui_times = !app_core.config.ui.perf_show_ui_times,
-                "wrap_times" => app_core.config.ui.perf_show_wrap_times = !app_core.config.ui.perf_show_wrap_times,
-                "net" => app_core.config.ui.perf_show_net = !app_core.config.ui.perf_show_net,
-                "parse" => app_core.config.ui.perf_show_parse = !app_core.config.ui.perf_show_parse,
-                "events" => app_core.config.ui.perf_show_events = !app_core.config.ui.perf_show_events,
-                "memory" => app_core.config.ui.perf_show_memory = !app_core.config.ui.perf_show_memory,
-                "lines" => app_core.config.ui.perf_show_lines = !app_core.config.ui.perf_show_lines,
-                "uptime" => app_core.config.ui.perf_show_uptime = !app_core.config.ui.perf_show_uptime,
-                "jitter" => app_core.config.ui.perf_show_jitter = !app_core.config.ui.perf_show_jitter,
-                "frame_spikes" => app_core.config.ui.perf_show_frame_spikes = !app_core.config.ui.perf_show_frame_spikes,
-                "event_lag" => app_core.config.ui.perf_show_event_lag = !app_core.config.ui.perf_show_event_lag,
-                "memory_delta" => app_core.config.ui.perf_show_memory_delta = !app_core.config.ui.perf_show_memory_delta,
-                _ => {}
+            // Performance metric toggle from the right-click menu; ids come
+            // from performance::PERF_METRICS.
+            if !app_core.config.ui.toggle_perf_metric(metric) {
+                tracing::warn!("Unknown perf metric toggle: {metric}");
             }
-            // Re-apply enabled flags to perf_stats collector
-            let data = app_core.perf_overlay_data(true);
-            app_core.perf_stats.apply_enabled_from(&data);
             // Rebuild menu with updated checkmarks (keep it open)
             if let Some(ref mut menu) = app_core.ui_state.popup_menu {
                 menu.items = Self::build_perf_metrics_context_menu(&app_core.config.ui);
@@ -4566,12 +2926,13 @@ impl TuiFrontend {
                 app_core.ui_state.nested_submenu = None;
                 app_core.ui_state.deep_submenu = None;
                 app_core.ui_state.input_mode = InputMode::Normal;
-                // Process the dot command (e.g., .menu, .help)
-                // IMPORTANT: Check return value for action: prefix - some dot commands
-                // return UI action strings that need to be handled by handle_menu_action
+                // Process the dot command (e.g., .menu, .help); UI
+                // outcomes are performed here like any menu pick.
                 match app_core.send_command(command.to_string()) {
-                    Ok(action_str) if action_str.starts_with("action:") => {
-                        handle_menu_action_fn(app_core, self, &action_str)?;
+                    Ok(crate::data::CommandOutcome::Ui(action)) => {
+                        crate::frontend::tui::menu_actions::handle_ui_action(
+                            app_core, self, action,
+                        )?;
                     }
                     Err(e) => {
                         tracing::error!("Dot command error: {}", e);
@@ -4615,16 +2976,9 @@ impl TuiFrontend {
         use crate::config::WidgetCategory;
         use crate::data::ui_state::InputMode;
 
-        match category_str {
-            "ProgressBar" => Ok(WidgetCategory::ProgressBar),
-            "TextWindow" => Ok(WidgetCategory::TextWindow),
-            "Countdown" => Ok(WidgetCategory::Countdown),
-            "Hand" => Ok(WidgetCategory::Hand),
-            "ActiveEffects" => Ok(WidgetCategory::ActiveEffects),
-            "Entity" => Ok(WidgetCategory::Entity),
-            "Status" => Ok(WidgetCategory::Status),
-            "Other" => Ok(WidgetCategory::Other),
-            _ => {
+        match WidgetCategory::from_name(category_str) {
+            Some(category) => Ok(category),
+            None => {
                 tracing::warn!("Unknown widget category: {}", category_str);
                 app_core.ui_state.popup_menu = None;
                 app_core.ui_state.input_mode = InputMode::Normal;
@@ -4641,100 +2995,39 @@ impl TuiFrontend {
 
     /// Build performance overlay metrics context menu with checkmarks for enabled metrics
     fn build_perf_metrics_context_menu(ui: &crate::config::UiConfig) -> Vec<crate::data::ui_state::PopupMenuItem> {
+        use crate::performance::{PerfFrontend, PERF_METRICS};
         let check = |on: bool| if on { "✓" } else { " " };
-        vec![
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] FPS", check(ui.perf_show_fps)),
-                command: "__TOGGLE_PERF__fps".to_string(),
+        // Rows derive from the shared metric table (TUI scope), so this
+        // menu can never list a metric the widget doesn't render.
+        let mut items: Vec<crate::data::ui_state::PopupMenuItem> = PERF_METRICS
+            .iter()
+            .filter(|metric| metric.in_scope(PerfFrontend::Tui))
+            .map(|metric| crate::data::ui_state::PopupMenuItem {
+                text: format!("[{}] {}", check(ui.perf_metric_enabled(metric.id)), metric.label),
+                command: format!("__TOGGLE_PERF__{}", metric.id),
                 disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Render Times", check(ui.perf_show_render_times)),
-                command: "__TOGGLE_PERF__render_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] UI Times", check(ui.perf_show_ui_times)),
-                command: "__TOGGLE_PERF__ui_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Wrap Times", check(ui.perf_show_wrap_times)),
-                command: "__TOGGLE_PERF__wrap_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Network", check(ui.perf_show_net)),
-                command: "__TOGGLE_PERF__net".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Parse Stats", check(ui.perf_show_parse)),
-                command: "__TOGGLE_PERF__parse".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Events", check(ui.perf_show_events)),
-                command: "__TOGGLE_PERF__events".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Memory", check(ui.perf_show_memory)),
-                command: "__TOGGLE_PERF__memory".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Lines/Windows", check(ui.perf_show_lines)),
-                command: "__TOGGLE_PERF__lines".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Uptime", check(ui.perf_show_uptime)),
-                command: "__TOGGLE_PERF__uptime".to_string(),
-                disabled: false,
-            },
-            // Advanced metrics (usually disabled by default)
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Frame Times", check(ui.perf_show_frame_times)),
-                command: "__TOGGLE_PERF__frame_times".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Jitter", check(ui.perf_show_jitter)),
-                command: "__TOGGLE_PERF__jitter".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Frame Spikes", check(ui.perf_show_frame_spikes)),
-                command: "__TOGGLE_PERF__frame_spikes".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Event Lag", check(ui.perf_show_event_lag)),
-                command: "__TOGGLE_PERF__event_lag".to_string(),
-                disabled: false,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: format!("[{}] Memory Delta", check(ui.perf_show_memory_delta)),
-                command: "__TOGGLE_PERF__memory_delta".to_string(),
-                disabled: false,
-            },
-            // Separator and Close button
-            crate::data::ui_state::PopupMenuItem {
-                text: "─────────────".to_string(),
-                command: String::new(),
-                disabled: true,
-            },
-            crate::data::ui_state::PopupMenuItem {
-                text: "Close".to_string(),
-                command: "__PERF_MENU_CLOSE__".to_string(),
-                disabled: false,
-            },
-        ]
+            })
+            .collect();
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: format!("[{}] Sparklines", check(ui.perf_sparklines)),
+            command: "__TOGGLE_PERF__sparklines".to_string(),
+            disabled: false,
+        });
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: "─────────────".to_string(),
+            command: String::new(),
+            disabled: true,
+        });
+        items.push(crate::data::ui_state::PopupMenuItem {
+            text: "Close".to_string(),
+            command: "__PERF_MENU_CLOSE__".to_string(),
+            disabled: false,
+        });
+        items
     }
 
     /// Handle WindowEditor mode keyboard events (extracted from main.rs Phase 4.2)
-    fn handle_window_editor_keys(
+    pub(super) fn handle_window_editor_keys(
         &mut self,
         code: crate::data::input::KeyCode,
         modifiers: crate::data::input::KeyModifiers,
@@ -4919,6 +3212,11 @@ impl TuiFrontend {
                                         app_core.ui_state.needs_widget_reset = true;
                                     }
                                 }
+                                // Text windows: push streams/compact/timestamps
+                                // onto the live content so the change (e.g. the
+                                // bounty condense toggle) applies immediately
+                                // instead of on window recreation.
+                                app_core.apply_text_content_settings(&window_def);
                             }
                         }
                         app_core.mark_layout_modified();
@@ -5002,5 +3300,91 @@ impl TuiFrontend {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod hit_test_tests {
+    use super::{find_topmost_window_at, resize_op_at};
+    use crate::data::ui_state::UiState;
+    use crate::data::window::WindowState;
+    use crate::data::DragOperation;
+
+    /// Insert a visible text window at the given rect.
+    fn add_window(ui: &mut UiState, name: &str, x: u16, y: u16, w: u16, h: u16) {
+        let mut window = WindowState::new_text(name, 100);
+        window.position.x = crate::data::geometry::Col::new(x);
+        window.position.y = crate::data::geometry::Row::new(y);
+        window.position.width = crate::data::geometry::Width::new(w);
+        window.position.height = crate::data::geometry::Height::new(h);
+        window.visible = true;
+        ui.windows.insert(name.to_string(), window);
+    }
+
+    #[test]
+    fn topmost_falls_back_to_main_when_empty() {
+        let ui = UiState::new();
+        assert_eq!(find_topmost_window_at(&ui, 5, 5), "main");
+    }
+
+    #[test]
+    fn topmost_hits_the_containing_window() {
+        let mut ui = UiState::new();
+        add_window(&mut ui, "a", 0, 0, 10, 10);
+        // Inside a.
+        assert_eq!(find_topmost_window_at(&ui, 3, 3), "a");
+        // Half-open bounds: the far edges are outside.
+        assert_eq!(find_topmost_window_at(&ui, 10, 3), "main");
+        assert_eq!(find_topmost_window_at(&ui, 3, 10), "main");
+    }
+
+    #[test]
+    fn topmost_skips_invisible_windows() {
+        let mut ui = UiState::new();
+        add_window(&mut ui, "a", 0, 0, 10, 10);
+        ui.windows.get_mut("a").unwrap().visible = false;
+        assert_eq!(find_topmost_window_at(&ui, 3, 3), "main");
+    }
+
+    #[test]
+    fn ephemeral_windows_win_over_regular() {
+        let mut ui = UiState::new();
+        // Overlapping regular + ephemeral at the same point.
+        add_window(&mut ui, "regular", 0, 0, 20, 20);
+        add_window(&mut ui, "popup", 0, 0, 20, 20);
+        ui.ephemeral_windows.insert("popup".to_string());
+        assert_eq!(find_topmost_window_at(&ui, 5, 5), "popup");
+    }
+
+    #[test]
+    fn resize_op_edges_and_corner() {
+        // 10x10 window at origin, unlocked. right_col=9, bottom_row=9.
+        let op = |x, y| resize_op_at(0, 0, 10, 10, false, x, y);
+        assert_eq!(op(9, 9), Some(DragOperation::ResizeBottomRight));
+        assert_eq!(op(9, 3), Some(DragOperation::ResizeRight));
+        assert_eq!(op(3, 9), Some(DragOperation::ResizeBottom));
+        assert_eq!(op(3, 0), Some(DragOperation::Move)); // top row
+        assert_eq!(op(3, 3), None); // body
+    }
+
+    #[test]
+    fn resize_op_locked_only_moves() {
+        // Locked: right/bottom/corner are NOT resize handles; only the top row
+        // moves. The bottom-right corner (9,9) is neither top row nor a legal
+        // handle, so it's a plain body click.
+        let op = |x, y| resize_op_at(0, 0, 10, 10, true, x, y);
+        assert_eq!(op(9, 9), None);
+        assert_eq!(op(9, 3), None); // right column, locked
+        assert_eq!(op(3, 9), None); // bottom row, locked
+        assert_eq!(op(3, 0), Some(DragOperation::Move)); // top row
+    }
+
+    #[test]
+    fn resize_op_small_window_bottom_row_is_content() {
+        // height <= 2: bottom row is NOT a resize handle (it's the one content
+        // row); only the top row moves and the right column resizes width.
+        assert_eq!(resize_op_at(0, 0, 10, 2, false, 3, 1), None);
+        assert_eq!(resize_op_at(0, 0, 10, 2, false, 9, 1), Some(DragOperation::ResizeRight));
+        assert_eq!(resize_op_at(0, 0, 10, 2, false, 3, 0), Some(DragOperation::Move));
     }
 }

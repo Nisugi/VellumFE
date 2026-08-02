@@ -479,6 +479,13 @@ impl UIColorsBrowser {
             entry_type: UIColorEntryType::UIColor,
         });
         entries.push(UIColorEntry {
+            name: "System Messages".to_string(),
+            category: "UI".to_string(),
+            fg_color: Some(colors.ui.system_message_color.clone()),
+            bg_color: None,
+            entry_type: UIColorEntryType::UIColor,
+        });
+        entries.push(UIColorEntry {
             name: "Text".to_string(),
             category: "UI".to_string(),
             fg_color: Some(colors.ui.text_color.clone()),

@@ -15,11 +15,13 @@ use std::path::PathBuf;
 pub mod menu_keybind_validator;
 pub mod wrayth_import;
 mod colors;
+mod conditions;
 mod highlights;
 mod hotbars;
 mod io;
 mod macros;
 mod paths;
+pub mod pool;
 pub mod profiles;
 pub mod skins;
 mod defaults_refresh;
@@ -33,16 +35,18 @@ mod widgets;
 mod window_def;
 
 pub use colors::{
-    ColorConfig, PaletteColor, PresetColor, PromptColor, SpellColorRange, SpellColorStyle,
-    UiColors,
+    ColorConfig, HarmonyRecipe, PaletteColor, PresetColor, PromptColor, SpellColorRange,
+    SpellColorStyle, UiColors,
 };
 pub use highlights::{
     highlight_web_fields, EventAction, EventPattern, HighlightPattern, RedirectMode,
 };
+pub use conditions::{
+    Cmp, Condition, EffectCategory, HandSlot, NameMatch, VitalKind, VitalUnit, INJURY_AREAS,
+};
 pub use hotbars::{
-    EffectCategory, GradientDir, HotbarButton, HotbarButtonState, HotbarCmp, HotbarCondition,
-    HotbarCountdownSource, HotbarDef, HotbarIcon, HotbarStyle, HotbarsConfig, IconMode, NameMatch,
-    VitalKind, VitalUnit,
+    GradientDir, HotbarButton, HotbarButtonState, HotbarCountdownSource, HotbarDef, HotbarIcon,
+    HotbarStyle, HotbarsConfig, IconMode,
 };
 pub use keybinds::{
     parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,
@@ -51,26 +55,29 @@ pub use keybinds::{
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
-pub use paths::{write_atomic, DialogPosition, SavedDialogPositions};
+pub use paths::{is_valid_layout_name, write_atomic, DialogPosition, SavedDialogPositions};
+#[cfg(test)]
+pub use paths::VELLUM_FE_DIR_TEST_LOCK;
 pub use settings::{
     ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
-    SoundConfig, StreamRoute, StreamsConfig, TargetListConfig, TtsConfig, TtsSubstitution,
-    UiConfig, WebConfig,
+    SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
+    TtsConfig, TtsSubstitution, UiConfig, WebConfig,
 };
-pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore};
+pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};
 pub use widgets::{
     apply_compiled_text_replacements, compile_text_replacements, default_minivitals_bar_order,
     ActiveEffectsWidgetData, BetrayerWidgetData, BorderSides, CommandInputWidgetData,
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
-    DashboardIndicatorDef, DashboardWidgetData, DialogPanelWidgetData, EncumbranceWidgetData,
+    DashboardIndicatorDef, DashboardLayout, DashboardWidgetData, DialogPanelWidgetData,
+    EncumbranceWidgetData,
     ExperienceWidgetData,
-    GS4ExperienceWidgetData, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
+    GS4ExperienceWidgetData, HandIconState, HandWidgetData, HotkeybarWidgetData, IndicatorWidgetData,
     InjuryDollWidgetData, InventoryWidgetData, ItemsWidgetData, MapWidgetData,
     MiniVitalsWidgetData, PerceptionWidgetData,
     PerformanceWidgetData, PlayersWidgetData, ProgressWidgetData, QuickbarDefinition,
     QuickbarEntryConfig, QuickbarWidgetData, QuickbarsConfig, RoomWidgetData, SortDirection,
     SpacerWidgetData, SpellsWidgetData, TabbedTextTab, TabbedTextWidgetData, TargetsWidgetData,
-    TextReplacement, TextWidgetData, WebUiWidgetData, WindowBase,
+    TextReplacement, TextWidgetData, WebUiWidgetData, WindowBase, WindowBinding, WindowVisibility,
 };
 pub use window_def::WindowDef;
 
@@ -99,9 +106,14 @@ const LAYOUT_DEFAULT: &str = include_str!("../defaults/globals/layouts/layout.to
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum WidgetCategory {
     ActiveEffects,
+    Character,
+    Container,
     Countdown,
+    Dialog,
     Entity,
     Hand,
+    Hotbars,
+    Navigation,
     Other,
     ProgressBar,
     Status,
@@ -109,12 +121,34 @@ pub enum WidgetCategory {
 }
 
 impl WidgetCategory {
+    /// All categories in a stable display order.
+    pub const ALL: [WidgetCategory; 13] = [
+        WidgetCategory::Status,
+        WidgetCategory::ProgressBar,
+        WidgetCategory::Countdown,
+        WidgetCategory::ActiveEffects,
+        WidgetCategory::Entity,
+        WidgetCategory::Hand,
+        WidgetCategory::TextWindow,
+        WidgetCategory::Character,
+        WidgetCategory::Navigation,
+        WidgetCategory::Hotbars,
+        WidgetCategory::Container,
+        WidgetCategory::Dialog,
+        WidgetCategory::Other,
+    ];
+
     pub fn display_name(&self) -> &str {
         match self {
             Self::ActiveEffects => "Active Effects",
+            Self::Character => "Character",
+            Self::Container => "Containers",
             Self::Countdown => "Countdowns",
+            Self::Dialog => "Dialogs",
             Self::Entity => "Entities",
             Self::Hand => "Hands",
+            Self::Hotbars => "Hotbars",
+            Self::Navigation => "Navigation",
             Self::Other => "Other",
             Self::ProgressBar => "Progress Bars",
             Self::Status => "Status",
@@ -127,9 +161,14 @@ impl WidgetCategory {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "ActiveEffects" => Some(Self::ActiveEffects),
+            "Character" => Some(Self::Character),
+            "Container" => Some(Self::Container),
             "Countdown" => Some(Self::Countdown),
+            "Dialog" => Some(Self::Dialog),
             "Entity" => Some(Self::Entity),
             "Hand" => Some(Self::Hand),
+            "Hotbars" => Some(Self::Hotbars),
+            "Navigation" => Some(Self::Navigation),
             "Other" => Some(Self::Other),
             "ProgressBar" => Some(Self::ProgressBar),
             "Status" => Some(Self::Status),
@@ -144,9 +183,15 @@ impl WidgetCategory {
             "hand" => Self::Hand,
             "active_effects" => Self::ActiveEffects,
             "indicator" | "dashboard" => Self::Status,
-            "progress" => Self::ProgressBar,
+            "progress" | "minivitals" => Self::ProgressBar,
             "text" | "tabbedtext" => Self::TextWindow,
             "targets" | "players" | "items" => Self::Entity,
+            "inventory" | "spells" | "injury_doll" | "experience" | "gs4_experience"
+            | "encum" | "reserve" | "perception" => Self::Character,
+            "room" | "compass" | "map" => Self::Navigation,
+            "quickbar" | "hotkeybar" => Self::Hotbars,
+            "container" => Self::Container,
+            "dialogpanel" | "betrayer" => Self::Dialog,
             _ => Self::Other,
         }
     }
@@ -275,9 +320,13 @@ pub struct Config {
     #[serde(default = "default_theme_name")] // Default to "dark" theme
     pub active_theme: String, // Currently active theme name
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_skin: Option<String>, // Active GUI skin (directory name under ~/.vellum-fe/skins/); None = plain theme colors
+    pub active_skin: Option<String>, // Active GUI skin (dir name under ~/.vellum-fe/global/skins/); None = plain theme colors. In the GUI this mirrors ui_settings.active_skin in the layout file (web doll + non-GUI frontends read it here)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doll_image: Option<String>, // Injury doll image override (pool-relative, "dolls/x.png"); mirrors ui_settings.doll_image like active_skin (web doll endpoint reads it here)
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
+    #[serde(default)] // `[sorter]` — categorized container looks (.sorter)
+    pub sorter: SorterConfig,
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml
     pub highlight_settings: HighlightsConfig, // Highlight system toggles (sounds, replace, redirect, coloring)
     #[serde(default)]
@@ -337,25 +386,6 @@ fn default_focus_exclude() -> Vec<String> {
 
 fn default_betrayer_active_color() -> Option<String> {
     Some("#ff4040".to_string())
-}
-
-fn default_open_dialog_blocklist() -> Vec<String> {
-    vec![
-        "combat".to_string(),
-        "injuries".to_string(),
-        "stance".to_string(),
-        "befriend".to_string(),
-        "espMasterDialog".to_string(),
-        "espMasterData".to_string(),
-        "Buffs".to_string(),
-        "Debuffs".to_string(),
-        "Cooldowns".to_string(),
-        "mapMaster".to_string(),
-        "encum".to_string(),
-        "minivitals".to_string(),
-        "expr".to_string(),
-        "Active Spells".to_string(),
-    ]
 }
 
 fn default_dashboard_layout() -> String {
@@ -420,6 +450,10 @@ fn default_buffer_size() -> usize {
 
 fn default_command_echo_color() -> String {
     "#ffffff".to_string()
+}
+
+fn default_system_message_color() -> String {
+    "#8fbc8f".to_string() // muted green; full #00ff00 reads as shouting
 }
 
 fn default_border_color_default() -> String {

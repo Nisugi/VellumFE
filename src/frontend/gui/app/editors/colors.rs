@@ -13,6 +13,7 @@ enum ColorsTab {
     Presets,
     Prompts,
     Spells,
+    Generate,
 }
 
 pub(in super::super) struct ColorsEditorState {
@@ -23,6 +24,7 @@ pub(in super::super) struct ColorsEditorState {
     ui_buffer: Option<UiColorsBuffer>,
     presets_buffer: Option<PresetsBuffer>,
     prompts_buffer: Option<PromptsBuffer>,
+    generate: Option<HarmonyGenState>,
 }
 
 impl ColorsEditorState {
@@ -35,8 +37,228 @@ impl ColorsEditorState {
             ui_buffer: None,
             presets_buffer: None,
             prompts_buffer: None,
+            generate: None,
         }
     }
+}
+
+/// Live state for the Generate tab: a seed picked from the theme's swatch
+/// strip (or a custom hex), scheme, and Low/Med/High constraint tiers. The
+/// preview regenerates every frame from these values; nothing touches disk
+/// until Apply.
+struct HarmonyGenState {
+    seed: String,
+    custom_seed: String,
+    use_custom: bool,
+    scheme: crate::core::harmony::Scheme,
+    variance: f64,
+    min_contrast: f64,
+    separation: f64,
+    room_title_spread: f64,
+    pins: std::collections::HashMap<String, String>,
+    /// Role whose alternate-hue chips are open in the preview, if any.
+    explore: Option<String>,
+    skin_name: String,
+    skin_panel: crate::core::harmony_skin::PanelSpec,
+    skin_frame: crate::core::harmony_skin::FrameSpec,
+    /// Cached preview textures keyed by a hash of everything they depend on.
+    skin_preview: Option<(u64, Vec<egui::TextureHandle>)>,
+}
+
+impl HarmonyGenState {
+    /// Start from the stored recipe when it was generated against the
+    /// current theme background (so a saved look stays re-tunable); else
+    /// defaults with the most vivid theme swatch pre-selected, so zero
+    /// clicks still previews something decent.
+    fn init(recipe: Option<crate::config::HarmonyRecipe>, swatches: &[String]) -> Self {
+        use crate::core::harmony::{HarmonyParams, Scheme};
+        let defaults = HarmonyParams::default();
+        let first_swatch = swatches
+            .first()
+            .cloned()
+            .unwrap_or_else(|| defaults.seed.clone());
+        match recipe {
+            Some(recipe) => {
+                let seed_in_strip = swatches
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&recipe.seed));
+                Self {
+                    seed: if seed_in_strip {
+                        recipe.seed.clone()
+                    } else {
+                        first_swatch
+                    },
+                    custom_seed: recipe.seed.clone(),
+                    use_custom: !seed_in_strip,
+                    scheme: Scheme::parse(&recipe.scheme).unwrap_or(defaults.scheme),
+                    variance: recipe.variance,
+                    min_contrast: recipe.min_contrast,
+                    separation: recipe.separation,
+                    room_title_spread: recipe.room_title_spread,
+                    pins: recipe.pins,
+                    explore: None,
+                    skin_name: "harmony".to_string(),
+                    skin_panel: Default::default(),
+                    skin_frame: Default::default(),
+                    skin_preview: None,
+                }
+            }
+            None => Self {
+                seed: first_swatch,
+                custom_seed: String::new(),
+                use_custom: false,
+                scheme: defaults.scheme,
+                variance: defaults.variance,
+                min_contrast: defaults.min_contrast,
+                separation: defaults.separation,
+                room_title_spread: defaults.room_title_spread,
+                pins: std::collections::HashMap::new(),
+                explore: None,
+                skin_name: "harmony".to_string(),
+                skin_panel: Default::default(),
+                skin_frame: Default::default(),
+                skin_preview: None,
+            },
+        }
+    }
+
+    /// The seed actually fed to the engine: the custom hex when selected and
+    /// valid, else the picked swatch.
+    fn effective_seed(&self) -> String {
+        if self.use_custom {
+            if crate::core::harmony::hex_to_lch(&self.custom_seed).is_some() {
+                return self.custom_seed.clone();
+            }
+        }
+        self.seed.clone()
+    }
+
+    fn params(&self, background: &str) -> crate::core::harmony::HarmonyParams {
+        crate::core::harmony::HarmonyParams {
+            seed: self.effective_seed(),
+            background: background.to_string(),
+            scheme: self.scheme,
+            variance: self.variance,
+            min_contrast: self.min_contrast,
+            separation: self.separation,
+            room_title_spread: self.room_title_spread,
+            pins: self.pins.clone(),
+        }
+    }
+}
+
+/// One row of Low/Med/High-style tier buttons bound to an f64 parameter.
+fn tier_row(ui: &mut egui::Ui, label: &str, hint: &str, value: &mut f64, tiers: &[(&str, f64)]) {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        for (name, tier) in tiers {
+            if ui
+                .selectable_label((*value - tier).abs() < f64::EPSILON, *name)
+                .clicked()
+            {
+                *value = *tier;
+            }
+        }
+        ui.weak(hint);
+    });
+}
+
+/// Fake game text rendered entirely in the generated colors, so the set is
+/// judged the way it will actually be read - words on the theme background -
+/// not as isolated swatches.
+fn story_preview(
+    app_theme: &crate::theme::AppTheme,
+    result: &crate::core::harmony::HarmonyResult,
+) -> egui::text::LayoutJob {
+    let body = {
+        let c = app_theme.text_primary;
+        egui::Color32::from_rgb(c.r, c.g, c.b)
+    };
+    let role = |name: &str| -> egui::Color32 {
+        result
+            .color_for(name)
+            .and_then(theme::resolve_color)
+            .unwrap_or(body)
+    };
+    let prompt = |character: &str| -> egui::Color32 {
+        result
+            .prompts
+            .iter()
+            .find(|(c, _)| c == character)
+            .and_then(|(_, hex)| theme::resolve_color(hex))
+            .unwrap_or(body)
+    };
+    let plate = theme::resolve_color(&result.room_bg).unwrap_or(egui::Color32::BLACK);
+
+    let font = egui::FontId::monospace(12.0);
+    let mut job = egui::text::LayoutJob::default();
+    let mut span = |text: &str, color: egui::Color32, background: egui::Color32| {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat {
+                font_id: font.clone(),
+                color,
+                background,
+                ..Default::default()
+            },
+        );
+    };
+    let none = egui::Color32::TRANSPARENT;
+
+    span("[Seamist Hall, Central Lounge]", role("roomName"), plate);
+    span("\nA circular ", body, none);
+    span("bar", role("links"), none);
+    span(" dominates the room, potted ", body, none);
+    span("ferns", role("links"), none);
+    span(" placed about it. A ", body, none);
+    span("grizzled kobold", role("monsterbold"), none);
+    span(" shuffles past.\nObvious exits: ", body, none);
+    span("northeast", role("links"), none);
+    span(", ", body, none);
+    span("northwest", role("links"), none);
+    span("\n>", prompt(">"), none);
+    span("go archway", role("commands"), none);
+    span("\n", body, none);
+    span("Penelopia says,", role("speech"), none);
+    span(" \"Selling a satyr will-o-wisp in a black acorn amulet.\"\n", body, none);
+    span("Someone whispers,", role("whisper"), none);
+    span(" \"Meet me by the fountain.\"\n", body, none);
+    span(
+        "[General] Aravon: \"Anyone running the rift tonight?\"\n",
+        role("thought"),
+        none,
+    );
+    span("Your familiar senses movement nearby.\n", role("familiar"), none);
+    span("You feel the favor of Voln upon you.\n", role("voln"), none);
+    span("\u{25b8} kobold", role("target_indicator"), none);
+    span("   ", body, none);
+    span("Spirit Warding II  12:04", role("percWindow"), none);
+    span("\nR", prompt("R"), none);
+    span(" S", prompt("S"), none);
+    span(" H", prompt("H"), none);
+    span(" !", prompt("!"), none);
+    span(" >", prompt(">"), none);
+    span("  (roundtime / stunned / hiding / bleeding / prompt)", body, none);
+    job
+}
+
+/// Clickable seed chip; returns true when clicked.
+fn seed_chip(ui: &mut egui::Ui, hex: &str, selected: bool) -> bool {
+    let Some(fill) = theme::resolve_color(hex) else {
+        return false;
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 18.0), egui::Sense::click());
+    ui.painter().rect_filled(rect, 3.0, fill);
+    if selected {
+        ui.painter().rect_stroke(
+            rect,
+            3.0,
+            egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
+            egui::StrokeKind::Outside,
+        );
+    }
+    response.on_hover_text(hex).clicked()
 }
 
 struct PaletteFormState {
@@ -177,6 +399,7 @@ impl SpellFormState {
 /// Live edit buffer for the global UI colors.
 struct UiColorsBuffer {
     command_echo_color: String,
+    system_message_color: String,
     border_color: String,
     focused_border_color: String,
     text_color: String,
@@ -190,6 +413,7 @@ impl UiColorsBuffer {
         let ui = &colors.ui;
         Self {
             command_echo_color: ui.command_echo_color.clone(),
+            system_message_color: ui.system_message_color.clone(),
             border_color: ui.border_color.clone(),
             focused_border_color: ui.focused_border_color.clone(),
             text_color: ui.text_color.clone(),
@@ -201,6 +425,7 @@ impl UiColorsBuffer {
 
     fn apply(&self, colors: &mut ColorConfig) {
         colors.ui.command_echo_color = self.command_echo_color.clone();
+        colors.ui.system_message_color = self.system_message_color.clone();
         colors.ui.border_color = self.border_color.clone();
         colors.ui.focused_border_color = self.focused_border_color.clone();
         colors.ui.text_color = self.text_color.clone();
@@ -374,6 +599,7 @@ impl VellumGuiApp {
         let mut open = true;
         egui::Window::new("Colors")
             .id(egui::Id::new("gui_colors_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(460.0)
             .default_height(420.0)
@@ -384,6 +610,7 @@ impl VellumGuiApp {
                     ui.selectable_value(&mut state.tab, ColorsTab::Presets, "Presets");
                     ui.selectable_value(&mut state.tab, ColorsTab::Prompts, "Prompts");
                     ui.selectable_value(&mut state.tab, ColorsTab::Spells, "Spell Colors");
+                    ui.selectable_value(&mut state.tab, ColorsTab::Generate, "Generate");
                 });
                 ui.separator();
                 match state.tab {
@@ -392,6 +619,7 @@ impl VellumGuiApp {
                     ColorsTab::Presets => self.render_presets_tab(ui, &mut state),
                     ColorsTab::Prompts => self.render_prompts_tab(ui, &mut state),
                     ColorsTab::Spells => self.render_spell_colors_tab(ui, &mut state),
+                    ColorsTab::Generate => self.render_generate_tab(ui, &mut state),
                 }
             });
 
@@ -509,6 +737,7 @@ impl VellumGuiApp {
         };
         egui::Window::new(title)
             .id(egui::Id::new("gui_palette_form"))
+            .order(egui::Order::Foreground)
             .open(&mut form_open)
             .default_width(340.0)
             .show(ctx, |ui| {
@@ -596,6 +825,9 @@ impl VellumGuiApp {
         egui::Grid::new("ui_colors_grid").num_columns(2).show(ui, |ui| {
             ui.label("Command echo");
             color_field(ui, &mut buffer.command_echo_color);
+            ui.end_row();
+            ui.label("System messages");
+            color_field(ui, &mut buffer.system_message_color);
             ui.end_row();
             ui.label("Border");
             color_field(ui, &mut buffer.border_color);
@@ -781,6 +1013,431 @@ impl VellumGuiApp {
         });
     }
 
+    /// Generate tab: seed an entire readable preset set from the active
+    /// theme. Clicking around only changes the live preview; Apply writes
+    /// presets + palette entries (and the recipe) through the shared
+    /// ColorConfig layer.
+    fn render_generate_tab(&mut self, ui: &mut egui::Ui, state: &mut ColorsEditorState) {
+        use crate::core::harmony::{self, Scheme};
+
+        let app_theme = self.app_core.config.get_theme();
+        let background = app_theme.background_primary.to_hex();
+        let swatches = app_theme.seed_swatches();
+        let stored_recipe = self
+            .app_core
+            .config
+            .colors
+            .harmony
+            .clone()
+            .filter(|r| r.background.eq_ignore_ascii_case(&background));
+
+        let gen = state
+            .generate
+            .get_or_insert_with(|| HarmonyGenState::init(stored_recipe, &swatches));
+
+        ui.label(format!(
+            "Seed a full set of readable game-text colors from the '{}' theme.",
+            app_theme.name
+        ));
+        ui.weak(
+            "Every chip is a safe seed against this theme's background. \
+             Click around - nothing is saved until Apply.",
+        );
+        ui.add_space(4.0);
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Seed:");
+            for hex in &swatches {
+                let selected = !gen.use_custom && gen.seed.eq_ignore_ascii_case(hex);
+                if seed_chip(ui, hex, selected) {
+                    gen.seed = hex.clone();
+                    gen.use_custom = false;
+                }
+            }
+            if ui.selectable_label(gen.use_custom, "custom").clicked() {
+                gen.use_custom = true;
+            }
+            let before = gen.custom_seed.clone();
+            color_field(ui, &mut gen.custom_seed);
+            if gen.custom_seed != before {
+                gen.use_custom = true;
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Scheme:");
+            egui::ComboBox::from_id_salt("harmony_scheme")
+                .selected_text(gen.scheme.name())
+                .show_ui(ui, |ui| {
+                    for scheme in Scheme::ALL {
+                        ui.selectable_value(
+                            &mut gen.scheme,
+                            scheme,
+                            format!("{} - {}", scheme.name(), scheme.description()),
+                        );
+                    }
+                });
+            ui.weak(gen.scheme.description());
+        });
+
+        tier_row(
+            ui,
+            "Variance:",
+            "how far the scheme spreads its hues apart",
+            &mut gen.variance,
+            &[("Low", 0.7), ("Medium", 1.0), ("High", 1.4)],
+        );
+        tier_row(
+            ui,
+            "Contrast:",
+            "how hard each color reads against the background",
+            &mut gen.min_contrast,
+            &[("Low", 3.0), ("Medium", 4.5), ("High", 7.0)],
+        );
+        tier_row(
+            ui,
+            "Separation:",
+            "how far apart two colors are pushed from each other",
+            &mut gen.separation,
+            &[("Low", 0.04), ("Medium", 0.09), ("High", 0.15)],
+        );
+        tier_row(
+            ui,
+            "Room title:",
+            "low reads as a subtle plate, high as a hard label",
+            &mut gen.room_title_spread,
+            &[("Low", 2.5), ("High", 7.0)],
+        );
+        ui.separator();
+
+        // Live preview: regenerated every frame (the engine is trivially
+        // cheap), rendered on the actual theme background.
+        let params = gen.params(&background);
+        let result = harmony::generate(&params);
+        let bg_fill = theme::resolve_color(&background).unwrap_or(egui::Color32::BLACK);
+        let mut apply_clicked = false;
+        egui::ScrollArea::vertical()
+            .id_salt("harmony_preview_scroll")
+            .auto_shrink([false, true])
+            .max_height(240.0)
+            .show(ui, |ui| {
+                egui::Frame::default()
+                    .fill(bg_fill)
+                    .inner_margin(egui::Margin::same(8))
+                    .corner_radius(3.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.label(story_preview(&app_theme, &result));
+                        ui.add_space(6.0);
+                        ui.separator();
+                        for (role, hex) in &result.colors {
+                            let Some(color) = theme::resolve_color(hex) else {
+                                continue;
+                            };
+                            ui.horizontal(|ui| {
+                                // Clicking the swatch opens alternate hues
+                                // for this role.
+                                let exploring = gen.explore.as_deref() == Some(role.as_str());
+                                if seed_chip(ui, hex, exploring) {
+                                    gen.explore = if exploring { None } else { Some(role.clone()) };
+                                }
+                                let text = egui::RichText::new(format!("{role:<17}"))
+                                    .monospace()
+                                    .color(color);
+                                let description = harmony::ROLES
+                                    .iter()
+                                    .find(|r| r.name == role)
+                                    .map(|r| r.description)
+                                    .unwrap_or("");
+                                if role == "roomName" {
+                                    let plate = theme::resolve_color(&result.room_bg)
+                                        .unwrap_or(egui::Color32::BLACK);
+                                    ui.label(text.background_color(plate))
+                                        .on_hover_text(description);
+                                } else {
+                                    ui.label(text).on_hover_text(description);
+                                }
+                                ui.label(
+                                    egui::RichText::new(hex.to_string())
+                                        .monospace()
+                                        .weak()
+                                        .color(color),
+                                );
+                                let contrast = harmony::wcag_contrast(hex, &background);
+                                let ok = contrast >= params.min_contrast - 0.35;
+                                ui.label(
+                                    egui::RichText::new(format!("{contrast:.1}:1"))
+                                        .monospace()
+                                        .color(if ok {
+                                            egui::Color32::from_rgb(0x7f, 0xb8, 0xa4)
+                                        } else {
+                                            egui::Color32::from_rgb(0xc0, 0x56, 0x4a)
+                                        }),
+                                );
+                                if gen.pins.contains_key(role)
+                                    && ui
+                                        .small_button("pinned")
+                                        .on_hover_text("Click to unpin; rerolls with the set")
+                                        .clicked()
+                                {
+                                    gen.pins.remove(role);
+                                }
+                            });
+                            if gen.explore.as_deref() == Some(role.as_str()) {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.weak("other hues:");
+                                    for variant in harmony::hue_variants(role, &params) {
+                                        if seed_chip(ui, &variant, false) {
+                                            // Choosing a hue pins the role so
+                                            // regeneration keeps it and
+                                            // re-harmonizes the rest.
+                                            gen.pins.insert(role.clone(), variant);
+                                            gen.explore = None;
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                        // Prompt indicators: hue-anchored to their semantic
+                        // bands (alarm stays warm), so no explorer or pins.
+                        ui.add_space(4.0);
+                        for (character, hex) in &result.prompts {
+                            let Some(color) = theme::resolve_color(hex) else {
+                                continue;
+                            };
+                            ui.horizontal(|ui| {
+                                let _ = seed_chip(ui, hex, false);
+                                let label = harmony::PROMPT_ROLES
+                                    .iter()
+                                    .find(|r| r.character == character)
+                                    .map(|r| r.label)
+                                    .unwrap_or("prompt");
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{:<17}",
+                                        format!("{label} '{character}'")
+                                    ))
+                                    .monospace()
+                                    .color(color),
+                                );
+                                ui.label(
+                                    egui::RichText::new(hex.to_string())
+                                        .monospace()
+                                        .weak()
+                                        .color(color),
+                                );
+                                let contrast = harmony::wcag_contrast(hex, &background);
+                                let ok = contrast >= params.min_contrast - 0.35;
+                                ui.label(
+                                    egui::RichText::new(format!("{contrast:.1}:1"))
+                                        .monospace()
+                                        .color(if ok {
+                                            egui::Color32::from_rgb(0x7f, 0xb8, 0xa4)
+                                        } else {
+                                            egui::Color32::from_rgb(0xc0, 0x56, 0x4a)
+                                        }),
+                                );
+                            });
+                        }
+                    });
+            });
+
+        // Matching skin: panel + frame images rendered from the same
+        // harmony, so the chrome and the words belong together.
+        let mut skin_write: Option<(
+            String,
+            crate::core::harmony_skin::SkinColors,
+            crate::core::harmony_skin::PanelSpec,
+            crate::core::harmony_skin::FrameSpec,
+        )> = None;
+        ui.separator();
+        egui::CollapsingHeader::new("Matching skin")
+            .default_open(false)
+            .show(ui, |ui| {
+                use crate::core::harmony_skin::{
+                    render_frame, render_panel, GradientKind, SkinColors,
+                };
+                ui.weak(
+                    "Panel and frame images colored from this harmony. Written to \
+                     global/skins/<name>/; activate with .setskin <name>.",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("Gradient:");
+                    egui::ComboBox::from_id_salt("harmony_skin_gradient")
+                        .selected_text(gen.skin_panel.gradient.name())
+                        .show_ui(ui, |ui| {
+                            for kind in GradientKind::ALL {
+                                ui.selectable_value(
+                                    &mut gen.skin_panel.gradient,
+                                    kind,
+                                    kind.name(),
+                                );
+                            }
+                        });
+                });
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_panel.fade_depth, 0.0..=60.0)
+                        .text("fade depth"),
+                );
+                ui.add(egui::Slider::new(&mut gen.skin_panel.vignette, 0.0..=90.0).text("vignette"));
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_panel.scanlines, 0.0..=40.0).text("scanlines"),
+                );
+                ui.add(egui::Slider::new(&mut gen.skin_frame.width, 0.0..=6.0).text("frame line"));
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_frame.radius, 0.0..=14.0).text("corner radius"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut gen.skin_frame.stub, 0.0..=14.0).text("accent stubs"),
+                );
+                ui.add(egui::Slider::new(&mut gen.skin_frame.slice, 1.0..=15.0).text("slice"));
+                if gen.skin_frame.slice_clips_corners() {
+                    ui.colored_label(
+                        ui.visuals().warn_fg_color,
+                        "slice is under radius + line - corners will clip",
+                    );
+                }
+
+                let colors = SkinColors::derive(
+                    &params.background,
+                    &params.seed,
+                    gen.skin_panel.fade_depth,
+                );
+                // Regenerate the four preview textures only when an input
+                // changed; uploading textures every frame would thrash.
+                let hash = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    format!("{:?}{:?}{:?}", colors, gen.skin_panel, gen.skin_frame).hash(&mut hasher);
+                    hasher.finish()
+                };
+                if gen.skin_preview.as_ref().map(|(h, _)| *h) != Some(hash) {
+                    let jobs: [(&str, u32, Vec<u8>); 4] = [
+                        (
+                            "harmony_skin_panel",
+                            96,
+                            render_panel(96, &colors.panel_top, &colors.panel_bottom, &gen.skin_panel),
+                        ),
+                        (
+                            "harmony_skin_deep",
+                            96,
+                            render_panel(
+                                96,
+                                &crate::core::harmony_skin::darken(
+                                    &colors.panel_top,
+                                    crate::core::harmony_skin::DEEP_OFFSET,
+                                ),
+                                &crate::core::harmony_skin::darken(
+                                    &colors.panel_bottom,
+                                    crate::core::harmony_skin::DEEP_OFFSET,
+                                ),
+                                &gen.skin_panel,
+                            ),
+                        ),
+                        (
+                            "harmony_skin_frame",
+                            64,
+                            render_frame(64, &colors.line, None, &gen.skin_frame),
+                        ),
+                        (
+                            "harmony_skin_frame_accent",
+                            64,
+                            render_frame(64, &colors.line, Some(&colors.accent), &gen.skin_frame),
+                        ),
+                    ];
+                    let textures = jobs
+                        .into_iter()
+                        .map(|(id, size, rgba)| {
+                            ui.ctx().load_texture(
+                                id,
+                                egui::ColorImage::from_rgba_unmultiplied(
+                                    [size as usize, size as usize],
+                                    &rgba,
+                                ),
+                                egui::TextureOptions::NEAREST,
+                            )
+                        })
+                        .collect();
+                    gen.skin_preview = Some((hash, textures));
+                }
+                if let Some((_, textures)) = &gen.skin_preview {
+                    ui.horizontal(|ui| {
+                        for texture in textures {
+                            ui.image((texture.id(), egui::vec2(64.0, 64.0)));
+                        }
+                    });
+                    ui.weak("panel - deep panel - frame - accented frame");
+                }
+
+                ui.horizontal(|ui| {
+                    ui.label("Skin name:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut gen.skin_name).desired_width(140.0),
+                    );
+                    if ui.button("Write skin files").clicked() {
+                        skin_write = Some((
+                            gen.skin_name.clone(),
+                            colors.clone(),
+                            gen.skin_panel.clone(),
+                            gen.skin_frame.clone(),
+                        ));
+                    }
+                });
+            });
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            if ui.button("Apply").clicked() {
+                apply_clicked = true;
+            }
+            if ui.button("Reset").clicked() {
+                state.generate = None;
+            }
+            ui.weak("Apply rewrites the preset colors; the previous colors.toml is kept as .bak.");
+        });
+
+        if let Some((name, colors, panel, frame)) = skin_write {
+            self.write_harmony_skin_files(&name, &params, &colors, &panel, &frame);
+        }
+
+        if apply_clicked {
+            let recipe = crate::config::HarmonyRecipe {
+                seed: params.seed.clone(),
+                background: params.background.clone(),
+                scheme: params.scheme.name().to_string(),
+                variance: params.variance,
+                min_contrast: params.min_contrast,
+                separation: params.separation,
+                room_title_spread: params.room_title_spread,
+                pins: params.pins.clone(),
+            };
+            let character = self.app_core.config.character.clone();
+            match ColorConfig::persist_generated_presets(
+                &result.colors,
+                &result.room_bg,
+                &result.prompts,
+                &recipe,
+                character.as_deref(),
+            ) {
+                Ok(()) => {
+                    self.app_core.reload_colors();
+                    // Invalidate the Presets tab's edit buffer so it re-reads
+                    // the freshly generated values instead of stale rows.
+                    state.presets_buffer = None;
+                    self.app_core.add_system_message(&format!(
+                        "Harmony presets applied ({} from seed {}).",
+                        params.scheme.name(),
+                        params.seed
+                    ));
+                }
+                Err(err) => {
+                    self.app_core
+                        .add_system_message(&format!("Failed to apply harmony presets: {}", err));
+                }
+            }
+        }
+    }
+
     fn render_spell_colors_tab(&mut self, ui: &mut egui::Ui, state: &mut ColorsEditorState) {
         let mut delete_request: Option<usize> = None;
         if ui.button("Add spell color range").clicked() {
@@ -846,6 +1503,7 @@ impl VellumGuiApp {
         };
         egui::Window::new(title)
             .id(egui::Id::new("gui_spell_color_form"))
+            .order(egui::Order::Foreground)
             .open(&mut form_open)
             .default_width(340.0)
             .show(ctx, |ui| {

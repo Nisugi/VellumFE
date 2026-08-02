@@ -76,6 +76,18 @@ pub struct UiState {
     /// Set of ephemeral window names (session-only, not saved to layout)
     pub ephemeral_windows: std::collections::HashSet<String>,
 
+    /// Container titles the user has opted to show this session (U3). A
+    /// sighted container auto-(re)opens only if its title is in here;
+    /// showing one via the Windows list adds it, hiding removes it.
+    /// Session-only — never persisted (containers wipe on relog).
+    pub shown_container_titles: std::collections::HashSet<String>,
+
+    /// Dialog ids the user has opted to show as popups (U6). A game
+    /// `openDialog` becomes a live popup only if its id is in here; empty by
+    /// default = nothing pops up unless shown (replacing the blocklist).
+    /// Kept in sync with layout visibility by AppCore.
+    pub shown_dialog_ids: std::collections::HashSet<String>,
+
     /// Quickbar data keyed by id (e.g., "quick", "quick-combat")
     pub quickbars: HashMap<String, crate::data::QuickbarData>,
 
@@ -107,6 +119,36 @@ pub struct UiState {
     /// Pending window additions (template names to add to layout)
     /// Set by message processor when openDialog has a matching template
     pub pending_window_additions: Vec<String>,
+
+    /// Game-window discoveries the message processor observed (streamWindow,
+    /// resident dialog panels, containers) that AppCore drains against the
+    /// layout — the processor can't reach the layout itself. U3's unified
+    /// discovery path, replacing the window_offers registry.
+    pub pending_window_discoveries: Vec<WindowDiscovery>,
+}
+
+/// A game window the client just saw announced, to be registered as a
+/// bound layout/ephemeral entry by AppCore (the message processor has no
+/// layout access). All discoveries register Hidden-by-default (U6:
+/// hidden-until-shown is the universal rule; the old blocklist is gone).
+#[derive(Clone, Debug)]
+pub struct WindowDiscovery {
+    /// The game id (dialog/stream/container id).
+    pub id: String,
+    pub title: String,
+    pub kind: WindowDiscoveryKind,
+    /// The game asked to persist position (save='t').
+    pub save: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowDiscoveryKind {
+    /// A named text stream (thoughts/loot/bounty/…).
+    Stream,
+    /// A resident dialog panel with no dedicated widget (combat/befriend).
+    DialogPanel,
+    /// A non-resident dialog that pops up (bank).
+    DialogPopup,
 }
 
 /// Mouse drag state for window operations
@@ -210,6 +252,8 @@ pub enum InputMode {
     ThemeEditor,
     /// Settings editor is open
     SettingsEditor,
+    /// Pack editor (.packs) is open
+    PackEditor,
     /// Indicator template editor is open
     IndicatorTemplateEditor,
     /// Interact mode: arrow-key/controller focus cycling over room entities
@@ -746,6 +790,8 @@ impl UiState {
             needs_widget_reset: false,
             widgets_to_reset: Vec::new(),
             ephemeral_windows: std::collections::HashSet::new(),
+            shown_container_titles: std::collections::HashSet::new(),
+            shown_dialog_ids: std::collections::HashSet::new(),
             quickbars: HashMap::new(),
             quickbar_order: Vec::new(),
             active_quickbar_id: None,
@@ -754,6 +800,7 @@ impl UiState {
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
+            pending_window_discoveries: Vec::new(),
         }
     }
 
@@ -782,6 +829,38 @@ impl UiState {
         }
         self.active_dialog = Some(dialog);
         self.input_mode = InputMode::Dialog;
+        self.popup_menu = None;
+        self.submenu = None;
+        self.nested_submenu = None;
+        self.deep_submenu = None;
+    }
+
+    /// Position of the deepest currently-open popup-menu level, falling back
+    /// through deep → nested → submenu → popup, then the default anchor
+    /// `(40, 12)` when no menu is open. The menu-command handlers place a new
+    /// child level relative to this; extracting it collapses ~half a dozen
+    /// hand-copied `.or_else(...).or_else(...)` cascades (which are easy to get
+    /// subtly wrong per site) into one tested function.
+    pub fn deepest_menu_pos(&self) -> (u16, u16) {
+        self.deep_submenu
+            .as_ref()
+            .map(|m| m.get_position())
+            .or_else(|| self.nested_submenu.as_ref().map(|m| m.get_position()))
+            .or_else(|| self.submenu.as_ref().map(|m| m.get_position()))
+            .or_else(|| self.popup_menu.as_ref().map(|m| m.get_position()))
+            .unwrap_or((40, 12))
+    }
+
+    /// Where a new child menu level should open: two columns right of the
+    /// deepest open level, same row.
+    pub fn child_menu_pos(&self) -> (u16, u16) {
+        let (x, y) = self.deepest_menu_pos();
+        (x + 2, y)
+    }
+
+    /// Close every popup-menu level (popup + all three submenu depths). Does
+    /// not touch `input_mode` — callers set that as they need.
+    pub fn close_all_menus(&mut self) {
         self.popup_menu = None;
         self.submenu = None;
         self.nested_submenu = None;
@@ -1012,6 +1091,49 @@ mod tests {
         let state = UiState::default();
         assert!(state.windows.is_empty());
         assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn deepest_menu_pos_falls_through_levels() {
+        let mut state = UiState::new();
+        // No menu open: the default anchor.
+        assert_eq!(state.deepest_menu_pos(), (40, 12));
+        // popup only.
+        state.popup_menu = Some(PopupMenu::new(vec![], (10, 20)));
+        assert_eq!(state.deepest_menu_pos(), (10, 20));
+        // submenu wins over popup.
+        state.submenu = Some(PopupMenu::new(vec![], (12, 20)));
+        assert_eq!(state.deepest_menu_pos(), (12, 20));
+        // nested wins over submenu.
+        state.nested_submenu = Some(PopupMenu::new(vec![], (14, 20)));
+        assert_eq!(state.deepest_menu_pos(), (14, 20));
+        // deep wins over all.
+        state.deep_submenu = Some(PopupMenu::new(vec![], (16, 20)));
+        assert_eq!(state.deepest_menu_pos(), (16, 20));
+    }
+
+    #[test]
+    fn child_menu_pos_is_two_right_same_row() {
+        let mut state = UiState::new();
+        state.popup_menu = Some(PopupMenu::new(vec![], (40, 12)));
+        assert_eq!(state.child_menu_pos(), (42, 12));
+    }
+
+    #[test]
+    fn close_all_menus_clears_every_level_but_not_mode() {
+        let mut state = UiState::new();
+        state.popup_menu = Some(PopupMenu::new(vec![], (1, 1)));
+        state.submenu = Some(PopupMenu::new(vec![], (2, 2)));
+        state.nested_submenu = Some(PopupMenu::new(vec![], (3, 3)));
+        state.deep_submenu = Some(PopupMenu::new(vec![], (4, 4)));
+        state.input_mode = InputMode::Menu;
+        state.close_all_menus();
+        assert!(state.popup_menu.is_none());
+        assert!(state.submenu.is_none());
+        assert!(state.nested_submenu.is_none());
+        assert!(state.deep_submenu.is_none());
+        // input_mode is the caller's responsibility, not touched here.
+        assert_eq!(state.input_mode, InputMode::Menu);
     }
 
     #[test]

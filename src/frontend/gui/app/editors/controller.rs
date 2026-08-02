@@ -361,6 +361,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Controller")
             .id(egui::Id::new("gui_controller_editor"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(440.0)
             .default_height(380.0)
@@ -994,6 +995,7 @@ impl VellumGuiApp {
             };
             egui::Window::new(title)
                 .id(egui::Id::new("gui_controller_form"))
+                .order(egui::Order::Foreground)
                 .open(&mut form_open)
                 .default_width(380.0)
                 .show(ctx, |ui| {

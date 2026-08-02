@@ -268,6 +268,10 @@ impl AppCore {
                 // Clear modified flag and update base layout name
                 self.layout_modified_since_save = false;
                 self.base_layout_name = Some(name.to_string());
+                // Persist the loaded layout to the auto-save slot right away,
+                // so it comes back on next launch even if this session ends
+                // without a clean quit.
+                self.autosave_layout();
                 self.needs_render = true;
                 return theme_update;
             }
@@ -332,7 +336,7 @@ impl AppCore {
         // Categorize widgets by scaling behavior
         let mut static_both = HashSet::new();
         let mut static_height = HashSet::new();
-        for window_def in self.layout.windows.iter().filter(|w| w.base().visible) {
+        for window_def in self.layout.windows.iter().filter(|w| w.base().visibility.is_shown()) {
             let base = window_def.base();
             match window_def.widget_type() {
                 "indicator" => {
@@ -353,14 +357,14 @@ impl AppCore {
                 baseline
                     .windows
                     .iter()
-                    .filter(|w| w.base().visible)
+                    .filter(|w| w.base().visibility.is_shown())
                     .map(|w| (w.name().to_string(), w.base().row.get(), w.base().rows.get()))
                     .collect()
             } else {
                 self.layout
                     .windows
                     .iter()
-                    .filter(|w| w.base().visible)
+                    .filter(|w| w.base().visibility.is_shown())
                     .map(|w| (w.base().name.clone(), w.base().row.get(), w.base().rows.get()))
                     .collect()
             };
@@ -377,7 +381,7 @@ impl AppCore {
         // Pull such a window back on screen WITHOUT resizing it (max origin =
         // terminal - size, saturating), so a fixed-height input keeps its size.
         // This never moves a window that already fits.
-        for window_def in self.layout.windows.iter_mut().filter(|w| w.base().visible) {
+        for window_def in self.layout.windows.iter_mut().filter(|w| w.base().visibility.is_shown()) {
             let base = window_def.base_mut();
             let max_col = crate::data::geometry::Col::new(terminal_width) - base.cols;
             let max_row = crate::data::geometry::Row::new(terminal_height) - base.rows;
@@ -483,7 +487,7 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visible)
+            .filter(|w| w.base().visibility.is_shown())
             .map(|w| {
                 let base = w.base();
                 (base.name.clone(), (base.row.get(), base.rows.get()))
@@ -495,7 +499,7 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visible)
+            .filter(|w| w.base().visibility.is_shown())
             .map(|w| {
                 let base = w.base();
                 base.col.get().saturating_add(base.cols.get())
@@ -515,7 +519,7 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible)
+                .filter(|w| w.base().visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
                     if base.col.get() <= current_col
@@ -587,7 +591,7 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible)
+                .filter(|w| w.base().visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
                     if base.col.get() <= current_col
@@ -670,7 +674,7 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visible)
+            .filter(|w| w.base().visibility.is_shown())
             .map(|w| {
                 let base = w.base();
                 (base.name.clone(), (base.col.get(), base.cols.get()))
@@ -682,7 +686,7 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visible)
+            .filter(|w| w.base().visibility.is_shown())
             .map(|w| {
                 let base = w.base();
                 base.row.get().saturating_add(base.rows.get())
@@ -702,7 +706,7 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible)
+                .filter(|w| w.base().visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
                     if base.row.get() <= current_row
@@ -772,7 +776,7 @@ impl AppCore {
                 .layout
                 .windows
                 .iter()
-                .filter(|w| w.base().visible)
+                .filter(|w| w.base().visibility.is_shown())
                 .filter_map(|w| {
                     let base = w.base();
                     if base.row.get() <= current_row
@@ -853,7 +857,7 @@ impl AppCore {
             .layout
             .windows
             .iter()
-            .filter(|w| w.base().visible)
+            .filter(|w| w.base().visibility.is_shown())
             .map(|w| w.name().to_string())
             .collect();
 
@@ -872,8 +876,8 @@ impl AppCore {
             let window_name = window_def.name().to_string();
             let base = window_def.base();
 
-            // Skip hidden windows
-            if !base.visible {
+            // Skip windows that shouldn't render (Hidden)
+            if !base.visibility.is_shown() {
                 tracing::debug!("Skipping hidden window '{}'", window_name);
                 continue;
             }
@@ -1001,7 +1005,7 @@ impl AppCore {
     }
 
     /// List all saved layouts
-    pub(super) fn list_layouts(&mut self) {
+    pub fn list_layouts(&mut self) {
         match Config::list_layouts() {
             Ok(layouts) => {
                 if layouts.is_empty() {
@@ -1017,16 +1021,6 @@ impl AppCore {
         }
     }
 
-    /// Fallback for the `.resize` dot-command in frontends without a cell grid
-    /// (GUI, headless). Resizes the layout to its own stored terminal size —
-    /// a zero delta in practice — routed through the single resize algorithm.
-    /// The TUI's real `.resize` handler calls `resize_windows` directly with
-    /// the actual terminal size (see frontend/tui/input_handlers.rs).
-    pub(super) fn resize_to_current_terminal(&mut self) {
-        let width = self.layout.terminal_width.unwrap_or(80);
-        let height = self.layout.terminal_height.unwrap_or(24);
-        self.resize_windows(width, height);
-    }
 }
 
 #[cfg(test)]
@@ -1058,7 +1052,8 @@ mod tests {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: crate::config::WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,
@@ -1606,10 +1601,10 @@ mod tests {
     #[test]
     fn test_window_base_visibility() {
         let mut base = test_window_base("test", 0, 0, 10, 10);
-        assert!(base.visible);
+        assert!(base.visibility.is_shown());
 
-        base.visible = false;
-        assert!(!base.visible);
+        base.visibility = crate::config::WindowVisibility::Hidden;
+        assert!(!base.visibility.is_shown());
     }
 
     // ========== Layout window collection tests ==========
@@ -1635,7 +1630,7 @@ mod tests {
     #[test]
     fn test_layout_visible_windows() {
         let mut hidden_base = test_window_base("hidden", 0, 0, 10, 10);
-        hidden_base.visible = false;
+        hidden_base.visibility = crate::config::WindowVisibility::Hidden;
 
         let windows = vec![
             WindowDef::Spacer {
@@ -1653,7 +1648,7 @@ mod tests {
         ];
         let layout = test_layout_with_windows(windows);
 
-        let visible_count = layout.windows.iter().filter(|w| w.base().visible).count();
+        let visible_count = layout.windows.iter().filter(|w| w.base().visibility.is_shown()).count();
         assert_eq!(visible_count, 2);
     }
 
@@ -1819,7 +1814,7 @@ mod tests {
 
             // The on-screen safety net: NO visible window may extend past the
             // terminal edge after a resize.
-            for w in c.layout.windows.iter().filter(|w| w.base().visible) {
+            for w in c.layout.windows.iter().filter(|w| w.base().visibility.is_shown()) {
                 let b = w.base();
                 assert!(
                     b.row.get() + b.rows.get() <= h,
@@ -2021,13 +2016,12 @@ mod tests {
         assert_eq!(row_rows(&core, "c"), (6, 3));
     }
 
-    /// The `.resize` dot-command fallback (GUI/headless frontends without a
-    /// cell grid) goes through `resize_to_current_terminal`, which resizes the
-    /// layout to its OWN already-stored terminal size — a zero delta — so it
-    /// must leave geometry unchanged. This pins the behavior after collapsing
-    /// the former second algorithm (`resize_to_terminal`) into `resize_windows`.
+    /// Resizing to the layout's own stored size is a zero delta and must
+    /// leave geometry unchanged. This pins the behavior after collapsing
+    /// the former second algorithm (`resize_to_terminal`) into
+    /// `resize_windows`.
     #[test]
-    fn resize_to_current_terminal_is_a_noop_at_stored_size() {
+    fn resize_to_stored_size_is_a_noop() {
         let mut core = core_with_baseline(
             vec![
                 text_def("top", 0, 0, 80, 10),
@@ -2036,7 +2030,7 @@ mod tests {
             80,
             24,
         );
-        core.resize_to_current_terminal();
+        core.resize_windows(80, 24);
 
         // Stored size == baseline size == 80x24, so nothing moves or resizes.
         assert_eq!(row_rows(&core, "top"), (0, 10));

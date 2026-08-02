@@ -417,7 +417,9 @@ impl WindowDef {
                 data: DashboardWidgetData {
                     layout: "horizontal".to_string(),
                     spacing: 1,
-                    hide_inactive: false,
+                    // New dashboards hide inactive statuses by default (see
+                    // templates.rs); uncheckable in the dashboard editor.
+                    hide_inactive: true,
                     indicators: vec![],
                 },
             },
@@ -427,6 +429,7 @@ impl WindowDef {
                     icon: None,
                     icon_color: None,
                     text_color: None,
+                    states: Vec::new(),
                 },
             },
             "active_effects" => WindowDef::ActiveEffects {
@@ -440,20 +443,19 @@ impl WindowDef {
                 data: PerformanceWidgetData {
                     enabled: true,
                     show_fps: true,
-                    show_frame_times: true,
                     show_render_times: true,
                     show_ui_times: true,
                     show_wrap_times: true,
                     show_net: true,
                     show_parse: true,
                     show_events: true,
+                    show_cpu: true,
                     show_memory: true,
                     show_lines: true,
                     show_uptime: true,
-                    show_jitter: true,
-                    show_frame_spikes: true,
-                    show_event_lag: true,
-                    show_memory_delta: true,
+                    show_spike_log: true,
+                    show_per_window: true,
+                    sparklines: true,
                 },
             },
             "targets" => WindowDef::Targets {
@@ -729,7 +731,8 @@ mod blank_tests {
             max_rows: None,
             min_cols: None,
             max_cols: None,
-            visible: true,
+            visibility: WindowVisibility::Shown,
+            binding: None,
             content_align: None,
             tts_speak: false,
             text_size: None,

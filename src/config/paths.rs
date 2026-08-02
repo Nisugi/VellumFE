@@ -5,6 +5,14 @@
 
 use super::*;
 
+/// One process-wide lock for tests that set the global `VELLUM_FE_DIR` env
+/// var. Every such test across every module must serialize on THIS lock, not
+/// a per-module one — separate mutexes guarding the same global don't mutually
+/// exclude, so tests would race (and one panic would poison only its own lock,
+/// cascading failures). Guard the whole set/use/remove with it.
+#[cfg(test)]
+pub static VELLUM_FE_DIR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Write a user config file safely: write to a sibling `.tmp` file, back up
 /// the existing file to `<name>.bak`, then rename over the target. A crash
 /// mid-write can no longer truncate user data, and the previous version is
@@ -29,6 +37,18 @@ pub fn write_atomic(path: &std::path::Path, contents: impl AsRef<[u8]>) -> std::
         let _ = std::fs::copy(path, PathBuf::from(bak));
     }
     std::fs::rename(&tmp, path)
+}
+
+/// True when a layout name is safe to use as a file stem in the shared
+/// layouts pool (also blocks path traversal, since names become
+/// `<name>.toml` / `<name>.json`). Shared by both frontends so
+/// `.savelayout` accepts the same names everywhere.
+pub fn is_valid_layout_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Saved dialog position for persistence across sessions
@@ -90,9 +110,11 @@ impl Config {
         Ok(Self::profile_dir(character)?.join("colors.toml"))
     }
 
-    /// Get the shared layouts directory (where .savelayout saves to)
+    /// Get the shared layouts directory (where .savelayout saves to, for
+    /// both frontends: TUI cell layouts as `<name>.toml`, GUI window
+    /// snapshots as `<name>.json`)
     /// Returns: ~/.vellum-fe/layouts/
-    pub(super) fn layouts_dir() -> Result<PathBuf> {
+    pub fn layouts_dir() -> Result<PathBuf> {
         Ok(Self::config_dir()?.join("layouts"))
     }
 
@@ -121,17 +143,39 @@ impl Config {
     }
 
     /// Get the shared skins directory (one subdirectory per skin, each with a
-    /// skin.toml manifest plus its image assets)
-    /// Returns: ~/.vellum-fe/skins/
+    /// skin.toml manifest plus any skin-local image assets)
+    /// Returns: ~/.vellum-fe/global/skins/
     pub fn skins_dir() -> Result<PathBuf> {
-        Ok(Self::config_dir()?.join("skins"))
+        Ok(Self::global_dir()?.join("skins"))
+    }
+
+    /// Category subfolders of the shared image pool. Created at startup so
+    /// the structure is visible; nothing enforces which category a file
+    /// lives in (resolution is by relative path).
+    pub const IMAGE_CATEGORIES: &'static [&'static str] = &[
+        "icons",
+        "frames",
+        "dolls",
+        "compass",
+        "backgrounds",
+        "statusicons",
+        "hands",
+    ];
+
+    /// Get the shared image pool: one subfolder per category
+    /// (see IMAGE_CATEGORIES). Skin manifests resolve relative image paths
+    /// against the skin folder first, then this pool — so skins can share
+    /// art without copying it.
+    /// Returns: ~/.vellum-fe/global/images/
+    pub fn global_images_dir() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("images"))
     }
 
     /// Get the shared hotbar icon-sheet store: sheet images plus an
     /// icons.toml manifest, available to every skin (and with no skin active)
-    /// Returns: ~/.vellum-fe/global/icons/
+    /// Returns: ~/.vellum-fe/global/images/icons/
     pub fn global_icons_dir() -> Result<PathBuf> {
-        Ok(Self::global_dir()?.join("icons"))
+        Ok(Self::global_images_dir()?.join("icons"))
     }
 
     /// Get the data-pack local store (gameobj-data.xml and friends; see
@@ -139,6 +183,23 @@ impl Config {
     /// Returns: ~/.vellum-fe/global/data/
     pub fn global_data_dir() -> Result<PathBuf> {
         Ok(Self::global_dir()?.join("data"))
+    }
+
+    /// Get the shared injury-doll base-image pool. Standalone doll base
+    /// images (installed by `.jinx`) drop in here; a skin's
+    /// `[injury_doll] base` can reference one as `dolls/<file>` (resolved
+    /// through the shared image pool) or by absolute path.
+    /// Returns: ~/.vellum-fe/global/images/dolls/
+    pub fn global_dolls_dir() -> Result<PathBuf> {
+        Ok(Self::global_images_dir()?.join("dolls"))
+    }
+
+    /// One shared-image-pool category folder (see IMAGE_CATEGORIES). Skins
+    /// reference pool art by relative path ("frames/iron.png"); `.jinx`
+    /// installs the per-file asset kinds here.
+    /// Returns: ~/.vellum-fe/global/images/<category>/
+    pub fn global_image_category_dir(category: &str) -> Result<PathBuf> {
+        Ok(Self::global_images_dir()?.join(category))
     }
 
     /// Get path to common (global) highlights file
@@ -299,6 +360,9 @@ impl Config {
     }
 
     pub fn layout_path(name: &str) -> Result<PathBuf> {
+        if !is_valid_layout_name(name) {
+            anyhow::bail!("Layout names use letters, digits, '-' and '_' only");
+        }
         let layouts_dir = Self::layouts_dir()?;
         Ok(layouts_dir.join(format!("{}.toml", name)))
     }
@@ -378,6 +442,31 @@ impl Config {
             toml::from_str(&contents).context("Failed to parse keybinds profile")?;
 
         Ok(keybinds)
+    }
+}
+
+#[cfg(test)]
+mod layout_name_tests {
+    use super::*;
+
+    #[test]
+    fn layout_path_rejects_unsafe_names() {
+        // Validation fires before any directory resolution, so a bad name
+        // can never become a path outside the layouts pool.
+        assert!(Config::layout_path("").is_err());
+        assert!(Config::layout_path("../escape").is_err());
+        assert!(Config::layout_path("..\\escape").is_err());
+        assert!(Config::layout_path("my layout").is_err());
+        assert!(Config::layout_path(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn layout_path_accepts_normal_names() {
+        let path = Config::layout_path("town-square_2").unwrap();
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("town-square_2.toml")
+        );
     }
 }
 

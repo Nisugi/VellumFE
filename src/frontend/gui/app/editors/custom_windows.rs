@@ -260,7 +260,7 @@ impl VellumGuiApp {
             super::super::INITIAL_LAYOUT_WIDTH,
             super::super::INITIAL_LAYOUT_HEIGHT,
         );
-        self.app_core.layout_modified_since_save = true;
+        self.app_core.schedule_layout_autosave();
 
         self.apply_streams_and_title(&name, title, streams, None)?;
         Ok(name)
@@ -292,7 +292,8 @@ impl VellumGuiApp {
         }
         // Persist to the layout definition too, or the edit is lost on
         // restart (same fix the Window Editor carries).
-        self.sync_text_streams_to_layout(name, streams.to_vec(), max_lines);
+        self.app_core
+            .sync_text_streams_to_layout(name, streams.to_vec(), max_lines);
         // Routing reads a cached subscriber map; rebuild it so the new streams
         // take effect immediately.
         self.app_core
@@ -310,113 +311,10 @@ impl VellumGuiApp {
         Ok(())
     }
 
-    /// Mirror a text window's live stream list (and optionally buffer size)
-    /// into its layout definition so the change survives a restart.
-    fn sync_text_streams_to_layout(
-        &mut self,
-        name: &str,
-        streams: Vec<String>,
-        buffer_size: Option<usize>,
-    ) {
-        if let Some(crate::config::WindowDef::Text { data, .. }) = self
-            .app_core
-            .layout
-            .windows
-            .iter_mut()
-            .find(|w| w.name() == name)
-        {
-            data.streams = streams;
-            if let Some(buffer_size) = buffer_size {
-                data.buffer_size = buffer_size;
-            }
-            self.app_core.layout_modified_since_save = true;
-        }
-    }
-
-    /// Remove `stream` from every plain text window's stream list except
-    /// `keep`, syncing layout definitions and the routing cache.
-    fn remove_stream_from_text_windows(&mut self, stream: &str, keep: Option<&str>) {
-        let mut changed: Vec<(String, Vec<String>)> = Vec::new();
-        for (name, window) in self.app_core.ui_state.windows.iter_mut() {
-            if keep == Some(name.as_str()) {
-                continue;
-            }
-            // Only plain Text widgets: the panel never edits tabbed tabs or
-            // built-in inventory-type widgets (Window Editor territory).
-            let WindowContent::Text(text) = &mut window.content else {
-                continue;
-            };
-            let before = text.streams.len();
-            text.streams
-                .retain(|s| !s.trim().eq_ignore_ascii_case(stream));
-            if text.streams.len() != before {
-                changed.push((name.clone(), text.streams.clone()));
-            }
-        }
-        if changed.is_empty() {
-            return;
-        }
-        for (name, streams) in changed {
-            self.sync_text_streams_to_layout(&name, streams, None);
-        }
-        self.app_core
-            .message_processor
-            .update_text_stream_subscribers(&self.app_core.ui_state);
-        self.app_core.needs_render = true;
-    }
-
-    /// Subscribe an existing text window to `stream` (no-op when already
-    /// subscribed), syncing the layout definition and the routing cache.
-    fn add_stream_to_text_window(&mut self, name: &str, stream: &str) -> Result<(), String> {
-        let streams = {
-            let window = self
-                .app_core
-                .ui_state
-                .windows
-                .get_mut(name)
-                .ok_or_else(|| format!("Window '{}' no longer exists.", name))?;
-            let text = text_content_mut(&mut window.content)
-                .ok_or_else(|| format!("Window '{}' is not a text window.", name))?;
-            if !text
-                .streams
-                .iter()
-                .any(|s| s.trim().eq_ignore_ascii_case(stream))
-            {
-                text.streams.push(stream.to_string());
-            }
-            text.streams.clone()
-        };
-        self.sync_text_streams_to_layout(name, streams, None);
-        self.app_core
-            .message_processor
-            .update_text_stream_subscribers(&self.app_core.ui_state);
-        self.app_core.needs_render = true;
-        Ok(())
-    }
-
-    /// Set (or clear, with `None`) the `[streams.routes]` entry for a stream,
-    /// persist it via the sparse profile save, and push the new config into
-    /// the message processor (which routes from its own copy).
-    fn set_stream_route(
-        &mut self,
-        stream: &str,
-        route: Option<StreamRoute>,
-    ) -> Result<(), String> {
-        let routes = &mut self.app_core.config.streams.routes;
-        // Replace any existing entry regardless of letter case (route lookup
-        // is case-insensitive, so near-duplicates would shadow each other).
-        routes.retain(|id, _| !id.eq_ignore_ascii_case(stream));
-        if let Some(route) = route {
-            routes.insert(stream.to_string(), route);
-        }
-        self.app_core
-            .save_config()
-            .map_err(|err| format!("Failed to save config: {}", err))?;
-        let config = self.app_core.config.clone();
-        self.app_core.message_processor.apply_config(config);
-        self.app_core.needs_render = true;
-        Ok(())
-    }
+    // The stream-routing mutations (subscribe, orphan, route, layout
+    // sync) live on AppCore (core/app_core/streams.rs), shared with the
+    // TUI's `.streams` menu; only the panel plumbing here is
+    // GUI-specific.
 
     /// Apply a "Goes to" combo choice for `stream`. `NewWindow` is handled in
     /// the render loop (it only pre-fills the draft).
@@ -425,20 +323,23 @@ impl VellumGuiApp {
             RouteTarget::Window(name) => {
                 // Move the subscription; any route entry stays as the orphan
                 // policy for when this window goes away (subscriptions win).
-                self.remove_stream_from_text_windows(stream, Some(&name));
-                self.add_stream_to_text_window(&name, stream)?;
+                self.app_core
+                    .remove_stream_from_text_windows(stream, Some(&name));
+                self.app_core.add_stream_to_text_window(&name, stream)?;
             }
             RouteTarget::Main => {
-                self.remove_stream_from_text_windows(stream, None);
-                self.set_stream_route(stream, Some(StreamRoute::Main))?;
+                self.app_core.remove_stream_from_text_windows(stream, None);
+                self.app_core
+                    .set_stream_route(stream, Some(StreamRoute::Main))?;
             }
             RouteTarget::Discard => {
-                self.remove_stream_from_text_windows(stream, None);
-                self.set_stream_route(stream, Some(StreamRoute::Discard))?;
+                self.app_core.remove_stream_from_text_windows(stream, None);
+                self.app_core
+                    .set_stream_route(stream, Some(StreamRoute::Discard))?;
             }
             RouteTarget::Fallback => {
-                self.remove_stream_from_text_windows(stream, None);
-                self.set_stream_route(stream, None)?;
+                self.app_core.remove_stream_from_text_windows(stream, None);
+                self.app_core.set_stream_route(stream, None)?;
             }
             RouteTarget::NewWindow => {}
         }
@@ -517,9 +418,17 @@ impl VellumGuiApp {
     /// UI and from the layout so it does not reappear, then rebuild routing.
     /// Shared by the Custom Windows panel and the Window Editor.
     pub(in super::super) fn delete_custom_window(&mut self, name: &str) {
+        // Forget the GUI-side per-tab state BEFORE removing the window from
+        // the core: find_tab_key_by_name resolves through available_tabs,
+        // which is derived from the core window list. Deleting a grouped
+        // window otherwise left the group intact, so surviving members
+        // stayed grouped followers — checked and un-re-addable in Windows.
+        if let Some(key) = self.find_tab_key_by_name(name) {
+            self.forget_tab_state(&key, name);
+        }
         self.app_core.remove_window(name);
         self.app_core.layout.windows.retain(|w| w.name() != name);
-        self.app_core.layout_modified_since_save = true;
+        self.app_core.schedule_layout_autosave();
         self.app_core
             .add_system_message(&format!("Custom window '{}' deleted.", name));
     }
@@ -552,6 +461,7 @@ impl VellumGuiApp {
 
         egui::Window::new("Streams")
             .id(egui::Id::new("gui_custom_windows"))
+            .order(egui::Order::Foreground)
             .open(&mut open)
             .default_width(460.0)
             .default_height(460.0)

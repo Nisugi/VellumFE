@@ -40,10 +40,23 @@ pub struct HighlightResult {
     pub sounds: Vec<SoundTrigger>,
     /// Rumble pattern names to trigger (controller haptics)
     pub rumbles: Vec<String>,
+    /// Custom-status changes triggered by matches (set/clear).
+    pub status_actions: Vec<StatusAction>,
     /// Replacements that target specific windows (applied during routing)
     pub deferred_replacements: Vec<DeferredReplacement>,
     /// True if the ENTIRE line was covered by silent_prompt patterns (suppress prompt)
     pub line_is_silent: bool,
+}
+
+/// A custom-status change requested by a matching highlight. Statuses
+/// drive indicator/dashboard widgets whose id matches, so all the icon,
+/// grayscale, and TUI machinery applies to them unchanged.
+#[derive(Clone, Debug)]
+pub struct StatusAction {
+    /// Status id to activate, with an optional auto-clear in seconds.
+    pub set: Option<(String, Option<f32>)>,
+    /// Status id to deactivate.
+    pub clear: Option<String>,
 }
 
 /// Character-level style information for highlight processing
@@ -110,6 +123,9 @@ impl CoreHighlightEngine {
             h.stream.hash(&mut hasher);
             h.window.hash(&mut hasher);
             h.silent_prompt.hash(&mut hasher);
+            h.set_status.hash(&mut hasher);
+            h.status_duration.map(f32::to_bits).hash(&mut hasher);
+            h.clear_status.hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -219,6 +235,7 @@ impl CoreHighlightEngine {
                 segments: segments.to_vec(),
                 sounds: Vec::new(),
                 rumbles: Vec::new(),
+                status_actions: Vec::new(),
                 deferred_replacements: Vec::new(),
                 line_is_silent: false,
             })
@@ -269,6 +286,19 @@ impl CoreHighlightEngine {
         let mut matches: Vec<MatchInfo> = Vec::new();
         let mut sounds: Vec<SoundTrigger> = Vec::new();
         let mut rumbles: Vec<String> = Vec::new();
+        let mut status_actions: Vec<StatusAction> = Vec::new();
+        // Shared by the three match sites below.
+        let status_action_for = |highlight: &crate::config::HighlightPattern| {
+            (highlight.set_status.is_some() || highlight.clear_status.is_some()).then(|| {
+                StatusAction {
+                    set: highlight
+                        .set_status
+                        .clone()
+                        .map(|id| (id, highlight.status_duration)),
+                    clear: highlight.clear_status.clone(),
+                }
+            })
+        };
 
         // Try Aho-Corasick fast patterns (with word boundary checking)
         if let Some(ref matcher) = self.fast_matcher {
@@ -311,6 +341,9 @@ impl CoreHighlightEngine {
                             }
                             if let Some(ref rumble) = highlight.rumble {
                                 rumbles.push(rumble.clone());
+                            }
+                            if let Some(action) = status_action_for(highlight) {
+                                status_actions.push(action);
                             }
 
                             matches.push(MatchInfo {
@@ -360,6 +393,9 @@ impl CoreHighlightEngine {
                                 if let Some(ref rumble) = highlight.rumble {
                                     rumbles.push(rumble.clone());
                                 }
+                                if let Some(action) = status_action_for(highlight) {
+                                    status_actions.push(action);
+                                }
 
                                 // Expand capture groups
                                 let mut expanded = String::new();
@@ -390,6 +426,9 @@ impl CoreHighlightEngine {
                         if let Some(ref rumble) = highlight.rumble {
                             rumbles.push(rumble.clone());
                         }
+                        if let Some(action) = status_action_for(highlight) {
+                            status_actions.push(action);
+                        }
 
                         matches.push(MatchInfo {
                             start_byte: m.start(),
@@ -411,7 +450,9 @@ impl CoreHighlightEngine {
         // style/link explode below. Sounds are only pushed alongside a match,
         // so they cannot be lost here.
         if matches.is_empty() {
-            debug_assert!(sounds.is_empty() && rumbles.is_empty());
+            debug_assert!(
+                sounds.is_empty() && rumbles.is_empty() && status_actions.is_empty()
+            );
             return None;
         }
 
@@ -639,6 +680,7 @@ impl CoreHighlightEngine {
             segments: result_segments,
             sounds,
             rumbles,
+            status_actions,
             deferred_replacements,
             line_is_silent,
         })
@@ -806,6 +848,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }
     }
@@ -1555,6 +1600,33 @@ mod tests {
         let mut with_stream = vec![make_pattern("alarm")];
         with_stream[0].stream = Some("combat".to_string());
         assert_ne!(base_hash, CoreHighlightEngine::compute_hash(&with_stream));
+    }
+
+    #[test]
+    fn status_actions_collected_on_match_only() {
+        let mut set = make_pattern("You feel poison");
+        set.set_status = Some("POISONED".to_string());
+        set.status_duration = Some(30.0);
+        let mut clear = make_pattern("The poison fades");
+        clear.clear_status = Some("POISONED".to_string());
+        let engine = CoreHighlightEngine::new(vec![set, clear]);
+
+        let result =
+            engine.apply_highlights(&[make_segment("You feel poison coursing")], "main");
+        assert_eq!(result.status_actions.len(), 1);
+        assert_eq!(
+            result.status_actions[0].set,
+            Some(("POISONED".to_string(), Some(30.0)))
+        );
+        assert!(result.status_actions[0].clear.is_none());
+
+        let result = engine.apply_highlights(&[make_segment("The poison fades away")], "main");
+        assert_eq!(result.status_actions.len(), 1);
+        assert_eq!(result.status_actions[0].clear.as_deref(), Some("POISONED"));
+
+        // No match, no actions.
+        let result = engine.apply_highlights(&[make_segment("nothing here")], "main");
+        assert!(result.status_actions.is_empty());
     }
 
     // ===========================================

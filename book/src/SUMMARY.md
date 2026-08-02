@@ -58,6 +58,8 @@
   - [Sound Alerts](./customization/sounds.md)
   - [Themes](./customization/themes.md)
   - [Skins (GUI Graphics)](./customization/skins.md)
+  - [Generating Skin Art with AI](./customization/skin-art-prompts.md)
+  - [Submitting Art to the Community Repo](./customization/submitting-art.md)
 
 ---
 
@@ -65,6 +67,7 @@
 
 - [Command Reference](./reference/commands.md)
 - [Inventory Tools (.foreach, .sorter)](./features/inventory-tools.md)
+- [Performance Monitor](./reference/performance.md)
 - [CLI Reference](./reference/cli.md)
 - [FAQ](./reference/faq.md)
 - [Troubleshooting](./reference/troubleshooting.md)

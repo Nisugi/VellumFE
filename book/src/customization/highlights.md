@@ -86,6 +86,33 @@ For replacement patterns, `window = "..."` limits the *replacement* to one
 window by name (colors still apply everywhere). Both filter fields are
 editable in the TUI highlight form (`.edithighlight`).
 
+## Custom Statuses
+
+A rule can drive a status icon of your own invention. Set these in the
+GUI highlight editor:
+
+- **Set status** — a status id to activate when the rule matches
+  (e.g. `POISONED`).
+- **Status duration** — seconds until it clears itself; leave empty to
+  keep it on until a clearing rule matches.
+- **Clear status** — a status id to deactivate on match.
+
+Any indicator or dashboard entry whose id matches lights up, exactly
+like the game's built-in statuses — so it gets skin/pool icon art, the
+per-indicator icon picker, grayscale-when-inactive, and TUI glyphs for
+free. Typical use: regex a spell's wear-off message into a status so
+you can *see* the buff drop:
+
+```toml
+[silver_lace_down]
+pattern = "The silvery luminescence fades"
+set_status = "SILVERLACE_DOWN"
+status_duration = 30.0
+```
+
+Then add an indicator window with id `SILVERLACE_DOWN` (Indicator
+Templates editor) and pick an icon for it.
+
 ## Test Your Patterns
 
 Don't wait for the game — inject a line:

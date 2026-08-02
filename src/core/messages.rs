@@ -182,6 +182,8 @@ pub struct MessageProcessor {
 
     /// Pending sounds from highlight processing (to be transferred to GameState)
     pub pending_sounds: Vec<super::highlight_engine::SoundTrigger>,
+    /// Custom-status changes from matched highlights, drained by AppCore.
+    pub pending_status_actions: Vec<super::highlight_engine::StatusAction>,
     /// Rumble pattern names from highlight matches, drained by AppCore
     /// into the haptic queue.
     pub pending_rumbles: Vec<String>,
@@ -210,9 +212,29 @@ pub struct MessageProcessor {
     /// Remote client sink for the web frontend sidecar.
     /// None unless `[web] enabled = true` — see core/remote.rs.
     pub remote: Option<super::remote::RemoteSink>,
+
+    /// Dot-commands injected by the feed (`<vellumCmd cmd="..."/>`), waiting
+    /// for the frontend to drain them into its dot-command dispatch.
+    pub pending_client_commands: Vec<String>,
 }
 
 impl MessageProcessor {
+    /// Registry entry for a held item from the `<left>`/`<right>` feed;
+    /// None for an empty hand (the game sends the literal "Empty").
+    fn hand_game_item(
+        item: &str,
+        link: Option<&crate::data::LinkData>,
+    ) -> Option<crate::core::game_objects::GameItem> {
+        if item.is_empty() || item.eq_ignore_ascii_case("empty") {
+            return None;
+        }
+        Some(crate::core::game_objects::GameItem::new(
+            link.map(|l| l.exist_id.clone()).unwrap_or_default(),
+            link.map(|l| l.noun.clone()).unwrap_or_default(),
+            item.to_string(),
+        ))
+    }
+
     /// Update any countdown windows whose id matches the provided id (case-sensitive).
     /// Falls back to window name for backward compatibility.
     fn update_countdown_by_id(
@@ -273,6 +295,7 @@ impl MessageProcessor {
             inv_scan: Default::default(),
             pending_container_ingest: None,
             remote: None,
+            pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
             chunk_has_silent_updates: false,
             discard_current_stream: false,
@@ -299,6 +322,7 @@ impl MessageProcessor {
             newly_registered_container: None,
             pending_webui_handshake: None,
             pending_sounds: Vec::new(),
+            pending_status_actions: Vec::new(),
             pending_rumbles: Vec::new(),
             pending_evidence: Vec::new(),
             pending_pathcode: None,
@@ -450,16 +474,16 @@ impl MessageProcessor {
         match element {
             ParsedElement::StreamWindow { id, subtitle, title } => {
                 self.note_seen_stream(id, title.as_deref());
-                // Register as a window offer too (unified list; P1). Streams
-                // are the persistent named windows, so mark resident.
-                game_state.window_offers.offer(
-                    id.clone(),
-                    title.clone().unwrap_or_else(|| id.clone()),
-                    crate::core::window_offers::OfferKind::Stream,
-                    None,
-                    false,
-                    true,
-                );
+                // U3: record the stream as a window discovery for AppCore to
+                // register as a bound, Hidden-by-default layout entry (the
+                // processor can't reach the layout). Replaces the Stream
+                // offer.
+                ui_state.pending_window_discoveries.push(crate::data::WindowDiscovery {
+                    id: id.clone(),
+                    title: title.clone().unwrap_or_else(|| id.clone()),
+                    kind: crate::data::WindowDiscoveryKind::Stream,
+                    save: false,
+                });
                 self.handle_stream_window(
                     id,
                     subtitle.as_deref(),
@@ -973,6 +997,19 @@ impl MessageProcessor {
                 // domain, like RoundTime/CastTime; 0 or a past time clears.
                 self.update_countdown_by_id(ui_state, id, (*value).max(0));
             }
+            ParsedElement::VellumCommand { command } => {
+                // Feed-driven client commands (Lich scripts). Dot-commands
+                // only: the frontends drain this queue into their normal
+                // dot-command dispatch, so anything else could round-trip
+                // back to the game — refuse it.
+                if command.starts_with('.') {
+                    self.pending_client_commands.push(command.clone());
+                } else {
+                    tracing::warn!(
+                        "vellumCmd rejected (only dot-commands are allowed): {command}"
+                    );
+                }
+            }
             ParsedElement::LeftHand { item, link } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
@@ -981,6 +1018,10 @@ impl MessageProcessor {
                 } else {
                     Some(item.clone())
                 };
+                game_state.objects.set_hand(
+                    crate::core::game_objects::Hand::Left,
+                    Self::hand_game_item(item, link.as_ref()),
+                );
 
                 // Update left hand widget if it exists (support legacy and new names)
                 for name in ["left", "left_hand"] {
@@ -1014,6 +1055,10 @@ impl MessageProcessor {
                 } else {
                     Some(item.clone())
                 };
+                game_state.objects.set_hand(
+                    crate::core::game_objects::Hand::Right,
+                    Self::hand_game_item(item, link.as_ref()),
+                );
 
                 // Update right hand widget if it exists (support legacy and new names)
                 for name in ["right", "right_hand"] {
@@ -1354,39 +1399,12 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true;
                 tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
 
-                // Register as a window offer — even suppressed dialogs, so
-                // they appear in the known-windows list and can be
-                // un-hidden. The config blocklist only SEEDS a Hidden
-                // policy the first time an id is offered; after that the
-                // user's checkbox choice wins. Dialogs reaching here are
-                // non-resident (resident ones are mined into panels).
-                let is_new = game_state.window_offers.get(id).is_none();
-                game_state.window_offers.offer(
-                    id.clone(),
-                    title.clone().unwrap_or_else(|| id.clone()),
-                    crate::core::window_offers::OfferKind::Dialog,
-                    None,
-                    *save,
-                    false,
-                );
-                if is_new
-                    && self
-                        .config
-                        .ui
-                        .open_dialog_blocklist
-                        .iter()
-                        .any(|b| b.eq_ignore_ascii_case(id))
-                {
-                    game_state
-                        .window_offers
-                        .set_policy(id, crate::core::window_offers::Policy::Hidden);
-                }
-                if !game_state
-                    .window_offers
-                    .get(id)
-                    .is_some_and(|offer| offer.should_show())
-                {
-                    tracing::debug!("DialogOpen suppressed (offer hidden): id={}", id);
+                // U3: dialogs reaching here are non-resident (resident ones
+                // are mined into panels). Hidden-until-shown: a dialog the
+                // user never showed doesn't pop up, but the store still
+                // ingests its data so the window can be shown later.
+                if !Self::dialog_should_popup(ui_state, id) {
+                    tracing::debug!("DialogOpen suppressed (not shown by user): id={}", id);
                     return;
                 }
 
@@ -1412,13 +1430,15 @@ impl MessageProcessor {
                 // Map dialog ID to template name (they may differ, e.g., "expr" -> "gs4_experience")
                 let template_name = Config::dialog_id_to_template(id);
 
-                // If a widget template exists for this dialog, add it to layout instead of popup
+                // If a widget template exists for this dialog, add it to layout
+                // instead of a popup. Queue the DIALOG ID (not the template
+                // name) so process_pending_window_additions can tag the created
+                // window with its binding — the U2 identity that ties the feed
+                // to the placed window regardless of its display name.
                 if Config::get_window_template(template_name).is_some() {
                     tracing::debug!("DialogOpen redirected to widget: id={} -> template={}", id, template_name);
-                    // Queue the window to be added to layout (use template name, not dialog ID)
-                    let template_owned = template_name.to_string();
-                    if !ui_state.pending_window_additions.contains(&template_owned) {
-                        ui_state.pending_window_additions.push(template_owned);
+                    if !ui_state.pending_window_additions.contains(id) {
+                        ui_state.pending_window_additions.push(id.clone());
                     }
                     return;
                 }
@@ -1466,7 +1486,7 @@ impl MessageProcessor {
                 self.chunk_has_silent_updates = true;
                 // Always INGEST into the store (even for hidden dialogs);
                 // policy only gates DISPLAY, synced below.
-                let show = self.dialog_offer_allows(game_state, id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.buttons.clear();
@@ -1491,7 +1511,7 @@ impl MessageProcessor {
             }
             ParsedElement::DialogDropDowns { id, clear, dropdowns } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_offer_allows(game_state, id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.dropdowns.clear();
@@ -1514,30 +1534,16 @@ impl MessageProcessor {
                 if Config::get_window_template(Config::dialog_id_to_template(id)).is_some() {
                     return;
                 }
-                // Register (or refresh) as a RESIDENT dialog offer so the
-                // known-windows list shows it and enabling it creates a
-                // dockable panel. Seed the store title.
-                let existed = game_state.window_offers.get(id).is_some();
-                game_state.window_offers.offer(
-                    id.clone(),
-                    title.clone().unwrap_or_else(|| id.clone()),
-                    crate::core::window_offers::OfferKind::Dialog,
-                    None,
-                    *save,
-                    true, // resident
-                );
-                if !existed
-                    && self
-                        .config
-                        .ui
-                        .open_dialog_blocklist
-                        .iter()
-                        .any(|b| b.eq_ignore_ascii_case(id))
-                {
-                    game_state
-                        .window_offers
-                        .set_policy(id, crate::core::window_offers::Policy::Hidden);
-                }
+                // U3: record the resident dialog as a DialogPanel discovery
+                // for AppCore to register as a bound, Hidden-by-default
+                // dockable-panel layout entry. Replaces the resident Dialog
+                // offer. Seed the store title so the panel renders when shown.
+                ui_state.pending_window_discoveries.push(crate::data::WindowDiscovery {
+                    id: id.clone(),
+                    title: title.clone().unwrap_or_else(|| id.clone()),
+                    kind: crate::data::WindowDiscoveryKind::DialogPanel,
+                    save: *save,
+                });
                 let dialog = ui_state.dialog_slot_mut(id);
                 if dialog.title.is_none() {
                     dialog.title = title.clone();
@@ -1551,7 +1557,7 @@ impl MessageProcessor {
                 spinboxes,
             } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_offer_allows(game_state, id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.links.clear();
@@ -1591,7 +1597,7 @@ impl MessageProcessor {
                 labels,
             } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_offer_allows(game_state, id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.fields.clear();
@@ -1680,7 +1686,7 @@ impl MessageProcessor {
                 progress_bars,
             } => {
                 self.chunk_has_silent_updates = true;
-                let show = self.dialog_offer_allows(game_state, id);
+                let show = Self::dialog_should_popup(ui_state, id);
                 let dialog = ui_state.dialog_slot_mut(id);
                 if *clear {
                     dialog.progress_bars.clear();
@@ -1979,23 +1985,11 @@ impl MessageProcessor {
                     .objects
                     .register_container(id.clone(), title.clone(), target.clone());
 
-                // Register it as a window offer too (unified list; P1 —
-                // populated alongside the existing discovery path).
-                if !title.is_empty() {
-                    game_state.window_offers.offer(
-                        id.clone(),
-                        title.clone(),
-                        crate::core::window_offers::OfferKind::Container,
-                        None,
-                        false,
-                        false,
-                    );
-                }
-
                 // Signal the sighting for the realize pass (every LOOK IN
                 // triggers this): the frontend tick auto-(re)opens the
-                // window only if this container's offer policy says Shown,
-                // and window creation itself skips already-open windows.
+                // container window when the user has opted it in, and window
+                // creation itself skips already-open windows. U3: containers
+                // are ephemeral session windows managed via the unified list.
                 if !title.is_empty() {
                     self.newly_registered_container = Some((id.clone(), title.clone()));
                     tracing::debug!("Container seen: id='{}', title='{}'", id, title);
@@ -2075,10 +2069,6 @@ impl MessageProcessor {
     /// stream to "room", causing room text to be discarded. The stream is reset on prompt.
     ///
     /// DragonRealms-specific - GemStone IV doesn't use streamWindow room.
-    /// Gate a `dialogData` element through the window-offer registry:
-    /// make sure the dialog id is offered (seeding a Hidden policy from
-    /// the config blocklist the first time it's seen, so dialogData-first
-    /// ids are still suppressed) and return whether it may be shown.
     /// After ingesting a dialogData delta into the store, reflect it into
     /// the visible `active_dialog` if this dialog should be shown. When
     /// first materializing a shown dialog, seed its saved position/size.
@@ -2113,32 +2103,16 @@ impl MessageProcessor {
         }
     }
 
-    fn dialog_offer_allows(&self, game_state: &mut GameState, id: &str) -> bool {
-        if game_state.window_offers.get(id).is_none() {
-            game_state.window_offers.offer(
-                id.to_string(),
-                id.to_string(),
-                crate::core::window_offers::OfferKind::Dialog,
-                None,
-                false,
-                false,
-            );
-            if self
-                .config
-                .ui
-                .open_dialog_blocklist
-                .iter()
-                .any(|blocked| blocked.eq_ignore_ascii_case(id))
-            {
-                game_state
-                    .window_offers
-                    .set_policy(id, crate::core::window_offers::Policy::Hidden);
-            }
-        }
-        game_state
-            .window_offers
-            .get(id)
-            .is_some_and(|offer| offer.should_show())
+    /// Whether a dialog's data may be shown as a transient popup. The
+    /// always-ingest store keeps every dialog's state regardless; this only
+    /// gates the popup. U6: nothing pops up unless the user has SHOWN it via
+    /// the Windows list (its id is in `shown_dialog_ids`) — hidden-by-default,
+    /// replacing the old blocklist.
+    fn dialog_should_popup(ui_state: &UiState, id: &str) -> bool {
+        ui_state
+            .shown_dialog_ids
+            .iter()
+            .any(|shown| shown.eq_ignore_ascii_case(id))
     }
 
     fn handle_stream_window(
@@ -2769,7 +2743,13 @@ impl MessageProcessor {
     /// Mirror the `.sorter` toggle into the processor's live config
     /// (AppCore owns the persisted copy).
     pub fn set_sorter_enabled(&mut self, enabled: bool) {
-        self.config.ui.sorter_enabled = enabled;
+        self.config.sorter.enabled = enabled;
+    }
+
+    /// Mirror the full sorter config (rules/order/labels/format) into the
+    /// processor after an editor save.
+    pub fn set_sorter_config(&mut self, sorter: crate::config::SorterConfig) {
+        self.config.sorter = sorter;
     }
 
     /// Apply container contents captured from a main-stream look line into
@@ -2911,12 +2891,13 @@ impl MessageProcessor {
             }
 
             // Categorized display transform (only when .sorter is on).
-            if self.config.ui.sorter_enabled {
+            if self.config.sorter.enabled {
                 let data = self.sorter_gameobj();
                 if let Some(mut lines) = crate::core::sorter::transform(
                     &self.current_segments,
                     &full_text,
                     &data,
+                    &self.config.sorter,
                 ) {
                     self.current_segments = lines.remove(0);
                     self.injected_lines.extend(lines);
@@ -2962,6 +2943,8 @@ impl MessageProcessor {
 
         // Queue sounds from highlight processing
         self.pending_sounds.extend(highlight_result.sounds);
+        self.pending_status_actions
+            .extend(highlight_result.status_actions);
         self.pending_rumbles.extend(highlight_result.rumbles);
 
         let mut line = StyledLine {
@@ -3438,6 +3421,69 @@ impl MessageProcessor {
                         }
                         delivered = true;
                         break;
+                    }
+                    if !delivered {
+                        // Last resort: any shown subscriber of the story
+                        // ("main") stream. The window NAMED "main" can be
+                        // hidden with the story feed routed into another
+                        // window or a tabbedtext tab — mirror
+                        // add_system_message's fallback instead of dropping.
+                        'fallback: for (win_name, window) in ui_state.windows.iter_mut() {
+                            match &mut window.content {
+                                WindowContent::Text(content)
+                                    if content
+                                        .streams
+                                        .iter()
+                                        .any(|s| s.eq_ignore_ascii_case("main")) =>
+                                {
+                                    let final_line = if deferred_replacements.is_empty() {
+                                        line.clone()
+                                    } else {
+                                        StyledLine {
+                                            segments:
+                                                super::highlight_engine::apply_deferred_for_window(
+                                                    &line.segments,
+                                                    &deferred_replacements,
+                                                    win_name,
+                                                ),
+                                            stream: line.stream.clone(),
+                                            timestamp: line.timestamp,
+                                        }
+                                    };
+                                    content.add_line(final_line);
+                                    if let Some(tts_mgr) = tts_manager.as_deref_mut() {
+                                        self.enqueue_tts(tts_mgr, win_name, line);
+                                    }
+                                    delivered = true;
+                                    break 'fallback;
+                                }
+                                WindowContent::TabbedText(tab_content) => {
+                                    let active_tab_index = tab_content.active_tab_index;
+                                    for (tab_index, tab) in
+                                        tab_content.tabs.iter_mut().enumerate()
+                                    {
+                                        if tab
+                                            .definition
+                                            .streams
+                                            .iter()
+                                            .any(|s| s.trim().eq_ignore_ascii_case("main"))
+                                        {
+                                            tab.content.add_line(line.clone());
+                                            if tab_index != active_tab_index
+                                                && !tab.definition.ignore_activity
+                                            {
+                                                tab.has_unread = true;
+                                            }
+                                            delivered = true;
+                                        }
+                                    }
+                                    if delivered {
+                                        break 'fallback;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                     if !delivered {
                         tracing::trace!(
@@ -4555,6 +4601,9 @@ mod tests {
             replace: None,
             stream: None,
             window: None,
+            set_status: None,
+            status_duration: None,
+            clear_status: None,
             compiled_regex: None,
         }
     }
@@ -4629,8 +4678,10 @@ mod tests {
     }
 
     #[test]
-    fn window_offers_registered_from_all_three_tag_families() {
-        use crate::core::window_offers::OfferKind;
+    fn discovery_routes_container_signal_bank_popup_stream_queue() {
+        // U3: no offer registry. A container sets the newly_registered
+        // signal; a dialog (bank) pops up only once the user shows it; a
+        // streamWindow pushes a WindowDiscovery for AppCore to bind.
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
         let mut ui_state = UiState::default();
@@ -4667,25 +4718,92 @@ mod tests {
             );
         }
 
-        let offers = &game_state.window_offers;
-        assert_eq!(offers.len(), 3);
-        assert_eq!(offers.get("77").unwrap().kind, OfferKind::Container);
-        assert_eq!(offers.get("bank").unwrap().kind, OfferKind::Dialog);
-        assert!(offers.get("bank").unwrap().save, "save='t' captured");
-        let stream = offers.get("thoughts").unwrap();
-        assert_eq!(stream.kind, OfferKind::Stream);
-        assert!(stream.resident, "streams are resident");
-        assert!(stream.should_show(), "resident+unset shows");
-        // Container non-resident + unset = not auto-shown.
-        assert!(!offers.get("77").unwrap().should_show());
+        // Container → registry + newly-registered signal.
+        assert!(game_state.objects.container("77").is_some());
+        assert_eq!(
+            processor.newly_registered_container,
+            Some(("77".to_string(), "Backpack".to_string()))
+        );
+        // U6: bank does NOT pop up by default (hidden-until-shown —
+        // nothing pops unless its id is in shown_dialog_ids).
+        assert!(ui_state.active_dialog.is_none());
+        // Stream → a WindowDiscovery for AppCore to register.
+        let disc = &ui_state.pending_window_discoveries;
+        assert!(disc.iter().any(|d| d.id == "thoughts"
+            && d.kind == crate::data::WindowDiscoveryKind::Stream));
+
+        // But once the user shows "bank", its re-sent openDialog pops up.
+        ui_state.shown_dialog_ids.insert("bank".to_string());
+        processor.process_element(
+            &ParsedElement::DialogOpen {
+                id: "bank".to_string(),
+                title: Some("Bank".to_string()),
+                save: true,
+            },
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert!(ui_state.active_dialog.as_ref().is_some_and(|d| d.id == "bank"));
     }
 
     #[test]
-    fn blocklisted_combat_dialogdata_never_opens_popup() {
+    fn dialog_popup_gated_on_shown_dialog_ids() {
+        // U6: a dialog pops up ONLY if the user has shown it (its id in
+        // shown_dialog_ids). Empty set = nothing pops up.
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        let open = |id: &str| ParsedElement::DialogOpen {
+            id: id.to_string(),
+            title: Some(id.to_string()),
+            save: false,
+        };
+
+        // Not shown → no popup.
+        processor.process_element(
+            &open("shop"),
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert!(ui_state.active_dialog.is_none());
+
+        // Shown → pops up.
+        ui_state.shown_dialog_ids.insert("shop".to_string());
+        processor.process_element(
+            &open("shop"),
+            &mut game_state,
+            &mut ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+        assert!(ui_state.active_dialog.as_ref().is_some_and(|d| d.id == "shop"));
+    }
+
+    #[test]
+    fn hidden_combat_dialogdata_never_opens_popup() {
         // Real shapes from a 2026-07-28 session log: the combat window is a
         // RESIDENT openDialog (so no DialogOpen is emitted) whose dialogData
-        // then arrives both embedded and standalone. 'combat' is in the
-        // default blocklist, so none of it may create the generic popup.
+        // then arrives both embedded and standalone. The user never showed
+        // 'combat', so none of it may create the generic popup.
         let mut parser = crate::parser::XmlParser::new();
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
@@ -4715,18 +4833,20 @@ mod tests {
 
         assert!(
             ui_state.active_dialog.is_none(),
-            "blocklisted combat dialogData opened the generic popup: {:?}",
+            "hidden combat dialogData opened the generic popup: {:?}",
             ui_state.active_dialog.as_ref().map(|d| &d.id)
         );
-        // And it still appears in the known-windows list as hidden.
-        let offer = game_state.window_offers.get("combat");
+        // It was recorded as a DialogPanel discovery (Hidden by default).
+        let disc = ui_state
+            .pending_window_discoveries
+            .iter()
+            .find(|d| d.id == "combat");
         assert!(
-            offer.is_some_and(|o| !o.should_show()),
-            "combat offer should exist and be hidden, got {:?}",
-            offer
+            disc.is_some_and(|d| d.kind == crate::data::WindowDiscoveryKind::DialogPanel),
+            "combat should be a DialogPanel discovery"
         );
-        // Even hidden, its full state accumulated in the store, so opting
-        // in mid-session shows it fully formed rather than from deltas.
+        // Even hidden, its full state accumulated in the store, so showing
+        // it later renders fully formed rather than from deltas.
         let stored = ui_state.dialog_store.get("combat").expect("combat stored");
         assert_eq!(stored.progress_bars.len(), 1, "stance bar stored");
         assert_eq!(stored.buttons.len(), 2, "both stance/target buttons stored");
@@ -4768,10 +4888,14 @@ mod tests {
             }
         }
 
-        // Resident dialog offer, blocklist-hidden, not popped up.
-        let offer = game_state.window_offers.get("combat").expect("offer");
-        assert!(offer.resident, "combat is a resident panel");
-        assert!(!offer.should_show(), "blocklisted → hidden by default");
+        // Combat is recorded as a DialogPanel discovery (Hidden by default)
+        // and never pops up as a transient dialog.
+        let disc = ui_state
+            .pending_window_discoveries
+            .iter()
+            .find(|d| d.id == "combat")
+            .expect("combat discovery");
+        assert_eq!(disc.kind, crate::data::WindowDiscoveryKind::DialogPanel);
         assert!(ui_state.active_dialog.is_none(), "no transient popup");
 
         // Store accumulated the whole panel.
@@ -4790,11 +4914,10 @@ mod tests {
     }
 
     #[test]
-    fn opting_in_materializes_dialog_from_store() {
-        // The core fix: the game sends combat's definition once (here as a
-        // batch), then the user opts in later — the popup must appear fully
-        // formed from the store, not empty.
-        use crate::core::window_offers::Policy;
+    fn always_ingest_store_accumulates_hidden_dialog() {
+        // The core fix: the game sends combat's definition (here as a batch);
+        // combat was never shown so no popup appears, but the store ingests
+        // the whole panel so showing it later renders fully formed.
         let mut parser = crate::parser::XmlParser::new();
         let mut processor = create_test_processor();
         let mut app = crate::core::AppCore::new_for_test();
@@ -4820,34 +4943,23 @@ mod tests {
             }
         }
 
-        // Blocklisted → not shown yet, but fully stored.
+        // Hidden → no transient popup, but fully stored.
         assert!(app.ui_state.active_dialog.is_none());
-        assert_eq!(app.ui_state.dialog_store.get("combat").unwrap().buttons.len(), 2);
-
-        // User ticks it in the known-windows list.
-        app.set_window_offer_policy("combat", Policy::Shown, 80, 24);
-
-        // Now it's on screen, fully formed from the store.
-        let shown = app.ui_state.active_dialog.as_ref().expect("materialized");
-        assert_eq!(shown.id, "combat");
-        assert_eq!(shown.buttons.len(), 2);
-        assert_eq!(shown.dropdowns.len(), 1);
-        assert_eq!(shown.progress_bars.len(), 1);
+        let stored = app.ui_state.dialog_store.get("combat").expect("stored");
+        assert_eq!(stored.buttons.len(), 2);
+        assert_eq!(stored.dropdowns.len(), 1);
+        assert_eq!(stored.progress_bars.len(), 1);
     }
 
     #[test]
     fn shown_dialog_updates_replace_controls_by_id() {
-        use crate::core::window_offers::{OfferKind, Policy};
+        // The always-ingest store replaces same-id controls (no pile-up) on
+        // every dialogData refresh — independent of whether it's shown.
+        // Assert against the store (the update-by-id happens there).
         let mut parser = crate::parser::XmlParser::new();
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
         let mut ui_state = UiState::default();
-
-        // The user opted in to the combat dialog via the known-windows list.
-        game_state
-            .window_offers
-            .offer("combat", "Combat", OfferKind::Dialog, None, false, false);
-        game_state.window_offers.set_policy("combat", Policy::Shown);
 
         let chunk = "<dialogData id='combat'><cmdButton id='cmdTarget' value='target' cmd='target random' top='93' left='0'/><cmdButton id='cmdAttack' value='attack' cmd='attack' top='93' left='55'/><dropDownBox id='dDBStance' value='defensive' cmd='_stance %dDBStance%' content_text='offensive,defensive' content_value='offensive,defensive' top='70'/></dialogData>";
         let updated = "<dialogData id='combat'><dropDownBox id='dDBStance' value='offensive' cmd='_stance %dDBStance%' content_text='offensive,defensive' content_value='offensive,defensive' top='70'/></dialogData>";
@@ -4868,7 +4980,7 @@ mod tests {
             }
         }
 
-        let dialog = ui_state.active_dialog.as_ref().expect("dialog opened");
+        let dialog = ui_state.dialog_store.get("combat").expect("stored");
         // Re-sent controls replaced their same-id entries, no pile-up
         // (the old extend produced target/attack duplicates live).
         assert_eq!(dialog.buttons.len(), 2, "buttons: {:?}", dialog.buttons);

@@ -106,9 +106,15 @@ impl AppCore {
         self.keybind_map = map;
     }
 
-    /// Execute a keybind action (called when a bound key is pressed)
-    /// Returns a list of commands to send to the server (for macros)
-    pub fn execute_keybind_action(&mut self, action: &KeyBindAction) -> Result<Vec<String>> {
+    /// Execute a keybind action (called when a bound key is pressed).
+    /// Returns the outcomes of any macro commands: the frontend sends
+    /// `Game` strings to the server and performs `Ui` actions itself —
+    /// which is what makes a macro bound to `.settings` actually open
+    /// the settings editor instead of leaking an action string.
+    pub fn execute_keybind_action(
+        &mut self,
+        action: &KeyBindAction,
+    ) -> Result<Vec<crate::data::CommandOutcome>> {
         match action {
             KeyBindAction::Action(action_str) => {
                 // Parse the action string to a KeyAction
@@ -141,10 +147,11 @@ impl AppCore {
                     macro_action.macro_text
                 );
 
-                // Send the macro text as a command (posts prompt+echo, returns command for server)
-                let command = self.send_command(clean_text)?;
-                tracing::info!("[MACRO] send_command returned: '{}'", command);
-                Ok(vec![command]) // Return command for network layer to send
+                // Send the macro text as a command (posts prompt+echo);
+                // the outcome flows back to the frontend to dispatch.
+                let outcome = self.send_command(clean_text)?;
+                tracing::info!("[MACRO] send_command returned: {:?}", outcome);
+                Ok(vec![outcome])
             }
         }
     }
@@ -349,7 +356,11 @@ impl AppCore {
 
             // Macro actions (should not reach here - handled by execute_keybind_action)
             KeyAction::SendMacro(text) => {
-                self.send_command(text)?;
+                // Core can't dispatch a Ui outcome itself; this path is a
+                // defensive fallback and drops one with a log if it fires.
+                if let crate::data::CommandOutcome::Ui(action) = self.send_command(text)? {
+                    tracing::warn!("SendMacro fallback dropped UI action {action}");
+                }
             }
         }
 
@@ -358,13 +369,13 @@ impl AppCore {
 
     /// Toggle the performance overlay window using the performance template
     /// Returns the new enabled state
-    fn toggle_performance_overlay(&mut self) -> bool {
+    pub(crate) fn toggle_performance_overlay(&mut self) -> bool {
         const OVERLAY_NAME: &str = "performance_overlay";
 
-        // If it's already present, remove it and disable collection
+        // If it's already present, remove it. Collection stays on — it is
+        // always-on (and cheap) so `.performance dump` has history no
+        // matter when the monitor was last open.
         if self.ui_state.remove_window(OVERLAY_NAME).is_some() {
-            let data = self.perf_overlay_data(false);
-            self.perf_stats.apply_enabled_from(&data);
             self.config.ui.performance_stats_enabled = false;
             self.needs_render = true;
             return false;
@@ -383,12 +394,44 @@ impl AppCore {
         // Add to UI state only (does not touch layout)
         self.add_new_window(&window_def, 0, 0);
 
-        // Enable collection based on template data
-        let data = self.perf_overlay_data(true);
-        self.perf_stats.apply_enabled_from(&data);
+        // Peaks and the spike log restart so they describe this viewing
+        // session, not the login flood.
+        self.perf_stats.reset_peaks();
         self.config.ui.performance_stats_enabled = true;
         self.needs_render = true;
         true
+    }
+
+    /// Write a `.performance dump` report to the config directory. `extra`
+    /// is a frontend-specific section (e.g. the GUI's toolkit internals)
+    /// appended after the core report.
+    pub fn write_perf_dump(
+        &mut self,
+        frontend: crate::performance::PerfFrontend,
+        extra: Option<String>,
+    ) {
+        let mut text = self.perf_stats.dump_text(frontend);
+        if let Some(extra) = extra {
+            text.push('\n');
+            text.push_str(&extra);
+        }
+        let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let path = match Config::base_dir() {
+            Ok(base) => base.join(format!("perf-dump-{stamp}.txt")),
+            Err(err) => {
+                self.add_system_message(&format!("Could not resolve config dir: {err}"));
+                return;
+            }
+        };
+        match std::fs::write(&path, text) {
+            Ok(()) => self.add_system_message(&format!(
+                "Performance dump written to {}",
+                path.display()
+            )),
+            Err(err) => {
+                self.add_system_message(&format!("Failed to write performance dump: {err}"))
+            }
+        }
     }
 
     /// Build performance overlay data from config.ui settings
@@ -396,20 +439,19 @@ impl AppCore {
         PerformanceWidgetData {
             enabled,
             show_fps: self.config.ui.perf_show_fps,
-            show_frame_times: self.config.ui.perf_show_frame_times,
             show_render_times: self.config.ui.perf_show_render_times,
             show_ui_times: self.config.ui.perf_show_ui_times,
             show_wrap_times: self.config.ui.perf_show_wrap_times,
             show_net: self.config.ui.perf_show_net,
             show_parse: self.config.ui.perf_show_parse,
             show_events: self.config.ui.perf_show_events,
+            show_cpu: self.config.ui.perf_show_cpu,
             show_memory: self.config.ui.perf_show_memory,
             show_lines: self.config.ui.perf_show_lines,
             show_uptime: self.config.ui.perf_show_uptime,
-            show_jitter: self.config.ui.perf_show_jitter,
-            show_frame_spikes: self.config.ui.perf_show_frame_spikes,
-            show_event_lag: self.config.ui.perf_show_event_lag,
-            show_memory_delta: self.config.ui.perf_show_memory_delta,
+            show_spike_log: self.config.ui.perf_show_spike_log,
+            show_per_window: self.config.ui.perf_show_per_window,
+            sparklines: self.config.ui.perf_sparklines,
         }
     }
 
@@ -447,7 +489,8 @@ impl AppCore {
                 max_rows: None,
                 min_cols: None,
                 max_cols: None,
-                visible: true,
+                visibility: crate::config::WindowVisibility::Shown,
+                binding: None,
                 content_align: None,
                 tts_speak: false,
                 text_size: None,

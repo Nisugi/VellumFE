@@ -108,3 +108,26 @@ color1 = "#RRGGBB"      # hex (6-digit)
 color2 = "#abc"         # hex (3-digit, expanded)
 color3 = "Link Blue"    # palette color name from [[color_palette]]
 ```
+
+## Harmony Recipe
+
+Generating preset colors with `.harmony` (or the GUI Colors editor's
+Generate tab) also stores the generation recipe, so the look stays
+reproducible and re-tunable instead of frozen as opaque hex:
+
+```toml
+[harmony]
+seed = "#bf616a"        # theme swatch the set was seeded from
+background = "#2e3440"  # theme background it was generated against
+scheme = "triadic"      # color-theory scheme (.harmony schemes lists them)
+variance = 1.0          # hue spread: 0.7 low / 1.0 medium / 1.4 high
+min_contrast = 4.5      # WCAG floor vs background: 3.0 / 4.5 / 7.0
+separation = 0.09       # min perceptual distance between roles
+room_title_spread = 2.5 # room title vs its background plate: 2.5 / 7.0
+
+[harmony.pins]          # roles held verbatim while the rest regenerate
+speech = "#53a684"
+```
+
+The recipe is written for you; there is no need to hand-edit it. It is
+ignored (and re-seeded) once the active theme's background changes.

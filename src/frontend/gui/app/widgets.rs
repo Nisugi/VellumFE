@@ -1050,7 +1050,7 @@ impl VellumGuiApp {
             .collect();
 
         if bars.is_empty() {
-            ui.label("No vitals selected (Settings → GUI → Vitals).");
+            ui.label("No vitals selected (right-click this window, Edit Window…).");
             return;
         }
 
@@ -1195,6 +1195,7 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         injuries: &HashMap<String, u8>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        grayscale: bool,
     ) {
         // Sprite mode: skin-supplied base body, then per part either a
         // hand-drawn severity overlay (authored on the base's canvas so it
@@ -1202,6 +1203,13 @@ impl VellumGuiApp {
         // anchor point.
         if let Some(base) = skin_art.and_then(|art| art.doll_base) {
             let art = skin_art.unwrap();
+            // Grayscale twins exist only while the checkbox demands them;
+            // the generated dots keep their colors regardless.
+            let base = if grayscale {
+                art.doll_base_gray.unwrap_or(base)
+            } else {
+                base
+            };
             let avail = ui.available_size();
             let (outer, response) = ui.allocate_exact_size(
                 Vec2::new(avail.x.max(40.0), avail.y.max(60.0)),
@@ -1217,7 +1225,13 @@ impl VellumGuiApp {
                 if *level == 0 {
                     continue;
                 }
-                if let Some(overlay) = art.doll_overlay(part, *level) {
+                let overlay = if grayscale {
+                    art.doll_overlay_gray(part, *level)
+                        .or_else(|| art.doll_overlay(part, *level))
+                } else {
+                    art.doll_overlay(part, *level)
+                };
+                if let Some(overlay) = overlay {
                     crate::frontend::gui::skin::paint_sprite(
                         &painter,
                         dest,
@@ -1359,6 +1373,7 @@ impl VellumGuiApp {
                         ui,
                         &popup.injuries,
                         self.skin_state.widget_art().as_deref(),
+                        self.ui_settings.doll_grayscale,
                     );
                 });
             });
@@ -1372,25 +1387,61 @@ impl VellumGuiApp {
         label: &str,
         indicator: &crate::data::IndicatorData,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        gray_inactive: bool,
+        resolved: &crate::core::conditions::ResolvedStatusArt,
     ) {
         let text = if label.is_empty() {
             &indicator.indicator_id
         } else {
             label
         };
-        // TUI defaults: #00ff00 when active, #555555 when off.
-        let color = if indicator.active {
-            indicator
-                .color
-                .as_deref()
-                .and_then(parse_hex_color)
-                .unwrap_or(Color32::from_rgb(0x00, 0xff, 0x00))
-        } else {
-            Color32::from_rgb(0x55, 0x55, 0x55)
+        // A matched state's color wins; then the per-window color; then the
+        // TUI defaults (#00ff00 active, #555555 off).
+        let color = resolved
+            .color
+            .as_deref()
+            .and_then(parse_hex_color)
+            .unwrap_or_else(|| {
+                if indicator.active {
+                    indicator
+                        .color
+                        .as_deref()
+                        .and_then(parse_hex_color)
+                        .unwrap_or(Color32::from_rgb(0x00, 0xff, 0x00))
+                } else {
+                    Color32::from_rgb(0x55, 0x55, 0x55)
+                }
+            });
+        // Icon precedence: a resolved IconRef (state icon or template active
+        // icon) via the skin/pool, then — only when ACTIVE — the id-keyed skin
+        // sprite and the built-in pictogram; custom ids without art keep the
+        // text. When INACTIVE with no configured inactive icon (resolved.icon
+        // is None), render NOTHING: inactive art is opt-in, never a dimmed
+        // copy or a fallback pictogram. "Gray when inactive" still applies to
+        // a configured inactive sprite.
+        let inactive_blank = !indicator.active && resolved.icon.is_none();
+        // Nothing to draw and no active pictogram to fall back to: leave the
+        // cell blank (inactive with no configured inactive icon).
+        if inactive_blank {
+            return;
+        }
+        let mut grayed = false;
+        let sprite = match &resolved.icon {
+            Some(icon) => skin_art.and_then(|art| {
+                if !indicator.active && gray_inactive {
+                    // Grayscale twin of the configured inactive sprite, if any.
+                    if let Some(gray) = art.icon_gray(&indicator.indicator_id) {
+                        grayed = true;
+                        return Some(gray);
+                    }
+                }
+                art.resolve_icon_ref(icon, &indicator.indicator_id)
+            }),
+            // Active + no explicit icon: fall through to the id-keyed skin
+            // sprite (and the built-in pictogram below) so "Default (by id)"
+            // shows the built-in art.
+            None => skin_art.and_then(|art| art.icon(&indicator.indicator_id)),
         };
-        // Skin sprite first, then the built-in pictogram (dimmed when
-        // inactive, Wrayth-style); custom ids without art keep the text.
-        let sprite = skin_art.and_then(|art| art.icon(&indicator.indicator_id));
         if sprite.is_some() || super::status_icons::supported(&indicator.indicator_id) {
             let side = ui
                 .available_width()
@@ -1401,14 +1452,15 @@ impl VellumGuiApp {
                     ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
                 if let Some(sprite) = sprite {
                     // Sprites carry their own colors: full-color when
-                    // active, dimmed toward gray when inactive.
-                    let tint = if indicator.active {
+                    // active, dimmed toward gray when inactive (or the
+                    // full-strength gray twin when that setting is on).
+                    let tint = if indicator.active || grayed {
                         Color32::WHITE
                     } else {
                         Color32::from_rgba_unmultiplied(255, 255, 255, 70)
                     };
-                    let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
-                    crate::frontend::gui::skin::paint_sprite(ui.painter(), dest, &sprite, tint);
+                    let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                    crate::frontend::gui::skin::paint_icon(ui.painter(), dest, &sprite, tint);
                 } else {
                     super::status_icons::paint(
                         ui.painter(),
@@ -1891,6 +1943,8 @@ impl VellumGuiApp {
         item: &Option<String>,
         link: &Option<LinkData>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        resolved: &crate::core::conditions::ResolvedHand,
+        icon_size: f32,
     ) -> Option<GuiLinkClick> {
         let empty_text = if hand_prefix == "S" { "None" } else { "Empty" };
         let item_text = item
@@ -1898,20 +1952,30 @@ impl VellumGuiApp {
             .map(str::trim)
             .filter(|text| !text.is_empty())
             .unwrap_or(empty_text);
-        let icon_text = match hand_prefix {
+        // A matched icon state's text wins over the bracket fallback.
+        let icon_text = resolved.text.as_deref().unwrap_or(match hand_prefix {
             "L" => "[L]",
             "R" => "[R]",
             "S" => "[S]",
             _ => "[?]",
-        };
+        });
         // Skin sprite for this hand (icons table: lefthand/righthand/spellhand);
-        // without one the bracket text stays.
+        // a matched icon state overrides it (IconRef::None = force artless);
+        // without either the bracket text stays.
         let icon_id = match hand_prefix {
             "L" => "lefthand",
             "R" => "righthand",
             _ => "spellhand",
         };
-        let icon_sprite = skin_art.and_then(|art| art.icon(icon_id));
+        let icon_sprite = match &resolved.icon {
+            Some(icon) => skin_art.and_then(|art| art.resolve_icon_ref(icon, icon_id)),
+            None => skin_art.and_then(|art| art.icon(icon_id)),
+        };
+        let icon_tint = resolved
+            .icon_color
+            .as_deref()
+            .and_then(crate::frontend::gui::skin::parse_hex_rgb)
+            .unwrap_or(Color32::WHITE);
         // Keep hand rows compact and content-sized so they don't request full window width.
         let display_text = if item_text.chars().count() > 56 {
             let mut truncated: String = item_text.chars().take(53).collect();
@@ -1920,8 +1984,15 @@ impl VellumGuiApp {
         } else {
             item_text.to_string()
         };
-        let row_height = ui.spacing().interact_size.y.max(16.0);
-        let icon_width = 22.0;
+        // The icon fills the window's height, so a taller hand window means a
+        // bigger icon (drag to 2/4 "lines" for big art) and a short one a small
+        // icon. The configured hand_icon_size is the floor so a freshly-placed
+        // hand isn't tiny; available height (capped) sets the ceiling.
+        let floor = icon_size.clamp(16.0, 48.0);
+        let avail = ui.available_height().max(1.0);
+        let icon_size = avail.clamp(floor.min(avail), 512.0);
+        let row_height = ui.spacing().interact_size.y.max(16.0).max(icon_size);
+        let icon_width = icon_size;
         let icon_gap = 4.0;
         let handle_gutter_width = 12.0;
 
@@ -1940,17 +2011,25 @@ impl VellumGuiApp {
                     Vec2::new(icon_width, row_height),
                     egui::Sense::hover(),
                 );
-                let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
-                crate::frontend::gui::skin::paint_sprite(
+                let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                crate::frontend::gui::skin::paint_icon(
                     ui.painter(),
                     dest,
                     &sprite,
-                    Color32::WHITE,
+                    icon_tint,
                 );
             } else {
+                let mut icon_rich = RichText::new(icon_text).monospace().strong();
+                if let Some(color) = resolved
+                    .icon_color
+                    .as_deref()
+                    .and_then(crate::frontend::gui::skin::parse_hex_rgb)
+                {
+                    icon_rich = icon_rich.color(color);
+                }
                 ui.add_sized(
                     [icon_width, row_height],
-                    egui::Label::new(RichText::new(icon_text).monospace().strong()),
+                    egui::Label::new(icon_rich),
                 );
             }
             ui.add_space(icon_gap);
@@ -2695,8 +2774,12 @@ impl VellumGuiApp {
 
         let now_server =
             chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
-        let buttons =
-            crate::core::hotbar::resolve_bar(bar_def, &app_core.game_state, now_server);
+        let buttons = crate::core::hotbar::resolve_bar(
+            bar_def,
+            &app_core.game_state,
+            now_server,
+            app_core.gameobj_data_cached(),
+        );
 
         // Countdown overlays tick between game events
         if buttons.iter().any(|b| b.countdown_secs.is_some()) {
@@ -2731,9 +2814,8 @@ impl VellumGuiApp {
                         button.icon.as_ref().and_then(|icon| {
                             skin_art.and_then(|art| {
                                 // Dim states reuse the grayscale twin, barbar-style.
-                                art.sheet_cell(
-                                    &icon.sheet,
-                                    icon.cell,
+                                art.icon_ref_texture(
+                                    &icon.icon,
                                     icon.grayscale || button.dim,
                                 )
                             })
@@ -3028,103 +3110,29 @@ impl VellumGuiApp {
     }
 
     pub(super) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        use crate::performance::{PerfFrontend, PerfMetric, PerfSeverity, PERF_METRICS};
+
         let cfg = app_core.perf_overlay_data(true);
         let stats = &app_core.perf_stats;
 
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        if cfg.show_fps {
-            rows.push(("FPS", format!("{:.1}", stats.fps())));
-        }
-        if cfg.show_frame_times {
-            rows.push((
-                "Frame",
-                format!(
-                    "{:.2} ms ({:.2}-{:.2})",
-                    stats.avg_frame_time_ms(),
-                    stats.min_frame_time_ms(),
-                    stats.max_frame_time_ms()
-                ),
-            ));
-        }
-        if cfg.show_render_times {
-            rows.push(("Render", format!("{:.2} ms", stats.avg_render_time_ms())));
-        }
-        if cfg.show_ui_times {
-            rows.push(("UI", format!("{:.2} ms", stats.avg_ui_render_time_ms())));
-        }
-        if cfg.show_wrap_times {
-            rows.push(("Wrap", format!("{:.1} us", stats.avg_text_wrap_time_us())));
-        }
-        if cfg.show_net {
-            rows.push((
-                "Net",
-                format!(
-                    "{} B/s in, {} B/s out",
-                    stats.bytes_received_per_sec(),
-                    stats.bytes_sent_per_sec()
-                ),
-            ));
-        }
-        if cfg.show_parse {
-            rows.push((
-                "Parse",
-                format!(
-                    "{:.1} us, {} elem/s",
-                    stats.avg_parse_time_us(),
-                    stats.elements_per_sec()
-                ),
-            ));
-        }
-        if cfg.show_events {
-            rows.push((
-                "Events",
-                format!(
-                    "{:.1} us, queue {}",
-                    stats.avg_event_process_time_us(),
-                    stats.last_event_queue_depth()
-                ),
-            ));
-        }
-        if cfg.show_memory {
-            rows.push((
-                "Memory",
-                format!(
-                    "{:.1} MB rss, {:.1} MB est",
-                    stats.process_rss_mb(),
-                    stats.estimated_memory_mb()
-                ),
-            ));
-        }
-        if cfg.show_lines {
-            rows.push((
-                "Lines",
-                format!(
-                    "{} in {} windows",
-                    stats.total_lines_buffered(),
-                    stats.active_window_count()
-                ),
-            ));
-        }
-        if cfg.show_uptime {
-            rows.push(("Uptime", stats.uptime_formatted()));
-        }
-        if cfg.show_jitter {
-            rows.push(("Jitter", format!("{:.2} ms", stats.frame_jitter_ms())));
-        }
-        if cfg.show_frame_spikes {
-            rows.push(("Spikes", stats.frame_spike_count().to_string()));
-        }
-        if cfg.show_event_lag {
-            rows.push(("Event lag", format!("{:.1} ms", stats.event_lag_ms())));
-        }
-        if cfg.show_memory_delta {
-            rows.push(("Mem delta", format!("{:+.1} MB", stats.memory_delta_mb())));
-        }
+        // Rows derive from the shared metric table, filtered to what the
+        // GUI actually records — a metric this frontend can't measure
+        // never renders as a confident-looking zero.
+        let visible: Vec<&PerfMetric> = PERF_METRICS
+            .iter()
+            .filter(|metric| metric.in_scope(PerfFrontend::Gui))
+            .filter(|metric| metric.enabled_in(&cfg))
+            .collect();
 
-        if rows.is_empty() {
+        if visible.is_empty() {
             ui.weak("All performance metrics are disabled in settings.");
             return;
         }
+
+        // Keep the numbers live at ~1 Hz while the monitor is visible,
+        // without repainting fast enough to distort what it measures.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
 
         let max_height = ui.available_height().max(1.0);
         egui::ScrollArea::vertical()
@@ -3133,63 +3141,290 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show(ui, |ui| {
-                for (name, value) in rows {
-                    ui.label(RichText::new(format!("{:<10} {}", name, value)).monospace());
+                for metric in visible {
+                    let severity = metric.severity.map(|f| f(stats));
+                    let value_color = match severity {
+                        Some(PerfSeverity::Crit) => egui::Color32::from_rgb(235, 90, 90),
+                        Some(PerfSeverity::Warn) => egui::Color32::from_rgb(230, 175, 60),
+                        _ => ui.visuals().text_color(),
+                    };
+                    let value = (metric.format)(stats);
+                    let mut lines = value.lines();
+                    let first = lines.next().unwrap_or("");
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{:<8}", metric.label))
+                                .monospace()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.label(RichText::new(first).monospace().color(value_color));
+                        if cfg.sparklines {
+                            if let Some(spark) = metric.spark {
+                                Self::draw_perf_sparkline(ui, &spark(stats));
+                            }
+                        }
+                    });
+                    for line in lines {
+                        ui.label(
+                            RichText::new(format!("{:<8} {}", "", line))
+                                .monospace()
+                                .color(value_color),
+                        );
+                    }
                 }
             });
     }
 
+    /// Small trend polyline next to a performance row, normalized to the
+    /// series max.
+    fn draw_perf_sparkline(ui: &mut egui::Ui, values: &[f32]) {
+        if values.len() < 2 {
+            return;
+        }
+        let height = ui.text_style_height(&egui::TextStyle::Monospace).max(8.0);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(64.0, height), egui::Sense::hover());
+        let max = values.iter().cloned().fold(0.0f32, f32::max);
+        if max <= 0.0 {
+            return;
+        }
+        let n = values.len();
+        let points: Vec<egui::Pos2> = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let x = rect.left() + rect.width() * i as f32 / (n - 1) as f32;
+                let y = rect.bottom() - (v / max).clamp(0.0, 1.0) * (rect.height() - 1.0);
+                egui::pos2(x, y)
+            })
+            .collect();
+        ui.painter().add(egui::Shape::line(
+            points,
+            egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+        ));
+    }
+
     pub(super) fn render_dashboard_content(
+        app_core: &AppCore,
         ui: &mut egui::Ui,
         indicators: &[(String, u8)],
+        data: Option<&crate::config::DashboardWidgetData>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
-        // Matches the TUI dashboard default of hiding inactive indicators.
-        let active: Vec<&(String, u8)> = indicators
-            .iter()
-            .filter(|(_, value)| *value > 0)
-            .collect();
-        if active.is_empty() {
+        use crate::config::DashboardLayout;
+
+        // Config-driven, matching the TUI: layout, spacing, hide_inactive.
+        // Missing config = flow layout, default spacing, hide inactive.
+        let layout = data
+            .map(|d| DashboardLayout::from_str(&d.layout))
+            .unwrap_or(DashboardLayout::Flow);
+        let hide_inactive = data.map(|d| d.hide_inactive).unwrap_or(true);
+        let spacing_chars = data.map(|d| d.spacing).unwrap_or(1);
+
+        let now_server =
+            chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
+
+        // Candidate ids in config order (the authored set + arrangement),
+        // then any runtime-only ids the server sent that the config omits.
+        // A grouped/swapping cell (e.g. one POSTURE entry with per-posture
+        // states) lives in the config with an id the server never flips, so
+        // iterating the config — not just the runtime list — is what lets it
+        // appear at all.
+        let mut candidate_ids: Vec<String> = Vec::new();
+        if let Some(d) = data {
+            for def in &d.indicators {
+                candidate_ids.push(def.id.clone());
+            }
+        }
+        for (id, _) in indicators {
+            if !candidate_ids.iter().any(|c| c.eq_ignore_ascii_case(id)) {
+                candidate_ids.push(id.clone());
+            }
+        }
+
+        // Stack-group tag per id (config only): entries sharing a non-empty
+        // `stack` layer into one square. Case-insensitive lookup, empty = none.
+        let stack_of = |id: &str| -> String {
+            data.and_then(|d| {
+                d.indicators
+                    .iter()
+                    .find(|def| def.id.eq_ignore_ascii_case(id))
+                    .map(|def| def.stack.clone())
+            })
+            .unwrap_or_default()
+        };
+
+        // Resolve each candidate once. A layer is visible when hide_inactive is
+        // off, OR its runtime value > 0, OR (for a states-driven layer) any
+        // state currently matches — so a posture group shows whichever posture
+        // is active even though its own id never gets a runtime value.
+        struct Layer {
+            id: String,
+            value: u8,
+            resolved: crate::core::conditions::ResolvedStatusArt,
+            visible: bool,
+        }
+        // A cell is either one standalone layer or a stack group of layers,
+        // all painted into the same square. Cells keep first-seen order.
+        struct Cell {
+            stack: String,
+            layers: Vec<Layer>,
+        }
+        let mut cells: Vec<Cell> = Vec::new();
+        for id in candidate_ids {
+            let value = indicators
+                .iter()
+                .find(|(rid, _)| rid.eq_ignore_ascii_case(&id))
+                .map(|(_, v)| *v)
+                .unwrap_or(0);
+            let resolved = app_core
+                .indicator_template(&id)
+                .filter(|t| !t.states.is_empty() || t.icon_ref.is_some())
+                .map(|t| {
+                    crate::core::conditions::resolve_status(
+                        t,
+                        value > 0,
+                        &app_core.game_state,
+                        now_server,
+                        app_core.gameobj_data_cached(),
+                    )
+                })
+                .unwrap_or_default();
+            let visible = !hide_inactive || value > 0 || resolved.state_matched;
+            let stack = stack_of(&id);
+            let layer = Layer { id, value, resolved, visible };
+            // Merge into an existing stack cell of the same (non-empty) name;
+            // otherwise open a new cell.
+            match cells
+                .iter_mut()
+                .find(|c| !stack.is_empty() && c.stack.eq_ignore_ascii_case(&stack))
+            {
+                Some(cell) => cell.layers.push(layer),
+                None => cells.push(Cell { stack, layers: vec![layer] }),
+            }
+        }
+        // Drop cells with no visible layer.
+        cells.retain(|cell| cell.layers.iter().any(|l| l.visible));
+        if cells.is_empty() {
             ui.weak("No active status.");
             return;
         }
-        // Icons scale with the window's text size. Skin sprites win over
-        // the built-in pictograms; ids with neither keep the text label.
+
+        // Icons scale with the window's text size. Spacing (in "chars") maps
+        // to a fraction of the icon size so it reads similarly to the TUI.
         let icon_side = (ui.text_style_height(&egui::TextStyle::Body) * 1.5).clamp(14.0, 64.0);
-        ui.horizontal_wrapped(|ui| {
-            for (id, value) in active {
-                let color = match value {
+        let gap = (spacing_chars as f32) * icon_side * 0.35;
+
+        // Paint one visible layer into `rect`. Returns true if it drew art (so
+        // a stack can fall back to a text label only when nothing drew).
+        let paint_layer = |ui: &mut egui::Ui, rect: Rect, layer: &Layer| -> bool {
+            let id = layer.id.as_str();
+            let value = layer.value.max(if layer.resolved.state_matched { 1 } else { 0 });
+            let color = layer
+                .resolved
+                .color
+                .as_deref()
+                .and_then(parse_hex_color)
+                .unwrap_or_else(|| match value {
                     1 => Color32::from_rgb(0x55, 0xb8, 0x6c),
                     2 => Color32::from_rgb(0xff, 0x88, 0x00),
                     _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
-                };
-                let sprite = skin_art.and_then(|art| art.icon(id));
-                if sprite.is_some() || super::status_icons::supported(id) {
-                    let (rect, response) = ui
-                        .allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
-                    if let Some(sprite) = sprite {
-                        let dest = crate::frontend::gui::skin::sprite_dest(&sprite, rect);
-                        crate::frontend::gui::skin::paint_sprite(
-                            ui.painter(),
-                            dest,
-                            &sprite,
-                            Color32::WHITE,
-                        );
-                    } else {
-                        super::status_icons::paint(
-                            ui.painter(),
-                            rect,
-                            id,
-                            color,
-                            ui.visuals().window_fill(),
-                        );
-                    }
-                    response.on_hover_text(super::status_icons::display_name(id));
-                } else {
-                    ui.label(RichText::new(id).color(color).strong());
+                });
+            let sprite = match &layer.resolved.icon {
+                Some(icon) => skin_art.and_then(|art| art.resolve_icon_ref(icon, id)),
+                None => skin_art.and_then(|art| art.icon(id)),
+            };
+            if let Some(sprite) = sprite {
+                let dest = crate::frontend::gui::skin::icon_dest(&sprite, rect);
+                crate::frontend::gui::skin::paint_icon(ui.painter(), dest, &sprite, Color32::WHITE);
+                true
+            } else if super::status_icons::supported(id) {
+                super::status_icons::paint(ui.painter(), rect, id, color, ui.visuals().window_fill());
+                true
+            } else {
+                false
+            }
+        };
+
+        // One cell: allocate a square and paint every visible layer into it,
+        // overlaid (authored art positions each within the square). A single
+        // artless layer falls back to a text label, as before.
+        let paint_cell = |ui: &mut egui::Ui, cell: &Cell| {
+            let visible_layers: Vec<&Layer> = cell.layers.iter().filter(|l| l.visible).collect();
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::splat(icon_side), egui::Sense::hover());
+            let mut drew_any = false;
+            let mut names: Vec<String> = Vec::new();
+            for layer in &visible_layers {
+                if paint_layer(ui, rect, layer) {
+                    drew_any = true;
+                }
+                names.push(super::status_icons::display_name(&layer.id));
+            }
+            if !drew_any {
+                // No art resolved for any layer: text label of the first
+                // visible layer's id (single-status cells keep the old look).
+                if let Some(first) = visible_layers.first() {
+                    let value = first.value.max(if first.resolved.state_matched { 1 } else { 0 });
+                    let color = first
+                        .resolved
+                        .color
+                        .as_deref()
+                        .and_then(parse_hex_color)
+                        .unwrap_or_else(|| match value {
+                            1 => Color32::from_rgb(0x55, 0xb8, 0x6c),
+                            2 => Color32::from_rgb(0xff, 0x88, 0x00),
+                            _ => Color32::from_rgb(0xcd, 0x4d, 0x4d),
+                        });
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        &first.id,
+                        egui::FontId::proportional(icon_side * 0.5),
+                        color,
+                    );
                 }
             }
-        });
+            response.on_hover_text(names.join(", "));
+        };
+
+        ui.spacing_mut().item_spacing = Vec2::splat(gap);
+        match layout {
+            DashboardLayout::Horizontal => {
+                ui.horizontal(|ui| {
+                    for cell in &cells {
+                        paint_cell(ui, cell);
+                    }
+                });
+            }
+            DashboardLayout::Flow => {
+                ui.horizontal_wrapped(|ui| {
+                    for cell in &cells {
+                        paint_cell(ui, cell);
+                    }
+                });
+            }
+            DashboardLayout::Vertical => {
+                ui.vertical(|ui| {
+                    for cell in &cells {
+                        paint_cell(ui, cell);
+                    }
+                });
+            }
+            DashboardLayout::Grid { cols, .. } => {
+                let cols = cols.max(1);
+                egui::Grid::new(ui.id().with("dashboard_grid"))
+                    .spacing(Vec2::splat(gap))
+                    .show(ui, |ui| {
+                        for (index, cell) in cells.iter().enumerate() {
+                            paint_cell(ui, cell);
+                            if (index + 1) % cols == 0 {
+                                ui.end_row();
+                            }
+                        }
+                    });
+            }
+        }
     }
 
     /// Wrayth-style room window: one flowing block inside a single scroll
@@ -3506,14 +3741,6 @@ impl VellumGuiApp {
             .unwrap_or(target_cfg.status_position.as_str());
         let current_target =
             Self::normalize_entity_id(&app_core.game_state.target_list.current_target);
-        let targetable_ids: HashSet<String> = app_core
-            .game_state
-            .target_list
-            .target_ids
-            .iter()
-            .map(|id| Self::normalize_entity_id(id))
-            .collect();
-
         let max_height = ui.available_height().max(1.0);
         egui::ScrollArea::vertical()
             .id_salt("targets_scroll")
@@ -3524,16 +3751,21 @@ impl VellumGuiApp {
                 let mut body_part_count: u32 = 0;
                 for creature in &app_core.game_state.room_creatures {
                     let creature_id = Self::normalize_entity_id(&creature.id);
-                    if !targetable_ids.is_empty() && !targetable_ids.contains(&creature_id) {
+                    // Hostile gate, matching Lich Creature.targets and the TUI
+                    // widget: require a <crtrStatus> snapshot with hostile==1.
+                    // Unknown hostility (flags: None) is excluded.
+                    if !creature.flags.as_ref().is_some_and(|f| f.hostile) {
                         continue;
                     }
-                    // Body parts (severed arms, tentacles, …) are filtered
-                    // from the list, Lich-style, matching the TUI widget.
+                    // Appendages are still counted for the footer even though
+                    // valid_target? also filters them.
                     if creature.is_body_part() {
                         body_part_count += 1;
-                        continue;
                     }
-                    if Self::should_filter_target_creature(creature, target_cfg) {
+                    // Lich valid_target? filtering (dead/animated/appendage +
+                    // configured excluded nouns), canonical on Creature so the
+                    // TUI/GUI/web lists stay in sync.
+                    if !creature.is_valid_target(&target_cfg.excluded_nouns) {
                         continue;
                     }
 
@@ -3580,33 +3812,6 @@ impl VellumGuiApp {
             });
 
         clicked_link
-    }
-
-    pub(super) fn should_filter_target_creature(
-        creature: &crate::core::state::Creature,
-        target_cfg: &TargetListConfig,
-    ) -> bool {
-        // Structured <crtrStatus> dead flag when available, legacy
-        // "(dead)"/"(gone)" text otherwise
-        if creature.is_dead() {
-            return true;
-        }
-
-        let name_lower = creature.name.to_ascii_lowercase();
-        if name_lower.starts_with("animated") && !name_lower.starts_with("animated slush") {
-            return true;
-        }
-
-        creature
-            .noun
-            .as_ref()
-            .map(|noun| noun.to_ascii_lowercase())
-            .is_some_and(|noun| {
-                target_cfg
-                    .excluded_nouns
-                    .iter()
-                    .any(|excluded| excluded == &noun)
-            })
     }
 
     pub(super) fn render_players_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
@@ -3715,6 +3920,83 @@ impl VellumGuiApp {
         debug_assert_eq!(cache.heights.len(), rendered_count);
     }
 
+    /// The command input line, rendered wherever its window is docked (or
+    /// in the fallback bottom panel). Render paths are `&self`, so buffer
+    /// edits and key events are stashed as a `CommandInputEcho` in egui
+    /// temp data and drained once per frame by the app update loop.
+    pub(super) fn render_command_input_widget(ui: &mut egui::Ui, seed: &str, drag_gutter: bool) {
+        let mut text = seed.to_string();
+        let mut echo = CommandInputEcho::default();
+        // Vertically center the single-line edit in whatever height the
+        // window gives it.
+        let edit_height = ui.text_style_height(&egui::TextStyle::Body) + 8.0;
+        let pad = ((ui.available_height() - edit_height) / 2.0).max(0.0);
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
+        let edit = |ui: &mut egui::Ui, text: &mut String| {
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(egui::Id::new(COMMAND_INPUT_EDIT_ID))
+                    .hint_text("Enter command...")
+                    .desired_width(ui.available_width()),
+            )
+        };
+        let response = if drag_gutter {
+            // Title bar hidden: the TextEdit owns every drag in the body,
+            // so this grip is the window's only drag surface. It is
+            // hover-only on purpose — drags on it fall through to the
+            // window body and move it.
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::Vec2::new(12.0, edit_height),
+                    egui::Sense::hover(),
+                );
+                if ui.is_rect_visible(rect) {
+                    let color = ui.visuals().weak_text_color();
+                    let center = rect.center();
+                    for row in -1..=1i32 {
+                        for col in 0..2i32 {
+                            let pos = center
+                                + egui::vec2(col as f32 * 4.0 - 2.0, row as f32 * 5.0);
+                            ui.painter().circle_filled(pos, 1.2, color);
+                        }
+                    }
+                }
+                edit(ui, &mut text)
+            })
+            .inner
+        } else {
+            edit(ui, &mut text)
+        };
+        let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if response.lost_focus() && pressed_enter {
+            echo.submit = true;
+            response.request_focus();
+        }
+        // History browsing: up = older, down = newer / clear at the newest.
+        // consume_key keeps the arrows from reaching anything else while
+        // the input has focus.
+        if response.has_focus() {
+            let up = ui
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
+            let down = ui
+                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
+            if up {
+                echo.history_prev = true;
+            } else if down {
+                echo.history_next = true;
+            }
+        }
+        if text != seed {
+            echo.text = Some(text);
+        }
+        if !echo.is_empty() {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(CommandInputEcho::id(), echo));
+        }
+    }
+
     pub(super) fn render_text_content(
         ui: &mut egui::Ui,
         content: &TextContent,
@@ -3722,7 +4004,28 @@ impl VellumGuiApp {
         search_query: Option<&str>,
         font_id: &egui::FontId,
         wrap: bool,
+        content_align: Option<&str>,
     ) -> Option<GuiLinkClick> {
+        // content_align (shared layout def, long honored by the TUI): the
+        // horizontal component offsets each line's galley; the vertical
+        // component pads above the block while the whole buffer is shorter
+        // than the viewport. Once content overflows, scrolling is unchanged.
+        use crate::config::ContentAlign;
+        let align = content_align.map(ContentAlign::from_str);
+        let h_align: u8 = match align {
+            Some(ContentAlign::Top | ContentAlign::Center | ContentAlign::Bottom) => 1,
+            Some(
+                ContentAlign::TopRight | ContentAlign::Right | ContentAlign::BottomRight,
+            ) => 2,
+            _ => 0,
+        };
+        let v_align: u8 = match align {
+            Some(ContentAlign::Left | ContentAlign::Center | ContentAlign::Right) => 1,
+            Some(
+                ContentAlign::BottomLeft | ContentAlign::Bottom | ContentAlign::BottomRight,
+            ) => 2,
+            _ => 0,
+        };
         // Cheap Arc clone; deep-cloning Visuals per window per frame is not.
         let style = ui.style().clone();
         let visuals = &style.visuals;
@@ -3858,17 +4161,12 @@ impl VellumGuiApp {
             .max_height(max_height)
             .show_viewport(ui, |ui, viewport| {
                 let is_touch = ui.input(|i| i.has_touch_screen());
-                // Blank space between and below lines must not start a
-                // window-body drag; claim drags across the viewport before
-                // the line widgets so those still win where they overlap.
-                // Touch screens skip this so drag-to-scroll keeps working.
-                if !is_touch {
-                    ui.interact(
-                        ui.clip_rect(),
-                        ui.id().with("text_blank_drag"),
-                        egui::Sense::drag(),
-                    );
-                }
+                // Drags on blank space between/below lines deliberately
+                // fall through to the window body: windows drag from
+                // anywhere now, and blank space is how a text window is
+                // moved without its title bar. Drags starting ON text stay
+                // with the line widgets (selection), and Lock Window is
+                // the guard against accidental moves.
                 if rendered_count == 0 {
                     return;
                 }
@@ -3883,6 +4181,20 @@ impl VellumGuiApp {
                 let base_uid = content
                     .generation
                     .wrapping_sub(content.lines.len() as u64);
+                // Vertical alignment pad, from last frame's height cache (it
+                // settles within a frame). Applied before content_top is read
+                // so all selection/viewport math stays consistent.
+                if v_align != 0 {
+                    let cache = cache_handle.lock().expect("row height cache poisoned");
+                    if cache.heights.len() == rendered_count {
+                        let total: f32 =
+                            cache.heights.iter().map(|h| h + spacing_y).sum();
+                        let free = max_height - total;
+                        if free > 0.0 {
+                            ui.add_space(if v_align == 1 { free / 2.0 } else { free });
+                        }
+                    }
+                }
                 // Top of line 0 in ui coords; the height cache turns this
                 // into every line's y-band, on or off screen.
                 let content_left = ui.max_rect().left();
@@ -3957,8 +4269,19 @@ impl VellumGuiApp {
                                 timestamps,
                             );
                             let galley = ctx.fonts_mut(|fonts| fonts.layout_job(line_job.job));
-                            let local =
-                                egui::Vec2::new(pos.x - content_left, pos.y - slot_top);
+                            // Centered/right rows paint their galley offset
+                            // within the full-width row; mirror that offset
+                            // when mapping the pointer back to a character.
+                            let drag_h_offset = if h_align != 0 && wrap_width.is_finite() {
+                                let free = (wrap_width - galley.size().x).max(0.0);
+                                if h_align == 1 { free / 2.0 } else { free }
+                            } else {
+                                0.0
+                            };
+                            let local = egui::Vec2::new(
+                                pos.x - content_left - drag_h_offset,
+                                pos.y - slot_top,
+                            );
                             sel.head = (
                                 base_uid.wrapping_add(line_index as u64),
                                 galley.cursor_from_pos(local).index.0,
@@ -4081,7 +4404,12 @@ impl VellumGuiApp {
                     };
                     let (rect, response) =
                         ui.allocate_exact_size(Vec2::new(width, height), sense);
-                    let galley_pos = rect.left_top();
+                    let h_offset = match h_align {
+                        1 => ((rect.width() - galley_size.x) / 2.0).max(0.0),
+                        2 => (rect.width() - galley_size.x).max(0.0),
+                        _ => 0.0,
+                    };
+                    let galley_pos = rect.left_top() + Vec2::new(h_offset, 0.0);
                     if (cache.heights[slot] - height).abs() > 0.5 {
                         cache.heights[slot] = height;
                     }
@@ -4326,14 +4654,18 @@ impl VellumGuiApp {
             return None;
         };
 
-        if let Some(background) = &settings.background {
-            crate::frontend::gui::skin::paint_background(
-                ui.painter(),
+        // Skin background: reserve a paint slot now (so the art stays behind
+        // the content), fill it after layout from the content's real extent.
+        // Compact one-row widgets live in auto-sized windows whose pre-layout
+        // available rect can be taller than the final frame; painting that
+        // rect up front spilled the art below the window.
+        let background_slot = settings.background.clone().map(|background| {
+            (
+                ui.painter().add(egui::Shape::Noop),
                 ui.available_rect_before_wrap(),
                 background,
-                ui.visuals().window_fill(),
-            );
-        }
+            )
+        });
 
         // Scale the label-driven text styles so list/grid widgets (targets,
         // players, dashboards, ...) follow the window's text size and font,
@@ -4354,7 +4686,7 @@ impl VellumGuiApp {
             }
         }
 
-        match &window.content {
+        let clicked_link = match &window.content {
             WindowContent::Text(content)
             | WindowContent::Inventory(content)
             | WindowContent::Reserve(content)
@@ -4367,6 +4699,7 @@ impl VellumGuiApp {
                     query.as_deref(),
                     &font_id,
                     settings.wrap_text,
+                    window.content_align.as_deref(),
                 )
             }
             WindowContent::MiniVitals => {
@@ -4391,12 +4724,36 @@ impl VellumGuiApp {
                 } else {
                     "S"
                 };
+                // Status-driven icon states from the window's layout def.
+                let resolved = app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|def| def.name() == window.name)
+                    .and_then(|def| match def {
+                        crate::config::WindowDef::Hand { data, .. } => Some(data),
+                        _ => None,
+                    })
+                    .filter(|data| !data.states.is_empty())
+                    .map(|data| {
+                        let now_server = chrono::Utc::now().timestamp()
+                            + app_core.message_processor.server_time_offset;
+                        crate::core::conditions::resolve_hand(
+                            data,
+                            &app_core.game_state,
+                            now_server,
+                            app_core.gameobj_data_cached(),
+                        )
+                    })
+                    .unwrap_or_default();
                 Self::render_hand_content(
                     ui,
                     hand_prefix,
                     item,
                     link,
                     settings.skin_art.as_deref(),
+                    &resolved,
+                    settings.hand_icon_size,
                 )
             }
             WindowContent::TabbedText(tabbed) => {
@@ -4416,6 +4773,7 @@ impl VellumGuiApp {
                         query.as_deref(),
                         &font_id,
                         settings.wrap_text,
+                        window.content_align.as_deref(),
                     ) {
                         clicked_link.get_or_insert(link);
                     }
@@ -4471,20 +4829,74 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::Indicator(indicator) => {
+                // Per-indicator gray override wins over the global toggle.
+                let gray = settings
+                    .gray_icon_overrides
+                    .get(&indicator.indicator_id)
+                    .or_else(|| {
+                        settings
+                            .gray_icon_overrides
+                            .get(&indicator.indicator_id.to_ascii_uppercase())
+                    })
+                    .copied()
+                    .unwrap_or(settings.gray_inactive_icons);
+                // Resolve the status template's condition-driven art (state
+                // icon/color) from the cached templates; empty when the id has
+                // no template or no states (falls back to id-keyed art).
+                let resolved = app_core
+                    .indicator_template(&indicator.indicator_id)
+                    .filter(|t| !t.states.is_empty() || t.icon_ref.is_some())
+                    .map(|template| {
+                        let now_server = chrono::Utc::now().timestamp()
+                            + app_core.message_processor.server_time_offset;
+                        crate::core::conditions::resolve_status(
+                            template,
+                            indicator.active,
+                            &app_core.game_state,
+                            now_server,
+                            app_core.gameobj_data_cached(),
+                        )
+                    })
+                    .unwrap_or_default();
                 Self::render_indicator_content(
                     ui,
                     &tab.id.title,
                     indicator,
                     settings.skin_art.as_deref(),
+                    gray,
+                    &resolved,
                 );
                 None
             }
             WindowContent::InjuryDoll(doll) => {
-                Self::render_injury_doll(ui, &doll.injuries, settings.skin_art.as_deref());
+                Self::render_injury_doll(
+                    ui,
+                    &doll.injuries,
+                    settings.skin_art.as_deref(),
+                    settings.doll_grayscale,
+                );
                 None
             }
             WindowContent::Dashboard { indicators } => {
-                Self::render_dashboard_content(ui, indicators, settings.skin_art.as_deref());
+                // Read this dashboard's config (layout/spacing/hide_inactive +
+                // per-id icon/colors via the status templates), matching the
+                // TUI. Missing config falls back to flow + hide-inactive.
+                let data = app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|def| def.name() == window.name)
+                    .and_then(|def| match def {
+                        crate::config::WindowDef::Dashboard { data, .. } => Some(data.clone()),
+                        _ => None,
+                    });
+                Self::render_dashboard_content(
+                    app_core,
+                    ui,
+                    indicators,
+                    data.as_ref(),
+                    settings.skin_art.as_deref(),
+                );
                 None
             }
             WindowContent::GS4Experience => {
@@ -4527,7 +4939,11 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::CommandInput { .. } => {
-                ui.weak("Command input is docked at the bottom of the GUI.");
+                Self::render_command_input_widget(
+                    ui,
+                    settings.command_input_seed.as_deref().unwrap_or(""),
+                    settings.command_input_drag_gutter,
+                );
                 None
             }
             WindowContent::Empty => {
@@ -4535,7 +4951,26 @@ impl VellumGuiApp {
                 ui.allocate_space(ui.available_size());
                 None
             }
+        };
+
+        if let Some((slot, avail, background)) = background_slot {
+            let mut rect = avail;
+            if Self::is_compact_center_widget(&window.widget_type) {
+                // One-row widgets: hug the rendered content so the art can't
+                // run past an auto-shrunk frame.
+                rect.max.y = rect.max.y.min(ui.min_rect().max.y);
+            }
+            let shapes = crate::frontend::gui::skin::background_shapes(
+                rect,
+                &background,
+                ui.visuals().window_fill(),
+            );
+            ui.painter()
+                .with_clip_rect(rect)
+                .set(slot, egui::Shape::Vec(shapes));
         }
+
+        clicked_link
     }
 }
 
