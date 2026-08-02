@@ -567,6 +567,18 @@ impl XmlParser {
         elements
     }
 
+    /// Close-tag match that tolerates mangled trailing junk before the '>'.
+    /// Game data occasionally ships broken escaping — e.g. ability HELP text
+    /// with `$<a href=$Q...$>Recent Evasion$</a$>` — and a strict `"</a>"`
+    /// comparison leaves the link style open, bleeding link color over
+    /// everything after it. The name must end at a non-alphanumeric char so
+    /// `</a$>` closes a link but `</app>` never does.
+    fn is_close_tag(tag: &str, name: &str) -> bool {
+        tag.strip_prefix("</")
+            .and_then(|rest| rest.strip_prefix(name))
+            .is_some_and(|rest| !rest.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()))
+    }
+
     fn process_tag(
         &mut self,
         tag: &str,
@@ -586,8 +598,8 @@ impl XmlParser {
 
         let color_closing = tag == "</preset>"
             || tag == "</color>"
-            || tag == "</a>"
-            || tag == "</d>"
+            || Self::is_close_tag(tag, "a")
+            || Self::is_close_tag(tag, "d")
             || tag == "<popBold/>"
             || tag == "</b>";
 
@@ -730,11 +742,11 @@ impl XmlParser {
             self.handle_stream_window(tag, elements);
         } else if tag.starts_with("<d ") || tag == "<d>" {
             self.handle_d_tag(tag);
-        } else if tag == "</d>" {
+        } else if Self::is_close_tag(tag, "d") {
             self.handle_d_close();
         } else if tag.starts_with("<a ") {
             self.handle_link_open(tag);
-        } else if tag == "</a>" {
+        } else if Self::is_close_tag(tag, "a") {
             self.handle_link_close();
         } else if tag.starts_with("<menu ") {
             self.handle_menu_open(tag);
@@ -3362,6 +3374,52 @@ mod tests {
         assert_eq!(link.exist_id, "12345");
         assert_eq!(link.noun, "sword");
         assert_eq!(link.text, "a rusty sword");
+    }
+
+    #[test]
+    fn mangled_close_tag_does_not_bleed_link_color() {
+        // Real game data (weapon HELP radialsweep, 2026-08): broken $-escaping
+        // ships `$<a href=$Q...$>Recent Evasion$</a$>`. The `</a$>` close must
+        // still pop the link style, or everything after renders link-colored.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "Reaction: Requires attacker to have a $<a href=$Qhttps://gswiki.play.net/Recent_Evasion$Q$>Recent Evasion$</a$>.  Reaction triggers are removed.",
+        );
+        let texts: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::Text { content, span_type, .. } => Some((content.as_str(), *span_type)),
+                _ => None,
+            })
+            .collect();
+        let trailing = texts
+            .iter()
+            .find(|(content, _)| content.contains("Reaction triggers"))
+            .expect("trailing text present");
+        assert_eq!(
+            trailing.1,
+            SpanType::Normal,
+            "text after the mangled </a$> must not stay link-styled"
+        );
+        // And the anchor content itself still styles as a link.
+        let inner = texts
+            .iter()
+            .find(|(content, _)| content.contains("Recent Evasion"))
+            .expect("anchor text present");
+        assert_eq!(inner.1, SpanType::Link);
+    }
+
+    #[test]
+    fn close_tag_tolerance_never_matches_longer_tag_names() {
+        // `</app>` and other real tags starting with 'a'/'d' must not be
+        // mistaken for anchor/command closes.
+        assert!(XmlParser::is_close_tag("</a>", "a"));
+        assert!(XmlParser::is_close_tag("</a$>", "a"));
+        assert!(XmlParser::is_close_tag("</d>", "d"));
+        assert!(XmlParser::is_close_tag("</d$>", "d"));
+        assert!(!XmlParser::is_close_tag("</app>", "a"));
+        assert!(!XmlParser::is_close_tag("</dialogData>", "d"));
+        assert!(!XmlParser::is_close_tag("<a>", "a"));
     }
 
     #[test]
