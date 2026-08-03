@@ -5997,15 +5997,7 @@ impl eframe::App for VellumGuiApp {
             };
             if !hold {
                 if let Some(from) = self.pending_layout_rescale.take() {
-                    let changed =
-                        Self::rescale_main_window_rects(&mut self.main_window_rects, from, content_size);
-                    for rect in self.main_window_rects.values_mut() {
-                        if let Some(r) = Self::rect_from_snapshot(*rect) {
-                            *rect =
-                                Self::rect_to_snapshot(Self::clamp_main_window_rect(r, content));
-                        }
-                    }
-                    if changed {
+                    if Self::apply_layout_rescale(&mut self.main_window_rects, from, content) {
                         self.layout_dirty = true;
                     }
                 }

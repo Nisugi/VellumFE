@@ -354,6 +354,26 @@ impl VellumGuiApp {
         true
     }
 
+    /// The full store mutation for a queued layout rescale: proportional
+    /// rescale from the reference canvas to the live content size, then a
+    /// per-rect min-inflate + clamp into the content rect. Extracted from
+    /// the frame loop so round-trip behavior is testable without a frame
+    /// harness. Returns whether the proportional rescale changed anything.
+    pub(super) fn apply_layout_rescale(
+        rects: &mut HashMap<TabKey, [f32; 4]>,
+        from: Vec2,
+        content: Rect,
+    ) -> bool {
+        let content_size = Vec2::new(content.width().max(1.0), content.height().max(1.0));
+        let changed = Self::rescale_main_window_rects(rects, from, content_size);
+        for rect in rects.values_mut() {
+            if let Some(r) = Self::rect_from_snapshot(*rect) {
+                *rect = Self::rect_to_snapshot(Self::clamp_main_window_rect(r, content));
+            }
+        }
+        changed
+    }
+
     pub(super) fn track_main_window_rect(&mut self, key: &TabKey, rect: Rect, bounds: Rect) {
         if !rect.is_finite() || !bounds.is_finite() {
             return;
@@ -686,6 +706,69 @@ mod tests {
         // Same-size rescale is a no-op.
         let unchanged = VellumGuiApp::rescale_main_window_rects(&mut rects, from, from);
         assert!(!unchanged);
+    }
+
+    // ── apply_layout_rescale round-trip fidelity ──
+    //
+    // Characterization from Nisugi's 2026-08-02 checkpoint chain: a layout
+    // squeezed through a short canvas and grown back. The proportional map
+    // is exact; the min-inflate + clamp write-back is the (current) loss.
+
+    #[test]
+    fn apply_layout_rescale_roundtrip_is_lossy_through_min_clamp() {
+        // 1500x1195 → 2558x664 → 1500x1195. The short window's proportional
+        // height (38 × 664/1195 ≈ 21.1) is below MIN_DOCKED_WINDOW_HEIGHT
+        // (24), which the apply bakes into the store; growing back scales
+        // the baked 24, landing ~43.2 instead of the original 38.
+        let mut rects = HashMap::new();
+        // command_input analogue: bottom strip, hits the min-height clamp.
+        rects.insert(TabKey::Vitals, [1.0, 1153.0, 1498.0, 38.0]);
+        // text_main analogue: never clamps, must survive exactly.
+        rects.insert(TabKey::TextMain, [220.0, 31.0, 909.0, 887.0]);
+
+        let large = Vec2::new(1500.0, 1195.0);
+        let short = Rect::from_min_size(Pos2::ZERO, Vec2::new(2558.0, 664.0));
+        let back = Rect::from_min_size(Pos2::ZERO, large);
+
+        VellumGuiApp::apply_layout_rescale(&mut rects, large, short);
+        let squeezed = rects[&TabKey::Vitals];
+        assert!(
+            (squeezed[3] - 24.0).abs() < 0.01,
+            "short strip clamps to MIN_DOCKED_WINDOW_HEIGHT, got {}",
+            squeezed[3]
+        );
+
+        VellumGuiApp::apply_layout_rescale(&mut rects, short.size(), back);
+        let strip = rects[&TabKey::Vitals];
+        assert!(
+            (strip[3] - 43.19).abs() < 0.1,
+            "round trip currently inflates the clamped strip (~43.2), got {}",
+            strip[3]
+        );
+        let main = rects[&TabKey::TextMain];
+        assert!(
+            (main[3] - 887.0).abs() < 0.1,
+            "unclamped window round-trips exactly, got {}",
+            main[3]
+        );
+    }
+
+    #[test]
+    fn apply_layout_rescale_identity_still_clamps_today() {
+        // Even a same-size apply (scale = identity) runs the min-inflate:
+        // a stored height below the minimum gets rewritten. Pinned so the
+        // purify change is a deliberate flip, not an accident.
+        let mut rects = HashMap::new();
+        rects.insert(TabKey::Vitals, [10.0, 10.0, 300.0, 18.0]);
+        let size = Vec2::new(1500.0, 1195.0);
+        let content = Rect::from_min_size(Pos2::ZERO, size);
+        let changed = VellumGuiApp::apply_layout_rescale(&mut rects, size, content);
+        assert!(!changed, "identity scale reports no proportional change");
+        assert!(
+            (rects[&TabKey::Vitals][3] - 24.0).abs() < 0.01,
+            "identity apply still bakes the min height today, got {}",
+            rects[&TabKey::Vitals][3]
+        );
     }
 
     #[test]
