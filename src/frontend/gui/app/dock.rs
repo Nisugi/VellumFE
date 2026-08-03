@@ -354,24 +354,24 @@ impl VellumGuiApp {
         true
     }
 
-    /// The full store mutation for a queued layout rescale: proportional
-    /// rescale from the reference canvas to the live content size, then a
-    /// per-rect min-inflate + clamp into the content rect. Extracted from
-    /// the frame loop so round-trip behavior is testable without a frame
-    /// harness. Returns whether the proportional rescale changed anything.
+    /// The store mutation for a queued layout rescale: a pure proportional
+    /// rescale from the reference canvas to the live content size. The store
+    /// deliberately holds UNCLAMPED values — min sizes and bounds are applied
+    /// on the way into egui at every feed site, never written back. Writing
+    /// clamped values here was the one lossy step in the resize round trip:
+    /// a rect squeezed below its minimum baked the minimum into the store,
+    /// so growing the canvas back inflated it past its original size, and
+    /// the distortion compounded per squeeze (it was also the compounding
+    /// mechanism behind the off-screen drift the 800a38d defensive clamp
+    /// papered over). Pure scales compose exactly, so any chain of applies
+    /// that returns to a canvas size returns every rect to its value there.
     pub(super) fn apply_layout_rescale(
         rects: &mut HashMap<TabKey, [f32; 4]>,
         from: Vec2,
         content: Rect,
     ) -> bool {
         let content_size = Vec2::new(content.width().max(1.0), content.height().max(1.0));
-        let changed = Self::rescale_main_window_rects(rects, from, content_size);
-        for rect in rects.values_mut() {
-            if let Some(r) = Self::rect_from_snapshot(*rect) {
-                *rect = Self::rect_to_snapshot(Self::clamp_main_window_rect(r, content));
-            }
-        }
-        changed
+        Self::rescale_main_window_rects(rects, from, content_size)
     }
 
     pub(super) fn track_main_window_rect(&mut self, key: &TabKey, rect: Rect, bounds: Rect) {
@@ -710,20 +710,21 @@ mod tests {
 
     // ── apply_layout_rescale round-trip fidelity ──
     //
-    // Characterization from Nisugi's 2026-08-02 checkpoint chain: a layout
-    // squeezed through a short canvas and grown back. The proportional map
-    // is exact; the min-inflate + clamp write-back is the (current) loss.
+    // Scenario from Nisugi's 2026-08-02 checkpoint chain: a layout squeezed
+    // through a short canvas and grown back. The store is pure — min sizes
+    // and bounds clamp only at the display feed — so round trips are exact.
 
     #[test]
-    fn apply_layout_rescale_roundtrip_is_lossy_through_min_clamp() {
-        // 1500x1195 → 2558x664 → 1500x1195. The short window's proportional
-        // height (38 × 664/1195 ≈ 21.1) is below MIN_DOCKED_WINDOW_HEIGHT
-        // (24), which the apply bakes into the store; growing back scales
-        // the baked 24, landing ~43.2 instead of the original 38.
+    fn apply_layout_rescale_roundtrip_is_exact_through_min_clamp_territory() {
+        // 1500x1195 → 2558x664 → 1500x1195. At the short canvas the strip's
+        // proportional height (~21.1) is below MIN_DOCKED_WINDOW_HEIGHT; the
+        // display feed inflates it on screen, but the store keeps the pure
+        // value, so growing back restores the original height exactly
+        // (the old clamp write-back landed at ~43.2 instead of 38).
         let mut rects = HashMap::new();
-        // command_input analogue: bottom strip, hits the min-height clamp.
+        // command_input analogue: bottom strip, enters min-clamp territory.
         rects.insert(TabKey::Vitals, [1.0, 1153.0, 1498.0, 38.0]);
-        // text_main analogue: never clamps, must survive exactly.
+        // text_main analogue: never in clamp territory.
         rects.insert(TabKey::TextMain, [220.0, 31.0, 909.0, 887.0]);
 
         let large = Vec2::new(1500.0, 1195.0);
@@ -733,42 +734,64 @@ mod tests {
         VellumGuiApp::apply_layout_rescale(&mut rects, large, short);
         let squeezed = rects[&TabKey::Vitals];
         assert!(
-            (squeezed[3] - 24.0).abs() < 0.01,
-            "short strip clamps to MIN_DOCKED_WINDOW_HEIGHT, got {}",
+            (squeezed[3] - 38.0 * (664.0 / 1195.0)).abs() < 0.01,
+            "store keeps the pure proportional height, got {}",
             squeezed[3]
         );
+        // The display feed still guards usability at the small canvas.
+        let displayed = VellumGuiApp::rect_from_snapshot(squeezed).unwrap();
+        assert!(displayed.height() >= 24.0, "feed inflates for display only");
 
         VellumGuiApp::apply_layout_rescale(&mut rects, short.size(), back);
-        let strip = rects[&TabKey::Vitals];
-        assert!(
-            (strip[3] - 43.19).abs() < 0.1,
-            "round trip currently inflates the clamped strip (~43.2), got {}",
-            strip[3]
-        );
-        let main = rects[&TabKey::TextMain];
-        assert!(
-            (main[3] - 887.0).abs() < 0.1,
-            "unclamped window round-trips exactly, got {}",
-            main[3]
-        );
+        for (key, original) in [
+            (TabKey::Vitals, [1.0, 1153.0, 1498.0, 38.0]),
+            (TabKey::TextMain, [220.0, 31.0, 909.0, 887.0]),
+        ] {
+            let got = rects[&key];
+            for i in 0..4 {
+                assert!(
+                    (got[i] - original[i]).abs() < 0.01,
+                    "{key:?}[{i}] round-trips exactly: {} vs {}",
+                    got[i],
+                    original[i]
+                );
+            }
+        }
     }
 
     #[test]
-    fn apply_layout_rescale_identity_still_clamps_today() {
-        // Even a same-size apply (scale = identity) runs the min-inflate:
-        // a stored height below the minimum gets rewritten. Pinned so the
-        // purify change is a deliberate flip, not an accident.
+    fn apply_layout_rescale_identity_leaves_store_untouched() {
+        // A same-size apply must not rewrite anything — not even a height
+        // below the display minimum (the old code min-inflated it here).
         let mut rects = HashMap::new();
         rects.insert(TabKey::Vitals, [10.0, 10.0, 300.0, 18.0]);
         let size = Vec2::new(1500.0, 1195.0);
         let content = Rect::from_min_size(Pos2::ZERO, size);
         let changed = VellumGuiApp::apply_layout_rescale(&mut rects, size, content);
-        assert!(!changed, "identity scale reports no proportional change");
-        assert!(
-            (rects[&TabKey::Vitals][3] - 24.0).abs() < 0.01,
-            "identity apply still bakes the min height today, got {}",
-            rects[&TabKey::Vitals][3]
+        assert!(!changed, "identity scale reports no change");
+        assert_eq!(
+            rects[&TabKey::Vitals],
+            [10.0, 10.0, 300.0, 18.0],
+            "identity apply is a pure no-op"
         );
+    }
+
+    #[test]
+    fn apply_layout_rescale_offscreen_rect_stays_in_store_but_displays_clamped() {
+        // A rect anchored past the canvas (legacy file, detached monitor)
+        // stays where the user left it in the store; the feed clamp brings
+        // it on screen for display without rewriting it.
+        let mut rects = HashMap::new();
+        rects.insert(TabKey::Vitals, [1400.0, 1100.0, 300.0, 200.0]);
+        let size = Vec2::new(1500.0, 1195.0);
+        let content = Rect::from_min_size(Pos2::ZERO, size);
+        VellumGuiApp::apply_layout_rescale(&mut rects, size, content);
+        assert_eq!(rects[&TabKey::Vitals], [1400.0, 1100.0, 300.0, 200.0]);
+        let displayed = VellumGuiApp::clamp_main_window_rect(
+            VellumGuiApp::rect_from_snapshot(rects[&TabKey::Vitals]).unwrap(),
+            content,
+        );
+        assert!(displayed.max.x <= 1500.0 + 0.01 && displayed.max.y <= 1195.0 + 0.01);
     }
 
     #[test]
