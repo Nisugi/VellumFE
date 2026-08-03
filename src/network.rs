@@ -507,6 +507,17 @@ async fn run_stream(
     let mut read_handle = AbortOnDrop(read_handle);
     let write_loop = async {
         while let Some(cmd) = command_rx.recv().await {
+            // Strip emoji before anything reaches the game. Emoji (and the
+            // :grin: shortcodes that render as emoji) are a Vellum-side display
+            // convenience; sending them as speech/thoughts/whispers in a
+            // roleplaying MUD can get a player warned or banned. This is the
+            // single socket-write seam, so every frontend and every
+            // internally-generated command is covered here, unbypassable.
+            let cmd = match crate::core::emoji::strip_outbound_emoji(&cmd) {
+                Some(stripped) => std::borrow::Cow::Owned(stripped),
+                None => std::borrow::Cow::Borrowed(&cmd),
+            };
+
             // Build the complete message: command prefix + command + newline.
             // The prefix is mode-dependent (see call sites): "<c>" when we talk
             // Stormfront protocol ourselves (direct / Lich-launched), empty for
