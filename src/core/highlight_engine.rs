@@ -673,6 +673,7 @@ impl CoreHighlightEngine {
                 mono: current_style.mono,
                 span_type: current_style.span_type,
                 link_data: current_link,
+                custom_emoji: None,
             });
         }
 
@@ -810,6 +811,7 @@ pub fn apply_deferred_for_window(
         mono: false,
         span_type: SpanType::Normal,
         link_data: None,
+        custom_emoji: None,
     });
 
     vec![TextSegment {
@@ -820,6 +822,7 @@ pub fn apply_deferred_for_window(
         mono: first_style.mono,
         span_type: first_style.span_type,
         link_data: None,
+        custom_emoji: None,
     }]
 }
 
@@ -865,6 +868,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Normal,
             link_data: None,
+            custom_emoji: None,
         }
     }
 
@@ -1455,6 +1459,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Link,
             link_data: None,
+            custom_emoji: None,
         }];
 
         let result = engine.apply_highlights(&segments, "main");
@@ -1495,6 +1500,7 @@ mod tests {
             mono: false,
             span_type: SpanType::System,
             link_data: None,
+            custom_emoji: None,
         }];
 
         let result = engine.apply_highlights(&segments, "main");
@@ -1787,6 +1793,7 @@ mod tests {
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
+                custom_emoji: None,
             },
             TextSegment {
                 text: "red text".to_string(),
@@ -1796,6 +1803,7 @@ mod tests {
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
+                custom_emoji: None,
             },
         ];
 
@@ -1826,6 +1834,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Normal,
             link_data: None,
+            custom_emoji: None,
         }];
 
         let result = engine.apply_highlights(&segments, "main");

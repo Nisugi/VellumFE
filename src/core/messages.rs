@@ -811,6 +811,7 @@ impl MessageProcessor {
                             mono: false,
                             span_type: SpanType::Normal,
                             link_data: None,
+                            custom_emoji: None,
                         });
                     }
 
@@ -889,6 +890,7 @@ impl MessageProcessor {
                         mono: *mono,
                         span_type: data_span_type,
                         link_data: link_data.clone(),
+                        custom_emoji: None,
                     };
 
                     // Accumulate this segment in the current line buffer
@@ -959,6 +961,7 @@ impl MessageProcessor {
                     mono: *mono,
                     span_type: data_span_type,
                     link_data: link_data.clone(),
+                    custom_emoji: None,
                 });
             }
             ParsedElement::RoundTime { value } => {
@@ -1780,6 +1783,7 @@ impl MessageProcessor {
                                         mono: false,
                                         span_type: SpanType::Normal,
                                         link_data: None,
+                                        custom_emoji: None,
                                     });
                                     let rest = label.value[1..].to_string();
                                     if !rest.is_empty() {
@@ -1791,6 +1795,7 @@ impl MessageProcessor {
                                             mono: false,
                                             span_type: SpanType::Normal,
                                             link_data: None,
+                                            custom_emoji: None,
                                         });
                                     }
                                     content.add_line(StyledLine {
@@ -2692,6 +2697,7 @@ impl MessageProcessor {
                             mono: false,
                             span_type: data_span_type,
                             link_data: link.clone(),
+                            custom_emoji: None,
                         };
 
                         // Debug logging for room exits to understand link coloring
@@ -3196,6 +3202,7 @@ impl MessageProcessor {
                     mono: false,
                     span_type: crate::data::SpanType::Normal,
                     link_data,
+                    custom_emoji: None,
                 };
 
                 self.perception_buffer.push(vec![entry_segment]);
@@ -5890,6 +5897,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Normal,
             link_data: None,
+            custom_emoji: None,
         });
     }
 
@@ -6283,6 +6291,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Normal,
             link_data: None,
+            custom_emoji: None,
         }]];
         assert!(!processor.previous_inventory.is_empty());
 

@@ -201,6 +201,7 @@ impl AppCore {
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
+                custom_emoji: None,
             });
         }
 
@@ -213,6 +214,7 @@ impl AppCore {
             mono: false,
             span_type: SpanType::Normal,
             link_data: None,
+            custom_emoji: None,
         });
 
         let styled_line = StyledLine {

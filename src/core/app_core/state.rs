@@ -408,6 +408,14 @@ impl AppCore {
             .inspect_err(|e| tracing::warn!("Failed to load command list: {}", e))
             .ok();
 
+        // Scan ~/.vellum-fe/emoji/ for custom emoji so `:name:` shortcodes
+        // resolve from the first line. Cheap and non-fatal when the dir is
+        // absent; rescanned on `.reload`.
+        let custom_emoji_count = crate::core::custom_emoji::reload();
+        if custom_emoji_count > 0 {
+            tracing::info!("Loaded {custom_emoji_count} custom emoji");
+        }
+
         // Load saved dialog positions from widget_state.toml
         let saved_dialog_positions = Config::load_dialog_positions(config.character.as_deref())
             .unwrap_or_default();
@@ -3320,6 +3328,7 @@ impl AppCore {
                 mono: true,
                 span_type: SpanType::System, // system echo; skip highlight transforms
                 link_data: None,
+                custom_emoji: None,
             }],
             stream: String::from("main"),
             timestamp: None,
@@ -5687,7 +5696,10 @@ impl AppCore {
         self.reload_settings();
         self.reload_colors();
         self.reload_layout();
-        self.add_system_message("All configuration reloaded");
+        let emoji_count = crate::core::custom_emoji::reload();
+        self.add_system_message(&format!(
+            "All configuration reloaded ({emoji_count} custom emoji)"
+        ));
     }
 
     /// Reload highlights from disk

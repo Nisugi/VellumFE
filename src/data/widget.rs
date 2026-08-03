@@ -83,6 +83,17 @@ pub struct TextSegment {
     #[serde(default)]
     pub span_type: SpanType, // Semantic type for priority layering
     pub link_data: Option<LinkData>,
+    /// Custom-emoji shortcode name (without the surrounding colons) when this
+    /// segment's `text` is a resolved custom emoji like `:VibeCat:`.
+    ///
+    /// Custom emoji have no Unicode codepoint, so the resolver keeps the
+    /// literal `:name:` in `text` (the universal fallback) and tags the
+    /// segment here. Frontends that can render images (GUI from disk, web via
+    /// `<img>`) swap the run for the emoji's picture; the TUI just shows the
+    /// `:name:` text. `None` for ordinary text and gemoji (which resolve to a
+    /// real Unicode glyph in `text`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_emoji: Option<String>,
 }
 
 impl TextSegment {
@@ -121,6 +132,7 @@ impl TextSegment {
             mono,
             span_type,
             link_data: None,
+            custom_emoji: None,
         }
     }
 }
@@ -574,6 +586,7 @@ impl StyledLine {
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
+                custom_emoji: None,
             }],
             stream: String::from("main"),
             timestamp: None,
@@ -591,6 +604,7 @@ impl StyledLine {
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
+                custom_emoji: None,
             }],
             stream: stream.into(),
             timestamp: None,
@@ -659,6 +673,7 @@ mod tests {
                         text: "a kobold".to_string(),
                         coord: Some("2524,1864".to_string()),
                     }),
+                    custom_emoji: None,
                 },
                 TextSegment::styled(" here.", Some("#a0a0a0".to_string()), false),
             ],
@@ -818,6 +833,7 @@ mod tests {
                 text: "a rusty sword".to_string(),
                 coord: None,
             }),
+            custom_emoji: None,
         };
 
         assert_eq!(segment.span_type, SpanType::Link);
@@ -836,6 +852,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Monsterbold,
             link_data: None,
+            custom_emoji: None,
         };
 
         let seg2 = TextSegment {
@@ -846,6 +863,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Monsterbold,
             link_data: None,
+            custom_emoji: None,
         };
 
         let seg3 = TextSegment {
@@ -856,6 +874,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Monsterbold,
             link_data: None,
+            custom_emoji: None,
         };
 
         assert_eq!(seg1, seg2);

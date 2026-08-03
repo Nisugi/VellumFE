@@ -157,11 +157,14 @@ pub fn strip_outbound_emoji(text: &str) -> Option<String> {
             }
             if j > start && j < bytes.len() && bytes[j] == b':' {
                 let code = &text[start..j];
-                let known = if code.bytes().any(|b| b.is_ascii_uppercase()) {
+                let is_gemoji = if code.bytes().any(|b| b.is_ascii_uppercase()) {
                     emojis::get_by_shortcode(&code.to_ascii_lowercase()).is_some()
                 } else {
                     emojis::get_by_shortcode(code).is_some()
                 };
+                // Also strip installed CUSTOM emoji (:VibeCat:) — they're
+                // Vellum-only and meaningless (or embarrassing) to the game.
+                let known = is_gemoji || crate::core::custom_emoji::contains(code);
                 if known {
                     // Drop the whole :code:. Collapse a following space if the
                     // char we already emitted ended with a space (or output is
@@ -212,25 +215,133 @@ pub fn strip_outbound_emoji(text: &str) -> Option<String> {
     Some(out)
 }
 
-/// Expand shortcodes in every segment's text in place.
+/// Expand shortcodes in every segment.
 ///
-/// Pure text rewrite: styles, span types, and link data are left untouched
-/// and segments are never split or merged. Segments without a ':' are
-/// skipped without any scanning.
-pub fn apply_to_segments(segments: &mut [TextSegment]) {
-    for seg in segments.iter_mut() {
-        // System spans skip text transforms (same rule as the highlight
-        // engine); everything else is display text.
-        if seg.span_type == crate::data::widget::SpanType::System {
+/// Gemoji shortcodes (`:grin:`) resolve to a Unicode glyph as a pure in-place
+/// text rewrite. CUSTOM emoji (`:VibeCat:`, installed under
+/// `~/.vellum-fe/emoji/`) have no Unicode codepoint, so a segment containing
+/// one is SPLIT: the custom run becomes its own segment carrying the same
+/// style but tagged with [`TextSegment::custom_emoji`] = the name, its `text`
+/// left as the literal `:name:` (the universal fallback). Ordinary text and
+/// gemoji are never split. System spans are skipped entirely.
+///
+/// Custom emoji take priority over gemoji on a name collision (the user's
+/// file wins), matching the Discord convention.
+pub fn apply_to_segments(segments: &mut Vec<TextSegment>) {
+    // Only pay the split cost if a custom emoji could possibly appear.
+    let have_custom = !crate::core::custom_emoji::all().is_empty();
+
+    // Fast path: no custom emoji installed → pure in-place gemoji rewrite,
+    // never splits (identical to the original behavior, zero extra allocation).
+    if !have_custom {
+        for seg in segments.iter_mut() {
+            if seg.span_type == crate::data::widget::SpanType::System
+                || !seg.text.contains(':')
+            {
+                continue;
+            }
+            if let Some(replaced) = replace_shortcodes(&seg.text) {
+                seg.text = replaced;
+            }
+        }
+        return;
+    }
+
+    // Custom emoji are installed: a segment may need splitting, so build a
+    // fresh vec. Consume the old segments by value to avoid borrow conflicts.
+    let old = std::mem::take(segments);
+    segments.reserve(old.len());
+    for seg in old {
+        if seg.span_type == crate::data::widget::SpanType::System || !seg.text.contains(':') {
+            segments.push(seg);
             continue;
         }
-        if !seg.text.contains(':') {
-            continue;
-        }
-        if let Some(replaced) = replace_shortcodes(&seg.text) {
-            seg.text = replaced;
+        if contains_custom_shortcode(&seg.text) {
+            split_segment_with_custom(&seg, segments);
+        } else {
+            let mut seg = seg;
+            if let Some(replaced) = replace_shortcodes(&seg.text) {
+                seg.text = replaced;
+            }
+            segments.push(seg);
         }
     }
+}
+
+/// Does `text` contain at least one `:name:` that is an installed custom emoji?
+fn contains_custom_shortcode(text: &str) -> bool {
+    scan_shortcodes(text).any(|(name, _, _)| crate::core::custom_emoji::contains(name))
+}
+
+/// Split one segment into a run of segments, turning each custom-emoji
+/// shortcode into its own tagged segment and resolving gemoji in the plain-text
+/// pieces between them. Pushes the results onto `out`.
+fn split_segment_with_custom(seg: &TextSegment, out: &mut Vec<TextSegment>) {
+    let text = &seg.text;
+    let mut cursor = 0usize;
+
+    let push_text = |out: &mut Vec<TextSegment>, slice: &str| {
+        if slice.is_empty() {
+            return;
+        }
+        let mut piece = seg.clone();
+        piece.custom_emoji = None;
+        // Resolve gemoji within the plain slice.
+        piece.text = replace_shortcodes(slice)
+            .unwrap_or_else(|| slice.to_string());
+        out.push(piece);
+    };
+
+    for (name, start, end) in scan_shortcodes(text) {
+        if !crate::core::custom_emoji::contains(name) {
+            continue;
+        }
+        // Flush the plain text before this custom emoji.
+        push_text(out, &text[cursor..start]);
+        // The custom-emoji segment: literal :name: as fallback text, tagged.
+        let mut custom = seg.clone();
+        custom.text = text[start..end].to_string(); // includes the colons
+        custom.custom_emoji = Some(name.to_ascii_lowercase());
+        // A custom emoji is an image, not a clickable game object; drop link
+        // data so it never mis-registers as a link.
+        custom.link_data = None;
+        out.push(custom);
+        cursor = end;
+    }
+    // Trailing plain text after the last custom emoji.
+    push_text(out, &text[cursor..]);
+}
+
+/// Iterate `:name:` candidates in `text`, yielding `(name, start, end)` where
+/// `start..end` spans the whole `:name:` (colons included). Only well-formed
+/// candidates are yielded; time strings and bare colons are skipped. Mirrors
+/// the tokenizer in [`replace_shortcodes`].
+fn scan_shortcodes(text: &str) -> impl Iterator<Item = (&str, usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    std::iter::from_fn(move || {
+        while i < bytes.len() {
+            if bytes[i] != b':' {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let name_start = i + 1;
+            let mut j = name_start;
+            while j < bytes.len() && is_shortcode_byte(bytes[j]) {
+                j += 1;
+            }
+            if j > name_start && j < bytes.len() && bytes[j] == b':' {
+                let name = &text[name_start..j];
+                let end = j + 1;
+                // Resume at the closing colon so `:a:b:` can match `:b:` too.
+                i = j;
+                return Some((name, start, end));
+            }
+            i = j.max(i + 1);
+        }
+        None
+    })
 }
 
 #[cfg(test)]
@@ -388,6 +499,89 @@ mod tests {
         assert_eq!(strip_outbound_emoji("channel #trade"), None);
     }
 
+    // ============ Custom emoji splitting (global registry) ============
+    // These mutate the process-wide custom-emoji registry, so they share one
+    // lock and reset it when done.
+    use std::sync::Mutex;
+    static CUSTOM_LOCK: Mutex<()> = Mutex::new(());
+
+    fn seg(text: &str) -> TextSegment {
+        TextSegment {
+            text: text.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn custom_emoji_splits_into_tagged_segment() {
+        let _g = CUSTOM_LOCK.lock().unwrap();
+        crate::core::custom_emoji::set_for_test(
+            crate::core::custom_emoji::registry_from_names(&[(
+                "vibecat",
+                crate::core::custom_emoji::EmojiFormat::Png,
+            )]),
+        );
+
+        let mut segments = vec![seg("hey :VibeCat: there")];
+        apply_to_segments(&mut segments);
+
+        assert_eq!(segments.len(), 3, "split into before / emoji / after");
+        assert_eq!(segments[0].text, "hey ");
+        assert_eq!(segments[0].custom_emoji, None);
+        assert_eq!(segments[1].text, ":VibeCat:", "literal fallback kept");
+        assert_eq!(segments[1].custom_emoji.as_deref(), Some("vibecat"));
+        assert_eq!(segments[2].text, " there");
+        assert_eq!(segments[2].custom_emoji, None);
+
+        crate::core::custom_emoji::set_for_test(Default::default());
+    }
+
+    #[test]
+    fn custom_wins_over_gemoji_on_collision_and_gemoji_still_resolves() {
+        let _g = CUSTOM_LOCK.lock().unwrap();
+        // Register a custom ":grin:" so it shadows the gemoji, plus a normal
+        // gemoji ":heart:" that must still resolve to Unicode in the same line.
+        crate::core::custom_emoji::set_for_test(
+            crate::core::custom_emoji::registry_from_names(&[(
+                "grin",
+                crate::core::custom_emoji::EmojiFormat::Gif,
+            )]),
+        );
+
+        let mut segments = vec![seg(":grin: and :heart:")];
+        apply_to_segments(&mut segments);
+
+        // :grin: → tagged custom (kept as text), :heart: → Unicode.
+        let tagged: Vec<_> = segments.iter().filter(|s| s.custom_emoji.is_some()).collect();
+        assert_eq!(tagged.len(), 1);
+        assert_eq!(tagged[0].custom_emoji.as_deref(), Some("grin"));
+        assert_eq!(tagged[0].text, ":grin:");
+        let joined: String = segments.iter().map(|s| s.text.as_str()).collect();
+        assert!(joined.contains('\u{2764}'), "gemoji heart still resolves: {joined:?}");
+
+        crate::core::custom_emoji::set_for_test(Default::default());
+    }
+
+    #[test]
+    fn unknown_custom_name_is_left_as_gemoji_only() {
+        let _g = CUSTOM_LOCK.lock().unwrap();
+        crate::core::custom_emoji::set_for_test(
+            crate::core::custom_emoji::registry_from_names(&[(
+                "vibecat",
+                crate::core::custom_emoji::EmojiFormat::Png,
+            )]),
+        );
+
+        // :notinstalled: isn't custom and isn't gemoji → untouched, no split.
+        let mut segments = vec![seg("a :notinstalled: b")];
+        apply_to_segments(&mut segments);
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].text, "a :notinstalled: b");
+        assert_eq!(segments[0].custom_emoji, None);
+
+        crate::core::custom_emoji::set_for_test(Default::default());
+    }
+
     #[test]
     fn system_spans_are_skipped() {
         let mut segments = vec![TextSegment {
@@ -398,6 +592,7 @@ mod tests {
             mono: false,
             span_type: SpanType::System,
             link_data: None,
+            custom_emoji: None,
         }];
         apply_to_segments(&mut segments);
         assert_eq!(segments[0].text, "[client :grin: notice]");
@@ -414,6 +609,7 @@ mod tests {
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
+                custom_emoji: None,
             },
             TextSegment {
                 text: "click :grin: me".into(),
@@ -428,6 +624,7 @@ mod tests {
                     text: "smile".into(),
                     coord: None,
                 }),
+                custom_emoji: None,
             },
         ];
 

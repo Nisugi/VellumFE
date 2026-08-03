@@ -7298,6 +7298,7 @@ mod tests {
                 text: "goblin".to_string(),
                 coord: None,
             }),
+            custom_emoji: None,
         };
 
         assert!(VellumGuiApp::segment_has_clickable_link(&segment));
@@ -7313,6 +7314,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Link,
             link_data: None,
+            custom_emoji: None,
         };
 
         assert!(!VellumGuiApp::segment_has_clickable_link(&segment));

@@ -173,6 +173,7 @@ impl ListWidget {
             mono: false,
             span_type: crate::data::SpanType::Normal,
             link_data: link,
+            custom_emoji: None,
         };
 
         // Apply highlights
@@ -230,6 +231,7 @@ impl ListWidget {
             mono: false,
             span_type,
             link_data,
+            custom_emoji: None,
         });
     }
 
@@ -523,6 +525,7 @@ impl ListWidget {
             mono: false,
             span_type: template.span_type,
             link_data: template.link_data.clone(),
+            custom_emoji: None,
         });
     }
 

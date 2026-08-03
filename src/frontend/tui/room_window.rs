@@ -216,6 +216,7 @@ impl RoomWindow {
                                             mono: false,
                                             span_type: word_seg.span_type,
                                             link_data: word_seg.link_data.clone(),
+                                            custom_emoji: None,
                                         },
                                     );
                                     current_width += 1;
@@ -244,6 +245,7 @@ impl RoomWindow {
                             mono: false,
                             span_type: segment.span_type,
                             link_data: segment.link_data.clone(),
+                            custom_emoji: None,
                         },
                     );
                     current_width += 1;
@@ -260,6 +262,7 @@ impl RoomWindow {
                             mono: false,
                             span_type: segment.span_type,
                             link_data: segment.link_data.clone(),
+                            custom_emoji: None,
                         },
                     );
                     word_buffer_len += 1;
@@ -300,6 +303,7 @@ impl RoomWindow {
                                 mono: false,
                                 span_type: word_seg.span_type,
                                 link_data: word_seg.link_data.clone(),
+                                custom_emoji: None,
                             },
                         );
                         current_width += 1;
@@ -408,6 +412,7 @@ impl RoomWindow {
                 mono: false,
                 span_type: SpanType::Normal,
                 link_data: None,
+                custom_emoji: None,
             }];
             // Apply highlights to title
             let highlighted = self
@@ -822,6 +827,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Normal,
             link_data: None,
+            custom_emoji: None,
         }
     }
 

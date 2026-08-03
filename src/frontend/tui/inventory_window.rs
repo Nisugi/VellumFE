@@ -156,6 +156,7 @@ mod tests {
             mono: false,
             span_type: SpanType::Normal,
             link_data: None,
+            custom_emoji: None,
         }
     }
 

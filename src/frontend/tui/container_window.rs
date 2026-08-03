@@ -91,6 +91,7 @@ impl ContainerWindow {
                     text: item.name.clone(),
                     coord: None,
                 }),
+                custom_emoji: None,
             };
             // ListWidget handles highlights internally during add_line.
             self.widget.add_line(vec![segment]);
