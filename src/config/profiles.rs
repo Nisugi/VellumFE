@@ -44,6 +44,8 @@ pub mod help {
         "GUI opens a native window; Terminal runs the text interface in its own console window";
     pub const WEB_PORT: &str =
         "Enable the embedded web server on this port: serves a browser view of this session at localhost:PORT (e.g. for a phone on your LAN)";
+    pub const WEB_BIND: &str =
+        "Address the web server binds to (default: 127.0.0.1, this machine only). Set to 0.0.0.0 to let other devices on your network (e.g. a phone) connect.";
     pub const NOSOUND: &str =
         "Disable the sound system entirely (skips audio device initialization; use if audio causes startup trouble)";
     pub const SETTINGS_PROFILE: &str =
@@ -133,6 +135,10 @@ pub struct LauncherProfile {
     // Advanced options (all map 1:1 onto CLI switches)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_port: Option<u16>,
+    /// Bind address for the web server; None = 127.0.0.1 (loopback only).
+    /// Set to "0.0.0.0" to allow other devices on the LAN to connect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_bind: Option<String>,
     #[serde(default)]
     pub nosound: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +164,7 @@ impl LauncherProfile {
             host: default_host(),
             port: default_port(),
             web_port: None,
+            web_bind: None,
             nosound: false,
             settings_profile: None,
             data_dir: None,
@@ -468,6 +475,7 @@ mod tests {
             character: "Nisugi".to_string(),
             password_saved: true,
             web_port: Some(8080),
+            web_bind: Some("0.0.0.0".to_string()),
             ..LauncherProfile::new_direct()
         }
     }
@@ -515,6 +523,7 @@ mod tests {
         assert_eq!(direct.character, "Nisugi");
         assert!(direct.password_saved);
         assert_eq!(direct.web_port, Some(8080));
+        assert_eq!(direct.web_bind.as_deref(), Some("0.0.0.0"));
         assert_eq!(direct.frontend, LaunchFrontend::Gui);
 
         let lich = &loaded.profiles[1];
@@ -548,6 +557,7 @@ mod tests {
         assert_eq!(profile.frontend, LaunchFrontend::Gui);
         assert!(!profile.password_saved);
         assert!(profile.web_port.is_none());
+        assert!(profile.web_bind.is_none());
     }
 
     #[test]

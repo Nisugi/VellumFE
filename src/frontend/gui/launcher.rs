@@ -56,6 +56,7 @@ struct EditForm {
     save_password: bool,
     web_enabled: bool,
     web_port_text: String,
+    web_bind_text: String,
     port_text: String,
     error: Option<String>,
 }
@@ -72,6 +73,7 @@ impl EditForm {
             save_password: true,
             web_enabled: false,
             web_port_text: "8484".to_string(),
+            web_bind_text: "127.0.0.1".to_string(),
             port_text: "8000".to_string(),
             error: None,
         }
@@ -87,6 +89,10 @@ impl EditForm {
             save_password: profile.password_saved,
             web_enabled: profile.web_port.is_some(),
             web_port_text: profile.web_port.unwrap_or(8484).to_string(),
+            web_bind_text: profile
+                .web_bind
+                .clone()
+                .unwrap_or_else(|| "127.0.0.1".to_string()),
             port_text: profile.port.to_string(),
             profile,
             error: None,
@@ -245,8 +251,17 @@ impl LauncherApp {
                     return;
                 }
             }
+            // Store the bind only when it differs from the loopback default,
+            // so unchanged profiles keep a clean launcher.toml (None = 127.0.0.1).
+            let bind = form.web_bind_text.trim();
+            form.profile.web_bind = if bind.is_empty() || bind == "127.0.0.1" {
+                None
+            } else {
+                Some(bind.to_string())
+            };
         } else {
             form.profile.web_port = None;
+            form.profile.web_bind = None;
         }
 
         let mut form = self.edit.take().expect("edit form present");
@@ -531,6 +546,24 @@ impl LauncherApp {
                                     egui::TextEdit::singleline(&mut form.web_port_text)
                                         .desired_width(60.0),
                                 );
+                            });
+                            ui.end_row();
+
+                            ui.label("Bind address").on_hover_text(help::WEB_BIND);
+                            ui.horizontal(|ui| {
+                                ui.add_enabled(
+                                    form.web_enabled,
+                                    egui::TextEdit::singleline(&mut form.web_bind_text)
+                                        .desired_width(120.0)
+                                        .hint_text("127.0.0.1"),
+                                )
+                                .on_hover_text(help::WEB_BIND);
+                                ui.label(
+                                    egui::RichText::new("0.0.0.0 = allow LAN devices")
+                                        .weak()
+                                        .small(),
+                                )
+                                .on_hover_text(help::WEB_BIND);
                             });
                             ui.end_row();
 

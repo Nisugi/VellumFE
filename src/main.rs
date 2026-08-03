@@ -109,6 +109,10 @@ struct Cli {
     #[arg(long, value_name = "PORT", help = config::profiles::help::WEB_PORT)]
     web_port: Option<u16>,
 
+    /// Address the web server binds to (overrides [web] bind in config.toml)
+    #[arg(long, value_name = "ADDR", help = config::profiles::help::WEB_BIND)]
+    web_bind: Option<String>,
+
     /// Setup terminal palette on startup using .setpalette (use with --color-mode slot)
     #[arg(long, help = config::profiles::help::SETUP_PALETTE)]
     setup_palette: bool,
@@ -456,6 +460,9 @@ fn main() -> Result<()> {
         config.web.enabled = true;
         config.web.port = web_port;
     }
+    if let Some(web_bind) = cli.web_bind.as_deref() {
+        config.web.bind = web_bind.to_string();
+    }
     // Store setup_palette flag for frontend to use after initialization
     let setup_palette = cli.setup_palette;
 
@@ -601,6 +608,9 @@ fn apply_launch_profile(cli: &mut Cli, name: &str) -> Result<Option<String>> {
     }
     if cli.web_port.is_none() {
         cli.web_port = profile.web_port;
+    }
+    if cli.web_bind.is_none() {
+        cli.web_bind = profile.web_bind.clone();
     }
     cli.nosound |= profile.nosound;
     cli.setup_palette |= profile.setup_palette;
