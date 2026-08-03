@@ -454,6 +454,20 @@ pub struct VellumGuiApp {
     webui_handshake_sent: bool,
     /// Image srcs with a fetch task in flight (dedupes re-queues).
     webui_fetches_inflight: HashSet<String>,
+
+    // --- Reconnect inputs (see `reconnect`) ------------------------------
+    /// Retained connection credentials so `.reconnect` can re-establish the
+    /// session after a drop. Some = direct mode (re-auths via eAccess); None
+    /// = Lich mode (re-attaches to host/port below). Holds the password in
+    /// memory exactly as the original connect did.
+    reconnect_direct: Option<crate::network::DirectConnectConfig>,
+    reconnect_login_key: Option<String>,
+    reconnect_host: String,
+    reconnect_port: u16,
+    /// Feeds the server→UI forwarder that wakes egui. Cloned into each
+    /// network task; retaining a clone keeps the forwarder alive and lets a
+    /// reconnect spawn a fresh task into the same pipeline.
+    network_forward_tx: mpsc::Sender<ServerMessage>,
 }
 
 /// What to do once the Lich WebUI bridge says hello.
@@ -543,6 +557,16 @@ impl VellumGuiApp {
 
         let host = app_core.config.connection.host.clone();
         let port = app_core.config.connection.port;
+
+        // Retain everything a later `.reconnect` needs. `server_tx` feeds the
+        // forwarder that wakes egui; keep a clone so a reconnect can spawn a
+        // fresh network task into the same pipeline (and so the forwarder
+        // never sees all senders drop between connections).
+        let network_forward_tx = server_tx.clone();
+        let reconnect_direct = direct.clone();
+        let reconnect_login_key = login_key.clone();
+        let reconnect_host = host.clone();
+        let reconnect_port = port;
 
         let raw_logger = match RawLogger::new(&app_core.config) {
             Ok(logger) => logger,
@@ -800,6 +824,11 @@ impl VellumGuiApp {
             is_direct_connection,
             webui_handshake_sent: false,
             webui_fetches_inflight: HashSet::new(),
+            reconnect_direct,
+            reconnect_login_key,
+            reconnect_host,
+            reconnect_port,
+            network_forward_tx,
         })
     }
 
@@ -4974,6 +5003,72 @@ impl VellumGuiApp {
         true
     }
 
+    /// Re-establish the game connection after a drop (`.reconnect` or the
+    /// toolbar Reconnect button). A single manual attempt: rebuild the command
+    /// channel, spawn a fresh network task from the retained inputs (direct
+    /// re-auths; Lich re-attaches), and let the server's login snapshot refresh
+    /// game state in place. Existing state is left on screen until it arrives.
+    fn reconnect(&mut self) {
+        if self.app_core.game_state.connected {
+            self.app_core
+                .add_system_message("Already connected — nothing to reconnect.");
+            return;
+        }
+
+        // Drop the old (dead) network task; its socket half is already gone,
+        // but abort so a half-open task can't linger.
+        if let Some(handle) = self.network_handle.take() {
+            handle.abort();
+        }
+
+        // Fresh command channel: the old command_rx was moved into the dead
+        // task. Swap in the new sender so typed commands reach the new socket.
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
+        self.command_tx = command_tx;
+
+        // A fresh raw logger (owns a background writer thread + file handle);
+        // the old one drops with the previous task and flushes.
+        let raw_logger = match RawLogger::new(&self.app_core.config) {
+            Ok(logger) => logger,
+            Err(err) => {
+                tracing::error!("Reconnect: failed to init raw logger: {}", err);
+                None
+            }
+        };
+
+        let server_tx = self.network_forward_tx.clone();
+        // Re-arm the layout-driven WebUI handshake for the new session.
+        self.webui_handshake_sent = false;
+
+        let handle = match self.reconnect_direct.clone() {
+            Some(cfg) => self._runtime.spawn(async move {
+                if let Err(err) =
+                    crate::network::DirectConnection::start(cfg, server_tx, command_rx, raw_logger)
+                        .await
+                {
+                    tracing::error!("GUI reconnect (direct) error: {}", err);
+                }
+            }),
+            None => {
+                let host = self.reconnect_host.clone();
+                let port = self.reconnect_port;
+                let login_key = self.reconnect_login_key.clone();
+                self._runtime.spawn(async move {
+                    if let Err(err) = LichConnection::start(
+                        &host, port, login_key, server_tx, command_rx, raw_logger,
+                    )
+                    .await
+                    {
+                        tracing::error!("GUI reconnect (lich) error: {}", err);
+                    }
+                })
+            }
+        };
+        self.network_handle = Some(handle);
+        self.app_core.add_system_message("Reconnecting…");
+        self.app_core.needs_render = true;
+    }
+
     /// Dispatch an `action:*` string from a popup-menu item (menu items
     /// carry strings). The typed path is [`Self::handle_ui_action`]; this
     /// is the single string bridge into it. Returns false only for
@@ -5017,6 +5112,7 @@ impl VellumGuiApp {
             },
             A::SorterEdit => self.open_sorter_editor(),
             A::TouchWheelEditor => self.open_touch_wheel_editor(),
+            A::Reconnect => self.reconnect(),
             A::SnapDebug => {
                 self.snap_debug = !self.snap_debug;
                 self.app_core.add_system_message(if self.snap_debug {
@@ -5668,6 +5764,7 @@ impl eframe::App for VellumGuiApp {
 
         let detached_before_frame = self.detached_tab_keys();
         let mut open_windows_manager = false;
+        let mut reconnect_clicked = false;
         let mut zone_actions = GuiWindowActions::default();
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
         let mut zone_window_rects: Vec<GuiZoneWindowRect> = Vec::new();
@@ -5683,15 +5780,25 @@ impl eframe::App for VellumGuiApp {
                     ui.visuals_mut().widgets.inactive.weak_bg_fill =
                         egui::Color32::TRANSPARENT;
                     ui.heading("VellumFE GUI");
-                    let connection_text = if self.app_core.game_state.connected {
-                        RichText::new("Connected")
-                            .color(theme::color32(self.current_theme.status_success))
-                    } else {
-                        RichText::new("Disconnected")
-                            .color(theme::color32(self.current_theme.status_error))
-                    };
                     ui.separator();
-                    ui.label(connection_text);
+                    // Connected: a plain green status label. Disconnected: the
+                    // same slot becomes a clickable Reconnect button (the
+                    // status IS the affordance — no separate button).
+                    if self.app_core.game_state.connected {
+                        ui.label(
+                            RichText::new("Connected")
+                                .color(theme::color32(self.current_theme.status_success)),
+                        );
+                    } else if ui
+                        .button(
+                            RichText::new("Reconnect")
+                                .color(theme::color32(self.current_theme.status_error)),
+                        )
+                        .on_hover_text("Reconnect to the game (.reconnect)")
+                        .clicked()
+                    {
+                        reconnect_clicked = true;
+                    }
                     ui.separator();
 
                     if ui
@@ -6073,6 +6180,9 @@ impl eframe::App for VellumGuiApp {
 
         if open_windows_manager {
             self.open_known_windows_editor();
+        }
+        if reconnect_clicked {
+            self.reconnect();
         }
         if let Some(drop_result) = zone_drop_result {
             self.apply_zone_drop(drop_result, &visible_zone_rects);

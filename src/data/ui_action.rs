@@ -180,6 +180,12 @@ pub enum UiAction {
     WebUiOff,
     WebUiOpen(String),
 
+    // Session control
+    /// Re-establish the game connection after a drop, reusing the retained
+    /// connection inputs (Direct config re-auths; Lich re-attaches). A single
+    /// manual attempt — the frontend owns the runtime, so it does the work.
+    Reconnect,
+
     // Diagnostics
     SnapDebug,
     /// Write a `.performance dump` report; each frontend appends its own
@@ -323,6 +329,7 @@ impl UiAction {
             "indicators" => UiAction::EditIndicators,
             "webui" => UiAction::WebUiPicker,
             "webui:off" => UiAction::WebUiOff,
+            "reconnect" => UiAction::Reconnect,
             "snapdebug" => UiAction::SnapDebug,
             "performance:dump" => UiAction::PerformanceDump,
             "layout:save" => UiAction::SaveLayout(None),
@@ -423,6 +430,7 @@ impl std::fmt::Display for UiAction {
             UiAction::WebUiPicker => write!(f, "action:webui"),
             UiAction::WebUiOff => write!(f, "action:webui:off"),
             UiAction::WebUiOpen(page) => write!(f, "action:webui:open:{page}"),
+            UiAction::Reconnect => write!(f, "action:reconnect"),
             UiAction::SnapDebug => write!(f, "action:snapdebug"),
             UiAction::PerformanceDump => write!(f, "action:performance:dump"),
         }
@@ -532,6 +540,7 @@ mod tests {
             UiAction::WebUiPicker,
             UiAction::WebUiOff,
             UiAction::WebUiOpen("bigshot".into()),
+            UiAction::Reconnect,
             UiAction::SnapDebug,
             UiAction::PerformanceDump,
             UiAction::PackEditor,

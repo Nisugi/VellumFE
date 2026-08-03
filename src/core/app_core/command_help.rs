@@ -49,6 +49,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             entry!(&["quit", "q"], "", "Exit VellumFE"),
             entry!(&["help", "h", "?"], "", "Show this help"),
             entry!(&["version", "ver"], "", "Show version info"),
+            entry!(
+                &["reconnect"],
+                "",
+                "Reconnect to the game after a dropped connection"
+            ),
             entry!(&["menu"], "", "Open main menu"),
             entry!(&["settings"], "", "Open settings editor"),
             entry!(
