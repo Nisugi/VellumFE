@@ -24,6 +24,16 @@ final class BootModel: ObservableObject {
     /// picker offer "play on this phone" without restarting the core.
     private var coreStarted = false
 
+    /// True while a `startLocal()` core-boot is in flight. A second call
+    /// (e.g. a vellum://lich deep link landing mid-launch) must not spawn a
+    /// second CoreBridge.startCore or race its phase writes.
+    private var localBootInFlight = false
+
+    /// Bumped whenever the user navigates away from an in-flight local boot
+    /// (a remote deep link, or returning to the picker). A boot that started
+    /// before the bump must not overwrite the newer phase when it finishes.
+    private var navGeneration = 0
+
     /// Remote server the WebView is allowed to browse in-app (Remote mode);
     /// nil while on the embedded core. Read by the container's nav policy.
     @Published private(set) var allowedRemoteHost: String?
@@ -43,9 +53,14 @@ final class BootModel: ObservableObject {
         // A lich deep link arriving at launch takes priority: honor it
         // directly rather than parking on the picker.
         let hasPrefill = lichFragment != nil
-        if !servers.isEmpty && !hasPrefill {
-            // Saved remote characters exist: let the user pick. The core is
-            // started lazily only if they choose "play on this phone".
+        if !hasPrefill {
+            // Land on the native picker at launch. It is the only surface for
+            // managing remote servers (nativepicker=1 hides the web client's
+            // Remote tab), so it must be reachable even with zero saved
+            // servers — otherwise a fresh install could never pair a remote
+            // character or reach "Add manually"/"Scan QR". The picker also
+            // offers "Play on this phone", so nothing is lost for local-only
+            // users. The core is started lazily only when they choose it.
             phase = .picker
             return
         }
@@ -62,6 +77,14 @@ final class BootModel: ObservableObject {
             phase = .ready(bootURL(port: port, token: token))
             return
         }
+        // A boot is already spinning up the core; don't start a second one.
+        // The in-flight boot will land on local play; a deep link that wants
+        // something else will have bumped navGeneration and win.
+        if localBootInFlight { return }
+        localBootInFlight = true
+        let generation = navGeneration
+        defer { localBootInFlight = false }
+
         phase = .starting
         let info = await Task.detached(priority: .userInitiated) { () -> CoreInfo in
             CryptoKeys.installPasswordKey()
@@ -71,21 +94,34 @@ final class BootModel: ObservableObject {
             return CoreBridge.startCore(dataDir: dataDir.path)
         }.value
 
+        // The core is a process-wide singleton, so record its port/token even
+        // if the user navigated away mid-boot — a later "play on this phone"
+        // must reuse it rather than start a second core. But only take over
+        // the visible phase if nothing newer (a remote deep link, the picker)
+        // superseded this boot while it was running.
         if let error = info.error {
-            phase = .failed("Core failed to start:\n\(error)")
+            if generation == navGeneration { phase = .failed("Core failed to start:\n\(error)") }
             return
         }
         guard let port = info.port, let token = info.token else {
-            phase = .failed("Core returned an incomplete reply.")
+            if generation == navGeneration { phase = .failed("Core returned an incomplete reply.") }
             return
         }
         guard await waitForServer(port: port) else {
-            phase = .failed("The embedded server did not come up on port \(port).")
+            if generation == navGeneration {
+                phase = .failed("The embedded server did not come up on port \(port).")
+            }
             return
         }
         self.port = port
         self.token = token
         coreStarted = true
+        guard generation == navGeneration else {
+            // A deep link / picker navigation superseded this boot; leave the
+            // newer phase in place. The core is ready for later reuse.
+            return
+        }
+        allowedRemoteHost = nil
         phase = .ready(bootURL(port: port, token: token))
     }
 
@@ -110,6 +146,8 @@ final class BootModel: ObservableObject {
 
     /// Return to the picker from a remote/local view.
     func showPicker() {
+        navGeneration += 1 // supersede any in-flight local boot
+        allowedRemoteHost = nil
         servers = RemoteStore.list()
         phase = .picker
     }
@@ -139,6 +177,7 @@ final class BootModel: ObservableObject {
     /// core keeps running but sits idle — there is no in-app game socket
     /// in this mode; the web client's own reconnect handles resume.
     private func showRemote(_ target: RemoteStore.Target) {
+        navGeneration += 1 // a remote deep link supersedes an in-flight local boot
         allowedRemoteHost = target.host.lowercased()
         // Bracket bare IPv6 literals so the URL parses.
         let host = target.host.contains(":") && !target.host.hasPrefix("[")
@@ -285,6 +324,27 @@ struct ContentView: View {
                     onShellURL: { model.handleShellURL($0) }
                 )
                 .ignoresSafeArea()
+                // A native "back to the character picker" affordance. The web
+                // client's in-page picker button only renders on non-loopback
+                // pages, so on local play ("Play on this phone") there was no
+                // route back to the picker except force-quitting. Show it only
+                // in local mode; remote mode keeps the web client's own Back.
+                .overlay(alignment: .topLeading) {
+                    if model.allowedRemoteHost == nil {
+                        Button {
+                            model.showPicker()
+                        } label: {
+                            Image(systemName: "person.2.circle.fill")
+                                .font(.system(size: 26))
+                                .foregroundColor(Color(white: 0.85))
+                                .padding(8)
+                                .background(.ultraThinMaterial, in: Circle())
+                        }
+                        .accessibilityLabel("Characters")
+                        .padding(.leading, 10)
+                        .padding(.top, 6)
+                    }
+                }
             case let .failed(message):
                 // Same dark monospace error page the Android shell renders.
                 VStack(alignment: .leading, spacing: 12) {

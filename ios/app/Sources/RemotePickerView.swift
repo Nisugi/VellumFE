@@ -1,6 +1,5 @@
 import SwiftUI
 import AVFoundation
-import Vision
 
 /// The launch character picker: saved remote VellumFE servers (one per
 /// character/port) plus "play on this phone". Add by scanning a `.webinfo`
