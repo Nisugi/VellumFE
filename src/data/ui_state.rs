@@ -533,9 +533,94 @@ pub struct DialogDropDown {
 pub struct DialogField {
     pub id: String,
     pub value: String,
+    /// Caret position as a CHARACTER index into `value` (not a byte offset).
+    /// `value` is UTF-8, so every edit converts to a byte offset before
+    /// touching the String; indexing it by `cursor` directly would panic on
+    /// any multibyte character.
     pub cursor: usize,
     pub enter_button: Option<String>,
     pub focused: bool,
+}
+
+impl DialogField {
+    /// Number of characters in the value (the upper bound for `cursor`).
+    fn char_count(&self) -> usize {
+        self.value.chars().count()
+    }
+
+    /// Byte offset of character index `cursor` (or the end of the string).
+    fn cursor_byte(&self) -> usize {
+        self.value
+            .char_indices()
+            .nth(self.cursor)
+            .map(|(idx, _)| idx)
+            .unwrap_or(self.value.len())
+    }
+
+    /// Clamp the caret into `0..=char_count`. Called when (re)focusing a field
+    /// whose value may have been set programmatically.
+    pub fn clamp_cursor(&mut self) {
+        let max = self.char_count();
+        if self.cursor > max {
+            self.cursor = max;
+        }
+    }
+
+    /// Insert a character at the caret and advance it.
+    pub fn insert_char(&mut self, ch: char) {
+        let at = self.cursor_byte();
+        self.value.insert(at, ch);
+        self.cursor += 1;
+    }
+
+    /// Delete the character before the caret (Backspace). No-op at the start.
+    pub fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        self.cursor -= 1;
+        let at = self.cursor_byte();
+        self.value.remove(at);
+    }
+
+    /// Delete the character at the caret (Delete). No-op at the end.
+    pub fn delete_forward(&mut self) {
+        if self.cursor >= self.char_count() {
+            return;
+        }
+        let at = self.cursor_byte();
+        self.value.remove(at);
+    }
+
+    /// Move the caret one character left. Returns whether it moved.
+    pub fn move_left(&mut self) -> bool {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Move the caret one character right. Returns whether it moved.
+    pub fn move_right(&mut self) -> bool {
+        if self.cursor < self.char_count() {
+            self.cursor += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Move the caret to the start.
+    pub fn move_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    /// Move the caret to the end.
+    pub fn move_end(&mut self) {
+        self.cursor = self.char_count();
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1067,6 +1152,117 @@ impl PopupMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ==================== DialogField edit (UTF-8 safety) Tests ====================
+
+    fn field(value: &str, cursor: usize) -> DialogField {
+        DialogField {
+            id: "f".to_string(),
+            value: value.to_string(),
+            cursor,
+            enter_button: None,
+            focused: false,
+        }
+    }
+
+    #[test]
+    fn dialog_field_insert_ascii() {
+        let mut f = field("ab", 1);
+        f.insert_char('X');
+        assert_eq!(f.value, "aXb");
+        assert_eq!(f.cursor, 2);
+    }
+
+    #[test]
+    fn dialog_field_insert_after_multibyte_does_not_panic() {
+        // Regression: 'é' is 2 bytes; a char-stepped cursor used as a byte
+        // index would land mid-codepoint and panic on the next insert.
+        let mut f = field("é", 1);
+        f.insert_char('z');
+        assert_eq!(f.value, "éz");
+        assert_eq!(f.cursor, 2);
+    }
+
+    #[test]
+    fn dialog_field_insert_multibyte_between_multibyte() {
+        let mut f = field("áé", 1);
+        f.insert_char('ñ');
+        assert_eq!(f.value, "áñé");
+        assert_eq!(f.cursor, 2);
+    }
+
+    #[test]
+    fn dialog_field_backspace_on_prefilled_multibyte() {
+        // A game-prefilled field ending in a multibyte char, cursor at end.
+        let mut f = field("café", 4);
+        f.backspace();
+        assert_eq!(f.value, "caf");
+        assert_eq!(f.cursor, 3);
+    }
+
+    #[test]
+    fn dialog_field_backspace_at_start_is_noop() {
+        let mut f = field("é", 0);
+        f.backspace();
+        assert_eq!(f.value, "é");
+        assert_eq!(f.cursor, 0);
+    }
+
+    #[test]
+    fn dialog_field_delete_forward_multibyte() {
+        let mut f = field("aéb", 1);
+        f.delete_forward();
+        assert_eq!(f.value, "ab");
+        assert_eq!(f.cursor, 1);
+    }
+
+    #[test]
+    fn dialog_field_delete_forward_at_end_is_noop() {
+        let mut f = field("é", 1);
+        f.delete_forward();
+        assert_eq!(f.value, "é");
+        assert_eq!(f.cursor, 1);
+    }
+
+    #[test]
+    fn dialog_field_move_bounds_are_char_counts() {
+        let mut f = field("é€", 0);
+        assert!(f.move_right());
+        assert!(f.move_right());
+        assert!(!f.move_right(), "cursor must stop at char count, not byte len");
+        assert_eq!(f.cursor, 2);
+        f.move_end();
+        assert_eq!(f.cursor, 2);
+        f.move_home();
+        assert_eq!(f.cursor, 0);
+        assert!(!f.move_left());
+    }
+
+    #[test]
+    fn dialog_field_clamp_cursor_uses_char_count() {
+        // cursor set past the char count (e.g. stale from a longer value)
+        // must clamp to the char count, never leave a byte-sized overshoot.
+        let mut f = field("é", 5);
+        f.clamp_cursor();
+        assert_eq!(f.cursor, 1);
+    }
+
+    #[test]
+    fn dialog_field_full_edit_sequence_multibyte() {
+        // Type "naïve", then backspace twice, then insert — exercises the
+        // whole path the panic used to blow up.
+        let mut f = field("", 0);
+        for ch in "naïve".chars() {
+            f.insert_char(ch);
+        }
+        assert_eq!(f.value, "naïve");
+        assert_eq!(f.cursor, 5);
+        f.backspace();
+        f.backspace();
+        assert_eq!(f.value, "naï");
+        f.insert_char('l');
+        assert_eq!(f.value, "naïl");
+    }
 
     // ==================== UiState Tests ====================
 

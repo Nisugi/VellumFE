@@ -2357,38 +2357,30 @@ impl TuiFrontend {
                         app_core.needs_render = true;
                     }
                     KeyCode::Left => {
-                        if field.cursor > 0 {
-                            field.cursor -= 1;
+                        if field.move_left() {
                             app_core.needs_render = true;
                         }
                     }
                     KeyCode::Right => {
-                        if field.cursor < field.value.len() {
-                            field.cursor += 1;
+                        if field.move_right() {
                             app_core.needs_render = true;
                         }
                     }
                     KeyCode::Home => {
-                        field.cursor = 0;
+                        field.move_home();
                         app_core.needs_render = true;
                     }
                     KeyCode::End => {
-                        field.cursor = field.value.len();
+                        field.move_end();
                         app_core.needs_render = true;
                     }
                     KeyCode::Backspace => {
-                        if field.cursor > 0 && !field.value.is_empty() {
-                            let remove_at = field.cursor - 1;
-                            field.value.remove(remove_at);
-                            field.cursor -= 1;
-                            app_core.needs_render = true;
-                        }
+                        field.backspace();
+                        app_core.needs_render = true;
                     }
                     KeyCode::Delete => {
-                        if field.cursor < field.value.len() {
-                            field.value.remove(field.cursor);
-                            app_core.needs_render = true;
-                        }
+                        field.delete_forward();
+                        app_core.needs_render = true;
                     }
                     KeyCode::Enter => {
                         if let Some(button_id) = field.enter_button.clone() {
@@ -2403,8 +2395,7 @@ impl TuiFrontend {
                         app_core.needs_render = true;
                     }
                     KeyCode::Char(ch) => {
-                        field.value.insert(field.cursor, ch);
-                        field.cursor += 1;
+                        field.insert_char(ch);
                         app_core.needs_render = true;
                     }
                     _ => {}
@@ -2467,9 +2458,7 @@ impl TuiFrontend {
         dialog.focused_field = focused.filter(|idx| *idx < dialog.fields.len());
         for (idx, field) in dialog.fields.iter_mut().enumerate() {
             field.focused = dialog.focused_field == Some(idx);
-            if field.cursor > field.value.len() {
-                field.cursor = field.value.len();
-            }
+            field.clamp_cursor();
         }
     }
 

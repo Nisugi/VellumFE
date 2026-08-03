@@ -1665,9 +1665,12 @@ impl MessageProcessor {
                         focused_index = Some(idx);
                     }
                     let existing = dialog.fields.iter().find(|f| f.id == field.id);
+                    // `cursor` is a CHARACTER index, so bound it against the
+                    // char count, not the byte length (multibyte-safe).
+                    let char_count = field.value.chars().count();
                     let cursor = existing
-                        .map(|f| f.cursor.min(field.value.len()))
-                        .unwrap_or_else(|| field.value.len());
+                        .map(|f| f.cursor.min(char_count))
+                        .unwrap_or(char_count);
                     new_fields.push(crate::data::DialogField {
                         id: field.id.clone(),
                         value: field.value.clone(),
@@ -1693,9 +1696,7 @@ impl MessageProcessor {
                 dialog.focused_field = focused_field;
                 for (idx, field) in dialog.fields.iter_mut().enumerate() {
                     field.focused = dialog.focused_field == Some(idx);
-                    if field.cursor > field.value.len() {
-                        field.cursor = field.value.len();
-                    }
+                    field.clamp_cursor();
                 }
                 self.sync_shown_dialog(ui_state, id, show);
             }
