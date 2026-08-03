@@ -62,10 +62,42 @@ struct WebViewContainer: UIViewRepresentable {
         // picks the target up. SwiftUI calls this on every update; the
         // coordinator's copy (not webView.url, which the client scrubs)
         // keeps it idempotent.
-        if context.coordinator.bootURL != url {
-            context.coordinator.bootURL = url
+        guard context.coordinator.bootURL != url else { return }
+        let previous = context.coordinator.bootURL
+        context.coordinator.bootURL = url
+        // WKWebView treats a load() whose URL differs only in the #fragment
+        // (same scheme/host/path/query) as an in-page anchor jump: the
+        // document is NOT reloaded and app.js never re-runs. That breaks
+        // Forget / server-swap, where only the boot URL's fragment changes
+        // (e.g. dropping &remote=…). Force a real document load by bouncing
+        // through about:blank first. Android's loadUrl() has no such quirk.
+        if Self.differsOnlyByFragment(previous, url) {
+            webView.load(URLRequest(url: URL(string: "about:blank")!))
+            DispatchQueue.main.async {
+                // Guard against a newer republish landing before this tick.
+                if context.coordinator.bootURL == url {
+                    webView.load(URLRequest(url: url))
+                }
+            }
+        } else {
             webView.load(URLRequest(url: url))
         }
+    }
+
+    /// True when `a` and `b` are the same document (scheme, host, port,
+    /// path, query) and differ only in their #fragment — the case WKWebView
+    /// would skip reloading.
+    private static func differsOnlyByFragment(_ a: URL?, _ b: URL) -> Bool {
+        guard let a,
+              let ca = URLComponents(url: a, resolvingAgainstBaseURL: false),
+              let cb = URLComponents(url: b, resolvingAgainstBaseURL: false)
+        else { return false }
+        return ca.scheme == cb.scheme
+            && ca.host == cb.host
+            && ca.port == cb.port
+            && ca.path == cb.path
+            && ca.query == cb.query
+            && ca.fragment != cb.fragment
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, UIScrollViewDelegate {
