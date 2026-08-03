@@ -374,6 +374,43 @@ impl VellumGuiApp {
         Self::rescale_main_window_rects(rects, from, content_size)
     }
 
+    /// Per-frame canvas tracking: rescale the store from its current anchor
+    /// to the live content size and re-anchor. Returns whether anything
+    /// changed (the caller marks the layout dirty). Rules that keep this
+    /// exact under composition:
+    /// - A degenerate content rect (minimize, first frames before the OS
+    ///   reports real geometry) neither rescales nor moves the anchor, so
+    ///   the true reference survives until real geometry returns.
+    /// - An identity-within-epsilon rescale keeps the OLD anchor: sub-epsilon
+    ///   wobble accumulates against the true reference instead of being
+    ///   dropped a fraction at a time.
+    /// - `None` (fresh profile, no persisted layout) adopts the first real
+    ///   content size without touching rects.
+    pub(super) fn track_canvas_anchor(
+        anchor: &mut Option<Vec2>,
+        rects: &mut HashMap<TabKey, [f32; 4]>,
+        content: Rect,
+    ) -> bool {
+        let content_size = Vec2::new(content.width().max(1.0), content.height().max(1.0));
+        if content_size.x <= 1.0 || content_size.y <= 1.0 {
+            return false;
+        }
+        match *anchor {
+            None => {
+                *anchor = Some(content_size);
+                false
+            }
+            Some(from) => {
+                if Self::apply_layout_rescale(rects, from, content) {
+                    *anchor = Some(content_size);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     pub(super) fn track_main_window_rect(&mut self, key: &TabKey, rect: Rect, bounds: Rect) {
         if !rect.is_finite() || !bounds.is_finite() {
             return;
@@ -773,6 +810,155 @@ mod tests {
             rects[&TabKey::Vitals],
             [10.0, 10.0, 300.0, 18.0],
             "identity apply is a pure no-op"
+        );
+    }
+
+    // ── track_canvas_anchor: continuous OS-resize tracking ──
+
+    #[test]
+    fn canvas_anchor_tracks_continuous_resize_losslessly() {
+        // A drag-resize is hundreds of small canvas changes. Walk the
+        // content size down to a squashed window, out wide, and back to the
+        // start: every rect must return to its original value, because each
+        // step is a pure proportional map and pure scales compose exactly.
+        let originals = [
+            (TabKey::Vitals, [1.0_f32, 1153.0, 1498.0, 38.0]),
+            (TabKey::TextMain, [220.0, 31.0, 909.0, 887.0]),
+        ];
+        let mut rects: HashMap<_, _> = originals.iter().cloned().collect();
+        let mut anchor = Some(Vec2::new(1500.0, 1195.0));
+
+        let mut sizes = Vec::new();
+        for i in 1..=40 {
+            // shrink toward 700x400
+            let t = i as f32 / 40.0;
+            sizes.push(Vec2::new(1500.0 - 800.0 * t, 1195.0 - 795.0 * t));
+        }
+        for i in 1..=40 {
+            // grow toward the wide curved-monitor canvas
+            let t = i as f32 / 40.0;
+            sizes.push(Vec2::new(700.0 + 1858.0 * t, 400.0 + 960.0 * t));
+        }
+        for i in 1..=40 {
+            // and back to the start
+            let t = i as f32 / 40.0;
+            sizes.push(Vec2::new(2558.0 - 1058.0 * t, 1360.0 - 165.0 * t));
+        }
+        for size in sizes {
+            VellumGuiApp::track_canvas_anchor(
+                &mut anchor,
+                &mut rects,
+                Rect::from_min_size(Pos2::ZERO, size),
+            );
+        }
+
+        assert_eq!(anchor, Some(Vec2::new(1500.0, 1195.0)));
+        for (key, original) in originals {
+            let got = rects[&key];
+            for i in 0..4 {
+                assert!(
+                    (got[i] - original[i]).abs() < 0.05,
+                    "{key:?}[{i}] after 120 resize steps: {} vs {}",
+                    got[i],
+                    original[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canvas_anchor_ignores_degenerate_content_and_survives_minimize() {
+        let mut rects = HashMap::new();
+        rects.insert(TabKey::Vitals, [100.0, 100.0, 400.0, 300.0]);
+        let mut anchor = Some(Vec2::new(1500.0, 1195.0));
+        // Minimize: content collapses; nothing moves, anchor survives.
+        let changed = VellumGuiApp::track_canvas_anchor(
+            &mut anchor,
+            &mut rects,
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(0.0, 0.0)),
+        );
+        assert!(!changed);
+        assert_eq!(anchor, Some(Vec2::new(1500.0, 1195.0)));
+        assert_eq!(rects[&TabKey::Vitals], [100.0, 100.0, 400.0, 300.0]);
+        // Restore at a different size: one exact map from the true anchor.
+        VellumGuiApp::track_canvas_anchor(
+            &mut anchor,
+            &mut rects,
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(3000.0, 1195.0)),
+        );
+        let r = rects[&TabKey::Vitals];
+        assert!((r[0] - 200.0).abs() < 0.01 && (r[2] - 800.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn canvas_anchor_first_frame_adopts_content_without_touching_rects() {
+        let mut rects = HashMap::new();
+        rects.insert(TabKey::Vitals, [100.0, 100.0, 400.0, 300.0]);
+        let mut anchor = None;
+        let changed = VellumGuiApp::track_canvas_anchor(
+            &mut anchor,
+            &mut rects,
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(1500.0, 1195.0)),
+        );
+        assert!(!changed);
+        assert_eq!(anchor, Some(Vec2::new(1500.0, 1195.0)));
+        assert_eq!(rects[&TabKey::Vitals], [100.0, 100.0, 400.0, 300.0]);
+    }
+
+    #[test]
+    fn canvas_anchor_subepsilon_wobble_accumulates_against_true_reference() {
+        // ±1px wobble at 1500 wide is inside the 0.1% identity epsilon: no
+        // rescale applies and the anchor must NOT advance, so a later real
+        // resize maps from the true 1500 reference, not a drifted one.
+        let mut rects = HashMap::new();
+        rects.insert(TabKey::Vitals, [100.0, 100.0, 400.0, 300.0]);
+        let mut anchor = Some(Vec2::new(1500.0, 1195.0));
+        for size in [
+            Vec2::new(1501.0, 1195.0),
+            Vec2::new(1499.0, 1194.0),
+            Vec2::new(1500.5, 1195.5),
+        ] {
+            let changed = VellumGuiApp::track_canvas_anchor(
+                &mut anchor,
+                &mut rects,
+                Rect::from_min_size(Pos2::ZERO, size),
+            );
+            assert!(!changed, "wobble {size:?} must not apply");
+            assert_eq!(anchor, Some(Vec2::new(1500.0, 1195.0)));
+        }
+        VellumGuiApp::track_canvas_anchor(
+            &mut anchor,
+            &mut rects,
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(3000.0, 1195.0)),
+        );
+        let r = rects[&TabKey::Vitals];
+        assert!(
+            (r[0] - 200.0).abs() < 0.01,
+            "scale comes from the true anchor, got x={}",
+            r[0]
+        );
+    }
+
+    #[test]
+    fn reanchoring_to_bbox_makes_next_frame_fill_the_canvas() {
+        // Bare `.resize` sets the anchor to the rects' bounding box; the
+        // next frame's tracking then stretches the arrangement out to the
+        // full canvas, absorbing dead space.
+        let mut rects = HashMap::new();
+        rects.insert(TabKey::Vitals, [0.0, 0.0, 500.0, 300.0]);
+        rects.insert(TabKey::TextMain, [500.0, 300.0, 500.0, 500.0]);
+        // Arrangement occupies 1000x800 inside a larger canvas.
+        let mut anchor = Some(Vec2::new(1000.0, 800.0));
+        VellumGuiApp::track_canvas_anchor(
+            &mut anchor,
+            &mut rects,
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(1500.0, 1200.0)),
+        );
+        let main = rects[&TabKey::TextMain];
+        assert!(
+            (main[0] + main[2] - 1500.0).abs() < 0.01
+                && (main[1] + main[3] - 1200.0).abs() < 0.01,
+            "arrangement stretches to the full canvas, got {main:?}"
         );
     }
 

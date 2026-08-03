@@ -407,13 +407,17 @@ pub struct VellumGuiApp {
     /// Fingerprint of the window set backing `available_tabs`; refresh is
     /// skipped while it is unchanged.
     available_tabs_fingerprint: Option<u64>,
-    /// Pending proportional rescale of the docked window rects, deferred to
-    /// the next frame because the target canvas size is only known inside the
-    /// render pass. Holds the save-time canvas size (the "from"); the frame
-    /// loop divides the current content size by it. Set by a layout load /
-    /// startup restore whose rects were captured on a differently-sized
-    /// window, and by the `.resize` command.
-    pending_layout_rescale: Option<egui::Vec2>,
+    /// The canvas size the stored window rects are currently anchored to.
+    /// Every frame, the loop rescales the store (a pure proportional map —
+    /// lossless under composition) from this anchor to the live content size
+    /// and re-anchors, so the store is ALWAYS in current-canvas coordinates
+    /// by render time: OS resizes track smoothly with no debounce, gestures
+    /// write in a consistent space, and a `.savelayout` at any moment records
+    /// rects that match its recorded viewport. Loads and `.resize` steer the
+    /// system by setting the anchor (file's reference canvas / rect bounding
+    /// box) and letting the next frame's apply do the work. None until the
+    /// first frame when starting without a persisted layout.
+    canonical_canvas: Option<egui::Vec2>,
     /// Live front-to-back stacking order of the main-surface windows, refreshed
     /// each frame from egui's layer order (only `ctx` knows it). The save
     /// snapshot reads this so `visible_tabs` records true z-order instead of an
@@ -421,7 +425,7 @@ pub struct VellumGuiApp {
     current_zorder: Vec<TabKey>,
     /// Stacking order to replay next frame (a layout load carries it in
     /// `visible_tabs`). Applied via `move_to_top` back-to-front, deferred
-    /// because restacking needs `ctx`. Mirrors `pending_layout_rescale`.
+    /// because restacking needs `ctx`.
     pending_zorder: Option<Vec<TabKey>>,
     /// A single window to raise to the front next frame (switch_current_window
     /// keybind). Deferred like `pending_zorder` because `move_to_top` needs
@@ -432,14 +436,10 @@ pub struct VellumGuiApp {
     /// Reset when the query or buffer changes. None = not yet stepped.
     search_match_index: Option<usize>,
     /// OS-window geometry to restore for a `.loadlayout` (saved size /
-    /// position / maximized), applied in the frame loop via ViewportCommands
-    /// so the rects land on the same canvas they were saved against.
+    /// position / maximized), applied in the frame loop via ViewportCommands.
+    /// No settle-wait is needed: the per-frame anchor rescale tracks every
+    /// intermediate size the OS passes through and lands 1:1 at the target.
     pending_viewport_restore: Option<MainViewportState>,
-    /// While a viewport restore is in flight: (target canvas size, frames
-    /// left to wait). The deferred rescale holds until the OS window reaches
-    /// the target (rescale becomes ~identity) or the countdown expires (OS
-    /// refused; rescale proportionally into whatever size we got).
-    viewport_settle: Option<(egui::Vec2, u8)>,
     command_input_id: Option<egui::Id>,
     repaint_ctx: std::sync::Arc<std::sync::Mutex<Option<egui::Context>>>,
     layout_save_tx: Option<std::sync::mpsc::Sender<GuiLayoutFileV1>>,
@@ -703,12 +703,12 @@ impl VellumGuiApp {
         let command_history =
             Self::load_command_history(app_core.config.character.as_deref());
 
-        // Queue a first-frame rescale of the restored rects: the OS window is
-        // restored toward the saved viewport size, but a changed monitor or a
-        // maximized-open can land it at a different size, and the rects are
-        // absolute against the save-time canvas. Same deferred path as
-        // `.loadlayout` — it no-ops when the sizes match.
-        let pending_layout_rescale = persisted_layout
+        // Anchor the restored rects to the canvas they were saved against:
+        // the OS window is restored toward the saved viewport size, but a
+        // changed monitor or a maximized-open can land it anywhere, and the
+        // first frame's anchor rescale maps the rects onto whatever size
+        // actually materializes (identity when they match).
+        let canonical_canvas = persisted_layout
             .as_ref()
             .map(|layout| Self::layout_reference_canvas(layout, &main_window_rects));
 
@@ -830,15 +830,14 @@ impl VellumGuiApp {
             search_bar_needs_focus: false,
             search_match_cache: None,
             available_tabs_fingerprint: None,
-            pending_layout_rescale,
+            canonical_canvas,
             current_zorder: Vec::new(),
             pending_zorder,
             pending_raise_tab: None,
             search_match_index: None,
-            // Startup already restores the OS window natively; this pair only
+            // Startup already restores the OS window natively; this only
             // serves runtime `.loadlayout`.
             pending_viewport_restore: None,
-            viewport_settle: None,
             // Fixed id: the TextEdit uses it wherever it renders, so focus
             // routing and cursor placement survive docking moves.
             command_input_id: Some(egui::Id::new(COMMAND_INPUT_EDIT_ID)),
@@ -2979,21 +2978,18 @@ impl VellumGuiApp {
         self.applied_title_font_size = None;
         self.applied_density = None;
         self.applied_window_corner_radius = None;
-        // Rects are stored in absolute points against the save-time canvas.
-        // Loading into a differently-sized window would pin them at those
-        // coordinates (dead space on a larger canvas, clipping on a smaller
-        // one). Defer a proportional rescale to the next frame, when the
-        // live content size is known. `from` is the saved canvas; without a
-        // recorded viewport (legacy checkpoints) fall back to the bounding
-        // box of the saved rects so we still have a reference.
-        self.pending_layout_rescale =
+        // Rects load in absolute points against the save-time canvas: anchor
+        // the store there and let the next frame's rescale map them onto the
+        // live content size. `from` is the saved canvas; without a recorded
+        // viewport (legacy checkpoints) fall back to the bounding box of the
+        // saved rects so we still have a reference.
+        self.canonical_canvas =
             Some(Self::layout_reference_canvas(layout, &self.main_window_rects));
         // Restore the saved OS-window geometry too, so "exact position on
-        // screen" means exactly that: the rects land on the same canvas they
-        // were saved against (the rescale then no-ops). The frame loop sends
-        // the ViewportCommands and holds the rescale until the OS window
-        // settles (or a short timeout — then it rescales proportionally into
-        // whatever size the OS allowed).
+        // screen" means exactly that. No settle-wait: the anchor rescale
+        // tracks every intermediate size while the OS window resizes and
+        // lands 1:1 when it reaches the saved canvas (or maps proportionally
+        // into whatever size the OS allowed).
         self.pending_viewport_restore = layout.main_viewport.clone();
         // Replay the saved stacking order next frame (windows must exist as
         // layers first). visible_tabs is recorded back-to-front; filter to
@@ -3096,7 +3092,14 @@ impl VellumGuiApp {
                 return egui::Vec2::new(w, h);
             }
         }
-        // Bounding box of the saved rects (max right / max bottom edge).
+        Self::rects_bounding_canvas(rects)
+    }
+
+    /// Bounding box of a rect set (max right / max bottom edge), used as a
+    /// reference canvas: by legacy layout files with no recorded viewport,
+    /// and by bare `.resize`, whose fill semantics come exactly from
+    /// anchoring to the box the rects occupy rather than the canvas.
+    fn rects_bounding_canvas(rects: &HashMap<TabKey, [f32; 4]>) -> egui::Vec2 {
         let mut max_x = 0.0_f32;
         let mut max_y = 0.0_f32;
         for rect in rects.values() {
@@ -5611,24 +5614,20 @@ impl VellumGuiApp {
             }
             A::ListLayouts => self.list_layout_checkpoints(),
             A::ResizeLayout => {
-                // The GUI has no cell grid, but the TUI's `.resize` intent —
-                // reflow the windows to fill the current window size — maps
-                // cleanly onto a proportional rescale. A plain OS resize only
-                // displaces windows inward (growing leaves dead space); this
-                // is the explicit "grow/shrink everything to fit now" action.
-                // "from" is the bounding box the rects currently occupy; the
-                // deferred frame pass divides the live content size by it.
+                // The GUI tracks the canvas automatically (per-frame anchor
+                // rescale), so bare `.resize` keeps only its FILL intent:
+                // stretch the arrangement's bounding box out to the full
+                // window, absorbing any dead space the user's manual
+                // arrangement left. Re-anchoring to the bbox makes the next
+                // frame's rescale do exactly that.
                 if self.main_window_rects.is_empty() {
                     self.app_core
                         .add_system_message("No positioned windows to refit.");
                 } else {
-                    let from = Self::layout_reference_canvas(
-                        &GuiLayoutFileV1::new(&self.layout_profile, &self.layout_character),
-                        &self.main_window_rects,
-                    );
-                    self.pending_layout_rescale = Some(from);
+                    self.canonical_canvas =
+                        Some(Self::rects_bounding_canvas(&self.main_window_rects));
                     self.app_core
-                        .add_system_message("Refitting windows to the current size.");
+                        .add_system_message("Refitting windows to fill the current size.");
                 }
             }
             A::SaveSkin(name) => {
@@ -5963,44 +5962,25 @@ impl eframe::App for VellumGuiApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
                 }
             }
-            let [tw, th] = viewport.canvas_size.unwrap_or(viewport.inner_size);
-            if tw.is_finite() && th.is_finite() && tw > 1.0 && th > 1.0 {
-                // ~half a second at 60fps before giving up on the OS resize.
-                self.viewport_settle = Some((egui::vec2(tw, th), 30));
-            }
             ctx.request_repaint();
         }
-        // A layout load / startup restore / `.resize` queued a proportional
-        // rescale; the target canvas size is only knowable here. Scale the
-        // stored rects from the save-time canvas to the current content size,
-        // then clamp each into the live window so nothing lands off-screen.
-        // While a viewport restore is settling, hold: once the OS window
-        // reaches the saved canvas the rescale is an identity (exact rects);
-        // if the countdown expires we rescale into whatever size we got.
-        if self.pending_layout_rescale.is_some() {
+        // Keep the rect store anchored to the live canvas: whenever the
+        // content size drifts from the anchor (OS resize, maximize, a load
+        // or `.resize` that re-pointed the anchor), apply the pure
+        // proportional map and re-anchor. Pure scales compose losslessly, so
+        // windows track a drag-resize smoothly frame by frame and return to
+        // exact positions when the size comes back; display-time clamping
+        // handles tiny canvases without ever writing into the store. A
+        // degenerate content rect (minimize, first frames) leaves the anchor
+        // alone so the real geometry is still the reference on restore.
+        {
             let content = ctx.input(|input| input.content_rect());
-            let content_size =
-                egui::Vec2::new(content.width().max(1.0), content.height().max(1.0));
-            let hold = if let Some((target, frames)) = self.viewport_settle {
-                let close = (content_size.x - target.x).abs() <= 1.5
-                    && (content_size.y - target.y).abs() <= 1.5;
-                if close || frames == 0 {
-                    self.viewport_settle = None;
-                    false
-                } else {
-                    self.viewport_settle = Some((target, frames - 1));
-                    ctx.request_repaint();
-                    true
-                }
-            } else {
-                false
-            };
-            if !hold {
-                if let Some(from) = self.pending_layout_rescale.take() {
-                    if Self::apply_layout_rescale(&mut self.main_window_rects, from, content) {
-                        self.layout_dirty = true;
-                    }
-                }
+            if Self::track_canvas_anchor(
+                &mut self.canonical_canvas,
+                &mut self.main_window_rects,
+                content,
+            ) {
+                self.layout_dirty = true;
             }
         }
         self.apply_theme_if_changed(&ctx);
