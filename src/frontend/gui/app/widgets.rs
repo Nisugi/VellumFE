@@ -3983,20 +3983,43 @@ impl VellumGuiApp {
         } else {
             edit(ui, &mut text)
         };
-        let pressed_enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if response.lost_focus() && pressed_enter {
+        // Which keys drive submit/history/clear-line comes from the keybind
+        // config (stashed each frame by stash_command_input_keys), so rebinding
+        // works; the defaults Enter/↑/↓ are always included there too.
+        let keys = ui
+            .ctx()
+            .data(|data| data.get_temp::<super::CommandInputKeys>(super::CommandInputKeys::id()))
+            .unwrap_or_else(|| super::CommandInputKeys {
+                submit: vec![egui::Key::Enter],
+                history_prev: vec![egui::Key::ArrowUp],
+                history_next: vec![egui::Key::ArrowDown],
+                clear_line: Vec::new(),
+            });
+
+        let pressed_submit = ui.input(|i| keys.submit.iter().any(|k| i.key_pressed(*k)));
+        if response.lost_focus() && pressed_submit {
             echo.submit = true;
             response.request_focus();
         }
-        // History browsing: up = older, down = newer / clear at the newest.
-        // consume_key keeps the arrows from reaching anything else while
-        // the input has focus.
+        // History browsing + clear-line. consume_key keeps these keys from
+        // reaching anything else while the input has focus.
         if response.has_focus() {
-            let up = ui
-                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp));
-            let down = ui
-                .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown));
-            if up {
+            let up = keys
+                .history_prev
+                .iter()
+                .any(|k| ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, *k)));
+            let down = keys
+                .history_next
+                .iter()
+                .any(|k| ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, *k)));
+            let clear = keys
+                .clear_line
+                .iter()
+                .any(|(k, m)| ui.input_mut(|i| i.consume_key(*m, *k)));
+            if clear {
+                text.clear();
+                echo.text = Some(String::new());
+            } else if up {
                 echo.history_prev = true;
             } else if down {
                 echo.history_next = true;
@@ -4156,6 +4179,31 @@ impl VellumGuiApp {
             hold = match kind {
                 1 => Some(0.0),      // home
                 2 => None,           // end: drop the hold, stickiness resumes
+                3 => {
+                    // Absolute: scroll so buffer line `value` sits near the top.
+                    // The height cache covers only the rendered tail (lines
+                    // `start..`), so map the absolute index into it and sum the
+                    // preceding rows' strides. Out-of-range clamps to the ends.
+                    let target_line = value as usize;
+                    let offset = if target_line < start {
+                        Some(0.0)
+                    } else {
+                        let rendered_idx = target_line - start;
+                        let cache = cache_handle.lock().expect("row height cache poisoned");
+                        if rendered_idx >= cache.heights.len() {
+                            None // past the cached tail → fall through to end
+                        } else {
+                            Some(
+                                cache.heights[..rendered_idx]
+                                    .iter()
+                                    .map(|h| h + outer_spacing_y)
+                                    .sum::<f32>()
+                                    .max(0.0),
+                            )
+                        }
+                    };
+                    offset
+                }
                 _ => Some((current.unwrap_or(0.0) + value).max(0.0)),
             };
             if hold.is_none() {

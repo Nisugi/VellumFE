@@ -676,6 +676,24 @@ impl VellumGuiApp {
         }
     }
 
+    /// Raise a single main-surface window to the front (switch_current_window).
+    /// Unlike `apply_stacking_order` this does NOT overwrite `current_zorder`;
+    /// the next frame's `refresh_zorder_cache` reads the resulting order.
+    pub(super) fn raise_tab_to_front(&mut self, ctx: &egui::Context, key: &TabKey) {
+        if self.hidden_tabs.contains(key)
+            || self.detached_tabs.contains_key(key)
+            || !self.available_tabs.contains_key(key)
+        {
+            return;
+        }
+        let layer = egui::LayerId::new(
+            egui::Order::Middle,
+            Self::zone_window_id(self.zone_for_tab(key), key),
+        );
+        ctx.move_to_top(layer);
+        ctx.request_repaint();
+    }
+
     fn zone_surface_tabs(&self, detached_tabs: &HashSet<TabKey>, zone: GuiShellZone) -> Vec<GuiTab> {
         let mut tabs: Vec<(i32, i32, String, GuiTab)> = self
             .available_tabs
