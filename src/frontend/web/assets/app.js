@@ -1446,6 +1446,10 @@ let gpWheelFired = false;
 // After a wheel closes with the aim stick still deflected, its normal
 // function (scroll / interact cycle) stays suppressed until it recenters.
 let gpAimRecenterNeeded = false;
+// Absolute pixel anchor for the touch wheel's SVG (null = the gamepad
+// wheel, which stays flex-centered). Declared here so renderWheel — which
+// runs for both wheels — can read it without a temporal-dead-zone hazard.
+let touchAnchor = null;
 // Sentinel command/marker for the injected Back slice (wheel-core.js).
 const WHEEL_BACK = WheelCore.WHEEL_BACK;
 
@@ -1471,6 +1475,34 @@ function gpHeldWheelKey() {
   return null;
 }
 
+// ---- Touch wheel -----------------------------------------------------------
+// The phone's OWN wheel (key "touch"), opened by a long-press and aimed with
+// the thumb. Distinct from the gamepad wheels: its top level is client
+// actions (open the drawer sections the P1/P2 feeds populate, the map, the
+// command input) plus a "Commands" folder that descends into the host's
+// default wheel so gamepad commands are thumb-reachable too. A slice with a
+// `client` field runs locally on fire; everything else fires to the host
+// exactly like the gamepad wheel. The host can override this by pushing a
+// `touch` wheel in the `wheels` message.
+const TOUCH_WHEEL_DEFAULT = [
+  { label: "Look", client: "cmd:look" },
+  { label: "Room", client: "open:room" },
+  { label: "Players", client: "open:players" },
+  { label: "Spells", client: "open:spells" },
+  { label: "Inventory", client: "open:inv" },
+  { label: "Map", client: "open:map" },
+  { label: "Commands", slices: "@default" },
+  { label: "Type", client: "focus:input" },
+];
+
+// The touch wheel's top-level ring: the host override if pushed, else the
+// built-in default. A slice whose `slices` is the "@default" sentinel is a
+// folder that descends into the host default wheel.
+function touchWheelTop() {
+  const override = (wheels.named || {}).touch;
+  return Array.isArray(override) ? override : TOUCH_WHEEL_DEFAULT;
+}
+
 // The room's portal commands ("go arch"), pushed by the host for the
 // dynamic "portals" wheel; picks resolve server-side by index.
 let portalCommands = [];
@@ -1492,6 +1524,22 @@ function wheelLevelSlices(key, path) {
         ? command.slice(command.indexOf(" ") + 1)
         : command,
     }));
+  }
+  if (key === "touch") {
+    let level = touchWheelTop();
+    // A "@default" folder descends into the host's default wheel; deeper
+    // levels then resolve within that wheel.
+    let intoDefault = false;
+    for (let i = 0; i < path.length; i++) {
+      if (!intoDefault && level[path[i]] && level[path[i]].slices === "@default") {
+        level = wheels.default;
+        intoDefault = true;
+        continue;
+      }
+      level = (level[path[i]] || {}).slices;
+      if (!Array.isArray(level)) return null;
+    }
+    return Array.isArray(level) ? level : null;
   }
   let level = key ? (wheels.named || {})[key] : wheels.default;
   if (!Array.isArray(level)) return null;
@@ -1522,6 +1570,234 @@ function sendWheelPick(key, path) {
   state.ws.send(JSON.stringify({ t: "wheel_pick", d: { key, path } }));
 }
 
+// Run a client-side wheel action ("open:room", "cmd:look", "focus:input").
+// Returns true if it was a client action (so the caller skips the host pick).
+function runWheelClientAction(action) {
+  if (typeof action !== "string") return false;
+  const [verb, arg] = action.split(":", 2);
+  if (verb === "open") {
+    // "map" opens the map overlay; everything else opens the status drawer
+    // and scrolls its matching section into view. "inv" is a stream chip,
+    // not a drawer section, so it switches to that chip instead.
+    if (arg === "map") { openMapOverlay(); return true; }
+    if (arg === "inv") { setActiveStream("inv"); return true; }
+    openDrawer("right");
+    scrollDrawerToSection(arg);
+    return true;
+  }
+  if (verb === "cmd") { sendCommand(arg); return true; }
+  if (verb === "focus") { if (arg === "input") cmdInput.focus(); return true; }
+  return false;
+}
+
+// Scroll a status-drawer section title into view by its arg ("room" ->
+// "Room", "players" -> "Players", …). No-op if the section isn't present.
+const DRAWER_SECTION_TITLES = {
+  room: "Room", players: "Players", spells: "Spells", injuries: "Injuries",
+};
+function scrollDrawerToSection(arg) {
+  const want = DRAWER_SECTION_TITLES[arg];
+  if (!want) return;
+  const title = [...document.querySelectorAll("#status-content .status-title")]
+    .find((t) => t.textContent === want);
+  if (title) title.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+// Fire a touch-wheel leaf: run its client action locally, or fall back to a
+// host wheel_pick (the "Commands" folder descends into the host default
+// wheel, so those leaves resolve server-side by their real path).
+function fireTouchLeaf(path) {
+  const slices = wheelLevelSlices("touch", path.slice(0, -1));
+  const leaf = Array.isArray(slices) ? slices[path[path.length - 1]] : null;
+  if (leaf && runWheelClientAction(leaf.client)) return;
+  // Not a client slice — it's a command from the descended host wheel.
+  // Strip the leading "Commands" folder index so the host resolves the
+  // pick against its own default wheel.
+  wheelFire("", stripTouchCommandsPrefix(path));
+}
+
+// A touch path that descended through the "Commands" folder looks like
+// [commandsIdx, ...hostPath]; the host wants just hostPath against its
+// default wheel. Non-Commands paths never reach wheelFire (client actions).
+function stripTouchCommandsPrefix(path) {
+  const top = touchWheelTop();
+  if (path.length && top[path[0]] && top[path[0]].slices === "@default") {
+    return path.slice(1);
+  }
+  return path;
+}
+
+// ---- Touch wheel input -----------------------------------------------------
+// Long-press anywhere (outside the exclusion list) blooms the touch wheel
+// under the thumb. Dragging toward a slice aims it (the shared wheel-core
+// machine handles descend-on-dwell + the persistence latch); lifting fires
+// the committed leaf (release mode). The wheel re-centers under the thumb on
+// each descend so consecutive submenus stay in comfortable reach.
+const TOUCH_WHEEL_LONGPRESS_MS = 300;
+// Pixel radius from the wheel center at which the thumb reaches full
+// deflection (magnitude 1). Derived from the rendered SVG each open.
+let touchWheelRadiusPx = 120;
+// Screen-space center of the wheel (where the thumb aims from); re-set on
+// each descend for re-center-under-thumb. (touchAnchor is declared up with
+// the gamepad wheel state so renderWheel can read it.)
+let touchWheelCenter = null;
+let touchLongPressTimer = 0;
+let touchActiveId = null; // the pointerId driving the wheel, if open
+let touchLastDepth = 0;   // gpWheel.path.length last frame (detect descend)
+// Last thumb position while the wheel is open, and the dwell-tick timer that
+// re-feeds it. The dwell/commit machine only advances when wheelAim runs; a
+// motionless thumb sends no pointermove, so without this tick a slice held
+// still would never commit or a folder never descend.
+let touchLastPoint = null;
+let touchDwellTick = 0;
+
+// Elements whose own gestures own a long-press (or that shouldn't spawn a
+// wheel): the wheel must not steal from them.
+function touchWheelExcluded(target) {
+  return !!target.closest(
+    "#chips, #macro-rail, .float-btn, .drawer, .drawer-handle, #repeat-btn, " +
+    "span.link, #wheel-overlay, #sheet, #map-overlay, #session-overlay, " +
+    ".overlay, input, textarea, button, a, #interact-bar",
+  );
+}
+
+// Normalize a client point to the aim vector the wheel machine expects:
+// (x right, yUp up), magnitude 0..1 at the deflection radius.
+function touchAimVector(clientX, clientY) {
+  const dx = clientX - touchWheelCenter.x;
+  const dy = clientY - touchWheelCenter.y;
+  const x = dx / touchWheelRadiusPx;
+  const yUp = -dy / touchWheelRadiusPx; // screen y grows down; aim y grows up
+  return { x, yUp };
+}
+
+// Clamp the wheel center inward so a thumb near a screen edge doesn't push
+// the ring off-screen (the aim vector still originates from the real thumb).
+function clampWheelCenter(x, y) {
+  const margin = touchWheelRadiusPx + 12;
+  return {
+    x: Math.min(window.innerWidth - margin, Math.max(margin, x)),
+    y: Math.min(window.innerHeight - margin, Math.max(margin, y)),
+  };
+}
+
+function openTouchWheel(clientX, clientY) {
+  if (gpWheel) return; // a wheel (gamepad or touch) is already up
+  touchWheelCenter = clampWheelCenter(clientX, clientY);
+  touchAnchor = { x: touchWheelCenter.x, y: touchWheelCenter.y };
+  gpWheel = {
+    key: "touch", path: [], aimed: null,
+    candidate: null, candidateSince: 0, rearmUntilCenter: false,
+    peakMagnitude: 0,
+  };
+  touchLastDepth = 0;
+  touchLastPoint = { x: clientX, y: clientY };
+  renderWheel();
+  // Measure the real on-screen deflection radius from the rendered SVG
+  // (outer wedge is 104/110 of the SVG half-size).
+  const svg = wheelOverlay.querySelector("svg");
+  if (svg) {
+    const rect = svg.getBoundingClientRect();
+    touchWheelRadiusPx = (rect.width / 2) * (104 / 110);
+  }
+  // Dwell tick: re-feed the last thumb position so a held-still slice commits
+  // (and folders descend) without needing pointermove jitter.
+  clearInterval(touchDwellTick);
+  touchDwellTick = setInterval(() => {
+    if (gpWheel && gpWheel.key === "touch" && touchLastPoint) {
+      const { x, yUp } = touchAimVector(touchLastPoint.x, touchLastPoint.y);
+      wheelAim(x, yUp);
+    }
+  }, 33);
+}
+
+function closeTouchWheel() {
+  gpWheel = null;
+  touchAnchor = null;
+  touchActiveId = null;
+  touchLastPoint = null;
+  clearInterval(touchDwellTick);
+  touchDwellTick = 0;
+  hideWheel();
+}
+
+// Feed one thumb move into the wheel; re-center under the thumb when a
+// descend just changed the level.
+function touchWheelMove(clientX, clientY) {
+  if (!gpWheel || gpWheel.key !== "touch") return;
+  touchLastPoint = { x: clientX, y: clientY };
+  const before = gpWheel.path.length;
+  const { x, yUp } = touchAimVector(clientX, clientY);
+  wheelAim(x, yUp);
+  // If wheelAim descended/ascended a level, re-center the ring under the
+  // current thumb so the next swipe starts from neutral in easy reach.
+  if (gpWheel && gpWheel.path.length !== before) {
+    touchWheelCenter = clampWheelCenter(clientX, clientY);
+    touchAnchor = { x: touchWheelCenter.x, y: touchWheelCenter.y };
+    renderWheel();
+  }
+}
+
+// Lift the thumb: fire the committed leaf (release mode), then close.
+function touchWheelRelease() {
+  if (!gpWheel || gpWheel.key !== "touch") { closeTouchWheel(); return; }
+  const { path, aimed } = gpWheel;
+  const view = wheelView("touch", path);
+  const real = view ? WheelCore.leafRealAt(view, aimed) : null;
+  closeTouchWheel();
+  if (real != null) fireTouchLeaf([...path, real]);
+}
+
+// Long-press detection: arm a timer on pointerdown, open the wheel if the
+// thumb stays roughly put until it elapses; any real movement or lift before
+// then cancels (it was a tap/scroll, not a wheel gesture).
+document.addEventListener("pointerdown", (ev) => {
+  if (ev.pointerType === "mouse" && ev.button !== 0) return;
+  if (gpWheel) return;
+  if (touchWheelExcluded(ev.target)) return;
+  const startX = ev.clientX;
+  const startY = ev.clientY;
+  const pointerId = ev.pointerId;
+  clearTimeout(touchLongPressTimer);
+  touchLongPressTimer = setTimeout(() => {
+    openTouchWheel(startX, startY);
+    touchActiveId = pointerId;
+  }, TOUCH_WHEEL_LONGPRESS_MS);
+
+  // Cancel the long-press if the thumb wanders before it fires.
+  const onEarlyMove = (mv) => {
+    if (Math.hypot(mv.clientX - startX, mv.clientY - startY) > 10 && !gpWheel) {
+      clearTimeout(touchLongPressTimer);
+      cleanup();
+    }
+  };
+  const cleanup = () => {
+    document.removeEventListener("pointermove", onEarlyMove);
+    document.removeEventListener("pointerup", onEarlyUp);
+    document.removeEventListener("pointercancel", onEarlyUp);
+  };
+  const onEarlyUp = () => { clearTimeout(touchLongPressTimer); cleanup(); };
+  document.addEventListener("pointermove", onEarlyMove);
+  document.addEventListener("pointerup", onEarlyUp);
+  document.addEventListener("pointercancel", onEarlyUp);
+});
+
+// While the touch wheel is up, its pointer drives aiming and lift fires.
+document.addEventListener("pointermove", (ev) => {
+  if (touchActiveId === null || ev.pointerId !== touchActiveId) return;
+  ev.preventDefault();
+  touchWheelMove(ev.clientX, ev.clientY);
+}, { passive: false });
+
+document.addEventListener("pointerup", (ev) => {
+  if (touchActiveId === null || ev.pointerId !== touchActiveId) return;
+  touchWheelRelease();
+});
+document.addEventListener("pointercancel", (ev) => {
+  if (touchActiveId === null || ev.pointerId !== touchActiveId) return;
+  closeTouchWheel();
+});
+
 const wheelOverlay = document.getElementById("wheel-overlay");
 const WHEEL_SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -1536,6 +1812,8 @@ function wheelSvgEl(tag, attrs, style) {
 function hideWheel() {
   wheelOverlay.hidden = true;
   wheelOverlay.replaceChildren();
+  // Clear the touch anchor so a subsequent gamepad wheel renders centered.
+  touchAnchor = null;
 }
 
 // Draw the current wheel level: a ring of wedges around the screen
@@ -1682,6 +1960,15 @@ function renderWheel() {
   hintText.textContent = hint;
   svg.appendChild(hintText);
 
+  // Anchor the wheel under the thumb for the touch wheel; the gamepad wheel
+  // stays flex-centered (touchAnchor null). The overlay flips to absolute
+  // positioning only while anchored.
+  if (touchAnchor) {
+    svg.style.position = "absolute";
+    svg.style.left = `${touchAnchor.x}px`;
+    svg.style.top = `${touchAnchor.y}px`;
+    svg.style.transform = "translate(-50%, -50%)";
+  }
   wheelOverlay.replaceChildren(svg);
   wheelOverlay.hidden = false;
 }
@@ -2244,11 +2531,17 @@ function wheelAim(x, yUp) {
 // [controller_tuning] snapshot in the units the machine consumes
 // (magnitudes 0..1, dwells in ms).
 function wheelTimingSnapshot() {
+  // The touch wheel is always release-mode (descend on dwell, fire on lift)
+  // regardless of the host's gamepad fire_mode — an edge/retract touch wheel
+  // would fire mid-drag while the thumb is still navigating. (Tap-slice is a
+  // planned future alternative; this is where that mode would branch.)
+  const fireMode =
+    gpWheel && gpWheel.key === "touch" ? "release" : (wheelTuning.fire_mode || "release");
   return {
     deadzone: wheelDeadzone(),
     aimMs: wheelTuning.aim_dwell_ms || 0,
     navMs: wheelTuning.nav_dwell_ms || 0,
-    fireMode: wheelTuning.fire_mode || "release",
+    fireMode,
     edgeThreshold: Math.min(1, Math.max(0, (wheelTuning.edge_threshold || 0) / 100)),
     retractDelta: Math.min(1, Math.max(0, (wheelTuning.retract_delta || 0) / 100)),
   };
