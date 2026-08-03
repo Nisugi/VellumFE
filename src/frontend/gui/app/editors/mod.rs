@@ -20,6 +20,7 @@ mod packs;
 mod settings;
 mod sorter;
 mod themes;
+mod touch_wheel;
 mod windows;
 
 pub(super) use colors::ColorsEditorState;
@@ -40,6 +41,7 @@ pub(super) use packs::PackEditorState;
 pub(super) use settings::SettingsEditorState;
 pub(super) use sorter::SorterEditorState;
 pub(super) use themes::{ThemeBrowserState, ThemeEditorState};
+pub(super) use touch_wheel::TouchWheelEditorState;
 pub(super) use windows::WindowEditorState;
 
 use super::{theme, VellumGuiApp};
@@ -84,6 +86,7 @@ impl VellumGuiApp {
         self.render_dashboard_editor(ctx);
         self.render_jinx_panel(ctx);
         self.render_sorter_editor(ctx);
+        self.render_touch_wheel_editor(ctx);
         self.render_doll_calibration(ctx);
         self.render_pack_editor(ctx);
     }

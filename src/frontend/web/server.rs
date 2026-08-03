@@ -908,6 +908,29 @@ async fn handle_client_message(
                 colors,
             })
             .is_ok(),
+        ClientMessage::TouchWheelGet { request_id, scope } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::TouchWheelGet {
+                client_id,
+                request_id,
+                scope,
+            })
+            .is_ok(),
+        ClientMessage::TouchWheelPut {
+            request_id,
+            scope,
+            slices,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::TouchWheelPut {
+                client_id,
+                request_id,
+                scope,
+                slices,
+            })
+            .is_ok(),
         ClientMessage::HighlightDelete {
             request_id,
             scope,
@@ -1097,6 +1120,7 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     | RemoteDelta::ConfigFile { client_id: target, .. }
                     | RemoteDelta::Highlights { client_id: target, .. }
                     | RemoteDelta::Colors { client_id: target, .. }
+                    | RemoteDelta::TouchWheel { client_id: target, .. }
                     | RemoteDelta::Settings { client_id: target, .. }
                     | RemoteDelta::Streams { client_id: target, .. }
                     | RemoteDelta::MapLocations { client_id: target, .. }

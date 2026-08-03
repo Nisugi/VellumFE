@@ -53,6 +53,7 @@ impl Config {
         config.controller_wheels = Self::load_controller_wheels(character).unwrap_or_default();
         config.controller_wheels_meta =
             Self::load_controller_wheels_meta(character).unwrap_or_default();
+        config.touch_wheel = Self::load_touch_wheel(character).unwrap_or_default();
         config.controller_overlay = Self::load_controller_overlay(character).unwrap_or_default();
         config.controller_rumble = Self::load_controller_rumble(character).unwrap_or_default();
         config.controller_tuning = Self::load_controller_tuning(character).unwrap_or_default();
@@ -581,6 +582,7 @@ impl Config {
         config.controller_wheels = Self::load_controller_wheels(character).unwrap_or_default();
         config.controller_wheels_meta =
             Self::load_controller_wheels_meta(character).unwrap_or_default();
+        config.touch_wheel = Self::load_touch_wheel(character).unwrap_or_default();
         config.controller_overlay = Self::load_controller_overlay(character).unwrap_or_default();
         config.controller_rumble = Self::load_controller_rumble(character).unwrap_or_default();
         config.controller_tuning = Self::load_controller_tuning(character).unwrap_or_default();
@@ -784,6 +786,8 @@ impl Default for Config {
             controller_shift_binds: HashMap::new(), // Loaded from [controller_shift]
             controller_wheel: Vec::new(),   // Loaded from [[controller_wheel]]
             controller_wheels: HashMap::new(), // Loaded from [controller_wheels.<name>]
+            touch_wheel: Vec::new(),        // Loaded from [touch_wheel] slices
+
             controller_wheels_meta: HashMap::new(), // Loaded from [controller_wheels_meta.<name>]
             controller_overlay: Vec::new(), // Loaded from [controller_overlay]
             controller_rumble: RumbleConfig::default(),

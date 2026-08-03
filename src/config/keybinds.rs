@@ -344,6 +344,13 @@ pub struct WheelSlice {
     pub label: String,
     #[serde(default)]
     pub command: String,
+    /// Optional client-side action for the touch wheel (`open:room`,
+    /// `open:map`, `focus:input`, …). Unlike `command` (a game command that
+    /// resolves server-side by index and never ships), a client action is a
+    /// safe UI verb that DOES ship to the phone, which runs it locally. The
+    /// gamepad wheel ignores this; only the touch wheel uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
     /// Optional wedge tint (hex or palette name) — dim normally, bright
     /// while aimed, so wheels can be color-coded by function.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -376,6 +383,34 @@ pub struct WheelSlice {
     /// edits (move, mirror, delete) carry them along for free.
     #[serde(skip)]
     pub locked: bool,
+}
+
+/// The client-action vocabulary a touch-wheel slice's `client` field may
+/// use, shipped to the editor UIs so they render the same picker the runtime
+/// understands (a field added here surfaces in both frontends without a
+/// client edit, and can't silently drift). Each entry is (action, label).
+pub const TOUCH_WHEEL_CLIENT_ACTIONS: &[(&str, &str)] = &[
+    ("open:room", "Open Room panel"),
+    ("open:players", "Open Players panel"),
+    ("open:spells", "Open Spells panel"),
+    ("open:inv", "Open Inventory"),
+    ("open:map", "Open Map"),
+    ("focus:input", "Focus command input"),
+];
+
+/// The touch-wheel action catalog as wire JSON for the editor UIs:
+/// `{ client_actions: [{action,label}], slice_kinds: [...] }`.
+pub fn touch_wheel_action_catalog() -> serde_json::Value {
+    let client_actions: Vec<serde_json::Value> = TOUCH_WHEEL_CLIENT_ACTIONS
+        .iter()
+        .map(|(action, label)| serde_json::json!({ "action": action, "label": label }))
+        .collect();
+    serde_json::json!({
+        "client_actions": client_actions,
+        // A slice is one of: a client action, a game command, or a folder
+        // (nested slices). The editors branch on these.
+        "slice_kinds": ["client", "command", "folder"],
+    })
 }
 
 impl WheelSlice {
@@ -1484,6 +1519,38 @@ impl Config {
         };
         // Last layer that defines the ring wins (character over global).
         Ok(last_controller_value(&Self::controller_layers(character), slices_from).unwrap_or_default())
+    }
+
+    /// Load the phone's touch wheel from `[touch_wheel]` (character over
+    /// global, like the controller wheels). Empty when unset — the phone
+    /// then falls back to its built-in default ring.
+    pub fn load_touch_wheel(character: Option<&str>) -> Result<Vec<WheelSlice>> {
+        let slices_from = |contents: &str| -> Option<Vec<WheelSlice>> {
+            let toml_value: toml::Value = toml::from_str(contents).ok()?;
+            toml_value.get("touch_wheel")?.get("slices")?.clone().try_into().ok()
+        };
+        Ok(last_controller_value(&Self::controller_layers(character), slices_from).unwrap_or_default())
+    }
+
+    /// Replace the touch wheel's slice list in the controller config
+    /// (character scope when a character is given, else global). An empty
+    /// list clears it (the phone reverts to its built-in default).
+    pub fn save_touch_wheel(
+        slices: &[WheelSlice],
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut toml_table) = Self::load_controller_table(is_global, character)?;
+        let section = toml_table
+            .entry("touch_wheel".to_string())
+            .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+        if let toml::Value::Table(table) = section {
+            table.insert(
+                "slices".to_string(),
+                toml::Value::try_from(slices).context("Failed to serialize touch wheel")?,
+            );
+        }
+        Self::write_controller_table(&path, &toml_table)
     }
 
     /// Load the overlay legend's curated entries from
@@ -3173,6 +3240,48 @@ command = \"fire\"
             v.get("controller_shift").and_then(|s| s.get("south")).and_then(|s| s.get("macro_text")).and_then(|m| m.as_str()),
             Some("stand\r")
         );
+    }
+
+    #[test]
+    fn touch_wheel_slice_client_action_round_trips() {
+        // A client-action slice keeps its `client` field through TOML; a
+        // plain command slice emits no `client` key (skip_serializing_if).
+        let slices = vec![
+            WheelSlice { label: "Room".into(), client: Some("open:room".into()), ..Default::default() },
+            WheelSlice { label: "Look".into(), command: "look".into(), ..Default::default() },
+        ];
+        // Serialize the way save_touch_wheel does — a Value array under a key
+        // (a bare top-level array of tables isn't valid TOML).
+        let value = toml::Value::try_from(&slices).unwrap();
+        let toml_str = toml::to_string(&toml::toml! { slices = (value) }).unwrap();
+        assert!(toml_str.contains("client = \"open:room\""), "client action must serialize: {toml_str}");
+        // Round-trip back and confirm the command slice carries no client key.
+        #[derive(serde::Deserialize)]
+        struct Wrap { slices: Vec<WheelSlice> }
+        let back: Wrap = toml::from_str(&toml_str).unwrap();
+        assert_eq!(back.slices[0].client.as_deref(), Some("open:room"));
+        assert_eq!(back.slices[1].client, None);
+        assert_eq!(back.slices[1].command, "look");
+    }
+
+    #[test]
+    fn touch_wheel_action_catalog_lists_client_actions_and_kinds() {
+        // The catalog the editors render from must expose every action in
+        // TOUCH_WHEEL_CLIENT_ACTIONS plus the three slice kinds. A drift
+        // tripwire: adding an action here surfaces it in both frontends.
+        let catalog = touch_wheel_action_catalog();
+        let actions = catalog["client_actions"].as_array().unwrap();
+        assert_eq!(actions.len(), TOUCH_WHEEL_CLIENT_ACTIONS.len());
+        for (action, label) in TOUCH_WHEEL_CLIENT_ACTIONS {
+            assert!(
+                actions.iter().any(|a| a["action"] == *action && a["label"] == *label),
+                "catalog missing {action}"
+            );
+        }
+        let kinds = catalog["slice_kinds"].as_array().unwrap();
+        assert!(kinds.iter().any(|k| k == "client"));
+        assert!(kinds.iter().any(|k| k == "command"));
+        assert!(kinds.iter().any(|k| k == "folder"));
     }
 
     #[test]

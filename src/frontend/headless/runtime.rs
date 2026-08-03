@@ -1036,6 +1036,23 @@ fn handle_remote_event(
             app_core.handle_remote_colors_put(client_id, request_id, scope, colors);
             true
         }
+        RemoteEvent::TouchWheelGet {
+            client_id,
+            request_id,
+            scope,
+        } => {
+            app_core.handle_remote_touch_wheel_get(client_id, request_id, scope);
+            true
+        }
+        RemoteEvent::TouchWheelPut {
+            client_id,
+            request_id,
+            scope,
+            slices,
+        } => {
+            app_core.handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
+            true
+        }
         RemoteEvent::MapLocations {
             client_id,
             request_id,

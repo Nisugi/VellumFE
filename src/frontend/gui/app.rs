@@ -366,6 +366,7 @@ pub struct VellumGuiApp {
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
     sorter_editor: Option<editors::SorterEditorState>,
+    touch_wheel_editor: Option<editors::TouchWheelEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
     pack_editor: Option<editors::PackEditorState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
@@ -769,6 +770,7 @@ impl VellumGuiApp {
             custom_windows_editor: None,
             known_windows_editor: None,
             sorter_editor: None,
+            touch_wheel_editor: None,
             doll_calibration: None,
             pack_editor: None,
             pending_editor_raise: None,
@@ -3220,6 +3222,23 @@ impl VellumGuiApp {
                     self.app_core
                         .handle_remote_colors_put(client_id, request_id, scope, colors);
                 }
+                crate::core::remote::RemoteEvent::TouchWheelGet {
+                    client_id,
+                    request_id,
+                    scope,
+                } => {
+                    self.app_core
+                        .handle_remote_touch_wheel_get(client_id, request_id, scope);
+                }
+                crate::core::remote::RemoteEvent::TouchWheelPut {
+                    client_id,
+                    request_id,
+                    scope,
+                    slices,
+                } => {
+                    self.app_core
+                        .handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
+                }
                 crate::core::remote::RemoteEvent::MapLocations {
                     client_id,
                     request_id,
@@ -5014,6 +5033,7 @@ impl VellumGuiApp {
                 }
             },
             A::SorterEdit => self.open_sorter_editor(),
+            A::TouchWheelEditor => self.open_touch_wheel_editor(),
             A::SnapDebug => {
                 self.snap_debug = !self.snap_debug;
                 self.app_core.add_system_message(if self.snap_debug {

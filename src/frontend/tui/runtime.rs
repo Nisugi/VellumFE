@@ -715,6 +715,21 @@ async fn async_run(
                     } => {
                         app_core.handle_remote_colors_put(client_id, request_id, scope, colors);
                     }
+                    crate::core::remote::RemoteEvent::TouchWheelGet {
+                        client_id,
+                        request_id,
+                        scope,
+                    } => {
+                        app_core.handle_remote_touch_wheel_get(client_id, request_id, scope);
+                    }
+                    crate::core::remote::RemoteEvent::TouchWheelPut {
+                        client_id,
+                        request_id,
+                        scope,
+                        slices,
+                    } => {
+                        app_core.handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
+                    }
                     crate::core::remote::RemoteEvent::MapLocations {
                         client_id,
                         request_id,

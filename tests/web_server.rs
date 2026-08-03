@@ -555,6 +555,67 @@ async fn room_description_and_spellbook_flow_in_snapshot_and_deltas() {
 }
 
 #[tokio::test]
+async fn touch_wheel_get_and_put_arrive_as_addressed_events() {
+    let (_sink, mut event_rx, addr) = start_server(100).await;
+    let (mut editor, _) = connect_and_sync(addr, 0).await;
+
+    // A get carries the scope through as a TouchWheelGet event.
+    editor
+        .send_text(r#"{"t":"touch_wheel_get","d":{"request_id":3,"scope":"profile"}}"#)
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out waiting for touch_wheel_get")
+        .expect("event channel open");
+    let RemoteEvent::TouchWheelGet {
+        request_id, scope, ..
+    } = event
+    else {
+        panic!("expected TouchWheelGet event, got {event:?}");
+    };
+    assert_eq!(request_id, 3);
+    assert_eq!(scope, "profile");
+
+    // A put carries the slice array through as a TouchWheelPut event.
+    editor
+        .send_text(
+            r#"{"t":"touch_wheel_put","d":{"request_id":4,"scope":"profile","slices":[{"label":"Room","client":"open:room"},{"label":"Look","command":"look"}]}}"#,
+        )
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out waiting for touch_wheel_put")
+        .expect("event channel open");
+    let RemoteEvent::TouchWheelPut {
+        request_id,
+        scope,
+        slices,
+        ..
+    } = event
+    else {
+        panic!("expected TouchWheelPut event, got {event:?}");
+    };
+    assert_eq!(request_id, 4);
+    assert_eq!(scope, "profile");
+    let arr = slices.as_array().expect("slices is an array");
+    assert_eq!(arr.len(), 2);
+    assert_eq!(arr[0]["label"], "Room");
+    assert_eq!(arr[0]["client"], "open:room");
+    assert_eq!(arr[1]["command"], "look");
+
+    // A malformed put (slices not an array) is rejected client-side and
+    // produces no event.
+    editor
+        .send_text(r#"{"t":"touch_wheel_put","d":{"request_id":5,"scope":"profile","slices":"nope"}}"#)
+        .await;
+    let timed_out =
+        tokio::time::timeout(std::time::Duration::from_millis(300), event_rx.recv())
+            .await
+            .is_err();
+    assert!(timed_out, "a non-array touch_wheel_put must not emit an event");
+}
+
+#[tokio::test]
 async fn wheels_flow_definitions_out_picks_in() {
     let (mut sink, mut event_rx, addr) = start_server(100).await;
 

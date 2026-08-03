@@ -622,6 +622,16 @@ pub fn handle_ui_action(
             }
             app_core.needs_render = true;
         }
+        UiAction::TouchWheelEditor => {
+            // The touch wheel is the phone's long-press ring; it's edited
+            // from the phone or the GUI, which both write the shared config.
+            app_core.add_system_message(
+                "The touch wheel is the phone's long-press radial wheel. \
+                 Edit it from the phone (Settings > Touch wheel) or the \
+                 desktop GUI — both save to the same config.",
+            );
+            app_core.needs_render = true;
+        }
         UiAction::SorterEdit => {
             // TUI parity for the structured editor (rules/order/renames)
             // is planned; the scalar toggles already ride the registry.

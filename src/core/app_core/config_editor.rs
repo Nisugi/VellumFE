@@ -533,6 +533,68 @@ impl AppCore {
         }
     }
 
+    // ---- Touch wheel (phone + GUI wheel editor) -------------------------
+
+    /// Send the touch wheel's slices + the client-action vocabulary catalog
+    /// to the requesting client. Empty slices means "unset" — the editor
+    /// offers to start from the built-in default.
+    pub fn handle_remote_touch_wheel_get(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+    ) {
+        let character = self.config.character.as_deref();
+        let slices = crate::config::Config::load_touch_wheel(character).unwrap_or_default();
+        let slices_json = serde_json::to_value(&slices).unwrap_or(serde_json::Value::Null);
+        let catalog = crate::config::touch_wheel_action_catalog();
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_touch_wheel(client_id, request_id, scope, slices_json, catalog, None, false);
+        }
+    }
+
+    /// Validate (deserialize into WheelSlice list), write to the controller
+    /// config, hot-reload, and re-broadcast the `wheels` message so the touch
+    /// wheel applies live on every connected client.
+    pub fn handle_remote_touch_wheel_put(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        slices: serde_json::Value,
+    ) {
+        let result = (|| -> Result<(), String> {
+            let parsed: Vec<crate::config::WheelSlice> = serde_json::from_value(slices)
+                .map_err(|e| format!("Invalid touch wheel: {e}"))?;
+            let is_global = scope == "global";
+            let character = self.config.character.as_deref();
+            crate::config::Config::save_touch_wheel(&parsed, is_global, character)
+                .map_err(|e| format!("Write failed: {e}"))
+        })();
+        let (saved, error) = match result {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        };
+        if saved {
+            // Hot-reload the touch wheel from disk and re-broadcast wheels.
+            let character = self.config.character.as_deref();
+            self.config.touch_wheel =
+                crate::config::Config::load_touch_wheel(character).unwrap_or_default();
+            self.push_remote_wheels();
+        }
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_touch_wheel(
+                client_id,
+                request_id,
+                scope,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                error,
+                saved,
+            );
+        }
+    }
+
     // ---- Registry settings (phone settings sheet) -----------------------
 
     /// Send the full settings catalog (registry dump + live values) to the

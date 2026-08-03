@@ -49,9 +49,10 @@ pub use hotbars::{
     HotbarStyle, HotbarsConfig, IconMode,
 };
 pub use keybinds::{
-    parse_key_string, validate_wheel_spans, AppKeybinds, KeyAction, KeyBindAction, MacroAction,
-    MenuKeybindField, MenuKeybinds, RumbleConfig, RumblePattern, TuningConfig, WheelMeta,
-    WheelSlice, WheelSpanIssue, WHEEL_MIN_SPAN_DEG,
+    parse_key_string, touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds, KeyAction,
+    KeyBindAction, MacroAction, MenuKeybindField, MenuKeybinds, RumbleConfig, RumblePattern,
+    TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue, TOUCH_WHEEL_CLIENT_ACTIONS,
+    WHEEL_MIN_SPAN_DEG,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
@@ -289,6 +290,12 @@ pub struct Config {
     pub controller_wheel: Vec<WheelSlice>,
     #[serde(skip)] // Loaded from [controller_wheels.<name>] (named radial wheels)
     pub controller_wheels: HashMap<String, Vec<WheelSlice>>,
+    /// The phone's touch radial wheel (long-press navigation). Loaded from
+    /// touch_wheel.toml (per-character, roams); shipped to the phone as the
+    /// named "touch" wheel and editable from both frontends. Slices carry a
+    /// `client` action (open a window, focus input) or a game `command`.
+    #[serde(skip)]
+    pub touch_wheel: Vec<WheelSlice>,
     #[serde(skip)] // Loaded from [controller_wheels_meta.<name>] (per-wheel button/stick)
     pub controller_wheels_meta: HashMap<String, WheelMeta>,
     #[serde(skip)] // Loaded from [controller_overlay] (curated HUD legend entries)

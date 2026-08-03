@@ -325,6 +325,26 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "saved": saved,
             }),
         ),
+        RemoteDelta::TouchWheel {
+            request_id,
+            scope,
+            slices,
+            catalog,
+            error,
+            saved,
+            ..
+        } => encode(
+            "touch_wheel",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "scope": scope,
+                "slices": slices,
+                "catalog": catalog,
+                "error": error,
+                "saved": saved,
+            }),
+        ),
         RemoteDelta::Highlights {
             request_id,
             scope,
@@ -577,6 +597,16 @@ pub enum ClientMessage {
         request_id: u64,
         scope: String,
         colors: serde_json::Value,
+    },
+    /// The touch wheel's slice list + the client-action vocabulary catalog,
+    /// for the phone's wheel editor.
+    TouchWheelGet { request_id: u64, scope: String },
+    /// Validate + write the touch wheel's slice list, then hot-reload and
+    /// re-broadcast the `wheels` message so it applies live.
+    TouchWheelPut {
+        request_id: u64,
+        scope: String,
+        slices: serde_json::Value,
     },
 }
 
@@ -873,6 +903,24 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 colors,
             })
         }
+        "touch_wheel_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            Some(ClientMessage::TouchWheelGet { request_id, scope })
+        }
+        "touch_wheel_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let scope = msg.d.get("scope")?.as_str()?.to_string();
+            let slices = msg.d.get("slices")?.clone();
+            if !slices.is_array() {
+                return None;
+            }
+            Some(ClientMessage::TouchWheelPut {
+                request_id,
+                scope,
+                slices,
+            })
+        }
         "highlight_delete" => {
             let request_id = msg.d.get("request_id")?.as_u64()?;
             let scope = msg.d.get("scope")?.as_str()?.to_string();
@@ -1086,6 +1134,7 @@ mod tests {
             default: vec![
                 RemoteWheelSlice {
                     label: "look".to_string(),
+                    client: None,
                     color: None,
                     span: None,
                     inner: Some(65),
@@ -1094,12 +1143,14 @@ mod tests {
                 },
                 RemoteWheelSlice {
                     label: "stance".to_string(),
+                    client: None,
                     color: Some("#2e8b57".to_string()),
                     span: Some(120.0),
                     inner: None,
                     back: false,
                     slices: vec![RemoteWheelSlice {
                         label: "defensive".to_string(),
+                        client: None,
                         color: None,
                         span: None,
                         inner: None,

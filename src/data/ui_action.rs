@@ -101,6 +101,8 @@ pub enum UiAction {
     SetTheme(String),
     EditTheme,
     SorterEdit,
+    /// Open the touch-wheel editor (the phone's long-press radial wheel).
+    TouchWheelEditor,
 
     // Skins (GUI graphics)
     Skins,
@@ -303,6 +305,7 @@ impl UiAction {
             "themes" => UiAction::Themes,
             "edittheme" => UiAction::EditTheme,
             "sorteredit" => UiAction::SorterEdit,
+            "touchwheel" => UiAction::TouchWheelEditor,
             "skins" => UiAction::Skins,
             "reloadskin" => UiAction::ReloadSkin,
             "setpalette" => UiAction::SetPalette,
@@ -363,6 +366,7 @@ impl std::fmt::Display for UiAction {
             UiAction::SetTheme(name) => write!(f, "action:settheme:{name}"),
             UiAction::EditTheme => write!(f, "action:edittheme"),
             UiAction::SorterEdit => write!(f, "action:sorteredit"),
+            UiAction::TouchWheelEditor => write!(f, "action:touchwheel"),
             UiAction::Skins => write!(f, "action:skins"),
             UiAction::SetSkin(name) => write!(f, "action:setskin:{name}"),
             UiAction::MakeSkin(name) => write!(f, "action:makeskin:{name}"),
@@ -467,6 +471,7 @@ mod tests {
             UiAction::SetTheme("gruvbox".into()),
             UiAction::EditTheme,
             UiAction::SorterEdit,
+            UiAction::TouchWheelEditor,
             UiAction::Skins,
             UiAction::SetSkin("wrayth".into()),
             UiAction::MakeSkin("mine".into()),

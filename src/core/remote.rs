@@ -171,6 +171,11 @@ impl Default for RemoteWheelTuning {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RemoteWheelSlice {
     pub label: String,
+    /// Client-side action for the touch wheel (`open:room`, `focus:input`,
+    /// …). Ships to the phone (safe UI verb); game commands never do — they
+    /// resolve server-side by index. Absent on gamepad-wheel slices.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// Explicit wedge width in degrees; absent = an even share of the
@@ -196,6 +201,7 @@ impl RemoteWheels {
                 .iter()
                 .map(|slice| RemoteWheelSlice {
                     label: slice.label.clone(),
+                    client: slice.client.clone(),
                     color: slice
                         .color
                         .as_deref()
@@ -213,11 +219,21 @@ impl RemoteWheels {
                 .wheel_level_slices("", &[])
                 .map(|slices| wire_slices(config, slices))
                 .unwrap_or_default(),
-            named: config
-                .controller_wheels
-                .iter()
-                .map(|(name, slices)| (name.clone(), wire_slices(config, slices)))
-                .collect(),
+            named: {
+                let mut named: std::collections::HashMap<String, Vec<RemoteWheelSlice>> = config
+                    .controller_wheels
+                    .iter()
+                    .map(|(name, slices)| (name.clone(), wire_slices(config, slices)))
+                    .collect();
+                // The phone's touch wheel rides along as the reserved "touch"
+                // named wheel (the client already prefers named.touch). Only
+                // shipped when configured — an empty touch_wheel lets the
+                // client fall back to its built-in default.
+                if !config.touch_wheel.is_empty() {
+                    named.insert("touch".to_string(), wire_slices(config, &config.touch_wheel));
+                }
+                named
+            },
             tuning: RemoteWheelTuning {
                 movement_stick: t.movement_stick.clone(),
                 back_slice: t.back_slice.clone(),
@@ -443,6 +459,18 @@ pub enum RemoteDelta {
         error: Option<String>,
         saved: bool,
     },
+    /// Reply to one client's touch-wheel get/put (addressed). `slices` is the
+    /// wheel's slice list (Null on put replies); `catalog` is the client-
+    /// action vocabulary the editor renders from; `saved` marks a write.
+    TouchWheel {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        slices: serde_json::Value,
+        catalog: serde_json::Value,
+        error: Option<String>,
+        saved: bool,
+    },
     /// Reply to one client's structured highlight get/put/delete: the full
     /// rule map for the scope (or an error), plus the available sound
     /// files for the editor's dropdown.
@@ -641,6 +669,20 @@ pub enum RemoteEvent {
         request_id: u64,
         scope: String,
         colors: serde_json::Value,
+    },
+    /// Fetch the touch wheel's slices + the client-action vocabulary catalog.
+    TouchWheelGet {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+    },
+    /// Validate and write the touch wheel's slice list, then hot-reload and
+    /// re-broadcast the `wheels` message so the change applies live.
+    TouchWheelPut {
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        slices: serde_json::Value,
     },
 }
 
@@ -1245,6 +1287,29 @@ impl RemoteSink {
         });
     }
 
+    /// Route a touch-wheel get/put reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_touch_wheel(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        scope: String,
+        slices: serde_json::Value,
+        catalog: serde_json::Value,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::TouchWheel {
+            client_id,
+            request_id,
+            scope,
+            slices,
+            catalog,
+            error,
+            saved,
+        });
+    }
+
     /// Route a structured highlights reply to the requesting client.
     #[allow(clippy::too_many_arguments)]
     pub fn push_highlights(
@@ -1443,6 +1508,36 @@ mod tests {
             stream: "main".to_string(),
             timestamp: None,
         })
+    }
+
+    #[test]
+    fn touch_wheel_rides_the_wheels_message_as_named_touch() {
+        use crate::config::{Config, WheelSlice};
+        let mut config = Config::default();
+        // A configured touch wheel with a client-action slice + a command
+        // slice; the wheels message must expose it as named["touch"], with
+        // the client action shipped (game commands never ship).
+        config.touch_wheel = vec![
+            WheelSlice { label: "Room".into(), client: Some("open:room".into()), ..Default::default() },
+            WheelSlice { label: "Look".into(), command: "look".into(), ..Default::default() },
+        ];
+        let wheels = RemoteWheels::from_config(&config);
+        let touch = wheels.named.get("touch").expect("touch wheel must be named 'touch'");
+        assert_eq!(touch.len(), 2);
+        assert_eq!(touch[0].label, "Room");
+        assert_eq!(touch[0].client.as_deref(), Some("open:room"), "client action must ship");
+        // The command slice ships its label but never its command (resolves
+        // server-side by index, like every wheel slice).
+        assert_eq!(touch[1].label, "Look");
+        assert_eq!(touch[1].client, None);
+
+        // An empty touch_wheel is NOT injected — the phone falls back to its
+        // built-in default ring.
+        let empty = Config::default();
+        assert!(
+            !RemoteWheels::from_config(&empty).named.contains_key("touch"),
+            "unset touch_wheel must not create a named 'touch' wheel"
+        );
     }
 
     #[test]

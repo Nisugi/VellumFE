@@ -684,6 +684,38 @@ async fn main() {
                 println!("EVENT colors_put: scope={scope:?} sections={sections:?} body={colors}");
                 sink.push_colors(client_id, request_id, scope, serde_json::Value::Null, None, true);
             }
+            RemoteEvent::TouchWheelGet {
+                client_id,
+                request_id,
+                scope,
+            } => {
+                println!("EVENT touch_wheel_get: scope={scope:?}");
+                // Reply with a small scripted ring + the real catalog so the
+                // editor renders its action picker from the true vocabulary.
+                let slices = serde_json::json!([
+                    { "label": "Room", "client": "open:room" },
+                    { "label": "Look", "command": "look" },
+                ]);
+                let catalog = vellum_fe::config::touch_wheel_action_catalog();
+                sink.push_touch_wheel(client_id, request_id, scope, slices, catalog, None, false);
+            }
+            RemoteEvent::TouchWheelPut {
+                client_id,
+                request_id,
+                scope,
+                slices,
+            } => {
+                println!("EVENT touch_wheel_put: scope={scope:?} slices={slices}");
+                sink.push_touch_wheel(
+                    client_id,
+                    request_id,
+                    scope,
+                    serde_json::Value::Null,
+                    serde_json::Value::Null,
+                    None,
+                    true,
+                );
+            }
             RemoteEvent::Command(text) => {
                 println!("EVENT cmd: {text:?}");
                 // `echo <text>` / `echot <text>` / `echod <text>` send the

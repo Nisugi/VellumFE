@@ -2433,4 +2433,52 @@ body.hide-compass #compass { display: none !important; }
 
 .st-dest { color: var(--fg-dim); font-size: 13px; }
 
+/* ---- Touch-wheel editor (mirrors the streams overlay chrome) ---- */
+#tw-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  background: var(--bg);
+  display: flex;
+  padding: 12px;
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+}
+#tw-overlay[hidden] { display: none; }
+#tw-card { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+#tw-titlebar { display: flex; align-items: center; justify-content: space-between; }
+#tw-close { padding: 4px 12px; background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--fg-dim); font: inherit; }
+#tw-note { color: var(--fg-dim); font-size: 12px; margin: 0; }
+#tw-list {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.tw-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-panel);
+}
+.tw-row input[type="text"], .tw-row select {
+  font: inherit; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--fg);
+}
+.tw-label { flex: 1 1 90px; min-width: 80px; }
+.tw-value { flex: 2 1 140px; display: flex; }
+.tw-value input, .tw-value select { width: 100%; }
+.tw-folder-tag { color: var(--fg-dim); font-size: 12px; font-style: italic; flex: 2 1 140px; }
+.tw-controls { display: flex; gap: 4px; }
+.tw-controls button {
+  padding: 4px 9px; background: none; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--fg); font: inherit;
+}
+.tw-controls button:disabled { opacity: 0.35; }
+#tw-actions { display: flex; gap: 8px; }
+#tw-add, #tw-save {
+  padding: 8px 14px; border-radius: 6px; font: inherit; border: 1px solid var(--border);
+}
+#tw-add { background: none; color: var(--fg); }
+#tw-save { background: var(--accent, #6a9fb5); color: var(--bg); border-color: transparent; font-weight: 600; }
+#tw-status { font-size: 12px; margin: 0; color: var(--fg-dim); }
+#tw-status.editor-error { color: var(--st, #d06060); }
+
 #colors-status[hidden] { display: none; }

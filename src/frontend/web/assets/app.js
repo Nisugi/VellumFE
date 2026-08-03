@@ -819,6 +819,7 @@ function handleMessage(msg) {
     case "colors": handleColorsReply(msg.d); break;
     case "settings": handleSettingsReply(msg.d); break;
     case "streams": handleStreamsReply(msg.d); break;
+    case "touch_wheel": handleTouchWheelReply(msg.d); break;
     case "injuries": setInjuries(msg.d); break;
     case "targets": setTargets(msg.d); break;
     case "entities": setRoomEntities(msg.d); break;
@@ -3207,6 +3208,7 @@ function openSettingsSheet() {
   }
   sheetButton("Client settings (saved on host)", openClientSettings);
   sheetButton("Streams (saved on host)", openStreamsPanel);
+  sheetButton("Touch wheel (long-press ring)", () => openTouchWheelEditor("profile"));
   sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
   sheetButton("Highlight rules (global)", () => openHighlightList("global"));
   sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
@@ -6033,6 +6035,213 @@ function renderStreamsPanel() {
   }
   stList.appendChild(group);
 }
+
+// ---- Touch-wheel editor ----------------------------------------------------
+// Edit the phone's touch wheel (the long-press ring). Slices are the
+// top-level ring; each is a client action (open a panel, focus input) or a
+// game command. Saved to the host per character and re-broadcast, so the
+// wheel updates live and follows the character to other devices. Nested
+// folders are edited on the desktop (kept out of the phone form for focus).
+
+const twOverlay = document.createElement("div");
+twOverlay.id = "tw-overlay";
+twOverlay.hidden = true;
+twOverlay.innerHTML = `
+  <div id="tw-card">
+    <div id="tw-titlebar">
+      <span id="tw-title">Touch wheel</span>
+      <button type="button" id="tw-close">Close</button>
+    </div>
+    <p id="tw-note">Long-press the screen to open this wheel. Drag to a
+      slice and lift to fire. Changes save to your character and apply live.</p>
+    <div id="tw-list"></div>
+    <div id="tw-actions">
+      <button type="button" id="tw-add">+ Add slice</button>
+      <button type="button" id="tw-save">Save</button>
+    </div>
+    <p id="tw-status" hidden></p>
+  </div>`;
+document.body.appendChild(twOverlay);
+const twList = twOverlay.querySelector("#tw-list");
+const twStatus = twOverlay.querySelector("#tw-status");
+
+let twScope = "profile";
+let twSlices = [];        // working copy: [{ label, kind, value }]
+let twCatalog = null;     // { client_actions:[{action,label}], slice_kinds }
+let twRequestCounter = 0;
+let twPendingGet = null;
+let twPendingPut = null;
+
+twOverlay.querySelector("#tw-close").addEventListener("click", () => {
+  twOverlay.hidden = true;
+  twPendingGet = null;
+});
+
+function twStatusMsg(text, isError) {
+  twStatus.textContent = text;
+  twStatus.classList.toggle("editor-error", !!isError);
+  twStatus.hidden = !text;
+}
+
+// Wire slices ({label, client?, command?, slices?}) -> editor rows
+// ({label, kind, value}). Folders are shown read-only (edit on desktop).
+function twSliceToRow(slice) {
+  if ((slice.slices || []).length) return { label: slice.label || "", kind: "folder", value: "" };
+  if (slice.client) return { label: slice.label || "", kind: "client", value: slice.client };
+  return { label: slice.label || "", kind: "command", value: slice.command || "" };
+}
+
+// Editor rows -> wire slices for touch_wheel_put. Folder rows are dropped
+// from the phone save (they weren't editable here); a desktop edit manages
+// them. Blank-label rows are skipped.
+function twRowsToSlices(rows) {
+  return rows
+    .filter((r) => r.kind !== "folder" && r.label.trim())
+    .map((r) => {
+      const slice = { label: r.label.trim() };
+      if (r.kind === "client") slice.client = r.value;
+      else slice.command = r.value;
+      return slice;
+    });
+}
+
+function openTouchWheelEditor(scope) {
+  twScope = scope || "profile";
+  twOverlay.hidden = false;
+  twList.replaceChildren(Object.assign(document.createElement("p"), {
+    className: "hl-empty", textContent: "Loading…",
+  }));
+  twStatusMsg("", false);
+  twPendingGet = ++twRequestCounter;
+  sendJson("touch_wheel_get", { request_id: twPendingGet, scope: twScope });
+}
+
+function handleTouchWheelReply(d) {
+  if (d.request_id === twPendingGet) {
+    twPendingGet = null;
+    if (d.error) { twStatusMsg(d.error, true); return; }
+    twCatalog = d.catalog || { client_actions: [], slice_kinds: [] };
+    const slices = Array.isArray(d.slices) ? d.slices : [];
+    // Empty = unset: seed the editor from the client's built-in default so
+    // the user starts from the familiar ring rather than a blank wheel.
+    const source = slices.length ? slices : touchWheelTop();
+    twSlices = source.map(twSliceToRow);
+    renderTouchWheelEditor();
+    return;
+  }
+  if (d.request_id === twPendingPut) {
+    twPendingPut = null;
+    if (d.error) { twStatusMsg(d.error, true); return; }
+    if (d.saved) twStatusMsg("Saved — applied live.", false);
+    return;
+  }
+}
+
+function renderTouchWheelEditor() {
+  twList.replaceChildren();
+  if (!twSlices.length) {
+    twList.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty", textContent: "No slices yet — add one below.",
+    }));
+    return;
+  }
+  twSlices.forEach((row, i) => twList.appendChild(twRowEl(row, i)));
+}
+
+function twRowEl(row, index) {
+  const el = document.createElement("div");
+  el.className = "tw-row";
+
+  const label = document.createElement("input");
+  label.type = "text";
+  label.className = "tw-label";
+  label.placeholder = "Label";
+  label.value = row.label;
+  label.addEventListener("input", () => { row.label = label.value; });
+  el.appendChild(label);
+
+  if (row.kind === "folder") {
+    const tag = document.createElement("span");
+    tag.className = "tw-folder-tag";
+    tag.textContent = "folder — edit on desktop";
+    el.appendChild(tag);
+  } else {
+    // Kind picker: client action vs game command.
+    const kind = document.createElement("select");
+    kind.className = "tw-kind";
+    for (const [val, txt] of [["client", "Open / focus"], ["command", "Game command"]]) {
+      kind.appendChild(new Option(txt, val));
+    }
+    kind.value = row.kind;
+    el.appendChild(kind);
+
+    // Value control: a dropdown of client actions, or a command text field.
+    const valueWrap = document.createElement("span");
+    valueWrap.className = "tw-value";
+    const buildValue = () => {
+      valueWrap.replaceChildren();
+      if (row.kind === "client") {
+        const sel = document.createElement("select");
+        for (const a of (twCatalog.client_actions || [])) {
+          sel.appendChild(new Option(a.label, a.action));
+        }
+        if (!(twCatalog.client_actions || []).some((a) => a.action === row.value)) {
+          row.value = (twCatalog.client_actions || [])[0]?.action || "";
+        }
+        sel.value = row.value;
+        sel.addEventListener("change", () => { row.value = sel.value; });
+        valueWrap.appendChild(sel);
+      } else {
+        const txt = document.createElement("input");
+        txt.type = "text";
+        txt.placeholder = "e.g. look";
+        txt.value = row.value;
+        txt.addEventListener("input", () => { row.value = txt.value; });
+        valueWrap.appendChild(txt);
+      }
+    };
+    kind.addEventListener("change", () => { row.kind = kind.value; row.value = ""; buildValue(); });
+    buildValue();
+    el.appendChild(valueWrap);
+  }
+
+  // Reorder + delete controls.
+  const controls = document.createElement("span");
+  controls.className = "tw-controls";
+  const mk = (txt, fn, disabled) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = txt;
+    b.disabled = !!disabled;
+    b.addEventListener("click", fn);
+    return b;
+  };
+  controls.appendChild(mk("↑", () => twMove(index, -1), index === 0));
+  controls.appendChild(mk("↓", () => twMove(index, 1), index === twSlices.length - 1));
+  controls.appendChild(mk("✕", () => { twSlices.splice(index, 1); renderTouchWheelEditor(); }));
+  el.appendChild(controls);
+  return el;
+}
+
+function twMove(index, delta) {
+  const target = index + delta;
+  if (target < 0 || target >= twSlices.length) return;
+  [twSlices[index], twSlices[target]] = [twSlices[target], twSlices[index]];
+  renderTouchWheelEditor();
+}
+
+twOverlay.querySelector("#tw-add").addEventListener("click", () => {
+  const first = (twCatalog?.client_actions || [])[0]?.action || "";
+  twSlices.push({ label: "", kind: "client", value: first });
+  renderTouchWheelEditor();
+});
+
+twOverlay.querySelector("#tw-save").addEventListener("click", () => {
+  const slices = twRowsToSlices(twSlices);
+  twStatusMsg("Saving…", false);
+  twPendingPut = ++twRequestCounter;
+  sendJson("touch_wheel_put", { request_id: twPendingPut, scope: twScope, slices });
+});
 
 // ---- Roaming phone prefs (per-character, server-side) ----------------------
 // Story text size, theme, and chip order ride the character profile as

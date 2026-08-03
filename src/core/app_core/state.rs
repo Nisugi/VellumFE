@@ -5688,6 +5688,8 @@ impl AppCore {
                 self.config.controller_wheels_meta =
                     crate::config::Config::load_controller_wheels_meta(character)
                         .unwrap_or_default();
+                self.config.touch_wheel =
+                    crate::config::Config::load_touch_wheel(character).unwrap_or_default();
                 self.config.controller_overlay =
                     crate::config::Config::load_controller_overlay(character).unwrap_or_default();
                 self.config.controller_rumble =
