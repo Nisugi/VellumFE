@@ -104,6 +104,12 @@ pub fn handle_ui_action(
         UiAction::SaveSkin(_) => {
             gui_only(app_core, "Saving a skin from the current appearance (.saveskin)")
         }
+        UiAction::Reconnect => {
+            // The runtime loop owns the network channels; flag it and let
+            // the next tick do the actual reconnect.
+            app_core.reconnect_requested = true;
+            app_core.needs_render = true;
+        }
         UiAction::UiExport(args) => {
             // The plain core pack; the GUI adds its live layout on top.
             app_core.uiexport_with(&args, Vec::new());

@@ -150,6 +150,26 @@ impl CommandInputEcho {
     }
 }
 
+/// The keys currently bound to the command-input actions, resolved from the
+/// keybind config once per frame and read by `render_command_input_widget`.
+/// This is what makes send_command / previous_command / next_command /
+/// cursor_clear_line honor REBINDS instead of being locked to Enter/↑/↓ —
+/// the config is the single source of truth. Defaults (Enter/↑/↓) are always
+/// also accepted so a config missing an entry never disables the input.
+#[derive(Clone, Default)]
+pub(super) struct CommandInputKeys {
+    pub submit: Vec<egui::Key>,
+    pub history_prev: Vec<egui::Key>,
+    pub history_next: Vec<egui::Key>,
+    pub clear_line: Vec<(egui::Key, egui::Modifiers)>,
+}
+
+impl CommandInputKeys {
+    pub(super) fn id() -> egui::Id {
+        egui::Id::new("gui_command_input_keys")
+    }
+}
+
 impl WidgetRenderSettings {
     /// The proportional font for this window's text.
     fn font_id(&self) -> egui::FontId {
@@ -193,6 +213,12 @@ enum AppShortcut {
 enum GlobalDispatchTarget {
     Macro(KeyBindAction),
     Shortcut(AppShortcut),
+    /// A keybind Action whose behavior lives in the GUI's own widgets
+    /// (command history, tab nav, search, window switch) rather than in
+    /// `AppCore`. Carries the action name; `try_gui_command_action` runs it.
+    /// These are dispatched globally so a *rebound* key reaches them, but the
+    /// focused command-input widget still consumes the default Enter/↑/↓ first.
+    GuiCommandAction(String),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -396,6 +422,14 @@ pub struct VellumGuiApp {
     /// `visible_tabs`). Applied via `move_to_top` back-to-front, deferred
     /// because restacking needs `ctx`. Mirrors `pending_layout_rescale`.
     pending_zorder: Option<Vec<TabKey>>,
+    /// A single window to raise to the front next frame (switch_current_window
+    /// keybind). Deferred like `pending_zorder` because `move_to_top` needs
+    /// `ctx`.
+    pending_raise_tab: Option<TabKey>,
+    /// Search match-navigation cursor: which matching line in the "main" text
+    /// window is currently focused (next_search_match / prev_search_match).
+    /// Reset when the query or buffer changes. None = not yet stepped.
+    search_match_index: Option<usize>,
     /// OS-window geometry to restore for a `.loadlayout` (saved size /
     /// position / maximized), applied in the frame loop via ViewportCommands
     /// so the rects land on the same canvas they were saved against.
@@ -454,6 +488,20 @@ pub struct VellumGuiApp {
     webui_handshake_sent: bool,
     /// Image srcs with a fetch task in flight (dedupes re-queues).
     webui_fetches_inflight: HashSet<String>,
+
+    // --- Reconnect inputs (see `reconnect`) ------------------------------
+    /// Retained connection credentials so `.reconnect` can re-establish the
+    /// session after a drop. Some = direct mode (re-auths via eAccess); None
+    /// = Lich mode (re-attaches to host/port below). Holds the password in
+    /// memory exactly as the original connect did.
+    reconnect_direct: Option<crate::network::DirectConnectConfig>,
+    reconnect_login_key: Option<String>,
+    reconnect_host: String,
+    reconnect_port: u16,
+    /// Feeds the server→UI forwarder that wakes egui. Cloned into each
+    /// network task; retaining a clone keeps the forwarder alive and lets a
+    /// reconnect spawn a fresh task into the same pipeline.
+    network_forward_tx: mpsc::Sender<ServerMessage>,
 }
 
 /// What to do once the Lich WebUI bridge says hello.
@@ -543,6 +591,16 @@ impl VellumGuiApp {
 
         let host = app_core.config.connection.host.clone();
         let port = app_core.config.connection.port;
+
+        // Retain everything a later `.reconnect` needs. `server_tx` feeds the
+        // forwarder that wakes egui; keep a clone so a reconnect can spawn a
+        // fresh network task into the same pipeline (and so the forwarder
+        // never sees all senders drop between connections).
+        let network_forward_tx = server_tx.clone();
+        let reconnect_direct = direct.clone();
+        let reconnect_login_key = login_key.clone();
+        let reconnect_host = host.clone();
+        let reconnect_port = port;
 
         let raw_logger = match RawLogger::new(&app_core.config) {
             Ok(logger) => logger,
@@ -774,6 +832,8 @@ impl VellumGuiApp {
             pending_layout_rescale,
             current_zorder: Vec::new(),
             pending_zorder,
+            pending_raise_tab: None,
+            search_match_index: None,
             // Startup already restores the OS window natively; this pair only
             // serves runtime `.loadlayout`.
             pending_viewport_restore: None,
@@ -800,6 +860,11 @@ impl VellumGuiApp {
             is_direct_connection,
             webui_handshake_sent: false,
             webui_fetches_inflight: HashSet::new(),
+            reconnect_direct,
+            reconnect_login_key,
+            reconnect_host,
+            reconnect_port,
+            network_forward_tx,
         })
     }
 
@@ -4161,15 +4226,22 @@ impl VellumGuiApp {
                 Some(binding @ KeyBindAction::Macro(_)) => {
                     return Some(GlobalDispatchTarget::Macro(binding.clone()));
                 }
-                // Action bindings the core can execute without frontend help
-                // (mode/system toggles, TTS). Cursor/scroll/search/tab actions
-                // stay with the GUI's own widgets — dispatching those here
-                // would steal keys like Esc (clear_search) from every editor.
+                // Action bindings split three ways:
+                //  - core-global (mode/system toggles, TTS) → run in AppCore;
+                //  - GUI-widget actions (history, tab nav, search, window
+                //    switch) → run in the GUI via try_gui_command_action so a
+                //    REBOUND key reaches them (the command-input widget still
+                //    consumes the default Enter/↑/↓ before this path);
+                //  - everything else stays widget-local (cursor/clipboard are
+                //    egui-native; scroll/menu are controller-only).
                 Some(binding @ KeyBindAction::Action(name)) => {
                     if crate::config::KeyAction::from_str(name)
                         .is_some_and(Self::is_core_global_action)
                     {
                         return Some(GlobalDispatchTarget::Macro(binding.clone()));
+                    }
+                    if Self::is_gui_command_action(name) {
+                        return Some(GlobalDispatchTarget::GuiCommandAction(name.clone()));
                     }
                 }
                 None => {}
@@ -4177,6 +4249,32 @@ impl VellumGuiApp {
         }
 
         Self::app_shortcut_for_key(key_event, app_keybinds).map(GlobalDispatchTarget::Shortcut)
+    }
+
+    /// Action keybinds dispatched globally in the GUI to `try_gui_command_action`.
+    ///
+    /// This is the single dispatch point for actions that had NO working GUI
+    /// path before (parity with the TUI's keybind router). It deliberately
+    /// excludes actions already owned by another single owner, to avoid
+    /// double-firing on their default keys:
+    ///  - send_command / previous_command / next_command / cursor_clear_line →
+    ///    owned by the command-input widget, which reads the keybind config
+    ///    itself (`command_input_action_for_key`), so rebinding still works;
+    ///  - switch_current_window (Tab) and clear_search (Esc) → owned by the
+    ///    modal-nav / search-close paths on their default keys.
+    fn is_gui_command_action(name: &str) -> bool {
+        matches!(
+            name,
+            "send_last_command"
+                | "send_second_last_command"
+                | "next_tab"
+                | "prev_tab"
+                | "next_unread_tab"
+                | "switch_current_window"
+                | "start_search"
+                | "next_search_match"
+                | "prev_search_match"
+        )
     }
 
     /// Action keybinds that execute fully inside AppCore, safe to dispatch
@@ -4242,6 +4340,9 @@ impl VellumGuiApp {
         match target {
             GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action, ctx),
             GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut),
+            GlobalDispatchTarget::GuiCommandAction(name) => {
+                self.try_gui_command_action(&name, ctx);
+            }
         }
     }
 
@@ -4328,6 +4429,142 @@ impl VellumGuiApp {
         }
     }
 
+    /// Run a GUI-widget keybind action (see `is_gui_command_action`). Reached
+    /// from a globally-dispatched key so a REBOUND binding works; the default
+    /// Enter/↑/↓ are still handled first by the focused command-input widget.
+    fn try_gui_command_action(&mut self, name: &str, ctx: &egui::Context) {
+        match name {
+            "send_last_command" => self.resend_history_command(0),
+            "send_second_last_command" => self.resend_history_command(1),
+            "next_tab" => self.cycle_tabbed_tabs(true),
+            "prev_tab" => self.cycle_tabbed_tabs(false),
+            "next_unread_tab" => self.goto_unread_tab(),
+            "switch_current_window" => self.cycle_focused_window(),
+            "start_search" => {
+                self.app_core.start_search_mode();
+                self.search_bar_needs_focus = true;
+                self.search_match_index = None;
+            }
+            "next_search_match" => self.step_search_match(true, ctx),
+            "prev_search_match" => self.step_search_match(false, ctx),
+            _ => {}
+        }
+        ctx.request_repaint();
+    }
+
+    /// Re-send a past command by history index (0 = most recent). Used by
+    /// send_last_command / send_second_last_command.
+    fn resend_history_command(&mut self, index: usize) {
+        if let Some(cmd) = self.command_history.get(index).cloned() {
+            self.dispatch_command(cmd);
+        }
+    }
+
+    /// Step search match-navigation over the CURRENT window — the same
+    /// core-owned focused window the TUI searches, chosen by
+    /// switch_current_window. Moves the match cursor forward/back (wrapping)
+    /// and queues a scroll that brings the matching line into view. No-op with
+    /// an empty query or no matches.
+    fn step_search_match(&mut self, forward: bool, ctx: &egui::Context) {
+        let query = self
+            .app_core
+            .ui_state
+            .search_input
+            .trim()
+            .to_ascii_lowercase();
+        if query.is_empty() {
+            return;
+        }
+        let window_name = self.app_core.get_focused_window_name();
+        // Line indices (into the focused window's buffer) that match the query.
+        let matches: Vec<usize> = self
+            .app_core
+            .ui_state
+            .windows
+            .values()
+            .find_map(|window| match &window.content {
+                WindowContent::Text(content) if window.name == window_name => Some(content),
+                _ => None,
+            })
+            .map(|content| {
+                content
+                    .lines
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, line)| {
+                        line.segments.iter().any(|segment| {
+                            Self::find_ascii_ci(&segment.text, &query, 0).is_some()
+                        })
+                    })
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if matches.is_empty() {
+            self.app_core
+                .add_system_message(&format!("No matches in '{}'.", window_name));
+            return;
+        }
+
+        // Advance the cursor within the match list (wrapping).
+        let next = match self.search_match_index {
+            None => {
+                if forward {
+                    0
+                } else {
+                    matches.len() - 1
+                }
+            }
+            Some(current) => {
+                let pos = matches.iter().position(|&m| m == current).unwrap_or(0);
+                if forward {
+                    (pos + 1) % matches.len()
+                } else {
+                    (pos + matches.len() - 1) % matches.len()
+                }
+            }
+        };
+        let target_line = matches[next];
+        self.search_match_index = Some(target_line);
+        // Request a scroll-to-line for the focused window (its scroll_id is the
+        // window name; see the scroll-pending protocol in widgets.rs, kind 3 =
+        // absolute line index).
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                egui::Id::new(("text_scroll_pending", window_name.as_str())),
+                (3u8, target_line as f32),
+            )
+        });
+        self.app_core.add_system_message(&format!(
+            "Match {} of {}",
+            next + 1,
+            matches.len()
+        ));
+        self.app_core.needs_render = true;
+    }
+
+    /// Advance the "current window" (switch_current_window), the same
+    /// core-owned focus the TUI uses (`ui_state.focused_window`) — search
+    /// match-nav and scroll target it. Raises the newly-focused window's tab
+    /// to the front as a visual cue.
+    fn cycle_focused_window(&mut self) {
+        self.app_core.cycle_focused_window();
+        // Reset the match cursor: a new window means a fresh match list.
+        self.search_match_index = None;
+        // Bring the focused window's tab forward, if it maps to one.
+        let focused = self.app_core.get_focused_window_name();
+        if let Some(key) = self
+            .available_tabs
+            .iter()
+            .find(|(_, tab)| tab.window_name == focused)
+            .map(|(key, _)| key.clone())
+        {
+            self.pending_raise_tab = Some(key);
+        }
+        self.app_core.needs_render = true;
+    }
+
     fn handle_close_window_shortcut(&mut self) {
         // Move mode owns Esc: the move overlay cancels and restores the
         // window's original position later this frame.
@@ -4361,6 +4598,95 @@ impl VellumGuiApp {
         let code = Self::egui_key_to_frontend_code(key, modifiers)?;
         let modifiers = Self::egui_modifiers_to_frontend(modifiers);
         Some(crate::data::input::KeyEvent::new(code, modifiers))
+    }
+
+    /// Inverse of `egui_key_to_frontend_code` for the keys that can bind to a
+    /// command-input action. Lets the command-input widget resolve which egui
+    /// keys are bound to submit/history/clear-line from the config, so those
+    /// actions honor rebinding (single source of truth). Returns None for keys
+    /// that can't be a command-input default (the widget just won't match them).
+    fn frontend_keycode_to_egui(code: crate::data::input::KeyCode) -> Option<egui::Key> {
+        use crate::data::input::KeyCode;
+        Some(match code {
+            KeyCode::Up => egui::Key::ArrowUp,
+            KeyCode::Down => egui::Key::ArrowDown,
+            KeyCode::Left => egui::Key::ArrowLeft,
+            KeyCode::Right => egui::Key::ArrowRight,
+            KeyCode::Enter => egui::Key::Enter,
+            KeyCode::Esc => egui::Key::Escape,
+            KeyCode::Tab => egui::Key::Tab,
+            KeyCode::Home => egui::Key::Home,
+            KeyCode::End => egui::Key::End,
+            KeyCode::PageUp => egui::Key::PageUp,
+            KeyCode::PageDown => egui::Key::PageDown,
+            KeyCode::Backspace => egui::Key::Backspace,
+            KeyCode::Delete => egui::Key::Delete,
+            KeyCode::F(n) => match n {
+                1 => egui::Key::F1,
+                2 => egui::Key::F2,
+                3 => egui::Key::F3,
+                4 => egui::Key::F4,
+                5 => egui::Key::F5,
+                6 => egui::Key::F6,
+                7 => egui::Key::F7,
+                8 => egui::Key::F8,
+                9 => egui::Key::F9,
+                10 => egui::Key::F10,
+                11 => egui::Key::F11,
+                12 => egui::Key::F12,
+                _ => return None,
+            },
+            KeyCode::Char(c) => return egui::Key::from_name(&c.to_uppercase().to_string()),
+            _ => return None,
+        })
+    }
+
+    /// Resolve which egui keys are bound to the command-input actions and stash
+    /// them for the widget (see `CommandInputKeys`). The hardcoded defaults
+    /// (Enter/↑/↓) are seeded first so the input never dies on a partial config;
+    /// any additional bound keys are appended.
+    fn stash_command_input_keys(&self, ctx: &egui::Context) {
+        let mut keys = CommandInputKeys {
+            submit: vec![egui::Key::Enter],
+            history_prev: vec![egui::Key::ArrowUp],
+            history_next: vec![egui::Key::ArrowDown],
+            clear_line: Vec::new(),
+        };
+        for (event, action) in &self.app_core.keybind_map {
+            let KeyBindAction::Action(name) = action else {
+                continue;
+            };
+            let Some(key) = Self::frontend_keycode_to_egui(event.code) else {
+                continue;
+            };
+            let modifiers = Self::frontend_modifiers_to_egui(event.modifiers);
+            match name.as_str() {
+                "send_command" if modifiers.is_none() && !keys.submit.contains(&key) => {
+                    keys.submit.push(key)
+                }
+                "previous_command" if modifiers.is_none() && !keys.history_prev.contains(&key) => {
+                    keys.history_prev.push(key)
+                }
+                "next_command" if modifiers.is_none() && !keys.history_next.contains(&key) => {
+                    keys.history_next.push(key)
+                }
+                "cursor_clear_line" => keys.clear_line.push((key, modifiers)),
+                _ => {}
+            }
+        }
+        ctx.data_mut(|data| data.insert_temp(CommandInputKeys::id(), keys));
+    }
+
+    fn frontend_modifiers_to_egui(
+        modifiers: crate::data::input::KeyModifiers,
+    ) -> egui::Modifiers {
+        egui::Modifiers {
+            alt: modifiers.alt,
+            ctrl: modifiers.ctrl,
+            shift: modifiers.shift,
+            mac_cmd: false,
+            command: modifiers.ctrl,
+        }
     }
 
     fn egui_modifiers_to_frontend(
@@ -4974,6 +5300,72 @@ impl VellumGuiApp {
         true
     }
 
+    /// Re-establish the game connection after a drop (`.reconnect` or the
+    /// toolbar Reconnect button). A single manual attempt: rebuild the command
+    /// channel, spawn a fresh network task from the retained inputs (direct
+    /// re-auths; Lich re-attaches), and let the server's login snapshot refresh
+    /// game state in place. Existing state is left on screen until it arrives.
+    fn reconnect(&mut self) {
+        if self.app_core.game_state.connected {
+            self.app_core
+                .add_system_message("Already connected — nothing to reconnect.");
+            return;
+        }
+
+        // Drop the old (dead) network task; its socket half is already gone,
+        // but abort so a half-open task can't linger.
+        if let Some(handle) = self.network_handle.take() {
+            handle.abort();
+        }
+
+        // Fresh command channel: the old command_rx was moved into the dead
+        // task. Swap in the new sender so typed commands reach the new socket.
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
+        self.command_tx = command_tx;
+
+        // A fresh raw logger (owns a background writer thread + file handle);
+        // the old one drops with the previous task and flushes.
+        let raw_logger = match RawLogger::new(&self.app_core.config) {
+            Ok(logger) => logger,
+            Err(err) => {
+                tracing::error!("Reconnect: failed to init raw logger: {}", err);
+                None
+            }
+        };
+
+        let server_tx = self.network_forward_tx.clone();
+        // Re-arm the layout-driven WebUI handshake for the new session.
+        self.webui_handshake_sent = false;
+
+        let handle = match self.reconnect_direct.clone() {
+            Some(cfg) => self._runtime.spawn(async move {
+                if let Err(err) =
+                    crate::network::DirectConnection::start(cfg, server_tx, command_rx, raw_logger)
+                        .await
+                {
+                    tracing::error!("GUI reconnect (direct) error: {}", err);
+                }
+            }),
+            None => {
+                let host = self.reconnect_host.clone();
+                let port = self.reconnect_port;
+                let login_key = self.reconnect_login_key.clone();
+                self._runtime.spawn(async move {
+                    if let Err(err) = LichConnection::start(
+                        &host, port, login_key, server_tx, command_rx, raw_logger,
+                    )
+                    .await
+                    {
+                        tracing::error!("GUI reconnect (lich) error: {}", err);
+                    }
+                })
+            }
+        };
+        self.network_handle = Some(handle);
+        self.app_core.add_system_message("Reconnecting…");
+        self.app_core.needs_render = true;
+    }
+
     /// Dispatch an `action:*` string from a popup-menu item (menu items
     /// carry strings). The typed path is [`Self::handle_ui_action`]; this
     /// is the single string bridge into it. Returns false only for
@@ -5017,6 +5409,7 @@ impl VellumGuiApp {
             },
             A::SorterEdit => self.open_sorter_editor(),
             A::TouchWheelEditor => self.open_touch_wheel_editor(),
+            A::Reconnect => self.reconnect(),
             A::SnapDebug => {
                 self.snap_debug = !self.snap_debug;
                 self.app_core.add_system_message(if self.snap_debug {
@@ -5660,6 +6053,9 @@ impl eframe::App for VellumGuiApp {
         #[cfg(feature = "gamepad")]
         self.poll_gamepad(&ctx);
         self.handle_global_input(&ctx, frame);
+        // Resolve command-input keybinds for this frame so the input widget's
+        // submit/history/clear-line honor rebinds (single source of truth).
+        self.stash_command_input_keys(&ctx);
 
         if self.close_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -5668,6 +6064,7 @@ impl eframe::App for VellumGuiApp {
 
         let detached_before_frame = self.detached_tab_keys();
         let mut open_windows_manager = false;
+        let mut reconnect_clicked = false;
         let mut zone_actions = GuiWindowActions::default();
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
         let mut zone_window_rects: Vec<GuiZoneWindowRect> = Vec::new();
@@ -5683,15 +6080,25 @@ impl eframe::App for VellumGuiApp {
                     ui.visuals_mut().widgets.inactive.weak_bg_fill =
                         egui::Color32::TRANSPARENT;
                     ui.heading("VellumFE GUI");
-                    let connection_text = if self.app_core.game_state.connected {
-                        RichText::new("Connected")
-                            .color(theme::color32(self.current_theme.status_success))
-                    } else {
-                        RichText::new("Disconnected")
-                            .color(theme::color32(self.current_theme.status_error))
-                    };
                     ui.separator();
-                    ui.label(connection_text);
+                    // Connected: a plain green status label. Disconnected: the
+                    // same slot becomes a clickable Reconnect button (the
+                    // status IS the affordance — no separate button).
+                    if self.app_core.game_state.connected {
+                        ui.label(
+                            RichText::new("Connected")
+                                .color(theme::color32(self.current_theme.status_success)),
+                        );
+                    } else if ui
+                        .button(
+                            RichText::new("Reconnect")
+                                .color(theme::color32(self.current_theme.status_error)),
+                        )
+                        .on_hover_text("Reconnect to the game (.reconnect)")
+                        .clicked()
+                    {
+                        reconnect_clicked = true;
+                    }
                     ui.separator();
 
                     if ui
@@ -6067,12 +6474,19 @@ impl eframe::App for VellumGuiApp {
         // see the pre-raise order and clobber the freshly-applied one.
         if let Some(order) = self.pending_zorder.take() {
             self.apply_stacking_order(&ctx, &order);
+        } else if let Some(tab) = self.pending_raise_tab.take() {
+            // switch_current_window: raise one window, then let the cache
+            // re-read the resulting order next frame (don't clobber it here).
+            self.raise_tab_to_front(&ctx, &tab);
         } else {
             self.refresh_zorder_cache(&ctx);
         }
 
         if open_windows_manager {
             self.open_known_windows_editor();
+        }
+        if reconnect_clicked {
+            self.reconnect();
         }
         if let Some(drop_result) = zone_drop_result {
             self.apply_zone_drop(drop_result, &visible_zone_rects);
@@ -6649,6 +7063,89 @@ mod tests {
             true,
         );
         assert!(target.is_none());
+    }
+
+    #[test]
+    fn test_global_dispatch_routes_gui_command_actions() {
+        // Previously-dead keyboard actions (send_last_command, tab nav, search
+        // match-nav, window switch, start_search) now resolve to a
+        // GuiCommandAction target so the GUI runs them — this is the fix for
+        // "send_last_command does nothing".
+        for name in [
+            "send_last_command",
+            "send_second_last_command",
+            "next_tab",
+            "prev_tab",
+            "next_unread_tab",
+            "switch_current_window",
+            "start_search",
+            "next_search_match",
+            "prev_search_match",
+        ] {
+            let key_event = KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE);
+            let mut keybind_map = HashMap::new();
+            keybind_map.insert(key_event, KeyBindAction::Action(name.to_string()));
+            let target = VellumGuiApp::resolve_global_dispatch_target(
+                key_event,
+                &keybind_map,
+                &AppKeybinds::default(),
+                false,
+            );
+            assert!(
+                matches!(target, Some(GlobalDispatchTarget::GuiCommandAction(ref n)) if n == name),
+                "action '{name}' should resolve to GuiCommandAction, got {target:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_command_input_owned_actions_stay_with_the_widget() {
+        // send_command / previous_command / next_command / cursor_clear_line /
+        // clear_search are owned by the command-input widget or search-close
+        // path (which read the keybind config themselves); routing them
+        // globally too would double-fire on their default keys.
+        for name in [
+            "send_command",
+            "previous_command",
+            "next_command",
+            "cursor_clear_line",
+            "clear_search",
+        ] {
+            let key_event = KeyEvent::new(KeyCode::F(9), KeyModifiers::NONE);
+            let mut keybind_map = HashMap::new();
+            keybind_map.insert(key_event, KeyBindAction::Action(name.to_string()));
+            let target = VellumGuiApp::resolve_global_dispatch_target(
+                key_event,
+                &keybind_map,
+                &AppKeybinds::default(),
+                false,
+            );
+            assert!(
+                !matches!(target, Some(GlobalDispatchTarget::GuiCommandAction(_))),
+                "action '{name}' must NOT route globally (widget owns it), got {target:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_frontend_keycode_to_egui_round_trips_common_keys() {
+        use crate::data::input::KeyCode;
+        assert_eq!(
+            VellumGuiApp::frontend_keycode_to_egui(KeyCode::Up),
+            Some(eframe::egui::Key::ArrowUp)
+        );
+        assert_eq!(
+            VellumGuiApp::frontend_keycode_to_egui(KeyCode::Enter),
+            Some(eframe::egui::Key::Enter)
+        );
+        assert_eq!(
+            VellumGuiApp::frontend_keycode_to_egui(KeyCode::Char('r')),
+            Some(eframe::egui::Key::R)
+        );
+        assert_eq!(
+            VellumGuiApp::frontend_keycode_to_egui(KeyCode::F(3)),
+            Some(eframe::egui::Key::F3)
+        );
     }
 
     #[test]

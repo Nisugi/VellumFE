@@ -7,11 +7,22 @@ import SwiftUI
 final class BootModel: ObservableObject {
     enum Phase {
         case starting
+        /// The native character picker: saved remote servers + "play on this
+        /// phone". Shown at launch when at least one server is saved.
+        case picker
         case ready(URL)
         case failed(String)
     }
 
     @Published var phase: Phase = .starting
+
+    /// Saved remote servers for the picker. Published so the picker view
+    /// re-renders after an add/delete.
+    @Published private(set) var servers: [RemoteStore.Target] = []
+
+    /// True once the embedded core is up (local play started). Lets the
+    /// picker offer "play on this phone" without restarting the core.
+    private var coreStarted = false
 
     /// Remote server the WebView is allowed to browse in-app (Remote mode);
     /// nil while on the embedded core. Read by the container's nav policy.
@@ -19,23 +30,39 @@ final class BootModel: ObservableObject {
 
     private var port: Int?
     private var token: String?
-    /// Fragment tail from a vellum:// deep link; rides the boot URL so the
-    /// web client prefills the Lich login tab.
+    /// Fragment tail from a vellum://lich deep link; rides the boot URL so
+    /// the web client prefills the Lich login tab. (Remote deep links no
+    /// longer prefill the page — the native picker owns remote servers.)
     private var lichFragment: String?
-    /// Prefill tail from a vellum://remote deep link (rhost/rport/rkey);
-    /// rides the boot URL so the web client opens the Remote tab. Never
-    /// auto-connects — the user presses Connect on the login page.
-    private var remoteFragment: String?
-    /// The remembered remote server (Keychain). Its address (never the
-    /// token) rides the boot URL so the login page can offer one-tap
-    /// connect; Connect/Forget come back as vellum://remote/… actions.
-    private var savedRemote: RemoteStore.Target?
 
     func boot() async {
         if case .ready = phase { return }
-        phase = .starting
-        savedRemote = RemoteStore.load()
+        if case .picker = phase { return }
+        servers = RemoteStore.list()
 
+        // A lich deep link arriving at launch takes priority: honor it
+        // directly rather than parking on the picker.
+        let hasPrefill = lichFragment != nil
+        if !servers.isEmpty && !hasPrefill {
+            // Saved remote characters exist: let the user pick. The core is
+            // started lazily only if they choose "play on this phone".
+            phase = .picker
+            return
+        }
+        await startLocal()
+    }
+
+    /// Start the embedded core (idempotent) and load local play. Used at
+    /// launch when no servers are saved, and from the picker's "play on this
+    /// phone" entry.
+    func startLocal() async {
+        if let port, let token, coreStarted {
+            // Core already up (returning from a remote view): just reload.
+            allowedRemoteHost = nil
+            phase = .ready(bootURL(port: port, token: token))
+            return
+        }
+        phase = .starting
         let info = await Task.detached(priority: .userInitiated) { () -> CoreInfo in
             CryptoKeys.installPasswordKey()
             guard let dataDir = try? CoreBridge.dataDirectory() else {
@@ -58,19 +85,41 @@ final class BootModel: ObservableObject {
         }
         self.port = port
         self.token = token
+        coreStarted = true
         phase = .ready(bootURL(port: port, token: token))
     }
 
+    // MARK: - Picker actions
+
+    /// Connect to a saved server (picker tap).
+    func connectToSaved(_ target: RemoteStore.Target) {
+        showRemote(target)
+    }
+
+    /// Add a server from the manual form or a scanned QR, then refresh the
+    /// picker list (staying on the picker so more can be added).
+    func addServer(_ target: RemoteStore.Target) {
+        RemoteStore.add(target)
+        servers = RemoteStore.list()
+    }
+
+    /// Delete a saved server by id and refresh the list.
+    func deleteServer(id: String) {
+        servers = RemoteStore.remove(id: id)
+    }
+
+    /// Return to the picker from a remote/local view.
+    func showPicker() {
+        servers = RemoteStore.list()
+        phase = .picker
+    }
+
     private func bootURL(port: Int, token: String) -> URL {
-        // app=1 marks the shell for the web client: it reveals the Remote
-        // login tab (whose actions only a shell can catch).
-        var url = "http://127.0.0.1:\(port)/play#token=\(token)&app=1"
-        if let saved = savedRemote {
-            url += "&remote=\(Self.encode("\(saved.host):\(saved.port)"))"
-        }
-        if let remote = remoteFragment {
-            url += "&\(remote)"
-        }
+        // app=1 marks the shell for the web client. nativepicker=1 tells it a
+        // native character picker owns remote-server management, so the
+        // in-page Remote login tab is hidden (a plain browser, lacking both,
+        // keeps its Remote tab).
+        var url = "http://127.0.0.1:\(port)/play#token=\(token)&app=1&nativepicker=1"
         if let lich = lichFragment {
             url += "&\(lich)"
         }
@@ -94,25 +143,34 @@ final class BootModel: ObservableObject {
         // Bracket bare IPv6 literals so the URL parses.
         let host = target.host.contains(":") && !target.host.hasPrefix("[")
             ? "[\(target.host)]" : target.host
-        var url = "http://\(host):\(target.port)/#"
-        url += target.token.isEmpty ? "app=1" : "token=\(target.token)&app=1"
+        // nativepicker=1: hide the web client's in-page Remote tab; the
+        // native picker (with a Back affordance) owns switching servers.
+        var url = "http://\(host):\(target.port)/#app=1&nativepicker=1"
+        if !target.token.isEmpty {
+            url += "&token=\(target.token)"
+        }
         guard let parsed = URL(string: url) else { return }
         phase = .ready(parsed)
     }
 
-    /// vellum://lich?host=…&port=…[&name=…] and
-    /// vellum://remote?host=…&port=…[&token=…] → stash a prefill fragment
-    /// and republish the boot URL. Both are prefill-only: a malicious QR
-    /// can't point the app at an attacker's socket unseen.
+    /// An OS-delivered deep link (a .webinfo QR scanned with the system
+    /// camera, which launches the app):
+    ///  - vellum://lich?…  → prefill the web client's Lich tab, then local play.
+    ///  - vellum://remote?… → add the character to the saved list and connect
+    ///    (the native picker owns remote servers now).
     func applyDeepLink(_ url: URL) {
-        if let fragment = Self.lichFragment(from: url) {
-            lichFragment = fragment
-        } else if let fragment = Self.remoteFragment(from: url) {
-            remoteFragment = fragment
-        } else {
+        if url.scheme == "vellum", url.host == "remote" {
+            guard let target = Self.remoteTarget(from: url) else { return }
+            if Self.queryValue(url, "save") != "0" {
+                addServer(target)
+            }
+            showRemote(target)
             return
         }
-        showLocal()
+        if let fragment = Self.lichFragment(from: url) {
+            lichFragment = fragment
+            Task { await startLocal() }
+        }
     }
 
     /// vellum:// navigations from the page itself (Remote tab actions).
@@ -124,21 +182,18 @@ final class BootModel: ObservableObject {
         case "remote":
             switch url.path {
             case "", "/":
-                // Pair: vellum://remote?host&port[&token][&save=0]
+                // Pair: vellum://remote?host&port[&token][&name][&save=0].
+                // Reached when the OS camera scans a .webinfo QR and hands the
+                // deep link to the app. Add to the saved list (unless save=0),
+                // then connect.
                 guard let target = Self.remoteTarget(from: url) else { return }
                 if Self.queryValue(url, "save") != "0" {
-                    RemoteStore.save(target)
-                    savedRemote = target
+                    addServer(target)
                 }
                 showRemote(target)
-            case "/connect":
-                if let target = savedRemote {
-                    showRemote(target)
-                }
-            case "/forget":
-                RemoteStore.forget()
-                savedRemote = nil
-                showLocal()
+            case "/picker":
+                // Return to the native character picker.
+                showPicker()
             default:
                 break
             }
@@ -160,25 +215,16 @@ final class BootModel: ObservableObject {
               let portText = queryValue(url, "port"),
               let port = UInt16(portText), port > 0
         else { return nil }
+        // The character name rides the extended .webinfo deep link so a
+        // scanned entry auto-names itself; fall back to host:port.
+        let name = queryValue(url, "name").flatMap { $0.isEmpty ? nil : $0 }
+            ?? "\(host):\(port)"
         return RemoteStore.Target(
+            name: name,
             host: host,
             port: Int(port),
             token: queryValue(url, "token") ?? ""
         )
-    }
-
-    /// vellum://remote?… → the #rhost=…&rport=…[&rkey=…] prefill tail.
-    /// ("rkey": the web client's token regex is unanchored, so any
-    /// *token= param in the local fragment would be eaten by it.)
-    private static func remoteFragment(from url: URL) -> String? {
-        guard url.host == "remote", url.path.isEmpty || url.path == "/",
-              let target = remoteTarget(from: url)
-        else { return nil }
-        var fragment = "rhost=\(encode(target.host))&rport=\(target.port)"
-        if !target.token.isEmpty {
-            fragment += "&rkey=\(encode(target.token))"
-        }
-        return fragment
     }
 
     private static func encode(_ s: String) -> String {
@@ -230,6 +276,8 @@ struct ContentView: View {
             case .starting:
                 ProgressView()
                     .tint(Color(white: 0.6))
+            case .picker:
+                RemotePickerView(model: model)
             case let .ready(url):
                 WebViewContainer(
                     url: url,

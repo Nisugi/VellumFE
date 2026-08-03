@@ -57,3 +57,18 @@ kotlin {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
+
+dependencies {
+    // In-app QR scanner for the character picker ("Scan QR to add"): CameraX
+    // drives the preview + analysis, ML Kit's bundled barcode model decodes
+    // the .webinfo pairing QR on-device (no network, no Play Services fetch).
+    val cameraX = "1.3.4"
+    implementation("androidx.camera:camera-core:$cameraX")
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // The scanner activity is not a LifecycleOwner on its own, so it hosts a
+    // LifecycleRegistry (lifecycle-runtime) to bind CameraX to.
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+}

@@ -242,7 +242,7 @@ async fn async_run(
         mpsc::channel::<ServerMessage>(crate::network::SERVER_CHANNEL_CAPACITY);
     // Command channel stays unbounded: sends happen in the synchronous UI
     // event loop (can't await) and volume is user-typed commands only.
-    let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
+    let (mut command_tx, command_rx) = mpsc::unbounded_channel::<String>();
 
     // Store connection info
     let host = config.connection.host.clone();
@@ -375,8 +375,18 @@ async fn async_run(
         }
     }
 
+    // Retain everything `.reconnect` needs to rebuild the session after a
+    // drop. `server_tx` is cloned so a reconnect can point a fresh task at the
+    // same `server_rx` the loop already reads. `raw_logger` owns a thread and
+    // can't be cloned; a reconnect rebuilds it from `app_core.config`.
+    let reconnect_server_tx = server_tx.clone();
+    let reconnect_direct = direct.clone();
+    let reconnect_host = host.clone();
+    let reconnect_port = port;
+    let reconnect_login_key = login_key.clone();
+
     // Spawn network connection task
-    let network_handle = match direct {
+    let mut network_handle = match direct {
         Some(cfg) => tokio::spawn(async move {
             if let Err(e) = DirectConnection::start(cfg, server_tx, command_rx, raw_logger).await {
                 tracing::error!(error = ?e, "Network connection error");
@@ -502,6 +512,62 @@ async fn async_run(
                 Ok(_) => app_core.needs_render = true,
                 Err(e) => tracing::warn!("vellumCmd failed: {e}"),
             }
+        }
+
+        // `.reconnect` (via UiAction::Reconnect) sets a flag core can't act on
+        // itself — the network channels live here. Rebuild the session with a
+        // fresh command channel and a task pointed at the existing server_rx.
+        if app_core.take_reconnect_request() {
+            if app_core.game_state.connected {
+                app_core.add_system_message("Already connected — nothing to reconnect.");
+            } else {
+                network_handle.abort();
+
+                let (new_command_tx, new_command_rx) = mpsc::unbounded_channel::<String>();
+                command_tx = new_command_tx;
+
+                // Fresh raw logger (owns a writer thread); the old one flushes
+                // and drops with the aborted task.
+                let raw_logger = match crate::network::RawLogger::new(&app_core.config) {
+                    Ok(logger) => logger,
+                    Err(e) => {
+                        tracing::error!("Reconnect: failed to init raw logger: {e}");
+                        None
+                    }
+                };
+
+                let server_tx = reconnect_server_tx.clone();
+                network_handle = match reconnect_direct.clone() {
+                    Some(cfg) => tokio::spawn(async move {
+                        if let Err(e) =
+                            DirectConnection::start(cfg, server_tx, new_command_rx, raw_logger).await
+                        {
+                            tracing::error!(error = ?e, "Reconnect (direct) error");
+                        }
+                    }),
+                    None => {
+                        let host_clone = reconnect_host.clone();
+                        let login_key_clone = reconnect_login_key.clone();
+                        let port = reconnect_port;
+                        tokio::spawn(async move {
+                            if let Err(e) = LichConnection::start(
+                                &host_clone,
+                                port,
+                                login_key_clone,
+                                server_tx,
+                                new_command_rx,
+                                raw_logger,
+                            )
+                            .await
+                            {
+                                tracing::error!(error = ?e, "Reconnect (lich) error");
+                            }
+                        })
+                    }
+                };
+                app_core.add_system_message("Reconnecting…");
+            }
+            app_core.needs_render = true;
         }
 
         // Poll for frontend events (keyboard, mouse, resize)

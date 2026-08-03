@@ -194,6 +194,12 @@ pub struct AppCore {
     /// is preserved so the GUI preference survives TUI sessions.
     pub force_show_command_input: bool,
 
+    /// Set by `.reconnect` (via `UiAction::Reconnect`); the frontend runtime
+    /// owns the network channels, so it drains this once per tick and
+    /// re-establishes the connection. Core can't reconnect itself — it has no
+    /// handle to the socket task — so this is the hand-off point.
+    pub reconnect_requested: bool,
+
     /// Base layout name for autosave reference
     pub base_layout_name: Option<String>,
 
@@ -373,6 +379,7 @@ impl AppCore {
             layout_autosave_pending: None,
             save_reminder_shown: false,
             force_show_command_input: false,
+            reconnect_requested: false,
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts: Vec::new(),
@@ -518,6 +525,7 @@ impl AppCore {
             layout_autosave_pending: None,
             save_reminder_shown: false,
             force_show_command_input: false,
+            reconnect_requested: false,
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts,
@@ -3286,6 +3294,12 @@ impl AppCore {
     /// Drained once per frame/tick by each frontend.
     pub fn take_pending_client_commands(&mut self) -> Vec<String> {
         std::mem::take(&mut self.message_processor.pending_client_commands)
+    }
+
+    /// Consume a pending `.reconnect` request (see `reconnect_requested`).
+    /// Returns true at most once per request; the frontend runtime acts on it.
+    pub fn take_reconnect_request(&mut self) -> bool {
+        std::mem::take(&mut self.reconnect_requested)
     }
 
     /// Add a system message to a window that receives the "main" stream.
@@ -6643,6 +6657,18 @@ fn wire_map_scene(
 mod tests {
     use super::*;
     use crate::config::{Layout, WindowBase, WindowDef, SpacerWidgetData, BorderSides};
+
+    #[test]
+    fn reconnect_request_flag_is_consumed_exactly_once() {
+        let mut core = AppCore::new_for_test();
+        // Fresh core has no pending request.
+        assert!(!core.take_reconnect_request());
+        // The frontend dispatcher sets this on UiAction::Reconnect.
+        core.reconnect_requested = true;
+        // First drain sees it, then clears it — the runtime reconnects once.
+        assert!(core.take_reconnect_request());
+        assert!(!core.take_reconnect_request());
+    }
 
     // Test helper to create a minimal WindowBase
     fn test_window_base(name: &str) -> WindowBase {

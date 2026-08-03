@@ -9,6 +9,11 @@
     <!-- Sideload app: the Play Store restricts this permission, but a
          persistent game session is exactly its intended use case. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- In-app QR scanner (character picker → "Scan QR to add"): reads a
+         desktop VellumFE's .webinfo pairing QR. Optional hardware so the app
+         still installs on camera-less devices. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
         android:label="VellumFE"
@@ -41,6 +46,13 @@
                 <data android:scheme="vellum" android:host="remote" />
             </intent-filter>
         </activity>
+
+        <!-- In-app QR scanner launched from the character picker; returns the
+             decoded vellum://remote deep link to MainActivity. -->
+        <activity
+            android:name=".QrScannerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
 
         <!-- specialUse (not dataSync): a persistent game connection has no
              6-hour budget; Android 15 caps dataSync services at 6h. -->

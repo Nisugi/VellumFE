@@ -91,6 +91,24 @@ fn split_sleep_macro(
     ))
 }
 
+/// Minimal percent-encoding for a query-string value: keeps the RFC 3986
+/// unreserved set (`A-Z a-z 0-9 - _ . ~`) and encodes everything else as
+/// `%XX`. Enough for a character name in the `.webinfo` app deep link
+/// without pulling in a URL crate; GemStone names are letters, but spaces
+/// or punctuation in a session label stay safe.
+fn percent_encode_query(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 impl AppCore {
     /// Send command to server
     pub fn send_command(&mut self, command: String) -> Result<CommandOutcome> {
@@ -276,8 +294,13 @@ impl AppCore {
         let url = format!("http://{host}:{port}/#token={token}");
         // Deep link for the iOS/Android apps' Remote login tab: same
         // server, but paired through the app shell (token lands in the
-        // phone's Keychain/Keystore instead of a browser).
-        let app_url = format!("vellum://remote?host={host}&port={port}&token={token}");
+        // phone's Keychain/Keystore instead of a browser). The character
+        // name rides along (URL-encoded) so a scanned entry auto-names
+        // itself in the app's character picker instead of showing host:port.
+        let mut app_url = format!("vellum://remote?host={host}&port={port}&token={token}");
+        if let Some(name) = self.config.character.as_deref().filter(|n| !n.is_empty()) {
+            app_url.push_str(&format!("&name={}", percent_encode_query(name)));
+        }
         self.add_system_message(&format!("Web session URL (browser): {url}"));
         self.add_system_message(&format!("VellumFE app link: {app_url}"));
         if self.config.web.bind == "127.0.0.1" {
@@ -1648,6 +1671,13 @@ impl AppCore {
                 self.show_version();
             }
 
+            // Re-establish a dropped game connection. Core can't reach the
+            // socket task, so this hands off to the frontend runtime, which
+            // owns the network channels (Direct re-auths; Lich re-attaches).
+            "reconnect" => {
+                return Ok(CommandOutcome::Ui(UiAction::Reconnect));
+            }
+
             // Map debug: how the stream's room identifiers resolved against
             // the mapdb (go2 plan phase 2).
             "room" => {
@@ -2858,6 +2888,15 @@ mod tests {
     }
 
     #[test]
+    fn percent_encode_query_keeps_unreserved_and_escapes_rest() {
+        // Plain GemStone names pass through untouched.
+        assert_eq!(super::percent_encode_query("Rysk"), "Rysk");
+        // Spaces and punctuation in a session label are escaped.
+        assert_eq!(super::percent_encode_query("Ma Roon"), "Ma%20Roon");
+        assert_eq!(super::percent_encode_query("a&b=c"), "a%26b%3Dc");
+    }
+
+    #[test]
     fn test_help_aliases() {
         let help_commands = vec![".help", ".h", ".?", ".HELP", ".H"];
         for cmd_str in help_commands {
@@ -3103,6 +3142,7 @@ mod tests {
             (".webui off", UiAction::WebUiOff),
             (".webui bigshot", UiAction::WebUiOpen("bigshot".into())),
             (".sorter edit", UiAction::SorterEdit),
+            (".reconnect", UiAction::Reconnect),
         ];
         for (command, expected) in cases {
             assert_eq!(
