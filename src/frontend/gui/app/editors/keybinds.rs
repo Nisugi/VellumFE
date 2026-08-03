@@ -320,14 +320,36 @@ impl VellumGuiApp {
                                 ui.end_row();
                             } else {
                                 ui.label("Action");
-                                ui.text_edit_singleline(&mut form.action);
+                                egui::ComboBox::from_id_salt("keybind_action_pick")
+                                    .selected_text(if form.action.is_empty() {
+                                        "pick..."
+                                    } else {
+                                        form.action.as_str()
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        let mut last_category = "";
+                                        for def in KeyAction::ACTIONS {
+                                            if def.category != last_category {
+                                                if !last_category.is_empty() {
+                                                    ui.separator();
+                                                }
+                                                ui.weak(def.category);
+                                                last_category = def.category;
+                                            }
+                                            ui.selectable_value(
+                                                &mut form.action,
+                                                def.name.to_string(),
+                                                format!("{} ({})", def.label, def.name),
+                                            );
+                                        }
+                                    });
                                 ui.end_row();
                             }
                         });
                     if form.is_macro {
                         ui.weak("Use \\r for enter (e.g. \"sw\\r\" to walk southwest).");
                     } else {
-                        ui.weak("Action name, e.g. cursor_word_left, next_tab, toggle_sounds.");
+                        ui.weak("For game commands, use a Macro instead.");
                     }
                     ui.checkbox(&mut form.is_global, "Global (all characters)");
 
