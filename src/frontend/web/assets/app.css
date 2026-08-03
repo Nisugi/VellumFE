@@ -263,6 +263,16 @@ html, body {
 
 .line .b { font-weight: bold; }
 
+/* Custom (Discord-style) emoji rendered inline from /emoji/<name>. Height is
+   pinned to the line so a picture never grows the row; width auto-scales. */
+.custom-emoji {
+  display: inline-block;
+  height: 1.3em;
+  width: auto;
+  vertical-align: middle;
+  object-fit: contain;
+}
+
 #bottombar {
   position: relative;
   background: var(--bg-panel);

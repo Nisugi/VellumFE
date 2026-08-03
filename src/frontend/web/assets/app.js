@@ -350,6 +350,20 @@ function renderLine(line) {
   div.className = "line";
   for (const seg of line.segments) {
     if (!seg.text) continue;
+    // Custom emoji: the segment text is the literal `:name:` shortcode and
+    // seg.custom_emoji is the resolved name. Render the picture inline; the
+    // alt/title degrade to `:name:` text if the image can't load. GIF/APNG
+    // animate natively in the browser.
+    if (seg.custom_emoji) {
+      const img = document.createElement("img");
+      img.className = "custom-emoji";
+      img.src = `/emoji/${encodeURIComponent(seg.custom_emoji)}?token=${encodeURIComponent(pairingToken)}`;
+      const label = seg.text || `:${seg.custom_emoji}:`;
+      img.alt = label;
+      img.title = label;
+      div.appendChild(img);
+      continue;
+    }
     const span = document.createElement("span");
     span.textContent = seg.text;
     if (seg.fg) span.style.color = seg.fg;

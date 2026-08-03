@@ -284,6 +284,8 @@ pub async fn serve_listener_with_token(
         .route("/health", get(health))
         .route("/status", get(status_json))
         .route("/sounds/{name}", get(sound_file))
+        .route("/emoji", get(emoji_list))
+        .route("/emoji/{name}", get(emoji_file))
         .route("/doll.json", get(doll_json))
         .route("/doll/image", get(doll_image))
         .route("/ws", get(ws_upgrade))
@@ -511,6 +513,76 @@ async fn sound_file(
     };
     match std::fs::read(&path) {
         Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, content_type)], bytes),
+        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+    }
+}
+
+/// Is `name` a valid custom-emoji shortcode? Matches the registry's own
+/// alphabet (alphanumeric + `_ + -`), so nothing path-like (`/`, `\`, `.`,
+/// `:`) can pass and traversal is impossible before we even hit the lookup.
+fn is_emoji_shortcode(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'+' || b == b'-')
+}
+
+/// List the installed custom-emoji shortcode names as a JSON array. Reserved
+/// for a future phone-side picker; token-gated like the other private
+/// endpoints.
+async fn emoji_list(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "application/json")],
+            "[]".to_string(),
+        );
+    }
+    let mut names: Vec<String> = crate::core::custom_emoji::all()
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    names.sort();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string()),
+    )
+}
+
+/// Serve a custom-emoji image (`~/.vellum-fe/emoji/<name>.<ext>`) so the
+/// phone can render `:name:` shortcodes as inline `<img>`. Token-gated like
+/// /sounds. The name must be a valid shortcode; the registry lookup then
+/// resolves it to an on-disk path (its scan already constrained names to the
+/// same alphabet, so there is no path-traversal surface). Unknown names 404.
+async fn emoji_file(
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    if !is_emoji_shortcode(&name) {
+        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    let Some(emoji) = crate::core::custom_emoji::get(&name) else {
+        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    };
+    match std::fs::read(&emoji.path) {
+        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, emoji.format.mime())], bytes),
         Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
     }
 }
