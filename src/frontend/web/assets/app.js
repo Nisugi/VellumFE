@@ -771,6 +771,8 @@ function handleSnapshot(d) {
   // Sidecar servers (TUI/GUI hosting) don't send session info; treat the
   // session as an implicitly-connected one we can't control.
   setSession(d.session || { state: "connected", session_control: false });
+  // WebUI pages ride the snapshot so a connecting client has the picker list.
+  if (Array.isArray(d.webui_pages)) { webuiState.pages = d.webui_pages; webuiState.connected = true; }
   if (autoScroll) scrollToBottom();
 }
 
@@ -3218,6 +3220,10 @@ function openSettingsSheet() {
   sheetButton("Client settings (saved on host)", openClientSettings);
   sheetButton("Streams (saved on host)", openStreamsPanel);
   sheetButton("Touch wheel (long-press ring)", () => openTouchWheelEditor("profile"));
+  // Lich WebUI panels — only on a Lich-attached session.
+  if (webuiState.available) {
+    sheetButton("Lich WebUI panels", openWebUi);
+  }
   sheetButton("Highlight rules (this profile)", () => openHighlightList("profile"));
   sheetButton("Highlight rules (global)", () => openHighlightList("global"));
   sheetButton("Colors (this profile)", () => openColorsEditor("profile"));
@@ -6304,9 +6310,523 @@ function webuiSendEvent(page, cid, value) {
   sendJson("webui_event", { page, cid, value: value ?? null });
 }
 
-// P5b replaces this with the real node renderer. For P5a it's a no-op hook
-// so the render/pages/closed/connected deltas have somewhere to land.
-function renderWebUiIfOpen(_page) { /* P5b: render webuiState.trees into panels */ }
+// ---- WebUI panel overlay + node renderer (P5b) -----------------------------
+// One page is shown at a time in a full-screen overlay (phone real estate).
+// A picker lists registered pages; opening one subscribes, closing
+// unsubscribes. The node renderer reproduces the desktop widget set; edit
+// state (in-progress input text) lives naturally in the DOM elements.
+
+const webuiOverlay = document.createElement("div");
+webuiOverlay.id = "webui-overlay";
+webuiOverlay.hidden = true;
+webuiOverlay.innerHTML = `
+  <div id="webui-card">
+    <div id="webui-titlebar">
+      <button type="button" id="webui-back" title="Pages">‹</button>
+      <span id="webui-title">Lich WebUI</span>
+      <button type="button" id="webui-close">Close</button>
+    </div>
+    <div id="webui-body"></div>
+  </div>`;
+document.body.appendChild(webuiOverlay);
+const webuiBody = webuiOverlay.querySelector("#webui-body");
+const webuiTitle = webuiOverlay.querySelector("#webui-title");
+let webuiOpenPage = null; // page id currently shown, or null = picker
+
+webuiOverlay.querySelector("#webui-close").addEventListener("click", closeWebUi);
+webuiOverlay.querySelector("#webui-back").addEventListener("click", () => {
+  if (webuiOpenPage) { webuiUnsubscribe(webuiOpenPage); webuiOpenPage = null; renderWebUi(); }
+  else closeWebUi();
+});
+
+function openWebUi() {
+  if (!webuiState.available) return;
+  webuiOverlay.hidden = false;
+  webuiOpenPage = null;
+  renderWebUi();
+}
+function closeWebUi() {
+  if (webuiOpenPage) webuiUnsubscribe(webuiOpenPage);
+  webuiOpenPage = null;
+  webuiOverlay.hidden = true;
+}
+function openWebUiPage(page) {
+  webuiOpenPage = page;
+  webuiSubscribe(page);
+  renderWebUi();
+}
+
+// The message dispatch calls this on every webui delta; only repaint if the
+// change concerns what's on screen.
+function renderWebUiIfOpen(page) {
+  if (webuiOverlay.hidden) return;
+  if (page && webuiOpenPage && page !== webuiOpenPage) return;
+  renderWebUi();
+}
+
+function renderWebUi() {
+  webuiBody.replaceChildren();
+  const backBtn = webuiOverlay.querySelector("#webui-back");
+  if (!webuiState.connected && !webuiOpenPage) {
+    webuiTitle.textContent = "Lich WebUI";
+    backBtn.hidden = true;
+    webuiBody.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty",
+      textContent: webuiState.available ? "Connecting to Lich…" : "Lich WebUI needs a Lich session.",
+    }));
+    return;
+  }
+  if (!webuiOpenPage) {
+    // Page picker.
+    webuiTitle.textContent = "Lich WebUI";
+    backBtn.hidden = true;
+    if (!webuiState.pages.length) {
+      webuiBody.appendChild(Object.assign(document.createElement("p"), {
+        className: "hl-empty", textContent: "No WebUI pages registered.",
+      }));
+      return;
+    }
+    for (const p of webuiState.pages) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "webui-page-item";
+      btn.textContent = p.title || p.id;
+      btn.addEventListener("click", () => openWebUiPage(p.id));
+      webuiBody.appendChild(btn);
+    }
+    return;
+  }
+  // A page is open: render its latest tree.
+  backBtn.hidden = false;
+  const desc = webuiState.pages.find((p) => p.id === webuiOpenPage);
+  webuiTitle.textContent = desc ? (desc.title || desc.id) : webuiOpenPage;
+  const entry = webuiState.trees.get(webuiOpenPage);
+  if (!entry || !entry.tree) {
+    webuiBody.appendChild(Object.assign(document.createElement("p"), {
+      className: "hl-empty", textContent: "Loading…",
+    }));
+    return;
+  }
+  webuiBody.appendChild(renderWebUiNode(webuiOpenPage, entry.tree));
+}
+
+// Render one node into a DOM element. `page` threads through for event cids.
+function renderWebUiNode(page, node) {
+  const t = node.t || "";
+  const emit = (value) => webuiSendEvent(page, node.cid || "", value);
+  switch (t) {
+    case "page": {
+      const el = document.createElement("div");
+      el.className = "webui-page";
+      for (const c of node.children || []) el.appendChild(renderWebUiNode(page, c));
+      return el;
+    }
+    case "header": {
+      const el = document.createElement("h3");
+      el.className = "webui-header";
+      el.textContent = node.text || "";
+      return el;
+    }
+    case "text": {
+      const el = document.createElement("div");
+      el.className = "webui-text";
+      el.textContent = node.text || "";
+      return el;
+    }
+    case "markdown": {
+      const el = document.createElement("div");
+      el.className = "webui-text";
+      renderWebUiMarkdown(el, node.text || "");
+      return el;
+    }
+    case "divider": {
+      return document.createElement("hr");
+    }
+    case "button": return webuiButton(page, node, emit);
+    case "text_input":
+    case "password_input": return webuiTextInput(page, node, emit, t === "password_input");
+    case "textarea": return webuiTextarea(page, node, emit);
+    case "select": return webuiSelect(page, node, emit);
+    case "radio": return webuiRadio(page, node, emit);
+    case "checkbox": return webuiCheckbox(page, node, emit);
+    case "slider":
+    case "number_input": return webuiNumber(page, node, emit, t === "slider");
+    case "log": return webuiLog(node);
+    case "progress": return webuiProgress(node);
+    case "table": return webuiTable(page, node, emit);
+    case "expander": return webuiExpander(page, node);
+    case "columns": return webuiColumns(page, node);
+    case "col": case "tab": case "cell": {
+      const el = document.createElement("div");
+      el.className = "webui-container";
+      for (const c of node.children || []) el.appendChild(renderWebUiNode(page, c));
+      return el;
+    }
+    case "grid": return webuiGrid(page, node);
+    case "tabs": return webuiTabs(page, node);
+    case "image": return webuiImage(node);
+    case "image_map": return webuiImageMap(page, node, emit);
+    default: {
+      const el = document.createElement("div");
+      el.className = "webui-text webui-unsupported";
+      el.textContent = `[unsupported component: ${t}]`;
+      return el;
+    }
+  }
+}
+
+// Two-step confirm: first tap arms (swaps label, colored); second fires.
+function webuiButton(page, node, emit) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "webui-btn";
+  if (node.variant === "danger") btn.classList.add("danger");
+  btn.disabled = !!node.disabled;
+  let armed = false;
+  let armTimer = 0;
+  const label = node.label || "";
+  const paint = () => {
+    btn.textContent = armed ? (node.confirm || label) : label;
+    btn.classList.toggle("armed", armed);
+  };
+  paint();
+  btn.addEventListener("click", () => {
+    if (node.confirm && !armed) {
+      armed = true; paint();
+      clearTimeout(armTimer);
+      armTimer = setTimeout(() => { armed = false; paint(); }, 3000);
+    } else {
+      armed = false; clearTimeout(armTimer); paint();
+      emit(null);
+    }
+  });
+  return btn;
+}
+
+// text/password: the DOM element IS the edit buffer. Adopt a changed server
+// value only when NOT focused; commit on blur or Enter.
+function webuiTextInput(page, node, emit, isPassword) {
+  const wrap = document.createElement("label");
+  wrap.className = "webui-field";
+  if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
+  const input = document.createElement("input");
+  input.type = isPassword ? "password" : "text";
+  input.value = webuiValueStr(node);
+  if (node.placeholder) input.placeholder = node.placeholder;
+  const commit = () => {
+    if (isPassword || input.value !== webuiValueStr(node)) emit(input.value);
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); input.blur(); } });
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function webuiTextarea(page, node, emit) {
+  const wrap = document.createElement("label");
+  wrap.className = "webui-field webui-field-col";
+  if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
+  const ta = document.createElement("textarea");
+  ta.value = webuiValueStr(node);
+  if (node.placeholder) ta.placeholder = node.placeholder;
+  if (node.rows_hint) ta.rows = node.rows_hint;
+  ta.addEventListener("blur", () => { if (ta.value !== webuiValueStr(node)) emit(ta.value); });
+  wrap.appendChild(ta);
+  return wrap;
+}
+
+function webuiSelect(page, node, emit) {
+  const wrap = document.createElement("label");
+  wrap.className = "webui-field";
+  if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
+  const sel = document.createElement("select");
+  for (const opt of node.options || []) sel.appendChild(new Option(opt, opt));
+  sel.value = webuiValueStr(node);
+  sel.addEventListener("change", () => emit(sel.value));
+  wrap.appendChild(sel);
+  return wrap;
+}
+
+function webuiRadio(page, node, emit) {
+  const group = document.createElement("div");
+  group.className = "webui-radio";
+  if (node.label) group.append(Object.assign(document.createElement("div"), { className: "webui-radio-label", textContent: node.label }));
+  const current = webuiValueStr(node);
+  const name = `webui_radio_${node.cid || Math.random()}`;
+  for (const opt of node.options || []) {
+    const lbl = document.createElement("label");
+    const r = document.createElement("input");
+    r.type = "radio"; r.name = name; r.value = opt; r.checked = opt === current;
+    r.addEventListener("change", () => emit(opt));
+    lbl.append(r, document.createTextNode(" " + opt));
+    group.appendChild(lbl);
+  }
+  return group;
+}
+
+function webuiCheckbox(page, node, emit) {
+  const lbl = document.createElement("label");
+  lbl.className = "webui-check";
+  const box = document.createElement("input");
+  box.type = "checkbox"; box.checked = !!node.checked;
+  box.addEventListener("change", () => emit(box.checked));
+  lbl.append(box, document.createTextNode(" " + (node.label || "")));
+  return lbl;
+}
+
+function webuiNumber(page, node, emit, isSlider) {
+  const wrap = document.createElement("label");
+  wrap.className = "webui-field";
+  if (node.label) wrap.append(Object.assign(document.createElement("span"), { textContent: node.label }));
+  const input = document.createElement("input");
+  input.type = isSlider ? "range" : "number";
+  if (node.min != null) input.min = node.min;
+  if (node.max != null) input.max = node.max;
+  if (node.step != null) input.step = node.step;
+  const v = webuiValueNum(node);
+  if (v != null) input.value = v;
+  // Commit on release (range) / change (number) — matches desktop's
+  // commit-on-drag-release, not every intermediate value.
+  const commit = () => { const n = parseFloat(input.value); if (!Number.isNaN(n)) emit(n); };
+  input.addEventListener("change", commit);
+  wrap.appendChild(input);
+  if (isSlider) {
+    const out = document.createElement("output");
+    out.textContent = v != null ? v : "";
+    input.addEventListener("input", () => { out.textContent = input.value; });
+    wrap.appendChild(out);
+  }
+  return wrap;
+}
+
+function webuiLog(node) {
+  const box = document.createElement("div");
+  box.className = "webui-log";
+  if (node.max_height) box.style.maxHeight = `${node.max_height}px`;
+  for (const line of node.lines || []) {
+    const row = document.createElement("div");
+    renderWebUiMarkdown(row, line);
+    box.appendChild(row);
+  }
+  return box;
+}
+
+function webuiProgress(node) {
+  const wrap = document.createElement("div");
+  wrap.className = "webui-progress-wrap";
+  const bar = document.createElement("div");
+  bar.className = "webui-progress";
+  const frac = Math.max(0, Math.min(1, webuiValueNum(node) ?? 0));
+  const fill = document.createElement("div");
+  fill.className = "webui-progress-fill";
+  fill.style.width = `${(frac * 100).toFixed(1)}%`;
+  bar.appendChild(fill);
+  wrap.appendChild(bar);
+  if (node.label) wrap.append(Object.assign(document.createElement("span"), { className: "webui-progress-label", textContent: node.label }));
+  return wrap;
+}
+
+function webuiTable(page, node, emit) {
+  const scroll = document.createElement("div");
+  scroll.className = "webui-table-scroll";
+  const table = document.createElement("table");
+  table.className = "webui-table";
+  if (node.headings && node.headings.length) {
+    const thead = document.createElement("thead");
+    const tr = document.createElement("tr");
+    for (const h of node.headings) tr.append(Object.assign(document.createElement("th"), { textContent: h }));
+    thead.appendChild(tr); table.appendChild(thead);
+  }
+  const tbody = document.createElement("tbody");
+  (node.rows || []).forEach((row, i) => {
+    const tr = document.createElement("tr");
+    if (node.selected === i) tr.classList.add("selected");
+    for (const cell of row) tr.append(Object.assign(document.createElement("td"), { textContent: cell }));
+    if (node.clickable) {
+      tr.classList.add("clickable");
+      // Emit the UNSORTED row index (desktop contract).
+      tr.addEventListener("click", () => emit(i));
+    }
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  return scroll;
+}
+
+function webuiExpander(page, node) {
+  const det = document.createElement("details");
+  det.className = "webui-expander";
+  det.open = !!node.open; // open state is client-local
+  const sum = document.createElement("summary");
+  sum.textContent = node.label || "";
+  det.appendChild(sum);
+  for (const c of node.children || []) det.appendChild(renderWebUiNode(page, c));
+  return det;
+}
+
+function webuiColumns(page, node) {
+  const el = document.createElement("div");
+  el.className = "webui-columns";
+  const cols = (node.children || []);
+  const weights = node.weights || [];
+  cols.forEach((c, i) => {
+    const colEl = renderWebUiNode(page, c);
+    colEl.style.flex = `${weights[i] || 1} 1 0`;
+    el.appendChild(colEl);
+  });
+  return el;
+}
+
+function webuiGrid(page, node) {
+  const el = document.createElement("div");
+  el.className = "webui-grid";
+  el.style.gridTemplateColumns = `repeat(${node.cols || 1}, 1fr)`;
+  for (const c of node.children || []) el.appendChild(renderWebUiNode(page, c));
+  return el;
+}
+
+// Tabs: active index is client-local (never sent to server).
+function webuiTabs(page, node) {
+  const el = document.createElement("div");
+  el.className = "webui-tabs";
+  const strip = document.createElement("div");
+  strip.className = "webui-tab-strip";
+  const panel = document.createElement("div");
+  panel.className = "webui-tab-panel";
+  const tabs = node.children || [];
+  let active = 0;
+  const paint = () => {
+    panel.replaceChildren();
+    if (tabs[active]) panel.appendChild(renderWebUiNode(page, tabs[active]));
+    [...strip.children].forEach((b, i) => b.classList.toggle("active", i === active));
+  };
+  tabs.forEach((tab, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "webui-tab";
+    b.textContent = tab.label || `Tab ${i + 1}`;
+    b.addEventListener("click", () => { active = i; paint(); });
+    strip.appendChild(b);
+  });
+  el.append(strip, panel);
+  paint();
+  return el;
+}
+
+function webuiImage(node) {
+  const img = document.createElement("img");
+  img.className = "webui-image";
+  img.alt = node.alt || "";
+  img.src = webuiImageSrc(node.src || "");
+  if (node.scale) img.style.width = `calc(var(--webui-img-w, 0px))`;
+  return img;
+}
+
+// image_map: an image with clickable marker boxes; a tap emits the unscaled
+// pixel coords + modifiers + topmost marker id (desktop payload).
+function webuiImageMap(page, node, emit) {
+  const wrap = document.createElement("div");
+  wrap.className = "webui-imagemap";
+  const img = document.createElement("img");
+  img.src = webuiImageSrc(node.src || "");
+  img.alt = node.alt || "";
+  const scale = node.scale || 1;
+  wrap.appendChild(img);
+  const markers = node.markers || [];
+  const hitAt = (px, py) => {
+    // topmost marker whose box contains the unscaled point
+    for (let i = markers.length - 1; i >= 0; i--) {
+      const m = markers[i];
+      if (px >= m.x1 && px <= m.x2 && py >= m.y1 && py <= m.y2) return m.id;
+    }
+    return null;
+  };
+  const fire = (ev, right) => {
+    ev.preventDefault();
+    const rect = img.getBoundingClientRect();
+    const px = Math.round((ev.clientX - rect.left) / scale);
+    const py = Math.round((ev.clientY - rect.top) / scale);
+    emit({ x: px, y: py, shift: ev.shiftKey, ctrl: ev.ctrlKey || ev.metaKey, right, marker: hitAt(px, py) });
+    if (right && node.popup) openWebUiPage(node.popup);
+  };
+  img.addEventListener("click", (ev) => fire(ev, false));
+  img.addEventListener("contextmenu", (ev) => fire(ev, true));
+  // Draw marker outlines scaled to display size.
+  for (const m of markers) {
+    const box = document.createElement("div");
+    box.className = `webui-marker webui-marker-${m.kind || "marker"}`;
+    box.style.left = `${m.x1 * scale}px`;
+    box.style.top = `${m.y1 * scale}px`;
+    box.style.width = `${(m.x2 - m.x1) * scale}px`;
+    box.style.height = `${(m.y2 - m.y1) * scale}px`;
+    if (m.label) box.title = m.label;
+    wrap.appendChild(box);
+  }
+  return wrap;
+}
+
+// /files/ images fetch over the bridge (cookie-authed) on desktop; on the
+// phone the token is in the URL fragment, not a usable cookie for a
+// cross-path GET, so route through the same /sounds-style token query the
+// phone already uses. Data URIs pass through untouched.
+function webuiImageSrc(src) {
+  if (src.startsWith("data:")) return src;
+  if (src.startsWith("/files/")) return `${src}?token=${encodeURIComponent(pairingToken)}`;
+  return src;
+}
+
+function webuiValueStr(node) {
+  const v = node.value;
+  return typeof v === "string" ? v : (v == null ? "" : String(v));
+}
+function webuiValueNum(node) {
+  const v = node.value;
+  return typeof v === "number" ? v : (v == null ? null : parseFloat(v));
+}
+
+// Inline markdown subset matching the desktop: {{color:text}}, **bold**,
+// *italic*, `code`, bare http(s) URLs. Appends styled spans into `el`.
+const WEBUI_PALETTE = {
+  red: "#c05050", green: "#2aa02a", blue: "#4a7ad0", yellow: "#b0902a",
+  orange: "#c86400", cyan: "#2aa0a8", magenta: "#a840a8", gray: "#8c8c8c", grey: "#8c8c8c",
+};
+function renderWebUiMarkdown(el, input) {
+  let rest = input;
+  const push = (text, style) => {
+    if (!text) return;
+    const span = document.createElement(style && style.link ? "a" : "span");
+    if (style) {
+      if (style.bold) span.style.fontWeight = "bold";
+      if (style.italic) span.style.fontStyle = "italic";
+      if (style.code) span.className = "webui-code";
+      if (style.color) span.style.color = WEBUI_PALETTE[style.color] || style.color;
+      if (style.link) { span.href = text; span.target = "_blank"; span.rel = "noopener"; }
+    }
+    span.textContent = text;
+    el.appendChild(span);
+  };
+  // Greedy left-to-right scan for the earliest marker.
+  const patterns = [
+    { re: /\{\{(\w+):([^}]*)\}\}/, fn: (m) => push(m[2], { color: m[1] }) },
+    { re: /\*\*([^*]+)\*\*/, fn: (m) => push(m[1], { bold: true }) },
+    { re: /\*([^*]+)\*/, fn: (m) => push(m[1], { italic: true }) },
+    { re: /`([^`]+)`/, fn: (m) => push(m[1], { code: true }) },
+    { re: /(https?:\/\/[^\s]+)/, fn: (m) => push(m[1], { link: true }) },
+  ];
+  let guard = 0;
+  while (rest && guard++ < 5000) {
+    let best = null, bestPat = null;
+    for (const p of patterns) {
+      const m = p.re.exec(rest);
+      if (m && (best === null || m.index < best.index)) { best = m; bestPat = p; }
+    }
+    if (!best) { push(rest); break; }
+    if (best.index > 0) push(rest.slice(0, best.index));
+    bestPat.fn(best);
+    rest = rest.slice(best.index + best[0].length);
+  }
+}
 
 // ---- Roaming phone prefs (per-character, server-side) ----------------------
 // Story text size, theme, and chip order ride the character profile as

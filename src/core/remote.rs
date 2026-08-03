@@ -762,6 +762,10 @@ pub struct RemoteStateSnapshot {
     /// Session status + session-control capability. Overlaid by the sink in
     /// `flush_state` (the sink owns it, not GameState).
     pub session: RemoteSessionInfo,
+    /// Lich WebUI registered pages (overlaid by the sink). Empty when no
+    /// Lich WebUI, so it costs nothing on the wire for direct sessions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub webui_pages: Vec<crate::data::webui::WebUiPageDescriptor>,
     /// Drawable map scene (overlaid by AppCore::flush_remote_state — the
     /// map lives on AppCore, not GameState). Pointer-compared.
     pub map_scene: RemoteMapSceneRef,
@@ -1078,6 +1082,7 @@ impl RemoteStateSnapshot {
                 info
             },
             session: RemoteSessionInfo::default(),
+            webui_pages: Vec::new(), // overlaid by the sink
             // Overlaid by AppCore::flush_remote_state (the map — and the
             // portal resolution that needs it — live there).
             portals: Vec::new(),
@@ -1120,6 +1125,9 @@ pub struct RemoteSink {
     /// Session status owned by the serving runtime (headless supervisor);
     /// overlaid onto every snapshot/flush.
     session: RemoteSessionInfo,
+    /// Latest Lich WebUI page list, so a connecting client's snapshot carries
+    /// it (broadcasts only reach already-connected clients).
+    webui_pages: Vec<crate::data::webui::WebUiPageDescriptor>,
 }
 
 impl RemoteSink {
@@ -1165,6 +1173,7 @@ impl RemoteSink {
                 bound_port,
                 last: RemoteStateSnapshot::default(),
                 session: RemoteSessionInfo::default(),
+                webui_pages: Vec::new(),
             },
             handles,
             event_rx,
@@ -1210,6 +1219,7 @@ impl RemoteSink {
             .send(RemoteDelta::Session(self.session.clone()));
         self.state_tx.send_modify(|snap| {
             snap.session = self.session.clone();
+            snap.webui_pages = self.webui_pages.clone();
         });
         self.last.session = self.session.clone();
     }
@@ -1248,8 +1258,10 @@ impl RemoteSink {
         let _ = self.delta_tx.send(RemoteDelta::WebUiRender { page, seq, tree });
     }
 
-    /// Broadcast the WebUI registered-page list to phone clients.
+    /// Broadcast the WebUI registered-page list to phone clients, and store
+    /// it so a later connect-time snapshot carries it.
     pub fn push_webui_pages(&mut self, pages: Vec<crate::data::webui::WebUiPageDescriptor>) {
+        self.webui_pages = pages.clone();
         let _ = self.delta_tx.send(RemoteDelta::WebUiPages(pages));
     }
 
@@ -1472,6 +1484,7 @@ impl RemoteSink {
         // The sink owns session status; AppCore builds snapshots from
         // GameState which knows nothing about it.
         snap.session = self.session.clone();
+            snap.webui_pages = self.webui_pages.clone();
         if snap == self.last {
             return;
         }

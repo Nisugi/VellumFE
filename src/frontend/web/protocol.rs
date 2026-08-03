@@ -125,6 +125,8 @@ struct SnapshotPayload {
     portals: Vec<String>,
     char_info: RemoteCharInfo,
     session: RemoteSessionInfo,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    webui_pages: Vec<crate::data::webui::WebUiPageDescriptor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     map_scene: Option<Arc<crate::core::remote::RemoteMapScene>>,
     map_state: crate::core::remote::RemoteMapState,
@@ -185,6 +187,7 @@ pub fn snapshot(
         portals: state.portals.clone(),
         char_info: state.char_info.clone(),
         session: state.session.clone(),
+        webui_pages: state.webui_pages.clone(),
         map_scene: state.map_scene.0.clone(),
         map_state: state.map_state.clone(),
         text: lines

@@ -2481,4 +2481,81 @@ body.hide-compass #compass { display: none !important; }
 #tw-status { font-size: 12px; margin: 0; color: var(--fg-dim); }
 #tw-status.editor-error { color: var(--st, #d06060); }
 
+/* ---- Lich WebUI panel overlay (P5b) ---- */
+#webui-overlay {
+  position: fixed; inset: 0; z-index: 26; background: var(--bg);
+  display: flex; padding: 10px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+#webui-overlay[hidden] { display: none; }
+#webui-card { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+#webui-titlebar { display: flex; align-items: center; gap: 8px; }
+#webui-title { flex: 1; font-weight: 600; text-align: center; }
+#webui-back, #webui-close {
+  padding: 4px 12px; background: none; border: 1px solid var(--border);
+  border-radius: 6px; color: var(--fg-dim); font: inherit;
+}
+#webui-back[hidden] { visibility: hidden; }
+#webui-body {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 8px; padding: 4px;
+}
+.webui-page-item {
+  padding: 12px; text-align: left; background: var(--bg-panel);
+  border: 1px solid var(--border); border-radius: 8px; color: var(--fg); font: inherit;
+}
+.webui-page, .webui-container { display: flex; flex-direction: column; gap: 8px; }
+.webui-header { margin: 4px 0 0; font-size: 16px; }
+.webui-text { font-size: 14px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+.webui-unsupported { color: var(--fg-dim); font-style: italic; }
+.webui-code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--bg-panel); padding: 0 3px; border-radius: 3px; }
+.webui-btn {
+  padding: 8px 14px; border-radius: 6px; font: inherit; color: var(--fg);
+  background: var(--bg-panel); border: 1px solid var(--border); align-self: flex-start;
+}
+.webui-btn:disabled { opacity: 0.4; }
+.webui-btn.danger, .webui-btn.armed { color: #d06060; border-color: #d06060; }
+.webui-field { display: flex; align-items: center; gap: 8px; }
+.webui-field-col { flex-direction: column; align-items: stretch; }
+.webui-field > span { color: var(--fg-dim); font-size: 13px; }
+.webui-field input, .webui-field select, .webui-field textarea {
+  flex: 1; font: inherit; padding: 6px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); color: var(--fg);
+}
+.webui-field input[type="range"] { padding: 0; }
+.webui-check, .webui-radio label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.webui-radio { display: flex; flex-direction: column; gap: 4px; }
+.webui-radio-label { color: var(--fg-dim); font-size: 13px; }
+.webui-log {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px; overflow-y: auto; max-height: 200px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.webui-progress-wrap { display: flex; align-items: center; gap: 8px; }
+.webui-progress { flex: 1; height: 12px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.webui-progress-fill { height: 100%; background: var(--accent, #6a9fb5); }
+.webui-progress-label { font-size: 12px; color: var(--fg-dim); white-space: nowrap; }
+.webui-table-scroll { overflow-x: auto; }
+.webui-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.webui-table th, .webui-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.webui-table tr.clickable { cursor: pointer; }
+.webui-table tr.selected { background: var(--bg-panel); }
+.webui-expander { border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.webui-expander > summary { cursor: pointer; font-weight: 600; }
+.webui-columns { display: flex; gap: 8px; }
+.webui-grid { display: grid; gap: 6px; }
+.webui-tabs { display: flex; flex-direction: column; gap: 6px; }
+.webui-tab-strip { display: flex; gap: 4px; flex-wrap: wrap; }
+.webui-tab { padding: 4px 10px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 6px 6px 0 0; color: var(--fg-dim); font: inherit; }
+.webui-tab.active { color: var(--fg); border-bottom-color: transparent; }
+.webui-image { max-width: 100%; }
+.webui-imagemap { position: relative; display: inline-block; }
+.webui-imagemap img { display: block; max-width: 100%; }
+.webui-marker { position: absolute; pointer-events: none; box-sizing: border-box; }
+.webui-marker-marker { border: 1px solid var(--accent, #6a9fb5); }
+.webui-marker-current { border: 2px solid #d06060; border-radius: 50%; box-shadow: 0 0 6px #d06060; }
+.webui-marker-pin { background: var(--accent, #6a9fb5); border-radius: 50%; }
+
 #colors-status[hidden] { display: none; }
