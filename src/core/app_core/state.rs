@@ -4199,9 +4199,21 @@ impl AppCore {
         // Pick the template + binding for this discovery kind.
         let (binding, template) = match d.kind {
             WindowDiscoveryKind::Stream => {
-                // Streams bind to a blank text window that subscribes to
-                // the id ("text_custom" is the addable blank-text template).
-                (WindowBinding::Stream(d.id.clone()), "text_custom")
+                // Most streams bind to a blank text window that subscribes
+                // to the id ("text_custom" is the addable blank-text
+                // template). A few stream ids have a dedicated widget type
+                // whose specialized pipeline (buffer replay, links) only
+                // feeds that widget's content variant — a generic text
+                // window would render empty. Route those to their widget
+                // template so discovery produces the right window type.
+                let template = match d.id.as_str() {
+                    // The spellbook is sent once at login and replayed from
+                    // a buffer into WindowContent::Spells only; a text window
+                    // bound to "Spells" never populates.
+                    "Spells" => "spells",
+                    _ => "text_custom",
+                };
+                (WindowBinding::Stream(d.id.clone()), template)
             }
             WindowDiscoveryKind::DialogPanel => {
                 (WindowBinding::Dialog(d.id.clone()), "dialogpanel")
@@ -7263,6 +7275,36 @@ mod tests {
         });
         core.realize_offered_windows(80, 24);
         assert_eq!(core.layout.windows_bound_to("thoughts").len(), 1);
+    }
+
+    #[test]
+    fn spells_stream_discovery_creates_a_spells_widget_not_text() {
+        use crate::config::WindowBinding;
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        let mut core = core_with_layout(vec![]);
+
+        // The game declares its spellbook window via <streamWindow id="Spells">.
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "Spells".to_string(),
+            title: "Spells".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+        });
+        core.realize_offered_windows(80, 24);
+
+        // It must be the dedicated spells widget (whose buffer-replay pipeline
+        // populates it), NOT a generic text window that would render empty.
+        let win = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.base().binding == Some(WindowBinding::Stream("Spells".to_string())))
+            .expect("Spells stream should register a bound window");
+        assert!(
+            matches!(win, crate::config::WindowDef::Spells { .. }),
+            "Spells stream discovery must produce a spells widget, got {:?}",
+            win.widget_type()
+        );
     }
 
     #[test]

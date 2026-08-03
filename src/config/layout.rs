@@ -212,8 +212,12 @@ impl Layout {
         tracing::warn!(
             "No layout found, using embedded default (this should have been extracted!)"
         );
-        let layout: Layout =
+        let mut layout: Layout =
             toml::from_str(LAYOUT_DEFAULT).context("Failed to parse embedded default layout")?;
+        // Consistency with the file-load paths (which run this in
+        // load_from_file); the embedded default carries no broken window,
+        // so this is defensive.
+        Self::heal_spells_text_windows(&mut layout);
 
         Ok((layout, Some("layout".to_string())))
     }
@@ -442,7 +446,45 @@ impl Layout {
             }
         }
 
+        Self::heal_spells_text_windows(&mut layout);
+
         Ok(layout)
+    }
+
+    /// Migration: stream discovery used to register the `Spells` stream as a
+    /// generic text window (`text_custom`). The spellbook is sent once at
+    /// login and replayed from a buffer into `WindowContent::Spells` only, so
+    /// a text window bound to `Spells` never populates. Convert any such
+    /// persisted window to the dedicated `spells` widget in place, preserving
+    /// its position, size, visibility, and title. Idempotent: a window that is
+    /// already a `spells` widget is left untouched.
+    fn heal_spells_text_windows(layout: &mut Layout) {
+        use crate::config::WindowBinding;
+
+        for window in &mut layout.windows {
+            let WindowDef::Text { base, data } = window else {
+                continue;
+            };
+            let bound_to_spells =
+                matches!(&base.binding, Some(WindowBinding::Stream(id)) if id == "Spells");
+            let subscribes_to_spells = data.streams.iter().any(|s| s == "Spells");
+            if !bound_to_spells && !subscribes_to_spells {
+                continue;
+            }
+
+            // Preserve the user's layout for this window; only the widget
+            // type (and its content pipeline) changes.
+            let mut healed_base = base.clone();
+            healed_base.binding = Some(WindowBinding::Stream("Spells".to_string()));
+            tracing::info!(
+                "Migrating Spells stream window '{}' from text -> spells widget",
+                healed_base.name
+            );
+            *window = WindowDef::Spells {
+                base: healed_base,
+                data: crate::config::SpellsWidgetData {},
+            };
+        }
     }
 
     /// Border colors the default layouts used to ship. Windows carrying
@@ -1173,6 +1215,55 @@ border_color = "#807f80"
             theme: None,
             unknown_windows: Vec::new(),
         }
+    }
+
+    /// A persisted Spells stream window that was registered as a generic text
+    /// widget (the pre-fix discovery behavior) is healed to the dedicated
+    /// spells widget on load, preserving its geometry, and the migration is
+    /// idempotent when re-run.
+    #[test]
+    fn heal_spells_text_window_converts_to_spells_widget_and_is_idempotent() {
+        use crate::config::WindowBinding;
+
+        // Simulate the broken persisted window: a text widget subscribed and
+        // bound to the "Spells" stream, sized/placed by the user.
+        let mut spells = scale_text_def("Spells", 5, 6, 40, 10);
+        if let WindowDef::Text { base, data } = &mut spells {
+            base.binding = Some(WindowBinding::Stream("Spells".to_string()));
+            data.streams = vec!["Spells".to_string()];
+        }
+        // A plain text window on another stream must be left alone.
+        let mut layout = scale_layout(
+            vec![spells, scale_text_def("thoughts", 0, 0, 40, 6)],
+            80,
+            24,
+        );
+
+        Layout::heal_spells_text_windows(&mut layout);
+
+        let healed = layout
+            .windows
+            .iter()
+            .find(|w| w.base().name == "Spells")
+            .unwrap();
+        assert!(
+            matches!(healed, WindowDef::Spells { .. }),
+            "Spells text window should become a spells widget"
+        );
+        // Geometry preserved.
+        let b = healed.base();
+        assert_eq!((b.col.get(), b.row.get(), b.cols.get(), b.rows.get()), (5, 6, 40, 10));
+        assert_eq!(b.binding, Some(WindowBinding::Stream("Spells".to_string())));
+        // Unrelated text window untouched.
+        assert!(matches!(
+            layout.windows.iter().find(|w| w.base().name == "thoughts").unwrap(),
+            WindowDef::Text { .. }
+        ));
+
+        // Idempotent: running again changes nothing.
+        let before = layout.windows.clone();
+        Layout::heal_spells_text_windows(&mut layout);
+        assert_eq!(layout.windows, before, "second heal pass must be a no-op");
     }
 
     /// 2x scale doubles every coordinate and size.
