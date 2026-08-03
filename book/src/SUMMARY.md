@@ -56,6 +56,7 @@
   - [Highlight Patterns](./customization/highlights.md)
   - [Keybind Actions](./customization/keybinds.md)
   - [Sound Alerts](./customization/sounds.md)
+  - [Emoji](./customization/emoji.md)
   - [Themes](./customization/themes.md)
   - [Skins (GUI Graphics)](./customization/skins.md)
   - [Generating Skin Art with AI](./customization/skin-art-prompts.md)
