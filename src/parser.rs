@@ -869,6 +869,34 @@ impl XmlParser {
 
     fn handle_prompt(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
         // <prompt time="1234567890">&gt;</prompt>
+        //
+        // A prompt marks the end of an input round. Well-formed traffic always
+        // balances its bold/color/preset tags before the prompt, so anything
+        // still open here is mangled server output — most visibly the daydream
+        // stream, which emits a `<pushBold/>` whose matching `<popBold/>` is
+        // dropped, leaking monsterbold onto every subsequent line. Reset the
+        // transient style stacks at the prompt so a missing close can never
+        // bleed past the current round. (This does NOT touch stream/mono
+        // state, which spans prompts legitimately.)
+        if !self.bold_stack.is_empty()
+            || !self.preset_stack.is_empty()
+            || !self.color_stack.is_empty()
+            || !self.style_stack.is_empty()
+        {
+            tracing::debug!(
+                "[parser] clearing {} bold / {} preset / {} color / {} style entries left open at prompt (mangled server markup)",
+                self.bold_stack.len(),
+                self.preset_stack.len(),
+                self.color_stack.len(),
+                self.style_stack.len(),
+            );
+            self.bold_stack.clear();
+            self.preset_stack.clear();
+            self.color_stack.clear();
+            self.style_stack.clear();
+            self.current_preset_id = None;
+        }
+
         // Extract time and text content
         if let Some(time) = Self::extract_attribute(tag, "time") {
             // Extract text between tags (e.g., "&gt;")
@@ -3344,6 +3372,135 @@ mod tests {
         assert_eq!(content, " attacks!");
         assert!(!*bold);
         assert_eq!(*span_type, SpanType::Normal);
+    }
+
+    #[test]
+    fn daydream_split_bold_does_not_leak_color_to_later_lines() {
+        // Real game traffic when daydreaming: pushBold and popBold arrive on
+        // SEPARATE lines with a blank line between them, and popBold shares a
+        // line with an <output> tag. The monsterbold preset must be fully
+        // popped so the prompt and everything after render normally.
+        let mut parser = test_parser();
+
+        parser.parse_line("<pushBold/>You continue to daydream...");
+        parser.parse_line(""); // blank line between push and pop
+        parser.parse_line(r#"<popBold/><output class="mono"/>"#);
+        parser.parse_line(r#"<output class=""/>"#);
+
+        // A later, unrelated line (the next prompt / normal output) must not
+        // carry the monsterbold color.
+        let elements = parser.parse_line("Vonnorik asks, \"How is ya?\"");
+        let ParsedElement::Text { span_type, bold, fg_color, .. } = &elements[0] else {
+            panic!("Expected Text element, got {:?}", elements[0]);
+        };
+        assert!(!*bold, "bold must be cleared after popBold");
+        assert_eq!(*span_type, SpanType::Normal, "must not still be monsterbold");
+        assert!(fg_color.is_none(), "monsterbold color leaked to a later line: {fg_color:?}");
+    }
+
+    #[test]
+    fn real_daydream_block_two_rounds_no_leak() {
+        // Verbatim traffic from a real capture (2026-08-03): two consecutive
+        // daydream rounds, each `<pushBold/>` … blank … `<popBold/>` split
+        // across lines with the popBold sharing its line with an <output> tag.
+        // The status/prompt lines after the block must render normally.
+        let mut parser = test_parser();
+        let lines = [
+            r#"<prompt time="1785795872">s&gt;</prompt>"#,
+            "<pushBold/>You continue to daydream...",
+            "",
+            r#"<popBold/><output class="mono"/>"#,
+            "          Level: 63                          Fame: 11,956,606",
+            r#"<output class=""/>"#,
+            "",
+            "Your mind is numbed.",
+            "",
+            "You have been experiencing the Wisdom of the Ages for 2 months.",
+            r#"<prompt time="1785795874">s&gt;</prompt>"#,
+            "<pushBold/>You continue to daydream...",
+            "",
+            r#"<popBold/><output class="mono"/>"#,
+            "Health: 264/<pushBold/>264<popBold/>     Mana: 70/<pushBold/>70<popBold/>",
+            r#"<output class=""/>"#,
+            r#"<prompt time="1785795874">s&gt;</prompt>"#,
+        ];
+        let mut all = Vec::new();
+        for l in lines {
+            all.extend(parser.parse_line(l));
+        }
+
+        // "Your mind is numbed." sits between the two daydream rounds, right
+        // after the first block closes — the most sensitive spot for a leak.
+        let numbed = all.iter().find_map(|e| match e {
+            ParsedElement::Text { content, span_type, fg_color, .. }
+                if content.contains("numbed") =>
+            {
+                Some((*span_type, fg_color.clone()))
+            }
+            _ => None,
+        });
+        let (span_type, fg_color) = numbed.expect("'numbed' line should be present");
+        assert_eq!(span_type, SpanType::Normal, "monsterbold leaked onto post-daydream text");
+        assert!(fg_color.is_none(), "color leaked onto post-daydream text: {fg_color:?}");
+
+        // And after the whole block, the parser's stacks must be clean.
+        assert!(parser.bold_stack.is_empty(), "bold_stack left dirty after daydream block");
+        assert!(parser.preset_stack.is_empty(), "preset_stack left dirty after daydream block");
+    }
+
+    #[test]
+    fn orphaned_bold_does_not_leak_past_prompt() {
+        // If the game leaves a pushBold open (no matching popBold) — the real
+        // failure mode behind the daydream color leak — the monsterbold color
+        // must not bleed through the next prompt into all subsequent output.
+        // The prompt is the game's fresh-round boundary; transient bold/color
+        // from the previous round is stale and must be dropped there.
+        let mut parser = test_parser();
+
+        parser.parse_line("<pushBold/>You continue to daydream...");
+        // No popBold arrives (dropped/mangled by the server). Next comes the
+        // prompt for the following round.
+        parser.parse_line(r#"<prompt time="1785795874">s&gt;</prompt>"#);
+        let elements = parser.parse_line("Vonnorik asks, \"How is ya?\"");
+
+        let ParsedElement::Text { span_type, bold, fg_color, .. } = &elements[0] else {
+            panic!("Expected Text element, got {:?}", elements[0]);
+        };
+        assert!(!*bold, "orphaned bold leaked past the prompt");
+        assert_eq!(*span_type, SpanType::Normal, "monsterbold leaked past the prompt");
+        assert!(fg_color.is_none(), "color leaked past the prompt: {fg_color:?}");
+    }
+
+    #[test]
+    fn daydream_full_traffic_does_not_leak_color() {
+        // Fuller repro matching the actual mid-turn traffic, including the
+        // surrounding prompts and the second output-close/prompt tail. The
+        // pushBold has NO matching popBold on its own line; the popBold
+        // arrives two lines later sharing a line with <output class="mono"/>.
+        let mut parser = test_parser();
+
+        parser.parse_line(r#"<prompt time="1785795874">s&gt;</prompt>"#);
+        parser.parse_line("<pushBold/>You continue to daydream...");
+        parser.parse_line("");
+        parser.parse_line(r#"<popBold/><output class="mono"/>"#);
+        parser.parse_line("Health: 264/<pushBold/>264<popBold/>     Mana: 70/<pushBold/>70<popBold/>");
+        parser.parse_line(r#"<output class=""/>"#);
+        let elements = parser.parse_line(r#"<prompt time="1785795874">s&gt;</prompt>"#);
+
+        // The prompt after the whole block must be normal, not monsterbold.
+        for el in &elements {
+            if let ParsedElement::Text { span_type, fg_color, content, .. } = el {
+                assert_ne!(
+                    *span_type,
+                    SpanType::Monsterbold,
+                    "monsterbold leaked onto prompt text {content:?}"
+                );
+                assert!(
+                    fg_color.is_none(),
+                    "color leaked onto prompt text {content:?}: {fg_color:?}"
+                );
+            }
+        }
     }
 
     #[test]
