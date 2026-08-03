@@ -820,6 +820,12 @@ function handleMessage(msg) {
     case "settings": handleSettingsReply(msg.d); break;
     case "streams": handleStreamsReply(msg.d); break;
     case "touch_wheel": handleTouchWheelReply(msg.d); break;
+    // Lich WebUI (P5): stored here; the panel renderer (P5b) reads webuiState.
+    case "webui_render": handleWebUiRender(msg.d); break;
+    case "webui_pages": webuiState.pages = msg.d.pages || []; renderWebUiIfOpen(); break;
+    case "webui_closed": handleWebUiClosed(msg.d); break;
+    case "webui_notice": handleWebUiNotice(msg.d); break;
+    case "webui_connected": webuiState.connected = !!msg.d.connected; renderWebUiIfOpen(); break;
     case "injuries": setInjuries(msg.d); break;
     case "targets": setTargets(msg.d); break;
     case "entities": setRoomEntities(msg.d); break;
@@ -915,6 +921,9 @@ function setSession(d) {
   const prevState = session.state;
   session = d || { state: "connected", session_control: false };
   if (session.character) setCharacter(session.character);
+  // Lich WebUI is only usable on a Lich-attached session; the affordance
+  // (P5b) shows only when this is set.
+  webuiState.available = !!session.webui_available;
   updateSessionUi(prevState);
 }
 
@@ -6242,6 +6251,62 @@ twOverlay.querySelector("#tw-save").addEventListener("click", () => {
   twPendingPut = ++twRequestCounter;
   sendJson("touch_wheel_put", { request_id: twPendingPut, scope: twScope, slices });
 });
+
+// ---- Lich WebUI (P5) -------------------------------------------------------
+// The phone renders Lich WebUI component trees so a Lich-attached player can
+// use script panels without a desktop. P5a lands the wire + this store; the
+// full node renderer is P5b. `subscribed` are the pages we've opened (renders
+// for other pages are dropped); `trees` holds the latest tree per page.
+const webuiState = {
+  available: false,   // set from session.webui_available
+  connected: false,   // bridge up?
+  pages: [],          // [{id,title,script,kind,bare,size}]
+  subscribed: new Set(),
+  trees: new Map(),   // page -> { seq, tree }
+  seqs: new Map(),    // page -> last applied seq
+};
+
+function handleWebUiRender(d) {
+  const { page, seq, tree } = d;
+  if (!webuiState.subscribed.has(page)) return; // not open here
+  const last = webuiState.seqs.get(page) || 0;
+  if (seq < last) return; // stale / out of order
+  webuiState.seqs.set(page, seq);
+  webuiState.trees.set(page, { seq, tree });
+  renderWebUiIfOpen(page);
+}
+
+function handleWebUiClosed(d) {
+  webuiState.trees.delete(d.page);
+  webuiState.seqs.delete(d.page);
+  renderWebUiIfOpen(d.page);
+}
+
+function handleWebUiNotice(d) {
+  // Surface as a system line for now; P5b may show it inline in the panel.
+  appendText(++webuiNoticeSeq * -1, "main",
+    { segments: [{ text: `[WebUI ${d.level || "info"}] ${d.text || ""}` }] });
+}
+let webuiNoticeSeq = 0;
+
+// Subscribe/unsubscribe a WebUI page (open/close its phone panel).
+function webuiSubscribe(page) {
+  webuiState.subscribed.add(page);
+  sendJson("webui_subscribe", { page });
+}
+function webuiUnsubscribe(page) {
+  webuiState.subscribed.delete(page);
+  webuiState.trees.delete(page);
+  sendJson("webui_unsubscribe", { page });
+}
+// Send a component interaction back to Lich (button/input/row).
+function webuiSendEvent(page, cid, value) {
+  sendJson("webui_event", { page, cid, value: value ?? null });
+}
+
+// P5b replaces this with the real node renderer. For P5a it's a no-op hook
+// so the render/pages/closed/connected deltas have somewhere to land.
+function renderWebUiIfOpen(_page) { /* P5b: render webuiState.trees into panels */ }
 
 // ---- Roaming phone prefs (per-character, server-side) ----------------------
 // Story text size, theme, and chip order ride the character profile as

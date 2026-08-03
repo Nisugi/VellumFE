@@ -555,6 +555,68 @@ async fn room_description_and_spellbook_flow_in_snapshot_and_deltas() {
 }
 
 #[tokio::test]
+async fn webui_subscribe_and_event_arrive_as_remote_events() {
+    let (_sink, mut event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_and_sync(addr, 0).await;
+
+    // Opening a WebUI panel subscribes to its page.
+    client
+        .send_text(r#"{"t":"webui_subscribe","d":{"page":"creaturebar/main"}}"#)
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::WebUiSubscribe { page } = event else {
+        panic!("expected WebUiSubscribe, got {event:?}");
+    };
+    assert_eq!(page, "creaturebar/main");
+
+    // A button tap forwards as a WebUiEvent carrying page/cid/value.
+    client
+        .send_text(
+            r#"{"t":"webui_event","d":{"page":"creaturebar/main","cid":"button:2","value":null}}"#,
+        )
+        .await;
+    let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+        .await
+        .expect("timed out")
+        .expect("channel open");
+    let RemoteEvent::WebUiEvent { page, cid, value } = event else {
+        panic!("expected WebUiEvent, got {event:?}");
+    };
+    assert_eq!(page, "creaturebar/main");
+    assert_eq!(cid, "button:2");
+    assert_eq!(value, serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn webui_render_broadcasts_the_serialized_tree() {
+    use vellum_fe::data::webui::WebUiNode;
+    let (mut sink, _event_rx, addr) = start_server(100).await;
+    let (mut client, _) = connect_and_sync(addr, 0).await;
+
+    // A page render broadcasts the serialized component tree to phone clients.
+    let tree: WebUiNode = serde_json::from_str(
+        r#"{ "t": "page", "title": "Creatures", "children": [
+            { "t": "button", "cid": "button:2", "label": "Attack", "variant": "danger" }
+        ] }"#,
+    )
+    .unwrap();
+    sink.push_webui_render("creaturebar/main".to_string(), 7, tree);
+
+    let delta = read_json_timeout(&mut client).await;
+    assert_eq!(delta["t"], "webui_render");
+    assert_eq!(delta["d"]["page"], "creaturebar/main");
+    assert_eq!(delta["d"]["seq"], 7);
+    assert_eq!(delta["d"]["tree"]["t"], "page");
+    assert_eq!(delta["d"]["tree"]["children"][0]["label"], "Attack");
+    assert_eq!(delta["d"]["tree"]["children"][0]["variant"], "danger");
+    // Lean wire: absent optional fields aren't serialized as nulls.
+    assert!(delta["d"]["tree"].get("markers").is_none());
+}
+
+#[tokio::test]
 async fn touch_wheel_get_and_put_arrive_as_addressed_events() {
     let (_sink, mut event_rx, addr) = start_server(100).await;
     let (mut editor, _) = connect_and_sync(addr, 0).await;

@@ -438,11 +438,12 @@ pub struct VellumGuiApp {
     /// Latest main OS window geometry, persisted so the next launch opens
     /// at the same size (per-window rects are saved against this geometry).
     main_viewport_state: Option<MainViewportState>,
-    /// Lich WebUI bridge socket (Some while a session's WebUI is connected).
-    webui_bridge: Option<crate::webui::WebUiHandle>,
-    /// Bridge events, forwarded through a repaint-waking hop like server_rx.
+    /// Bridge events re-emitted by core's pump, forwarded through a
+    /// repaint-waking hop like server_rx. Core owns the socket (see
+    /// core::app_core::webui); the GUI applies renders to panels.
     webui_rx: Option<mpsc::UnboundedReceiver<crate::webui::WebUiEvent>>,
-    /// Pages currently registered on the connected Lich session.
+    /// Pages currently registered on the connected Lich session (GUI-local
+    /// mirror for the picker / window-kind logic).
     webui_pages: Vec<crate::data::webui::WebUiPageDescriptor>,
     /// Actions deferred until the handshake/hello completes.
     webui_pending: Vec<WebUiPendingAction>,
@@ -451,13 +452,6 @@ pub struct VellumGuiApp {
     is_direct_connection: bool,
     /// Ensures the layout-driven auto-handshake fires once per connect.
     webui_handshake_sent: bool,
-    /// (host, port, auth token) of the connected WebUI server, for /files/
-    /// image fetches. Host comes from the handshake url (loopback for a
-    /// local Lich, a LAN address for a containerized one). The token is
-    /// script-level power: never log it.
-    webui_endpoint: Option<(String, u16, String)>,
-    /// Raw bridge event sender; image fetch tasks report through it.
-    webui_event_tx: Option<mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
     /// Image srcs with a fetch task in flight (dedupes re-queues).
     webui_fetches_inflight: HashSet<String>,
 }
@@ -800,14 +794,11 @@ impl VellumGuiApp {
             snap_debug: false,
             last_monitor_bounds: None,
             main_viewport_state,
-            webui_bridge: None,
             webui_rx: None,
             webui_pages: Vec::new(),
             webui_pending: Vec::new(),
             is_direct_connection,
             webui_handshake_sent: false,
-            webui_endpoint: None,
-            webui_event_tx: None,
             webui_fetches_inflight: HashSet::new(),
         })
     }
@@ -3239,6 +3230,15 @@ impl VellumGuiApp {
                     self.app_core
                         .handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
                 }
+                crate::core::remote::RemoteEvent::WebUiSubscribe { page } => {
+                    self.app_core.webui_subscribe(&page);
+                }
+                crate::core::remote::RemoteEvent::WebUiUnsubscribe { page } => {
+                    self.app_core.webui_unsubscribe(&page);
+                }
+                crate::core::remote::RemoteEvent::WebUiEvent { page, cid, value } => {
+                    self.app_core.webui_send_event(page, cid, value);
+                }
                 crate::core::remote::RemoteEvent::MapLocations {
                     client_id,
                     request_id,
@@ -3394,6 +3394,9 @@ impl VellumGuiApp {
             }
         }
 
+        // Core owns the WebUI socket: drain it (fans events to the phone and
+        // re-emits to the GUI channel), then the GUI applies them to panels.
+        self.app_core.pump_webui();
         self.pump_webui_events();
 
         // Flush coalesced state deltas to web clients once per batch
@@ -3473,18 +3476,15 @@ impl VellumGuiApp {
         };
 
         // Replace any prior bridge (Lich restarts change port and token).
-        // Dial the address the handshake url advertises — a containerized
-        // Lich hands out its reachable LAN address there, not loopback.
-        let (host, port) = handshake.endpoint();
-        self.webui_bridge = None;
+        // Core owns the socket now (so the phone renders the same trees). The
+        // GUI receives bridge events on a re-emit channel core feeds from its
+        // per-frame pump; a waking hop repaints egui so panel updates aren't
+        // stuck waiting for an idle frame.
         self.webui_rx = None;
-        self.webui_endpoint = Some((host.clone(), port, token.clone()));
         self.webui_fetches_inflight.clear();
+        self.app_core.start_webui(self._runtime.handle(), &handshake);
 
-        // Same waking hop as server messages: forward bridge events and
-        // repaint so panel updates aren't stuck waiting for an idle frame.
-        let (event_tx, mut raw_rx) = mpsc::unbounded_channel::<crate::webui::WebUiEvent>();
-        self.webui_event_tx = Some(event_tx.clone());
+        let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<crate::webui::WebUiEvent>();
         let (forward_tx, forward_rx) = mpsc::unbounded_channel::<crate::webui::WebUiEvent>();
         let waker_ctx = std::sync::Arc::clone(&self.repaint_ctx);
         self._runtime.spawn(async move {
@@ -3497,12 +3497,10 @@ impl VellumGuiApp {
                 }
             }
         });
-
-        let handle =
-            crate::webui::start(self._runtime.handle(), host.clone(), port, token, event_tx);
-        self.webui_bridge = Some(handle);
+        self.app_core.set_webui_gui_channel(raw_tx);
         self.webui_rx = Some(forward_rx);
-        tracing::info!("WebUI bridge connecting to {}:{}", host, port);
+        let (host, port) = handshake.endpoint();
+        tracing::info!("WebUI bridge (core-owned) connecting to {}:{}", host, port);
     }
 
     /// Applies bridge events to panel windows. Called once per frame.
@@ -3543,10 +3541,8 @@ impl VellumGuiApp {
                             _ => None,
                         })
                         .collect();
-                    if let Some(bridge) = &self.webui_bridge {
-                        for page in pages {
-                            bridge.subscribe(&page);
-                        }
+                    for page in pages {
+                        self.app_core.webui_subscribe(&page);
                     }
                     let pending = std::mem::take(&mut self.webui_pending);
                     for action in pending {
@@ -3571,11 +3567,9 @@ impl VellumGuiApp {
                             _ => None,
                         })
                         .collect();
-                    if let Some(bridge) = &self.webui_bridge {
-                        for page in hosted_ended {
-                            if pages.iter().any(|p| p.id == page) {
-                                bridge.subscribe(&page);
-                            }
+                    for page in hosted_ended {
+                        if pages.iter().any(|p| p.id == page) {
+                            self.app_core.webui_subscribe(&page);
                         }
                     }
                     // Transient pages registered while we're connected open
@@ -3660,8 +3654,8 @@ impl VellumGuiApp {
                             // from this machine (WebUI bound to localhost
                             // on the Lich box, firewall, stale address).
                             let endpoint = self
-                                .webui_endpoint
-                                .as_ref()
+                                .app_core
+                                .webui_endpoint()
                                 .map(|(host, port, _)| format!("{}:{}", host, port))
                                 .unwrap_or_else(|| "the advertised address".to_string());
                             self.app_core.add_system_message(&format!(
@@ -3677,11 +3671,10 @@ impl VellumGuiApp {
                                 "Lich WebUI connection lost (Lich restarted?). Run .webui to reconnect.",
                             );
                         }
-                        self.webui_bridge = None;
+                        // Core owns the bridge; tear it down there. The GUI's
+                        // own event channel is dropped so the pump goes quiet.
+                        self.app_core.stop_webui();
                         self.webui_rx = None;
-                        self.webui_endpoint = None;
-                        self.webui_event_tx = None;
-                        self.webui_handshake_sent = false;
                         break;
                     }
                 }
@@ -3830,9 +3823,7 @@ impl VellumGuiApp {
                 content.kind = kind.clone();
             }
         });
-        if let Some(bridge) = &self.webui_bridge {
-            bridge.subscribe(page_id);
-        }
+        self.app_core.webui_subscribe(page_id);
         self.layout_dirty = true;
         tracing::info!("WebUI panel '{}' opened for page '{}'", name, page_id);
     }
@@ -3858,11 +3849,7 @@ impl VellumGuiApp {
             matches!(&w.content, WindowContent::WebUi(c) if c.page_id == page_id)
         });
         if !still_hosted {
-            if let Some(bridge) = &self.webui_bridge {
-                bridge.send(crate::data::webui::WebUiClientMessage::Unsubscribe {
-                    page: page_id.clone(),
-                });
-            }
+            self.app_core.webui_unsubscribe(&page_id);
         }
         tracing::info!(
             "WebUI panel '{}' closed by user (page '{}', unsubscribed: {})",
@@ -3875,7 +3862,7 @@ impl VellumGuiApp {
     /// `.webui` action entry points (returns true when handled).
     fn handle_webui_action(&mut self, action: &str) -> bool {
         if action == "action:webui" {
-            if self.webui_bridge.is_some() && !self.webui_pages.is_empty() {
+            if self.app_core.webui_is_active() && !self.app_core.webui_pages().is_empty() {
                 self.open_webui_picker();
             } else {
                 self.webui_pending.push(WebUiPendingAction::Picker);
@@ -3886,13 +3873,9 @@ impl VellumGuiApp {
             return true;
         }
         if action == "action:webui:off" {
-            self.webui_bridge = None;
+            self.app_core.stop_webui();
             self.webui_rx = None;
-            self.webui_pages.clear();
             self.webui_pending.clear();
-            self.webui_handshake_sent = false;
-            self.webui_endpoint = None;
-            self.webui_event_tx = None;
             self.webui_fetches_inflight.clear();
             self.set_webui_windows_connected(false);
             self.app_core
@@ -3901,7 +3884,7 @@ impl VellumGuiApp {
         }
         if let Some(page) = action.strip_prefix("action:webui:open:") {
             let page = page.to_string();
-            if self.webui_bridge.is_some() {
+            if self.app_core.webui_is_active() {
                 self.open_webui_page(&page);
             } else {
                 self.webui_pending.push(WebUiPendingAction::Open(page));
@@ -6126,30 +6109,30 @@ impl eframe::App for VellumGuiApp {
         // Interactions queued by WebUI panels during this frame go out over
         // the bridge socket (button clicks, input submits, row clicks).
         let webui_events = Self::take_pending_webui_events(&ctx);
-        if !webui_events.is_empty() {
-            if let Some(bridge) = &self.webui_bridge {
-                for event in webui_events {
-                    bridge.send(event);
-                }
+        for event in webui_events {
+            // Core owns the socket; forward each interaction through it.
+            if let crate::data::webui::WebUiClientMessage::Event { page, cid, value } = event {
+                self.app_core.webui_send_event(page, cid, value);
             }
         }
 
         // Images the panels asked for: /files/ srcs fetch over the bridge's
-        // HTTP endpoint (cookie-authed); anything else fails visibly.
+        // HTTP endpoint (cookie-authed); anything else fails visibly. The
+        // endpoint + event sender come from core (the bridge owner).
         for src in Self::take_pending_webui_fetches(&ctx) {
             if self.webui_fetches_inflight.contains(&src) {
                 continue;
             }
-            match (&self.webui_endpoint, &self.webui_event_tx) {
+            match (self.app_core.webui_endpoint().cloned(), self.app_core.webui_event_sender()) {
                 (Some((host, port, token)), Some(event_tx)) if src.starts_with("/files/") => {
                     self.webui_fetches_inflight.insert(src.clone());
                     crate::webui::fetch_image(
                         self._runtime.handle(),
-                        host.clone(),
-                        *port,
-                        token.clone(),
+                        host,
+                        port,
+                        token,
                         src,
-                        event_tx.clone(),
+                        event_tx,
                     );
                 }
                 _ => {

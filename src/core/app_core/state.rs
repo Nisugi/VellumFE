@@ -218,6 +218,42 @@ pub struct AppCore {
     /// Saved dialog positions loaded from widget_state.toml
     /// Updated when dialogs with save='t' are dragged/resized
     pub saved_dialog_positions: SavedDialogPositions,
+
+    // === Lich WebUI bridge (owned in core so BOTH the GUI and the phone
+    // render the same trees; see core::app_core::webui) ===
+    /// The live bridge socket to Lich's WebUI server. None until a handshake
+    /// starts it; the frontend supplies its tokio Handle to `start_webui`.
+    pub(crate) webui_bridge: Option<crate::webui::WebUiHandle>,
+    /// Raw bridge events from the socket task, drained each tick by
+    /// `pump_webui`. None until the bridge starts.
+    pub(crate) webui_rx: Option<tokio::sync::mpsc::UnboundedReceiver<crate::webui::WebUiEvent>>,
+    /// The sender half, cloned into `fetch_image` calls so results return
+    /// on the same channel `pump_webui` drains.
+    pub(crate) webui_event_tx:
+        Option<tokio::sync::mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
+    /// (host, port, token) for `/files/` image fetches; set at handshake.
+    pub(crate) webui_endpoint: Option<(String, u16, String)>,
+    /// True once a `;ui handshake` has been dispatched this session, so it
+    /// isn't re-sent every tick.
+    pub(crate) webui_handshake_sent: bool,
+    /// Registered pages from the last `hello`/`pages` envelope (mirrored to
+    /// the phone; the GUI reads them for its page picker).
+    pub(crate) webui_pages: Vec<crate::data::webui::WebUiPageDescriptor>,
+    /// Whether Lich WebUI is reachable this session (only when Lich-attached;
+    /// a direct eAccess connection has no Lich, so no WebUI). Advertised to
+    /// the phone so it shows the WebUI affordance only when usable.
+    pub(crate) webui_available: bool,
+    /// GUI re-emit channel: `pump_webui` forwards every bridge event here so
+    /// the GUI can do its GUI-side handling (image textures, window kinds)
+    /// while core owns the socket. None in headless/TUI (no local renderer).
+    pub(crate) webui_gui_tx:
+        Option<tokio::sync::mpsc::UnboundedSender<crate::webui::WebUiEvent>>,
+    /// Raw game commands core queued for the frontend to send (the WebUI
+    /// `;ui handshake` — core has no game socket). Drained each tick.
+    pub(crate) webui_pending_raw: Vec<String>,
+    /// Pages any client has subscribed to; replayed on a fresh socket's Hello
+    /// so renders resume after a reconnect.
+    pub(crate) webui_subscribed: std::collections::HashSet<String>,
 }
 
 impl AppCore {
@@ -343,6 +379,16 @@ impl AppCore {
             gameobj_data: None,
             foreach: Default::default(),
             saved_dialog_positions,
+            webui_bridge: None,
+            webui_rx: None,
+            webui_event_tx: None,
+            webui_endpoint: None,
+            webui_handshake_sent: false,
+            webui_pages: Vec::new(),
+            webui_available: false,
+            webui_gui_tx: None,
+            webui_pending_raw: Vec::new(),
+            webui_subscribed: std::collections::HashSet::new(),
         }
     }
 
@@ -478,6 +524,16 @@ impl AppCore {
             gameobj_data: None,
             foreach: Default::default(),
             saved_dialog_positions,
+            webui_bridge: None,
+            webui_rx: None,
+            webui_event_tx: None,
+            webui_endpoint: None,
+            webui_handshake_sent: false,
+            webui_pages: Vec::new(),
+            webui_available: false,
+            webui_gui_tx: None,
+            webui_pending_raw: Vec::new(),
+            webui_subscribed: std::collections::HashSet::new(),
         };
 
         for conflict in &app.hotbar_key_conflicts.clone() {

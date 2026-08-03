@@ -730,6 +730,15 @@ async fn async_run(
                     } => {
                         app_core.handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
                     }
+                    crate::core::remote::RemoteEvent::WebUiSubscribe { page } => {
+                        app_core.webui_subscribe(&page);
+                    }
+                    crate::core::remote::RemoteEvent::WebUiUnsubscribe { page } => {
+                        app_core.webui_unsubscribe(&page);
+                    }
+                    crate::core::remote::RemoteEvent::WebUiEvent { page, cid, value } => {
+                        app_core.webui_send_event(page, cid, value);
+                    }
                     crate::core::remote::RemoteEvent::MapLocations {
                         client_id,
                         request_id,

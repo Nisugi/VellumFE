@@ -358,6 +358,11 @@ pub struct RemoteSessionInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub session_control: bool,
+    /// True when Lich WebUI is reachable (a Lich-attached session). The phone
+    /// shows its WebUI affordance only when this is set — a direct eAccess
+    /// connection has no Lich, so no WebUI. Defaults false.
+    #[serde(default)]
+    pub webui_available: bool,
 }
 
 /// A state change broadcast to all connected remote clients.
@@ -505,6 +510,24 @@ pub enum RemoteDelta {
         error: Option<String>,
         saved: bool,
     },
+    /// A Lich WebUI page's component tree changed. Broadcast to every client
+    /// (the phone renders only pages it has subscribed to). `tree` is the
+    /// serialized WebUiNode; `seq` orders renders so stale ones drop.
+    WebUiRender {
+        page: String,
+        seq: u64,
+        tree: crate::data::webui::WebUiNode,
+    },
+    /// The registered-page list changed (script registered/unregistered a
+    /// page). The phone updates its WebUI page picker.
+    WebUiPages(Vec<crate::data::webui::WebUiPageDescriptor>),
+    /// A WebUI page ended (script exited / page replaced).
+    WebUiPageClosed { page: String },
+    /// A WebUI notice ("info" | "warn" | "error") for the user.
+    WebUiNotice { level: String, text: String },
+    /// The WebUI bridge connected or dropped; the phone shows/clears a
+    /// "connecting…" state and re-subscribes on reconnect.
+    WebUiConnected { connected: bool },
 }
 
 /// Input from a remote client, drained by the active frontend's main loop
@@ -683,6 +706,18 @@ pub enum RemoteEvent {
         request_id: u64,
         scope: String,
         slices: serde_json::Value,
+    },
+    /// A phone client subscribed to a Lich WebUI page (opened its panel):
+    /// core forwards a `subscribe` to Lich so renders start flowing.
+    WebUiSubscribe { page: String },
+    /// A phone client closed a WebUI panel: core `unsubscribe`s from Lich.
+    WebUiUnsubscribe { page: String },
+    /// A phone WebUI interaction (button/input/row): core forwards it to
+    /// Lich as a `WebUiClientMessage::Event`. `value` is component-specific.
+    WebUiEvent {
+        page: String,
+        cid: String,
+        value: serde_json::Value,
     },
 }
 
@@ -1146,12 +1181,22 @@ impl RemoteSink {
         }
     }
 
+    /// Set whether Lich WebUI is reachable this session (the sink owns this
+    /// capability flag like session_control; overlaid onto session info).
+    pub fn set_webui_available(&mut self, available: bool) {
+        if self.session.webui_available != available {
+            self.session.webui_available = available;
+            self.publish_session();
+        }
+    }
+
     /// Publish a session status change (state machine transitions in the
     /// headless supervisor). Broadcast immediately — session changes must
     /// not wait for the next game-text batch — and folded into the watch
     /// so connect-time snapshots agree.
     pub fn set_session_state(&mut self, mut info: RemoteSessionInfo) {
         info.session_control = self.session.session_control;
+        info.webui_available = self.session.webui_available;
         if self.session == info {
             return;
         }
@@ -1191,6 +1236,36 @@ impl RemoteSink {
         let wheels = Arc::new(RemoteWheels::from_config(config));
         self.wheels_tx.send_replace(wheels.clone());
         let _ = self.delta_tx.send(RemoteDelta::Wheels(wheels));
+    }
+
+    /// Broadcast a Lich WebUI page render to phone clients.
+    pub fn push_webui_render(
+        &mut self,
+        page: String,
+        seq: u64,
+        tree: crate::data::webui::WebUiNode,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::WebUiRender { page, seq, tree });
+    }
+
+    /// Broadcast the WebUI registered-page list to phone clients.
+    pub fn push_webui_pages(&mut self, pages: Vec<crate::data::webui::WebUiPageDescriptor>) {
+        let _ = self.delta_tx.send(RemoteDelta::WebUiPages(pages));
+    }
+
+    /// Broadcast that a WebUI page ended.
+    pub fn push_webui_page_closed(&mut self, page: String) {
+        let _ = self.delta_tx.send(RemoteDelta::WebUiPageClosed { page });
+    }
+
+    /// Broadcast a WebUI notice to phone clients.
+    pub fn push_webui_notice(&mut self, level: String, text: String) {
+        let _ = self.delta_tx.send(RemoteDelta::WebUiNotice { level, text });
+    }
+
+    /// Broadcast the WebUI bridge's connected state to phone clients.
+    pub fn push_webui_connected(&mut self, connected: bool) {
+        let _ = self.delta_tx.send(RemoteDelta::WebUiConnected { connected });
     }
 
     /// Reply to one client's map-locations request.

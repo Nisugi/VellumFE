@@ -61,7 +61,7 @@ impl WebUiHandshake {
 }
 
 /// Session identity from the `hello` envelope.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct WebUiSession {
     #[serde(default)]
     pub name: String,
@@ -70,7 +70,7 @@ pub struct WebUiSession {
 }
 
 /// One registered page, from `hello`/`pages` envelopes.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct WebUiPageDescriptor {
     /// "script/page", e.g. "creaturebar/main"
     pub id: String,
@@ -109,124 +109,124 @@ pub struct WebUiSibling {
 /// page, header, text, markdown, divider, button, text_input, password_input,
 /// select, radio, checkbox, slider, number_input, log, progress, table,
 /// expander, columns, col, tabs, tab, image, image_map.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct WebUiNode {
     /// Component type tag
     #[serde(default)]
     pub t: String,
     /// Component id, target for events ("button:3", "expander:5.text_input:0")
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cid: Option<String>,
 
     // page node
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bare: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<[f32; 2]>,
 
     // header / text / markdown
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
 
     // labeled inputs + button + expander + tab
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 
     // button
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm: Option<String>,
 
     // text_input / password_input / select / radio / slider / number_input
     /// Current value: string for text/select/radio, number for slider/number
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Vec<String>>,
 
     // checkbox
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked: Option<bool>,
 
     // slider / number_input
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<f64>,
 
     // log
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lines: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_height: Option<f32>,
 
     // table
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headings: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rows: Option<Vec<Vec<String>>>,
 
     // textarea
     /// Visible-height hint in text rows (a distinct wire field from the
     /// table's `rows` so both stay simply typed).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rows_hint: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sortable: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clickable: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected: Option<i64>,
 
     // expander
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open: Option<bool>,
 
     // columns
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weights: Option<Vec<f32>>,
 
     // grid (aligned matrix of `cell` children, row-major)
     /// Column count; rows = ceil(children / cols)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cols: Option<u32>,
 
     // tabs
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vertical: Option<bool>,
 
     // image / image_map
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alt: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<f32>,
     /// image_map overlay boxes, in unscaled image-pixel coordinates
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub markers: Option<Vec<WebUiMapMarker>>,
     /// Marker id to center the container on whenever it moves
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll_to: Option<String>,
     /// Page id a right-click opens as a supplemental window
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub popup: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub popup_size: Option<[f32; 2]>,
 
     // containers (page, expander, columns/col, tabs/tab)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<WebUiNode>>,
 }
 
@@ -248,7 +248,7 @@ impl WebUiNode {
 
 /// One image_map overlay box, in UNSCALED image-pixel coordinates
 /// (positioned at coord * scale in display space, like the browser bundle).
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct WebUiMapMarker {
     #[serde(default)]
     pub id: String,
@@ -261,10 +261,10 @@ pub struct WebUiMapMarker {
     #[serde(default)]
     pub y2: f32,
     /// "current" (red glow circle) | "marker" (accent box) | "pin" (filled dot)
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     /// Tooltip text
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
 
@@ -568,6 +568,27 @@ mod tests {
         let msg: WebUiServerMessage =
             serde_json::from_str(r#"{"type":"shiny_new_thing","stuff":1}"#).unwrap();
         assert_eq!(msg, WebUiServerMessage::Unknown);
+    }
+
+    #[test]
+    fn node_serializes_leanly_and_round_trips() {
+        // The tree must serialize (to ride the wire to the phone) AND stay
+        // lean — absent Option fields are skipped, so a node isn't a wall of
+        // nulls. A round-trip through JSON must preserve the structure.
+        let raw = r#"{ "t": "page", "title": "Demo", "children": [
+            { "t": "button", "cid": "button:2", "label": "Attack", "variant": "danger" },
+            { "t": "progress", "cid": "progress:1", "value": 0.4, "label": "kobold" }
+        ] }"#;
+        let node: WebUiNode = serde_json::from_str(raw).unwrap();
+        let out = serde_json::to_string(&node).unwrap();
+        // Lean: no null-valued keys leaked in.
+        assert!(!out.contains("null"), "serialized node must skip absent fields: {out}");
+        assert!(!out.contains("\"markers\""), "absent Option must not serialize");
+        // Round-trips back to the same tree.
+        let back: WebUiNode = serde_json::from_str(&out).unwrap();
+        assert_eq!(node, back);
+        assert_eq!(back.children()[0].variant.as_deref(), Some("danger"));
+        assert_eq!(back.children()[1].value_f64(), Some(0.4));
     }
 
     #[test]

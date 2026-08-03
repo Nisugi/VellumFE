@@ -425,6 +425,29 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "saved": saved,
             }),
         ),
+        // Lich WebUI broadcasts. The phone renders only pages it subscribed
+        // to; it drops renders for pages it hasn't opened.
+        RemoteDelta::WebUiRender { page, seq, tree } => encode(
+            "webui_render",
+            last_seq,
+            serde_json::json!({ "page": page, "seq": seq, "tree": tree }),
+        ),
+        RemoteDelta::WebUiPages(pages) => {
+            encode("webui_pages", last_seq, serde_json::json!({ "pages": pages }))
+        }
+        RemoteDelta::WebUiPageClosed { page } => {
+            encode("webui_closed", last_seq, serde_json::json!({ "page": page }))
+        }
+        RemoteDelta::WebUiNotice { level, text } => encode(
+            "webui_notice",
+            last_seq,
+            serde_json::json!({ "level": level, "text": text }),
+        ),
+        RemoteDelta::WebUiConnected { connected } => encode(
+            "webui_connected",
+            last_seq,
+            serde_json::json!({ "connected": connected }),
+        ),
     }
 }
 
@@ -607,6 +630,17 @@ pub enum ClientMessage {
         request_id: u64,
         scope: String,
         slices: serde_json::Value,
+    },
+    /// The phone opened a Lich WebUI panel: subscribe to the page so renders
+    /// flow. Core forwards a `subscribe` to Lich.
+    WebUiSubscribe { page: String },
+    /// The phone closed a WebUI panel: unsubscribe.
+    WebUiUnsubscribe { page: String },
+    /// A phone WebUI interaction (button/input/row); core forwards it to Lich.
+    WebUiEvent {
+        page: String,
+        cid: String,
+        value: serde_json::Value,
     },
 }
 
@@ -921,6 +955,21 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 slices,
             })
         }
+        "webui_subscribe" => {
+            let page = msg.d.get("page")?.as_str()?.to_string();
+            Some(ClientMessage::WebUiSubscribe { page })
+        }
+        "webui_unsubscribe" => {
+            let page = msg.d.get("page")?.as_str()?.to_string();
+            Some(ClientMessage::WebUiUnsubscribe { page })
+        }
+        "webui_event" => {
+            let page = msg.d.get("page")?.as_str()?.to_string();
+            let cid = msg.d.get("cid")?.as_str()?.to_string();
+            // value is component-specific; null is valid (button clicks).
+            let value = msg.d.get("value").cloned().unwrap_or(serde_json::Value::Null);
+            Some(ClientMessage::WebUiEvent { page, cid, value })
+        }
         "highlight_delete" => {
             let request_id = msg.d.get("request_id")?.as_u64()?;
             let scope = msg.d.get("scope")?.as_str()?.to_string();
@@ -1075,6 +1124,7 @@ mod tests {
             attempt: Some(3),
             error: None,
             session_control: true,
+            webui_available: false,
         };
         let json: serde_json::Value =
             serde_json::from_str(&delta(&RemoteDelta::Session(info.clone()), 5)).unwrap();

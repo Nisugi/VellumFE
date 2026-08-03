@@ -931,6 +931,21 @@ async fn handle_client_message(
                 slices,
             })
             .is_ok(),
+        ClientMessage::WebUiSubscribe { page } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::WebUiSubscribe { page })
+            .is_ok(),
+        ClientMessage::WebUiUnsubscribe { page } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::WebUiUnsubscribe { page })
+            .is_ok(),
+        ClientMessage::WebUiEvent { page, cid, value } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::WebUiEvent { page, cid, value })
+            .is_ok(),
         ClientMessage::HighlightDelete {
             request_id,
             scope,

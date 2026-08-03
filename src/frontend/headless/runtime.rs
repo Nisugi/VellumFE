@@ -160,6 +160,10 @@ impl Supervisor {
             attempt: (self.reconnect_attempt > 0).then_some(self.reconnect_attempt),
             error: None,
             session_control: true,
+            // Set from the live AppCore flag by flush_state's session overlay;
+            // this constructor doesn't know the connection mode, so default
+            // false and let the sink overlay the real value.
+            webui_available: false,
         }
     }
 }
@@ -357,6 +361,11 @@ pub async fn async_run(
         phase_started: None,
         first_text_seen: false,
     };
+
+    // Lich WebUI is reachable only on a Lich-attached session (a direct
+    // eAccess connection bypasses Lich). Advertise it to phone clients so
+    // they show the WebUI affordance only when it will work.
+    app_core.set_webui_available(!is_direct);
 
     // Auto-connect only when the CLI asked for a session (--direct / --key);
     // otherwise idle on the login screen.
@@ -666,6 +675,20 @@ pub async fn async_run(
                 Ok(_) => {}
                 Err(e) => tracing::warn!("vellumCmd failed: {e}"),
             }
+        }
+
+        // Lich WebUI tick: drain the bridge (fans renders to phone clients),
+        // send any queued `;ui handshake` to the game, and start the bridge
+        // once its reply arrives. Only meaningful on a Lich-attached session
+        // (webui_available); a direct eAccess connection has no Lich.
+        app_core.pump_webui();
+        for raw in app_core.take_webui_pending_raw() {
+            if let Some(conn) = supervisor.connection.as_ref() {
+                let _ = conn.command_tx.send(format!("{raw}\n"));
+            }
+        }
+        if let Some(handshake) = app_core.take_webui_handshake() {
+            app_core.start_webui(&tokio::runtime::Handle::current(), &handshake);
         }
 
         // Apply session-control requests from web clients.
@@ -1051,6 +1074,24 @@ fn handle_remote_event(
             slices,
         } => {
             app_core.handle_remote_touch_wheel_put(client_id, request_id, scope, slices);
+            true
+        }
+        RemoteEvent::WebUiSubscribe { page } => {
+            // First subscription starts the bridge: trigger the handshake if
+            // it isn't up yet (the raw `;ui handshake` drains next tick, the
+            // reply starts the socket, then the subscribe replays via Hello).
+            if !app_core.webui_is_active() {
+                app_core.request_webui_handshake();
+            }
+            app_core.webui_subscribe(&page);
+            true
+        }
+        RemoteEvent::WebUiUnsubscribe { page } => {
+            app_core.webui_unsubscribe(&page);
+            true
+        }
+        RemoteEvent::WebUiEvent { page, cid, value } => {
+            app_core.webui_send_event(page, cid, value);
             true
         }
         RemoteEvent::MapLocations {
