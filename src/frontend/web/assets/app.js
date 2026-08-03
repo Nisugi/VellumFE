@@ -750,6 +750,15 @@ function handleSnapshot(d) {
         buffers.delete(stream);
       }
     }
+    // A full snapshot removes every stream except main. If the view was
+    // pointed at one of the deleted streams, activeStream would still name a
+    // gone buffer: incoming main text fails the `stream === activeStream`
+    // paint check and files as unread forever, and with only main left the
+    // chip bar hides itself — a permanently blank pane with no chip to tap
+    // back. Snap the active stream back to main.
+    if (!buffers.has(activeStream)) {
+      activeStream = "main";
+    }
     pane.replaceChildren();
     autoScroll = true;
     updateChips();
