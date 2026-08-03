@@ -5613,7 +5613,7 @@ impl VellumGuiApp {
                 }
             }
             A::ListLayouts => self.list_layout_checkpoints(),
-            A::ResizeLayout => {
+            A::ResizeLayout(None) => {
                 // The GUI tracks the canvas automatically (per-frame anchor
                 // rescale), so bare `.resize` keeps only its FILL intent:
                 // stretch the arrangement's bounding box out to the full
@@ -5628,6 +5628,62 @@ impl VellumGuiApp {
                         Some(Self::rects_bounding_canvas(&self.main_window_rects));
                     self.app_core
                         .add_system_message("Refitting windows to fill the current size.");
+                }
+            }
+            A::ResizeLayout(Some(name)) => {
+                // Geometry-only restore: take the named checkpoint's window
+                // positions/sizes (rescaled into the current window) and
+                // nothing else — a "make it look arranged like X" that keeps
+                // this session's windows, skin, and OS geometry.
+                match load_named_layout(&name) {
+                    Ok(layout) => {
+                        let saved: HashMap<TabKey, [f32; 4]> =
+                            Self::dock_snapshot_from_layout(&layout)
+                                .map(|snapshot| {
+                                    snapshot
+                                        .main_window_rects
+                                        .into_iter()
+                                        .map(|entry| (entry.key, entry.rect))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                        if saved.is_empty() {
+                            self.app_core.add_system_message(&format!(
+                                "Layout '{}' has no window geometry to adopt.",
+                                name
+                            ));
+                            return;
+                        }
+                        let file_ref = Self::layout_reference_canvas(&layout, &saved);
+                        let to = self.canonical_canvas.unwrap_or(file_ref);
+                        let available = &self.available_tabs;
+                        let applied = Self::merge_layout_geometry(
+                            &mut self.main_window_rects,
+                            &saved,
+                            file_ref,
+                            to,
+                            |key| available.contains_key(key),
+                        );
+                        if applied > 0 {
+                            self.layout_dirty = true;
+                            self.app_core.add_system_message(&format!(
+                                "Adopted the geometry of layout '{}' for {} window{}.",
+                                name,
+                                applied,
+                                if applied == 1 { "" } else { "s" }
+                            ));
+                        } else {
+                            self.app_core.add_system_message(&format!(
+                                "Layout '{}' positions no windows that are open here.",
+                                name
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        self.app_core
+                            .add_system_message(&format!("Failed to load layout: {}", err));
+                        self.list_layout_checkpoints();
+                    }
                 }
             }
             A::SaveSkin(name) => {

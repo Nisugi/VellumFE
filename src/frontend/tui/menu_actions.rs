@@ -96,10 +96,18 @@ pub fn handle_ui_action(
             app_core.list_layouts();
             app_core.needs_render = true;
         }
-        UiAction::ResizeLayout => {
+        UiAction::ResizeLayout(None) => {
             let (width, height) = frontend.size();
             app_core.resize_windows(width, height);
             app_core.needs_render = true;
+        }
+        UiAction::ResizeLayout(Some(_)) => {
+            // The TUI reflows its cell grid natively; adopting a saved
+            // layout's pixel geometry is a GUI concept.
+            gui_only(
+                app_core,
+                "Adopting a saved layout's geometry (.resize <name>)",
+            )
         }
         UiAction::SaveSkin(_) => {
             gui_only(app_core, "Saving a skin from the current appearance (.saveskin)")

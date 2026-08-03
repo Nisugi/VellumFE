@@ -1001,7 +1001,7 @@ fn dispatch_ui_action(
         | A::SaveLayout(_)
         | A::LoadLayout { .. }
         | A::ListLayouts
-        | A::ResizeLayout
+        | A::ResizeLayout(_)
         | A::SaveSkin(_)
         | A::PackEditor
         | A::Zone { .. }

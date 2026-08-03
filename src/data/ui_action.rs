@@ -166,7 +166,12 @@ pub enum UiAction {
         keep_skin: bool,
     },
     ListLayouts,
-    ResizeLayout,
+    /// `.resize` — refit windows to the current size. Bare: stretch the
+    /// arrangement to fill the window (TUI: reflow the cell grid). With a
+    /// name (GUI only): adopt just the GEOMETRY of that saved layout —
+    /// window positions/sizes rescaled into the current window — touching
+    /// nothing else (no defs, visibility, z-order, skin, or OS geometry).
+    ResizeLayout(Option<String>),
     SaveSkin(String),
     UiExport(Vec<String>),
     UiImport(Vec<String>),
@@ -270,6 +275,9 @@ impl UiAction {
                 keep_skin,
             });
         }
+        if let Some(name) = body.strip_prefix("layout:resize:") {
+            return Some(UiAction::ResizeLayout(Some(name.to_string())));
+        }
         if let Some(name) = body.strip_prefix("saveskin:") {
             return Some(UiAction::SaveSkin(name.to_string()));
         }
@@ -341,7 +349,7 @@ impl UiAction {
                 keep_skin: false,
             },
             "layout:list" => UiAction::ListLayouts,
-            "layout:resize" => UiAction::ResizeLayout,
+            "layout:resize" => UiAction::ResizeLayout(None),
             "uiexport" => UiAction::UiExport(Vec::new()),
             "uiimport" => UiAction::UiImport(Vec::new()),
             "packeditor" => UiAction::PackEditor,
@@ -421,7 +429,10 @@ impl std::fmt::Display for UiAction {
                 keep_skin: true,
             } => write!(f, "action:layout:load:{name}:keep-skin"),
             UiAction::ListLayouts => write!(f, "action:layout:list"),
-            UiAction::ResizeLayout => write!(f, "action:layout:resize"),
+            UiAction::ResizeLayout(None) => write!(f, "action:layout:resize"),
+            UiAction::ResizeLayout(Some(name)) => {
+                write!(f, "action:layout:resize:{name}")
+            }
             UiAction::SaveSkin(name) => write!(f, "action:saveskin:{name}"),
             UiAction::UiExport(args) if args.is_empty() => write!(f, "action:uiexport"),
             UiAction::UiExport(args) => write!(f, "action:uiexport:{}", args.join(" ")),
@@ -533,7 +544,8 @@ mod tests {
                 keep_skin: true,
             },
             UiAction::ListLayouts,
-            UiAction::ResizeLayout,
+            UiAction::ResizeLayout(None),
+            UiAction::ResizeLayout(Some("mine".into())),
             UiAction::SaveSkin("mine".into()),
             UiAction::UiExport(Vec::new()),
             UiAction::UiExport(vec!["mypack".into(), "highlights".into()]),

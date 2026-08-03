@@ -1958,7 +1958,11 @@ impl AppCore {
                 return Ok(CommandOutcome::Ui(UiAction::ListLayouts));
             }
             "resize" => {
-                return Ok(CommandOutcome::Ui(UiAction::ResizeLayout));
+                // `.resize [name]` — bare refits to the current size; a name
+                // adopts just that saved layout's geometry (GUI).
+                return Ok(CommandOutcome::Ui(UiAction::ResizeLayout(
+                    parts.get(1).map(|name| name.to_string()),
+                )));
             }
             // Bake the current GUI appearance into a skin. Core knows the
             // command so the TUI can answer "GUI-only" instead of

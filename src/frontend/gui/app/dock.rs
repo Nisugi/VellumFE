@@ -411,6 +411,30 @@ impl VellumGuiApp {
         }
     }
 
+    /// Geometry-only merge from a saved layout (`.resize <name>`): adopt the
+    /// saved rect for every window that is live this session, rescaled from
+    /// the file's reference canvas into the store's anchor space (a pure
+    /// map, so it composes exactly with the per-frame canvas tracking).
+    /// Windows only in the file are not materialized; live windows the file
+    /// doesn't position keep their current rects. Everything else about the
+    /// file — defs, visibility, z-order, skin, OS geometry — is ignored.
+    pub(super) fn merge_layout_geometry(
+        store: &mut HashMap<TabKey, [f32; 4]>,
+        saved: &HashMap<TabKey, [f32; 4]>,
+        file_ref: Vec2,
+        to: Vec2,
+        mut is_live: impl FnMut(&TabKey) -> bool,
+    ) -> usize {
+        let mut applied = 0;
+        for (key, rect) in saved {
+            if is_live(key) {
+                store.insert(key.clone(), Self::rescale_rect(*rect, file_ref, to));
+                applied += 1;
+            }
+        }
+        applied
+    }
+
     pub(super) fn track_main_window_rect(&mut self, key: &TabKey, rect: Rect, bounds: Rect) {
         if !rect.is_finite() || !bounds.is_finite() {
             return;
@@ -936,6 +960,48 @@ mod tests {
             (r[0] - 200.0).abs() < 0.01,
             "scale comes from the true anchor, got x={}",
             r[0]
+        );
+    }
+
+    #[test]
+    fn merge_layout_geometry_intersects_and_rescales() {
+        // `.resize <name>`: live ∩ saved windows adopt the saved geometry
+        // rescaled from the file's canvas into the current anchor space;
+        // saved-only windows are not materialized; live-only windows keep
+        // their rects.
+        let mut store = HashMap::new();
+        store.insert(TabKey::Vitals, [10.0, 10.0, 100.0, 100.0]);
+        store.insert(TabKey::TextMain, [500.0, 500.0, 400.0, 300.0]);
+
+        let mut saved = HashMap::new();
+        saved.insert(TabKey::Vitals, [100.0, 200.0, 300.0, 400.0]);
+        saved.insert(TabKey::CommandInput, [0.0, 900.0, 1000.0, 50.0]); // not live
+
+        let file_ref = Vec2::new(1000.0, 1000.0);
+        let to = Vec2::new(2000.0, 500.0);
+        let live = [TabKey::Vitals, TabKey::TextMain];
+        let applied = VellumGuiApp::merge_layout_geometry(
+            &mut store,
+            &saved,
+            file_ref,
+            to,
+            |key| live.contains(key),
+        );
+
+        assert_eq!(applied, 1, "only the live ∩ saved window is adopted");
+        assert_eq!(
+            store[&TabKey::Vitals],
+            [200.0, 100.0, 600.0, 200.0],
+            "adopted rect is rescaled file→anchor (2x, 0.5x)"
+        );
+        assert_eq!(
+            store[&TabKey::TextMain],
+            [500.0, 500.0, 400.0, 300.0],
+            "live window absent from the file keeps its rect"
+        );
+        assert!(
+            !store.contains_key(&TabKey::CommandInput),
+            "saved-only window is not materialized"
         );
     }
 
