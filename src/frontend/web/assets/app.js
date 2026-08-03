@@ -139,6 +139,11 @@ const bootLich = (() => {
 // them), and only there does a non-loopback page offer "back to the app".
 const inShell = /(?:^#|&)app=1(?:&|$)/.test(location.hash);
 
+// nativepicker=1: the native app shell owns remote-server management via its
+// own character picker, so the in-page Remote login tab is hidden. A plain
+// browser (no app=1) keeps its Remote tab as its only way to attach.
+const nativePicker = /(?:^#|&)nativepicker=1(?:&|$)/.test(location.hash);
+
 // #remote=host:port — the shell has a remembered remote server (the
 // pairing token stays in native secure storage; only the address rides
 // the fragment for display).
@@ -1095,7 +1100,9 @@ function setLoginMode(mode) {
 modeDirectBtn.addEventListener("click", () => setLoginMode("direct"));
 modeLichBtn.addEventListener("click", () => setLoginMode("lich"));
 modeRemoteBtn.addEventListener("click", () => setLoginMode("remote"));
-modeRemoteBtn.hidden = !inShell;
+// The Remote tab is a shell-only affordance, and the native picker replaces
+// it when present.
+modeRemoteBtn.hidden = !inShell || nativePicker;
 
 // Deep-linked Lich target: open the Lich tab prefilled and let the user
 // press Connect.
@@ -1108,8 +1115,9 @@ if (bootLich) {
 }
 
 // Remembered remote server: one-tap row above the manual fields. Connect
-// and Forget are shell actions — the token never reaches this page.
-if (shellRemote && inShell) {
+// and Forget are shell actions — the token never reaches this page. Skipped
+// under the native picker, which owns saved servers.
+if (shellRemote && inShell && !nativePicker) {
   const row = document.getElementById("remote-saved");
   document.getElementById("remote-saved-name").textContent = "Saved server";
   document.getElementById("remote-saved-detail").textContent =
@@ -1128,8 +1136,9 @@ if (shellRemote && inShell) {
 }
 
 // Deep-linked remote server (.webinfo app QR): open the Remote tab
-// prefilled and let the user press Connect.
-if (bootRemote && inShell) {
+// prefilled and let the user press Connect. Skipped under the native picker
+// (the native shell handles the scanned deep link itself).
+if (bootRemote && inShell && !nativePicker) {
   remoteHostInput.value = bootRemote.host;
   remotePortInput.value = bootRemote.port;
   remoteTokenInput.value = bootRemote.token;
@@ -3233,12 +3242,20 @@ function openSettingsSheet() {
   // same ground. Tuck the four file buttons behind one disclosure so they're
   // reachable for import/export power users without crowding the main sheet.
   sheetButton("Advanced: edit config files…", openAdvancedConfigSheet);
-  // Viewing a desktop server from inside the app shell: the way home.
-  // (The shell swaps the WebView back to its embedded login page.)
+  // Viewing a desktop server from inside the app shell: the way home. With
+  // the native picker, that's the character list; otherwise the shell's
+  // embedded login page. (Both are shell actions the WebView container
+  // intercepts and swaps the view for.)
   if (inShell && location.hostname !== "127.0.0.1") {
-    sheetButton("Leave this server (app login)", () => {
-      location.href = "vellum://local";
-    });
+    if (nativePicker) {
+      sheetButton("Switch character", () => {
+        location.href = "vellum://remote/picker";
+      });
+    } else {
+      sheetButton("Leave this server (app login)", () => {
+        location.href = "vellum://local";
+      });
+    }
   }
 }
 

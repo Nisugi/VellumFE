@@ -51,6 +51,9 @@ targets:
           # Tailscale MagicDNS) in *web content* only — the app's own
           # networking stays ATS-strict.
           NSAllowsArbitraryLoadsInWebContent: true
+        # In-app QR scanner (character picker → "Scan QR to add"): reads a
+        # desktop VellumFE's .webinfo pairing QR to add a remote character.
+        NSCameraUsageDescription: "Scan a VellumFE pairing QR code to add a character to connect to."
         # vellum:// deep links: lich?host=…&port=… (Lich's connect-a-device
         # panel) prefills the Lich login tab; remote?host=…&port=…&token=…
         # (.webinfo's app QR on a desktop VellumFE) prefills the Remote tab.
