@@ -202,15 +202,52 @@ impl VellumGuiApp {
     /// Emit the accumulated non-link text as a single label. One galley per
     /// run (instead of one widget per segment) keeps wrapping natural and
     /// lets egui's galley cache reuse the layout across frames.
-    fn flush_text_job(ui: &mut egui::Ui, job: &mut egui::text::LayoutJob) {
+    ///
+    /// `custom_runs` are `(char_start, char_end, name)` slots within this job's
+    /// text that hold a custom emoji's `:name:` fallback and must be overpainted
+    /// with the emoji image. They are drained together with the job so the next
+    /// flush starts clean.
+    fn flush_text_job(
+        ui: &mut egui::Ui,
+        job: &mut egui::text::LayoutJob,
+        custom_runs: &mut Vec<(usize, usize, String)>,
+    ) {
         if job.is_empty() {
+            custom_runs.clear();
             return;
         }
         let job = std::mem::take(job);
-        if super::color_emoji::should_overlay(&job.text) {
-            Self::add_label_with_color_emoji(ui, egui::Label::new(job), false, None);
+        let runs = std::mem::take(custom_runs);
+        if !runs.is_empty() || super::color_emoji::should_overlay(&job.text) {
+            Self::add_label_with_color_emoji(ui, egui::Label::new(job), false, None, &runs);
         } else {
             ui.add(egui::Label::new(job));
+        }
+    }
+
+    /// Paint custom-emoji images over the `:name:` fallback slots recorded for a
+    /// galley. Mirrors `color_emoji::paint_color_emoji`: a pure overlay run
+    /// after the galley is painted, so selection/copy still see the shortcode.
+    /// A slot whose emoji fails to resolve is left as visible `:name:` text.
+    fn paint_custom_emoji_runs(
+        ctx: &egui::Context,
+        painter: &egui::Painter,
+        galley: &egui::Galley,
+        galley_pos: egui::Pos2,
+        custom_runs: &[(usize, usize, String)],
+    ) {
+        for (start, end, name) in custom_runs {
+            // Two 0-width cursor rects bound the `:name:` run; their union is
+            // the slot (horizontal span + row height). Offset by galley_pos to
+            // reach screen space.
+            let start_rect =
+                galley.pos_from_cursor(egui::text::CCursor::new(*start));
+            let end_rect = galley.pos_from_cursor(egui::text::CCursor::new(*end));
+            let slot = egui::Rect::from_min_max(
+                galley_pos + start_rect.min.to_vec2(),
+                galley_pos + end_rect.max.to_vec2(),
+            );
+            super::custom_emoji_render::paint_custom_emoji(ctx, painter, name, slot);
         }
     }
 
@@ -230,6 +267,7 @@ impl VellumGuiApp {
         label: egui::Label,
         interactive: bool,
         selectable: Option<bool>,
+        custom_runs: &[(usize, usize, String)],
     ) -> egui::Response {
         let (galley_pos, galley, response) = label.layout_in_ui(ui);
         response.widget_info(|| {
@@ -264,6 +302,15 @@ impl VellumGuiApp {
                 );
             }
             super::color_emoji::paint_color_emoji(ui.ctx(), ui.painter(), &galley, galley_pos);
+            if !custom_runs.is_empty() {
+                Self::paint_custom_emoji_runs(
+                    ui.ctx(),
+                    ui.painter(),
+                    &galley,
+                    galley_pos,
+                    custom_runs,
+                );
+            }
         }
         response
     }
@@ -320,9 +367,17 @@ impl VellumGuiApp {
                 // Consecutive non-link segments accumulate into one LayoutJob;
                 // links flush it and render as their own clickable widgets.
                 let mut job = egui::text::LayoutJob::default();
+                // Custom-emoji `:name:` slots within the current job, as
+                // `(char_start, char_end, name)`. `job_chars` tracks the char
+                // count already appended so a slot's cursor range is known
+                // before the fallback text goes in. Char (not byte) counts,
+                // because galley cursors index by char.
+                let mut custom_runs: Vec<(usize, usize, String)> = Vec::new();
+                let mut job_chars = 0usize;
 
                 if let Some((text, crate::config::TimestampPosition::Start)) = &ts_run {
                     job.append(text, 0.0, ts_format.clone());
+                    job_chars += text.chars().count();
                 }
 
                 for segment in &line.segments {
@@ -330,11 +385,34 @@ impl VellumGuiApp {
                         continue;
                     }
 
+                    // Custom emoji: reserve the `:name:` fallback run and mark
+                    // it for image overlay. Always render as an image (no
+                    // monochrome fallback exists), independent of the
+                    // color-emoji toggle. If the emoji can't resolve to an
+                    // image, fall through to plain text so the slot shows
+                    // `:name:` instead of a blank.
+                    if let Some(name) = &segment.custom_emoji {
+                        if super::custom_emoji_render::is_paintable(ui.ctx(), name) {
+                            let start = job_chars;
+                            let n = segment.text.chars().count();
+                            job.append(
+                                &segment.text,
+                                0.0,
+                                Self::segment_text_format(segment, visuals, false, font_id),
+                            );
+                            job_chars += n;
+                            custom_runs.push((start, job_chars, name.clone()));
+                            continue;
+                        }
+                        // Unresolved: fall through to the normal text paths.
+                    }
+
                     let is_link = Self::segment_has_clickable_link(segment);
                     let search_match = Self::segment_matches_query(segment, search_query);
 
                     if is_link {
-                        Self::flush_text_job(ui, &mut job);
+                        Self::flush_text_job(ui, &mut job, &mut custom_runs);
+                        job_chars = 0;
                         // Links stay one clickable widget; highlight the whole
                         // segment when it matches. While the drag modifier is
                         // held with the mouse button down, the label is not
@@ -352,7 +430,7 @@ impl VellumGuiApp {
                             .sense(egui::Sense::click_and_drag())
                             .selectable(selectable);
                         let response = if super::color_emoji::should_overlay(&segment.text) {
-                            Self::add_label_with_color_emoji(ui, label, true, Some(selectable))
+                            Self::add_label_with_color_emoji(ui, label, true, Some(selectable), &[])
                         } else {
                             ui.add(label)
                         }
@@ -383,6 +461,7 @@ impl VellumGuiApp {
                                 0.0,
                                 Self::segment_text_format(segment, visuals, is_match, font_id),
                             );
+                            job_chars += piece.chars().count();
                         }
                     } else {
                         job.append(
@@ -390,14 +469,17 @@ impl VellumGuiApp {
                             0.0,
                             Self::segment_text_format(segment, visuals, false, font_id),
                         );
+                        job_chars += segment.text.chars().count();
                     }
                 }
 
                 if let Some((text, crate::config::TimestampPosition::End)) = &ts_run {
                     job.append(text, 0.0, ts_format.clone());
+                    job_chars += text.chars().count();
                 }
 
-                Self::flush_text_job(ui, &mut job);
+                let _ = job_chars;
+                Self::flush_text_job(ui, &mut job, &mut custom_runs);
                 Self::line_tail_selection_filler(ui, font_id);
             };
             if wrap {

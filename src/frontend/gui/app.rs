@@ -25,6 +25,7 @@ use tokio::sync::mpsc;
 
 mod borders;
 mod color_emoji;
+mod custom_emoji_render;
 mod detached;
 mod map_explorer;
 mod dialogs;
