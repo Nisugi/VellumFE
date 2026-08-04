@@ -1599,8 +1599,30 @@ impl Config {
         match dialog_id {
             // GS4 expr dialog -> gs4_experience template
             "expr" => "gs4_experience",
-            // Most dialogs use the same ID as template
+            // Most dialogs use the same ID as the template
             _ => dialog_id,
+        }
+    }
+
+    /// The window template a discovered `<streamWindow>` id should use.
+    ///
+    /// Most streams are plain text (bounty, loot, society, thoughts, …) and get
+    /// the blank `text_custom` template. A few stream ids have a DEDICATED
+    /// widget whose specialized pipeline (buffer replay, clickable links,
+    /// structured parsing) only feeds that widget's content variant — a generic
+    /// text window bound to the id renders empty or broken. Route those to
+    /// their widget template so auto-discovery produces the right window type
+    /// instead of defaulting everything to text.
+    pub fn stream_id_to_template(stream_id: &str) -> &'static str {
+        match stream_id {
+            // Spellbook: replayed from a buffer into WindowContent::Spells only.
+            "Spells" => "spells",
+            // Inventory / reserve / room have structured widgets; a text window
+            // bound to these never populates correctly.
+            "inv" => "inventory",
+            "reserve" => "reserve",
+            "room" => "room",
+            _ => "text_custom",
         }
     }
 

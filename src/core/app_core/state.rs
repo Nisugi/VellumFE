@@ -4278,20 +4278,11 @@ impl AppCore {
         // Pick the template + binding for this discovery kind.
         let (binding, template) = match d.kind {
             WindowDiscoveryKind::Stream => {
-                // Most streams bind to a blank text window that subscribes
-                // to the id ("text_custom" is the addable blank-text
-                // template). A few stream ids have a dedicated widget type
-                // whose specialized pipeline (buffer replay, links) only
-                // feeds that widget's content variant — a generic text
-                // window would render empty. Route those to their widget
-                // template so discovery produces the right window type.
-                let template = match d.id.as_str() {
-                    // The spellbook is sent once at login and replayed from
-                    // a buffer into WindowContent::Spells only; a text window
-                    // bound to "Spells" never populates.
-                    "Spells" => "spells",
-                    _ => "text_custom",
-                };
+                // A stream id with a dedicated widget (spells/inventory/reserve/
+                // room) routes to that widget's template; everything else gets a
+                // blank text window bound to the id. Centralized in
+                // Config::stream_id_to_template so the mapping isn't scattered.
+                let template = crate::config::Config::stream_id_to_template(&d.id);
                 (WindowBinding::Stream(d.id.clone()), template)
             }
             WindowDiscoveryKind::DialogPanel => {
@@ -7401,6 +7392,65 @@ mod tests {
             "Spells stream discovery must produce a spells widget, got {:?}",
             win.widget_type()
         );
+    }
+
+    #[test]
+    fn widget_backed_streams_discover_their_widget_not_text() {
+        use crate::config::{WindowBinding, WindowDef};
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+
+        // Each of these stream ids has a dedicated widget; auto-discovery must
+        // produce that widget, not a generic (empty) text window.
+        let cases: &[(&str, fn(&WindowDef) -> bool)] = &[
+            ("Spells", |w| matches!(w, WindowDef::Spells { .. })),
+            ("inv", |w| matches!(w, WindowDef::Inventory { .. })),
+            ("reserve", |w| matches!(w, WindowDef::Reserve { .. })),
+            ("room", |w| matches!(w, WindowDef::Room { .. })),
+        ];
+
+        for (id, is_expected) in cases {
+            let mut core = core_with_layout(vec![]);
+            core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+                id: id.to_string(),
+                title: id.to_string(),
+                kind: WindowDiscoveryKind::Stream,
+                save: false,
+            });
+            core.realize_offered_windows(80, 24);
+            let win = core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.base().binding == Some(WindowBinding::Stream(id.to_string())))
+                .unwrap_or_else(|| panic!("stream '{id}' should register a bound window"));
+            assert!(
+                is_expected(win),
+                "stream '{id}' must discover its widget, got {:?}",
+                win.widget_type()
+            );
+        }
+    }
+
+    #[test]
+    fn plain_text_streams_still_discover_a_text_window() {
+        use crate::config::{WindowBinding, WindowDef};
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        // A stream with no dedicated widget stays a text window.
+        let mut core = core_with_layout(vec![]);
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "custom_feed".to_string(),
+            title: "Custom".to_string(),
+            kind: WindowDiscoveryKind::Stream,
+            save: false,
+        });
+        core.realize_offered_windows(80, 24);
+        let win = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.base().binding == Some(WindowBinding::Stream("custom_feed".to_string())))
+            .expect("stream should register a window");
+        assert!(matches!(win, WindowDef::Text { .. }));
     }
 
     #[test]
