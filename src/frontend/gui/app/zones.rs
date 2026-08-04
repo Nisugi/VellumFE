@@ -217,13 +217,18 @@ impl ShellLayoutSnapshot {
         self.right_sidebar_width = self.right_sidebar_width.clamp(220.0, 700.0);
     }
 
-    /// Per-frame sanitize: range clamps plus the small-window guard that
-    /// keeps expanded sidebars from swallowing the center.
-    pub(super) fn sanitize(&mut self, center_width: f32) {
+    /// Per-frame sanitize: range clamps ONLY.
+    ///
+    /// The small-window squeeze that used to live here wrote the width-aware
+    /// clamp back into the persisted `left/right_sidebar_width` every frame, so
+    /// on a narrow window the stored widths were permanently shrunk and never
+    /// sprang back (build_layout_snapshot then persisted the shrunk value on
+    /// the next drag). The squeeze is display-only and already handled on local
+    /// copies by [`squeezed_sidebar_widths`] in the shell pass — doing it here
+    /// too was both redundant and the regression the "widths never written
+    /// back" fix was meant to prevent. So sanitize now only range-clamps.
+    pub(super) fn sanitize(&mut self) {
         self.clamp_ranges();
-        let max_sidebar_width = ((center_width - 220.0).max(220.0) * 0.45).max(220.0);
-        self.left_sidebar_width = self.left_sidebar_width.min(max_sidebar_width);
-        self.right_sidebar_width = self.right_sidebar_width.min(max_sidebar_width);
     }
 }
 
@@ -1697,6 +1702,41 @@ impl VellumGuiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_preserves_stored_sidebar_width_on_narrow_window() {
+        // Regression: the old width-aware squeeze in sanitize() wrote the clamp
+        // back into the persisted width, so a narrow window permanently shrank
+        // the stored sidebar and it never sprang back. sanitize() must only
+        // range-clamp now; the display squeeze lives in squeezed_sidebar_widths.
+        let mut layout = ShellLayoutSnapshot {
+            left_sidebar_width: 300.0,
+            right_sidebar_width: 300.0,
+            ..Default::default()
+        };
+        // A window far too narrow to hold two 300px sidebars.
+        layout.sanitize();
+        assert_eq!(layout.left_sidebar_width, 300.0, "stored width must not shrink");
+        assert_eq!(layout.right_sidebar_width, 300.0);
+
+        // The display-only squeeze still narrows the RENDERED widths on a
+        // narrow window, without touching the stored values.
+        let (l, r) = squeezed_sidebar_widths(700.0, 220.0, 300.0, 300.0);
+        assert!(l < 300.0 && r < 300.0, "display squeeze should shrink render widths: {l},{r}");
+        assert_eq!(layout.left_sidebar_width, 300.0, "stored width still intact");
+    }
+
+    #[test]
+    fn sanitize_still_range_clamps_out_of_bounds_widths() {
+        let mut layout = ShellLayoutSnapshot {
+            left_sidebar_width: 9999.0, // above the 700 max
+            right_sidebar_width: 10.0,  // below the 220 min
+            ..Default::default()
+        };
+        layout.sanitize();
+        assert_eq!(layout.left_sidebar_width, 700.0);
+        assert_eq!(layout.right_sidebar_width, 220.0);
+    }
 
     #[test]
     fn test_default_zone_for_tab_key_assignments() {

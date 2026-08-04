@@ -176,6 +176,14 @@ impl WidgetManager {
         self.minivitals_widgets.remove(name);
         self.betrayer_widgets.remove(name);
         self.last_synced_generation.remove(name);
+        // Tabbed windows track sync progress under per-tab composite keys
+        // (`name:tab`, see sync.rs). Removing only `name` left those behind, so
+        // after an edit the rebuilt-empty TabbedTextWindow's `current_gen >
+        // last_synced_gen` gate stayed false and no lines were re-added —
+        // every tab rendered blank until new lines arrived. Prune them too.
+        let tab_prefix = format!("{name}:");
+        self.last_synced_generation
+            .retain(|key, _| !key.starts_with(&tab_prefix));
         self.widget_data_generation.remove(name);
     }
 }
@@ -183,5 +191,34 @@ impl WidgetManager {
 impl Default for WidgetManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remove_widget_prunes_per_tab_generation_keys() {
+        let mut wm = WidgetManager::new();
+        // A tabbed window "combat" with two tabs, plus an unrelated window.
+        wm.last_synced_generation.insert("combat".to_string(), 5);
+        wm.last_synced_generation.insert("combat:melee".to_string(), 3);
+        wm.last_synced_generation.insert("combat:ranged".to_string(), 4);
+        wm.last_synced_generation.insert("thoughts".to_string(), 9);
+        // A window whose name is a prefix of another must not over-match:
+        // "combat" removal must NOT touch "combative".
+        wm.last_synced_generation.insert("combative".to_string(), 1);
+
+        wm.remove_widget_from_all_caches("combat");
+
+        assert!(!wm.last_synced_generation.contains_key("combat"));
+        assert!(!wm.last_synced_generation.contains_key("combat:melee"));
+        assert!(!wm.last_synced_generation.contains_key("combat:ranged"));
+        assert!(wm.last_synced_generation.contains_key("thoughts"));
+        assert!(
+            wm.last_synced_generation.contains_key("combative"),
+            "prefix-only match must not remove a different window"
+        );
     }
 }

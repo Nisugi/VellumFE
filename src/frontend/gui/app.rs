@@ -6302,7 +6302,7 @@ impl eframe::App for VellumGuiApp {
                 return;
             }
 
-            self.shell_layout.sanitize(root.width());
+            self.shell_layout.sanitize();
             let min_center_width = 220.0;
             let left_width = if self.shell_layout.left_sidebar_collapsed {
                 0.0
