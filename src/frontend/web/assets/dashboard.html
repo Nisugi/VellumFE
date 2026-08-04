@@ -83,11 +83,20 @@
       }
     }
 
+    // The pairing token rides the URL fragment (#token=... from the .webinfo
+    // QR). /sessions is token-gated, so forward it on the fetch.
+    function pairingToken() {
+      const m = location.hash.match(/token=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : "";
+    }
+
     async function load() {
       const box = document.getElementById("sessions");
       let sessions = [];
       try {
-        sessions = await (await fetch("/sessions")).json();
+        const token = encodeURIComponent(pairingToken());
+        sessions = await (await fetch(`/sessions?token=${token}`)).json();
+        if (!Array.isArray(sessions)) sessions = []; // e.g. {"error":"forbidden"}
       } catch { /* fall through to empty state */ }
       const checks = await Promise.all(sessions.map(s => alive(s.port)));
       const live = sessions.filter((_, i) => checks[i]);

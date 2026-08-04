@@ -441,9 +441,32 @@ async fn dashboard_html() -> impl IntoResponse {
 
 /// Session list for the dashboard. Every instance serves the same list
 /// (from the shared registry dir), so it's reachable via any live port.
-async fn sessions_json() -> impl IntoResponse {
+/// List running VellumFE instances for the dashboard picker. Token-gated for
+/// the same reason as /status: the registry carries character names, pids, and
+/// ports, which shouldn't be readable by arbitrary local processes — and, with
+/// a 0.0.0.0 web bind, by anything on the LAN. The dashboard forwards its
+/// pairing token when it fetches this.
+async fn sessions_json(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            r#"{"error":"forbidden"}"#.to_string(),
+        );
+    }
     let entries = registry::list_and_gc();
     (
+        StatusCode::OK,
         [
             (header::CONTENT_TYPE, "application/json"),
             (header::CACHE_CONTROL, "no-cache"),

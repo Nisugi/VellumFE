@@ -892,7 +892,12 @@ mod eaccess {
         let bytes_read = stream.read(&mut buf)?;
 
         if bytes_read == 0 {
-            return Ok(String::new());
+            // EOF: the server closed the connection mid-exchange. This is a
+            // transient DROP, not a credential rejection — it must NOT surface
+            // as AuthFailed, or the headless reconnect supervisor treats it as
+            // "bad credentials, stop retrying" (runtime.rs) and strands the
+            // session. Return a plain error so callers retry with backoff.
+            anyhow::bail!("eAccess closed the connection during authentication (transient)");
         }
 
         // Truncate to actual bytes read

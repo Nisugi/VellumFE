@@ -461,6 +461,10 @@ fn main() -> Result<()> {
         config.web.port = web_port;
     }
     if let Some(web_bind) = cli.web_bind.as_deref() {
+        // Setting a bind address implies wanting the web server, same as
+        // --web-port. Without this, a profile that set only web_bind="0.0.0.0"
+        // (default port) would apply the address but never start the server.
+        config.web.enabled = true;
         config.web.bind = web_bind.to_string();
     }
     // Store setup_palette flag for frontend to use after initialization
