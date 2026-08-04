@@ -827,9 +827,18 @@ impl VellumGuiApp {
                     return;
                 }
 
-                let window_name = state.selected.clone().unwrap_or_default();
+                // Show the window's title (the human name), not the internal
+                // id — the id (custom-text-1) is just a stable key.
+                let editing_label = {
+                    let t = state.title.trim();
+                    if t.is_empty() {
+                        state.selected.clone().unwrap_or_default()
+                    } else {
+                        t.to_string()
+                    }
+                };
                 ui.label(
-                    egui::RichText::new(format!("Editing '{}'", window_name)).strong(),
+                    egui::RichText::new(format!("Editing '{}'", editing_label)).strong(),
                 );
                 ui.separator();
                 egui::Grid::new("window_editor_grid")

@@ -908,10 +908,21 @@ impl VellumGuiApp {
 
             // The main story window keeps its canonical title regardless of the
             // layout's window name (legacy layouts call it "main"/"primary").
+            // Every other window shows its configured title (base.title, set by
+            // .rename / the window editor) — falling back to the window name
+            // only when no title is set. Previously this always used the name,
+            // so a renamed custom window's title bar kept the internal id.
             let title = if tab_key == TabKey::TextMain {
                 tab_key.default_title()
             } else {
-                window.name.clone()
+                app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|w| w.name() == name)
+                    .and_then(|w| w.base().title.clone())
+                    .filter(|t| !t.trim().is_empty())
+                    .unwrap_or_else(|| window.name.clone())
             };
             tabs.entry(tab_key.clone()).or_insert_with(|| GuiTab {
                 id: TabId::with_title(tab_key, title),
@@ -1037,6 +1048,16 @@ impl VellumGuiApp {
             window.name.hash(&mut hasher);
             std::mem::discriminant(&window.widget_type).hash(&mut hasher);
             Self::is_main_stream_window(name, window).hash(&mut hasher);
+            // The configured title feeds the tab's display title, so a rename
+            // must change the fingerprint — otherwise collect_available_tabs is
+            // skipped and the title bar keeps the old (internal-id) title.
+            app_core
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.name() == name)
+                .and_then(|w| w.base().title.as_deref())
+                .hash(&mut hasher);
             acc = acc.wrapping_add(hasher.finish());
         }
         acc
@@ -6789,6 +6810,54 @@ mod tests {
                 window_name: window_name.to_string(),
             },
         )
+    }
+
+    #[test]
+    fn collect_available_tabs_uses_configured_title_not_internal_name() {
+        use crate::core::AppCore;
+        use crate::data::WindowState;
+
+        let mut core = AppCore::new_for_test();
+        // A custom text window: opaque internal name, human-facing title.
+        let base: crate::config::WindowBase =
+            toml::from_str("name = \"custom-text-1\"").unwrap();
+        core.layout.windows.push(WindowDef::Text {
+            base: crate::config::WindowBase {
+                title: Some("Consumables".into()),
+                ..base
+            },
+            data: crate::config::TextWidgetData {
+                streams: vec!["consumables".into()],
+                buffer_size: 1000,
+                wordwrap: true,
+                show_timestamps: false,
+                timestamp_position: None,
+                compact: false,
+            },
+        });
+        core.ui_state.windows.insert(
+            "custom-text-1".to_string(),
+            WindowState::new_text("custom-text-1", 1000),
+        );
+
+        let fp_before = VellumGuiApp::available_tabs_fingerprint(&core);
+        let tabs = VellumGuiApp::collect_available_tabs(&core);
+        let tab = tabs
+            .values()
+            .find(|t| t.window_name == "custom-text-1")
+            .expect("tab for the custom window");
+        assert_eq!(
+            tab.id.title, "Consumables",
+            "tab title must be the configured title, not the internal id"
+        );
+
+        // Renaming (changing base.title) must change the fingerprint so the tab
+        // list actually refreshes.
+        if let Some(w) = core.layout.windows.iter_mut().find(|w| w.name() == "custom-text-1") {
+            w.base_mut().title = Some("Snacks".into());
+        }
+        let fp_after = VellumGuiApp::available_tabs_fingerprint(&core);
+        assert_ne!(fp_before, fp_after, "a title change must alter the fingerprint");
     }
 
     #[test]
