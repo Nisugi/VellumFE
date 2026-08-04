@@ -4005,6 +4005,22 @@ impl AppCore {
             return false;
         };
         let def = self.layout.windows.remove(pos);
+        // A dialog-bound window carries an entry in the popup allow-set
+        // (shown_dialog_ids) whenever it was shown. hide_window clears that,
+        // but delete must too — otherwise the id lingers and the next
+        // dialogData the game sends re-pops the dialog as a bare popup
+        // (titled "Dialog"), resurrecting a window the user deleted.
+        if let Some(crate::config::WindowBinding::Dialog(id)) = def.base().binding.clone() {
+            self.ui_state.shown_dialog_ids.remove(&id);
+            if self
+                .ui_state
+                .active_dialog
+                .as_ref()
+                .is_some_and(|d| d.id == id)
+            {
+                self.ui_state.active_dialog = None;
+            }
+        }
         self.layout.deleted_windows.retain(|w| w.name() != name);
         self.layout.deleted_windows.push(def);
         self.mark_layout_modified();
@@ -7406,6 +7422,41 @@ mod tests {
         assert!(core.ui_state.shown_dialog_ids.contains("bank"));
         core.set_known_window_shown("bank", false, 80, 24);
         assert!(!core.ui_state.shown_dialog_ids.contains("bank"));
+    }
+
+    #[test]
+    fn deleting_a_shown_dialog_window_clears_the_popup_allow_set() {
+        // Rysk's bug: show a dialog-bound window (seeds shown_dialog_ids),
+        // then DELETE it. Delete must scrub the id from the popup allow-set
+        // and drop any live popup — otherwise the next dialogData the game
+        // sends re-pops the deleted dialog as a bare "Dialog" popup.
+        use crate::config::WindowBinding;
+        let mut core = core_with_layout(vec![]);
+        core.layout.terminal_width = Some(80);
+        core.layout.terminal_height = Some(24);
+        let mut win = crate::config::Config::get_window_template("stance").unwrap();
+        win.base_mut().name = "activespells".to_string();
+        win.base_mut().binding = Some(WindowBinding::Dialog("activespells".to_string()));
+        win.base_mut().visibility = crate::config::WindowVisibility::Hidden;
+        core.layout.windows.push(win);
+
+        core.set_known_window_shown("activespells", true, 80, 24);
+        assert!(core.ui_state.shown_dialog_ids.contains("activespells"));
+        // Simulate a live popup for this id.
+        core.ui_state.active_dialog = Some(crate::data::DialogState::empty(
+            "activespells".to_string(),
+            Some("Dialog".to_string()),
+        ));
+
+        assert!(core.delete_and_stash_window("activespells"));
+        assert!(
+            !core.ui_state.shown_dialog_ids.contains("activespells"),
+            "delete must remove the dialog id from the popup allow-set"
+        );
+        assert!(
+            core.ui_state.active_dialog.is_none(),
+            "delete must close a popup that was showing the deleted dialog"
+        );
     }
 
     #[test]
