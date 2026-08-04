@@ -132,6 +132,12 @@ impl VellumGuiApp {
                                         .truncate(),
                                 );
                             }
+                            crate::data::ui_state::PositionedControlKind::Skin(_) => {
+                                // Backdrop art needs the skin store, which this
+                                // popup path doesn't thread; skins are a resident
+                                // dialog-panel feature (rendered there). The
+                                // numeric bars/text below still show.
+                            }
                         }
                     }
                 } else {

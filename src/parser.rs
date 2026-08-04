@@ -252,6 +252,7 @@ pub enum ParsedElement {
         links: Vec<crate::data::DialogLink>,
         images: Vec<crate::data::DialogImage>,
         spinboxes: Vec<crate::data::DialogSpinBox>,
+        skins: Vec<crate::data::DialogSkin>,
     },
     /// A resident dialog announcing itself as a persistent panel (combat,
     /// Buffs, injuries, ...) — registers a resident window offer rather
@@ -1217,14 +1218,19 @@ impl XmlParser {
                                 || value.eq_ignore_ascii_case("true")
                         })
                         .unwrap_or(false);
-                    let (links, images, spinboxes) = Self::parse_dialog_controls(tag);
-                    if !links.is_empty() || !images.is_empty() || !spinboxes.is_empty() {
+                    let (links, images, spinboxes, skins) = Self::parse_dialog_controls(tag);
+                    if !links.is_empty()
+                        || !images.is_empty()
+                        || !spinboxes.is_empty()
+                        || !skins.is_empty()
+                    {
                         elements.push(ParsedElement::DialogControls {
                             id,
                             clear,
                             links,
                             images,
                             spinboxes,
+                            skins,
                         });
                     }
                 }
@@ -1631,7 +1637,8 @@ impl XmlParser {
 
             if !(dialog_tag.contains("<link ")
                 || dialog_tag.contains("<image ")
-                || dialog_tag.contains("<upDownEditBox "))
+                || dialog_tag.contains("<upDownEditBox ")
+                || dialog_tag.contains("<skin "))
             {
                 remaining = &remaining[end..];
                 continue;
@@ -1646,14 +1653,20 @@ impl XmlParser {
                                 || value.eq_ignore_ascii_case("true")
                         })
                         .unwrap_or(false);
-                    let (links, images, spinboxes) = Self::parse_dialog_controls(dialog_tag);
-                    if !links.is_empty() || !images.is_empty() || !spinboxes.is_empty() {
+                    let (links, images, spinboxes, skins) =
+                        Self::parse_dialog_controls(dialog_tag);
+                    if !links.is_empty()
+                        || !images.is_empty()
+                        || !spinboxes.is_empty()
+                        || !skins.is_empty()
+                    {
                         elements.push(ParsedElement::DialogControls {
                             id,
                             clear,
                             links,
                             images,
                             spinboxes,
+                            skins,
                         });
                     }
                 }
@@ -2087,10 +2100,12 @@ impl XmlParser {
         Vec<crate::data::DialogLink>,
         Vec<crate::data::DialogImage>,
         Vec<crate::data::DialogSpinBox>,
+        Vec<crate::data::DialogSkin>,
     ) {
         let mut links = Vec::new();
         let mut images = Vec::new();
         let mut spinboxes = Vec::new();
+        let mut skins = Vec::new();
 
         let mut remaining = tag;
         while let Some(start) = remaining.find("<link ") {
@@ -2148,7 +2163,32 @@ impl XmlParser {
             remaining = &remaining[end..];
         }
 
-        (links, images, spinboxes)
+        let mut remaining = tag;
+        while let Some(start) = remaining.find("<skin ") {
+            remaining = &remaining[start..];
+            let Some(end) = Self::self_closing_end(remaining) else { break };
+            let slice = &remaining[..end];
+            if let Some(id) = Self::extract_attribute(slice, "id") {
+                let name = Self::extract_attribute(slice, "name").unwrap_or_default();
+                let controls = Self::extract_attribute(slice, "controls")
+                    .map(|c| {
+                        c.split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                skins.push(crate::data::DialogSkin {
+                    id,
+                    name,
+                    controls,
+                    layout: Self::parse_control_layout(slice),
+                });
+            }
+            remaining = &remaining[end..];
+        }
+
+        (links, images, spinboxes, skins)
     }
 
     /// End offset (exclusive) of a self-closing or open tag at the start
@@ -5581,6 +5621,26 @@ mod tests {
             "the value label keeps its anchor chain"
         );
 
-        // GAP remaining (Tier 3): <skin> still produces no element.
+        // Tier 3: <skin> now reaches the dialog store via DialogControls,
+        // carrying its asset name + backed control ids + layout.
+        let skins: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::DialogControls { id, skins, .. } if id == "UberBar" => Some(skins),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let injury = skins
+            .iter()
+            .find(|s| s.id == "ubinjury")
+            .expect("the InjuriesPanel skin is ingested");
+        assert_eq!(injury.name, "InjuriesPanel");
+        assert!(
+            injury.controls.contains(&"nsys".to_string())
+                && injury.controls.contains(&"rightArm".to_string()),
+            "the skin lists the body-part controls it backs"
+        );
+        assert_eq!(injury.layout.as_ref().and_then(|l| l.width), Some(100));
     }
 }

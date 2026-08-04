@@ -2549,6 +2549,7 @@ impl VellumGuiApp {
         app_core: &AppCore,
         ui: &mut egui::Ui,
         dialog_id: &str,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
         let Some(dialog) = app_core.ui_state.dialog_store.get(dialog_id) else {
             ui.weak("Waiting for the game to send this panel…");
@@ -2617,6 +2618,22 @@ impl VellumGuiApp {
                     PositionedControlKind::Label(i) => {
                         if let Some(label) = dialog.display_labels.get(i) {
                             ui.put(rect, egui::Label::new(&label.value).truncate());
+                        }
+                    }
+                    PositionedControlKind::Skin(i) => {
+                        // Backdrop art (UberBar's InjuriesPanel paperdoll + bar
+                        // skins). Painted behind the controls (skins are first
+                        // in the positioned list). Missing from the icon pool =>
+                        // draw nothing; the numeric bars/text show through.
+                        if let Some(skin) = dialog.skins.get(i) {
+                            if let Some(icon) = skin_art.and_then(|art| art.icon(&skin.name)) {
+                                ui.painter().image(
+                                    icon.texture,
+                                    rect,
+                                    icon.uv,
+                                    egui::Color32::WHITE,
+                                );
+                            }
                         }
                     }
                 }
@@ -5216,7 +5233,12 @@ impl VellumGuiApp {
                 Self::render_container_content(app_core, ui, container_title, settings.wrap_text)
             }
             WindowContent::DialogPanel { dialog_id } => {
-                Self::render_dialog_panel_content(app_core, ui, dialog_id);
+                Self::render_dialog_panel_content(
+                    app_core,
+                    ui,
+                    dialog_id,
+                    settings.skin_art.as_deref(),
+                );
                 None
             }
             WindowContent::Quickbar => Self::render_quickbar_content(app_core, ui),

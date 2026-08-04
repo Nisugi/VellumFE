@@ -1577,6 +1577,7 @@ impl MessageProcessor {
                 links,
                 images,
                 spinboxes,
+                skins,
             } => {
                 self.chunk_has_silent_updates = true;
                 let show = Self::dialog_should_popup(ui_state, id);
@@ -1585,6 +1586,13 @@ impl MessageProcessor {
                     dialog.links.clear();
                     dialog.images.clear();
                     dialog.spinboxes.clear();
+                    dialog.skins.clear();
+                }
+                for skin in skins {
+                    match dialog.skins.iter_mut().find(|s| s.id == skin.id) {
+                        Some(slot) => *slot = skin.clone(),
+                        None => dialog.skins.push(skin.clone()),
+                    }
                 }
                 for link in links {
                     match dialog.links.iter_mut().find(|l| l.id == link.id) {

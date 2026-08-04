@@ -322,6 +322,8 @@ pub struct DialogState {
     pub links: Vec<DialogLink>,
     /// Icon buttons (`<image>`), e.g. combat's weapon-ready row.
     pub images: Vec<DialogImage>,
+    /// Backdrop art (`<skin>`), e.g. UberBar's injury paperdoll + bar skins.
+    pub skins: Vec<DialogSkin>,
     /// Integer spinners (`<upDownEditBox>`), e.g. quickstrike offset.
     pub spinboxes: Vec<DialogSpinBox>,
     /// Manual position override (None = auto-center)
@@ -349,6 +351,7 @@ impl DialogState {
             dropdowns: Vec::new(),
             links: Vec::new(),
             images: Vec::new(),
+            skins: Vec::new(),
             spinboxes: Vec::new(),
             position: None,
             size: None,
@@ -500,6 +503,22 @@ pub struct DialogImage {
     pub name: String,
     pub command: String,
     pub tooltip: Option<String>,
+    pub layout: Option<DialogControlLayout>,
+}
+
+/// A `<skin>` inside dialogData: a named art asset drawn as a backdrop —
+/// UberBar's `InjuriesPanel` paperdoll and its `healthBar`/`manaBar` bar
+/// skins. `name` keys into the icon store (case-insensitive); `controls`
+/// lists the ids this skin visually backs (informational for now). When the
+/// asset isn't in the pool the renderer simply draws nothing (the numeric
+/// progressBar / text still shows through).
+#[derive(Clone, Debug)]
+pub struct DialogSkin {
+    pub id: String,
+    /// Skin asset name (e.g. "InjuriesPanel", "healthBar").
+    pub name: String,
+    /// Comma-separated control ids this skin backs (may be empty).
+    pub controls: Vec<String>,
     pub layout: Option<DialogControlLayout>,
 }
 
@@ -655,6 +674,8 @@ pub enum PositionedControlKind {
     ProgressBar(usize),
     /// Index into `display_labels` — a positioned text row (UberBar's grid).
     Label(usize),
+    /// Index into `skins` — a positioned backdrop art asset.
+    Skin(usize),
 }
 
 /// A dialog control resolved to a pixel-space rect by the anchor grid.
@@ -689,6 +710,16 @@ impl DialogState {
         }
 
         let mut entries: Vec<Entry> = Vec::new();
+        // Skins first so the render loop paints these backdrops BEHIND the
+        // controls that anchor to them (UberBar's InjuriesPanel + bar skins).
+        for (i, skin) in self.skins.iter().enumerate() {
+            entries.push(Entry {
+                id: skin.id.clone(),
+                layout: skin.layout.clone(),
+                kind: PositionedControlKind::Skin(i),
+                rect: (0.0, 0.0, 100.0, 100.0),
+            });
+        }
         for (i, button) in self.buttons.iter().enumerate() {
             entries.push(Entry {
                 id: button.id.clone(),
