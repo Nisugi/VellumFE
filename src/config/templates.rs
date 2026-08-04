@@ -1599,6 +1599,17 @@ impl Config {
         match dialog_id {
             // GS4 expr dialog -> gs4_experience template
             "expr" => "gs4_experience",
+            // The active-effects dialogs arrive capitalized (and "Active
+            // Spells" has a space), but their templates are lowercase. Without
+            // these, get_window_template(dialog_id_to_template(id)) returns
+            // None, the "already has a dedicated widget" guard in
+            // messages.rs::DialogPanelOpen fails to fire, and Buffs/Debuffs/
+            // Cooldowns/Active Spells get spawned as generic (empty) dialog
+            // panels instead of their ActiveEffects widget.
+            "Buffs" => "buffs",
+            "Debuffs" => "debuffs",
+            "Cooldowns" => "cooldowns",
+            "Active Spells" | "ActiveSpells" => "active_spells",
             // Most dialogs use the same ID as the template
             _ => dialog_id,
         }
@@ -1973,5 +1984,31 @@ impl Config {
             .filter(|w| w.base().visibility.is_shown())
             .map(|w| w.name().to_string())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod dialog_template_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn effect_dialog_ids_resolve_to_their_widget_templates() {
+        // The active-effects dialogs come capitalized/spaced; each must map to
+        // a real widget template so the DialogPanelOpen guard recognizes them
+        // as widget-backed (and doesn't spawn a generic empty panel).
+        for (id, expected) in [
+            ("Buffs", "buffs"),
+            ("Debuffs", "debuffs"),
+            ("Cooldowns", "cooldowns"),
+            ("Active Spells", "active_spells"),
+            ("expr", "gs4_experience"),
+        ] {
+            let tpl = Config::dialog_id_to_template(id);
+            assert_eq!(tpl, expected, "dialog '{id}' should map to '{expected}'");
+            assert!(
+                Config::get_window_template(tpl).is_some(),
+                "template '{tpl}' for dialog '{id}' must exist so the guard fires"
+            );
+        }
     }
 }
