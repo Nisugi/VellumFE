@@ -8,10 +8,13 @@ use super::*;
 /// Seconds for a value-driven bar to glide to a new target value.
 const BAR_ANIMATION_SECONDS: f32 = 0.2;
 
-/// The one-cell text a paintable custom-emoji segment occupies in the galley
-/// and in `compose_line_text` (they must agree). The emoji image is painted
-/// over this cell; a copy yields this char, not `:name:`.
-const EMOJI_PLACEHOLDER: &str = " ";
+/// The placeholder text a paintable custom-emoji segment occupies in the
+/// galley and in `compose_line_text` (they must agree). The emoji image is a
+/// square sized to the row height (~2 space-widths), so the placeholder is
+/// wide enough to hold the square PLUS a little padding on each side, and the
+/// image is centered in it — otherwise adjacent emoji crowd/overlap. A copy
+/// yields these spaces, not `:name:`.
+const EMOJI_PLACEHOLDER: &str = "   ";
 
 impl VellumGuiApp {
     /// Animate a bar fraction toward its target so server updates glide
@@ -586,19 +589,20 @@ impl VellumGuiApp {
             // `:name:` shows instead of a blank slot.
             if let Some(name) = &segment.custom_emoji {
                 if super::custom_emoji_render::is_paintable(ctx, name) {
-                    // Reserve a single-space placeholder (transparent) for the
-                    // emoji instead of the wide `:name:` text: the image is
-                    // painted over this one cell, so it reads as a single inline
-                    // glyph with no gap. The placeholder must match
-                    // compose_line_text (also one space) so copy/selection char
-                    // offsets stay aligned; the emoji itself isn't copyable as
-                    // text (a space is), which is fine.
+                    // Reserve a transparent fixed-width placeholder (wide enough
+                    // for the square emoji + padding) instead of the wide
+                    // `:name:` text; the image is painted centered over this run
+                    // so it reads as one inline glyph with breathing room. The
+                    // placeholder must match compose_line_text so copy/selection
+                    // char offsets stay aligned; the emoji isn't copyable as
+                    // text (spaces are), which is fine.
+                    let placeholder_len = EMOJI_PLACEHOLDER.chars().count();
                     let mut fmt =
                         Self::segment_text_format_ex(segment, visuals, false, false, font_id);
                     fmt.color = egui::Color32::TRANSPARENT;
                     job.append(EMOJI_PLACEHOLDER, 0.0, fmt);
-                    custom_runs.push((chars, chars + 1, name.clone()));
-                    chars += 1;
+                    custom_runs.push((chars, chars + placeholder_len, name.clone()));
+                    chars += placeholder_len;
                     continue;
                 }
             }
@@ -5553,16 +5557,19 @@ mod tests {
             VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
         let _ = ctx.end_pass();
 
-        // A paintable custom emoji occupies a one-cell placeholder (not the
-        // wide `:name:` text), and the run is recorded over that single cell.
-        assert_eq!(built.job.text, "yep  "); // "yep " + placeholder space
+        // A paintable custom emoji occupies the fixed-width placeholder (not
+        // the wide `:name:` text), and the run is recorded over exactly it.
+        let placeholder = super::EMOJI_PLACEHOLDER;
+        let ph = placeholder.chars().count();
+        let expected = format!("yep {placeholder}");
+        assert_eq!(built.job.text, expected);
         assert_eq!(built.custom_runs.len(), 1, "must record the emoji slot");
         assert_eq!(built.custom_runs[0].0, 4);
-        assert_eq!(built.custom_runs[0].1, 5, "one-cell placeholder");
+        assert_eq!(built.custom_runs[0].1, 4 + ph, "run spans the placeholder");
         assert_eq!(built.custom_runs[0].2, "vibecat");
 
         // compose_line_text must agree so copy/selection offsets stay aligned.
-        assert_eq!(VellumGuiApp::compose_line_text(&ctx, &line, None), "yep  ");
+        assert_eq!(VellumGuiApp::compose_line_text(&ctx, &line, None), expected);
 
         custom_emoji::set_for_test(CustomEmojiRegistry::default());
         let _ = std::fs::remove_dir_all(&tmp);

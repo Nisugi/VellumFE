@@ -270,17 +270,16 @@ pub(super) fn paint_custom_emoji(
     let time = ctx.input(|i| i.time);
     let texture = frames.frame_at(time);
 
-    // The slot spans the whole `:name:` fallback run (drawn transparent in
-    // build_line_job — it holds layout space and stays copyable but paints
-    // nothing). Draw the emoji as a square sized to the slot height, CENTERED
-    // in the slot so any leftover run width is symmetric padding rather than a
-    // trailing gap.
-    let side = slot.height();
-    let center_x = slot.center().x;
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(center_x - side * 0.5, slot.top()),
-        egui::vec2(side, side),
-    );
+    // The slot is a transparent fixed-width placeholder (see build_line_job),
+    // sized so a square emoji at ~row height fits with side padding. Draw the
+    // square at the row height, centered in the slot; the extra slot width
+    // becomes the breathing room between adjacent emoji.
+    // Cap the square at the slot width so it can never overflow into the next
+    // emoji (fixed placeholders are only approximately sized for a proportional
+    // font); otherwise use ~row height for readability.
+    let side = slot.height().min(slot.width());
+    let center = slot.center();
+    let rect = egui::Rect::from_center_size(center, egui::vec2(side, side));
     painter.image(
         texture.id(),
         rect,
