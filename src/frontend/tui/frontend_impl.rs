@@ -493,13 +493,13 @@ impl Frontend for TuiFrontend {
                         }
                     }
                     WindowContent::WebUi(content) => {
-                        // Native WebUI panels are GUI-only for now; show the
-                        // binding so the window isn't a mystery in the TUI.
-                        let note = ratatui::widgets::Paragraph::new(format!(
-                            "Lich WebUI panel '{}'\n(GUI frontend only for now)",
-                            content.page_id
-                        ))
-                        .wrap(ratatui::widgets::Wrap { trim: true });
+                        // Read-only text outline of the panel's component tree.
+                        // The terminal can't run native widgets, but the outline
+                        // shows what the panel displays and its current state so
+                        // a shared layout's WebUI window isn't dead chrome.
+                        let lines = super::webui_window::render_lines(content);
+                        let note = ratatui::widgets::Paragraph::new(lines)
+                            .wrap(ratatui::widgets::Wrap { trim: false });
                         f.render_widget(note, area);
                     }
                 }

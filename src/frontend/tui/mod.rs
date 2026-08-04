@@ -67,6 +67,7 @@ mod theme_cache;
 pub mod theme_editor;
 mod title_position;
 pub mod uicolors_browser;
+mod webui_window;
 mod widget_manager;
 pub mod window_editor;
 
