@@ -8,6 +8,11 @@ use super::*;
 /// Seconds for a value-driven bar to glide to a new target value.
 const BAR_ANIMATION_SECONDS: f32 = 0.2;
 
+/// The one-cell text a paintable custom-emoji segment occupies in the galley
+/// and in `compose_line_text` (they must agree). The emoji image is painted
+/// over this cell; a copy yields this char, not `:name:`.
+const EMOJI_PLACEHOLDER: &str = " ";
+
 impl VellumGuiApp {
     /// Animate a bar fraction toward its target so server updates glide
     /// instead of jumping. The first paint for a given id snaps straight to
@@ -581,14 +586,19 @@ impl VellumGuiApp {
             // `:name:` shows instead of a blank slot.
             if let Some(name) = &segment.custom_emoji {
                 if super::custom_emoji_render::is_paintable(ctx, name) {
-                    let count = segment.text.chars().count();
-                    job.append(
-                        &segment.text,
-                        0.0,
-                        Self::segment_text_format_ex(segment, visuals, false, false, font_id),
-                    );
-                    custom_runs.push((chars, chars + count, name.clone()));
-                    chars += count;
+                    // Reserve a single-space placeholder (transparent) for the
+                    // emoji instead of the wide `:name:` text: the image is
+                    // painted over this one cell, so it reads as a single inline
+                    // glyph with no gap. The placeholder must match
+                    // compose_line_text (also one space) so copy/selection char
+                    // offsets stay aligned; the emoji itself isn't copyable as
+                    // text (a space is), which is fine.
+                    let mut fmt =
+                        Self::segment_text_format_ex(segment, visuals, false, false, font_id);
+                    fmt.color = egui::Color32::TRANSPARENT;
+                    job.append(EMOJI_PLACEHOLDER, 0.0, fmt);
+                    custom_runs.push((chars, chars + 1, name.clone()));
+                    chars += 1;
                     continue;
                 }
             }
@@ -638,6 +648,7 @@ impl VellumGuiApp {
     /// Must compose the same string as build_line_job so char offsets from
     /// galley hit tests slice it correctly.
     fn compose_line_text(
+        ctx: &egui::Context,
         line: &StyledLine,
         timestamps: Option<crate::config::TimestampPosition>,
     ) -> String {
@@ -651,7 +662,17 @@ impl VellumGuiApp {
             out.push_str(text);
         }
         for segment in &line.segments {
-            out.push_str(&segment.text);
+            // A paintable custom-emoji segment renders as the one-cell
+            // placeholder (see build_line_job), so it must compose as the same
+            // single char here or copy/selection char offsets misalign. A
+            // non-paintable one keeps its `:name:` text.
+            if segment.custom_emoji.is_some()
+                && super::custom_emoji_render::is_paintable(ctx, segment.custom_emoji.as_ref().unwrap())
+            {
+                out.push_str(EMOJI_PLACEHOLDER);
+            } else {
+                out.push_str(&segment.text);
+            }
         }
         if let Some((text, crate::config::TimestampPosition::End)) = &ts_run {
             out.push_str(text);
@@ -725,6 +746,7 @@ impl VellumGuiApp {
     /// Assemble the copy text for a selection, walking the buffer directly so
     /// lines outside the rendered viewport are included.
     fn buffer_selection_copy_text(
+        ctx: &egui::Context,
         content: &TextContent,
         selection: &GuiBufferSelection,
         base_uid: u64,
@@ -741,7 +763,7 @@ impl VellumGuiApp {
             let Some(line) = content.lines.get(index) else {
                 continue;
             };
-            let text = Self::compose_line_text(line, timestamps);
+            let text = Self::compose_line_text(ctx, line, timestamps);
             let from = (index == l0).then_some(c0);
             let to = (index == l1).then_some(c1);
             if index > l0 {
@@ -4502,7 +4524,7 @@ impl VellumGuiApp {
                     if let Some(sel) = &selection {
                         if sel.scroll_id == scroll_id && sel.anchor != sel.head {
                             let text = Self::buffer_selection_copy_text(
-                                content, sel, base_uid, timestamps,
+                                &ctx, content, sel, base_uid, timestamps,
                             );
                             if !text.is_empty() {
                                 ctx.copy_text(text);
@@ -5401,7 +5423,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&content, &selection, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &selection, base, None),
             "line\nsecond line\nthird"
         );
 
@@ -5413,7 +5435,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&content, &reversed, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &reversed, base, None),
             "line\nsecond line\nthird"
         );
 
@@ -5425,7 +5447,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&content, &single, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &single, base, None),
             "line"
         );
     }
@@ -5448,7 +5470,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&content, &selection, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &selection, base, None),
             "line 2\nline 3"
         );
     }
@@ -5531,13 +5553,16 @@ mod tests {
             VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
         let _ = ctx.end_pass();
 
-        // The fallback text stays in the job, and a custom-emoji run is
-        // recorded over the ":vibecat:" span (chars 4..13 after "yep ").
-        assert_eq!(built.job.text, "yep :vibecat:");
+        // A paintable custom emoji occupies a one-cell placeholder (not the
+        // wide `:name:` text), and the run is recorded over that single cell.
+        assert_eq!(built.job.text, "yep  "); // "yep " + placeholder space
         assert_eq!(built.custom_runs.len(), 1, "must record the emoji slot");
         assert_eq!(built.custom_runs[0].0, 4);
-        assert_eq!(built.custom_runs[0].1, 13);
+        assert_eq!(built.custom_runs[0].1, 5, "one-cell placeholder");
         assert_eq!(built.custom_runs[0].2, "vibecat");
+
+        // compose_line_text must agree so copy/selection offsets stay aligned.
+        assert_eq!(VellumGuiApp::compose_line_text(&ctx, &line, None), "yep  ");
 
         custom_emoji::set_for_test(CustomEmojiRegistry::default());
         let _ = std::fs::remove_dir_all(&tmp);
@@ -5555,7 +5580,7 @@ mod tests {
         let font_id = eframe::egui::FontId::monospace(14.0);
         let built =
             VellumGuiApp::build_line_job(&eframe::egui::Context::default(), &line, &visuals, None, &font_id, f32::INFINITY, None);
-        assert_eq!(VellumGuiApp::compose_line_text(&line, None), built.job.text);
+        assert_eq!(VellumGuiApp::compose_line_text(&eframe::egui::Context::default(), &line, None), built.job.text);
     }
 
     #[test]

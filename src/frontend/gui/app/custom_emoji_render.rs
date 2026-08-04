@@ -270,7 +270,11 @@ pub(super) fn paint_custom_emoji(
     let time = ctx.input(|i| i.time);
     let texture = frames.frame_at(time);
 
-    // Square sized to the slot height, centered horizontally over the slot.
+    // The slot spans the whole `:name:` fallback run (drawn transparent in
+    // build_line_job — it holds layout space and stays copyable but paints
+    // nothing). Draw the emoji as a square sized to the slot height, CENTERED
+    // in the slot so any leftover run width is symmetric padding rather than a
+    // trailing gap.
     let side = slot.height();
     let center_x = slot.center().x;
     let rect = egui::Rect::from_min_size(
