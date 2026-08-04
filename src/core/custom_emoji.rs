@@ -30,9 +30,15 @@ pub enum EmojiFormat {
 }
 
 impl EmojiFormat {
-    /// Does this format carry animation frames the GUI must cycle?
+    /// May this format carry animation frames? GIF/APNG/WebP can all be
+    /// animated (Discord serves animated custom emoji as WebP). Whether a given
+    /// file actually animates is decided at decode time by the frame count; the
+    /// GUI renderer doesn't gate on this, so it's an advisory/coverage hint.
     pub fn is_animated(self) -> bool {
-        matches!(self, EmojiFormat::Apng | EmojiFormat::Gif)
+        matches!(
+            self,
+            EmojiFormat::Apng | EmojiFormat::Gif | EmojiFormat::Webp
+        )
     }
 
     /// MIME type for the web endpoint's Content-Type header.

@@ -37,7 +37,12 @@ Supported formats:
 | PNG    | `.png`    | if it is an animated PNG (APNG) |
 | APNG   | `.apng`   | yes |
 | GIF    | `.gif`    | yes |
-| WebP   | `.webp`   | no (static) |
+| WebP   | `.webp`   | yes, if the file is animated |
+
+Animated GIF, WebP, and APNG all animate in the GUI and on the phone. Discord
+serves its animated custom emoji as **animated WebP** — save one as
+`~/.vellum-fe/emoji/<name>.webp` and it animates. (To grab one: right-click the
+emoji in Discord → Copy Link, open the `…​.webp` URL in a browser, and save it.)
 
 Naming rules: the filename (without extension) is the shortcode, and may
 contain letters, digits, `_`, `+`, and `-` only. Names are case-insensitive

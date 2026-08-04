@@ -13,10 +13,12 @@
 //! - Images load lazily FROM DISK (`custom_emoji::get(name).path`), not from an
 //!   embedded `include_dir`. A file that vanished negative-caches so the caller
 //!   falls back to leaving the `:name:` text visible.
-//! - ANIMATED formats (GIF, APNG) decode into a `Vec<(TextureHandle, delay)>`;
-//!   the painter picks the current frame from egui's monotonic frame clock
-//!   (`ctx.input(|i| i.time)`), never wall-clock time, and requests a repaint
-//!   so the animation keeps ticking.
+//! - ANIMATED formats (GIF, animated WebP, APNG) decode into a
+//!   `Vec<(TextureHandle, delay)>`; the painter picks the current frame from
+//!   egui's monotonic frame clock (`ctx.input(|i| i.time)`), never wall-clock
+//!   time, and requests a repaint so the animation keeps ticking. (Discord
+//!   serves animated custom emoji as WebP.) A static file with an
+//!   animation-capable extension falls back to a single-frame texture.
 //!
 //! Toggle policy: custom emoji are images with no monochrome fallback, so they
 //! always render as images regardless of the `ui.color_emoji` setting (that
@@ -120,24 +122,27 @@ fn decode_static(
     })
 }
 
-/// Decode an animated GIF into all its frames with per-frame delays.
-fn decode_gif(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<EmojiFrames> {
-    use image::AnimationDecoder;
-    let decoder = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes))
-        .map_err(|err| tracing::warn!("Custom emoji :{name}: GIF open failed: {err}"))
-        .ok()?;
+/// Turn an `image` `Frames` iterator (GIF / animated WebP / APNG) into an
+/// `EmojiFrames`, uploading each frame and accumulating per-frame delays.
+/// Returns None when no frame decodes (caller falls back to a static decode).
+fn frames_to_emoji(
+    ctx: &egui::Context,
+    name: &str,
+    kind: &str,
+    frames_iter: image::Frames<'_>,
+) -> Option<EmojiFrames> {
     let mut frames = Vec::new();
     let mut acc = 0.0f32;
-    for (idx, frame) in decoder.into_frames().enumerate() {
+    for (idx, frame) in frames_iter.enumerate() {
         let frame = match frame {
             Ok(f) => f,
             Err(err) => {
-                tracing::warn!("Custom emoji :{name}: GIF frame {idx} decode failed: {err}");
+                tracing::warn!("Custom emoji :{name}: {kind} frame {idx} decode failed: {err}");
                 break;
             }
         };
-        // GIF frames can carry a zero/absent delay; browsers clamp very small
-        // delays up. Use a 100ms floor so a broken delay does not spin at the
+        // Frames can carry a zero/absent delay; browsers clamp very small
+        // delays up. Use a 100ms floor so a broken delay doesn't spin at the
         // frame rate, matching common viewer behavior.
         let delay: Duration = frame.delay().into();
         let mut secs = delay.as_secs_f32();
@@ -157,10 +162,51 @@ fn decode_gif(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<EmojiFram
     })
 }
 
-/// Load and decode a custom emoji by name, honoring its format. Animated GIFs
-/// yield all frames; APNG currently paints only its first frame (the `image`
-/// 0.25 PNG decoder does not expose APNG frame extraction), which is logged
-/// once per name. PNG/WEBP are single static textures.
+/// Decode an animated GIF into all its frames.
+fn decode_gif(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<EmojiFrames> {
+    use image::AnimationDecoder;
+    let decoder = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes))
+        .map_err(|err| tracing::warn!("Custom emoji :{name}: GIF open failed: {err}"))
+        .ok()?;
+    frames_to_emoji(ctx, name, "GIF", decoder.into_frames())
+}
+
+/// Decode an animated WebP into all its frames (Discord serves animated custom
+/// emoji as WebP). Falls back to None for a static WebP so the caller decodes
+/// it as a single texture.
+fn decode_webp(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<EmojiFrames> {
+    use image::AnimationDecoder;
+    let decoder = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes))
+        .map_err(|err| tracing::warn!("Custom emoji :{name}: WebP open failed: {err}"))
+        .ok()?;
+    if !decoder.has_animation() {
+        return None; // static webp: caller uses decode_static
+    }
+    frames_to_emoji(ctx, name, "WebP", decoder.into_frames())
+}
+
+/// Decode an animated PNG (APNG) into all its frames. Falls back to None for a
+/// static PNG so the caller decodes it as a single texture.
+fn decode_apng(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<EmojiFrames> {
+    use image::AnimationDecoder;
+    let decoder = image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes))
+        .map_err(|err| tracing::warn!("Custom emoji :{name}: PNG open failed: {err}"))
+        .ok()?;
+    if !decoder.is_apng().unwrap_or(false) {
+        return None; // static png: caller uses decode_static
+    }
+    let apng = decoder
+        .apng()
+        .map_err(|err| tracing::warn!("Custom emoji :{name}: APNG open failed: {err}"))
+        .ok()?;
+    frames_to_emoji(ctx, name, "APNG", apng.into_frames())
+}
+
+/// Load and decode a custom emoji by name, honoring its format. GIF, animated
+/// WebP, and APNG all yield their full frame sequences and animate; static
+/// PNG/WebP are single textures. An animated decode that finds no animation
+/// (static file with an animated-capable extension) falls back to a static
+/// texture.
 fn decode_emoji(ctx: &egui::Context, name: &str) -> Option<EmojiFrames> {
     let meta = custom_emoji::get(name)?;
     let bytes = std::fs::read(&meta.path)
@@ -173,17 +219,12 @@ fn decode_emoji(ctx: &egui::Context, name: &str) -> Option<EmojiFrames> {
         .ok()?;
     match meta.format {
         EmojiFormat::Gif => decode_gif(ctx, name, &bytes),
-        EmojiFormat::Apng => {
-            // The bundled `image` crate decodes an APNG's default/first frame
-            // as a plain PNG but does not iterate its animation frames, so we
-            // show the first frame statically rather than block the feature.
-            tracing::warn!(
-                "Custom emoji :{name}: APNG animation is not supported; painting first frame only"
-            );
-            decode_static(ctx, name, &bytes, image::ImageFormat::Png)
-        }
+        EmojiFormat::Apng => decode_apng(ctx, name, &bytes)
+            .or_else(|| decode_static(ctx, name, &bytes, image::ImageFormat::Png)),
         EmojiFormat::Png => decode_static(ctx, name, &bytes, image::ImageFormat::Png),
-        EmojiFormat::Webp => decode_static(ctx, name, &bytes, image::ImageFormat::WebP),
+        // WebP may be animated (Discord's animated emoji) or static.
+        EmojiFormat::Webp => decode_webp(ctx, name, &bytes)
+            .or_else(|| decode_static(ctx, name, &bytes, image::ImageFormat::WebP)),
     }
 }
 
@@ -347,5 +388,64 @@ mod tests {
         let guard = cache.lock().unwrap();
         assert!(guard.contains_key("nope"));
         assert!(guard.get("nope").unwrap().is_none());
+    }
+
+    fn static_webp() -> Vec<u8> {
+        use image::codecs::webp::WebPEncoder;
+        use image::ImageEncoder;
+        let mut buf = Vec::new();
+        WebPEncoder::new_lossless(&mut buf)
+            .write_image(&[0, 255, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        buf
+    }
+
+    fn static_png() -> Vec<u8> {
+        use image::ImageEncoder;
+        let mut buf = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut buf)
+            .write_image(&[0, 0, 255, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        buf
+    }
+
+    #[test]
+    fn static_webp_is_not_treated_as_animated() {
+        let ctx = egui::Context::default();
+        let bytes = static_webp();
+        // The animated path detects no animation and yields None...
+        assert!(
+            decode_webp(&ctx, "logo", &bytes).is_none(),
+            "a static webp must not be decoded as animated"
+        );
+        // ...but the static fallback decodes it to a single texture.
+        let frames = decode_static(&ctx, "logo", &bytes, image::ImageFormat::WebP)
+            .expect("static webp decodes");
+        assert_eq!(frames.frames.len(), 1);
+    }
+
+    #[test]
+    fn static_png_is_not_treated_as_apng() {
+        let ctx = egui::Context::default();
+        let bytes = static_png();
+        assert!(
+            decode_apng(&ctx, "logo", &bytes).is_none(),
+            "a static png must not be decoded as APNG"
+        );
+    }
+
+    #[test]
+    fn animated_gif_frames_animate_through_the_shared_helper() {
+        // GIF exercises the same frames_to_emoji helper that WebP/APNG use, so
+        // this confirms multi-frame content produces a cycling animation.
+        let ctx = egui::Context::default();
+        let frames = decode_gif(&ctx, "dance", &tiny_gif()).expect("gif decodes");
+        assert!(frames.frames.len() > 1, "multi-frame => animates");
+        assert!(frames.total > 0.0);
+        // Different frames at different phases of the cycle.
+        assert_ne!(
+            frames.frame_at(0.0).id(),
+            frames.frame_at(frames.total as f64 - 0.01).id()
+        );
     }
 }
