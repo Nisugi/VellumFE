@@ -5564,6 +5564,17 @@ impl VellumGuiApp {
                 match load_named_layout(&name) {
                     Ok(layout) => {
                         self.apply_layout_snapshot(&layout, keep_skin);
+                        // Persist the loaded arrangement to the auto-save slot
+                        // RIGHT NOW, not just via the 2s debounce. Loading a
+                        // layout is a deliberate, infrequent choice, and a user
+                        // who X-es or kills the window before the debounce fires
+                        // would otherwise lose it — the exact "it never saves my
+                        // .loadlayout" report. Also persist the core TOML
+                        // (window defs) so a rebuilt window set survives too.
+                        self.save_layout_state();
+                        self.app_core.autosave_layout();
+                        self.layout_dirty = false;
+                        self.layout_dirty_since = None;
                         self.app_core.add_system_message(&format!(
                             "Loaded GUI layout '{}'{}.",
                             name,

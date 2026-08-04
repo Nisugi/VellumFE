@@ -1236,6 +1236,33 @@ mod tests {
     }
 
     #[test]
+    fn autosave_layout_roundtrips_through_disk() {
+        // The persistence guarantee .loadlayout relies on: what save_layout
+        // writes to the (profile, character) auto-save slot is exactly what
+        // load_layout reads back on the next launch. This round-trip was
+        // previously untested — a user who .loadlayout'd and relogged got the
+        // old layout back if the write never reached disk.
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", tmp.path());
+
+        let mut layout = GuiLayoutFileV1::new("prime", "Rysk");
+        // A distinctive marker so we know the reload isn't just a fresh default.
+        layout.saved_at_utc = "roundtrip-marker".to_string();
+        save_layout(&layout, "prime", "Rysk").expect("save");
+
+        let reloaded = load_layout("prime", "Rysk").expect("load");
+        assert_eq!(
+            reloaded.saved_at_utc, "roundtrip-marker",
+            "load_layout must read back exactly what save_layout wrote to the same slot"
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
     fn test_migrate_legacy_checkpoints_into_pool() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
