@@ -8,11 +8,6 @@ use super::*;
 /// Seconds for a value-driven bar to glide to a new target value.
 const BAR_ANIMATION_SECONDS: f32 = 0.2;
 
-/// The one-char text a paintable custom-emoji segment occupies in the galley
-/// and in `compose_line_text` (they must agree). Its rendered WIDTH is set in
-/// pixels via `extra_letter_spacing` (see build_line_job), not by the char
-/// count, so a single space suffices. A copy yields this space, not `:name:`.
-const EMOJI_PLACEHOLDER: &str = " ";
 
 impl VellumGuiApp {
     /// Animate a bar fraction toward its target so server updates glide
@@ -242,20 +237,14 @@ impl VellumGuiApp {
         galley_pos: egui::Pos2,
         custom_runs: &[(usize, usize, String)],
     ) {
-        // The placeholder run was widened via extra_letter_spacing, but
-        // pos_from_cursor does NOT include trailing letter-spacing — the end
-        // cursor sits at the bare space glyph's right edge, not at the reserved
-        // width. So take only the LEFT edge and the row height from the galley,
-        // and use the intended reserved width (row_height * width_factor) for
-        // the slot, so the emoji is centered in the space actually reserved.
-        let width_factor = super::custom_emoji_render::width_factor();
-        for (start, _end, name) in custom_runs {
+        // The placeholder is real spaces, so the cursor span is the true slot:
+        // left edge at `start`, right edge at `end`. Center the emoji in it.
+        for (start, end, name) in custom_runs {
             let start_rect = galley.pos_from_cursor(egui::text::CCursor::new(*start));
-            let top_left = galley_pos + start_rect.min.to_vec2();
-            let row_h = start_rect.height();
-            let slot = egui::Rect::from_min_size(
-                top_left,
-                egui::vec2(row_h * width_factor, row_h),
+            let end_rect = galley.pos_from_cursor(egui::text::CCursor::new(*end));
+            let slot = egui::Rect::from_min_max(
+                galley_pos + start_rect.min.to_vec2(),
+                galley_pos + end_rect.max.to_vec2(),
             );
             super::custom_emoji_render::paint_custom_emoji(ctx, painter, name, slot);
         }
@@ -545,6 +534,19 @@ impl VellumGuiApp {
     /// (not bytes) of its clickable links. One galley per line keeps hit
     /// testing, selection painting, and height measurement all on the same
     /// geometry.
+    /// The transparent space run a paintable custom emoji occupies: enough
+    /// real spaces to cover the emoji square + padding (row_height *
+    /// width_factor) at the current font. build_line_job and compose_line_text
+    /// both call this so their char counts agree (copy/selection alignment).
+    /// At least one space so the run always has width.
+    fn emoji_placeholder(ctx: &egui::Context, font_id: &egui::FontId) -> String {
+        let row_h = ctx.fonts_mut(|f| f.row_height(font_id));
+        let space_w = ctx.fonts_mut(|f| f.glyph_width(font_id, ' ')).max(1.0);
+        let target_w = row_h * super::custom_emoji_render::width_factor();
+        let n = (target_w / space_w).ceil().max(1.0) as usize;
+        " ".repeat(n)
+    }
+
     fn build_line_job(
         ctx: &egui::Context,
         line: &StyledLine,
@@ -591,24 +593,21 @@ impl VellumGuiApp {
             // `:name:` shows instead of a blank slot.
             if let Some(name) = &segment.custom_emoji {
                 if super::custom_emoji_render::is_paintable(ctx, name) {
-                    // Reserve a transparent one-char placeholder for the emoji
-                    // instead of the wide `:name:` text, and widen it in PIXELS
-                    // via extra_letter_spacing to exactly (row height + padding)
-                    // — measuring the space rather than guessing a space count,
-                    // so the square emoji fits with breathing room at any font.
-                    // The placeholder char must match compose_line_text so
-                    // copy/selection offsets stay aligned; the emoji isn't
-                    // copyable as text (a space is), which is fine.
-                    let row_h = ctx.fonts_mut(|f| f.row_height(font_id));
-                    let space_w = ctx.fonts_mut(|f| f.glyph_width(font_id, ' '));
-                    let target_w = row_h * super::custom_emoji_render::width_factor();
+                    // Reserve a transparent run of N real spaces (not the wide
+                    // `:name:` text) wide enough for the square emoji + padding.
+                    // Real spaces advance the galley cursor predictably (unlike
+                    // extra_letter_spacing, which the cursor API ignores), so
+                    // the emoji can be centered in the true cursor span. The
+                    // count must match compose_line_text so copy/selection
+                    // offsets align; copy yields spaces, not `:name:`.
+                    let placeholder = Self::emoji_placeholder(ctx, font_id);
+                    let n = placeholder.chars().count();
                     let mut fmt =
                         Self::segment_text_format_ex(segment, visuals, false, false, font_id);
                     fmt.color = egui::Color32::TRANSPARENT;
-                    fmt.extra_letter_spacing = (target_w - space_w).max(0.0);
-                    job.append(EMOJI_PLACEHOLDER, 0.0, fmt);
-                    custom_runs.push((chars, chars + 1, name.clone()));
-                    chars += 1;
+                    job.append(&placeholder, 0.0, fmt);
+                    custom_runs.push((chars, chars + n, name.clone()));
+                    chars += n;
                     continue;
                 }
             }
@@ -673,6 +672,7 @@ impl VellumGuiApp {
     /// galley hit tests slice it correctly.
     fn compose_line_text(
         ctx: &egui::Context,
+        font_id: &egui::FontId,
         line: &StyledLine,
         timestamps: Option<crate::config::TimestampPosition>,
     ) -> String {
@@ -686,14 +686,14 @@ impl VellumGuiApp {
             out.push_str(text);
         }
         for segment in &line.segments {
-            // A paintable custom-emoji segment renders as the one-cell
-            // placeholder (see build_line_job), so it must compose as the same
-            // single char here or copy/selection char offsets misalign. A
-            // non-paintable one keeps its `:name:` text.
+            // A paintable custom-emoji segment renders as the space placeholder
+            // (see build_line_job), so it must compose as the SAME placeholder
+            // here or copy/selection char offsets misalign. A non-paintable one
+            // keeps its `:name:` text.
             if segment.custom_emoji.is_some()
                 && super::custom_emoji_render::is_paintable(ctx, segment.custom_emoji.as_ref().unwrap())
             {
-                out.push_str(EMOJI_PLACEHOLDER);
+                out.push_str(&Self::emoji_placeholder(ctx, font_id));
             } else {
                 out.push_str(&segment.text);
             }
@@ -771,6 +771,7 @@ impl VellumGuiApp {
     /// lines outside the rendered viewport are included.
     fn buffer_selection_copy_text(
         ctx: &egui::Context,
+        font_id: &egui::FontId,
         content: &TextContent,
         selection: &GuiBufferSelection,
         base_uid: u64,
@@ -787,7 +788,7 @@ impl VellumGuiApp {
             let Some(line) = content.lines.get(index) else {
                 continue;
             };
-            let text = Self::compose_line_text(ctx, line, timestamps);
+            let text = Self::compose_line_text(ctx, font_id, line, timestamps);
             let from = (index == l0).then_some(c0);
             let to = (index == l1).then_some(c1);
             if index > l0 {
@@ -4552,7 +4553,7 @@ impl VellumGuiApp {
                     if let Some(sel) = &selection {
                         if sel.scroll_id == scroll_id && sel.anchor != sel.head {
                             let text = Self::buffer_selection_copy_text(
-                                &ctx, content, sel, base_uid, timestamps,
+                                &ctx, font_id, content, sel, base_uid, timestamps,
                             );
                             if !text.is_empty() {
                                 ctx.copy_text(text);
@@ -5459,7 +5460,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &selection, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &eframe::egui::FontId::monospace(14.0), &content, &selection, base, None),
             "line\nsecond line\nthird"
         );
 
@@ -5471,7 +5472,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &reversed, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &eframe::egui::FontId::monospace(14.0), &content, &reversed, base, None),
             "line\nsecond line\nthird"
         );
 
@@ -5483,7 +5484,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &single, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &eframe::egui::FontId::monospace(14.0), &content, &single, base, None),
             "line"
         );
     }
@@ -5506,7 +5507,7 @@ mod tests {
             dragging: false,
         };
         assert_eq!(
-            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &content, &selection, base, None),
+            VellumGuiApp::buffer_selection_copy_text(&eframe::egui::Context::default(), &eframe::egui::FontId::monospace(14.0), &content, &selection, base, None),
             "line 2\nline 3"
         );
     }
@@ -5589,10 +5590,13 @@ mod tests {
             VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
         let _ = ctx.end_pass();
 
-        // A paintable custom emoji occupies the fixed-width placeholder (not
-        // the wide `:name:` text), and the run is recorded over exactly it.
-        let placeholder = super::EMOJI_PLACEHOLDER;
+        // A paintable custom emoji occupies a space-run placeholder (not the
+        // wide `:name:` text), and the run is recorded over exactly it.
+        ctx.begin_pass(eframe::egui::RawInput::default());
+        let placeholder = VellumGuiApp::emoji_placeholder(&ctx, &font_id);
+        let _ = ctx.end_pass();
         let ph = placeholder.chars().count();
+        assert!(ph >= 1, "placeholder is at least one space");
         let expected = format!("yep {placeholder}");
         assert_eq!(built.job.text, expected);
         assert_eq!(built.custom_runs.len(), 1, "must record the emoji slot");
@@ -5601,7 +5605,10 @@ mod tests {
         assert_eq!(built.custom_runs[0].2, "vibecat");
 
         // compose_line_text must agree so copy/selection offsets stay aligned.
-        assert_eq!(VellumGuiApp::compose_line_text(&ctx, &line, None), expected);
+        assert_eq!(
+            VellumGuiApp::compose_line_text(&ctx, &font_id, &line, None),
+            expected
+        );
 
         // At the default size (1.0) the line needs no extra height...
         super::custom_emoji_render::set_geometry(1.0, 0.2);
@@ -5643,7 +5650,7 @@ mod tests {
         let font_id = eframe::egui::FontId::monospace(14.0);
         let built =
             VellumGuiApp::build_line_job(&eframe::egui::Context::default(), &line, &visuals, None, &font_id, f32::INFINITY, None);
-        assert_eq!(VellumGuiApp::compose_line_text(&eframe::egui::Context::default(), &line, None), built.job.text);
+        assert_eq!(VellumGuiApp::compose_line_text(&eframe::egui::Context::default(), &eframe::egui::FontId::monospace(14.0), &line, None), built.job.text);
     }
 
     #[test]
@@ -5683,5 +5690,7 @@ mod tests {
         assert_eq!(palette[3], Color32::from_rgb(0xff, 0x00, 0x00));
     }
 }
+
+
 
 

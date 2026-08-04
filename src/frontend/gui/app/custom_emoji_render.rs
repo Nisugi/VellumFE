@@ -302,12 +302,11 @@ pub(super) fn paint_custom_emoji(
     let time = ctx.input(|i| i.time);
     let texture = frames.frame_at(time);
 
-    // The slot is row_height tall and (row_height * width_factor) wide (set in
-    // build_line_job via extra_letter_spacing). The square is row_height *
-    // size_factor; the leftover slot width is the spacing, split EQUALLY on
-    // both sides so text before AND after the emoji get the same gap. Center on
-    // the slot's own center so the padding is symmetric regardless of how the
-    // extra spacing lands in the glyph run.
+    // The slot is the real cursor span of the space-run placeholder: row_height
+    // tall and >= (row_height * width_factor) wide. The square is row_height *
+    // size_factor; the leftover width (the spacing) splits EQUALLY because the
+    // square is centered on the slot's own center, so text before AND after the
+    // emoji get the same gap.
     let side = slot.height() * size_factor();
     let cx = slot.center().x;
     // Vertically anchor to the text row (bottom of the row) so a taller emoji
