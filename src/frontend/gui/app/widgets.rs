@@ -643,10 +643,24 @@ impl VellumGuiApp {
             job.append(text, 0.0, ts_format);
         }
 
+        // If the line carries a custom emoji rendered taller than the text
+        // (size knob > 1), the row must grow so it isn't clipped by neighbors.
+        let min_height = if custom_runs.is_empty() {
+            0.0
+        } else {
+            let size = super::custom_emoji_render::size_factor();
+            if size > 1.0 {
+                ctx.fonts_mut(|f| f.row_height(font_id)) * size
+            } else {
+                0.0
+            }
+        };
+
         GuiLineJob {
             job,
             links,
             custom_runs,
+            min_height,
         }
     }
 
@@ -4029,13 +4043,17 @@ impl VellumGuiApp {
     ) -> f32 {
         // Same job builder as rendering, so measured heights match rendered
         // heights exactly (timestamps included).
-        let job =
-            Self::build_line_job(ctx, line, visuals, None, font_id, wrap_width, timestamps).job;
-        if job.is_empty() {
+        let built =
+            Self::build_line_job(ctx, line, visuals, None, font_id, wrap_width, timestamps);
+        let min_height = built.min_height;
+        if built.job.is_empty() {
             // Blank line: renders as one empty text row.
-            return ctx.fonts_mut(|fonts| fonts.row_height(font_id));
+            return ctx.fonts_mut(|fonts| fonts.row_height(font_id)).max(min_height);
         }
-        ctx.fonts_mut(|fonts| fonts.layout_job(job)).size().y
+        ctx.fonts_mut(|fonts| fonts.layout_job(built.job))
+            .size()
+            .y
+            .max(min_height)
     }
 
     /// Bring the height cache in sync with the rendered slice
@@ -4602,13 +4620,17 @@ impl VellumGuiApp {
                     );
                     let links = line_job.links;
                     let custom_runs = line_job.custom_runs;
+                    let emoji_min_height = line_job.min_height;
                     let mut galley = ctx.fonts_mut(|fonts| fonts.layout_job(line_job.job));
                     let galley_size = galley.size();
+                    // Grow the row for an oversized emoji so it isn't clipped
+                    // (must match measure_line_height's .max(min_height)).
                     let height = if galley_size.y > 0.0 {
                         galley_size.y
                     } else {
                         ctx.fonts_mut(|fonts| fonts.row_height(font_id))
-                    };
+                    }
+                    .max(emoji_min_height);
                     // Full-width rows: the blank tail past the text belongs
                     // to the line, so clicks there select from that line and
                     // never fall through to the window body.
@@ -5229,6 +5251,10 @@ pub(super) struct GuiLineJob {
     /// `:name:` fallback text kept in the job. The caller paints the image over
     /// this run after the galley is drawn (see `paint_custom_emoji_runs`).
     custom_runs: Vec<(usize, usize, String)>,
+    /// Minimum row height this line needs so an oversized custom emoji (size
+    /// knob > 1) isn't clipped by the line above/below. 0.0 when the line has
+    /// no emoji taller than the text.
+    min_height: f32,
 }
 
 /// Buffer-anchored text selection for virtualized text windows. Endpoints
@@ -5572,6 +5598,16 @@ mod tests {
 
         // compose_line_text must agree so copy/selection offsets stay aligned.
         assert_eq!(VellumGuiApp::compose_line_text(&ctx, &line, None), expected);
+
+        // At the default size (1.0) the line needs no extra height...
+        super::custom_emoji_render::set_geometry(1.0, 0.2);
+        let a = VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
+        assert_eq!(a.min_height, 0.0);
+        // ...but an oversized emoji grows the row so it isn't clipped.
+        super::custom_emoji_render::set_geometry(2.0, 0.2);
+        let b = VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
+        assert!(b.min_height > 0.0, "size>1 must set a taller min_height");
+        super::custom_emoji_render::set_geometry(1.0, 0.2); // reset
 
         custom_emoji::set_for_test(CustomEmojiRegistry::default());
         let _ = std::fs::remove_dir_all(&tmp);
