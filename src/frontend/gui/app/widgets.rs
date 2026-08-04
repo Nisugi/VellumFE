@@ -242,16 +242,20 @@ impl VellumGuiApp {
         galley_pos: egui::Pos2,
         custom_runs: &[(usize, usize, String)],
     ) {
-        for (start, end, name) in custom_runs {
-            // Two 0-width cursor rects bound the `:name:` run; their union is
-            // the slot (horizontal span + row height). Offset by galley_pos to
-            // reach screen space.
-            let start_rect =
-                galley.pos_from_cursor(egui::text::CCursor::new(*start));
-            let end_rect = galley.pos_from_cursor(egui::text::CCursor::new(*end));
-            let slot = egui::Rect::from_min_max(
-                galley_pos + start_rect.min.to_vec2(),
-                galley_pos + end_rect.max.to_vec2(),
+        // The placeholder run was widened via extra_letter_spacing, but
+        // pos_from_cursor does NOT include trailing letter-spacing — the end
+        // cursor sits at the bare space glyph's right edge, not at the reserved
+        // width. So take only the LEFT edge and the row height from the galley,
+        // and use the intended reserved width (row_height * width_factor) for
+        // the slot, so the emoji is centered in the space actually reserved.
+        let width_factor = super::custom_emoji_render::width_factor();
+        for (start, _end, name) in custom_runs {
+            let start_rect = galley.pos_from_cursor(egui::text::CCursor::new(*start));
+            let top_left = galley_pos + start_rect.min.to_vec2();
+            let row_h = start_rect.height();
+            let slot = egui::Rect::from_min_size(
+                top_left,
+                egui::vec2(row_h * width_factor, row_h),
             );
             super::custom_emoji_render::paint_custom_emoji(ctx, painter, name, slot);
         }
@@ -5609,6 +5613,20 @@ mod tests {
         assert!(b.min_height > 0.0, "size>1 must set a taller min_height");
         super::custom_emoji_render::set_geometry(1.0, 0.2); // reset
 
+        // The slot (row_height * width_factor) must be WIDER than the emoji
+        // square (row_height * size_factor) so there's positive padding split
+        // symmetrically on both sides — pos_from_cursor can't be trusted for
+        // the width (it ignores extra_letter_spacing), so the painter uses
+        // width_factor directly. Guard the invariant that keeps padding > 0.
+        let size = super::custom_emoji_render::size_factor();
+        let width_factor = super::custom_emoji_render::width_factor();
+        assert!(
+            width_factor >= size,
+            "reserved width ({width_factor}) must be >= the square ({size}) so padding is never negative"
+        );
+        // With the default 0.2 spacing there is strictly positive padding.
+        assert!(width_factor > size, "default spacing gives positive padding");
+
         custom_emoji::set_for_test(CustomEmojiRegistry::default());
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -5665,3 +5683,5 @@ mod tests {
         assert_eq!(palette[3], Color32::from_rgb(0xff, 0x00, 0x00));
     }
 }
+
+

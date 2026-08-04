@@ -303,11 +303,21 @@ pub(super) fn paint_custom_emoji(
     let texture = frames.frame_at(time);
 
     // The slot is row_height tall and (row_height * width_factor) wide (set in
-    // build_line_job). Draw the emoji square at row_height * size_factor — the
-    // user's size knob — centered in the slot. size_factor > 1 lets the emoji
-    // stand out above the line; the leftover slot width is the spacing knob.
+    // build_line_job via extra_letter_spacing). The square is row_height *
+    // size_factor; the leftover slot width is the spacing, split EQUALLY on
+    // both sides so text before AND after the emoji get the same gap. Center on
+    // the slot's own center so the padding is symmetric regardless of how the
+    // extra spacing lands in the glyph run.
     let side = slot.height() * size_factor();
-    let rect = egui::Rect::from_center_size(slot.center(), egui::vec2(side, side));
+    let cx = slot.center().x;
+    // Vertically anchor to the text row (bottom of the row) so a taller emoji
+    // grows upward, sitting on the baseline like an oversized glyph rather than
+    // drifting off-center in a grown row.
+    let bottom = slot.bottom();
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(cx - side * 0.5, bottom - side),
+        egui::pos2(cx + side * 0.5, bottom),
+    );
     painter.image(
         texture.id(),
         rect,
