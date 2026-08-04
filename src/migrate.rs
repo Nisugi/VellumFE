@@ -111,15 +111,24 @@ pub struct MigratedFile {
     pub windows_skipped: usize,
 }
 
-/// Check if a file appears to already be in current VellumFE format
+/// Check if a file is already in the current VellumFE layout format.
+///
+/// The current `WindowDef` serializes its `base`/`data` with `#[serde(flatten)]`,
+/// so real current layouts have every field inline under `[[windows]]` and
+/// NEVER contain `[windows.data]`/`[windows.base]` section headers — the old
+/// check looked for exactly those and so never matched a current file, meaning
+/// migrate re-converted (and lossily downgraded) current layouts. The reliable
+/// test is whether the file deserializes into the current `Layout` type with
+/// its typed window variants; an old-format layout does not.
 fn is_current_layout(path: &Path) -> bool {
-    if let Ok(content) = fs::read_to_string(path) {
-        // Current layouts use [[windows]] array syntax with typed variants
-        // Old formats use different structure
-        content.contains("[[windows]]")
-            && (content.contains("[windows.data]") || content.contains("[windows.base]"))
-    } else {
-        false
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+    match toml::from_str::<Layout>(&content) {
+        // A current layout parses into typed windows. Require at least one so a
+        // near-empty/old file with only a terminal size isn't a false positive.
+        Ok(layout) => !layout.windows.is_empty(),
+        Err(_) => false,
     }
 }
 
@@ -821,49 +830,55 @@ mod tests {
     // ===========================================
 
     #[test]
-    fn test_is_current_layout_with_windows_array() {
+    fn test_is_current_layout_inline_flattened_format() {
+        // The REAL current format: WindowDef fields are flattened inline under
+        // [[windows]] (no [windows.base]/[windows.data] sections — those never
+        // appear because of #[serde(flatten)]). This must read as current.
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test.toml");
         let content = r#"
 [[windows]]
 name = "main"
-
-[windows.base]
+widget_type = "text"
+streams = ["main"]
 row = 0
 col = 0
+rows = 10
+cols = 40
 "#;
         std::fs::write(&path, content).unwrap();
         assert!(is_current_layout(&path));
     }
 
     #[test]
-    fn test_is_current_layout_with_data_section() {
+    fn test_is_current_layout_bundled_default_is_current() {
+        // Guard against future drift: the layout the app itself ships and
+        // writes must always be recognized as current.
+        let content = include_str!("../defaults/globals/layouts/layout.toml");
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("test.toml");
-        let content = r#"
-[[windows]]
-name = "main"
-
-[windows.data]
-streams = ["main"]
-"#;
+        let path = dir.path().join("layout.toml");
         std::fs::write(&path, content).unwrap();
         assert!(is_current_layout(&path));
     }
 
     #[test]
     fn test_is_current_layout_old_format() {
+        // An old-format layout uses a different window shape (e.g. a `type`
+        // discriminator and x/y coords) that does NOT deserialize into the
+        // current typed Layout, so it is correctly seen as NOT current and
+        // gets migrated.
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test.toml");
         let content = r#"
+terminal_width = 120
+terminal_height = 40
 [[windows]]
-widget_type = "text"
+type = "TextWindow"
 name = "main"
-row = 0
-col = 0
+x = 0
+y = 0
 "#;
         std::fs::write(&path, content).unwrap();
-        // Old format doesn't have [windows.base] or [windows.data]
         assert!(!is_current_layout(&path));
     }
 
@@ -1292,13 +1307,16 @@ col = 0
         let src = dir.path().join("src");
         std::fs::create_dir(&src).unwrap();
 
-        // Create a current format layout
+        // Create a current-format layout (real inline/flattened shape).
         let content = r#"
 [[windows]]
 name = "main"
-
-[windows.base]
+widget_type = "text"
+streams = ["main"]
 row = 0
+col = 0
+rows = 10
+cols = 40
 "#;
         std::fs::write(src.join("layout.toml"), content).unwrap();
 
@@ -1309,7 +1327,7 @@ row = 0
             verbose: false,
         };
         let result = run_migration(&options).unwrap();
-        assert_eq!(result.skipped, 1);
+        assert_eq!(result.skipped, 1, "a current-format layout must be skipped, not re-converted");
         assert_eq!(result.succeeded, 0);
     }
 
@@ -1345,3 +1363,4 @@ cols = 1
         assert!(!out.join("old_layout.toml").exists());
     }
 }
+
