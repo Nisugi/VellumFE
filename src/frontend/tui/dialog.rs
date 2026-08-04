@@ -54,6 +54,7 @@ enum BandCell {
     Button { index: usize, text: String },
     DropDown { index: usize, text: String },
     Progress { index: usize },
+    Label { text: String },
 }
 
 /// Group the anchor-grid resolution into horizontal bands for the TUI:
@@ -95,6 +96,10 @@ fn positioned_band_cells(dialog: &DialogState) -> Option<Vec<Vec<BandCell>>> {
             PositionedControlKind::ProgressBar(index) => {
                 dialog.progress_bars.get(index).map(|_| BandCell::Progress { index })
             }
+            PositionedControlKind::Label(index) => dialog
+                .display_labels
+                .get(index)
+                .map(|l| BandCell::Label { text: l.value.clone() }),
         };
         let Some(cell) = cell else { continue };
         if (control.rect.1 - band_y).abs() > 12.0 || bands.is_empty() {
@@ -108,9 +113,9 @@ fn positioned_band_cells(dialog: &DialogState) -> Option<Vec<Vec<BandCell>>> {
 
 fn band_cell_text_len(cell: &BandCell, dialog: &DialogState) -> usize {
     match cell {
-        BandCell::Button { text, .. } | BandCell::DropDown { text, .. } => {
-            text.chars().count()
-        }
+        BandCell::Button { text, .. }
+        | BandCell::DropDown { text, .. }
+        | BandCell::Label { text } => text.chars().count(),
         BandCell::Progress { index } => dialog
             .progress_bars
             .get(*index)
@@ -478,7 +483,8 @@ pub fn compute_dialog_layout(screen: Rect, dialog: &DialogState) -> DialogLayout
                         },
                         BandHit::DropDown(*index),
                     )),
-                    BandCell::Progress { .. } => {}
+                    // Progress bars and plain labels aren't clickable.
+                    BandCell::Progress { .. } | BandCell::Label { .. } => {}
                 }
                 cell_x = cell_x.saturating_add(cell_width + 2);
             }
@@ -1128,6 +1134,9 @@ pub fn render_dialog(
                             spans.push(Span::styled(pb.text.clone(), normal_style_banded));
                         }
                     }
+                    BandCell::Label { text } => {
+                        spans.push(Span::styled(text.clone(), normal_style_banded));
+                    }
                 }
             }
             lines.push(Line::from(spans));
@@ -1386,6 +1395,9 @@ pub fn render_dialog_panel(
                         if let Some(pb) = dialog.progress_bars.get(*index) {
                             spans.push(Span::styled(pb.text.clone(), normal));
                         }
+                    }
+                    BandCell::Label { text } => {
+                        spans.push(Span::styled(text.clone(), normal));
                     }
                 }
             }

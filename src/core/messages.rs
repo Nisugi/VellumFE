@@ -1624,6 +1624,10 @@ impl MessageProcessor {
                 if *clear {
                     dialog.fields.clear();
                     dialog.labels.clear();
+                    // display_labels are the standalone (unpaired) rows, e.g.
+                    // a resident panel's positioned label grid; a clear='t'
+                    // frame rebuilds them, so drop the old set too.
+                    dialog.display_labels.clear();
                     dialog.focused_field = None;
                 }
 
@@ -1648,6 +1652,7 @@ impl MessageProcessor {
                         let dialog_label = crate::data::DialogLabel {
                             id: label.id.clone(),
                             value: label.value.clone(),
+                            layout: label.layout.clone(),
                         };
 
                         if is_paired {
@@ -1719,6 +1724,7 @@ impl MessageProcessor {
                         id: pb.id.clone(),
                         value: pb.value,
                         text: pb.text.clone(),
+                        layout: pb.layout.clone(),
                     };
                     match dialog.progress_bars.iter_mut().find(|b| b.id == pb.id) {
                         Some(slot) => *slot = bar,

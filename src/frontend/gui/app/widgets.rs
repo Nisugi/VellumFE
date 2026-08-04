@@ -2614,6 +2614,11 @@ impl VellumGuiApp {
                             );
                         }
                     }
+                    PositionedControlKind::Label(i) => {
+                        if let Some(label) = dialog.display_labels.get(i) {
+                            ui.put(rect, egui::Label::new(&label.value).truncate());
+                        }
+                    }
                 }
             }
         }

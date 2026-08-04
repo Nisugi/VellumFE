@@ -324,6 +324,8 @@ pub struct DialogFieldSpec {
 pub struct DialogLabelSpec {
     pub id: String,
     pub value: String,
+    /// Anchor-grid layout hints (None when the tag carried none).
+    pub layout: Option<crate::data::DialogControlLayout>,
 }
 
 #[derive(Debug, Clone)]
@@ -331,6 +333,8 @@ pub struct DialogProgressBarSpec {
     pub id: String,
     pub value: u32,   // Percentage 0-100
     pub text: String, // Display text (e.g., "defensive (100%)")
+    /// Anchor-grid layout hints (None when the tag carried none).
+    pub layout: Option<crate::data::DialogControlLayout>,
 }
 
 /// Tracks the currently active foreground/background/bold settings while the
@@ -1127,6 +1131,32 @@ impl XmlParser {
                     break;
                 }
             }
+            // Also feed the dialog store so a shown dialog panel (UberBar and
+            // other resident dynamic dialogs) can render its label rows
+            // positioned — additive alongside the flat Label elements above,
+            // which existing widgets (encumbrance, experience) still consume.
+            // Only emit when a label carries anchor-grid geometry, so plain
+            // status labels don't churn the store or steal display space.
+            if let Some(id) = Self::extract_dialog_data_id(tag_head) {
+                if !Self::is_quickbar_id(&id) {
+                    let clear = Self::extract_attribute(tag_head, "clear")
+                        .map(|value| {
+                            matches!(value.as_str(), "t" | "true" | "1")
+                                || value.eq_ignore_ascii_case("true")
+                        })
+                        .unwrap_or(false);
+                    let (fields, labels) = Self::parse_dialog_fields(tag);
+                    let positioned = labels.iter().any(|l| l.layout.is_some());
+                    if positioned {
+                        elements.push(ParsedElement::DialogFields {
+                            id,
+                            clear,
+                            fields,
+                            labels,
+                        });
+                    }
+                }
+            }
         }
 
         // Extract dropDownBox tags (combat targets). These only appear in
@@ -1507,10 +1537,10 @@ impl XmlParser {
         // Always call handle_embedded_resident_dialog_data to emit standalone ProgressBar/Label
         // elements for game state updates (needed for widgets like gs4_experience, encumbrance)
         self.handle_embedded_resident_dialog_data(tag, elements);
-        if !is_resident {
-            // Also extract for popup dialog rendering
-            self.handle_embedded_dialog_progress_bars(tag, elements);
-        }
+        // Ingest progressBars into the dialog store so a shown panel can render
+        // them positioned. For resident dialogs this is additive alongside the
+        // flat ProgressBar widget emit above; for popups it's the render feed.
+        self.handle_embedded_dialog_progress_bars(tag, elements);
     }
 
     /// Extract progressBar and other widget data from embedded dialogData in resident dialogs
@@ -1718,7 +1748,13 @@ impl XmlParser {
             let end = start + end_start + end_pattern.len();
             let dialog_tag = &remaining[start..end];
 
-            if !dialog_tag.contains("<editBox") && !dialog_tag.contains("<upDownEditBox") {
+            // Fields imply an input dialog; positioned label rows (a resident
+            // dynamic dialog's grid, e.g. UberBar) also belong in the store.
+            // Plain unpositioned labels stay out — they feed widgets via the
+            // flat Label emit instead.
+            let has_inputs =
+                dialog_tag.contains("<editBox") || dialog_tag.contains("<upDownEditBox");
+            if !has_inputs && !dialog_tag.contains("<label ") {
                 remaining = &remaining[end..];
                 continue;
             }
@@ -1733,7 +1769,10 @@ impl XmlParser {
                         })
                         .unwrap_or(false);
                     let (fields, labels) = Self::parse_dialog_fields(dialog_tag);
-                    if !fields.is_empty() || !labels.is_empty() {
+                    // Without input fields, only ingest when a label carries
+                    // anchor geometry — that's what marks a positioned grid.
+                    let positioned_labels = labels.iter().any(|l| l.layout.is_some());
+                    if !fields.is_empty() || positioned_labels {
                         elements.push(ParsedElement::DialogFields {
                             id,
                             clear,
@@ -1810,8 +1849,9 @@ impl XmlParser {
                     .and_then(|v| v.parse::<u32>().ok())
                     .unwrap_or(0);
                 let text = Self::extract_attribute(pb_tag, "text").unwrap_or_default();
+                let layout = Self::parse_control_layout(pb_tag);
 
-                progress_bars.push(DialogProgressBarSpec { id, value, text });
+                progress_bars.push(DialogProgressBarSpec { id, value, text, layout });
             }
 
             remaining = &remaining[pb_end..];
@@ -2216,7 +2256,8 @@ impl XmlParser {
                 let id = Self::extract_attribute(tag_slice, "id").unwrap_or_default();
                 let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
                 let value = Self::sanitize_dialog_label(&value);
-                labels.push(DialogLabelSpec { id, value });
+                let layout = Self::parse_control_layout(tag_slice);
+                labels.push(DialogLabelSpec { id, value, layout });
             }
 
             remaining = &remaining[advance_by..];
@@ -5448,7 +5489,11 @@ mod tests {
         </dialogData></openDialog>";
 
     #[test]
-    fn characterize_uberbar_resident_dialog_current_parse() {
+    fn uberbar_resident_dialog_ingests_bars_and_labels_with_layout() {
+        // Tier 1 landed: resident non-templated dialogData bars + labels are
+        // now ADDITIVELY routed into the DialogState carrying anchor geometry,
+        // while the flat stream ProgressBar/Label emit is preserved (widgets
+        // like encumbrance/experience still consume it).
         let mut parser = test_parser();
         let elements = parser.parse_line(UBERBAR_FRAME);
 
@@ -5465,8 +5510,8 @@ mod tests {
             "resident dialogs must not emit a popup DialogOpen"
         );
 
-        // <image> DOES reach the DialogState path (DialogControls), with layout
-        // preserved — this already works and Tier 1 must not regress it.
+        // <image> reaches the DialogState path (DialogControls) with layout —
+        // unchanged by Tier 1.
         let image_ctrls: Vec<_> = elements
             .iter()
             .filter_map(|e| match e {
@@ -5480,40 +5525,62 @@ mod tests {
             "the wound image keeps its cmd"
         );
 
-        // CURRENT GAP #1: progressBars flatten into layout-less, dialog-less
-        // stream ProgressBar elements (siphoned for widget updates), NOT into a
-        // positioned DialogState. Tier 1 will additionally route these into the
-        // UberBar DialogState carrying their anchor geometry.
-        let flat_bars: Vec<_> = elements
+        // PRESERVED: the flat stream emit still happens (widgets depend on it).
+        let flat_bars = elements
             .iter()
             .filter(|e| matches!(e, ParsedElement::ProgressBar { .. }))
-            .collect();
-        assert_eq!(
-            flat_bars.len(),
-            2,
-            "today both bars land as flat stream ProgressBar elements (no dialog id, no layout)"
-        );
-        assert!(
-            !elements
-                .iter()
-                .any(|e| matches!(e, ParsedElement::DialogProgressBars { .. })),
-            "today resident bars are NOT ingested into the dialog store"
-        );
-
-        // CURRENT GAP #2: standalone <label> rows flatten into layout-less
-        // stream Label elements. Tier 1 will route these into display_labels
-        // with layout.
-        let flat_labels: Vec<_> = elements
+            .count();
+        assert_eq!(flat_bars, 2, "flat stream ProgressBar emit is preserved for widgets");
+        let flat_labels = elements
             .iter()
             .filter(|e| matches!(e, ParsedElement::Label { .. }))
+            .count();
+        assert_eq!(flat_labels, 2, "flat stream Label emit is preserved for widgets");
+
+        // NEW: bars are ALSO ingested into the dialog store, carrying layout.
+        let dlg_bars: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::DialogProgressBars { id, progress_bars, .. } if id == "UberBar" => {
+                    Some(progress_bars)
+                }
+                _ => None,
+            })
             .collect();
+        assert_eq!(dlg_bars.len(), 1, "resident bars now reach the dialog store");
+        let health = dlg_bars[0]
+            .iter()
+            .find(|b| b.id == "health")
+            .expect("health bar ingested");
+        let hlayout = health.layout.as_ref().expect("health bar carries layout");
+        assert_eq!(hlayout.anchor_top.as_deref(), Some("ubbars"));
+        assert_eq!(hlayout.anchor_left.as_deref(), Some("ubinjury"));
+
+        // NEW: standalone labels are ALSO ingested (as DialogFields with empty
+        // fields), carrying layout.
+        let dlg_labels: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::DialogFields { id, labels, fields, .. } if id == "UberBar" => {
+                    Some((labels, fields))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dlg_labels.len(), 1, "resident labels now reach the dialog store");
+        let (labels, fields) = &dlg_labels[0];
+        assert!(fields.is_empty(), "UberBar carries no input fields");
+        let logv = labels
+            .iter()
+            .find(|l| l.id == "ublogv")
+            .expect("the value label ingested");
+        assert_eq!(logv.value, "1234");
         assert_eq!(
-            flat_labels.len(),
-            2,
-            "today both label rows land as flat stream Label elements (no dialog id, no layout)"
+            logv.layout.as_ref().and_then(|l| l.anchor_left.as_deref()),
+            Some("ublog"),
+            "the value label keeps its anchor chain"
         );
 
-        // CURRENT GAP #3: <skin> produces NO element at all — silently ignored.
-        // (Nothing to assert positively; documented here so Tier 3 has a target.)
+        // GAP remaining (Tier 3): <skin> still produces no element.
     }
 }

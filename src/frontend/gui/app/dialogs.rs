@@ -24,10 +24,12 @@ impl VellumGuiApp {
             .collapsible(false)
             .default_width(320.0)
             .show(ctx, |ui| {
-                for label in &dialog.display_labels {
-                    ui.label(&label.value);
-                }
+                // In anchor-grid mode the labels are drawn positioned inside
+                // the canvas below; only the flow fallback lists them here.
                 if positioned.is_none() {
+                    for label in &dialog.display_labels {
+                        ui.label(&label.value);
+                    }
                     for bar in &dialog.progress_bars {
                         let mut progress =
                             egui::ProgressBar::new(bar.value.min(100) as f32 / 100.0)
@@ -114,6 +116,20 @@ impl VellumGuiApp {
                                     rect,
                                     egui::ProgressBar::new(bar.value.min(100) as f32 / 100.0)
                                         .text(bar.text.clone()),
+                                );
+                            }
+                            crate::data::ui_state::PositionedControlKind::Label(index) => {
+                                let Some(label) = dialog.display_labels.get(index) else {
+                                    continue;
+                                };
+                                // Wrayth right-justifies value columns (justify='6');
+                                // we approximate with a left-aligned label placed at
+                                // the resolved rect — good enough for the grid, and
+                                // wrap is off so rows stay single-line.
+                                ui.put(
+                                    rect,
+                                    egui::Label::new(&label.value)
+                                        .truncate(),
                                 );
                             }
                         }

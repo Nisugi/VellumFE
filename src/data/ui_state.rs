@@ -630,6 +630,9 @@ impl DialogField {
 pub struct DialogLabel {
     pub id: String,
     pub value: String,
+    /// Anchor-grid layout hints (None when the tag carried none). Resident
+    /// dynamic dialogs like UberBar position their label rows this way.
+    pub layout: Option<DialogControlLayout>,
 }
 
 /// Progress bar displayed in a dialog
@@ -638,6 +641,9 @@ pub struct DialogProgressBar {
     pub id: String,
     pub value: u32,   // Percentage 0-100
     pub text: String, // Display text (e.g., "defensive (100%)")
+    /// Anchor-grid layout hints (None when the tag carried none). Resident
+    /// dynamic dialogs position their bars via anchor_top/anchor_left chains.
+    pub layout: Option<DialogControlLayout>,
 }
 
 /// Which dialog control a resolved rect belongs to (index into the
@@ -647,6 +653,8 @@ pub enum PositionedControlKind {
     Button(usize),
     DropDown(usize),
     ProgressBar(usize),
+    /// Index into `display_labels` — a positioned text row (UberBar's grid).
+    Label(usize),
 }
 
 /// A dialog control resolved to a pixel-space rect by the anchor grid.
@@ -697,15 +705,23 @@ impl DialogState {
                 rect: (0.0, 0.0, 80.0, 20.0),
             });
         }
-        for (i, _bar) in self.progress_bars.iter().enumerate() {
-            // Progress bars don't carry layout on DialogProgressBar yet;
-            // give them stacked rows at the top so combat's stance bar
-            // lands in roughly the right zone.
+        for (i, bar) in self.progress_bars.iter().enumerate() {
+            // Positioned resident dialogs (UberBar) carry anchor geometry;
+            // bars without it fall back to stacked rows at the top so combat's
+            // stance bar still lands in roughly the right zone.
             entries.push(Entry {
-                id: self.progress_bars[i].id.clone(),
-                layout: None,
+                id: bar.id.clone(),
+                layout: bar.layout.clone(),
                 kind: PositionedControlKind::ProgressBar(i),
                 rect: (0.0, i as f32 * 20.0, 130.0, 16.0),
+            });
+        }
+        for (i, label) in self.display_labels.iter().enumerate() {
+            entries.push(Entry {
+                id: label.id.clone(),
+                layout: label.layout.clone(),
+                kind: PositionedControlKind::Label(i),
+                rect: (0.0, 0.0, 60.0, 15.0),
             });
         }
 
@@ -1887,6 +1903,93 @@ mod tests {
 
         // Out-of-range index is a no-op.
         assert!(dialog.cycle_dropdown(5).is_none());
+    }
+
+    #[test]
+    fn anchor_grid_resolves_uberbar_label_and_bar_rows() {
+        // UberBar's grid: a value label anchored to the right of its header
+        // label, and two vitals bars stacked via anchor_top (mana below
+        // health). Proves display_labels + progress_bars now flow through the
+        // same anchor resolver as combat's controls.
+        use crate::data::ui_state::PositionedControlKind;
+        let label = |id: &str, layout: DialogControlLayout| DialogLabel {
+            id: id.to_string(),
+            value: id.to_string(),
+            layout: Some(layout),
+        };
+        let bar = |id: &str, layout: DialogControlLayout| DialogProgressBar {
+            id: id.to_string(),
+            value: 50,
+            text: id.to_string(),
+            layout: Some(layout),
+        };
+
+        let header = label(
+            "ublog",
+            DialogControlLayout {
+                top: Some(5),
+                left: Some(5),
+                width: Some(50),
+                height: Some(15),
+                align: Some("nw".to_string()),
+                ..Default::default()
+            },
+        );
+        let value = label(
+            "ublogv",
+            DialogControlLayout {
+                top: Some(0),
+                left: Some(0),
+                width: Some(50),
+                height: Some(15),
+                anchor_left: Some("ublog".to_string()),
+                ..Default::default()
+            },
+        );
+        // health anchors to a bare "ubbars" reference we don't capture — that
+        // axis stays at its absolute top; mana then stacks under health.
+        let health = bar(
+            "health",
+            DialogControlLayout {
+                top: Some(3),
+                left: Some(4),
+                width: Some(100),
+                height: Some(15),
+                ..Default::default()
+            },
+        );
+        let mana = bar(
+            "mana",
+            DialogControlLayout {
+                top: Some(3),
+                left: Some(4),
+                width: Some(100),
+                height: Some(15),
+                anchor_top: Some("health".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let dialog = DialogState {
+            display_labels: vec![header, value],
+            progress_bars: vec![health, mana],
+            ..DialogState::empty("UberBar".to_string(), None)
+        };
+        let (controls, _) = dialog.positioned_controls().expect("positioned");
+        let rect_of = |kind: PositionedControlKind| {
+            controls.iter().find(|c| c.kind == kind).map(|c| c.rect).unwrap()
+        };
+
+        let header = rect_of(PositionedControlKind::Label(0));
+        let value = rect_of(PositionedControlKind::Label(1));
+        let health = rect_of(PositionedControlKind::ProgressBar(0));
+        let mana = rect_of(PositionedControlKind::ProgressBar(1));
+
+        // The value label sits immediately right of the header (its own
+        // left=0 is the offset added past the header's right edge).
+        assert_eq!(value.0, header.0 + header.2);
+        // Mana stacks directly beneath health (anchor_top + its own top=3).
+        assert_eq!(mana.1, health.1 + health.3 + 3.0);
     }
 
     #[test]
