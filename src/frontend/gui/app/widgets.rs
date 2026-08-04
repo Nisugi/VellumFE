@@ -536,6 +536,7 @@ impl VellumGuiApp {
     /// testing, selection painting, and height measurement all on the same
     /// geometry.
     fn build_line_job(
+        ctx: &egui::Context,
         line: &StyledLine,
         visuals: &egui::Visuals,
         search_query: Option<&str>,
@@ -551,6 +552,7 @@ impl VellumGuiApp {
             ..Default::default()
         };
         let mut links = Vec::new();
+        let mut custom_runs: Vec<(usize, usize, String)> = Vec::new();
         let mut chars = 0usize;
 
         let ts_run = timestamps.and_then(|position| {
@@ -573,6 +575,23 @@ impl VellumGuiApp {
                 continue;
             }
             let search_match = Self::segment_matches_query(segment, search_query);
+            // Custom emoji: reserve the `:name:` fallback run and record it for
+            // an image overlay painted after the galley. Only when it resolves
+            // to a paintable image; otherwise fall through to plain text so the
+            // `:name:` shows instead of a blank slot.
+            if let Some(name) = &segment.custom_emoji {
+                if super::custom_emoji_render::is_paintable(ctx, name) {
+                    let count = segment.text.chars().count();
+                    job.append(
+                        &segment.text,
+                        0.0,
+                        Self::segment_text_format_ex(segment, visuals, false, false, font_id),
+                    );
+                    custom_runs.push((chars, chars + count, name.clone()));
+                    chars += count;
+                    continue;
+                }
+            }
             if let Some(link_data) = &segment.link_data {
                 // Links keep whole-segment search highlighting, matching the
                 // old one-widget-per-link rendering.
@@ -608,7 +627,11 @@ impl VellumGuiApp {
             job.append(text, 0.0, ts_format);
         }
 
-        GuiLineJob { job, links }
+        GuiLineJob {
+            job,
+            links,
+            custom_runs,
+        }
     }
 
     /// The plain text a line renders as (timestamps included when shown).
@@ -3978,7 +4001,8 @@ impl VellumGuiApp {
     ) -> f32 {
         // Same job builder as rendering, so measured heights match rendered
         // heights exactly (timestamps included).
-        let job = Self::build_line_job(line, visuals, None, font_id, wrap_width, timestamps).job;
+        let job =
+            Self::build_line_job(ctx, line, visuals, None, font_id, wrap_width, timestamps).job;
         if job.is_empty() {
             // Blank line: renders as one empty text row.
             return ctx.fonts_mut(|fonts| fonts.row_height(font_id));
@@ -4426,6 +4450,7 @@ impl VellumGuiApp {
                             }
                             let line_index = start + slot;
                             let line_job = Self::build_line_job(
+                                &ctx,
                                 &content.lines[line_index],
                                 &visuals,
                                 search_query,
@@ -4539,6 +4564,7 @@ impl VellumGuiApp {
                     let uid = base_uid.wrapping_add(line_index as u64);
 
                     let line_job = Self::build_line_job(
+                        &ctx,
                         line,
                         &visuals,
                         search_query,
@@ -4547,6 +4573,7 @@ impl VellumGuiApp {
                         timestamps,
                     );
                     let links = line_job.links;
+                    let custom_runs = line_job.custom_runs;
                     let mut galley = ctx.fonts_mut(|fonts| fonts.layout_job(line_job.job));
                     let galley_size = galley.size();
                     let height = if galley_size.y > 0.0 {
@@ -4735,6 +4762,16 @@ impl VellumGuiApp {
                             &galley,
                             galley_pos,
                         );
+                        // Custom emoji images over their `:name:` slots.
+                        if !custom_runs.is_empty() {
+                            Self::paint_custom_emoji_runs(
+                                &ctx,
+                                ui.painter(),
+                                &galley,
+                                galley_pos,
+                                &custom_runs,
+                            );
+                        }
                     }
                 }
                 // A press on the blank area below the last line clears the
@@ -5160,6 +5197,10 @@ impl VellumGuiApp {
 pub(super) struct GuiLineJob {
     job: egui::text::LayoutJob,
     links: Vec<(std::ops::Range<usize>, LinkData)>,
+    /// Custom-emoji image slots as `(char_start, char_end, name)` over the
+    /// `:name:` fallback text kept in the job. The caller paints the image over
+    /// this run after the galley is drawn (see `paint_custom_emoji_runs`).
+    custom_runs: Vec<(usize, usize, String)>,
 }
 
 /// Buffer-anchored text selection for virtualized text windows. Endpoints
@@ -5436,12 +5477,70 @@ mod tests {
         let visuals = eframe::egui::Visuals::default();
         let font_id = eframe::egui::FontId::monospace(14.0);
         let built =
-            VellumGuiApp::build_line_job(&line, &visuals, None, &font_id, f32::INFINITY, None);
+            VellumGuiApp::build_line_job(&eframe::egui::Context::default(), &line, &visuals, None, &font_id, f32::INFINITY, None);
         assert_eq!(built.job.text, "héllo an orc lunges!");
         assert_eq!(built.links.len(), 1);
         // Char (not byte) range: "héllo " is 6 chars.
         assert_eq!(built.links[0].0, 6..12);
         assert_eq!(built.links[0].1.exist_id, "123");
+    }
+
+    #[test]
+    fn build_line_job_records_custom_emoji_runs() {
+        use crate::core::custom_emoji::{self, CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+        use crate::data::{StyledLine, TextSegment};
+
+        // Write a real 1x1 PNG so is_paintable's decode succeeds.
+        let tmp = std::env::temp_dir().join(format!("vellum_emoji_bl_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let path = tmp.join("vibecat.png");
+        {
+            use image::ImageEncoder;
+            let mut png = Vec::new();
+            image::codecs::png::PngEncoder::new(&mut png)
+                .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+                .unwrap();
+            std::fs::write(&path, png).unwrap();
+        }
+        let mut reg = CustomEmojiRegistry::default();
+        reg.insert_for_test(CustomEmoji {
+            name: "vibecat".into(),
+            path,
+            format: EmojiFormat::Png,
+        });
+        custom_emoji::set_for_test(reg);
+
+        // A line with a tagged custom-emoji segment, as the resolver produces.
+        let line = StyledLine {
+            segments: vec![
+                TextSegment::plain("yep "),
+                TextSegment {
+                    text: ":vibecat:".into(),
+                    custom_emoji: Some("vibecat".into()),
+                    ..Default::default()
+                },
+            ],
+            stream: "main".into(),
+            timestamp: None,
+        };
+        let visuals = eframe::egui::Visuals::default();
+        let font_id = eframe::egui::FontId::monospace(14.0);
+        let ctx = eframe::egui::Context::default();
+        ctx.begin_pass(eframe::egui::RawInput::default());
+        let built =
+            VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
+        let _ = ctx.end_pass();
+
+        // The fallback text stays in the job, and a custom-emoji run is
+        // recorded over the ":vibecat:" span (chars 4..13 after "yep ").
+        assert_eq!(built.job.text, "yep :vibecat:");
+        assert_eq!(built.custom_runs.len(), 1, "must record the emoji slot");
+        assert_eq!(built.custom_runs[0].0, 4);
+        assert_eq!(built.custom_runs[0].1, 13);
+        assert_eq!(built.custom_runs[0].2, "vibecat");
+
+        custom_emoji::set_for_test(CustomEmojiRegistry::default());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
@@ -5455,7 +5554,7 @@ mod tests {
         let visuals = eframe::egui::Visuals::default();
         let font_id = eframe::egui::FontId::monospace(14.0);
         let built =
-            VellumGuiApp::build_line_job(&line, &visuals, None, &font_id, f32::INFINITY, None);
+            VellumGuiApp::build_line_job(&eframe::egui::Context::default(), &line, &visuals, None, &font_id, f32::INFINITY, None);
         assert_eq!(VellumGuiApp::compose_line_text(&line, None), built.job.text);
     }
 

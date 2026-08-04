@@ -68,6 +68,13 @@ pub struct CustomEmojiRegistry {
 }
 
 impl CustomEmojiRegistry {
+    /// Insert an entry directly (tests only) so a real on-disk file can be
+    /// registered with a decodable path.
+    #[cfg(test)]
+    pub fn insert_for_test(&mut self, emoji: CustomEmoji) {
+        self.by_name.insert(emoji.name.to_ascii_lowercase(), emoji);
+    }
+
     /// Look up a custom emoji by shortcode name (case-insensitive).
     pub fn get(&self, name: &str) -> Option<&CustomEmoji> {
         if name.bytes().any(|b| b.is_ascii_uppercase()) {
