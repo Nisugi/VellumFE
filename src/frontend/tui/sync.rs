@@ -1798,33 +1798,25 @@ impl TuiFrontend {
                         widget.set_title(title_text);
                         widget.set_content_align(window_def.base().content_align.clone());
 
-                        // Apply injury doll color configuration if specified
+                        // Apply injury doll color configuration. The shared
+                        // resolver applies per-level overrides over the single
+                        // DEFAULT_INJURY_PALETTE; the TUI additionally lets the
+                        // active theme supply the level-0 (uninjured) color when
+                        // the config leaves it unset.
                         if let crate::config::WindowDef::InjuryDoll { data, .. } = window_def {
-                            let resolved_default = normalize_color(&data.injury_default_color)
-                                .or_else(|| color_to_hex_string(&theme.injury_default_color))
-                                .unwrap_or_else(|| "#333333".to_string());
-                            // Build colors vec with defaults if not specified
-                            let colors = vec![
-                                resolved_default,
-                                data.injury1_color
-                                    .clone()
-                                    .unwrap_or_else(|| "#aa5500".to_string()),
-                                data.injury2_color
-                                    .clone()
-                                    .unwrap_or_else(|| "#ff8800".to_string()),
-                                data.injury3_color
-                                    .clone()
-                                    .unwrap_or_else(|| "#ff0000".to_string()),
-                                data.scar1_color
-                                    .clone()
-                                    .unwrap_or_else(|| "#999999".to_string()),
-                                data.scar2_color
-                                    .clone()
-                                    .unwrap_or_else(|| "#777777".to_string()),
-                                data.scar3_color
-                                    .clone()
-                                    .unwrap_or_else(|| "#555555".to_string()),
-                            ];
+                            let mut colors = data.resolved_colors().to_vec();
+                            if data
+                                .injury_default_color
+                                .as_ref()
+                                .map(|s| s.trim().is_empty())
+                                .unwrap_or(true)
+                            {
+                                if let Some(themed) =
+                                    color_to_hex_string(&theme.injury_default_color)
+                                {
+                                    colors[0] = themed;
+                                }
+                            }
                             widget.set_colors(colors);
                         }
                     }

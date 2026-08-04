@@ -46,15 +46,12 @@ impl InjuryDoll {
             border_style: None,
             border_color: None,
             border_sides: crate::config::BorderSides::default(),
-            colors: vec![
-                "#333333".to_string(), // 0: none
-                "#aa5500".to_string(), // 1: injury 1 (brown)
-                "#ff8800".to_string(), // 2: injury 2 (orange)
-                "#ff0000".to_string(), // 3: injury 3 (bright red)
-                "#999999".to_string(), // 4: scar 1 (light gray)
-                "#777777".to_string(), // 5: scar 2 (medium gray)
-                "#555555".to_string(), // 6: scar 3 (darker gray)
-            ],
+            // Shared default palette (single source of truth); overridden per
+            // widget via set_colors from the resolved config.
+            colors: crate::config::DEFAULT_INJURY_PALETTE
+                .iter()
+                .map(|c| c.to_string())
+                .collect(),
             background_color: None,
             content_align: None,
             transparent_background: false, // Default to transparent

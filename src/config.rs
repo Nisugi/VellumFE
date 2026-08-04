@@ -67,6 +67,7 @@ pub use settings::{
 pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};
 pub use widgets::{
     apply_compiled_text_replacements, compile_text_replacements, default_minivitals_bar_order,
+    DEFAULT_INJURY_PALETTE,
     ActiveEffectsWidgetData, BetrayerWidgetData, BorderSides, CommandInputWidgetData,
     CompassWidgetData, CompiledTextReplacement, ContainerWidgetData, CountdownWidgetData,
     DashboardIndicatorDef, DashboardLayout, DashboardWidgetData, DialogPanelWidgetData,

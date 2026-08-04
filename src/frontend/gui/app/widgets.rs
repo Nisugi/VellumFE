@@ -1247,16 +1247,33 @@ impl VellumGuiApp {
     }
 
     /// ProfanityFE injury palette: none, injury 1-3, scar 1-3.
-    pub(super) fn injury_level_color(level: u8) -> Color32 {
-        match level.min(6) {
-            0 => Color32::from_rgb(0x33, 0x33, 0x33),
-            1 => Color32::from_rgb(0xaa, 0x55, 0x00),
-            2 => Color32::from_rgb(0xff, 0x88, 0x00),
-            3 => Color32::from_rgb(0xff, 0x00, 0x00),
-            4 => Color32::from_rgb(0x99, 0x99, 0x99),
-            5 => Color32::from_rgb(0x77, 0x77, 0x77),
-            _ => Color32::from_rgb(0x55, 0x55, 0x55),
-        }
+    /// The default severity palette as egui colors, parsed once from the
+    /// shared `DEFAULT_INJURY_PALETTE` (single source of truth with the TUI and
+    /// web). Used when no per-widget config override applies (e.g. the
+    /// other-player injuries popup).
+    pub(super) fn default_injury_palette() -> [Color32; 7] {
+        std::array::from_fn(|i| {
+            parse_hex_color(crate::config::DEFAULT_INJURY_PALETTE[i])
+                .unwrap_or(Color32::GRAY)
+        })
+    }
+
+    /// Resolve an injury doll's palette from its config (per-level overrides
+    /// over the shared defaults) into egui colors. The GUI previously ignored
+    /// these config fields entirely, so a user's injury*_color/scar*_color
+    /// changed the TUI but not the GUI.
+    pub(super) fn resolved_injury_palette(
+        data: &crate::config::InjuryDollWidgetData,
+    ) -> [Color32; 7] {
+        let hex = data.resolved_colors();
+        std::array::from_fn(|i| {
+            parse_hex_color(&hex[i]).unwrap_or_else(|| Self::default_injury_palette()[i])
+        })
+    }
+
+    /// Look up the fill color for a severity level in a resolved palette.
+    pub(super) fn injury_level_color(palette: &[Color32; 7], level: u8) -> Color32 {
+        palette[level.min(6) as usize]
     }
 
     /// Human-readable body part name for a hover tooltip ("leftArm" ->
@@ -1292,6 +1309,7 @@ impl VellumGuiApp {
         injuries: &HashMap<String, u8>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
         grayscale: bool,
+        palette: &[Color32; 7],
     ) {
         // Sprite mode: skin-supplied base body, then per part either a
         // hand-drawn severity overlay (authored on the base's canvas so it
@@ -1411,7 +1429,7 @@ impl VellumGuiApp {
         let letter_font = egui::FontId::proportional((scale * 0.09).clamp(10.0, 18.0));
         for (key, display, shape) in PARTS {
             let level = injuries.get(*key).copied().unwrap_or(0);
-            let fill = Self::injury_level_color(level);
+            let fill = Self::injury_level_color(palette, level);
             let outline = egui::Stroke::new(1.0, Self::lighten(fill, 0.2));
 
             let hover_rect = match shape {
@@ -1465,11 +1483,14 @@ impl VellumGuiApp {
             .open(&mut open)
             .show(ctx, |ui| {
                 ui.allocate_ui(Vec2::new(170.0, 225.0), |ui| {
+                    // Another player's injuries: no per-widget config, so the
+                    // shared default palette.
                     Self::render_injury_doll(
                         ui,
                         &popup.injuries,
                         self.skin_state.widget_art().as_deref(),
                         self.ui_settings.doll_grayscale,
+                        &Self::default_injury_palette(),
                     );
                 });
             });
@@ -5013,11 +5034,27 @@ impl VellumGuiApp {
                 None
             }
             WindowContent::InjuryDoll(doll) => {
+                // Resolve the palette from this doll's config (per-level
+                // injury*_color/scar*_color overrides), matching the TUI —
+                // the GUI used to ignore these and hardcode the palette.
+                let palette = app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|def| def.name() == window.name)
+                    .and_then(|def| match def {
+                        crate::config::WindowDef::InjuryDoll { data, .. } => {
+                            Some(Self::resolved_injury_palette(data))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(Self::default_injury_palette);
                 Self::render_injury_doll(
                     ui,
                     &doll.injuries,
                     settings.skin_art.as_deref(),
                     settings.doll_grayscale,
+                    &palette,
                 );
                 None
             }
@@ -5425,22 +5462,37 @@ mod tests {
     #[test]
     fn injury_level_color_distinguishes_injuries_from_scars() {
         use eframe::egui::Color32;
+        let palette = VellumGuiApp::default_injury_palette();
         assert_eq!(
-            VellumGuiApp::injury_level_color(0),
+            VellumGuiApp::injury_level_color(&palette, 0),
             Color32::from_rgb(0x33, 0x33, 0x33)
         );
         assert_eq!(
-            VellumGuiApp::injury_level_color(3),
+            VellumGuiApp::injury_level_color(&palette, 3),
             Color32::from_rgb(0xff, 0x00, 0x00)
         );
         assert_eq!(
-            VellumGuiApp::injury_level_color(6),
+            VellumGuiApp::injury_level_color(&palette, 6),
             Color32::from_rgb(0x55, 0x55, 0x55)
         );
         // Out-of-range levels clamp to the deepest scar color.
         assert_eq!(
-            VellumGuiApp::injury_level_color(9),
-            VellumGuiApp::injury_level_color(6)
+            VellumGuiApp::injury_level_color(&palette, 9),
+            VellumGuiApp::injury_level_color(&palette, 6)
         );
+    }
+
+    #[test]
+    fn resolved_injury_palette_honors_config_overrides() {
+        use eframe::egui::Color32;
+        let data = crate::config::InjuryDollWidgetData {
+            injury1_color: Some("#00ff00".to_string()),
+            ..Default::default()
+        };
+        let palette = VellumGuiApp::resolved_injury_palette(&data);
+        // The overridden level renders the user's color...
+        assert_eq!(palette[1], Color32::from_rgb(0x00, 0xff, 0x00));
+        // ...while un-overridden levels keep the shared defaults.
+        assert_eq!(palette[3], Color32::from_rgb(0xff, 0x00, 0x00));
     }
 }

@@ -4967,9 +4967,13 @@ function renderTray() {
 
 // ---- Right drawer: injury doll + status -------------------------------------
 
+// Mirrors the shared DEFAULT_INJURY_PALETTE (config/widgets.rs) so the same
+// wound renders the same color on phone and desktop. Keep in sync if that
+// constant changes. (Per-widget config overrides aren't forwarded to the phone
+// yet — a separate, larger item.)
 const LEVEL_COLORS = {
-  1: "#d9b44f", 2: "#e08a2e", 3: "#d9534f", // wounds
-  4: "#8a8f98", 5: "#a98f6e", 6: "#7a5c49", // scars
+  1: "#aa5500", 2: "#ff8800", 3: "#ff0000", // wounds
+  4: "#999999", 5: "#777777", 6: "#555555", // scars
 };
 
 // Viewer-mirrored like the game's doll: the character's left side draws on

@@ -557,8 +557,22 @@ pub struct MapWidgetData {
     pub zoom: Option<f32>,
 }
 
+/// The default injury/scar severity palette, indexed by level 0..=6
+/// (0 = uninjured, 1-3 injuries brown→orange→red, 4-6 scars light→dark gray).
+/// Single source of truth: every frontend resolves through
+/// [`InjuryDollWidgetData::resolved_colors`] so the palette can't drift.
+pub const DEFAULT_INJURY_PALETTE: [&str; 7] = [
+    "#333333", // 0: none
+    "#aa5500", // 1: injury 1 (brown)
+    "#ff8800", // 2: injury 2 (orange)
+    "#ff0000", // 3: injury 3 (bright red)
+    "#999999", // 4: scar 1 (light gray)
+    "#777777", // 5: scar 2 (medium gray)
+    "#555555", // 6: scar 3 (darker gray)
+];
+
 /// Injury doll widget specific data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct InjuryDollWidgetData {
     #[serde(default)]
     pub injury_default_color: Option<String>, // Level 0: none (default: #333333)
@@ -574,6 +588,30 @@ pub struct InjuryDollWidgetData {
     pub scar2_color: Option<String>, // Level 5: scar 2 (default: #777777)
     #[serde(default)]
     pub scar3_color: Option<String>, // Level 6: scar 3 (default: #555555)
+}
+
+impl InjuryDollWidgetData {
+    /// The 7-entry severity palette (level 0..=6) with per-level config
+    /// overrides applied over [`DEFAULT_INJURY_PALETTE`]. Every frontend calls
+    /// this so the palette and the user's `injury*_color`/`scar*_color`
+    /// settings are honored identically (the GUI used to ignore them).
+    pub fn resolved_colors(&self) -> [String; 7] {
+        let overrides = [
+            &self.injury_default_color,
+            &self.injury1_color,
+            &self.injury2_color,
+            &self.injury3_color,
+            &self.scar1_color,
+            &self.scar2_color,
+            &self.scar3_color,
+        ];
+        std::array::from_fn(|i| {
+            overrides[i]
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_INJURY_PALETTE[i].to_string())
+        })
+    }
 }
 
 /// Indicator widget specific data
