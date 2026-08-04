@@ -383,12 +383,102 @@ impl ColorConfig {
         Ok(colors)
     }
 
-    /// Save colors to colors.toml for a character
+    /// Save colors to colors.toml for a character.
+    ///
+    /// `self` is the MERGED (global + character) config held in memory. Writing
+    /// it whole pins every global preset/palette into the character file, so
+    /// later global edits never reach that character (the same profile-pinning
+    /// anti-pattern sparse.rs eliminated for config.toml). For a real
+    /// character we therefore write only what DIVERGES from the global colors
+    /// layer; for the global/default profile (or if the global layer can't be
+    /// read) we fall back to a full write.
     pub fn save(&self, character: Option<&str>) -> Result<()> {
         let colors_path = Config::colors_path(character)?;
-        let contents = toml::to_string_pretty(self).context("Failed to serialize colors")?;
+        let to_write = match (character, Self::load_common_colors()) {
+            (Some(_), Ok(global)) => self.sparse_against(&global),
+            // Global/default profile, or global layer unreadable: full write.
+            _ => self.clone(),
+        };
+        let contents =
+            toml::to_string_pretty(&to_write).context("Failed to serialize colors")?;
         write_atomic(&colors_path, contents).context("Failed to write colors.toml")?;
         Ok(())
+    }
+
+    /// The sparse subset of `self` (a merged config) that differs from
+    /// `global`, honoring how `load_with_merge` recombines them:
+    ///  - presets: per-key override — keep a preset only if it's new or its
+    ///    serialized value differs from global's;
+    ///  - prompt_colors / spell_colors / color_palette: whole-list
+    ///    replace-if-nonempty — keep the list only if it differs from global's
+    ///    (an identical list would merge back the same either way, so dropping
+    ///    it lets global edits flow through);
+    ///  - ui: per-field override vs UiColors::default() (that is exactly the
+    ///    predicate load_with_merge uses), so keep the ui block only if any
+    ///    field diverges from the default;
+    ///  - harmony: keep only if it differs from global's.
+    fn sparse_against(&self, global: &Self) -> Self {
+        // Value-equality via TOML serialization (the sub-structs don't derive
+        // PartialEq). A serialize failure yields Null, so two failures compare
+        // equal — acceptable, since we then simply keep the field.
+        fn to_val<T: serde::Serialize>(v: &T) -> toml::Value {
+            toml::Value::try_from(v).unwrap_or(toml::Value::String(String::new()))
+        }
+        let differs = |a: &toml::Value, b: &toml::Value| a != b;
+
+        // Presets: keep only those new-or-changed vs global.
+        let mut presets = HashMap::new();
+        for (key, preset) in &self.presets {
+            let keep = match global.presets.get(key) {
+                Some(g) => differs(&to_val(preset), &to_val(g)),
+                None => true,
+            };
+            if keep {
+                presets.insert(key.clone(), preset.clone());
+            }
+        }
+
+        // Whole-list fields: keep only if different from global's.
+        let prompt_colors = if differs(&to_val(&self.prompt_colors), &to_val(&global.prompt_colors))
+        {
+            self.prompt_colors.clone()
+        } else {
+            Vec::new()
+        };
+        let spell_colors = if differs(&to_val(&self.spell_colors), &to_val(&global.spell_colors)) {
+            self.spell_colors.clone()
+        } else {
+            Vec::new()
+        };
+        let color_palette =
+            if differs(&to_val(&self.color_palette), &to_val(&global.color_palette)) {
+                self.color_palette.clone()
+            } else {
+                Vec::new()
+            };
+
+        // ui: keep the block only if any field diverges from the default (the
+        // exact merge predicate). Otherwise emit the default (no override).
+        let default_ui = UiColors::default();
+        let ui = if differs(&to_val(&self.ui), &to_val(&default_ui)) {
+            self.ui.clone()
+        } else {
+            default_ui
+        };
+
+        let harmony = match (&self.harmony, &global.harmony) {
+            (Some(mine), Some(g)) if !differs(&to_val(mine), &to_val(g)) => None,
+            (h, _) => h.clone(),
+        };
+
+        Self {
+            presets,
+            prompt_colors,
+            ui,
+            spell_colors,
+            color_palette,
+            harmony,
+        }
     }
 
     /// Save colors to global colors.toml
@@ -874,5 +964,120 @@ mod ui_color_layer_tests {
         assert_eq!(ui.user_background_color(), Some("#000011"));
         ui.border_color = "-".to_string();
         assert_eq!(ui.user_border_color(), None);
+    }
+}
+
+#[cfg(test)]
+mod sparse_character_save_tests {
+    use super::*;
+
+    fn preset(fg: &str) -> PresetColor {
+        PresetColor { fg: Some(fg.to_string()), bg: None }
+    }
+
+    /// Save-sparse then reload must preserve a character override AND let a
+    /// later global change to an un-overridden preset reach the character —
+    /// the whole point of not full-dumping the merged config into the profile.
+    #[test]
+    fn character_save_is_sparse_and_lets_global_edits_flow_through() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        // Global colors: two presets.
+        let mut global = ColorConfig {
+            presets: HashMap::new(),
+            prompt_colors: Vec::new(),
+            ui: UiColors::default(),
+            spell_colors: Vec::new(),
+            color_palette: Vec::new(),
+            harmony: None,
+        };
+        global.presets.insert("speech".into(), preset("#111111"));
+        global.presets.insert("links".into(), preset("#222222"));
+        global.save_common().unwrap();
+
+        // Character loads merged (global's presets + the code defaults that
+        // load_common_colors back-fills), then overrides ONE (speech).
+        let mut merged = ColorConfig::load_with_merge(Some("Alice")).unwrap();
+        assert!(merged.presets.contains_key("speech"));
+        assert!(merged.presets.contains_key("links"));
+        merged.presets.insert("speech".into(), preset("#ff0000"));
+
+        // Save for the character — must be sparse.
+        merged.save(Some("Alice")).unwrap();
+
+        // The on-disk CHARACTER file must contain ONLY the override, not the
+        // untouched global "links" preset (that would pin it forever).
+        let char_only = ColorConfig::load_character_colors_only(Some("Alice")).unwrap();
+        assert_eq!(
+            char_only.presets.len(),
+            1,
+            "character file should carry only the overridden preset, got {:?}",
+            char_only.presets.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(char_only.presets.get("speech").unwrap().fg.as_deref(), Some("#ff0000"));
+        assert!(char_only.presets.get("links").is_none());
+
+        // Now change the GLOBAL "links" preset and confirm it reaches Alice
+        // (it wasn't pinned into her profile).
+        let mut global2 = ColorConfig::load_common_colors().unwrap();
+        global2.presets.insert("links".into(), preset("#00ff00"));
+        global2.save_common().unwrap();
+
+        let remerged = ColorConfig::load_with_merge(Some("Alice")).unwrap();
+        assert_eq!(
+            remerged.presets.get("links").unwrap().fg.as_deref(),
+            Some("#00ff00"),
+            "global edit to a non-overridden preset must flow through"
+        );
+        assert_eq!(
+            remerged.presets.get("speech").unwrap().fg.as_deref(),
+            Some("#ff0000"),
+            "character override must survive"
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    /// The global/default profile save stays a full write (no global layer to
+    /// diff against for the global file itself).
+    #[test]
+    fn palette_override_is_sparse_but_survives_roundtrip() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        let mut global = ColorConfig {
+            presets: HashMap::new(),
+            prompt_colors: Vec::new(),
+            ui: UiColors::default(),
+            spell_colors: Vec::new(),
+            color_palette: vec![PaletteColor {
+                name: "Red".into(),
+                color: "#ff0000".into(),
+                category: "red".into(),
+                favorite: false,
+                slot: None,
+            }],
+            harmony: None,
+        };
+        global.save_common().unwrap();
+
+        // Character with the SAME palette as global (no real override): the
+        // sparse save should drop the identical palette so global edits flow.
+        let merged = ColorConfig::load_with_merge(Some("Bob")).unwrap();
+        merged.save(Some("Bob")).unwrap();
+        let char_only = ColorConfig::load_character_colors_only(Some("Bob")).unwrap();
+        assert!(
+            char_only.color_palette.is_empty(),
+            "an identical palette must not be pinned into the profile"
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
     }
 }
