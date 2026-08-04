@@ -335,6 +335,22 @@ pub struct ActiveEffectsContent {
     pub generation: u64,
 }
 
+impl ActiveEffectsContent {
+    /// The window/template name that renders an effects `category` string
+    /// (from `<dialogData>` / `<clearContainer>`), or `None` for an unknown
+    /// category. Single source of truth for this mapping so the two effect
+    /// handlers in the message pipeline don't drift.
+    pub fn window_name_for_category(category: &str) -> Option<&'static str> {
+        match category {
+            "Buffs" => Some("buffs"),
+            "Debuffs" => Some("debuffs"),
+            "Cooldowns" => Some("cooldowns"),
+            "ActiveSpells" => Some("active_spells"),
+            _ => None,
+        }
+    }
+}
+
 /// Tab definition for tabbed text window
 #[derive(Clone, Debug)]
 pub struct TabDefinition {
@@ -648,6 +664,18 @@ pub struct PerceptionData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effect_category_maps_to_its_window() {
+        assert_eq!(ActiveEffectsContent::window_name_for_category("Buffs"), Some("buffs"));
+        assert_eq!(ActiveEffectsContent::window_name_for_category("Debuffs"), Some("debuffs"));
+        assert_eq!(ActiveEffectsContent::window_name_for_category("Cooldowns"), Some("cooldowns"));
+        assert_eq!(
+            ActiveEffectsContent::window_name_for_category("ActiveSpells"),
+            Some("active_spells")
+        );
+        assert_eq!(ActiveEffectsContent::window_name_for_category("Nonsense"), None);
+    }
 
     // ==================== Serde Round-Trip Tests ====================
     // The web frontend ships StyledLine over WebSocket as JSON; these

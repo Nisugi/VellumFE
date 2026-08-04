@@ -1857,13 +1857,11 @@ impl MessageProcessor {
             } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Find the window for this category
-                let window_name = match category.as_str() {
-                    "Buffs" => "buffs",
-                    "Debuffs" => "debuffs",
-                    "Cooldowns" => "cooldowns",
-                    "ActiveSpells" => "active_spells",
-                    _ => return, // Unknown category
+                // Find the window for this category (shared mapping).
+                let Some(window_name) =
+                    crate::data::ActiveEffectsContent::window_name_for_category(category)
+                else {
+                    return; // Unknown category
                 };
 
                 // Derive an absolute expiry now: effects are only re-sent on
@@ -1952,13 +1950,11 @@ impl MessageProcessor {
             ParsedElement::ClearActiveEffects { category } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Find the window for this category
-                let window_name = match category.as_str() {
-                    "Buffs" => "buffs",
-                    "Debuffs" => "debuffs",
-                    "Cooldowns" => "cooldowns",
-                    "ActiveSpells" => "active_spells",
-                    _ => return, // Unknown category
+                // Find the window for this category (shared mapping).
+                let Some(window_name) =
+                    crate::data::ActiveEffectsContent::window_name_for_category(category)
+                else {
+                    return; // Unknown category
                 };
 
                 // Clear the game-state store too (see ActiveEffect above)
