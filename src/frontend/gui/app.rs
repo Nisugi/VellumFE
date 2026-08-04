@@ -109,6 +109,8 @@ pub(super) struct WidgetRenderSettings {
     /// Current command-input buffer, only for command-input windows. Render
     /// paths are `&self`; edits flow back via `CommandInputEcho`.
     command_input_seed: Option<String>,
+    /// Untyped suffix of the newest matching history entry.
+    command_input_completion: Option<String>,
     /// Command-input windows with a hidden title bar show a small grip
     /// gutter: the TextEdit owns every drag in the body, so without it the
     /// window would have no drag surface at all.
@@ -139,6 +141,7 @@ pub(super) struct CommandInputEcho {
     submit: bool,
     history_prev: bool,
     history_next: bool,
+    completion_accepted: bool,
 }
 
 impl CommandInputEcho {
@@ -147,7 +150,11 @@ impl CommandInputEcho {
     }
 
     fn is_empty(&self) -> bool {
-        self.text.is_none() && !self.submit && !self.history_prev && !self.history_next
+        self.text.is_none()
+            && !self.submit
+            && !self.history_prev
+            && !self.history_next
+            && !self.completion_accepted
     }
 }
 
@@ -1664,6 +1671,15 @@ impl VellumGuiApp {
                 .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
                 .filter(|window| window.widget_type == WidgetType::CommandInput)
                 .map(|_| self.command_input.clone()),
+            command_input_completion: self
+                .available_tabs
+                .get(key)
+                .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
+                .filter(|window| window.widget_type == WidgetType::CommandInput)
+                .and_then(|_| crate::frontend::common::find_history_completion(
+                    &self.command_input,
+                    &self.command_history,
+                )),
             command_input_drag_gutter: self
                 .available_tabs
                 .get(key)
@@ -4036,6 +4052,17 @@ impl VellumGuiApp {
         let mut consumed_keyboard_input = false;
 
         for key_press in key_presses {
+            // A focused command input with a history completion owns plain
+            // Tab. Leave the event unconsumed so its TextEdit can accept the
+            // suggestion later this frame; otherwise normal Tab keybind
+            // dispatch (switch_current_window by default) remains unchanged.
+            if key_press.key_event.code == crate::data::input::KeyCode::Tab
+                && key_press.key_event.modifiers == crate::data::input::KeyModifiers::NONE
+                && self.command_completion_ready(ctx)
+            {
+                continue;
+            }
+
             // Esc cancels an active .go2 trip from anywhere in the GUI. Gated
             // on the same text-capture modes as macro dispatch so an editor
             // that owns the keyboard keeps its Esc semantics.
@@ -4933,6 +4960,27 @@ impl VellumGuiApp {
                 .collect();
             let _ = std::fs::write(path, joined);
         }
+    }
+
+    fn command_completion_ready(&self, ctx: &egui::Context) -> bool {
+        if crate::frontend::common::find_history_completion(
+            &self.command_input,
+            &self.command_history,
+        )
+        .is_none()
+            || !ctx.memory(|memory| {
+                memory.focused() == Some(egui::Id::new(COMMAND_INPUT_EDIT_ID))
+            })
+        {
+            return false;
+        }
+
+        let end = self.command_input.chars().count();
+        egui::TextEdit::load_state(ctx, egui::Id::new(COMMAND_INPUT_EDIT_ID))
+            .and_then(|state| state.cursor.char_range())
+            .is_some_and(|range| {
+                range.primary.index.0 == end && range.secondary.index.0 == end
+            })
     }
 
     /// Up arrow: step back through history (stashing the in-progress text
@@ -6540,8 +6588,12 @@ impl eframe::App for VellumGuiApp {
         if !self.command_input_tab_rendered() {
             egui::Panel::bottom("gui_command_input").show(ui, |ui| {
                 let seed = self.command_input.clone();
+                let completion = crate::frontend::common::find_history_completion(
+                    &seed,
+                    &self.command_history,
+                );
                 // Fixed fallback panel: not a movable window, no grip.
-                Self::render_command_input_widget(ui, &seed, false);
+                Self::render_command_input_widget(ui, &seed, completion.as_deref(), false);
             });
         }
 
@@ -6917,7 +6969,9 @@ impl eframe::App for VellumGuiApp {
             if let Some(text) = echo.text {
                 self.command_input = text;
             }
-            if echo.history_prev {
+            if echo.completion_accepted {
+                self.command_cursor_to_end(&ctx);
+            } else if echo.history_prev {
                 self.history_previous();
                 self.command_cursor_to_end(&ctx);
             } else if echo.history_next {

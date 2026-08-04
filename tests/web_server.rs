@@ -193,15 +193,18 @@ async fn health_and_static_assets_are_served() {
     let index = http_get(addr, "/play").await;
     assert!(index.contains("200"));
     assert!(index.contains("VellumFE"));
+    assert!(index.contains("cmd-suggestion"));
 
     let sessions = http_get(addr, "/sessions").await;
     assert!(sessions.contains("application/json"));
 
     let js = http_get(addr, "/app.js").await;
     assert!(js.contains("text/javascript"));
+    assert!(js.contains("updateCommandSuggestion"));
 
     let css = http_get(addr, "/app.css").await;
     assert!(css.contains("text/css"));
+    assert!(css.contains("#cmd-suggestion"));
 
     // PWA shell (Phase 4)
     let manifest = http_get(addr, "/manifest.webmanifest").await;

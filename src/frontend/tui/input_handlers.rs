@@ -334,17 +334,23 @@ impl super::TuiFrontend {
                     }
                     app_core.needs_render = true;
                 } else if is_switch_window_action {
-                    // Check if command input has text that should trigger tab completion
+                    // Keep Tab in the command input when it can accept a
+                    // history suggestion or complete a dot-command. Otherwise
+                    // preserve the configured switch-window behavior.
                     let should_complete = self
                         .widget_manager
                         .command_inputs
                         .get("command_input")
-                        .and_then(|cmd| cmd.get_input())
-                        .map(|text| text.starts_with('.'))
+                        .map(|cmd| {
+                            cmd.history_completion().is_some()
+                                || cmd
+                                    .get_input()
+                                    .is_some_and(|text| text.starts_with('.'))
+                        })
                         .unwrap_or(false);
 
                     if should_complete {
-                        // Do tab completion for dot commands
+                        // Accept history or perform dot-command completion.
                         let available_commands = app_core.get_available_commands();
                         let available_window_names = app_core.get_window_names();
                         use crate::frontend::tui::crossterm_bridge;

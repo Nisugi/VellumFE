@@ -12,13 +12,34 @@ use crate::frontend::tui::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{BorderType, Paragraph, Widget},
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write as _};
 use std::path::PathBuf;
+
+fn char_display_width(ch: char) -> usize {
+    Span::raw(ch.to_string()).width()
+}
+
+fn prefix_fitting_width(text: &str, max_width: usize) -> (String, usize) {
+    let mut width = 0;
+    let prefix = text
+        .chars()
+        .take_while(|ch| {
+            let next_width = char_display_width(*ch);
+            if width + next_width > max_width {
+                false
+            } else {
+                width += next_width;
+                true
+            }
+        })
+        .collect();
+    (prefix, width)
+}
 
 pub struct CommandInput {
     model: CommandInputModel,
@@ -184,6 +205,14 @@ impl CommandInput {
         self.model.history_next();
     }
 
+    pub fn history_completion(&self) -> Option<String> {
+        self.model.history_completion()
+    }
+
+    pub fn accept_history_completion(&mut self) -> bool {
+        self.model.accept_history_completion()
+    }
+
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         self.render_with_status(area, buf, None);
     }
@@ -282,8 +311,8 @@ impl CommandInput {
         if let Some(icon) = icon_text {
             let max_icon_width = inner.width as usize;
             if max_icon_width > 0 {
-                let icon_render: String = icon.chars().take(max_icon_width).collect();
-                let icon_render_width = icon_render.chars().count();
+                let (icon_render, icon_render_width) =
+                    prefix_fitting_width(icon, max_icon_width);
                 let icon_color = self
                     .prompt_icon_color
                     .as_ref()
@@ -297,7 +326,7 @@ impl CommandInput {
                 );
                 let mut consumed = icon_render_width;
                 // Add a trailing spacer if room allows
-                if consumed < max_icon_width {
+                if consumed > 0 && consumed < max_icon_width {
                     buf.set_string(
                         inner.x + consumed as u16,
                         inner.y,
@@ -314,51 +343,72 @@ impl CommandInput {
         let available_width = text_area.width as usize;
         let chars: Vec<char> = self.model.text().chars().collect();
         let total_chars = chars.len();
+        let char_widths: Vec<usize> = chars.iter().map(|ch| char_display_width(*ch)).collect();
+        let total_width: usize = char_widths.iter().sum();
         let selection = self.model.selection_range();
-
-        // We need space for: text before cursor + cursor block + text after cursor
-        // The cursor block takes 1 position, so max visible cursor position is (available_width - 1)
-        let max_visible_cursor_pos = available_width.saturating_sub(1);
+        let history_completion = self.model.history_completion();
+        let cursor_at_end = self.model.cursor_pos() == total_chars;
+        let completion_width = history_completion
+            .as_deref()
+            .and_then(|suffix| suffix.chars().next())
+            .map(char_display_width)
+            .unwrap_or(0);
+        let reserved_width = if cursor_at_end {
+            1 + completion_width.min(available_width.saturating_sub(1))
+        } else {
+            0
+        };
+        let visible_text_width = available_width.saturating_sub(reserved_width);
 
         let scroll_offset = if available_width == 0 {
             0
-        } else if total_chars < available_width {
+        } else if cursor_at_end {
+            let mut start = self.model.cursor_pos();
+            let mut width = 0;
+            while start > 0 && width + char_widths[start - 1] <= visible_text_width {
+                start -= 1;
+                width += char_widths[start];
+            }
+            start
+        } else if total_width < available_width {
             // Everything fits - no scroll needed
             0
         } else {
             // Text is longer than visible area - need to scroll
             // Keep cursor at 30% from left edge when scrolling
-            let target_cursor_pos = (available_width * 3 / 10).min(max_visible_cursor_pos);
-
-            // Calculate scroll to position cursor at target_cursor_pos from left
-            if self.model.cursor_pos() < target_cursor_pos {
-                // Near start - show from beginning
-                0
-            } else if self.model.cursor_pos()
-                >= total_chars.saturating_sub(available_width - target_cursor_pos)
-            {
-                // Near end - anchor to end, ensuring cursor stays within bounds
-                total_chars.saturating_sub(available_width)
-            } else {
-                // Middle - keep cursor at target position from left
-                self.model.cursor_pos().saturating_sub(target_cursor_pos)
+            let cursor_width = char_widths
+                .get(self.model.cursor_pos())
+                .copied()
+                .unwrap_or(1);
+            let target_cursor_width = (available_width * 3 / 10)
+                .min(available_width.saturating_sub(cursor_width));
+            let mut start = self.model.cursor_pos();
+            let mut width = 0;
+            while start > 0 && width + char_widths[start - 1] <= target_cursor_width {
+                start -= 1;
+                width += char_widths[start];
             }
+            start
         };
 
         // Extract visible portion of text with scroll applied
-        // Take up to available_width chars, which includes the cursor position
-        let visible_chars: Vec<char> = chars
-            .iter()
-            .skip(scroll_offset)
-            .take(available_width)
-            .copied()
-            .collect();
+        // Reserve room at the end for the cursor and at least one completion
+        // character, even when the input itself fills the window.
+        let mut visible_chars = Vec::new();
+        let mut visible_width = 0;
+        for (index, ch) in chars.iter().copied().enumerate().skip(scroll_offset) {
+            let width = char_widths[index];
+            if visible_width + width > visible_text_width {
+                break;
+            }
+            visible_chars.push((index, ch));
+            visible_width += width;
+        }
 
         // Adjust cursor position relative to visible window
-        let visible_cursor_pos = self.model.cursor_pos().saturating_sub(scroll_offset);
-
-        // Ensure cursor position doesn't exceed available space
-        let visible_cursor_pos = visible_cursor_pos.min(available_width.saturating_sub(1));
+        let visible_cursor_pos: usize = char_widths[scroll_offset..self.model.cursor_pos()]
+            .iter()
+            .sum();
 
         // Get cursor colors
         let cursor_fg = self
@@ -384,19 +434,50 @@ impl CommandInput {
                 " ",
                 Style::default().bg(cursor_bg).fg(cursor_fg),
             ));
+            if let Some(suffix) = history_completion {
+                let (visible_suffix, _) =
+                    prefix_fitting_width(&suffix, available_width.saturating_sub(1));
+                spans.push(Span::styled(
+                    visible_suffix,
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                ));
+            }
         } else {
-            for (i, ch) in visible_chars.iter().enumerate() {
+            let mut cell_pos = 0;
+            for (global_idx, ch) in &visible_chars {
                 let mut style = Style::default().fg(text_color);
                 if let Some((start, end)) = selection {
-                    let global_idx = scroll_offset + i;
-                    if global_idx >= start && global_idx < end {
+                    if *global_idx >= start && *global_idx < end {
                         style = style.bg(selection_bg);
                     }
                 }
-                if i == visible_cursor_pos {
+                if cell_pos == visible_cursor_pos {
                     style = Style::default().bg(cursor_bg).fg(cursor_fg);
                 }
                 spans.push(Span::styled(ch.to_string(), style));
+                cell_pos += char_widths[*global_idx];
+            }
+            let cursor_is_visible_at_end =
+                self.model.cursor_pos() == total_chars && visible_width < available_width;
+            if cursor_is_visible_at_end {
+                spans.push(Span::styled(
+                    " ",
+                    Style::default().bg(cursor_bg).fg(cursor_fg),
+                ));
+                if let Some(suffix) = history_completion {
+                    let (visible_suffix, _) = prefix_fitting_width(
+                        &suffix,
+                        available_width.saturating_sub(visible_width + 1),
+                    );
+                    spans.push(Span::styled(
+                        visible_suffix,
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::DIM),
+                    ));
+                }
             }
         }
 
@@ -608,5 +689,57 @@ impl CommandInput {
 
     pub fn redo(&mut self) -> bool {
         self.model.redo()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_remains_visible_when_input_fills_the_window() {
+        let mut input = CommandInput::new(10);
+        input.show_border = false;
+        input.show_title = false;
+        input.record_external_command("abcdefg");
+        input.insert_text("abcdef");
+
+        let area = Rect::new(0, 0, 6, 1);
+        let mut buf = Buffer::empty(area);
+        input.render(area, &mut buf);
+
+        assert_eq!(buf[(4, 0)].symbol(), " ");
+        assert_eq!(buf[(5, 0)].symbol(), "g");
+    }
+
+    #[test]
+    fn completion_remains_visible_after_horizontal_scrolling() {
+        let mut input = CommandInput::new(10);
+        input.show_border = false;
+        input.show_title = false;
+        input.record_external_command("abcdefghij!");
+        input.insert_text("abcdefghij");
+
+        let area = Rect::new(0, 0, 6, 1);
+        let mut buf = Buffer::empty(area);
+        input.render(area, &mut buf);
+
+        assert_eq!(buf[(5, 0)].symbol(), "!");
+    }
+
+    #[test]
+    fn completion_clipping_accounts_for_wide_characters() {
+        let mut input = CommandInput::new(10);
+        input.show_border = false;
+        input.show_title = false;
+        input.record_external_command("界界界!");
+        input.insert_text("界界界");
+
+        let area = Rect::new(0, 0, 6, 1);
+        let mut buf = Buffer::empty(area);
+        input.render(area, &mut buf);
+
+        assert_eq!(buf[(4, 0)].symbol(), " ");
+        assert_eq!(buf[(5, 0)].symbol(), "!");
     }
 }

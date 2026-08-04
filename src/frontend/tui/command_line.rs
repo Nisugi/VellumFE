@@ -99,8 +99,11 @@ impl TuiFrontend {
                 KeyCode::Up => cmd_input.history_previous(),
                 KeyCode::Down => cmd_input.history_next(),
                 KeyCode::Tab => {
-                    // Tab completion for commands and window names
-                    cmd_input.try_complete(available_commands, available_window_names);
+                    // History completion takes precedence; retain the existing
+                    // dot-command/window completion when history has no match.
+                    if !cmd_input.accept_history_completion() {
+                        cmd_input.try_complete(available_commands, available_window_names);
+                    }
                 }
                 _ => {}
             }

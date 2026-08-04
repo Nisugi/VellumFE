@@ -98,7 +98,7 @@ All of these can be changed in [keybinds.toml](../configuration/keybinds-toml.md
 | `Enter` | Send command |
 | `Up` / `Down` | Command history |
 | `Page Up/Down` | Scroll focused window |
-| `Tab` | Switch focused window |
+| `Tab` | Accept a grey history suggestion; otherwise switch focused window |
 | `Ctrl+F` | Search in window (`F3` next match) |
 | `Ctrl+R` | Repeat last command |
 | `Escape` | Close dialogs / cancel |

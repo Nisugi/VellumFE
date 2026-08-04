@@ -4101,6 +4101,7 @@ function insertMacroText(text) {
   }
   cmdInput.value += text;
   if (send) submitInput();
+  else updateCommandSuggestion();
 }
 
 // A button or menu option, post-confirm: type-in entries stay local,
@@ -4603,12 +4604,32 @@ function openMacroEditor(existing) {
 
 const inputForm = document.getElementById("input-row");
 const cmdInput = document.getElementById("cmd-input");
+const cmdSuggestion = document.getElementById("cmd-suggestion");
+const cmdSuggestionPrefix = document.getElementById("cmd-suggestion-prefix");
+const cmdSuggestionSuffix = document.getElementById("cmd-suggestion-suffix");
 const repeatBtn = document.getElementById("repeat-btn");
 
 let cmdHistory = [];
 try {
   cmdHistory = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
 } catch { /* corrupted storage — start fresh */ }
+
+let commandCompletion = null;
+
+function updateCommandSuggestion() {
+  const input = cmdInput.value;
+  const cursorAtEnd = cmdInput.selectionStart === input.length
+    && cmdInput.selectionEnd === input.length;
+  commandCompletion = input && cursorAtEnd
+    ? cmdHistory.find((command) => command.startsWith(input) && command.length > input.length) || null
+    : null;
+  cmdSuggestion.hidden = !commandCompletion;
+  cmdSuggestionPrefix.textContent = commandCompletion ? input : "";
+  cmdSuggestionSuffix.textContent = commandCompletion
+    ? commandCompletion.slice(input.length)
+    : "";
+  cmdSuggestion.scrollLeft = cmdInput.scrollLeft;
+}
 
 function recordHistory(text) {
   if (cmdHistory[0] === text) return;
@@ -4628,6 +4649,7 @@ function submitInput() {
   sendCommand(text);
   recordHistory(text);
   cmdInput.value = "";
+  updateCommandSuggestion();
 }
 
 inputForm.addEventListener("submit", (ev) => {
@@ -4664,12 +4686,21 @@ repeatBtn.addEventListener("click", () => {
   if (cmdHistory[0]) sendCommand(cmdHistory[0]);
 });
 
-// Hardware keyboard: up/down arrows browse cmdHistory in the input field.
+// Hardware keyboard: Tab accepts the visible completion; up/down browse
+// command history in the input field.
 let historyIndex = -1;
 cmdInput.addEventListener("keydown", (ev) => {
-  if (ev.key === "ArrowUp") {
+  if (ev.key === "Tab" && commandCompletion
+      && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+    cmdInput.value = commandCompletion;
+    cmdInput.setSelectionRange(commandCompletion.length, commandCompletion.length);
+    historyIndex = -1;
+    updateCommandSuggestion();
+    ev.preventDefault();
+  } else if (ev.key === "ArrowUp") {
     if (historyIndex < cmdHistory.length - 1) historyIndex += 1;
     if (cmdHistory[historyIndex]) cmdInput.value = cmdHistory[historyIndex];
+    updateCommandSuggestion();
     ev.preventDefault();
   } else if (ev.key === "ArrowDown") {
     historyIndex -= 1;
@@ -4679,11 +4710,17 @@ cmdInput.addEventListener("keydown", (ev) => {
     } else {
       cmdInput.value = cmdHistory[historyIndex] || "";
     }
+    updateCommandSuggestion();
     ev.preventDefault();
   } else {
     historyIndex = -1;
   }
 });
+cmdInput.addEventListener("input", updateCommandSuggestion);
+cmdInput.addEventListener("click", updateCommandSuggestion);
+cmdInput.addEventListener("keyup", updateCommandSuggestion);
+cmdInput.addEventListener("scroll", updateCommandSuggestion);
+cmdInput.addEventListener("select", updateCommandSuggestion);
 
 // ---- Text size --------------------------------------------------------------
 // Story-text size, adjusted live from a stepper sheet. Roaming pref:
