@@ -5839,6 +5839,11 @@ impl eframe::App for VellumGuiApp {
         }
         // Publish the color-emoji toggle for this frame's text painters.
         color_emoji::set_enabled(self.app_core.config.ui.color_emoji);
+        // Publish the custom-emoji size/spacing knobs for this frame.
+        custom_emoji_render::set_geometry(
+            self.app_core.config.ui.custom_emoji_size,
+            self.app_core.config.ui.custom_emoji_spacing,
+        );
         // Publish the configured item-drag modifier for link renderers.
         ctx.data_mut(|data| {
             data.insert_temp(

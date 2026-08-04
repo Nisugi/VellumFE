@@ -597,7 +597,7 @@ impl VellumGuiApp {
                     // copyable as text (a space is), which is fine.
                     let row_h = ctx.fonts_mut(|f| f.row_height(font_id));
                     let space_w = ctx.fonts_mut(|f| f.glyph_width(font_id, ' '));
-                    let target_w = row_h * super::custom_emoji_render::EMOJI_WIDTH_FACTOR;
+                    let target_w = row_h * super::custom_emoji_render::width_factor();
                     let mut fmt =
                         Self::segment_text_format_ex(segment, visuals, false, false, font_id);
                     fmt.color = egui::Color32::TRANSPARENT;

@@ -49,6 +49,15 @@ contain letters, digits, `_`, `+`, and `-` only. Names are case-insensitive
 (`VibeCat.png` matches `:vibecat:` and `:VibeCat:`). If a custom emoji shares a
 name with a standard one, **your custom emoji wins**.
 
+### Sizing custom emoji (GUI)
+
+Two settings tune how custom emoji look in the GUI (Client settings → UI):
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `Custom Emoji Size` (`ui.custom_emoji_size`) | 1.0 | Image height as a multiple of the text line height. Above 1.0 the emoji stand out above the line. |
+| `Custom Emoji Spacing` (`ui.custom_emoji_spacing`) | 0.2 | Breathing room around each emoji, as a fraction of the line height added to its width. |
+
 ### How each frontend renders custom emoji
 
 - **GUI** — draws the image inline, animating APNG/GIF frames.

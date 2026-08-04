@@ -35,12 +35,37 @@ use std::time::Duration;
 
 use crate::core::custom_emoji::{self, EmojiFormat};
 
-/// Total inline width a custom emoji occupies, as a multiple of the text row
-/// height: the square is one row-height tall/wide, and the extra 0.2 is the
-/// horizontal breathing room between adjacent emoji. build_line_job sizes the
-/// placeholder run to `row_height * this`; the painter draws the square
-/// centered in it.
-pub(super) const EMOJI_WIDTH_FACTOR: f32 = 1.2;
+// User-tunable emoji geometry, published once per frame from config (same
+// pattern as color_emoji::set_enabled), so build_line_job / the painter — which
+// only have &Context — can read them without threading config everywhere.
+// Stored as integer bits so they fit in an AtomicU32.
+static EMOJI_SIZE_BITS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3f80_0000); // 1.0
+static EMOJI_SPACING_BITS: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3e4c_cccd); // 0.2
+
+/// Publish the emoji size/spacing settings for this frame's layout + paint.
+/// `size` = square height as a multiple of row height; `spacing` = extra
+/// inline width as a fraction of row height.
+pub(super) fn set_geometry(size: f32, spacing: f32) {
+    use std::sync::atomic::Ordering;
+    EMOJI_SIZE_BITS.store(size.max(0.1).to_bits(), Ordering::Relaxed);
+    EMOJI_SPACING_BITS.store(spacing.max(0.0).to_bits(), Ordering::Relaxed);
+}
+
+/// The emoji square height as a multiple of the text row height.
+pub(super) fn size_factor() -> f32 {
+    f32::from_bits(EMOJI_SIZE_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The total inline width a custom emoji reserves, as a multiple of row height
+/// (square width + horizontal padding). The placeholder run is sized to
+/// `row_height * this`; the square is centered in it.
+pub(super) fn width_factor() -> f32 {
+    let size = size_factor();
+    let spacing = f32::from_bits(EMOJI_SPACING_BITS.load(std::sync::atomic::Ordering::Relaxed));
+    size + spacing
+}
 
 /// One decoded custom emoji: its animation frames as textures plus the total
 /// cycle duration in seconds. A static image is a single frame with a zero
@@ -277,11 +302,11 @@ pub(super) fn paint_custom_emoji(
     let time = ctx.input(|i| i.time);
     let texture = frames.frame_at(time);
 
-    // The slot was sized (in build_line_job) to row_height * EMOJI_WIDTH_FACTOR
-    // wide by row_height tall, so a square at the row height fits with padding.
-    // Draw it square (slot height), centered in the slot; the extra slot width
-    // is the breathing room between adjacent emoji.
-    let side = slot.height();
+    // The slot is row_height tall and (row_height * width_factor) wide (set in
+    // build_line_job). Draw the emoji square at row_height * size_factor — the
+    // user's size knob — centered in the slot. size_factor > 1 lets the emoji
+    // stand out above the line; the leftover slot width is the spacing knob.
+    let side = slot.height() * size_factor();
     let rect = egui::Rect::from_center_size(slot.center(), egui::vec2(side, side));
     painter.image(
         texture.id(),

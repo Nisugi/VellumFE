@@ -11,6 +11,14 @@ fn default_highlights_enabled() -> bool {
     true
 }
 
+fn default_custom_emoji_size() -> f32 {
+    1.0
+}
+
+fn default_custom_emoji_spacing() -> f32 {
+    0.2
+}
+
 /// Configuration for highlight system toggles.
 /// Allows disabling specific highlight features without deleting patterns.
 /// Note: System highlights (monsterbold, links, roomname) are NOT affected by these toggles.
@@ -97,6 +105,14 @@ pub struct UiConfig {
     /// Draw emoji in color in the GUI (monochrome when off)
     #[serde(default = "default_true")]
     pub color_emoji: bool,
+    /// Custom-emoji image size as a multiple of the text row height
+    /// (1.0 = same height as the line; >1 makes them stand out above the line).
+    #[serde(default = "default_custom_emoji_size")]
+    pub custom_emoji_size: f32,
+    /// Horizontal breathing room around a custom emoji, as a fraction of the
+    /// row height added to its inline width (0.0 = tight, higher = more space).
+    #[serde(default = "default_custom_emoji_spacing")]
+    pub custom_emoji_spacing: f32,
     /// LEGACY: migrated to `[sorter].enabled` at load (`SorterConfig`);
     /// kept readable one release so old files carry their value over.
     #[serde(default)]
@@ -221,6 +237,8 @@ impl Default for UiConfig {
             command_echo: default_command_echo(),
             emoji_shortcodes: true,
             color_emoji: true,
+            custom_emoji_size: default_custom_emoji_size(),
+            custom_emoji_spacing: default_custom_emoji_spacing(),
             sorter_enabled: false,
             performance_stats_enabled: default_performance_stats_enabled(),
             perf_stats_x: default_perf_stats_x(),

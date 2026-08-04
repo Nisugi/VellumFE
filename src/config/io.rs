@@ -753,6 +753,8 @@ impl Default for Config {
                 min_command_length: default_min_command_length(),
                 emoji_shortcodes: true,
                 color_emoji: true,
+                custom_emoji_size: 1.0,
+                custom_emoji_spacing: 0.2,
                 sorter_enabled: false,
                 performance_stats_enabled: default_performance_stats_enabled(),
                 perf_stats_x: default_perf_stats_x(),
