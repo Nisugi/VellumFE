@@ -5421,4 +5421,99 @@ mod tests {
             .collect();
         assert_eq!(labels.len(), 1);
     }
+
+    // ==================== UberBar (resident dynamic dialog) ====================
+    //
+    // Characterization of how uberbar_eo.lic's feed parses TODAY, before any
+    // UberBar-support work. UberBar is a resident, non-templated openDialog
+    // (id='UberBar') whose dialogData mixes <skin>, <image>, <label>, and
+    // <progressBar> positioned by an anchor grid (anchor_left/anchor_top).
+    //
+    // These asserts LOCK CURRENT BEHAVIOR so the Tier-1 change (ingest resident
+    // labels/bars into the DialogState WITH layout) is a visible, reviewed diff
+    // rather than a silent behavior swap. They are expected to be *updated*
+    // when that change lands — that is the point of a characterization test.
+
+    /// A trimmed but faithful slice of one real UberBar frame: the panel open,
+    /// the injury skin, one wound image, two label rows, and two vitals bars,
+    /// carrying the same align/anchor/top/left geometry the script emits.
+    const UBERBAR_FRAME: &str = "<openDialog type='dynamic' id='UberBar' title=\"Nisugi's Uberbar\" target='UberBar' location='main' height='282' width='190' resident='true'>\
+        <dialogData id='UberBar' clear='t'>\
+        <skin id='ubinjury' name='InjuriesPanel' controls='nsys,leftArm,rightArm' top='5' left='5' width='100' height='150' align='nw'/>\
+        <image id='nsys' name='Injury3' cmd='cure nerves' tooltip='cure nerves' height='0' width='0'/>\
+        <label id='ublog' value='Today:' justify='4' anchor_left='ubinjury' align='n' top='5' left='5' height='15' width='50'/>\
+        <label id='ublogv' value='1234' justify='6' anchor_left='ublog' align='n' top='5' left='0' height='15' width='50'/>\
+        <progressBar id='health' value='95' text='95/100' customText='t' anchor_left='ubinjury' anchor_top='ubbars' top='3' left='4' width='100' height='15'/>\
+        <progressBar id='mana' value='80' text='80/100' customText='t' anchor_left='ubinjury' anchor_top='health' top='3' left='4' width='100' height='15'/>\
+        </dialogData></openDialog>";
+
+    #[test]
+    fn characterize_uberbar_resident_dialog_current_parse() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(UBERBAR_FRAME);
+
+        // Resident + no template => announced as a dockable DialogPanel, not a
+        // transient popup (no DialogOpen).
+        assert!(
+            elements
+                .iter()
+                .any(|e| matches!(e, ParsedElement::DialogPanelOpen { id, .. } if id == "UberBar")),
+            "resident UberBar should announce a DialogPanel"
+        );
+        assert!(
+            !elements.iter().any(|e| matches!(e, ParsedElement::DialogOpen { .. })),
+            "resident dialogs must not emit a popup DialogOpen"
+        );
+
+        // <image> DOES reach the DialogState path (DialogControls), with layout
+        // preserved — this already works and Tier 1 must not regress it.
+        let image_ctrls: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::DialogControls { id, images, .. } if id == "UberBar" => Some(images),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(image_ctrls.len(), 1, "UberBar images should arrive as DialogControls");
+        assert!(
+            image_ctrls[0].iter().any(|img| img.id == "nsys" && img.command == "cure nerves"),
+            "the wound image keeps its cmd"
+        );
+
+        // CURRENT GAP #1: progressBars flatten into layout-less, dialog-less
+        // stream ProgressBar elements (siphoned for widget updates), NOT into a
+        // positioned DialogState. Tier 1 will additionally route these into the
+        // UberBar DialogState carrying their anchor geometry.
+        let flat_bars: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::ProgressBar { .. }))
+            .collect();
+        assert_eq!(
+            flat_bars.len(),
+            2,
+            "today both bars land as flat stream ProgressBar elements (no dialog id, no layout)"
+        );
+        assert!(
+            !elements
+                .iter()
+                .any(|e| matches!(e, ParsedElement::DialogProgressBars { .. })),
+            "today resident bars are NOT ingested into the dialog store"
+        );
+
+        // CURRENT GAP #2: standalone <label> rows flatten into layout-less
+        // stream Label elements. Tier 1 will route these into display_labels
+        // with layout.
+        let flat_labels: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::Label { .. }))
+            .collect();
+        assert_eq!(
+            flat_labels.len(),
+            2,
+            "today both label rows land as flat stream Label elements (no dialog id, no layout)"
+        );
+
+        // CURRENT GAP #3: <skin> produces NO element at all — silently ignored.
+        // (Nothing to assert positively; documented here so Tier 3 has a target.)
+    }
 }
