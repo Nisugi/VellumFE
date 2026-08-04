@@ -130,8 +130,9 @@ impl VellumGuiApp {
         let mut ungroup: Option<crate::frontend::gui::TabKey> = None;
         let mut restore_deleted: Option<String> = None;
 
-        // Windows the user deleted (not hidden) that can be restored.
-        let deleted_names = self.app_core.deleted_window_names();
+        // Windows the user deleted (not hidden) that can be restored:
+        // (internal name, display title).
+        let deleted_windows = self.app_core.deleted_windows_for_restore();
 
         egui::Window::new("Windows")
             .id(egui::Id::new("gui_known_windows"))
@@ -159,10 +160,11 @@ impl VellumGuiApp {
                     // Restore a window the user deleted (distinct from hide):
                     // its exact def — position, streams, widget type — comes
                     // back. Only shown when something was deleted.
-                    if !deleted_names.is_empty() {
+                    if !deleted_windows.is_empty() {
                         ui.menu_button("↩ Restore deleted…", |ui| {
-                            for name in &deleted_names {
-                                if ui.button(name).clicked() {
+                            for (name, title) in &deleted_windows {
+                                // Show the human title; restore by the stable id.
+                                if ui.button(title).clicked() {
                                     restore_deleted = Some(name.clone());
                                     ui.close();
                                 }

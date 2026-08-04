@@ -795,7 +795,10 @@ impl VellumGuiApp {
                 if state.selected.is_none() {
                     ui.weak("Pick a window to edit.");
                     ui.separator();
-                    let mut names: Vec<(String, String, bool)> = self
+                    // (internal name, display title, widget type, hidden). The
+                    // title is the human name (base.title), falling back to the
+                    // id; Edit still loads by the stable name.
+                    let mut rows: Vec<(String, String, String, bool)> = self
                         .app_core
                         .ui_state
                         .windows
@@ -803,20 +806,30 @@ impl VellumGuiApp {
                         .map(|(name, window)| {
                             let hidden = Self::tab_key_for_window(name, window)
                                 .is_some_and(|key| self.hidden_tabs.contains(&key));
-                            (name.clone(), format!("{:?}", window.widget_type), hidden)
+                            let title = self
+                                .app_core
+                                .layout
+                                .windows
+                                .iter()
+                                .find(|w| w.name() == name)
+                                .and_then(|w| w.base().title.clone())
+                                .filter(|t| !t.trim().is_empty())
+                                .unwrap_or_else(|| name.clone());
+                            (name.clone(), title, format!("{:?}", window.widget_type), hidden)
                         })
                         .collect();
-                    names.sort();
+                    // Sort by the visible title so the list reads alphabetically.
+                    rows.sort_by(|a, b| a.1.to_ascii_lowercase().cmp(&b.1.to_ascii_lowercase()));
                     egui::ScrollArea::vertical()
                         .id_salt("window_editor_picker")
                         .max_height(300.0)
                         .show(ui, |ui| {
-                            for (name, widget_type, hidden) in names {
+                            for (name, title, widget_type, hidden) in rows {
                                 ui.horizontal(|ui| {
                                     if ui.small_button("Edit").clicked() {
                                         load_request = Some(name.clone());
                                     }
-                                    ui.label(&name);
+                                    ui.label(&title);
                                     ui.weak(widget_type);
                                     if hidden {
                                         ui.weak("(hidden)");

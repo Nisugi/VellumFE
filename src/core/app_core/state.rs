@@ -4012,7 +4012,29 @@ impl AppCore {
         true
     }
 
-    /// Names of windows the user deleted and can restore, newest first.
+    /// Deleted windows the user can restore, newest first, as
+    /// `(name, display_title)`: restore by the stable `name`, show the human
+    /// `title` (falling back to the name when no title was set).
+    pub fn deleted_windows_for_restore(&self) -> Vec<(String, String)> {
+        self.layout
+            .deleted_windows
+            .iter()
+            .rev()
+            .map(|w| {
+                let name = w.name().to_string();
+                let title = w
+                    .base()
+                    .title
+                    .clone()
+                    .filter(|t| !t.trim().is_empty())
+                    .unwrap_or_else(|| name.clone());
+                (name, title)
+            })
+            .collect()
+    }
+
+    /// Just the internal names of restorable deleted windows, newest first.
+    /// (Kept for tests / callers that only need the key.)
     pub fn deleted_window_names(&self) -> Vec<String> {
         self.layout
             .deleted_windows
@@ -7093,6 +7115,36 @@ mod tests {
         assert!(core.ui_state.windows.contains_key("my_notes"));
         // Stash is now empty.
         assert!(core.deleted_window_names().is_empty());
+    }
+
+    #[test]
+    fn deleted_windows_for_restore_shows_title_not_internal_id() {
+        // A custom window with an opaque id but a human title.
+        let mut def = positioned_text_def("custom-text-1", 1, 1, 10, 5);
+        def.base_mut().title = Some("Consumables".into());
+        let mut core = core_with_layout(vec![def]);
+        core.init_windows(80, 24);
+        core.delete_and_stash_window("custom-text-1");
+
+        let entries = core.deleted_windows_for_restore();
+        assert_eq!(entries.len(), 1);
+        let (name, title) = &entries[0];
+        assert_eq!(name, "custom-text-1", "restore key is the stable id");
+        assert_eq!(title, "Consumables", "menu shows the human title");
+
+        // A titleless deleted window falls back to its name.
+        core.delete_and_stash_window("custom-text-1"); // already stashed; re-add a bare one
+        let mut bare = positioned_text_def("scratch-2", 0, 0, 5, 5);
+        bare.base_mut().title = None;
+        core.layout.windows.push(bare);
+        core.init_windows(80, 24);
+        core.delete_and_stash_window("scratch-2");
+        let scratch = core
+            .deleted_windows_for_restore()
+            .into_iter()
+            .find(|(n, _)| n == "scratch-2")
+            .unwrap();
+        assert_eq!(scratch.1, "scratch-2", "no title -> falls back to name");
     }
 
     #[test]
