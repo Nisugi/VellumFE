@@ -426,11 +426,14 @@ impl VellumGuiApp {
         if let Some(key) = self.find_tab_key_by_name(name) {
             self.forget_tab_state(&key, name);
         }
-        self.app_core.remove_window(name);
-        self.app_core.layout.windows.retain(|w| w.name() != name);
-        self.app_core.schedule_layout_autosave();
+        // Stash the def instead of dropping it, so the window can be restored
+        // (delete_and_stash_window calls remove_window + autosave internally).
+        self.app_core.delete_and_stash_window(name);
         self.app_core
-            .add_system_message(&format!("Custom window '{}' deleted.", name));
+            .add_system_message(&format!(
+                "Window '{}' deleted. Restore it from + Custom window → Restore deleted.",
+                name
+            ));
     }
 
     pub(in super::super) fn render_custom_windows_editor(&mut self, ctx: &egui::Context) {

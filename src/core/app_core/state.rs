@@ -316,6 +316,7 @@ impl AppCore {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
         let saved_dialog_positions: crate::config::SavedDialogPositions = Default::default();
         let message_processor =
@@ -3988,6 +3989,71 @@ impl AppCore {
         self.hide_window(name);
     }
 
+    /// Permanently delete a window from the layout, but STASH its full def in
+    /// `layout.deleted_windows` so it can be restored later. This is the honest
+    /// "delete" (distinct from hide): the window leaves the Windows menu and
+    /// stops rendering, yet a custom window — the only record of a moved
+    /// command_input or a user-authored window that `+ Custom window` can't
+    /// recreate — is never actually lost. Returns true if a window was deleted.
+    pub fn delete_and_stash_window(&mut self, name: &str) -> bool {
+        // Remove the live UI window.
+        self.remove_window(name);
+        // Pull the def out of the layout and stash it (newest last). If a def
+        // with this name is already stashed, replace it (a re-delete after a
+        // restore keeps one copy).
+        let Some(pos) = self.layout.windows.iter().position(|w| w.name() == name) else {
+            return false;
+        };
+        let def = self.layout.windows.remove(pos);
+        self.layout.deleted_windows.retain(|w| w.name() != name);
+        self.layout.deleted_windows.push(def);
+        self.mark_layout_modified();
+        self.schedule_layout_autosave();
+        true
+    }
+
+    /// Names of windows the user deleted and can restore, newest first.
+    pub fn deleted_window_names(&self) -> Vec<String> {
+        self.layout
+            .deleted_windows
+            .iter()
+            .rev()
+            .map(|w| w.name().to_string())
+            .collect()
+    }
+
+    /// Restore a previously deleted window by name: move its def out of the
+    /// stash and back into the layout (Shown), then materialize the live
+    /// window. Returns true if it was restored. If a live window with the same
+    /// name now exists (the name was reused), the restore is refused so it
+    /// can't clobber the current window.
+    pub fn restore_deleted_window(&mut self, name: &str, width: u16, height: u16) -> bool {
+        if self.layout.windows.iter().any(|w| w.name() == name) {
+            self.add_system_message(&format!(
+                "Can't restore '{name}': a window with that name already exists."
+            ));
+            return false;
+        }
+        let Some(pos) = self
+            .layout
+            .deleted_windows
+            .iter()
+            .position(|w| w.name() == name)
+        else {
+            return false;
+        };
+        let mut def = self.layout.deleted_windows.remove(pos);
+        // A restored window comes back visible (Ephemeral would not persist).
+        def.base_mut().visibility = crate::config::WindowVisibility::Shown;
+        self.layout.windows.push(def);
+        self.mark_layout_modified();
+        // Rebuild the live windows so the restored def gets a UI window.
+        self.init_windows(width, height);
+        self.schedule_layout_autosave();
+        self.add_system_message(&format!("Restored window '{name}'."));
+        true
+    }
+
     /// Create an ephemeral container window at screen center (or saved position if available)
     pub fn create_ephemeral_container_window(
         &mut self,
@@ -6721,6 +6787,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let with_hidden =
@@ -6746,6 +6813,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6766,6 +6834,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6794,6 +6863,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6818,6 +6888,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6864,6 +6935,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6894,6 +6966,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6918,6 +6991,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6938,6 +7012,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         let name = AppCore::generate_spacer_name(&layout);
@@ -6984,8 +7059,77 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
         core
+    }
+
+    #[test]
+    fn delete_and_stash_then_restore_roundtrips_the_exact_def() {
+        let mut core = core_with_layout(vec![
+            positioned_text_def("main", 0, 0, 40, 24),
+            positioned_text_def("my_notes", 5, 5, 20, 8),
+        ]);
+        core.init_windows(80, 24);
+
+        // Delete the custom window: gone from the layout, stashed.
+        assert!(core.delete_and_stash_window("my_notes"));
+        assert!(!core.layout.windows.iter().any(|w| w.name() == "my_notes"));
+        assert!(!core.ui_state.windows.contains_key("my_notes"));
+        assert_eq!(core.deleted_window_names(), vec!["my_notes".to_string()]);
+
+        // Restore it: back in the layout with its exact geometry, live again.
+        assert!(core.restore_deleted_window("my_notes", 80, 24));
+        let def = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == "my_notes")
+            .expect("restored def present");
+        assert_eq!(def.base().col.get(), 5);
+        assert_eq!(def.base().row.get(), 5);
+        assert_eq!(def.base().cols.get(), 20);
+        assert!(def.base().visibility.is_shown());
+        assert!(core.ui_state.windows.contains_key("my_notes"));
+        // Stash is now empty.
+        assert!(core.deleted_window_names().is_empty());
+    }
+
+    #[test]
+    fn re_deleting_after_restore_keeps_one_stash_copy() {
+        let mut core = core_with_layout(vec![positioned_text_def("notes", 1, 1, 10, 5)]);
+        core.init_windows(80, 24);
+        core.delete_and_stash_window("notes");
+        core.restore_deleted_window("notes", 80, 24);
+        core.delete_and_stash_window("notes");
+        // Only one stashed copy, not two.
+        assert_eq!(core.deleted_window_names(), vec!["notes".to_string()]);
+    }
+
+    #[test]
+    fn restore_refuses_when_name_is_reused_by_a_live_window() {
+        let mut core = core_with_layout(vec![positioned_text_def("notes", 1, 1, 10, 5)]);
+        core.init_windows(80, 24);
+        core.delete_and_stash_window("notes");
+        // A new window reuses the name.
+        core.layout.windows.push(positioned_text_def("notes", 0, 0, 5, 5));
+        core.init_windows(80, 24);
+        // Restore is refused (won't clobber the live one); the stash keeps it.
+        assert!(!core.restore_deleted_window("notes", 80, 24));
+        assert_eq!(core.deleted_window_names(), vec!["notes".to_string()]);
+    }
+
+    #[test]
+    fn deleted_windows_persist_through_layout_serialization() {
+        let mut core = core_with_layout(vec![positioned_text_def("gone", 2, 2, 12, 6)]);
+        core.init_windows(80, 24);
+        core.delete_and_stash_window("gone");
+        // Serialize + reparse the layout: the stash survives.
+        let toml = toml::to_string(&core.layout).expect("serialize layout");
+        assert!(toml.contains("deleted_windows"), "stash must serialize");
+        let reparsed: Layout = toml::from_str(&toml).expect("reparse layout");
+        assert_eq!(reparsed.deleted_windows.len(), 1);
+        assert_eq!(reparsed.deleted_windows[0].name(), "gone");
     }
 
     /// Positions and sizes pass through exactly (no scaling), even when the

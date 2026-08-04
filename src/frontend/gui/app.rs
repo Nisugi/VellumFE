@@ -7685,6 +7685,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         }
     }
 

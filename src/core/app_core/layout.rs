@@ -1075,6 +1075,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         }
     }
 
@@ -1086,6 +1087,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         }
     }
 
@@ -1742,6 +1744,7 @@ mod tests {
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
         let mut core = AppCore::new_for_test();
         for def in &layout.windows {

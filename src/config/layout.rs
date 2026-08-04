@@ -31,6 +31,13 @@ pub struct Layout {
     /// carried through saves so switching builds doesn't destroy them.
     #[serde(skip)]
     pub unknown_windows: Vec<toml::Value>,
+    /// Windows the user explicitly DELETED (not hidden). A deleted window's
+    /// full def is stashed here instead of dropped, so it can be restored with
+    /// its exact position/streams/widget type — the only record of a custom
+    /// window (e.g. a moved command_input) that `+ Custom window` can't
+    /// recreate. Persisted so restore survives a restart.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deleted_windows: Vec<WindowDef>,
 }
 
 /// Content alignment within widget area (used when borders are removed)
@@ -966,6 +973,7 @@ border_color = "#807f80"
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
         layout
             .register_discovered_window(WindowBinding::Stream("thoughts".into()), "text_custom");
@@ -1214,6 +1222,7 @@ border_color = "#807f80"
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         }
     }
 

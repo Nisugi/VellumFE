@@ -128,6 +128,10 @@ impl VellumGuiApp {
         let mut zone_change: Option<(String, GuiShellZone)> = None;
         let mut add_template: Option<String> = None;
         let mut ungroup: Option<crate::frontend::gui::TabKey> = None;
+        let mut restore_deleted: Option<String> = None;
+
+        // Windows the user deleted (not hidden) that can be restored.
+        let deleted_names = self.app_core.deleted_window_names();
 
         egui::Window::new("Windows")
             .id(egui::Id::new("gui_known_windows"))
@@ -143,12 +147,27 @@ impl VellumGuiApp {
                      on a hidden window and it appears there when shown.",
                 );
 
-                ui.menu_button("➕ Custom window…", |ui| {
-                    for (label, template) in CUSTOM_SEEDS {
-                        if ui.button(*label).clicked() {
-                            add_template = Some((*template).to_string());
-                            ui.close();
+                ui.horizontal(|ui| {
+                    ui.menu_button("➕ Custom window…", |ui| {
+                        for (label, template) in CUSTOM_SEEDS {
+                            if ui.button(*label).clicked() {
+                                add_template = Some((*template).to_string());
+                                ui.close();
+                            }
                         }
+                    });
+                    // Restore a window the user deleted (distinct from hide):
+                    // its exact def — position, streams, widget type — comes
+                    // back. Only shown when something was deleted.
+                    if !deleted_names.is_empty() {
+                        ui.menu_button("↩ Restore deleted…", |ui| {
+                            for name in &deleted_names {
+                                if ui.button(name).clicked() {
+                                    restore_deleted = Some(name.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
                     }
                 });
                 ui.separator();
@@ -264,6 +283,10 @@ impl VellumGuiApp {
         }
         if let Some(template) = add_template {
             self.add_window_from_template(&template);
+        }
+        if let Some(name) = restore_deleted {
+            self.app_core.restore_deleted_window(&name, w, h);
+            self.layout_dirty = true;
         }
         if let Some(leader) = ungroup {
             self.dissolve_group_of(&leader);

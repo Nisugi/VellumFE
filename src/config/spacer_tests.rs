@@ -183,6 +183,7 @@ use crate::data::geometry::{Col, Height, Row, Width};
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         // Should serialize without error
@@ -259,6 +260,7 @@ visible = true
             base_layout: Some("default".to_string()),
             theme: Some("classic".to_string()),
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         // Serialize to TOML
@@ -362,6 +364,7 @@ visible = true
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         // Serialize and deserialize
@@ -450,6 +453,7 @@ visible = true
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         // Serialize and deserialize
@@ -587,6 +591,7 @@ visible = true
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         // Resize to 100x40 (2x scale)
@@ -721,6 +726,7 @@ visible = true
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         // Verify gap before resize: A ends at 10, spacer starts at 10, B starts at 15
@@ -868,6 +874,7 @@ visible = true
             base_layout: None,
             theme: None,
             unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
         };
 
         // Verify initial no overlap
