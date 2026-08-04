@@ -35,6 +35,13 @@ use std::time::Duration;
 
 use crate::core::custom_emoji::{self, EmojiFormat};
 
+/// Total inline width a custom emoji occupies, as a multiple of the text row
+/// height: the square is one row-height tall/wide, and the extra 0.2 is the
+/// horizontal breathing room between adjacent emoji. build_line_job sizes the
+/// placeholder run to `row_height * this`; the painter draws the square
+/// centered in it.
+pub(super) const EMOJI_WIDTH_FACTOR: f32 = 1.2;
+
 /// One decoded custom emoji: its animation frames as textures plus the total
 /// cycle duration in seconds. A static image is a single frame with a zero
 /// cycle length (never advanced).
@@ -270,16 +277,12 @@ pub(super) fn paint_custom_emoji(
     let time = ctx.input(|i| i.time);
     let texture = frames.frame_at(time);
 
-    // The slot is a transparent fixed-width placeholder (see build_line_job),
-    // sized so a square emoji at ~row height fits with side padding. Draw the
-    // square at the row height, centered in the slot; the extra slot width
-    // becomes the breathing room between adjacent emoji.
-    // Cap the square at the slot width so it can never overflow into the next
-    // emoji (fixed placeholders are only approximately sized for a proportional
-    // font); otherwise use ~row height for readability.
-    let side = slot.height().min(slot.width());
-    let center = slot.center();
-    let rect = egui::Rect::from_center_size(center, egui::vec2(side, side));
+    // The slot was sized (in build_line_job) to row_height * EMOJI_WIDTH_FACTOR
+    // wide by row_height tall, so a square at the row height fits with padding.
+    // Draw it square (slot height), centered in the slot; the extra slot width
+    // is the breathing room between adjacent emoji.
+    let side = slot.height();
+    let rect = egui::Rect::from_center_size(slot.center(), egui::vec2(side, side));
     painter.image(
         texture.id(),
         rect,

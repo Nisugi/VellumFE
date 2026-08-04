@@ -8,13 +8,11 @@ use super::*;
 /// Seconds for a value-driven bar to glide to a new target value.
 const BAR_ANIMATION_SECONDS: f32 = 0.2;
 
-/// The placeholder text a paintable custom-emoji segment occupies in the
-/// galley and in `compose_line_text` (they must agree). The emoji image is a
-/// square sized to the row height (~2 space-widths), so the placeholder is
-/// wide enough to hold the square PLUS a little padding on each side, and the
-/// image is centered in it — otherwise adjacent emoji crowd/overlap. A copy
-/// yields these spaces, not `:name:`.
-const EMOJI_PLACEHOLDER: &str = "   ";
+/// The one-char text a paintable custom-emoji segment occupies in the galley
+/// and in `compose_line_text` (they must agree). Its rendered WIDTH is set in
+/// pixels via `extra_letter_spacing` (see build_line_job), not by the char
+/// count, so a single space suffices. A copy yields this space, not `:name:`.
+const EMOJI_PLACEHOLDER: &str = " ";
 
 impl VellumGuiApp {
     /// Animate a bar fraction toward its target so server updates glide
@@ -589,20 +587,24 @@ impl VellumGuiApp {
             // `:name:` shows instead of a blank slot.
             if let Some(name) = &segment.custom_emoji {
                 if super::custom_emoji_render::is_paintable(ctx, name) {
-                    // Reserve a transparent fixed-width placeholder (wide enough
-                    // for the square emoji + padding) instead of the wide
-                    // `:name:` text; the image is painted centered over this run
-                    // so it reads as one inline glyph with breathing room. The
-                    // placeholder must match compose_line_text so copy/selection
-                    // char offsets stay aligned; the emoji isn't copyable as
-                    // text (spaces are), which is fine.
-                    let placeholder_len = EMOJI_PLACEHOLDER.chars().count();
+                    // Reserve a transparent one-char placeholder for the emoji
+                    // instead of the wide `:name:` text, and widen it in PIXELS
+                    // via extra_letter_spacing to exactly (row height + padding)
+                    // — measuring the space rather than guessing a space count,
+                    // so the square emoji fits with breathing room at any font.
+                    // The placeholder char must match compose_line_text so
+                    // copy/selection offsets stay aligned; the emoji isn't
+                    // copyable as text (a space is), which is fine.
+                    let row_h = ctx.fonts_mut(|f| f.row_height(font_id));
+                    let space_w = ctx.fonts_mut(|f| f.glyph_width(font_id, ' '));
+                    let target_w = row_h * super::custom_emoji_render::EMOJI_WIDTH_FACTOR;
                     let mut fmt =
                         Self::segment_text_format_ex(segment, visuals, false, false, font_id);
                     fmt.color = egui::Color32::TRANSPARENT;
+                    fmt.extra_letter_spacing = (target_w - space_w).max(0.0);
                     job.append(EMOJI_PLACEHOLDER, 0.0, fmt);
-                    custom_runs.push((chars, chars + placeholder_len, name.clone()));
-                    chars += placeholder_len;
+                    custom_runs.push((chars, chars + 1, name.clone()));
+                    chars += 1;
                     continue;
                 }
             }
