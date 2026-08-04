@@ -1695,16 +1695,6 @@ let touchLastDepth = 0;   // gpWheel.path.length last frame (detect descend)
 let touchLastPoint = null;
 let touchDwellTick = 0;
 
-// Elements whose own gestures own a long-press (or that shouldn't spawn a
-// wheel): the wheel must not steal from them.
-function touchWheelExcluded(target) {
-  return !!target.closest(
-    "#chips, #macro-rail, .float-btn, .drawer, .drawer-handle, #repeat-btn, " +
-    "span.link, #wheel-overlay, #sheet, #map-overlay, #session-overlay, " +
-    ".overlay, input, textarea, button, a, #interact-bar",
-  );
-}
-
 // Normalize a client point to the aim vector the wheel machine expects:
 // (x right, yUp up), magnitude 0..1 at the deflection radius.
 function touchAimVector(clientX, clientY) {
@@ -1753,6 +1743,10 @@ function openTouchWheel(clientX, clientY) {
       wheelAim(x, yUp);
     }
   }, 33);
+  // Turn the overlay into an inert scrim: it now catches pointer events
+  // (so a lift fires a slice, not a link underneath) and dims the text a
+  // touch. Cleared in closeTouchWheel. The gamepad wheel never sets this.
+  wheelOverlay.classList.add("wheel-scrim");
 }
 
 function closeTouchWheel() {
@@ -1762,6 +1756,13 @@ function closeTouchWheel() {
   touchLastPoint = null;
   clearInterval(touchDwellTick);
   touchDwellTick = 0;
+  wheelOverlay.classList.remove("wheel-scrim");
+  // The lift that closes the wheel may be caught by the document-level
+  // release path rather than the puck's own handler (pointer capture
+  // retargets, but be robust either way), so clear the puck's pressed
+  // state here too — otherwise the ring stays visually "held".
+  const puck = document.getElementById("wheel-puck");
+  if (puck) puck.classList.remove("puck-active");
   hideWheel();
 }
 
@@ -1792,41 +1793,110 @@ function touchWheelRelease() {
   if (real != null) fireTouchLeaf([...path, real]);
 }
 
-// Long-press detection: arm a timer on pointerdown, open the wheel if the
-// thumb stays roughly put until it elapses; any real movement or lift before
-// then cancels (it was a tap/scroll, not a wheel gesture).
-document.addEventListener("pointerdown", (ev) => {
-  if (ev.pointerType === "mouse" && ev.button !== 0) return;
-  if (gpWheel) return;
-  if (touchWheelExcluded(ev.target)) return;
-  const startX = ev.clientX;
-  const startY = ev.clientY;
-  const pointerId = ev.pointerId;
-  clearTimeout(touchLongPressTimer);
-  touchLongPressTimer = setTimeout(() => {
-    openTouchWheel(startX, startY);
-    touchActiveId = pointerId;
-  }, TOUCH_WHEEL_LONGPRESS_MS);
+// ---- Wheel puck: the touch wheel's trigger ---------------------------------
+// A faint, draggable button (#wheel-puck) is the ONLY thing that opens the
+// touch wheel. This is deliberate: the old design armed a long-press on any
+// pointerdown across the whole document, which fought iOS text selection (the
+// magnifier loupe) and left links tappable underneath. By owning its own
+// gesture, the puck never competes with the scrolling text — pressing it can't
+// arm the OS loupe, and once the wheel is open the overlay scrim (wheel-scrim)
+// swallows taps meant for links below.
+//
+// Gestures on the puck:
+//   • quick press+hold (no movement)  -> long-press opens the wheel here
+//   • press + move past DRAG_EPS      -> drag the puck to a new home
+// A drag cancels the pending open. Position persists per device in
+// uiPrefs.wheelPuckPos (fractions of the viewport), mirroring the interact bar.
+const wheelPuck = document.getElementById("wheel-puck");
+const PUCK_DRAG_EPS = 8; // px of movement before a press becomes a drag
 
-  // Cancel the long-press if the thumb wanders before it fires.
-  const onEarlyMove = (mv) => {
-    if (Math.hypot(mv.clientX - startX, mv.clientY - startY) > 10 && !gpWheel) {
-      clearTimeout(touchLongPressTimer);
-      cleanup();
+// Place the puck from persisted fractions (clamped into the viewport). The
+// CSS anchors it by its own center (margin:-26px), so left/top are the center.
+function applyWheelPuckPos() {
+  const p = uiPrefs.wheelPuckPos;
+  const x = Number.isFinite(p && p.x) ? p.x : 0.5;
+  const y = Number.isFinite(p && p.y) ? p.y : 0.78;
+  wheelPuck.style.left = `${Math.min(0.97, Math.max(0.03, x)) * 100}%`;
+  wheelPuck.style.top = `${Math.min(0.95, Math.max(0.05, y)) * 100}%`;
+}
+// Initial placement happens after uiPrefs loads (see applyUiPrefs), since
+// uiPrefs is declared further down and reading it here would hit its TDZ.
+
+(function attachWheelPuck() {
+  let pointerId = null;
+  let startX = 0, startY = 0;
+  let dragging = false;
+
+  const puckCenter = () => {
+    const r = wheelPuck.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  };
+
+  const clearHold = () => { clearTimeout(touchLongPressTimer); touchLongPressTimer = 0; };
+
+  wheelPuck.addEventListener("pointerdown", (ev) => {
+    if (ev.pointerType === "mouse" && ev.button !== 0) return;
+    if (gpWheel) return; // a wheel is already up
+    ev.preventDefault();
+    pointerId = ev.pointerId;
+    startX = ev.clientX;
+    startY = ev.clientY;
+    dragging = false;
+    wheelPuck.classList.add("puck-active");
+    try { wheelPuck.setPointerCapture(ev.pointerId); } catch { /* ok */ }
+    // Arm the open at the puck's own center so the wheel always blooms in a
+    // stable, known place regardless of exactly where the thumb landed.
+    clearHold();
+    touchLongPressTimer = setTimeout(() => {
+      if (dragging) return;
+      const c = puckCenter();
+      openTouchWheel(c.x, c.y);
+      touchActiveId = pointerId; // the same thumb now aims the wheel
+    }, TOUCH_WHEEL_LONGPRESS_MS);
+  });
+
+  wheelPuck.addEventListener("pointermove", (ev) => {
+    if (ev.pointerId !== pointerId) return;
+    // Once the wheel is open, aiming is handled by the document-level
+    // pointermove below (touchActiveId path); the puck stops dragging.
+    if (gpWheel) return;
+    if (!dragging &&
+        Math.hypot(ev.clientX - startX, ev.clientY - startY) < PUCK_DRAG_EPS) {
+      return; // still a tap/hold, not a drag
     }
-  };
-  const cleanup = () => {
-    document.removeEventListener("pointermove", onEarlyMove);
-    document.removeEventListener("pointerup", onEarlyUp);
-    document.removeEventListener("pointercancel", onEarlyUp);
-  };
-  const onEarlyUp = () => { clearTimeout(touchLongPressTimer); cleanup(); };
-  document.addEventListener("pointermove", onEarlyMove);
-  document.addEventListener("pointerup", onEarlyUp);
-  document.addEventListener("pointercancel", onEarlyUp);
-});
+    dragging = true;
+    clearHold(); // moving cancels the pending open
+    wheelPuck.style.left = `${(ev.clientX / window.innerWidth) * 100}%`;
+    wheelPuck.style.top = `${(ev.clientY / window.innerHeight) * 100}%`;
+  });
 
-// While the touch wheel is up, its pointer drives aiming and lift fires.
+  const endPuck = (ev) => {
+    if (ev.pointerId !== pointerId) return;
+    clearHold();
+    wheelPuck.classList.remove("puck-active");
+    try { wheelPuck.releasePointerCapture(ev.pointerId); } catch { /* ok */ }
+    if (dragging) {
+      // Persist the dropped position as viewport fractions (per device).
+      uiPrefs.wheelPuckPos = {
+        x: ev.clientX / window.innerWidth,
+        y: ev.clientY / window.innerHeight,
+      };
+      saveUiPrefs();
+      applyWheelPuckPos();
+    }
+    // If the wheel opened, its own release path (document pointerup below)
+    // fires the aimed slice; nothing to do here.
+    pointerId = null;
+    dragging = false;
+  };
+  wheelPuck.addEventListener("pointerup", endPuck);
+  wheelPuck.addEventListener("pointercancel", endPuck);
+  wheelPuck.addEventListener("contextmenu", (ev) => ev.preventDefault());
+})();
+
+// While the touch wheel is up, the driving pointer aims it and its lift fires
+// the committed slice. These stay document-level because the thumb slides off
+// the puck and onto the overlay scrim as it aims.
 document.addEventListener("pointermove", (ev) => {
   if (touchActiveId === null || ev.pointerId !== touchActiveId) return;
   ev.preventDefault();
@@ -3113,6 +3183,8 @@ const OPACITY_SETTINGS = [
   ["drawer", "Side drawers", "--drawer-alpha", 93],
   ["sheet", "Bottom menus", "--sheet-alpha", 100],
   ["interact", "Interact bar", "--interact-alpha", 93],
+  ["wheelpuck", "Wheel puck", "--puck-alpha", 35],
+  ["wheeldim", "Wheel backdrop dim", "--wheel-dim-alpha", 25],
 ];
 
 const CHROME_TOGGLES = [
@@ -3124,6 +3196,7 @@ const CHROME_TOGGLES = [
   ["rt", "RT label"],
   ["fx", "Effect pills"],
   ["chips", "Stream chips"],
+  ["wheelpuck", "Wheel puck"],
 ];
 
 function saveUiPrefs() {
@@ -3150,6 +3223,7 @@ function applyUiPrefs() {
     root.style.setProperty(cssVar, String(Math.min(100, Math.max(20, pct)) / 100));
   }
   applyInteractPos();
+  applyWheelPuckPos();
 }
 applyUiPrefs();
 

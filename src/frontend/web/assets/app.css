@@ -958,10 +958,65 @@ body.hide-interact #interact-bar { display: none !important; }
 
 #wheel-overlay[hidden] { display: none; }
 
+/* While the touch wheel is open the overlay becomes an inert scrim: it
+   swallows pointer events meant for the text/links beneath (so a lift
+   fires a slice, never a link) and dims the background a touch so slice
+   labels read against a calmer field. The gamepad wheel never sets this
+   class, so its behavior is unchanged. */
+#wheel-overlay.wheel-scrim {
+  pointer-events: auto;
+  background: rgba(0, 0, 0, var(--wheel-dim-alpha, 0.25));
+  touch-action: none;
+}
+
 #wheel-overlay svg {
   width: min(78vmin, 380px);
   height: min(78vmin, 380px);
 }
+
+/* Faint, draggable trigger for the touch wheel. Present enough to find,
+   translucent enough to leave the text visible. It owns its own gesture
+   (touch-action:none) so pressing it never arms the OS text-selection
+   loupe. Opacity is player-adjustable via --puck-alpha. */
+#wheel-puck {
+  position: fixed;
+  left: 50%;
+  top: 78%;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px; /* anchor by center */
+  border-radius: 50%;
+  border: 2px solid var(--accent, #6a9fb5);
+  background: rgba(var(--panel-rgb, 20, 22, 28), 0.35);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  opacity: var(--puck-alpha, 0.35);
+  z-index: 27; /* below the open wheel/scrim (28), above game text */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+/* A small ring glyph so it reads as "the wheel button". */
+#wheel-puck::after {
+  content: "";
+  position: absolute;
+  inset: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent, #6a9fb5);
+  opacity: 0.7;
+}
+
+/* Brighten on press/drag so the player sees the grab register. */
+#wheel-puck.puck-active {
+  opacity: 1;
+  transform: scale(1.08);
+}
+
+#wheel-puck[hidden] { display: none; }
+
+body.hide-wheelpuck #wheel-puck { display: none; }
 
 /* Gamepad d-pad focus over sheet items */
 .sheet-item.gp-focus {

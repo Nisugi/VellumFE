@@ -327,6 +327,11 @@
     </div>
   </div>
   <div id="wheel-overlay" hidden></div>
+  <!-- Faint draggable trigger for the touch wheel. Long-press it to bloom
+       the wheel at its position; drag it to reposition. Owns its own
+       gesture so the wheel never competes with the scrolling text below
+       (no OS selection loupe, no stray link taps). -->
+  <div id="wheel-puck" aria-label="Wheel" role="button" tabindex="-1"></div>
   <div id="sheet-backdrop" hidden></div>
   <div id="sheet" hidden>
     <div id="sheet-titlebar">
