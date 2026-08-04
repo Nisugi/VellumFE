@@ -2621,34 +2621,38 @@ impl VellumGuiApp {
                         }
                     }
                     PositionedControlKind::Skin(i) => {
-                        // Backdrop art (UberBar's InjuriesPanel paperdoll + bar
-                        // skins). Painted behind the controls (skins are first
-                        // in the positioned list). Missing from the icon pool =>
-                        // draw nothing; the numeric bars/text show through.
+                        // Backdrop art (skins are first in the list, so they
+                        // paint behind the controls anchored to them).
                         if let Some(skin) = dialog.skins.get(i) {
-                            if let Some(icon) = skin_art.and_then(|art| art.icon(&skin.name)) {
-                                ui.painter().image(
-                                    icon.texture,
-                                    rect,
-                                    icon.uv,
-                                    egui::Color32::WHITE,
-                                );
-                            }
+                            Self::paint_dialog_skin(ui, rect, skin, dialog, skin_art);
                         }
                     }
                 }
             }
         }
 
-        // Links and images aren't in positioned_controls yet; lay links
-        // out as a wrapped footer row and images as an icon row. (Icon
-        // art from the skin store is a follow-up; show the tooltip text.)
-        if !dialog.images.is_empty() {
+        // Images an InjuriesPanel skin already draws as wound overlays on the
+        // doll are display-only state — never surface them as a button row.
+        // (A read-only reporter like UberBar copies Wrayth's cmd='cure ...' onto
+        // its wound images, but it takes no input; the doll consumes them.)
+        let doll_owned: std::collections::HashSet<&str> = dialog
+            .skins
+            .iter()
+            .filter(|s| s.name.eq_ignore_ascii_case("InjuriesPanel"))
+            .flat_map(|s| s.controls.iter().map(|c| c.as_str()))
+            .collect();
+
+        // Links and remaining images: combat's icon/link footer. Images with a
+        // command render as buttons; the doll's wound images are excluded above.
+        let footer_images: Vec<_> = dialog
+            .images
+            .iter()
+            .filter(|image| !image.command.trim().is_empty())
+            .filter(|image| !doll_owned.contains(image.id.as_str()))
+            .collect();
+        if !footer_images.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                for image in &dialog.images {
-                    if image.command.trim().is_empty() {
-                        continue;
-                    }
+                for image in footer_images {
                     let label = image.tooltip.as_deref().unwrap_or(&image.name);
                     if ui.small_button(label).clicked() {
                         queue(dialog.command_with_placeholders(&image.command));
@@ -2665,6 +2669,58 @@ impl VellumGuiApp {
                 }
             });
         }
+    }
+
+    /// Paint one `<skin>` backdrop inside `rect`. Wrayth scripts reference
+    /// skin assets by the *client's* built-in names; the only one that maps to
+    /// distinct art in VellumFE is `InjuriesPanel`, which we render as our own
+    /// injury doll (base + shipped/calibrated anchors), with wound levels taken
+    /// from the panel's own `<image>` data (`name='Injury3'` etc.) so wounds
+    /// land on the right body regions.
+    ///
+    /// Bar skins (`healthBar`/`manaBar`/...) are intentionally ignored: they
+    /// exist only to color a bar in Wrayth, and VellumFE already draws the
+    /// sibling `<progressBar>` as its own filled, colored bar. Any other skin
+    /// name paints nothing — the numeric bars and labels still show through.
+    fn paint_dialog_skin(
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        skin: &crate::data::DialogSkin,
+        dialog: &crate::data::ui_state::DialogState,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) {
+        if !skin.name.eq_ignore_ascii_case("InjuriesPanel") {
+            return;
+        }
+        // Build part -> severity from the panel's wound images, using the same
+        // Injury1-3 / Scar1-6 convention as the game's injury feed.
+        let mut injuries: HashMap<String, u8> = HashMap::new();
+        for image in &dialog.images {
+            let level = match image.name.as_str() {
+                "Injury1" => 1,
+                "Injury2" => 2,
+                "Injury3" => 3,
+                "Scar1" => 4,
+                "Scar2" => 5,
+                "Scar3" => 6,
+                _ => 0,
+            };
+            if level > 0 {
+                injuries.insert(image.id.clone(), level);
+            }
+        }
+        // Confine the doll (which allocates its own space) to the skin's
+        // resolved rect so it sits where the script positioned it.
+        let builder = egui::UiBuilder::new().max_rect(rect);
+        ui.scope_builder(builder, |ui| {
+            Self::render_injury_doll(
+                ui,
+                &injuries,
+                skin_art,
+                false,
+                &Self::default_injury_palette(),
+            );
+        });
     }
 
     /// A ComboBox for a dialog-panel dropdown; returns the newly picked
