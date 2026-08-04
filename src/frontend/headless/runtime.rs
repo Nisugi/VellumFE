@@ -70,6 +70,9 @@ enum SessionRequest {
     /// connection shortly — treat that close as an intentional logout
     /// (no reconnect, back to the login screen), not a network drop.
     UserQuit,
+    /// The user ran `.reconnect`: re-establish the session using the stored
+    /// credentials, clearing any intentional-disconnect / backoff state.
+    Reconnect,
 }
 
 /// A web-requested Lich attach target (detachable-client mode).
@@ -112,7 +115,14 @@ impl Supervisor {
     fn can_reconnect(&self) -> bool {
         // Direct mode re-authenticates for a fresh ticket; detachable Lich
         // (no key) re-attaches. A Lich --key is single-use.
-        !self.user_disconnected && (self.direct.is_some() || self.login_key.is_none())
+        !self.user_disconnected && self.can_reconnect_after_clear()
+    }
+
+    /// Whether the session is re-establishable ignoring the
+    /// intentional-disconnect flag — used by an explicit `.reconnect`, which
+    /// clears that flag on purpose. A single-use Lich `--key` still can't.
+    fn can_reconnect_after_clear(&self) -> bool {
+        self.direct.is_some() || self.login_key.is_none()
     }
 
     fn spawn(&mut self, app_core: &AppCore, server_tx: mpsc::Sender<ServerMessage>) {
@@ -716,6 +726,33 @@ pub async fn async_run(
                     supervisor.reconnect_at = None;
                     quit_deadline = Some(Instant::now() + Duration::from_secs(8));
                 }
+                SessionRequest::Reconnect => {
+                    // `.reconnect` from a phone/web client. If a session is
+                    // live there is nothing to do. Otherwise clear the
+                    // intentional-disconnect / backoff state and re-establish
+                    // using the stored credentials (direct re-auths for a
+                    // fresh ticket; detachable Lich re-attaches).
+                    if supervisor.connection.is_some() {
+                        app_core.add_system_message("Already connected.");
+                    } else if !supervisor.can_reconnect_after_clear() {
+                        app_core.add_system_message(
+                            "Nothing to reconnect to — log in from the app.",
+                        );
+                        app_core
+                            .set_remote_session_state(supervisor.status(SessionState::Idle));
+                    } else {
+                        supervisor.user_disconnected = false;
+                        supervisor.reconnect_attempt = 0;
+                        supervisor.reconnect_at = None;
+                        let state = if supervisor.direct.is_some() {
+                            SessionState::Authenticating
+                        } else {
+                            SessionState::Connecting
+                        };
+                        supervisor.spawn(&app_core, server_tx.clone());
+                        app_core.set_remote_session_state(supervisor.status(state));
+                    }
+                }
                 connect @ SessionRequest::Connect { .. } => {
                     if supervisor.connection.is_some() {
                         app_core.add_system_message(
@@ -776,46 +813,43 @@ pub async fn async_run(
 
 /// Command dispatch without a local frontend: same core path as typed input
 /// (echo, dot-commands, quit interception), modeled on the GUI's
+/// What a dispatched command asks the supervisor to do next.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DispatchResult {
+    /// Nothing special; keep the current session.
+    None,
+    /// The outbound command was `quit`: the server will close shortly and the
+    /// supervisor treats that as an intentional logout, not a drop.
+    Quit,
+    /// The user asked to reconnect (`.reconnect`): re-establish the session
+    /// using the stored credentials.
+    Reconnect,
+}
+
 /// `dispatch_command`. `action:`/`menu:` outputs need a local UI and get a
-/// notice instead. Returns true when the outbound command was `quit`, so
-/// the supervisor treats the server's coming close as an intentional
-/// logout instead of a drop to reconnect from.
+/// notice instead. Returns what the supervisor should do next (see
+/// [`DispatchResult`]).
+///
+/// The `UiAction` match is EXHAUSTIVE on purpose (like the TUI and GUI
+/// handlers): adding a variant forces a decision for the phone/web client too,
+/// rather than silently degrading to "needs the desktop client".
 fn dispatch_command(
     app_core: &mut AppCore,
     connection: Option<&Connection>,
     command: String,
-) -> bool {
+) -> DispatchResult {
+    use crate::data::{CommandOutcome, UiAction};
     let command = command.trim_end().to_string();
     if command.is_empty() {
-        return false;
+        return DispatchResult::None;
     }
     match app_core.send_command(command) {
-        Ok(crate::data::CommandOutcome::Handled) => false,
+        Ok(CommandOutcome::Handled) => DispatchResult::None,
         // UI packs are core-side work; everything else needs a local UI.
-        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::UiExport(args))) => {
-            app_core.uiexport_with(&args, Vec::new());
-            false
-        }
-        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::UiImport(args))) => {
-            if app_core.uiimport(&args).is_some() {
-                app_core.add_system_message(
-                    "This pack also carries a GUI layout — run the import in the GUI to install it.",
-                );
-            }
-            false
-        }
-        Ok(crate::data::CommandOutcome::Ui(crate::data::UiAction::PerformanceDump)) => {
-            app_core.write_perf_dump(crate::performance::PerfFrontend::Headless, None);
-            false
-        }
-        Ok(crate::data::CommandOutcome::Ui(_)) => {
-            app_core.add_system_message("That action needs the desktop client.");
-            false
-        }
-        Ok(crate::data::CommandOutcome::Game(outbound)) => {
-            if outbound.is_empty() || outbound.starts_with("__") || outbound.starts_with("menu:")
-            {
-                return false;
+        Ok(CommandOutcome::Ui(action)) => dispatch_ui_action(app_core, action),
+        Ok(CommandOutcome::Game(outbound)) => {
+            if !should_send_to_network(&outbound) {
+                return DispatchResult::None;
             }
             let is_quit = outbound.trim().eq_ignore_ascii_case("quit");
             match connection {
@@ -824,18 +858,156 @@ fn dispatch_command(
                         .perf_stats
                         .record_bytes_sent((outbound.len() + 1) as u64);
                     let _ = conn.command_tx.send(outbound);
-                    is_quit
+                    if is_quit {
+                        DispatchResult::Quit
+                    } else {
+                        DispatchResult::None
+                    }
                 }
                 None => {
                     app_core.add_system_message("Not connected - command not sent.");
-                    false
+                    DispatchResult::None
                 }
             }
         }
         Err(err) => {
             app_core.add_system_message(&format!("Command error: {}", err));
-            false
+            DispatchResult::None
         }
+    }
+}
+
+/// Translate a [`DispatchResult`] into the matching session request (if any).
+fn push_dispatch_request(result: DispatchResult, session_requests: &mut Vec<SessionRequest>) {
+    match result {
+        DispatchResult::None => {}
+        DispatchResult::Quit => session_requests.push(SessionRequest::UserQuit),
+        DispatchResult::Reconnect => session_requests.push(SessionRequest::Reconnect),
+    }
+}
+
+/// Should this outbound string actually go to the game socket? Filters the UI
+/// sentinels that never belong on the wire. Mirrors the GUI's
+/// `should_send_to_network` (previously the headless copy forgot `action:`).
+fn should_send_to_network(command: &str) -> bool {
+    !(command.is_empty()
+        || command.starts_with("__")
+        || command.starts_with("action:")
+        || command.starts_with("menu:"))
+}
+
+/// Decide how the phone/web client answers each `UiAction`.
+///
+/// EXHAUSTIVE by design — a new `UiAction` variant must be answered here, the
+/// same rule the TUI (`tui/menu_actions.rs`) and GUI (`gui/app.rs`) handlers
+/// enforce. Actions that open a desktop editor panel get a notice pointing the
+/// phone user at the client's own on-device surface; actions the headless
+/// runtime genuinely supports (reconnect, UI pack import/export, perf dump) do
+/// the real work.
+fn dispatch_ui_action(
+    app_core: &mut AppCore,
+    action: crate::data::UiAction,
+) -> DispatchResult {
+    use crate::data::UiAction as A;
+
+    // Notice shown for actions whose editing UI lives on the desktop clients.
+    // Phrased for the phone: many of these have an equivalent on-device sheet
+    // reached from the app's own menus, not from a typed dot-command.
+    let desktop_only = |app_core: &mut AppCore| {
+        app_core.add_system_message(
+            "That editor opens on the desktop client; on the phone, use the app's own menus.",
+        );
+        DispatchResult::None
+    };
+
+    match action {
+        // --- Genuinely supported on the headless/web path ---
+        A::Reconnect => {
+            app_core.add_system_message("Reconnecting...");
+            DispatchResult::Reconnect
+        }
+        A::UiExport(args) => {
+            app_core.uiexport_with(&args, Vec::new());
+            DispatchResult::None
+        }
+        A::UiImport(args) => {
+            if app_core.uiimport(&args).is_some() {
+                app_core.add_system_message(
+                    "This pack also carries a GUI layout — run the import in the GUI to install it.",
+                );
+            }
+            DispatchResult::None
+        }
+        A::PerformanceDump => {
+            app_core.write_perf_dump(crate::performance::PerfFrontend::Headless, None);
+            DispatchResult::None
+        }
+        // The phone HAS a touch-wheel editor (app.js openTouchWheelEditor); the
+        // old wildcard wrongly told users it needed the desktop.
+        A::TouchWheelEditor => {
+            app_core.add_system_message(
+                "Open the touch-wheel editor from the phone's radial-wheel menu.",
+            );
+            DispatchResult::None
+        }
+
+        // --- Editors / panels that live on the desktop clients ---
+        A::Settings
+        | A::Highlights
+        | A::AddHighlight
+        | A::EditHighlight(_)
+        | A::Keybinds
+        | A::AddKeybind
+        | A::MenuKeybinds
+        | A::Controller
+        | A::Hotbars
+        | A::JinxPanel
+        | A::Streams
+        | A::Colors
+        | A::AddColor
+        | A::UiColors
+        | A::SpellColors
+        | A::AddSpellColor
+        | A::Themes
+        | A::SetTheme(_)
+        | A::EditTheme
+        | A::SorterEdit
+        | A::Skins
+        | A::SetSkin(_)
+        | A::MakeSkin(_)
+        | A::HarmonySkin(_)
+        | A::ReloadSkin
+        | A::SetPalette
+        | A::ResetPalette
+        | A::NextTab
+        | A::PrevTab
+        | A::NextUnread
+        | A::AddWindowPicker
+        | A::EditWindow(_)
+        | A::HideWindow(_)
+        | A::ShowWindow(_)
+        | A::CreateWindow(_)
+        | A::WindowList
+        | A::CustomWindows
+        | A::KnownWindows
+        | A::EditIndicators
+        | A::StreamActions(_)
+        | A::StreamPickWindow(_)
+        | A::StreamRoute { .. }
+        | A::StreamSubscribe { .. }
+        | A::StreamNewWindow(_)
+        | A::LoadLayoutToml(_)
+        | A::SaveLayout(_)
+        | A::LoadLayout { .. }
+        | A::ListLayouts
+        | A::ResizeLayout
+        | A::SaveSkin(_)
+        | A::PackEditor
+        | A::Zone { .. }
+        | A::WebUiPicker
+        | A::WebUiOff
+        | A::WebUiOpen(_)
+        | A::SnapDebug => desktop_only(app_core),
     }
 }
 
@@ -852,9 +1024,7 @@ fn handle_remote_event(
     match event {
         RemoteEvent::Command(text) => {
             tracing::debug!("remote command: '{}'", text);
-            if dispatch_command(app_core, connection, text) {
-                session_requests.push(SessionRequest::UserQuit);
-            }
+            push_dispatch_request(dispatch_command(app_core, connection, text), session_requests);
             true
         }
         RemoteEvent::LinkTap {
@@ -919,9 +1089,10 @@ fn handle_remote_event(
             match app_core.config.macros.resolve(&id).map(String::from) {
                 Some(command) => {
                     tracing::debug!("remote macro '{}': '{}'", id, command);
-                    if dispatch_command(app_core, connection, command) {
-                        session_requests.push(SessionRequest::UserQuit);
-                    }
+                    push_dispatch_request(
+                        dispatch_command(app_core, connection, command),
+                        session_requests,
+                    );
                 }
                 None => {
                     tracing::warn!("remote macro id '{}' did not resolve (stale client?)", id)
@@ -933,9 +1104,10 @@ fn handle_remote_event(
             match app_core.wheel_pick_command(&key, &path) {
                 Some(command) => {
                     tracing::debug!("remote wheel pick '{}' {:?}: '{}'", key, path, command);
-                    if dispatch_command(app_core, connection, command) {
-                        session_requests.push(SessionRequest::UserQuit);
-                    }
+                    push_dispatch_request(
+                        dispatch_command(app_core, connection, command),
+                        session_requests,
+                    );
                 }
                 None => tracing::warn!(
                     "remote wheel pick '{}' {:?} did not resolve (stale client?)",
@@ -1165,5 +1337,75 @@ fn handle_server_message(app_core: &mut AppCore, msg: ServerMessage) -> bool {
             app_core.game_state.connected = false;
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::data::UiAction;
+
+    fn app() -> AppCore {
+        AppCore::new(Config::default()).expect("AppCore")
+    }
+
+    /// `.reconnect` from the phone must ask the supervisor to reconnect — the
+    /// old `Ui(_)` wildcard wrongly answered "needs the desktop client" from
+    /// the very file that owns the reconnect supervisor.
+    #[test]
+    fn reconnect_action_requests_reconnect() {
+        let mut core = app();
+        assert!(matches!(
+            dispatch_ui_action(&mut core, UiAction::Reconnect),
+            DispatchResult::Reconnect
+        ));
+    }
+
+    /// `push_dispatch_request` maps Reconnect onto a Reconnect session request.
+    #[test]
+    fn reconnect_result_becomes_session_request() {
+        let mut reqs = Vec::new();
+        push_dispatch_request(DispatchResult::Reconnect, &mut reqs);
+        assert_eq!(reqs.len(), 1);
+        assert!(matches!(reqs[0], SessionRequest::Reconnect));
+    }
+
+    /// The touch-wheel editor exists on the phone, so `.touchwheel` must not be
+    /// a reconnect/quit — it's a benign local notice (DispatchResult::None).
+    #[test]
+    fn touch_wheel_editor_is_a_local_notice_not_reconnect_or_quit() {
+        let mut core = app();
+        assert!(matches!(
+            dispatch_ui_action(&mut core, UiAction::TouchWheelEditor),
+            DispatchResult::None
+        ));
+    }
+
+    /// UI-pack export/import and perf dump are handled locally (None), not
+    /// bounced to the desktop.
+    #[test]
+    fn supported_actions_are_handled_locally() {
+        let mut core = app();
+        assert!(matches!(
+            dispatch_ui_action(&mut core, UiAction::PerformanceDump),
+            DispatchResult::None
+        ));
+        assert!(matches!(
+            dispatch_ui_action(&mut core, UiAction::UiExport(vec![])),
+            DispatchResult::None
+        ));
+    }
+
+    /// The outbound sentinel filter now blocks `action:` (the drift the audit
+    /// found — the GUI filtered it, the headless copy did not).
+    #[test]
+    fn should_send_to_network_blocks_ui_sentinels_including_action() {
+        assert!(!should_send_to_network(""));
+        assert!(!should_send_to_network("__internal"));
+        assert!(!should_send_to_network("menu:foo"));
+        assert!(!should_send_to_network("action:bar"));
+        assert!(should_send_to_network("say hello"));
+        assert!(should_send_to_network("north"));
     }
 }

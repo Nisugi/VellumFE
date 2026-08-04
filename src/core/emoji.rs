@@ -108,8 +108,7 @@ pub fn is_emoji_char(c: char) -> bool {
         | 0x2B00..=0x2BFF            // Misc symbols and arrows
         | 0x3030 | 0x303D
         | 0x3297 | 0x3299            // ㊗ ㊙
-        | 0x1F000..=0x1FAFF          // Mahjong … Symbols & Pictographs Extended-A
-        | 0x1F1E6..=0x1F1FF          // Regional indicators (flags)
+        | 0x1F000..=0x1FAFF          // Mahjong … Pictographs Extended-A (incl. 1F1E6-1F1FF regional-indicator flags)
         | 0xE0020..=0xE007F          // Tag characters (subdivision flags)
     )
 }
