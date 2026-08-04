@@ -53,6 +53,18 @@ fn sleep_segment_seconds(segment: &str) -> Option<f64> {
     digits.parse().ok()
 }
 
+/// Everything after the first (dot-command) word of `command`, verbatim, or
+/// `None` when there is no argument. `command` is the whole line including the
+/// leading `.`. Used where the argument must be taken literally (e.g.
+/// `.testline`): slicing past the command word avoids matching a token that
+/// happens to occur inside the command word itself.
+fn command_rest(command: &str) -> Option<&str> {
+    command[1..]
+        .splitn(2, char::is_whitespace)
+        .nth(1)
+        .filter(|s| !s.is_empty())
+}
+
 /// Split a multi-command macro containing sleep segments into the part to
 /// send immediately (joined by \r, the way multi-command strings always
 /// ride to the server) and the paused remainder as (cumulative delay,
@@ -2040,11 +2052,14 @@ impl AppCore {
                 )));
             }
             "testline" => {
-                if let Some(text) = parts.get(1) {
-                    let rest_of_line = command[command.find(text).unwrap_or(0)..].to_string();
-                    self.inject_test_line(&rest_of_line);
-                } else {
-                    self.add_system_message("Usage: .testline <text>");
+                // Everything after the command word, verbatim. See
+                // `command_rest`: slicing past the word avoids the old
+                // `command.find(first_token)` bug where the token matched
+                // INSIDE "testline" and injected a polluted line — defeating
+                // the very tool used to verify highlight/squelch patterns.
+                match command_rest(command) {
+                    Some(text) => self.inject_test_line(text),
+                    None => self.add_system_message("Usage: .testline <text>"),
                 }
             }
             "savehighlights" | "savehl" => {
@@ -2752,8 +2767,23 @@ mod portal_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::{sleep_segment_seconds, split_sleep_macro};
+    use super::{command_rest, sleep_segment_seconds, split_sleep_macro};
     use std::time::Duration;
+
+    #[test]
+    fn command_rest_slices_past_the_command_word_not_a_substring_match() {
+        // The bug: `command.find("test")` matched inside ".testline" itself, so
+        // `.testline test rat` injected "testline test rat". command_rest
+        // slices past the word.
+        assert_eq!(command_rest(".testline test rat appears"), Some("test rat appears"));
+        assert_eq!(command_rest(".testline line two"), Some("line two"));
+        assert_eq!(command_rest(".testline t"), Some("t"));
+        // Leading/interior arguments kept verbatim (no trimming of the rest).
+        assert_eq!(command_rest(".testline  double space"), Some(" double space"));
+        // No argument.
+        assert_eq!(command_rest(".testline"), None);
+        assert_eq!(command_rest(".testline "), None);
+    }
 
     #[test]
     fn sleep_segments_parse_seconds() {

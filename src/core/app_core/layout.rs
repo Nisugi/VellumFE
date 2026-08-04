@@ -450,6 +450,11 @@ impl AppCore {
             "quickbar" => (20, 1),
             "hotkeybar" => (20, 1),
             "dialogpanel" => (14, 4),
+            // Spacers are pure layout padding (1x1 minimum, per docs). Without
+            // this arm they fell to the (5, 3) text default, so distribute_1d
+            // clamped a thin 2x2 alignment spacer up to 5x3 on ANY resize and
+            // displaced the layout after it.
+            "spacer" => (1, 1),
             _ => (5, 3), // text, room, tabbed, etc.
         }
     }
@@ -1099,6 +1104,7 @@ mod tests {
             "quickbar" => (20, 1),
             "hotkeybar" => (20, 1),
             "dialogpanel" => (14, 4),
+            "spacer" => (1, 1),
             _ => (5, 3), // text, room, tabbed, etc.
         }
     }
@@ -1122,6 +1128,8 @@ mod tests {
             "command_input",
             "quickbar",
             "hotkeybar",
+            "dialogpanel",
+            "spacer",
             "text",
             "room",
             "tabbedtext",

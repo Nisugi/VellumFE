@@ -550,10 +550,30 @@ pub fn handle_ui_action(
             app_core.ui_state.input_mode = InputMode::ThemeBrowser;
         }
         UiAction::SetTheme(theme_id) => {
-            // Update frontend theme cache when theme changes via .settheme command
-            let theme = app_core.config.get_theme();
-            frontend.update_theme_cache(theme_id, theme);
-            app_core.needs_render = true;
+            // Validate the requested theme, set it as active, save, THEN fetch
+            // it. Previously this fetched get_theme() (which reads the CURRENT
+            // active_theme) and cached that unchanged theme under the new id —
+            // so `.settheme X` was a no-op that never switched anything.
+            let presets = crate::theme::ThemePresets::all_with_custom(
+                app_core.config.character.as_deref(),
+            );
+            if !presets.contains_key(&theme_id) {
+                let mut names: Vec<&String> = presets.keys().collect();
+                names.sort();
+                let list = names.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(", ");
+                app_core.add_system_message(&format!(
+                    "Unknown theme '{}'. Available: {}",
+                    theme_id, list
+                ));
+            } else {
+                app_core.config.active_theme = theme_id.clone();
+                if let Err(err) = app_core.config.save(app_core.config.character.as_deref()) {
+                    tracing::warn!("Failed to save config after theme switch: {}", err);
+                }
+                let theme = app_core.config.get_theme();
+                frontend.update_theme_cache(theme_id, theme);
+                app_core.needs_render = true;
+            }
         }
         UiAction::EditTheme => {
             // Open theme editor with current theme
