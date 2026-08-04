@@ -300,6 +300,23 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
         if let Some(v) = get_bool(table, "locked")? {
             base.locked = v;
         }
+        // Old layouts stored visibility as `visible = true|false` (a bool);
+        // the current WindowVisibility deserializes from strings, so the
+        // serde `alias = "visible"` never catches the old bool. Carry it over
+        // explicitly, or a deliberately hidden window comes back visible.
+        if let Some(v) = get_bool(table, "visible")? {
+            base.visibility = if v {
+                crate::config::WindowVisibility::Shown
+            } else {
+                crate::config::WindowVisibility::Hidden
+            };
+        } else if let Some(v) = get_str(table, "visibility")? {
+            base.visibility = match v.as_str() {
+                "hidden" => crate::config::WindowVisibility::Hidden,
+                "ephemeral" => crate::config::WindowVisibility::Ephemeral,
+                _ => crate::config::WindowVisibility::Shown,
+            };
+        }
         if let Some(v) = get_str(table, "title")? {
             base.title = Some(v);
         }
@@ -784,6 +801,37 @@ impl BaseMut for WindowDef {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn convert_window_carries_legacy_visible_false_to_hidden() {
+        // Old layouts stored `visible = false`; the migrated window must stay
+        // hidden, not come back visible.
+        let toml = r#"
+widget_type = "text"
+name = "main"
+visible = false
+"#;
+        let val: Value = toml::from_str(toml).unwrap();
+        let table = Value::Table(val.as_table().unwrap().clone());
+        let out = convert_window(table, false).unwrap().expect("window converts");
+        assert!(
+            !out.base().visibility.is_shown(),
+            "legacy visible=false must migrate to Hidden"
+        );
+    }
+
+    #[test]
+    fn convert_window_visible_true_stays_shown() {
+        let toml = r#"
+widget_type = "text"
+name = "main"
+visible = true
+"#;
+        let val: Value = toml::from_str(toml).unwrap();
+        let table = Value::Table(val.as_table().unwrap().clone());
+        let out = convert_window(table, false).unwrap().expect("window converts");
+        assert!(out.base().visibility.is_shown());
+    }
 
     // ===========================================
     // infer_size_from_filename tests

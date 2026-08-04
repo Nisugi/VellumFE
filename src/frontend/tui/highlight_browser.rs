@@ -803,26 +803,6 @@ impl HighlightBrowser {
         }
     }
 
-    /// Update the list of highlight entries (legacy - all marked as global)
-    #[allow(dead_code)]
-    pub fn update_items(
-        &mut self,
-        highlights: &std::collections::HashMap<String, crate::config::HighlightPattern>,
-    ) {
-        self.entries.clear();
-        for (name, highlight) in highlights {
-            self.entries
-                .push(Self::pattern_to_entry(name, highlight, true));
-        }
-        // Sort by name
-        self.entries.sort_by(|a, b| a.name.cmp(&b.name));
-
-        // Reset selection if out of bounds
-        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
-            self.selected_index = self.entries.len() - 1;
-        }
-    }
-
     /// Get the is_global status of the currently selected highlight
     pub fn get_selected_is_global(&self) -> Option<bool> {
         let filtered = self.filtered_entries();

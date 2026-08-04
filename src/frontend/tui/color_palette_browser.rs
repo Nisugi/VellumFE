@@ -783,25 +783,6 @@ impl ColorPaletteBrowser {
             self.selected_index = self.entries.len() - 1;
         }
     }
-
-    /// Legacy update method - marks all as global
-    #[allow(dead_code)]
-    pub fn update_items(&mut self, palette: Vec<crate::config::PaletteColor>) {
-        self.entries = palette
-            .into_iter()
-            .map(|color| PaletteColorEntry {
-                color,
-                is_global: true,
-            })
-            .collect();
-        // Sort by name
-        self.entries.sort_by(|a, b| a.color.name.cmp(&b.color.name));
-
-        // Reset selection if out of bounds
-        if self.selected_index >= self.entries.len() && !self.entries.is_empty() {
-            self.selected_index = self.entries.len() - 1;
-        }
-    }
 }
 
 // Trait implementations for ColorPaletteBrowser

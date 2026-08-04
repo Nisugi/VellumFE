@@ -771,27 +771,6 @@ impl KeybindBrowser {
         }
     }
 
-    /// Update the list of keybind entries (legacy - all marked as global)
-    ///
-    /// Prefer `update_items_with_source` for proper [G]/[C] indicators.
-    #[allow(dead_code)]
-    pub fn update_items(
-        &mut self,
-        keybinds: &std::collections::HashMap<String, crate::config::KeyBindAction>,
-    ) {
-        self.all_entries.clear();
-        for (key, action) in keybinds {
-            self.all_entries.push(KeybindEntry {
-                key_combo: key.clone(),
-                action_type: action.type_name().to_string(),
-                action_value: action.display_value(),
-                is_global: true, // Default to global when source unknown
-            });
-        }
-        // Sort by key combo
-        self.all_entries.sort_by(|a, b| a.key_combo.cmp(&b.key_combo));
-        self.apply_filter();
-    }
 }
 
 // Trait implementations for KeybindBrowser
