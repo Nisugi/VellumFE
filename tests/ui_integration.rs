@@ -2536,6 +2536,7 @@ fn make_segment(text: &str) -> TextSegment {
         mono: false,
         span_type: SpanType::Normal,
         link_data: None,
+        custom_emoji: None,
     }
 }
 
