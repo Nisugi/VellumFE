@@ -370,6 +370,11 @@ pub struct XmlParser {
     /// open link, and pop-on-close restores the outer command for the text
     /// that follows the inner link. `current_link_data` mirrors the top.
     pub(crate) link_stack: Vec<LinkData>,
+    /// Parallel to `link_stack`: whether each open `<a>` pushed a color onto
+    /// `color_stack`. The close pops color iff its own open pushed one, so a
+    /// link that opens outside bold but closes inside it (or vice versa) still
+    /// balances — without this, the color leaked onto every later line.
+    pub(crate) link_pushed_color: Vec<bool>,
     pub(crate) current_preset_id: Option<String>, // Current preset ID (e.g., "speech", "monsterbold")
     // Menu tracking
     current_menu_id: Option<String>, // ID of menu being parsed
@@ -433,6 +438,7 @@ impl XmlParser {
             spell_depth: 0,
             current_link_data: None,
             link_stack: Vec::new(),
+            link_pushed_color: Vec::new(),
             current_preset_id: None,
             current_menu_id: None,
             current_menu_coords: Vec::new(),
@@ -894,6 +900,10 @@ impl XmlParser {
             self.preset_stack.clear();
             self.color_stack.clear();
             self.style_stack.clear();
+            // color_stack was cleared, so the per-link "pushed a color" flags
+            // are moot — drop them too so a later close doesn't act on stale
+            // bookkeeping.
+            self.link_pushed_color.clear();
             self.current_preset_id = None;
         }
 
@@ -2216,8 +2226,16 @@ impl XmlParser {
     }
 
     fn sanitize_dialog_label(value: &str) -> String {
+        // Some dialog labels embed pseudo-attributes after a quote, e.g.
+        // `Label" anchor_top"displayedit_text`. Keep only the leading text.
+        // extract_attribute now entity-decodes, so the quote arrives as a real
+        // `"` (it used to be the literal `&quot;`); truncate at either form so
+        // this is robust regardless of decode timing.
         let mut cleaned = value.to_string();
-        if let Some(pos) = cleaned.find("&quot;") {
+        let cut = cleaned
+            .find('"')
+            .or_else(|| cleaned.find("&quot;"));
+        if let Some(pos) = cut {
             cleaned.truncate(pos);
         }
         cleaned.trim().to_string()
@@ -2385,8 +2403,10 @@ impl XmlParser {
         // Extract id and subtitle. Subtitles carry entity-escaped room
         // names (e.g. Scrivener&apos;s) - decode like text content.
         if let Some(id) = Self::extract_attribute(tag, "id") {
-            let subtitle = Self::extract_attribute(tag, "subtitle").map(Self::decode_entities);
-            let title = Self::extract_attribute(tag, "title").map(Self::decode_entities);
+            // extract_attribute now entity-decodes, so no extra decode here
+            // (double-decoding would collapse a literal `&amp;` in a title).
+            let subtitle = Self::extract_attribute(tag, "subtitle");
+            let title = Self::extract_attribute(tag, "title");
             elements.push(ParsedElement::StreamWindow {
                 id,
                 subtitle,
@@ -2537,8 +2557,10 @@ impl XmlParser {
         // an all-empty stack surfaces as None.
         self.sync_current_link_from_stack();
 
-        // But don't apply color if we're inside monsterbold (bold has priority)
+        // Don't apply color if we're inside monsterbold (bold has priority).
+        // Record that this link pushed NO color so its close doesn't pop one.
         if !self.bold_stack.is_empty() {
+            self.link_pushed_color.push(false);
             return;
         }
 
@@ -2552,14 +2574,17 @@ impl XmlParser {
                 fg,
                 bg,
             });
-        } else {
+            self.link_pushed_color.push(true);
+        } else if let Some((preset_fg, preset_bg)) = self.presets.get("links") {
             // Use links preset
-            if let Some((preset_fg, preset_bg)) = self.presets.get("links") {
-                self.color_stack.push(ColorStyle {
-                    fg: preset_fg.clone(),
-                    bg: preset_bg.clone(),
-                });
-            }
+            self.color_stack.push(ColorStyle {
+                fg: preset_fg.clone(),
+                bg: preset_bg.clone(),
+            });
+            self.link_pushed_color.push(true);
+        } else {
+            // No preset configured: pushed nothing.
+            self.link_pushed_color.push(false);
         }
     }
 
@@ -2574,8 +2599,10 @@ impl XmlParser {
         self.link_stack.pop();
         self.sync_current_link_from_stack();
 
-        // Only pop color if we're not inside monsterbold (matching handle_link_open behavior)
-        if self.bold_stack.is_empty() && !self.color_stack.is_empty() {
+        // Pop color iff THIS link's open pushed one — regardless of the current
+        // bold state. Keying off bold at close time (the old behavior) leaked
+        // the color whenever a link opened outside bold but closed inside it.
+        if self.link_pushed_color.pop().unwrap_or(false) && !self.color_stack.is_empty() {
             self.color_stack.pop();
         }
     }
@@ -3021,16 +3048,23 @@ impl XmlParser {
     fn extract_attribute(tag: &str, attr: &str) -> Option<String> {
         // Extract attribute value from tag using simple string parsing.
         // Handles both quote styles; double quotes keep precedence to match
-        // the original pattern order.
+        // the original pattern order. The value is entity-decoded (`&apos;` ->
+        // `'`, etc.) so callers that feed an attribute into a menu request or
+        // an outbound `<d cmd>` game command send the real character, not the
+        // literal entity. decode_entities is a no-op on entity-free values.
         if let Some(value_start) = Self::find_attr_value_start(tag, attr, b'"') {
             if let Some(end) = tag[value_start..].find('"') {
-                return Some(tag[value_start..value_start + end].to_string());
+                return Some(Self::decode_entities(
+                    tag[value_start..value_start + end].to_string(),
+                ));
             }
         }
 
         if let Some(value_start) = Self::find_attr_value_start(tag, attr, b'\'') {
             if let Some(end) = tag[value_start..].find('\'') {
-                return Some(tag[value_start..value_start + end].to_string());
+                return Some(Self::decode_entities(
+                    tag[value_start..value_start + end].to_string(),
+                ));
             }
         }
 
@@ -3446,6 +3480,44 @@ mod tests {
         // And after the whole block, the parser's stacks must be clean.
         assert!(parser.bold_stack.is_empty(), "bold_stack left dirty after daydream block");
         assert!(parser.preset_stack.is_empty(), "preset_stack left dirty after daydream block");
+    }
+
+    #[test]
+    fn link_opening_outside_bold_closing_inside_bold_does_not_leak_color() {
+        // A link that opens outside bold (pushes the links color) but closes
+        // INSIDE bold must still pop its color. The old code keyed the pop on
+        // the bold state at close time, so this leaked the links color onto
+        // every following line.
+        let mut parser = test_parser();
+        // <a ...> opens (pushes links color), then bold starts, then </a>
+        // closes inside bold, then bold ends. Text after must be uncolored.
+        parser.parse_line(
+            "<a exist=\"1\" noun=\"cat\">a cat<pushBold/> pauncing</a><popBold/> and it leaves.",
+        );
+        let elements = parser.parse_line("Plain following line.");
+        let ParsedElement::Text { fg_color, span_type, .. } = &elements[0] else {
+            panic!("expected Text, got {:?}", elements[0]);
+        };
+        assert!(fg_color.is_none(), "links color leaked to a later line: {fg_color:?}");
+        assert_eq!(*span_type, SpanType::Normal);
+        assert!(parser.color_stack.is_empty(), "color_stack left dirty");
+    }
+
+    #[test]
+    fn attribute_values_are_entity_decoded() {
+        // A link noun carrying &apos; must decode to a real apostrophe so menu
+        // requests / outbound <d cmd> commands use the real character, not the
+        // literal entity.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<a exist=\"5\" noun=\"orc&apos;s helm\">the helm</a>",
+        );
+        let link = elements.iter().find_map(|e| match e {
+            ParsedElement::Text { link_data: Some(l), .. } => Some(l.clone()),
+            _ => None,
+        });
+        let link = link.expect("link present");
+        assert_eq!(link.noun, "orc's helm", "noun should be entity-decoded");
     }
 
     #[test]
