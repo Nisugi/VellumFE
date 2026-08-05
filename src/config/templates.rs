@@ -467,10 +467,9 @@ impl Config {
                 data: DashboardWidgetData {
                     layout: default_dashboard_layout(),
                     spacing: default_dashboard_spacing(),
-                    // New dashboards hide inactive statuses by default so the
-                    // grid isn't a wall of dim icons; users can uncheck it in
-                    // the dashboard editor. (The serde LOAD default stays
-                    // false so existing saved layouts keep what they had.)
+                    // Hide inactive statuses by default so the grid isn't a
+                    // wall of dim icons; users can uncheck it in the dashboard
+                    // editor. Matches the serde load default (config.rs).
                     hide_inactive: true,
                     indicators: Vec::new(),
                 },
@@ -595,6 +594,208 @@ impl Config {
                     active_color: Some("#cccccc".to_string()),
                     default_status: None,
                     default_color: Some("#cccccc".to_string()),
+                },
+            }),
+
+            // Posture + presence indicators. The game reports these as
+            // Icon{STANDING,KNEELING,SITTING,PRONE,HIDDEN,INVISIBLE,JOINED,DEAD}
+            // (see core::state::StatusInfo). Shipping them as first-class
+            // templates makes their art user-customizable (like the afflictions
+            // above) and lets a single combined "posture" indicator drive all
+            // four postures via `states` conditions. The GUI already carries a
+            // vector pictogram for every one of these ids (status_icons.rs), so
+            // they render as art regardless of the text `icon` glyph; the glyph
+            // is a TUI-side fallback chosen to be present in the bundled fonts.
+            "standing" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "standing".to_string(),
+                    title: Some("Standing".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("St".to_string()),
+                    indicator_id: Some("STANDING".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#55b86c".to_string()),
+                    default_status: None,
+                    default_color: Some("#55b86c".to_string()),
+                },
+            }),
+            "kneeling" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "kneeling".to_string(),
+                    title: Some("Kneeling".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("Kn".to_string()),
+                    indicator_id: Some("KNEELING".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#c9a54d".to_string()),
+                    default_status: None,
+                    default_color: Some("#c9a54d".to_string()),
+                },
+            }),
+            "sitting" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "sitting".to_string(),
+                    title: Some("Sitting".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("Si".to_string()),
+                    indicator_id: Some("SITTING".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#c9a54d".to_string()),
+                    default_status: None,
+                    default_color: Some("#c9a54d".to_string()),
+                },
+            }),
+            "prone" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "prone".to_string(),
+                    title: Some("Prone".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("Pr".to_string()),
+                    indicator_id: Some("PRONE".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#d67d3e".to_string()),
+                    default_status: None,
+                    default_color: Some("#d67d3e".to_string()),
+                },
+            }),
+            "hidden" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "hidden".to_string(),
+                    title: Some("Hidden".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("".to_string()), // Nerdfont eye-slash
+                    indicator_id: Some("HIDDEN".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#7a7aa8".to_string()),
+                    default_status: None,
+                    default_color: Some("#7a7aa8".to_string()),
+                },
+            }),
+            "invisible" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "invisible".to_string(),
+                    title: Some("Invisible".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("".to_string()), // Nerdfont ghost
+                    indicator_id: Some("INVISIBLE".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#9a9ac0".to_string()),
+                    default_status: None,
+                    default_color: Some("#9a9ac0".to_string()),
+                },
+            }),
+            "joined" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "joined".to_string(),
+                    title: Some("Joined".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("".to_string()), // Nerdfont users/group
+                    indicator_id: Some("JOINED".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#5aa0d0".to_string()),
+                    default_status: None,
+                    default_color: Some("#5aa0d0".to_string()),
+                },
+            }),
+            "dead" => Some(WindowDef::Indicator {
+                base: WindowBase {
+                    name: "dead".to_string(),
+                    title: Some("Dead".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(2),
+                    cols: Width::new(1),
+                    min_rows: Some(2),
+                    max_rows: Some(2),
+                    min_cols: Some(1),
+                    max_cols: Some(1),
+                    show_border: false,
+                    ..base_defaults.clone()
+                },
+                data: IndicatorWidgetData {
+                    icon: Some("".to_string()), // Nerdfont skull
+                    indicator_id: Some("DEAD".to_string()),
+                    inactive_color: None,
+                    active_color: Some("#cd4d4d".to_string()),
+                    default_status: None,
+                    default_color: Some("#cd4d4d".to_string()),
                 },
             }),
 
@@ -1499,6 +1700,15 @@ impl Config {
             "diseased".to_string(),
             "stunned".to_string(),
             "webbed".to_string(),
+            // Posture + presence indicators (game reports Icon{...}; StatusInfo)
+            "standing".to_string(),
+            "kneeling".to_string(),
+            "sitting".to_string(),
+            "prone".to_string(),
+            "hidden".to_string(),
+            "invisible".to_string(),
+            "joined".to_string(),
+            "dead".to_string(),
             // Text windows
             "main".to_string(),
             "thoughts".to_string(),
@@ -1617,6 +1827,22 @@ impl Config {
             // Most dialogs use the same ID as the template
             _ => dialog_id,
         }
+    }
+
+    /// Whether a game dialog/window `id` is backed by a dedicated widget
+    /// template (minivitals, expr, encum, Buffs, ...) rather than being a
+    /// generic dockable dialog panel (combat, befriend, ...).
+    ///
+    /// This is the single source of truth for the "already has a widget"
+    /// decision. Two paths need it and MUST agree, or a deleted-then-reshown
+    /// widget gets resurrected as a generic `panel_<id>` instead of its real
+    /// widget:
+    /// - `DialogPanelOpen` (messages.rs): skip DialogPanel discovery for ids
+    ///   that own a widget.
+    /// - `set_known_window_shown` (state.rs): a widget id must restore its
+    ///   template, not conjure a dialog panel from the always-on dialog store.
+    pub fn id_has_widget_template(id: &str) -> bool {
+        Self::get_window_template(Self::dialog_id_to_template(id)).is_some()
     }
 
     /// The window template a discovered `<streamWindow>` id should use.
@@ -2013,6 +2239,33 @@ mod dialog_template_mapping_tests {
                 Config::get_window_template(tpl).is_some(),
                 "template '{tpl}' for dialog '{id}' must exist so the guard fires"
             );
+        }
+    }
+
+    #[test]
+    fn standard_status_indicators_all_have_templates() {
+        // Every self-status the game reports (core::state::StatusInfo) must be a
+        // first-class indicator template so its icon is user-customizable and a
+        // combined indicator can drive it. Postures were previously absent,
+        // leaving them as uncustomizable runtime-only dashboard cells.
+        for name in [
+            "poisoned", "bleeding", "diseased", "stunned", "webbed", // afflictions
+            "standing", "kneeling", "sitting", "prone", // postures
+            "hidden", "invisible", "joined", "dead", // presence
+        ] {
+            assert!(
+                Config::get_window_template(name).is_some(),
+                "indicator template '{name}' must exist"
+            );
+        }
+
+        // And they surface in the customizable indicator-template list.
+        let ids: std::collections::HashSet<String> = Config::list_indicator_templates()
+            .into_iter()
+            .map(|t| t.id.to_ascii_uppercase())
+            .collect();
+        for id in ["STANDING", "KNEELING", "SITTING", "PRONE", "DEAD", "HIDDEN"] {
+            assert!(ids.contains(id), "indicator template list missing '{id}'");
         }
     }
 }

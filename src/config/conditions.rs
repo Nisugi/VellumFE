@@ -102,6 +102,27 @@ fn default_true() -> bool {
     true
 }
 
+impl Condition {
+    /// Collect every status-indicator id this condition tree tests via
+    /// `Condition::Indicator`, descending through `All`/`Any` nesting. Ids are
+    /// pushed in encounter order (deduping is the caller's job). Used by the
+    /// dashboard's runtime auto-discovery to know which ids a template already
+    /// "claims" through its `states`, so those ids aren't also auto-added as
+    /// separate orphan cells (e.g. a combined posture indicator referencing
+    /// STANDING/KNEELING/... suppresses those four raw cells).
+    pub fn referenced_indicator_ids(&self, out: &mut Vec<String>) {
+        match self {
+            Condition::Indicator { id, .. } => out.push(id.clone()),
+            Condition::All { conditions } | Condition::Any { conditions } => {
+                for c in conditions {
+                    c.referenced_indicator_ids(out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Body-part ids the injury feed uses (same keys as the injury doll). The
 /// canonical list the parser emits on a full clear; editors offer these in a
 /// dropdown for `Condition::Injury.area`.
@@ -220,4 +241,52 @@ pub enum VitalUnit {
     #[default]
     Percent,
     Absolute,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn indicator(id: &str) -> Condition {
+        Condition::Indicator { id: id.to_string(), active: true }
+    }
+
+    #[test]
+    fn referenced_indicator_ids_collects_flat() {
+        let mut ids = Vec::new();
+        indicator("STANDING").referenced_indicator_ids(&mut ids);
+        assert_eq!(ids, vec!["STANDING"]);
+    }
+
+    #[test]
+    fn referenced_indicator_ids_descends_any_and_all() {
+        // A combined posture indicator's state might read
+        // Any(Standing, Kneeling, All(Sitting, Prone)).
+        let cond = Condition::Any {
+            conditions: vec![
+                indicator("STANDING"),
+                indicator("KNEELING"),
+                Condition::All {
+                    conditions: vec![indicator("SITTING"), indicator("PRONE")],
+                },
+            ],
+        };
+        let mut ids = Vec::new();
+        cond.referenced_indicator_ids(&mut ids);
+        assert_eq!(ids, vec!["STANDING", "KNEELING", "SITTING", "PRONE"]);
+    }
+
+    #[test]
+    fn referenced_indicator_ids_ignores_non_indicator_conditions() {
+        let mut ids = Vec::new();
+        Condition::RtActive.referenced_indicator_ids(&mut ids);
+        Condition::Vital {
+            vital: VitalKind::Health,
+            cmp: Cmp::Lt,
+            value: 50,
+            unit: VitalUnit::Percent,
+        }
+        .referenced_indicator_ids(&mut ids);
+        assert!(ids.is_empty());
+    }
 }

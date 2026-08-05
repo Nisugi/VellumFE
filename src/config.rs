@@ -405,7 +405,11 @@ fn default_dashboard_spacing() -> u16 {
 }
 
 fn default_dashboard_hide_inactive() -> bool {
-    false
+    // Hide inactive statuses by default so a dashboard reads as "what's wrong
+    // right now" rather than a wall of dim icons. Applies to new dashboards and
+    // to any saved layout that omits the field. Users can uncheck it per
+    // dashboard in the editor.
+    true
 }
 
 pub(crate) fn default_target_entity_id() -> String {
