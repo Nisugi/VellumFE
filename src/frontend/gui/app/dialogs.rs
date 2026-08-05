@@ -138,6 +138,7 @@ impl VellumGuiApp {
                                 // dialog-panel feature (rendered there). The
                                 // numeric bars/text below still show.
                             }
+                            crate::data::ui_state::PositionedControlKind::Image(_) => {}
                         }
                     }
                 } else {

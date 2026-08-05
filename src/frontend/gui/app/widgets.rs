@@ -2623,6 +2623,8 @@ impl VellumGuiApp {
                             Self::paint_dialog_skin(ui, rect, skin, dialog, skin_art);
                         }
                     }
+                    // Anchor-only images (ubbars, wound points) are never drawn.
+                    PositionedControlKind::Image(_) => {}
                 }
             }
         }

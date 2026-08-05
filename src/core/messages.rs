@@ -4916,6 +4916,41 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "diagnostic: prints resolved rects for the real frame"]
+    fn uberbar_dump_resolved_rects() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        let frame = include_str!("../../tests/fixtures/uberbar_frame.xml");
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        for element in &parser.parse_line(frame) {
+            processor.process_element(
+                element, &mut game_state, &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None, &mut false, &mut None, &mut None, &mut None, None,
+            );
+        }
+        let dialog = ui_state.dialog_store.get("UberBar").unwrap();
+        let (controls, size) = dialog.positioned_controls().unwrap();
+        eprintln!("canvas = {:?}", size);
+        use crate::data::ui_state::PositionedControlKind as K;
+        for c in &controls {
+            let name = match c.kind {
+                K::Skin(i) => format!("skin:{}", dialog.skins[i].id),
+                K::ProgressBar(i) => format!("bar:{}", dialog.progress_bars[i].id),
+                K::Label(i) => format!("label:{}={}", dialog.display_labels[i].id, dialog.display_labels[i].value),
+                K::Button(i) => format!("btn:{}", dialog.buttons[i].id),
+                K::DropDown(i) => format!("dd:{}", dialog.dropdowns[i].id),
+                K::Image(i) => format!("img:{}", dialog.images[i].id),
+            };
+            eprintln!("  {:<22} x={:6.1} y={:6.1} w={:6.1} h={:5.1}", name, c.rect.0, c.rect.1, c.rect.2, c.rect.3);
+        }
+    }
+
+    #[test]
     fn uberbar_real_frame_multispace_positions() {
         // The REAL frame uses multi-space attribute formatting and a
         // PanelBackground skin ('ubbars') that health anchors to via

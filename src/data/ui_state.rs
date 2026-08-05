@@ -680,6 +680,9 @@ pub enum PositionedControlKind {
     Label(usize),
     /// Index into `skins` — a positioned backdrop art asset.
     Skin(usize),
+    /// Index into `images` — an ANCHOR-ONLY point (never drawn as a control;
+    /// e.g. UberBar's invisible `ubbars` background that vitals anchor to).
+    Image(usize),
 }
 
 /// A dialog control resolved to a pixel-space rect by the anchor grid.
@@ -757,6 +760,20 @@ impl DialogState {
                 layout: label.layout.clone(),
                 kind: PositionedControlKind::Label(i),
                 rect: (0.0, 0.0, 60.0, 15.0),
+            });
+        }
+        // Images participate as ANCHOR POINTS only (never drawn as controls):
+        // UberBar's `ubbars`/PanelBackground is an invisible <image> that the
+        // vitals bars hang from via anchor_top='ubbars'. Without it in the grid
+        // those bars lose their vertical anchor and collapse to the top. Wound
+        // images (width=0/height=0) resolve to zero-size points and affect
+        // nothing.
+        for (i, image) in self.images.iter().enumerate() {
+            entries.push(Entry {
+                id: image.id.clone(),
+                layout: image.layout.clone(),
+                kind: PositionedControlKind::Image(i),
+                rect: (0.0, 0.0, 0.0, 0.0),
             });
         }
 

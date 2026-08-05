@@ -100,8 +100,8 @@ fn positioned_band_cells(dialog: &DialogState) -> Option<Vec<Vec<BandCell>>> {
                 .display_labels
                 .get(index)
                 .map(|l| BandCell::Label { text: l.value.clone() }),
-            // Skins are graphical backdrops with no TUI representation.
-            PositionedControlKind::Skin(_) => None,
+            // Skins + anchor-only images have no TUI representation.
+            PositionedControlKind::Skin(_) | PositionedControlKind::Image(_) => None,
         };
         let Some(cell) = cell else { continue };
         if (control.rect.1 - band_y).abs() > 12.0 || bands.is_empty() {
