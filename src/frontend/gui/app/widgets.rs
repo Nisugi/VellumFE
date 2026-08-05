@@ -2608,16 +2608,12 @@ impl VellumGuiApp {
                     }
                     PositionedControlKind::ProgressBar(i) => {
                         if let Some(bar) = dialog.progress_bars.get(i) {
-                            ui.put(
-                                rect,
-                                egui::ProgressBar::new(bar.value.min(100) as f32 / 100.0)
-                                    .text(bar.text.clone()),
-                            );
+                            Self::paint_panel_progress_bar(ui, rect, bar);
                         }
                     }
                     PositionedControlKind::Label(i) => {
                         if let Some(label) = dialog.display_labels.get(i) {
-                            ui.put(rect, egui::Label::new(&label.value).truncate());
+                            Self::paint_panel_label(ui, rect, label);
                         }
                     }
                     PositionedControlKind::Skin(i) => {
@@ -2669,6 +2665,71 @@ impl VellumGuiApp {
                 }
             });
         }
+    }
+
+    /// Paint a dialog progress bar to its EXACT resolved rect (Wrayth pixel
+    /// layout), instead of ui.put'ing an egui ProgressBar that centers itself
+    /// at its own min-size and overflows the 15px rows UberBar uses. Trough +
+    /// fill (fraction of width) + centered customText.
+    fn paint_panel_progress_bar(
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        bar: &crate::data::DialogProgressBar,
+    ) {
+        let painter = ui.painter();
+        let visuals = ui.visuals();
+        let radius = 2.0;
+        // Trough.
+        painter.rect_filled(rect, radius, visuals.extreme_bg_color);
+        // Fill.
+        let frac = (bar.value.min(100) as f32 / 100.0).clamp(0.0, 1.0);
+        if frac > f32::EPSILON {
+            let mut fill_rect = rect;
+            fill_rect.set_width(rect.width() * frac);
+            painter.rect_filled(fill_rect, radius, visuals.selection.bg_fill);
+        }
+        // Centered text (auto-contrast against the ground it sits on).
+        if !bar.text.is_empty() {
+            let behind = if frac >= 0.5 {
+                visuals.selection.bg_fill
+            } else {
+                visuals.extreme_bg_color
+            };
+            let color = Self::readable_text_color(visuals.text_color(), behind, true);
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                &bar.text,
+                egui::FontId::proportional((rect.height() - 3.0).clamp(8.0, 14.0)),
+                color,
+            );
+        }
+    }
+
+    /// Paint a dialog label to its EXACT rect honoring Wrayth `justify`
+    /// (4 = left, 5 = center, 6 = right). UberBar right-justifies its value
+    /// columns; ui.put centered them mid-slot, which read as floating gaps.
+    fn paint_panel_label(
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        label: &crate::data::DialogLabel,
+    ) {
+        if label.value.is_empty() {
+            return;
+        }
+        let (anchor, pos) = match label.justify {
+            Some(6) => (egui::Align2::RIGHT_CENTER, rect.right_center()),
+            Some(5) => (egui::Align2::CENTER_CENTER, rect.center()),
+            // 4 or unspecified: left.
+            _ => (egui::Align2::LEFT_CENTER, rect.left_center()),
+        };
+        ui.painter().text(
+            pos,
+            anchor,
+            &label.value,
+            egui::FontId::proportional((rect.height() - 3.0).clamp(8.0, 14.0)),
+            ui.visuals().text_color(),
+        );
     }
 
     /// Paint one `<skin>` backdrop inside `rect`. Wrayth scripts reference

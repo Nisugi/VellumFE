@@ -1676,6 +1676,7 @@ impl MessageProcessor {
                             id: label.id.clone(),
                             value: label.value.clone(),
                             layout: label.layout.clone(),
+                            justify: label.justify,
                         };
 
                         if is_paired {
@@ -4912,6 +4913,49 @@ mod tests {
             None,
         );
         assert!(ui_state.active_dialog.as_ref().is_some_and(|d| d.id == "bank"));
+    }
+
+    #[test]
+    fn uberbar_real_frame_multispace_positions() {
+        // The REAL frame uses multi-space attribute formatting and a
+        // PanelBackground skin ('ubbars') that health anchors to via
+        // anchor_top='ubbars'. Assert positioned_controls() returns Some
+        // (the DialogPanel renderer has no flow fallback, so None = blank).
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        let frame = "<openDialog type='dynamic' id='UberBar' title='x' location='main' resident='true'><dialogData id='UberBar' clear='t'>\
+<skin id='ubinjury'    name='InjuriesPanel'    controls='nsys,head' top='5' left='5' width='100' height='150' align='nw'/>\
+<label id='ublog'    value='Today:'      justify='4'  anchor_left='ubinjury'  align='n'    top='5' left='5' height='15' width='50'/>\
+<image id='ubbars'    name='PanelBackground'    justify='4'  anchor_left='ubinjury'  align='n'    top='3' left='5' height='120' width='0'/>\
+<progressBar id='health'    value='100'  text='193/193'  customText='t' anchor_left='ubinjury' anchor_top='ubbars'  top='3' left='4' width='100' height='15'/>\
+</dialogData></openDialog>";
+
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        for element in &parser.parse_line(frame) {
+            processor.process_element(
+                element, &mut game_state, &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None, &mut false, &mut None, &mut None, &mut None, None,
+            );
+        }
+
+        let dialog = ui_state.dialog_store.get("UberBar").expect("store entry");
+        assert!(dialog.progress_bars.iter().any(|b| b.id == "health"), "health bar ingested");
+        assert!(dialog.display_labels.iter().any(|l| l.id == "ublog"), "label ingested");
+        let positioned = dialog.positioned_controls();
+        assert!(
+            positioned.is_some(),
+            "positioned_controls() is None -> panel renders BLANK. bars={:?} labels={:?} their layouts: bar={:?} label={:?}",
+            dialog.progress_bars.iter().map(|b| &b.id).collect::<Vec<_>>(),
+            dialog.display_labels.iter().map(|l| &l.id).collect::<Vec<_>>(),
+            dialog.progress_bars.first().map(|b| b.layout.is_some()),
+            dialog.display_labels.first().map(|l| l.layout.is_some()),
+        );
     }
 
     #[test]

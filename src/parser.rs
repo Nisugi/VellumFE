@@ -327,6 +327,8 @@ pub struct DialogLabelSpec {
     pub value: String,
     /// Anchor-grid layout hints (None when the tag carried none).
     pub layout: Option<crate::data::DialogControlLayout>,
+    /// Wrayth `justify` (4 = left, 5 = center, 6 = right).
+    pub justify: Option<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -2297,7 +2299,9 @@ impl XmlParser {
                 let value = Self::extract_attribute(tag_slice, "value").unwrap_or_default();
                 let value = Self::sanitize_dialog_label(&value);
                 let layout = Self::parse_control_layout(tag_slice);
-                labels.push(DialogLabelSpec { id, value, layout });
+                let justify =
+                    Self::extract_attribute(tag_slice, "justify").and_then(|v| v.parse().ok());
+                labels.push(DialogLabelSpec { id, value, layout, justify });
             }
 
             remaining = &remaining[advance_by..];

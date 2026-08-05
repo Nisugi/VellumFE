@@ -652,6 +652,10 @@ pub struct DialogLabel {
     /// Anchor-grid layout hints (None when the tag carried none). Resident
     /// dynamic dialogs like UberBar position their label rows this way.
     pub layout: Option<DialogControlLayout>,
+    /// Wrayth `justify` (the middle row of a 3x3 grid): 4 = left, 5 = center,
+    /// 6 = right. UberBar right-justifies its value columns (justify='6').
+    /// None = left by default.
+    pub justify: Option<u8>,
 }
 
 /// Progress bar displayed in a dialog
@@ -1947,6 +1951,7 @@ mod tests {
             id: id.to_string(),
             value: id.to_string(),
             layout: Some(layout),
+            justify: None,
         };
         let bar = |id: &str, layout: DialogControlLayout| DialogProgressBar {
             id: id.to_string(),
