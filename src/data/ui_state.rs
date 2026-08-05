@@ -793,9 +793,42 @@ impl DialogState {
             entry.rect = (x, top, w, h);
         }
 
+        // Which entries participate in implicit vertical flow: Wrayth stacks
+        // siblings that share an `anchor_left` target down a column even when
+        // a later one omits `anchor_top` (UberBar's `ubbars` vitals block
+        // anchors_left to the doll with no anchor_top, yet sits BELOW the label
+        // column that also anchors_left to the doll). An entry qualifies when
+        // it has `anchor_left` but no explicit `anchor_top`; it then flows
+        // below the lowest OTHER sibling sharing that anchor_left that does NOT
+        // itself flow (so the anchoring label column, resolved by its own
+        // anchor_top chain, is the floor — not a circular dependency). We skip
+        // the column's own head (the topmost, which keeps its absolute top).
+        // The set of ids that are some other entry's explicit anchor_top
+        // target — these are column HEADS and must keep their absolute top
+        // (they can't flow, or they'd chase the very siblings anchored to them
+        // in a circular push-down).
+        let anchor_top_targets: std::collections::HashSet<String> = entries
+            .iter()
+            .filter_map(|e| e.layout.as_ref().and_then(|l| l.anchor_top.clone()))
+            .collect();
+        let flows: Vec<Option<String>> = entries
+            .iter()
+            .map(|e| {
+                let l = e.layout.as_ref()?;
+                if l.anchor_top.is_some() {
+                    return None;
+                }
+                // A column head (target of someone's anchor_top) stays put.
+                if !e.id.is_empty() && anchor_top_targets.contains(&e.id) {
+                    return None;
+                }
+                l.anchor_left.clone()
+            })
+            .collect();
+
         // Pass 2 (iterated): anchors against resolved siblings. A few
         // rounds lets chains (a anchored to b anchored to c) settle.
-        for _ in 0..3 {
+        for _ in 0..4 {
             for index in 0..entries.len() {
                 let Some(layout) = entries[index].layout.clone() else {
                     continue;
@@ -809,6 +842,28 @@ impl DialogState {
                 let mut rect = entries[index].rect;
                 if let Some(target) = layout.anchor_top.as_deref().and_then(find) {
                     rect.1 = target.1 + target.3 + layout.top.unwrap_or(2) as f32;
+                } else if let Some(al) = flows[index].as_deref() {
+                    // Implicit flow: stack below the lowest NON-flowing sibling
+                    // that also anchors_left to `al` (the resolved label column
+                    // is the floor; other flowing siblings don't count, so a
+                    // block of flowing elements all land just below the column
+                    // rather than cascading off each other).
+                    let floor = entries
+                        .iter()
+                        .enumerate()
+                        .filter(|(j, e)| {
+                            *j != index
+                                && flows[*j].is_none()
+                                && e.layout
+                                    .as_ref()
+                                    .and_then(|l| l.anchor_left.as_deref())
+                                    == Some(al)
+                        })
+                        .map(|(_, e)| e.rect.1 + e.rect.3)
+                        .fold(f32::MIN, f32::max);
+                    if floor > f32::MIN {
+                        rect.1 = floor + layout.top.unwrap_or(2) as f32;
+                    }
                 }
                 match (
                     layout.anchor_left.as_deref().and_then(find),
@@ -2026,6 +2081,82 @@ mod tests {
         assert_eq!(value.0, header.0 + header.2);
         // Mana stacks directly beneath health (anchor_top + its own top=3).
         assert_eq!(mana.1, health.1 + health.3 + 3.0);
+    }
+
+    #[test]
+    fn implicit_flow_stacks_vitals_below_the_label_column() {
+        // UberBar's real bug: a label column and the vitals background BOTH
+        // anchor_left to the doll, but the vitals block has NO anchor_top, so
+        // raw anchors piled it on top of the labels. Wrayth flows same-column
+        // siblings in document order — the vitals must land BELOW the labels.
+        use crate::data::ui_state::PositionedControlKind;
+        let lbl = |id: &str, anchor_top: Option<&str>| DialogLabel {
+            id: id.to_string(),
+            value: id.to_string(),
+            justify: None,
+            layout: Some(DialogControlLayout {
+                top: Some(5),
+                left: Some(5),
+                width: Some(50),
+                height: Some(15),
+                anchor_left: Some("ubinjury".to_string()),
+                anchor_top: anchor_top.map(str::to_string),
+                ..Default::default()
+            }),
+        };
+        // Doll skin (the shared anchor_left target), 150 tall.
+        let doll = DialogSkin {
+            id: "ubinjury".to_string(),
+            name: "InjuriesPanel".to_string(),
+            controls: vec![],
+            layout: Some(DialogControlLayout {
+                top: Some(5),
+                left: Some(5),
+                width: Some(100),
+                height: Some(150),
+                align: Some("nw".to_string()),
+                ..Default::default()
+            }),
+        };
+        // Two-row label column (ublog top, ubhour anchor_top=ublog), then a
+        // vitals background with anchor_left=doll but NO anchor_top.
+        let ubbars = DialogProgressBar {
+            id: "ubbars".to_string(),
+            value: 0,
+            text: String::new(),
+            layout: Some(DialogControlLayout {
+                top: Some(3),
+                left: Some(5),
+                width: Some(100),
+                height: Some(15),
+                anchor_left: Some("ubinjury".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        let dialog = DialogState {
+            skins: vec![doll],
+            display_labels: vec![lbl("ublog", None), lbl("ubhour", Some("ublog"))],
+            progress_bars: vec![ubbars],
+            ..DialogState::empty("UberBar".to_string(), None)
+        };
+        let (controls, _) = dialog.positioned_controls().expect("positioned");
+        let rect_of = |k: PositionedControlKind| {
+            controls.iter().find(|c| c.kind == k).map(|c| c.rect).unwrap()
+        };
+        let ublog = rect_of(PositionedControlKind::Label(0));
+        let ubhour = rect_of(PositionedControlKind::Label(1));
+        let ubbars = rect_of(PositionedControlKind::ProgressBar(0));
+
+        // ubhour stacks below ublog (explicit chain).
+        assert!(ubhour.1 > ublog.1, "ubhour below ublog");
+        // The vitals bar flows below the LAST label (ubhour), not at the top.
+        assert!(
+            ubbars.1 >= ubhour.1 + ubhour.3,
+            "vitals ({}) must sit below the label column bottom ({})",
+            ubbars.1,
+            ubhour.1 + ubhour.3
+        );
     }
 
     #[test]
