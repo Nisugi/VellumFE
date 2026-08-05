@@ -270,6 +270,24 @@ impl VellumGuiApp {
         pane: Rect,
         min_size: Vec2,
     ) -> Rect {
+        // A live snap gesture owns this window's rect: from the frame the
+        // drag state exists, gesture tracking writes the dragged rect into
+        // the store, and the solve must NOT re-apply the old anchors on
+        // top — most critically on the RELEASE frame, where the resuming
+        // position feed would otherwise warp the window back onto its
+        // anchor before promotion runs, making the gesture classify as
+        // Idle and the drag-away-releases rule dead (live-test defect:
+        // "goes right back no matter where I move it"). The drag state is
+        // created on the first tracked frame, AFTER that frame's feed was
+        // computed — so the gesture's start rect is still the solved rect
+        // the user visually grabbed, and no phantom axis deltas appear.
+        if self
+            .zone_snap_drag
+            .as_ref()
+            .is_some_and(|drag| drag.tab_key == *key)
+        {
+            return free;
+        }
         match self.window_anchors.get(key) {
             Some(anchors) if !anchors.is_free() => {
                 solve_window_rect(anchors, free, pane, min_size)
@@ -311,16 +329,17 @@ impl VellumGuiApp {
         if promoted == current {
             return;
         }
-        if self.snap_debug {
-            tracing::info!(
-                "snapdbg promote {:?} gx={:?} gy={:?} {:?} -> {:?}",
-                tab_key,
-                gesture_x,
-                gesture_y,
-                current,
-                promoted,
-            );
-        }
+        // Release frames are rare; log every anchor change unconditionally
+        // so field reports come with evidence without needing `.snapdebug`.
+        tracing::info!(
+            "anchor promote {:?} gx={:?} gy={:?} guides={} {:?} -> {:?}",
+            tab_key,
+            gesture_x,
+            gesture_y,
+            guides.len(),
+            current,
+            promoted,
+        );
         if promoted.is_free() {
             self.window_anchors.remove(tab_key);
         } else {
@@ -334,13 +353,18 @@ impl VellumGuiApp {
     /// in) is written into the store first so the window stays exactly
     /// where the user sees it instead of teleporting to its stale free
     /// rect.
-    pub(super) fn release_window_anchors(&mut self, key: &TabKey, zone: GuiShellZone) {
-        let Some(anchors) = self.window_anchors.remove(key) else {
-            return;
-        };
+    /// Returns the released anchors so callers that are only *suspending*
+    /// them (Move Window) can restore on cancel.
+    pub(super) fn release_window_anchors(
+        &mut self,
+        key: &TabKey,
+        zone: GuiShellZone,
+    ) -> Option<WindowAnchors> {
+        let anchors = self.window_anchors.remove(key)?;
         if anchors.is_free() {
-            return;
+            return None;
         }
+        tracing::info!("anchor release {:?} was {:?}", key, anchors);
         if let (Some(free), Some(pane)) = (
             self.main_window_rects
                 .get(key)
@@ -358,6 +382,7 @@ impl VellumGuiApp {
                 .insert(key.clone(), Self::rect_to_snapshot(resolved));
         }
         self.layout_dirty = true;
+        Some(anchors)
     }
 }
 

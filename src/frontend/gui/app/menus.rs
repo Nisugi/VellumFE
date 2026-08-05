@@ -455,6 +455,11 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::StartMove => {
+                // A move is a deliberate re-place: suspend any anchors
+                // (commit-on-detach inside) so the preview follows the
+                // pointer on every axis; Esc restores them.
+                let original_anchors =
+                    self.release_window_anchors(&request.tab_key, request.zone);
                 // Windows that were never repositioned have no stored rect;
                 // seed it from where the window actually rendered.
                 self.main_window_rects
@@ -463,6 +468,7 @@ impl VellumGuiApp {
                 self.window_move_state = Some(GuiWindowMoveState {
                     tab_key: request.tab_key.clone(),
                     original_rect: self.main_window_rects.get(&request.tab_key).copied(),
+                    original_anchors,
                     just_started: true,
                 });
             }

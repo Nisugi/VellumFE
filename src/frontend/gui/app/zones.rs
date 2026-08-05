@@ -247,6 +247,10 @@ pub(super) struct GuiWindowMoveState {
     pub(super) tab_key: TabKey,
     /// Stored rect at move start, restored on cancel
     pub(super) original_rect: Option<[f32; 4]>,
+    /// Anchors released at move start (a deliberate re-place, so the
+    /// preview follows the pointer on every axis); restored on cancel,
+    /// dropped on placement.
+    pub(super) original_anchors: Option<super::window_manager::WindowAnchors>,
     /// True until the first overlay frame; the menu click that started the
     /// move must not count as the placement click.
     pub(super) just_started: bool,
@@ -921,6 +925,9 @@ impl VellumGuiApp {
                     self.main_window_rects.remove(&state.tab_key);
                 }
             }
+            if let Some(anchors) = state.original_anchors.clone() {
+                self.window_anchors.insert(state.tab_key.clone(), anchors);
+            }
             self.window_move_state = None;
             return;
         }
@@ -1486,9 +1493,21 @@ impl VellumGuiApp {
             let engaging_press = press_origin
                 .is_some_and(|pos| initial_rect.expand(12.0).contains(pos));
             let already_latched = self.zone_engaged_tab.as_ref() == Some(&tab.id.key);
+            // The pre-latch `engaging_press` fallback counts ONLY on the
+            // press frame (the latch doesn't exist yet within it); from the
+            // next frame the topmost-at-press latch is authoritative. Left
+            // open-ended, a press the latch never claims — the sidebar
+            // splitter gutter is a Foreground layer sitting inside every
+            // flush window's 12px ring — kept this window "engaged" for the
+            // whole splitter drag: its position feed suspended (an anchored
+            // window couldn't follow the pane edge it is anchored to), and
+            // the phantom fed-vs-rendered divergence ran the snap hook,
+            // whose release pass then promoted/cleared anchors for a
+            // gesture that never happened.
             let user_engaging_window = !window_locked
                 && pointer_interacting
-                && (already_latched || (self.zone_engaged_tab.is_none() && engaging_press));
+                && (already_latched
+                    || (self.zone_engaged_tab.is_none() && engaging_press && just_pressed));
             // The size pin only relaxes once the press becomes a real drag —
             // a stationary title-bar click keeps the pin, so egui can't snap
             // the window (grouped windows especially, whose max height is the
