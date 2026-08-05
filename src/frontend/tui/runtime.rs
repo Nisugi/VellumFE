@@ -702,6 +702,25 @@ async fn async_run(
                     crate::core::remote::RemoteEvent::Notice(message) => {
                         app_core.add_system_message(&message);
                     }
+                    crate::core::remote::RemoteEvent::LauncherSshGet {
+                        client_id,
+                        request_id,
+                    } => {
+                        app_core.handle_remote_launcher_ssh_get(client_id, request_id);
+                    }
+                    crate::core::remote::RemoteEvent::LauncherSshPut {
+                        client_id,
+                        request_id,
+                        user,
+                        host,
+                        port,
+                        remote_os,
+                        generate_key,
+                    } => {
+                        app_core.handle_remote_launcher_ssh_put(
+                            client_id, request_id, user, host, port, remote_os, generate_key,
+                        );
+                    }
                     crate::core::remote::RemoteEvent::ConfigGet {
                         client_id,
                         request_id,

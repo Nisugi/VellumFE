@@ -464,6 +464,17 @@ pub enum RemoteDelta {
         error: Option<String>,
         saved: bool,
     },
+    /// Reply to one client's SSH-launcher settings get/put (addressed).
+    /// `settings` carries user/host/port/remote_os + key_saved; `public_key`
+    /// is the authorized_keys line (present after generate or if a key exists).
+    LauncherSsh {
+        client_id: u64,
+        request_id: u64,
+        settings: serde_json::Value,
+        public_key: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    },
     /// Reply to one client's touch-wheel get/put (addressed). `slices` is the
     /// wheel's slice list (Null on put replies); `catalog` is the client-
     /// action vocabulary the editor renders from; `saved` marks a write.
@@ -615,6 +626,21 @@ pub enum RemoteEvent {
     },
     /// User-initiated disconnect: end the session, suppress reconnection.
     SessionDisconnect,
+    /// Read the SSH-launcher settings (user, host override, port, remote OS,
+    /// and whether a key is stored + its public line). Reply routes back as
+    /// `RemoteDelta::LauncherSsh`.
+    LauncherSshGet { client_id: u64, request_id: u64 },
+    /// Write the SSH-launcher settings. `generate_key` = true mints a fresh
+    /// ed25519 key into the secure store; the reply carries its public line.
+    LauncherSshPut {
+        client_id: u64,
+        request_id: u64,
+        user: String,
+        host: String,
+        port: u16,
+        remote_os: String,
+        generate_key: bool,
+    },
     /// Read a whitelisted config file (settings sheet editor). The reply
     /// routes back to the requesting client as `RemoteDelta::ConfigFile`.
     ConfigGet {
@@ -1351,6 +1377,27 @@ impl RemoteSink {
             request_id,
             file,
             content,
+            error,
+            saved,
+        });
+    }
+
+    /// Route an SSH-launcher settings reply to the requesting client.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_launcher_ssh(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        settings: serde_json::Value,
+        public_key: Option<String>,
+        error: Option<String>,
+        saved: bool,
+    ) {
+        let _ = self.delta_tx.send(RemoteDelta::LauncherSsh {
+            client_id,
+            request_id,
+            settings,
+            public_key,
             error,
             saved,
         });

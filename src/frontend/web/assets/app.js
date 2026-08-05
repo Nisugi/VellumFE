@@ -844,6 +844,7 @@ function handleMessage(msg) {
     case "session": setSession(msg.d); break;
     case "profiles": renderProfiles(msg.d.list || []); break;
     case "config_file": handleConfigReply(msg.d); break;
+    case "launcher_ssh": handleLauncherSshReply(msg.d); break;
     case "sound": playRemoteSound(msg.d); break;
     case "highlights": handleHighlightsReply(msg.d); break;
     case "colors": handleColorsReply(msg.d); break;
@@ -3350,6 +3351,7 @@ function openSettingsSheet() {
     );
   }
   sheetButton("Client settings (saved on host)", openClientSettings);
+  sheetButton("SSH launcher (cold-start Lich)", openLauncherSsh);
   sheetButton("Streams (saved on host)", openStreamsPanel);
   sheetButton("Touch wheel (long-press ring)", () => openTouchWheelEditor("profile"));
   // Lich WebUI panels — only on a Lich-attached session.
@@ -5764,6 +5766,148 @@ csOverlay.querySelector("#cs-close").addEventListener("click", () => {
   csOverlay.hidden = true;
   csPendingGet = null;
 });
+
+// ---- SSH launcher settings (phone SSH setup) -------------------------------
+// A compact sheet: SSH user/host/port/OS + a Generate-key button that shows the
+// authorized_keys line to paste on the home PC. The private key never leaves
+// the host's secure store.
+
+let launcherSshReqCounter = 0;
+let launcherSshPendingGet = null;
+let launcherSshPendingPut = null;
+let launcherSshState = null; // last settings snapshot
+let launcherSshPublicKey = null;
+
+function openLauncherSsh() {
+  openSheet("SSH launcher");
+  sheetNote("Loading…", false);
+  launcherSshPendingGet = ++launcherSshReqCounter;
+  sendJson("launcher_ssh_get", { request_id: launcherSshPendingGet });
+}
+
+function handleLauncherSshReply(d) {
+  if (d.request_id !== launcherSshPendingGet && d.request_id !== launcherSshPendingPut) return;
+  launcherSshPendingGet = null;
+  launcherSshPendingPut = null;
+  if (d.settings) launcherSshState = d.settings;
+  if (d.public_key) launcherSshPublicKey = d.public_key;
+  // Only redraw if the sheet is still the launcher one.
+  if (!sheet.hidden) renderLauncherSsh(d.error, d.saved);
+}
+
+function renderLauncherSsh(error, saved) {
+  const s = launcherSshState || { user: "", host: "", port: 22, remote_os: "windows", key_saved: false };
+  sheetTitle.textContent = "SSH launcher";
+  sheetItems.replaceChildren();
+
+  const intro = document.createElement("div");
+  intro.className = "sheet-empty";
+  intro.textContent =
+    "Set up SSH so a saved Lich login with a launch command can cold-start Lich when the port is down.";
+  sheetItems.appendChild(intro);
+
+  const field = (label, value, opts = {}) => {
+    const wrap = document.createElement("label");
+    wrap.className = "ssh-field";
+    const span = document.createElement("span");
+    span.textContent = label;
+    const input = document.createElement("input");
+    input.type = opts.numeric ? "text" : "text";
+    if (opts.numeric) input.inputMode = "numeric";
+    input.value = value == null ? "" : String(value);
+    input.autocapitalize = "off";
+    input.autocorrect = "off";
+    input.spellcheck = false;
+    if (opts.placeholder) input.placeholder = opts.placeholder;
+    wrap.append(span, input);
+    sheetItems.appendChild(wrap);
+    return input;
+  };
+
+  const userIn = field("SSH user", s.user, { placeholder: "e.g. shawn" });
+  const hostIn = field("SSH host override", s.host, { placeholder: "(blank = Lich host)" });
+  const portIn = field("SSH port", s.port, { numeric: true, placeholder: "22" });
+
+  const osWrap = document.createElement("label");
+  osWrap.className = "ssh-field";
+  const osSpan = document.createElement("span");
+  osSpan.textContent = "Home PC OS";
+  const osSel = document.createElement("select");
+  for (const [val, lbl] of [["windows", "Windows"], ["unix", "Unix/macOS"]]) {
+    const opt = document.createElement("option");
+    opt.value = val;
+    opt.textContent = lbl;
+    if (s.remote_os === val) opt.selected = true;
+    osSel.appendChild(opt);
+  }
+  osWrap.append(osSpan, osSel);
+  sheetItems.appendChild(osWrap);
+
+  // Key state + public line.
+  const keyState = document.createElement("div");
+  keyState.className = "sheet-empty";
+  keyState.textContent = s.key_saved ? "✓ launcher key stored" : "No launcher key yet.";
+  sheetItems.appendChild(keyState);
+
+  if (launcherSshPublicKey) {
+    const keyBox = document.createElement("textarea");
+    keyBox.className = "ssh-pubkey";
+    keyBox.readOnly = true;
+    keyBox.rows = 3;
+    keyBox.value = launcherSshPublicKey;
+    sheetItems.appendChild(keyBox);
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "sheet-item";
+    copyBtn.textContent = "Copy public key";
+    copyBtn.addEventListener("click", () => {
+      try { navigator.clipboard.writeText(launcherSshPublicKey); } catch { /* ok */ }
+    });
+    sheetItems.appendChild(copyBtn);
+    const hint = document.createElement("div");
+    hint.className = "sheet-empty";
+    hint.textContent = "Paste this into ~/.ssh/authorized_keys on the home PC.";
+    sheetItems.appendChild(hint);
+  }
+
+  if (error) {
+    const err = document.createElement("div");
+    err.className = "sheet-empty editor-error";
+    err.textContent = error;
+    sheetItems.appendChild(err);
+  } else if (saved) {
+    const ok = document.createElement("div");
+    ok.className = "sheet-empty";
+    ok.textContent = "Saved.";
+    sheetItems.appendChild(ok);
+  }
+
+  const put = (generate) => {
+    launcherSshPendingPut = ++launcherSshReqCounter;
+    sendJson("launcher_ssh_put", {
+      request_id: launcherSshPendingPut,
+      user: userIn.value.trim(),
+      host: hostIn.value.trim(),
+      port: (portIn.value.trim().match(/^\d+$/) ? parseInt(portIn.value.trim(), 10) : 22),
+      remote_os: osSel.value,
+      generate_key: !!generate,
+    });
+  };
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "sheet-item";
+  saveBtn.textContent = "Save";
+  saveBtn.addEventListener("click", () => put(false));
+  sheetItems.appendChild(saveBtn);
+
+  const genBtn = document.createElement("button");
+  genBtn.type = "button";
+  genBtn.className = "sheet-item";
+  genBtn.textContent = s.key_saved ? "Regenerate key" : "Generate key";
+  genBtn.addEventListener("click", () => put(true));
+  sheetItems.appendChild(genBtn);
+}
 
 function openClientSettings() {
   csOverlay.hidden = false;

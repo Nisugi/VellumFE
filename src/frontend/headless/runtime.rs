@@ -1319,6 +1319,33 @@ fn handle_remote_event(
             session_requests.push(SessionRequest::Disconnect);
             true
         }
+        RemoteEvent::LauncherSshGet {
+            client_id,
+            request_id,
+        } => {
+            app_core.handle_remote_launcher_ssh_get(client_id, request_id);
+            true
+        }
+        RemoteEvent::LauncherSshPut {
+            client_id,
+            request_id,
+            user,
+            host,
+            port,
+            remote_os,
+            generate_key,
+        } => {
+            app_core.handle_remote_launcher_ssh_put(
+                client_id,
+                request_id,
+                user,
+                host,
+                port,
+                remote_os,
+                generate_key,
+            );
+            true
+        }
         RemoteEvent::ConfigGet {
             client_id,
             request_id,

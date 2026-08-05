@@ -428,6 +428,25 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "saved": saved,
             }),
         ),
+        // client_id stays server-side (ws task already filtered on it).
+        RemoteDelta::LauncherSsh {
+            request_id,
+            settings,
+            public_key,
+            error,
+            saved,
+            ..
+        } => encode(
+            "launcher_ssh",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "settings": settings,
+                "public_key": public_key,
+                "error": error,
+                "saved": saved,
+            }),
+        ),
         // Lich WebUI broadcasts. The phone renders only pages it subscribed
         // to; it drops renders for pages it hasn't opened.
         RemoteDelta::WebUiRender { page, seq, tree } => encode(
@@ -578,6 +597,17 @@ pub enum ClientMessage {
     GetProfiles,
     /// Delete a saved profile (and its stored password if unshared).
     DeleteProfile { name: String },
+    /// Read the SSH-launcher settings (user/host/port/OS + key state).
+    LauncherSshGet { request_id: u64 },
+    /// Write the SSH-launcher settings; `generate_key` mints a fresh key.
+    LauncherSshPut {
+        request_id: u64,
+        user: String,
+        host: String,
+        port: u16,
+        remote_os: String,
+        generate_key: bool,
+    },
     /// Read a whitelisted config file (settings sheet editor).
     ConfigGet { request_id: u64, file: String },
     /// Validate + write a whitelisted config file, then hot-reload.
@@ -862,6 +892,36 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         }
         "disconnect" => Some(ClientMessage::Disconnect),
         "get_profiles" => Some(ClientMessage::GetProfiles),
+        "launcher_ssh_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            Some(ClientMessage::LauncherSshGet { request_id })
+        }
+        "launcher_ssh_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let user = opt_str(msg.d.get("user")).unwrap_or_default();
+            let host = opt_str(msg.d.get("host")).unwrap_or_default();
+            // Port may arrive as number or text; default to 22.
+            let port = match msg.d.get("port") {
+                Some(v) if v.is_u64() => v.as_u64().and_then(|p| u16::try_from(p).ok()),
+                Some(v) => v.as_str().and_then(|s| s.trim().parse::<u16>().ok()),
+                None => None,
+            }
+            .unwrap_or(22);
+            let remote_os = opt_str(msg.d.get("remote_os")).unwrap_or_else(|| "windows".to_string());
+            let generate_key = msg
+                .d
+                .get("generate_key")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(ClientMessage::LauncherSshPut {
+                request_id,
+                user,
+                host,
+                port,
+                remote_os,
+                generate_key,
+            })
+        }
         "config_get" => {
             let request_id = msg.d.get("request_id")?.as_u64()?;
             let file = msg.d.get("file")?.as_str()?.to_string();

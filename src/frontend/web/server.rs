@@ -886,6 +886,34 @@ async fn handle_client_message(
             .event_tx
             .send(RemoteEvent::SessionDisconnect)
             .is_ok(),
+        ClientMessage::LauncherSshGet { request_id } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::LauncherSshGet {
+                client_id,
+                request_id,
+            })
+            .is_ok(),
+        ClientMessage::LauncherSshPut {
+            request_id,
+            user,
+            host,
+            port,
+            remote_os,
+            generate_key,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::LauncherSshPut {
+                client_id,
+                request_id,
+                user,
+                host,
+                port,
+                remote_os,
+                generate_key,
+            })
+            .is_ok(),
         ClientMessage::ConfigGet { request_id, file } => state
             .handles
             .event_tx
@@ -1232,6 +1260,7 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     // only the requesting client's task forwards them.
                     if let RemoteDelta::Menu { client_id: target, .. }
                     | RemoteDelta::ConfigFile { client_id: target, .. }
+                    | RemoteDelta::LauncherSsh { client_id: target, .. }
                     | RemoteDelta::Highlights { client_id: target, .. }
                     | RemoteDelta::Colors { client_id: target, .. }
                     | RemoteDelta::TouchWheel { client_id: target, .. }
