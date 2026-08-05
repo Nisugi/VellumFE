@@ -712,6 +712,13 @@ impl VellumGuiApp {
         ctx.data(|data| data.get_temp(Self::buffer_selection_data_id()))
     }
 
+    /// True when a game-window buffer selection spans a non-empty range, i.e.
+    /// the user has text highlighted that should own Copy/Cut over the command
+    /// input. A collapsed selection (anchor == head) or none returns false.
+    fn active_buffer_selection_present(ctx: &egui::Context) -> bool {
+        Self::buffer_selection(ctx).is_some_and(|sel| sel.anchor != sel.head)
+    }
+
     fn store_buffer_selection(ctx: &egui::Context, selection: Option<GuiBufferSelection>) {
         ctx.data_mut(|data| match selection {
             Some(selection) => {
@@ -4290,6 +4297,22 @@ impl VellumGuiApp {
     /// edits and key events are stashed as a `CommandInputEcho` in egui
     /// temp data and drained once per frame by the app update loop.
     pub(super) fn render_command_input_widget(ui: &mut egui::Ui, seed: &str, drag_gutter: bool) {
+        // Copy/Cut priority: when a game-window buffer selection is active, that
+        // selection owns the clipboard, not this (often focused-but-unselected)
+        // input. The focused TextEdit would otherwise consume the Copy event
+        // during ui.add() and win the clipboard whenever the input held text.
+        // Removing the Copy/Cut event here -- before the edit, regardless of
+        // which window renders first -- lets the owning text window's buffer
+        // copy path be the sole handler. With no active selection the event is
+        // left in place, so copying from the input still works (bug #3).
+        if Self::active_buffer_selection_present(ui.ctx()) {
+            ui.ctx().input_mut(|input| {
+                input
+                    .events
+                    .retain(|event| !matches!(event, egui::Event::Copy | egui::Event::Cut));
+            });
+        }
+
         let mut text = seed.to_string();
         let mut echo = CommandInputEcho::default();
         // Vertically center the single-line edit in whatever height the
@@ -4731,6 +4754,15 @@ impl VellumGuiApp {
                             if !text.is_empty() {
                                 ctx.copy_text(text);
                             }
+                            // Consume the event so a command input rendering
+                            // later this frame can't also claim the clipboard
+                            // (bug #3). The command-input widget makes the same
+                            // check up front for the reverse order.
+                            ctx.input_mut(|input| {
+                                input.events.retain(|event| {
+                                    !matches!(event, egui::Event::Copy | egui::Event::Cut)
+                                });
+                            });
                         }
                     }
                 }
@@ -5893,6 +5925,47 @@ mod tests {
         assert_eq!(palette[1], Color32::from_rgb(0x00, 0xff, 0x00));
         // ...while un-overridden levels keep the shared defaults.
         assert_eq!(palette[3], Color32::from_rgb(0xff, 0x00, 0x00));
+    }
+
+    // --- Keybind bug #3: copy priority. A non-empty game-window selection owns
+    // Copy/Cut over the command input; a collapsed or absent selection does
+    // not, so copying from the input still works. ---
+
+    #[test]
+    fn active_buffer_selection_gates_copy_priority() {
+        let ctx = eframe::egui::Context::default();
+
+        // No selection stored: input keeps the clipboard.
+        assert!(!VellumGuiApp::active_buffer_selection_present(&ctx));
+
+        // A collapsed selection (anchor == head) is just a caret, not a
+        // highlight -- the input still owns Copy.
+        VellumGuiApp::store_buffer_selection(
+            &ctx,
+            Some(GuiBufferSelection {
+                scroll_id: "main".into(),
+                anchor: (10, 3),
+                head: (10, 3),
+                dragging: false,
+            }),
+        );
+        assert!(!VellumGuiApp::active_buffer_selection_present(&ctx));
+
+        // A real, non-empty selection takes priority.
+        VellumGuiApp::store_buffer_selection(
+            &ctx,
+            Some(GuiBufferSelection {
+                scroll_id: "main".into(),
+                anchor: (10, 3),
+                head: (11, 0),
+                dragging: false,
+            }),
+        );
+        assert!(VellumGuiApp::active_buffer_selection_present(&ctx));
+
+        // Clearing the selection returns the clipboard to the input.
+        VellumGuiApp::store_buffer_selection(&ctx, None);
+        assert!(!VellumGuiApp::active_buffer_selection_present(&ctx));
     }
 }
 

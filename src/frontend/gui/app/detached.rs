@@ -486,8 +486,12 @@ impl VellumGuiApp {
         }
 
         if consumed_keyboard_input {
+            // Retain on PROCESSED input.events (what widgets read this frame),
+            // not raw.events -- see the matching note in app.rs
+            // handle_global_input. Kept consistent with the root path even
+            // though detached windows host no text widgets today.
             ctx.input_mut(|input| {
-                input.raw.events.retain(|event| {
+                input.events.retain(|event| {
                     !matches!(
                         event,
                         egui::Event::Key { .. }

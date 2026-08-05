@@ -4102,9 +4102,18 @@ impl VellumGuiApp {
         }
 
         if consumed_keyboard_input {
-            // Remove keyboard/text events so focused text widgets don't also process consumed keys.
+            // Strip keyboard/text events so focused text widgets don't also
+            // process a consumed key. This MUST retain on the PROCESSED
+            // `input.events`, not `input.raw.events`: egui clones raw.events
+            // into events at begin_pass (before update() runs), and the
+            // command-input TextEdit reads the processed vector. Filtering
+            // raw.events here is a no-op for the current frame -- which is why
+            // alt+key / shift+key leaked their printable Event::Text into the
+            // input line even though the macro fired (consume_key removes only
+            // the Event::Key, never the Event::Text). ctrl+key never leaked
+            // because the OS emits no printable text for control chords.
             ctx.input_mut(|input| {
-                input.raw.events.retain(|event| {
+                input.events.retain(|event| {
                     !matches!(
                         event,
                         egui::Event::Key { .. }
@@ -4836,6 +4845,31 @@ impl VellumGuiApp {
             egui::Key::F10 => crate::data::input::KeyCode::F(10),
             egui::Key::F11 => crate::data::input::KeyCode::F(11),
             egui::Key::F12 => crate::data::input::KeyCode::F(12),
+            // Punctuation → UNSHIFTED base char, matching the keybind map /
+            // keybinds.toml convention (parse_key_string stores a single char
+            // as Char, key_event_to_string lowercases). Shift stays a modifier
+            // rather than folding into ':' / '?' / '{' etc. Without these arms
+            // Capture ignored the press and the live matcher never fired the
+            // binding (bug: punctuation keys can't be bound in the GUI).
+            egui::Key::Semicolon => crate::data::input::KeyCode::Char(';'),
+            egui::Key::Comma => crate::data::input::KeyCode::Char(','),
+            egui::Key::Period => crate::data::input::KeyCode::Char('.'),
+            egui::Key::Slash => crate::data::input::KeyCode::Char('/'),
+            egui::Key::Minus => crate::data::input::KeyCode::Char('-'),
+            egui::Key::Equals => crate::data::input::KeyCode::Char('='),
+            egui::Key::Backtick => crate::data::input::KeyCode::Char('`'),
+            egui::Key::OpenBracket => crate::data::input::KeyCode::Char('['),
+            egui::Key::CloseBracket => crate::data::input::KeyCode::Char(']'),
+            egui::Key::Backslash => crate::data::input::KeyCode::Char('\\'),
+            egui::Key::Quote => crate::data::input::KeyCode::Char('\''),
+            // Fork also exposes the shifted-glyph variants directly (some
+            // layouts/IMEs report ':' as Colon rather than Shift+Semicolon).
+            // Map them to the same base char so a binding matches regardless of
+            // which the platform emits.
+            egui::Key::Colon => crate::data::input::KeyCode::Char(';'),
+            egui::Key::Pipe => crate::data::input::KeyCode::Char('\\'),
+            egui::Key::Questionmark => crate::data::input::KeyCode::Char('/'),
+            egui::Key::Plus => crate::data::input::KeyCode::Char('='),
             _ => return None,
         };
         Some(code)
@@ -8154,5 +8188,131 @@ mod tests {
         assert!(!layout_changed);
         assert!(!gui_changed);
         assert_eq!(settings.get(&TabKey::Vitals).unwrap().text_size, Some(16.0));
+    }
+
+    // --- Keybind bug #1: punctuation keys must map through the egui→frontend
+    // translation, or Capture ignores them and the live matcher never fires. ---
+
+    /// Every punctuation key reported unbindable maps to its UNSHIFTED base
+    /// char — the canonical form the keybind map and keybinds.toml store
+    /// (`parse_key_string` treats a single char as `KeyCode::Char`, and
+    /// `key_event_to_string` lowercases). Shift is carried as a modifier, not
+    /// folded into a shifted glyph.
+    #[test]
+    fn egui_punctuation_keys_map_to_unshifted_chars() {
+        use eframe::egui::{Key, Modifiers};
+        let none = Modifiers::NONE;
+        let cases = [
+            (Key::Quote, '\''),
+            (Key::Semicolon, ';'),
+            (Key::Comma, ','),
+            (Key::Period, '.'),
+            (Key::Slash, '/'),
+            (Key::Minus, '-'),
+            (Key::Equals, '='),
+            (Key::Backtick, '`'),
+            (Key::OpenBracket, '['),
+            (Key::CloseBracket, ']'),
+            (Key::Backslash, '\\'),
+        ];
+        for (key, expected) in cases {
+            assert_eq!(
+                VellumGuiApp::egui_key_to_frontend_code(key, none),
+                Some(KeyCode::Char(expected)),
+                "egui::Key::{key:?} should map to Char({expected:?})"
+            );
+        }
+    }
+
+    /// Capture → serialize → parse → match round-trip: a captured punctuation
+    /// press must produce the same `KeyEvent` the live matcher builds from a
+    /// keybind-map key loaded off disk. If these diverge, the binding "exists"
+    /// but never fires (the reported bug).
+    #[test]
+    fn punctuation_keybind_round_trips_capture_to_matcher() {
+        use crate::core::menu_actions::key_event_to_string;
+        use eframe::egui::{Key, Modifiers};
+
+        for (key, ch) in [
+            (Key::Semicolon, ';'),
+            (Key::Slash, '/'),
+            (Key::Minus, '-'),
+            (Key::OpenBracket, '['),
+        ] {
+            // Capture side: egui press → frontend KeyEvent.
+            let captured = VellumGuiApp::egui_key_to_frontend_event(key, Modifiers::NONE)
+                .expect("punctuation press should capture");
+            // Serialize the way the form fills its Key-combo field / saves TOML.
+            let combo = key_event_to_string(captured);
+            assert_eq!(combo, ch.to_string());
+            // Matcher side: the string re-parses to the same KeyEvent that the
+            // keybind map is keyed on.
+            let (code, modifiers) =
+                crate::config::parse_key_string(&combo).expect("combo parses");
+            assert_eq!(KeyEvent::new(code, modifiers), captured);
+        }
+    }
+
+    /// Shift + punctuation carries the base char plus a shift modifier (the
+    /// chosen convention), not a shifted glyph — so `shift+;` serializes to
+    /// `"shift+;"`, matching the TUI/config model.
+    #[test]
+    fn shift_punctuation_carries_base_char_and_shift_modifier() {
+        use crate::core::menu_actions::key_event_to_string;
+        use eframe::egui::{Key, Modifiers};
+
+        let event = VellumGuiApp::egui_key_to_frontend_event(Key::Semicolon, Modifiers::SHIFT)
+            .expect("shift+; should capture");
+        assert_eq!(event.code, KeyCode::Char(';'));
+        assert!(event.modifiers.shift);
+        assert_eq!(key_event_to_string(event), "shift+;");
+    }
+
+    // --- Keybind bug #2: alt+key / shift+key produce a printable Event::Text
+    // alongside the Event::Key. When a keybind consumes the press we must strip
+    // BOTH, or the char leaks into the command input. This tests the retain
+    // predicate `handle_global_input` applies to the processed event vector. ---
+
+    /// The consume filter removes the leaked printable Text (and the Key,
+    /// Copy/Cut/Paste) while leaving unrelated events (pointer motion) intact.
+    #[test]
+    fn dispatched_keybind_strips_leaked_text_event() {
+        use eframe::egui::{Event, Key, Modifiers, Pos2};
+
+        // What an alt+2 press looks like in the processed event vector: the Key
+        // (already targeted by consume_key) plus the printable Text egui emits
+        // for alt/shift chords, plus an unrelated pointer event.
+        let mut events = vec![
+            Event::Key {
+                key: Key::Num2,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::ALT,
+            },
+            Event::Text("2".to_string()),
+            Event::PointerMoved(Pos2::new(1.0, 2.0)),
+        ];
+
+        // Identical predicate to handle_global_input's consume block.
+        events.retain(|event| {
+            !matches!(
+                event,
+                Event::Key { .. }
+                    | Event::Text(_)
+                    | Event::Paste(_)
+                    | Event::Copy
+                    | Event::Cut
+            )
+        });
+
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Text(_))),
+            "the leaked '2' Text event must be stripped so it can't reach the input line"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, Event::PointerMoved(_))),
+            "unrelated pointer events must survive"
+        );
     }
 }
