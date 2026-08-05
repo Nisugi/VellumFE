@@ -596,6 +596,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Text color for boss creatures", target_list.boss_color),
         opt_text_entry!("target_list.challenging_color", "Challenging Color", "Targets",
             "Text color for challenging creatures", target_list.challenging_color),
+        opt_text_entry!("target_list.dead_color", "Dead Color", "Targets",
+            "Text color for dead players in the players window", target_list.dead_color),
         // ---- Logging -------------------------------------------------
         bool_entry!("logging.enabled", "Raw Logging", "Logging",
             "Capture raw XML from the network layer", logging.enabled),

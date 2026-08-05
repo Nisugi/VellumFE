@@ -109,6 +109,7 @@ struct TargetGlobalFields {
     excluded_nouns: String,
     boss_color: String,
     challenging_color: String,
+    dead_color: String,
 }
 
 /// Current value of a registry setting as draft text (lists join one entry
@@ -356,6 +357,7 @@ impl VellumGuiApp {
                 excluded_nouns: registry_draft(config, "target_list.excluded_nouns"),
                 boss_color: registry_draft(config, "target_list.boss_color"),
                 challenging_color: registry_draft(config, "target_list.challenging_color"),
+                dead_color: registry_draft(config, "target_list.dead_color"),
             });
         }
         // The vitals window's bar options live in GuiUiSettings (moved from
@@ -1221,6 +1223,7 @@ impl VellumGuiApp {
                                     "target_list.challenging_color",
                                     &mut globals.challenging_color,
                                 ),
+                                ("target_list.dead_color", &mut globals.dead_color),
                             ] {
                                 let Some(def) = registry::find(key) else {
                                     continue;
@@ -1463,6 +1466,9 @@ impl VellumGuiApp {
                         }
                         "target_list.challenging_color" => {
                             SettingValue::Text(globals.challenging_color.trim().to_string())
+                        }
+                        "target_list.dead_color" => {
+                            SettingValue::Text(globals.dead_color.trim().to_string())
                         }
                         _ => continue,
                     };
