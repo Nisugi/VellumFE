@@ -4968,14 +4968,20 @@ impl VellumGuiApp {
             &self.command_history,
         )
         .is_none()
-            || !ctx.memory(|memory| {
-                memory.focused() == Some(egui::Id::new(COMMAND_INPUT_EDIT_ID))
-            })
         {
             return false;
         }
 
-        let end = self.command_input.chars().count();
+        Self::command_completion_cursor_ready(ctx, self.command_input.chars().count())
+    }
+
+    fn command_completion_cursor_ready(ctx: &egui::Context, end: usize) -> bool {
+        if !ctx.memory(|memory| {
+            memory.focused() == Some(egui::Id::new(COMMAND_INPUT_EDIT_ID))
+        }) {
+            return false;
+        }
+
         egui::TextEdit::load_state(ctx, egui::Id::new(COMMAND_INPUT_EDIT_ID))
             .and_then(|state| state.cursor.char_range())
             .is_some_and(|range| {
@@ -6970,6 +6976,8 @@ impl eframe::App for VellumGuiApp {
                 self.command_input = text;
             }
             if echo.completion_accepted {
+                self.history_pos = None;
+                self.history_draft.clear();
                 self.command_cursor_to_end(&ctx);
             } else if echo.history_prev {
                 self.history_previous();

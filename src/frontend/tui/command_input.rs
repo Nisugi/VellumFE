@@ -12,24 +12,34 @@ use crate::frontend::tui::{
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{BorderType, Paragraph, Widget},
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write as _};
 use std::path::PathBuf;
+use unicode_segmentation::UnicodeSegmentation;
 
-fn char_display_width(ch: char) -> usize {
-    Span::raw(ch.to_string()).width()
+fn grapheme_display_width(grapheme: &str) -> usize {
+    Span::raw(grapheme.to_string()).width()
+}
+
+fn text_char_widths(text: &str) -> Vec<usize> {
+    text.graphemes(true)
+        .flat_map(|grapheme| {
+            std::iter::once(grapheme_display_width(grapheme))
+                .chain(std::iter::repeat_n(0, grapheme.chars().count().saturating_sub(1)))
+        })
+        .collect()
 }
 
 fn prefix_fitting_width(text: &str, max_width: usize) -> (String, usize) {
     let mut width = 0;
     let prefix = text
-        .chars()
-        .take_while(|ch| {
-            let next_width = char_display_width(*ch);
+        .graphemes(true)
+        .take_while(|grapheme| {
+            let next_width = grapheme_display_width(grapheme);
             if width + next_width > max_width {
                 false
             } else {
@@ -39,6 +49,40 @@ fn prefix_fitting_width(text: &str, max_width: usize) -> (String, usize) {
         })
         .collect();
     (prefix, width)
+}
+
+fn push_cursor_and_completion(
+    spans: &mut Vec<Span<'static>>,
+    suffix: Option<String>,
+    remaining_width: usize,
+    cursor_fg: Color,
+    cursor_bg: Color,
+    completion_color: Color,
+) {
+    if let Some(suffix) = suffix {
+        let mut graphemes = suffix.graphemes(true);
+        if let Some(first) = graphemes.next() {
+            let first_width = grapheme_display_width(first).max(1);
+            if first_width <= remaining_width {
+                spans.push(Span::styled(
+                    first.to_string(),
+                    Style::default().bg(cursor_bg).fg(cursor_fg),
+                ));
+                let rest = graphemes.collect::<String>();
+                let (visible_rest, _) =
+                    prefix_fitting_width(&rest, remaining_width.saturating_sub(first_width));
+                spans.push(Span::styled(
+                    visible_rest,
+                    Style::default().fg(completion_color),
+                ));
+                return;
+            }
+        }
+    }
+    spans.push(Span::styled(
+        " ",
+        Style::default().bg(cursor_bg).fg(cursor_fg),
+    ));
 }
 
 pub struct CommandInput {
@@ -52,6 +96,7 @@ pub struct CommandInput {
     title_position: TitlePosition,
     background_color: Option<String>,
     text_color: Option<String>,        // Input text color
+    completion_color: Option<String>,  // History completion suffix color
     cursor_fg_color: Option<String>,   // Cursor foreground color
     cursor_bg_color: Option<String>,   // Cursor background color
     prompt_icon: Option<String>,       // Optional prompt icon shown before input
@@ -70,9 +115,10 @@ impl CommandInput {
             title: "Command".to_string(),
             title_position: TitlePosition::TopLeft,
             background_color: None,
-            text_color: None,      // Will use global default
-            cursor_fg_color: None, // Default: black
-            cursor_bg_color: None, // Default: white
+            text_color: None,       // Will use global default
+            completion_color: None, // Will use a visible muted fallback
+            cursor_fg_color: None,  // Default: black
+            cursor_bg_color: None,  // Default: white
             prompt_icon: None,
             prompt_icon_color: None,
         }
@@ -111,6 +157,10 @@ impl CommandInput {
 
     pub fn set_text_color(&mut self, color: Option<String>) {
         self.text_color = color;
+    }
+
+    pub fn set_completion_color(&mut self, color: Option<String>) {
+        self.completion_color = color;
     }
 
     pub fn set_cursor_colors(&mut self, fg: Option<String>, bg: Option<String>) {
@@ -205,10 +255,6 @@ impl CommandInput {
         self.model.history_next();
     }
 
-    pub fn history_completion(&self) -> Option<String> {
-        self.model.history_completion()
-    }
-
     pub fn accept_history_completion(&mut self) -> bool {
         self.model.accept_history_completion()
     }
@@ -300,6 +346,11 @@ impl CommandInput {
             .as_ref()
             .and_then(|c| self.parse_color(c))
             .unwrap_or(Color::White);
+        let completion_color = self
+            .completion_color
+            .as_ref()
+            .and_then(|c| self.parse_color(c))
+            .unwrap_or(Color::Gray);
         let icon_text = self.prompt_icon.as_ref().and_then(|s| {
             let t = s.trim();
             if t.is_empty() {
@@ -343,18 +394,18 @@ impl CommandInput {
         let available_width = text_area.width as usize;
         let chars: Vec<char> = self.model.text().chars().collect();
         let total_chars = chars.len();
-        let char_widths: Vec<usize> = chars.iter().map(|ch| char_display_width(*ch)).collect();
+        let char_widths = text_char_widths(self.model.text());
         let total_width: usize = char_widths.iter().sum();
         let selection = self.model.selection_range();
         let history_completion = self.model.history_completion();
         let cursor_at_end = self.model.cursor_pos() == total_chars;
         let completion_width = history_completion
             .as_deref()
-            .and_then(|suffix| suffix.chars().next())
-            .map(char_display_width)
+            .and_then(|suffix| suffix.graphemes(true).next())
+            .map(grapheme_display_width)
             .unwrap_or(0);
         let reserved_width = if cursor_at_end {
-            1 + completion_width.min(available_width.saturating_sub(1))
+            completion_width.max(1).min(available_width)
         } else {
             0
         };
@@ -430,20 +481,14 @@ impl CommandInput {
 
         let mut spans = Vec::new();
         if visible_chars.is_empty() {
-            spans.push(Span::styled(
-                " ",
-                Style::default().bg(cursor_bg).fg(cursor_fg),
-            ));
-            if let Some(suffix) = history_completion {
-                let (visible_suffix, _) =
-                    prefix_fitting_width(&suffix, available_width.saturating_sub(1));
-                spans.push(Span::styled(
-                    visible_suffix,
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::DIM),
-                ));
-            }
+            push_cursor_and_completion(
+                &mut spans,
+                history_completion,
+                available_width,
+                cursor_fg,
+                cursor_bg,
+                completion_color,
+            );
         } else {
             let mut cell_pos = 0;
             for (global_idx, ch) in &visible_chars {
@@ -462,22 +507,14 @@ impl CommandInput {
             let cursor_is_visible_at_end =
                 self.model.cursor_pos() == total_chars && visible_width < available_width;
             if cursor_is_visible_at_end {
-                spans.push(Span::styled(
-                    " ",
-                    Style::default().bg(cursor_bg).fg(cursor_fg),
-                ));
-                if let Some(suffix) = history_completion {
-                    let (visible_suffix, _) = prefix_fitting_width(
-                        &suffix,
-                        available_width.saturating_sub(visible_width + 1),
-                    );
-                    spans.push(Span::styled(
-                        visible_suffix,
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .add_modifier(Modifier::DIM),
-                    ));
-                }
+                push_cursor_and_completion(
+                    &mut spans,
+                    history_completion,
+                    available_width.saturating_sub(visible_width),
+                    cursor_fg,
+                    cursor_bg,
+                    completion_color,
+                );
             }
         }
 
@@ -697,6 +734,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn display_widths_keep_grapheme_clusters_together() {
+        assert_eq!(text_char_widths("👩‍💻"), vec![2, 0, 0]);
+        assert_eq!(text_char_widths("e\u{301}"), vec![1, 0]);
+        assert_eq!(prefix_fitting_width("👩‍💻!", 1), (String::new(), 0));
+        assert_eq!(prefix_fitting_width("👩‍💻!", 2), ("👩‍💻".to_string(), 2));
+    }
+
+    #[test]
+    fn completion_styles_the_first_grapheme_as_the_cursor() {
+        let mut spans = Vec::new();
+        push_cursor_and_completion(
+            &mut spans,
+            Some("👩‍💻!".to_string()),
+            3,
+            Color::Black,
+            Color::White,
+            Color::Gray,
+        );
+
+        assert_eq!(spans[0].content.as_ref(), "👩‍💻");
+        assert_eq!(spans[0].style.bg, Some(Color::White));
+        assert_eq!(spans[1].content.as_ref(), "!");
+        assert_eq!(spans[1].style.fg, Some(Color::Gray));
+    }
+
+    #[test]
     fn completion_remains_visible_when_input_fills_the_window() {
         let mut input = CommandInput::new(10);
         input.show_border = false;
@@ -708,8 +771,9 @@ mod tests {
         let mut buf = Buffer::empty(area);
         input.render(area, &mut buf);
 
-        assert_eq!(buf[(4, 0)].symbol(), " ");
+        assert_eq!(buf[(4, 0)].symbol(), "f");
         assert_eq!(buf[(5, 0)].symbol(), "g");
+        assert_eq!(buf[(5, 0)].bg, Color::White);
     }
 
     #[test]
@@ -739,7 +803,29 @@ mod tests {
         let mut buf = Buffer::empty(area);
         input.render(area, &mut buf);
 
-        assert_eq!(buf[(4, 0)].symbol(), " ");
-        assert_eq!(buf[(5, 0)].symbol(), "!");
+        assert_eq!(buf[(4, 0)].symbol(), "!");
+        assert_eq!(buf[(4, 0)].bg, Color::White);
+    }
+
+    #[test]
+    fn completion_uses_configured_color_without_terminal_dim() {
+        let mut input = CommandInput::new(10);
+        input.show_border = false;
+        input.show_title = false;
+        input.set_completion_color(Some("#d8dee9".to_string()));
+        input.record_external_command("go well");
+        input.insert_text("go ");
+
+        let area = Rect::new(0, 0, 12, 1);
+        let mut buf = Buffer::empty(area);
+        input.render(area, &mut buf);
+
+        assert_eq!(buf[(3, 0)].symbol(), "w");
+        assert_eq!(buf[(3, 0)].bg, Color::White);
+        assert_eq!(buf[(4, 0)].symbol(), "e");
+        assert_eq!(buf[(4, 0)].fg, Color::Rgb(216, 222, 233));
+        assert!(!buf[(4, 0)]
+            .modifier
+            .contains(ratatui::style::Modifier::DIM));
     }
 }

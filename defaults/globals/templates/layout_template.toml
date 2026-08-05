@@ -805,6 +805,7 @@
 # streams = []                      # Leave empty
 # buffer_size = 100                 # Command history size
 # text_color = "#ffffff"            # Input text color (optional)
+# completion_color = "#808080"      # History completion suffix (optional; theme secondary fallback)
 # cursor_color = "#ffffff"          # Cursor color (optional)
 # cursor_background_color = "#808080"  # Cursor background (optional)
 # prompt_icon = ""                 # Prompt icon (optional, Nerd Font)

@@ -195,6 +195,21 @@ impl super::TuiFrontend {
                 return self.handle_command_submission(command, app_core);
             }
         } else {
+            // A visible history suggestion always owns plain Tab, regardless
+            // of how Tab is rebound. Other completion behavior remains tied
+            // to the configured switch-window action below.
+            if matches!(code, KeyCode::Tab)
+                && modifiers == crate::data::input::KeyModifiers::NONE
+                && self
+                    .widget_manager
+                    .command_inputs
+                    .get_mut("command_input")
+                    .is_some_and(|input| input.accept_history_completion())
+            {
+                app_core.needs_render = true;
+                return Ok(None);
+            }
+
             // Check for keybinds first - normalize to lowercase for consistent matching
             let normalized_code = match code {
                 KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
@@ -334,20 +349,15 @@ impl super::TuiFrontend {
                     }
                     app_core.needs_render = true;
                 } else if is_switch_window_action {
-                    // Keep Tab in the command input when it can accept a
-                    // history suggestion or complete a dot-command. Otherwise
-                    // preserve the configured switch-window behavior.
+                    // Keep the configured switch-window key in the command
+                    // input for dot-command completion. Plain Tab history
+                    // completion is handled before keybind dispatch above.
                     let should_complete = self
                         .widget_manager
                         .command_inputs
                         .get("command_input")
-                        .map(|cmd| {
-                            cmd.history_completion().is_some()
-                                || cmd
-                                    .get_input()
-                                    .is_some_and(|text| text.starts_with('.'))
-                        })
-                        .unwrap_or(false);
+                        .and_then(|cmd| cmd.get_input())
+                        .is_some_and(|text| text.starts_with('.'));
 
                     if should_complete {
                         // Accept history or perform dot-command completion.
