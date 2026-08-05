@@ -87,6 +87,8 @@ pub enum UiAction {
     Keybinds,
     AddKeybind,
     MenuKeybinds,
+    /// Open the status-abbreviation map editor (target_list.status_abbrev).
+    EditStatusAbbrev,
     Controller,
     Hotbars,
     /// The Jinx asset-manager panel (`.jinx gui`). GUI-only.
@@ -299,6 +301,7 @@ impl UiAction {
             "keybinds" => UiAction::Keybinds,
             "addkeybind" => UiAction::AddKeybind,
             "menukeybinds" => UiAction::MenuKeybinds,
+            "editstatusabbrev" => UiAction::EditStatusAbbrev,
             "controller" => UiAction::Controller,
             "hotbars" => UiAction::Hotbars,
             "jinxpanel" => UiAction::JinxPanel,
@@ -360,6 +363,7 @@ impl std::fmt::Display for UiAction {
             UiAction::Keybinds => write!(f, "action:keybinds"),
             UiAction::AddKeybind => write!(f, "action:addkeybind"),
             UiAction::MenuKeybinds => write!(f, "action:menukeybinds"),
+            UiAction::EditStatusAbbrev => write!(f, "action:editstatusabbrev"),
             UiAction::Controller => write!(f, "action:controller"),
             UiAction::Hotbars => write!(f, "action:hotbars"),
             UiAction::JinxPanel => write!(f, "action:jinxpanel"),
@@ -466,6 +470,7 @@ mod tests {
             UiAction::Keybinds,
             UiAction::AddKeybind,
             UiAction::MenuKeybinds,
+            UiAction::EditStatusAbbrev,
             UiAction::Controller,
             UiAction::Hotbars,
             UiAction::JinxPanel,

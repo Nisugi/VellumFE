@@ -53,6 +53,7 @@ pub mod pack_editor;
 pub mod settings_editor;
 mod spacer;
 pub mod menu_keybind_editor;
+pub mod status_abbrev_editor;
 pub mod spell_color_browser;
 pub mod spell_color_form;
 mod spells_window;
@@ -118,6 +119,8 @@ pub struct TuiFrontend {
     pub spell_color_form: Option<spell_color_form::SpellColorFormWidget>,
     /// Active menu keybind editor (if any)
     pub menu_keybind_editor: Option<menu_keybind_editor::MenuKeybindEditor>,
+    /// Active status abbreviation editor (if any)
+    pub status_abbrev_editor: Option<status_abbrev_editor::StatusAbbrevEditor>,
     /// Active theme browser (if any)
     pub theme_browser: Option<theme_browser::ThemeBrowser>,
     /// Active theme editor (if any)
@@ -288,6 +291,7 @@ impl TuiFrontend {
             spell_color_browser: None,
             spell_color_form: None,
             menu_keybind_editor: None,
+            status_abbrev_editor: None,
             theme_browser: None,
             theme_editor: None,
             settings_editor: None,

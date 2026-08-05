@@ -5459,6 +5459,27 @@ impl VellumGuiApp {
             },
             A::Keybinds => self.open_keybind_editor(),
             A::MenuKeybinds => self.open_menu_keybind_editor(),
+            A::EditStatusAbbrev => {
+                // The GUI edits status_abbrev inside the Window Editor's
+                // "Targets (global)" section, so open that editor on the first
+                // Targets window (falling back to the picker with a hint).
+                let targets_window = self
+                    .app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|w| matches!(w, crate::config::WindowDef::Targets { .. }))
+                    .map(|w| w.name().to_string());
+                match targets_window {
+                    Some(name) => self.open_window_editor(Some(&name)),
+                    None => {
+                        self.open_window_editor(None);
+                        self.app_core.add_system_message(
+                            "Add a Targets window, then edit status abbreviations in its editor.",
+                        );
+                    }
+                }
+            }
             A::Controller => {
                 #[cfg(feature = "gamepad")]
                 self.open_controller_editor();

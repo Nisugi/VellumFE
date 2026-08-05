@@ -622,6 +622,9 @@ impl Frontend for TuiFrontend {
             if let Some(ref mut menu_keybind_editor) = self.menu_keybind_editor {
                 menu_keybind_editor.render(screen_area, f.buffer_mut(), &theme);
             }
+            if let Some(ref mut status_abbrev_editor) = self.status_abbrev_editor {
+                status_abbrev_editor.render(screen_area, f.buffer_mut(), &theme);
+            }
             if let Some(ref mut theme_editor) = self.theme_editor {
                 theme_editor.render(screen_area, f.buffer_mut(), &app_core.config, &theme);
             }

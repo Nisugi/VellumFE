@@ -2106,6 +2106,50 @@ impl super::TuiFrontend {
                 Ok(None)
     }
 
+    /// Status abbreviation editor keys. This edits text cells, so plain
+    /// character keys type into the focused cell; commands use non-char keys
+    /// to avoid colliding with typing (Ctrl+A add, Ctrl+D delete, Tab column,
+    /// Up/Down navigate, Ctrl+S save, Esc cancel).
+    pub(super) fn handle_status_abbrev_editor_mode_keys(
+        &mut self,
+        code: crate::data::input::KeyCode,
+        modifiers: crate::data::input::KeyModifiers,
+        app_core: &mut crate::core::AppCore,
+    ) -> Result<Option<String>> {
+        use crate::data::input::KeyCode;
+        use crate::data::ui_state::InputMode;
+        if let Some(ref mut editor) = self.status_abbrev_editor {
+            let ctrl = modifiers.contains_ctrl();
+            match code {
+                KeyCode::Esc => {
+                    self.status_abbrev_editor = None;
+                    app_core.ui_state.input_mode = InputMode::Normal;
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+                    app_core.config.target_list.status_abbrev = editor.to_map();
+                    match app_core.save_config() {
+                        Ok(()) => {
+                            self.status_abbrev_editor = None;
+                            app_core.ui_state.input_mode = InputMode::Normal;
+                            app_core.add_system_message("Status abbreviations saved.");
+                        }
+                        Err(err) => editor.set_status(format!("Save failed: {}", err)),
+                    }
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') if ctrl => editor.add_row(),
+                KeyCode::Char('d') | KeyCode::Char('D') if ctrl => editor.delete_row(),
+                KeyCode::Up => editor.navigate_up(),
+                KeyCode::Down => editor.navigate_down(),
+                KeyCode::Tab | KeyCode::BackTab => editor.toggle_column(),
+                KeyCode::Backspace => editor.backspace(),
+                KeyCode::Char(c) if !ctrl => editor.insert_char(c),
+                _ => {}
+            }
+            app_core.needs_render = true;
+        }
+        Ok(None)
+    }
+
     pub(super) fn handle_theme_editor_mode_keys(
         &mut self,
         code: crate::data::input::KeyCode,

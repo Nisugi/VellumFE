@@ -256,6 +256,9 @@ pub enum InputMode {
     PackEditor,
     /// Indicator template editor is open
     IndicatorTemplateEditor,
+    /// Status abbreviation editor is open (edit the target_list.status_abbrev
+    /// map: full status name -> short tag, shown in targets & players)
+    StatusAbbrevEditor,
     /// Interact mode: arrow-key/controller focus cycling over room entities
     Interact,
 }

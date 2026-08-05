@@ -959,6 +959,7 @@ fn dispatch_ui_action(
         | A::Keybinds
         | A::AddKeybind
         | A::MenuKeybinds
+        | A::EditStatusAbbrev
         | A::Controller
         | A::Hotbars
         | A::JinxPanel

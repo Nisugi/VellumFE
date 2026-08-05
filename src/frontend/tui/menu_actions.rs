@@ -404,6 +404,17 @@ pub fn handle_ui_action(
             close_all_menus(&mut app_core.ui_state);
             app_core.ui_state.input_mode = InputMode::MenuKeybindEditor;
         }
+        UiAction::EditStatusAbbrev => {
+            // Standalone editor for the global target_list.status_abbrev map
+            // (full status name -> short tag), seeded from live config.
+            frontend.status_abbrev_editor = Some(
+                crate::frontend::tui::status_abbrev_editor::StatusAbbrevEditor::new(
+                    &app_core.config.target_list.status_abbrev,
+                ),
+            );
+            close_all_menus(&mut app_core.ui_state);
+            app_core.ui_state.input_mode = InputMode::StatusAbbrevEditor;
+        }
         // The GUI's Streams & Custom Windows panel and the TUI's
         // `.streams` menu are the same surface.
         UiAction::Streams | UiAction::CustomWindows => {

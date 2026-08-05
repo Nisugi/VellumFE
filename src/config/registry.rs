@@ -140,7 +140,7 @@ pub const EXEMPT_PREFIXES: &[&str] = &[
     "menu_keybinds",              // 26-field struct; .menukeybinds editor (TUI menu_keybind_editor + GUI editors/menu_keybinds)
     "quickbars",                  // quickbar definitions (config template docs)
     "ui.layout",                  // legacy empty section
-    "target_list.status_abbrev",  // abbreviation map; targets editor later
+    "target_list.status_abbrev",  // Map (no registry Kind); bespoke editors in both frontends
     "go2.saved",                  // captured travel targets (.go2 save)
     "go2.pathcodes",              // captured maze routes, never hand-edited
     "tts.substitutions",          // pattern/replacement pairs; Accessibility panel

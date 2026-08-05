@@ -2286,6 +2286,7 @@ impl TuiFrontend {
             InputMode::ColorForm => return self.handle_color_form_mode_keys(code, modifiers, app_core),
             InputMode::SpellColorForm => return self.handle_spell_color_form_mode_keys(code, modifiers, app_core),
             InputMode::MenuKeybindEditor => return self.handle_menu_keybind_editor_mode_keys(code, modifiers, app_core),
+            InputMode::StatusAbbrevEditor => return self.handle_status_abbrev_editor_mode_keys(code, modifiers, app_core),
             InputMode::ThemeEditor => return self.handle_theme_editor_mode_keys(code, modifiers, app_core),
             InputMode::IndicatorTemplateEditor => return self.handle_indicator_template_editor_mode_keys(code, modifiers, app_core),
             _ => {}

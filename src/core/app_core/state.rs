@@ -5084,6 +5084,15 @@ impl AppCore {
                 command: ".indicators".to_string(),
                 disabled: false,
             },
+            // Standalone editor for the target_list.status_abbrev map (shown
+            // in the targets & players windows). Uses the action: command form
+            // rather than a dot-command. In the GUI this opens the Window
+            // Editor's Targets section where the same map is edited.
+            crate::data::ui_state::PopupMenuItem {
+                text: "Status Abbrevs".to_string(),
+                command: "action:editstatusabbrev".to_string(),
+                disabled: false,
+            },
         ]
     }
 

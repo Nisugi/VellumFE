@@ -33,7 +33,10 @@ fn get_action_context(mode: &InputMode) -> ActionContext {
         | InputMode::UIColorsBrowser
         | InputMode::ThemeBrowser
         | InputMode::MenuKeybindEditor
-        | InputMode::IndicatorTemplateEditor => ActionContext::Browser,
+        | InputMode::IndicatorTemplateEditor
+        // StatusAbbrevEditor handles raw keys itself; grouped here only so the
+        // context mapping stays total.
+        | InputMode::StatusAbbrevEditor => ActionContext::Browser,
 
         // Form widgets
         // (PackEditor handles raw keys itself; grouped here so the
