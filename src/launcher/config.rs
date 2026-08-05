@@ -483,4 +483,30 @@ mod tests {
         delete_private_key(id);
         assert_eq!(load_private_key(id), None);
     }
+
+    /// The mobile (non-desktop) key store: seals the private key into a file
+    /// under the base dir, keyed by id, and reads it back. Exercises the path
+    /// that replaces the OS keyring on iOS/Android. Uses a temp base dir under
+    /// the shared VELLUM_FE_DIR lock so it doesn't touch the real store.
+    #[cfg(not(feature = "desktop"))]
+    #[test]
+    fn mobile_key_round_trip() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        let id = "default";
+        let pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nmobilekeydata\n-----END OPENSSH PRIVATE KEY-----";
+        assert!(load_private_key(id).is_none(), "empty store starts empty");
+        save_private_key(id, pem).expect("save to mobile store");
+        assert_eq!(load_private_key(id).as_deref(), Some(pem));
+        // A different id must not collide.
+        assert!(load_private_key("other").is_none());
+        delete_private_key(id);
+        assert_eq!(load_private_key(id), None);
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
 }
