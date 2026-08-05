@@ -1457,9 +1457,9 @@ impl VellumGuiApp {
                     Self::injury_severity_text(*level)
                 ));
             }
-            if wounds.is_empty() {
-                response.on_hover_text("uninjured");
-            } else {
+            // No "uninjured" tooltip on an unwounded doll (it read as a stray
+            // badge over the UberBar paperdoll); only surface actual wounds.
+            if !wounds.is_empty() {
                 wounds.sort();
                 response.on_hover_text(wounds.join("\n"));
             }
