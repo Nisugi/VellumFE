@@ -110,6 +110,10 @@ struct TargetGlobalFields {
     boss_color: String,
     challenging_color: String,
     dead_color: String,
+    /// status_abbrev map buffered as (full name, abbrev) rows. Registry-exempt
+    /// structured data (no Map kind), so it persists via save_config, not the
+    /// per-key registry path — the same idiom as TTS substitutions.
+    status_abbrev: Vec<(String, String)>,
 }
 
 /// Current value of a registry setting as draft text (lists join one entry
@@ -351,6 +355,15 @@ impl VellumGuiApp {
         // (moved from the Settings window's Targets category).
         if matches!(window.content, WindowContent::Targets) {
             let config = &self.app_core.config;
+            // Sort the abbrev map by name so rows keep a stable order across
+            // opens (HashMap iteration order is otherwise arbitrary).
+            let mut status_abbrev: Vec<(String, String)> = config
+                .target_list
+                .status_abbrev
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            status_abbrev.sort_by(|a, b| a.0.cmp(&b.0));
             state.targets_global = Some(TargetGlobalFields {
                 status_position: registry_draft(config, "target_list.status_position"),
                 truncation_mode: registry_draft(config, "target_list.truncation_mode"),
@@ -358,6 +371,7 @@ impl VellumGuiApp {
                 boss_color: registry_draft(config, "target_list.boss_color"),
                 challenging_color: registry_draft(config, "target_list.challenging_color"),
                 dead_color: registry_draft(config, "target_list.dead_color"),
+                status_abbrev,
             });
         }
         // The vitals window's bar options live in GuiUiSettings (moved from
@@ -770,6 +784,10 @@ impl VellumGuiApp {
         // Global target_list.* keys edited this frame; applied and persisted
         // after the UI closure (the closure only borrows self immutably).
         let mut changed_global: Vec<&'static str> = Vec::new();
+        // status_abbrev is registry-exempt structured data; when its rows
+        // change we rebuild the map and persist via save_config after the
+        // closure (same as changed_global, different save path).
+        let mut status_abbrev_changed = false;
         // Snapshot outside the closure: the closure borrows self immutably.
         // Available for single-stream text windows AND tabbed windows (each
         // tab picks streams from it).
@@ -1242,6 +1260,51 @@ impl VellumGuiApp {
                                 ui.end_row();
                             }
                         });
+
+                    // Status abbreviation map (full status name -> up to 3
+                    // chars). Registry-exempt, so edited as (name, abbrev)
+                    // rows and persisted via save_config. Same idiom as the
+                    // TTS pronunciation editor.
+                    ui.separator();
+                    ui.strong("Status abbreviations");
+                    ui.weak("Full status name ▸ short tag (shown in targets & players).");
+                    let mut remove_abbrev: Option<usize> = None;
+                    for (index, (name, abbrev)) in globals.status_abbrev.iter_mut().enumerate() {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(name)
+                                        .hint_text("stunned")
+                                        .desired_width(140.0),
+                                )
+                                .changed()
+                            {
+                                status_abbrev_changed = true;
+                            }
+                            ui.label("▸");
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(abbrev)
+                                        .hint_text("stu")
+                                        .desired_width(60.0),
+                                )
+                                .changed()
+                            {
+                                status_abbrev_changed = true;
+                            }
+                            if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                                remove_abbrev = Some(index);
+                            }
+                        });
+                    }
+                    if let Some(index) = remove_abbrev {
+                        globals.status_abbrev.remove(index);
+                        status_abbrev_changed = true;
+                    }
+                    if ui.button("Add abbreviation").clicked() {
+                        globals.status_abbrev.push((String::new(), String::new()));
+                        status_abbrev_changed = true;
+                    }
                 }
 
                 if state.supports_streams {
@@ -1483,6 +1546,27 @@ impl VellumGuiApp {
                     ) {
                         state.error = Some(format!("{key}: {err}"));
                     }
+                }
+                self.app_core.needs_render = true;
+            }
+        }
+
+        // status_abbrev is registry-exempt structured data: rebuild the map
+        // from the edited rows (dropping blank-name rows) and persist with the
+        // sparse whole-config save, mirroring the TTS-substitutions path.
+        if status_abbrev_changed {
+            if let Some(globals) = &state.targets_global {
+                let mut map = std::collections::HashMap::new();
+                for (name, abbrev) in &globals.status_abbrev {
+                    let name = name.trim();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    map.insert(name.to_lowercase(), abbrev.trim().to_string());
+                }
+                self.app_core.config.target_list.status_abbrev = map;
+                if let Err(err) = self.app_core.save_config() {
+                    state.error = Some(format!("target_list.status_abbrev: {err}"));
                 }
                 self.app_core.needs_render = true;
             }
