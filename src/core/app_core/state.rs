@@ -2436,6 +2436,24 @@ impl AppCore {
                     };
                     WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(page, title))
                 }
+                // A resident dialog panel (combat, UberBar) renders from the
+                // dialog store by its bound id — see add_new_window's twin arm.
+                WidgetType::DialogPanel => {
+                    let dialog_id = match window_def {
+                        crate::config::WindowDef::DialogPanel { data, .. }
+                            if !data.dialog_id.is_empty() =>
+                        {
+                            data.dialog_id.clone()
+                        }
+                        _ => window_def
+                            .base()
+                            .binding
+                            .as_ref()
+                            .map(|b| b.id().to_string())
+                            .unwrap_or_default(),
+                    };
+                    WindowContent::DialogPanel { dialog_id }
+                }
                 _ => WindowContent::Empty,
             };
 
@@ -2777,6 +2795,28 @@ impl AppCore {
                     String::new()
                 };
                 WindowContent::WebUi(crate::data::webui::WebUiPanelContent::new(page, title))
+            }
+            // A resident dialog panel (combat, UberBar) renders from the
+            // dialog store by its bound id. Without this arm the window fell
+            // through to Empty and rendered blank even though the store held
+            // its bars/labels/skins.
+            WidgetType::DialogPanel => {
+                let dialog_id = match window_def {
+                    crate::config::WindowDef::DialogPanel { data, .. }
+                        if !data.dialog_id.is_empty() =>
+                    {
+                        data.dialog_id.clone()
+                    }
+                    // Fall back to the binding id (the discovery sets both, but
+                    // a hand-authored panel might only carry the binding).
+                    _ => window_def
+                        .base()
+                        .binding
+                        .as_ref()
+                        .map(|b| b.id().to_string())
+                        .unwrap_or_default(),
+                };
+                WindowContent::DialogPanel { dialog_id }
             }
             _ => WindowContent::Empty,
         };
@@ -4668,6 +4708,10 @@ impl AppCore {
             WidgetType::WebUi => WindowContent::WebUi(
                 crate::data::webui::WebUiPanelContent::new(name, name),
             ),
+            // Name-based creation path: bind the panel to the window name.
+            WidgetType::DialogPanel => WindowContent::DialogPanel {
+                dialog_id: name.to_string(),
+            },
             _ => WindowContent::Empty,
         };
 
@@ -7525,6 +7569,21 @@ mod tests {
             !core.ui_state.shown_dialog_ids.contains("UberBar"),
             "a DialogPanel must not join the popup allow-set (that causes the duplicate window)"
         );
+
+        // The runtime window must carry DialogPanel content bound to the id —
+        // NOT WindowContent::Empty (the blank-panel bug: add_new_window had no
+        // DialogPanel arm, so the shown panel rendered nothing).
+        let win = core
+            .ui_state
+            .windows
+            .get("UberBar")
+            .expect("shown UberBar has a runtime window");
+        match &win.content {
+            crate::data::WindowContent::DialogPanel { dialog_id } => {
+                assert_eq!(dialog_id, "UberBar", "panel content bound to the dialog id");
+            }
+            other => panic!("expected DialogPanel content, got {:?}", other),
+        }
     }
 
     #[test]
