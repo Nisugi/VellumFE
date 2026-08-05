@@ -64,6 +64,7 @@ enum SessionRequest {
         profile_name: Option<String>,
         lich_host: Option<String>,
         lich_port: Option<u16>,
+        custom_launch: Option<String>,
     },
     Disconnect,
     /// The user sent `quit` to the game: the server will close the
@@ -182,6 +183,15 @@ impl Supervisor {
     }
 }
 
+/// Load the global launcher SSH settings (user, port, remote OS) used by the
+/// mobile per-profile launch flow. Falls back to defaults if the launcher
+/// config is absent — the flow then surfaces a clear "no SSH key/user" error.
+fn launcher_ssh_settings() -> crate::launcher::config::SshConfig {
+    crate::launcher::config::LauncherConfig::load()
+        .map(|c| c.ssh)
+        .unwrap_or_default()
+}
+
 /// What a web `connect` request resolved to.
 enum ResolvedConnect {
     Direct(DirectConnectConfig),
@@ -189,6 +199,10 @@ enum ResolvedConnect {
         target: LichTarget,
         /// Display label only — Lich owns the actual login.
         character: Option<String>,
+        /// Present when this Lich target has a launch command: if the port is
+        /// down, SSH-launch it before attaching (mobile cold-start). None for
+        /// a plain attach-only target.
+        custom_launch: Option<String>,
     },
 }
 
@@ -206,6 +220,7 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
         profile_name,
         lich_host,
         lich_port,
+        custom_launch,
     } = req
     else {
         return Err("not a connect request".to_string());
@@ -228,6 +243,7 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
                     port: saved.port,
                 },
                 character: Some(saved.character.clone()).filter(|c| !c.is_empty()),
+                custom_launch: saved.custom_launch.clone(),
             });
         }
         let password = password
@@ -247,6 +263,12 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
 
     // Inline Lich target path: host+port, no credentials involved.
     if let (Some(host), Some(port)) = (lich_host.clone(), *lich_port) {
+        // An empty custom-launch string means "no launch" (the web form sends
+        // "" when the box is blank); normalize to None.
+        let launch = custom_launch
+            .clone()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         if profile_name.is_some() {
             let mut store =
                 crate::config::profiles::LauncherStore::load().unwrap_or_default();
@@ -258,6 +280,7 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
             saved.character = character.clone().unwrap_or_default();
             saved.host = host.clone();
             saved.port = port;
+            saved.custom_launch = launch.clone();
             store.upsert(saved, None);
             if let Err(e) = store.save() {
                 tracing::warn!("failed to save launcher.toml: {e:#}");
@@ -266,6 +289,7 @@ fn resolve_connect(req: &SessionRequest) -> Result<ResolvedConnect, String> {
         return Ok(ResolvedConnect::Lich {
             target: LichTarget { host, port },
             character: character.clone(),
+            custom_launch: launch,
         });
     }
 
@@ -774,12 +798,61 @@ pub async fn async_run(
                                     supervisor.lich_target = None;
                                     SessionState::Authenticating
                                 }
-                                ResolvedConnect::Lich { target, character } => {
-                                    supervisor.character = character;
-                                    supervisor.game = None;
-                                    supervisor.direct = None;
-                                    supervisor.lich_target = Some(target);
-                                    SessionState::Connecting
+                                ResolvedConnect::Lich {
+                                    target,
+                                    character,
+                                    custom_launch,
+                                } => {
+                                    // A launch-capable Lich profile runs the
+                                    // cold-start flow: probe the port, and if
+                                    // it's down, SSH-launch then poll every 5s
+                                    // until it's up. If already up (or no
+                                    // launch command), attach directly.
+                                    if let Some(command) = custom_launch {
+                                        let ssh = launcher_ssh_settings();
+                                        let spec = crate::launcher::flow::LaunchSpec::from_command(
+                                            &command,
+                                            &target.host,
+                                            target.port,
+                                            character.as_deref().unwrap_or(""),
+                                            &ssh,
+                                        );
+                                        app_core.set_remote_session_state(
+                                            supervisor.status(SessionState::Connecting),
+                                        );
+                                        let trust =
+                                            crate::launcher::flow::HostKeyTrust::AutoPinFirstUse;
+                                        let outcome = crate::launcher::flow::launch_spec(
+                                            &spec,
+                                            trust,
+                                            |p| tracing::debug!("launch progress: {p:?}"),
+                                        )
+                                        .await;
+                                        match outcome {
+                                            Ok(_) => {
+                                                supervisor.character = character;
+                                                supervisor.game = None;
+                                                supervisor.direct = None;
+                                                supervisor.lich_target = Some(target);
+                                                SessionState::Connecting
+                                            }
+                                            Err(err) => {
+                                                let message = format!("Launch failed: {err:#}");
+                                                app_core.add_system_message(&message);
+                                                let mut info =
+                                                    supervisor.status(SessionState::Idle);
+                                                info.error = Some(message);
+                                                app_core.set_remote_session_state(info);
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        supervisor.character = character;
+                                        supervisor.game = None;
+                                        supervisor.direct = None;
+                                        supervisor.lich_target = Some(target);
+                                        SessionState::Connecting
+                                    }
                                 }
                             };
                             supervisor.login_key = None;
@@ -1226,6 +1299,7 @@ fn handle_remote_event(
             profile_name,
             lich_host,
             lich_port,
+            custom_launch,
         } => {
             session_requests.push(SessionRequest::Connect {
                 profile,
@@ -1237,6 +1311,7 @@ fn handle_remote_event(
                 profile_name,
                 lich_host,
                 lich_port,
+                custom_launch,
             });
             true
         }

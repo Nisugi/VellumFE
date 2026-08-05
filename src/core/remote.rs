@@ -609,6 +609,9 @@ pub enum RemoteEvent {
         /// Set (both) for a Lich attach instead of a direct eAccess login.
         lich_host: Option<String>,
         lich_port: Option<u16>,
+        /// Lich launch command (mobile cold-start): if the port is down, SSH
+        /// to the host and run this before attaching. Lich targets only.
+        custom_launch: Option<String>,
     },
     /// User-initiated disconnect: end the session, suppress reconnection.
     SessionDisconnect,

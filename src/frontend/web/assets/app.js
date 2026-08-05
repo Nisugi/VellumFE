@@ -1251,12 +1251,16 @@ sessionForm.addEventListener("submit", (ev) => {
     const name = lichNameInput.value.trim();
     if (!host || !/^\d+$/.test(port)) return;
     const save = document.getElementById("lich-save").checked;
+    // The custom launch command (mobile cold-start): if the port is down on
+    // connect, SSH-launch it before attaching. Empty = plain attach.
+    const launch = document.getElementById("lich-launch").value.trim();
     sendJson("connect", {
       mode: "lich",
       host,
       port,
       character: name || null,
       profile_name: save ? (name || `${host}:${port}`) : null,
+      custom_launch: launch || null,
     });
     profilesRequested = false;
     return;

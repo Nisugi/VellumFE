@@ -444,6 +444,47 @@ pub enum RemoteOs {
     Unix,
 }
 
+/// Split a launch command line into (program, args), honoring double quotes so
+/// a path with spaces stays one token. A trailing `&` (users copy the whole
+/// PowerShell line, `… --detachable-client=8001 "&"`) is dropped — the detach
+/// wrapper backgrounds the process itself. This is a pragmatic splitter for
+/// the launch-command box, not a full shell parser: double quotes group,
+/// everything else splits on whitespace.
+pub fn split_command(line: &str) -> (String, Vec<String>) {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    let mut has_char = false;
+    for ch in line.chars() {
+        match ch {
+            '"' => {
+                in_quote = !in_quote;
+                has_char = true;
+            }
+            c if c.is_whitespace() && !in_quote => {
+                if has_char {
+                    tokens.push(std::mem::take(&mut cur));
+                    has_char = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                has_char = true;
+            }
+        }
+    }
+    if has_char {
+        tokens.push(cur);
+    }
+    // Drop a lone trailing "&" (or "&" the user pasted from the PowerShell line).
+    if tokens.last().map(|t| t == "&").unwrap_or(false) {
+        tokens.pop();
+    }
+    let program = tokens.first().cloned().unwrap_or_default();
+    let args = tokens.into_iter().skip(1).collect();
+    (program, args)
+}
+
 /// Quick TCP reachability probe: is something already listening on `host:port`?
 /// Used before launching so we attach to a running Lich instead of starting a
 /// duplicate, and after launching to confirm Lich actually came up.
@@ -454,10 +495,16 @@ pub async fn probe_port(host: &str, port: u16, timeout: Duration) -> bool {
     )
 }
 
-/// Poll `host:port` until it accepts a connection or `deadline` elapses.
-/// Returns true if the port came up in time. This is the authoritative "did
-/// the launch work" check — we trust the open port, not the spawn exit code.
-pub async fn wait_for_port(host: &str, port: u16, deadline: Duration) -> bool {
+/// Poll `host:port` every `interval` until it accepts a connection or
+/// `deadline` elapses. Returns true if the port came up in time. This is the
+/// authoritative "did the launch work" check — we trust the open port, not the
+/// spawn exit code.
+pub async fn wait_for_port(
+    host: &str,
+    port: u16,
+    deadline: Duration,
+    interval: Duration,
+) -> bool {
     let start = tokio::time::Instant::now();
     let probe_timeout = Duration::from_secs(2);
     loop {
@@ -467,7 +514,7 @@ pub async fn wait_for_port(host: &str, port: u16, deadline: Duration) -> bool {
         if start.elapsed() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(400)).await;
+        tokio::time::sleep(interval).await;
     }
 }
 
@@ -569,5 +616,36 @@ mod tests {
     async fn probe_port_false_for_closed_port() {
         // Port 1 is (almost certainly) not listening on localhost.
         assert!(!probe_port("127.0.0.1", 1, Duration::from_millis(300)).await);
+    }
+
+    #[test]
+    fn split_command_handles_quoted_paths_and_trailing_amp() {
+        // The exact line a user pastes from PowerShell.
+        let (prog, args) = split_command(
+            "C:\\Ruby4Lich5\\4.0.3\\bin\\rubyw.exe \"C:\\Gemstone\\dev\\lich-5\\lich.rbw\" \
+             --login Nisugi --gemstone --without-frontend --bind-address=lan \
+             --detachable-client=8001 \"&\"",
+        );
+        assert_eq!(prog, "C:\\Ruby4Lich5\\4.0.3\\bin\\rubyw.exe");
+        // The quoted path with no spaces stays intact; the trailing "&" is dropped.
+        assert_eq!(args[0], "C:\\Gemstone\\dev\\lich-5\\lich.rbw");
+        assert!(args.contains(&"--login".to_string()));
+        assert!(args.contains(&"Nisugi".to_string()));
+        assert!(args.contains(&"--detachable-client=8001".to_string()));
+        assert!(!args.iter().any(|a| a == "&"));
+    }
+
+    #[test]
+    fn split_command_keeps_spaces_inside_quotes() {
+        let (prog, args) = split_command("\"C:\\Program Files\\ruby\\rubyw.exe\" \"a b\" c");
+        assert_eq!(prog, "C:\\Program Files\\ruby\\rubyw.exe");
+        assert_eq!(args, vec!["a b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn split_command_empty_is_empty() {
+        let (prog, args) = split_command("   ");
+        assert_eq!(prog, "");
+        assert!(args.is_empty());
     }
 }

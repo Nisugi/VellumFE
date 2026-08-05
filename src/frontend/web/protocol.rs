@@ -470,6 +470,11 @@ pub struct ProfileEntry {
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// The Lich launch command, if this profile has one (mobile cold-start).
+    /// Present tells the client this saved login will SSH-launch on connect
+    /// if the port is down; the client shows it in the edit form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_launch: Option<String>,
 }
 
 /// Saved-profile list; direct reply to a `get_profiles` request.
@@ -563,6 +568,9 @@ pub enum ClientMessage {
         /// Set (both) for a Lich attach instead of a direct eAccess login.
         lich_host: Option<String>,
         lich_port: Option<u16>,
+        /// Lich launch command (mobile cold-start): SSH-launch if the port is
+        /// down before attaching. Only meaningful with a Lich target.
+        custom_launch: Option<String>,
     },
     /// End the session and suppress reconnection (headless runtime only).
     Disconnect,
@@ -837,6 +845,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 profile_name: opt_str(msg.d.get("profile_name")),
                 lich_host,
                 lich_port,
+                custom_launch: lich.then(|| opt_str(msg.d.get("custom_launch"))).flatten(),
             })
         }
         "map_locations" => {
@@ -1047,6 +1056,7 @@ mod tests {
                 profile_name: None,
                 lich_host: None,
                 lich_port: None,
+                custom_launch: None,
             })
         );
         // Inline credentials with save.
@@ -1064,6 +1074,7 @@ mod tests {
                 profile_name: Some("Testy".to_string()),
                 lich_host: None,
                 lich_port: None,
+                custom_launch: None,
             })
         );
         // Neither a profile nor complete inline credentials → rejected.
@@ -1088,9 +1099,36 @@ mod tests {
                     profile_name: None,
                     lich_host: Some("100.64.0.7".to_string()),
                     lich_port: Some(8000),
+                    custom_launch: None,
                 })
             );
         }
+        // Lich attach with a launch command (mobile cold-start): the command
+        // rides the connect and only parses in lich mode.
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"connect","d":{"mode":"lich","host":"100.64.0.7","port":8001,"custom_launch":"rubyw lich.rbw --detachable-client=8001"}}"#
+            ),
+            Some(ClientMessage::Connect {
+                profile: None,
+                account: None,
+                password: None,
+                character: None,
+                game: None,
+                save_password: false,
+                profile_name: None,
+                lich_host: Some("100.64.0.7".to_string()),
+                lich_port: Some(8001),
+                custom_launch: Some("rubyw lich.rbw --detachable-client=8001".to_string()),
+            })
+        );
+        // A launch command in DIRECT mode is ignored (lich-only).
+        assert!(matches!(
+            parse_client_message(
+                r#"{"t":"connect","d":{"account":"ACCT","character":"Testy","custom_launch":"x"}}"#
+            ),
+            Some(ClientMessage::Connect { custom_launch: None, .. })
+        ));
         // Lich mode without a complete target or profile → rejected.
         assert_eq!(
             parse_client_message(r#"{"t":"connect","d":{"mode":"lich","host":"pc.local"}}"#),
@@ -1446,6 +1484,7 @@ mod tests {
                 has_password: true,
                 host: None,
                 port: None,
+                custom_launch: None,
             },
             ProfileEntry {
                 name: "Home Lich".to_string(),
@@ -1456,6 +1495,7 @@ mod tests {
                 has_password: false,
                 host: Some("100.64.0.7".to_string()),
                 port: Some(8000),
+                custom_launch: Some("rubyw lich.rbw --detachable-client=8000".to_string()),
             },
         ];
         let json: serde_json::Value = serde_json::from_str(&profiles(&list, 9)).unwrap();
@@ -1465,9 +1505,15 @@ mod tests {
         assert_eq!(json["d"]["list"][0]["mode"], "direct");
         // Direct entries omit the Lich target fields entirely.
         assert!(json["d"]["list"][0].get("host").is_none());
+        assert!(json["d"]["list"][0].get("custom_launch").is_none());
         assert_eq!(json["d"]["list"][1]["mode"], "lich");
         assert_eq!(json["d"]["list"][1]["host"], "100.64.0.7");
         assert_eq!(json["d"]["list"][1]["port"], 8000);
+        // The launch command is exposed so the client can show/edit it.
+        assert_eq!(
+            json["d"]["list"][1]["custom_launch"],
+            "rubyw lich.rbw --detachable-client=8000"
+        );
     }
 
     #[test]

@@ -864,6 +864,7 @@ async fn handle_client_message(
             profile_name,
             lich_host,
             lich_port,
+            custom_launch,
         } => state
             .handles
             .event_tx
@@ -877,6 +878,7 @@ async fn handle_client_message(
                 profile_name,
                 lich_host,
                 lich_port,
+                custom_launch,
             })
             .is_ok(),
         ClientMessage::Disconnect => state
@@ -1088,6 +1090,7 @@ fn profiles_reply(state: &WebState) -> String {
                         has_password: p.password_saved,
                         host: None,
                         port: None,
+                        custom_launch: None,
                     },
                     LaunchMode::Lich => protocol::ProfileEntry {
                         name: p.name.clone(),
@@ -1098,6 +1101,7 @@ fn profiles_reply(state: &WebState) -> String {
                         has_password: false,
                         host: Some(p.host.clone()),
                         port: Some(p.port),
+                        custom_launch: p.custom_launch.clone(),
                     },
                 })
                 .collect()

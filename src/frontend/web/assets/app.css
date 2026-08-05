@@ -1229,7 +1229,8 @@ body.hide-wheelpuck #wheel-puck { display: none; }
 }
 
 #session-form input,
-#session-form select {
+#session-form select,
+#session-form textarea {
   padding: 10px;
   background: var(--bg-panel);
   color: var(--fg);
@@ -1237,6 +1238,19 @@ body.hide-wheelpuck #wheel-puck { display: none; }
   border-radius: 6px;
   font: inherit;
   font-size: 16px;
+}
+
+#lich-launch {
+  font-family: var(--mono, monospace);
+  font-size: 13px;
+  resize: vertical;
+  min-height: 3.2em;
+}
+
+#lich-launch-note {
+  color: var(--fg-dim);
+  font-size: 12px;
+  margin: 0;
 }
 
 #login-save-row,
