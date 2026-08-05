@@ -821,6 +821,7 @@ mod blank_tests {
                     icon: None,
                     color: None,
                     countdown_background_color: Some("#444444".to_string()),
+                    show_when_zero: None,
                 },
             },
         ];
