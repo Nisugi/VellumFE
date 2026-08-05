@@ -131,6 +131,15 @@ pub struct LauncherProfile {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Optional launch command for a Lich attach: the full `rubyw lich.rbw …
+    /// --detachable-client=PORT` line the user runs to bring Lich up. When
+    /// present, connecting to this profile probes the port first and, if Lich
+    /// isn't up, SSHes to `host` and runs this command before attaching (the
+    /// mobile cold-start QoL flow). The command carries everything Lich needs
+    /// (`--login`, instance, `--detachable-client`); host/port here are the
+    /// attach target. Never a secret — the SSH key lives in the secure store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_launch: Option<String>,
 
     // Advanced options (all map 1:1 onto CLI switches)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,6 +172,7 @@ impl LauncherProfile {
             frontend: LaunchFrontend::Gui,
             host: default_host(),
             port: default_port(),
+            custom_launch: None,
             web_port: None,
             web_bind: None,
             nosound: false,
@@ -461,6 +471,21 @@ pub fn delete_password(account: &str) {
             tracing::debug!(account, "Password store delete failed: {err:#}");
         }
     }
+}
+
+/// Seal an arbitrary secret with the same ChaCha20-Poly1305 key the password
+/// store uses (non-desktop builds). Exposed so the SSH launcher can store its
+/// private key sealed-at-rest without duplicating the crypto. On desktop the
+/// launcher uses the OS keyring instead, so these are non-desktop only.
+#[cfg(not(feature = "desktop"))]
+pub fn seal_value(value: &str) -> String {
+    seal::seal(value)
+}
+
+/// Open a value sealed by [`seal_value`] (or a legacy plaintext entry).
+#[cfg(not(feature = "desktop"))]
+pub fn open_value(value: &str) -> Option<String> {
+    seal::open(value)
 }
 
 #[cfg(test)]

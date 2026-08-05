@@ -307,6 +307,107 @@ impl AppCore {
         }
     }
 
+    // ---- SSH-launcher settings (phone SSH setup) ------------------------
+    // The phone can set the SSH user/host/port/remote-OS and generate a
+    // dedicated launcher key without editing TOML. The private key lands in
+    // the secure store; only the public authorized_keys line crosses the wire.
+
+    fn launcher_ssh_settings_json(cfg: &crate::launcher::config::LauncherConfig) -> serde_json::Value {
+        serde_json::json!({
+            "user": cfg.ssh.user,
+            "host": cfg.ssh.host,
+            "port": cfg.ssh.port,
+            "remote_os": match cfg.ssh.remote_os {
+                crate::launcher::config::RemoteOs::Windows => "windows",
+                crate::launcher::config::RemoteOs::Unix => "unix",
+            },
+            "key_saved": cfg.ssh.key_saved,
+        })
+    }
+
+    /// Read the SSH-launcher settings + public key line for a remote client.
+    pub fn handle_remote_launcher_ssh_get(&mut self, client_id: u64, request_id: u64) {
+        let cfg = crate::launcher::config::LauncherConfig::load().unwrap_or_default();
+        let settings = Self::launcher_ssh_settings_json(&cfg);
+        let public_key = if cfg.ssh.key_saved {
+            crate::launcher::config::load_private_key(crate::launcher::config::DEFAULT_KEY_ID)
+                .and_then(|pem| crate::launcher::ssh::public_line_from_private(&pem).ok())
+        } else {
+            None
+        };
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_launcher_ssh(client_id, request_id, settings, public_key, None, false);
+        }
+    }
+
+    /// Write the SSH-launcher settings; optionally mint a fresh key.
+    pub fn handle_remote_launcher_ssh_put(
+        &mut self,
+        client_id: u64,
+        request_id: u64,
+        user: String,
+        host: String,
+        port: u16,
+        remote_os: String,
+        generate_key: bool,
+    ) {
+        use crate::launcher::config::{LauncherConfig, RemoteOs, DEFAULT_KEY_ID};
+        let mut cfg = LauncherConfig::load().unwrap_or_default();
+        cfg.ssh.user = user.trim().to_string();
+        cfg.ssh.host = host.trim().to_string();
+        cfg.ssh.port = port;
+        cfg.ssh.remote_os = if remote_os == "unix" {
+            RemoteOs::Unix
+        } else {
+            RemoteOs::Windows
+        };
+
+        let mut public_key: Option<String> = None;
+        let mut error: Option<String> = None;
+
+        if generate_key {
+            let comment = format!(
+                "vellum-launcher@{}",
+                self.config.character.as_deref().unwrap_or("phone")
+            );
+            match crate::launcher::ssh::generate_keypair(&comment) {
+                Ok(key) => match crate::launcher::config::save_private_key(
+                    DEFAULT_KEY_ID,
+                    &key.private_openssh,
+                ) {
+                    Ok(()) => {
+                        cfg.ssh.key_saved = true;
+                        public_key = Some(key.public_authorized_keys);
+                    }
+                    Err(e) => error = Some(format!("Could not store key: {e:#}")),
+                },
+                Err(e) => error = Some(format!("Key generation failed: {e:#}")),
+            }
+        } else if cfg.ssh.key_saved {
+            // Surface the existing public line so the client can keep showing it.
+            public_key =
+                crate::launcher::config::load_private_key(DEFAULT_KEY_ID)
+                    .and_then(|pem| crate::launcher::ssh::public_line_from_private(&pem).ok());
+        }
+
+        let saved = if error.is_none() {
+            match cfg.save() {
+                Ok(()) => true,
+                Err(e) => {
+                    error = Some(format!("Save failed: {e:#}"));
+                    false
+                }
+            }
+        } else {
+            false
+        };
+
+        let settings = Self::launcher_ssh_settings_json(&cfg);
+        if let Some(remote) = self.message_processor.remote.as_mut() {
+            remote.push_launcher_ssh(client_id, request_id, settings, public_key, error, saved);
+        }
+    }
+
     // ---- Structured highlight editing (phone editor UI) ----------------
     // Operates on one scope's file (profile or global), never the merged
     // view. Rewriting from the parsed map drops comments/ordering in the

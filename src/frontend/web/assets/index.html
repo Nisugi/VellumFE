@@ -163,6 +163,11 @@
           <input id="lich-port" type="text" inputmode="numeric" placeholder="port (e.g. 8000)">
           <input id="lich-name" type="text" placeholder="label (optional)"
                  autocapitalize="off" autocorrect="off" spellcheck="false">
+          <textarea id="lich-launch" rows="3" placeholder="custom launch command (optional)"
+                    autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+          <p id="lich-launch-note">If set, connecting checks the port first; if Lich
+            isn't up it SSHes to the host, runs this command, then attaches once the
+            port opens. Needs SSH set up (gear &#9881; &rarr; SSH launcher).</p>
           <label id="lich-save-row"><input id="lich-save" type="checkbox" checked> Remember this connection</label>
           <p id="lich-warning" hidden></p>
           <p id="lich-note">Attaches to a running Lich session — launch Lich with
@@ -190,7 +195,13 @@
             pairing token. Your phone needs a private path to that machine: home
             Wi-Fi, Tailscale, or a VPN.</p>
         </div>
-        <button id="login-submit" type="submit">Connect</button>
+        <div id="login-actions">
+          <!-- Only inside the app shells (app=1&nativepicker=1): opens the
+               native character picker (saved remote servers / QR / manual). -->
+          <button id="session-characters" type="button" hidden
+                  aria-label="Characters" title="Characters">&#128101;</button>
+          <button id="login-submit" type="submit">Connect</button>
+        </div>
       </form>
     </div>
   </div>

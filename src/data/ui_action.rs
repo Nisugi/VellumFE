@@ -193,6 +193,15 @@ pub enum UiAction {
     /// manual attempt — the frontend owns the runtime, so it does the work.
     Reconnect,
 
+    // SSH launcher (cold-start a headless Lich on the home PC, then attach)
+    /// Launch a character via the SSH launcher: SSH into the configured home
+    /// PC, cold-start its headless Lich, then attach. Payload is the character
+    /// name (looked up in ssh-launcher.toml).
+    Launch(String),
+    /// Open the SSH launcher editor (SSH target, launch command, per-character
+    /// ports, generate/show the launcher public key). GUI-first.
+    LauncherEditor,
+
     // Diagnostics
     SnapDebug,
     /// Write a `.performance dump` report; each frontend appends its own
@@ -218,6 +227,9 @@ impl UiAction {
         }
         if let Some(name) = body.strip_prefix("makeskin:") {
             return Some(UiAction::MakeSkin(name.to_string()));
+        }
+        if let Some(name) = body.strip_prefix("launch:") {
+            return Some(UiAction::Launch(name.to_string()));
         }
         if let Some(name) = body.strip_prefix("harmonyskin:") {
             return Some(UiAction::HarmonySkin(name.to_string()));
@@ -341,6 +353,7 @@ impl UiAction {
             "webui" => UiAction::WebUiPicker,
             "webui:off" => UiAction::WebUiOff,
             "reconnect" => UiAction::Reconnect,
+            "launchereditor" => UiAction::LauncherEditor,
             "snapdebug" => UiAction::SnapDebug,
             "performance:dump" => UiAction::PerformanceDump,
             "layout:save" => UiAction::SaveLayout(None),
@@ -446,6 +459,8 @@ impl std::fmt::Display for UiAction {
             UiAction::WebUiOff => write!(f, "action:webui:off"),
             UiAction::WebUiOpen(page) => write!(f, "action:webui:open:{page}"),
             UiAction::Reconnect => write!(f, "action:reconnect"),
+            UiAction::Launch(name) => write!(f, "action:launch:{name}"),
+            UiAction::LauncherEditor => write!(f, "action:launchereditor"),
             UiAction::SnapDebug => write!(f, "action:snapdebug"),
             UiAction::PerformanceDump => write!(f, "action:performance:dump"),
         }
@@ -558,6 +573,8 @@ mod tests {
             UiAction::WebUiOff,
             UiAction::WebUiOpen("bigshot".into()),
             UiAction::Reconnect,
+            UiAction::Launch("Nisugi".into()),
+            UiAction::LauncherEditor,
             UiAction::SnapDebug,
             UiAction::PerformanceDump,
             UiAction::PackEditor,

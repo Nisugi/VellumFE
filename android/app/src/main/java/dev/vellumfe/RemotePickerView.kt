@@ -16,10 +16,16 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * The launch character picker (native): saved remote VellumFE servers plus
- * "play on this phone". Add by scanning a `.webinfo` QR or entering
- * host/port/token manually; delete per row; each row shows a live/offline
- * dot from a `/health` probe. Mirrors iOS `RemotePickerView.swift`.
+ * The launch character picker (native): saved remote VellumFE servers. Add by
+ * scanning a `.webinfo` QR or entering host/port/token manually; delete per
+ * row; each row shows a live/offline dot from a `/health` probe. Mirrors iOS
+ * `RemotePickerView.swift`.
+ *
+ * Layout: fixed heading, the character list in its own scroll region, then
+ * always-visible actions (Scan QR / Add manually) with a back-to-login button
+ * in the bottom-left corner — a long list can never push the actions
+ * off-screen, and "play on this phone" is just going back now that the login
+ * page is the app's front door.
  *
  * Built as a programmatic View (this shell has no Compose / XML-layout
  * dependency); the host activity swaps it in via setContentView, exactly as
@@ -28,7 +34,7 @@ import java.net.URL
 class RemotePickerView(
     context: Context,
     private val callbacks: Callbacks,
-) : ScrollView(context) {
+) : LinearLayout(context) {
 
     interface Callbacks {
         fun onPlayLocal()
@@ -38,17 +44,45 @@ class RemotePickerView(
         fun onDelete(id: String)
     }
 
-    private val column = LinearLayout(context).apply {
+    /** The scrolling character list's content column. */
+    private val listColumn = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(20), dp(24), dp(20), dp(24))
     }
 
     /** id → reachable (null = probe not finished). */
     private val health = HashMap<String, Boolean?>()
 
     init {
+        orientation = LinearLayout.VERTICAL
         setBackgroundColor(BG)
-        addView(column)
+        setPadding(dp(20), dp(24), dp(20), dp(16))
+
+        addView(heading("Characters"))
+
+        // The list scrolls inside a weighted region; the actions below stay
+        // fixed and always visible.
+        addView(ScrollView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(match, 0, 1f)
+            isFillViewport = true
+            addView(listColumn)
+        })
+
+        addView(actionButton("⧉  Scan QR to add") { callbacks.onScanQr() })
+        addView(actionButton("＋  Add manually") { showManualDialog() })
+
+        // Bottom row: back-to-login in the left corner (same spot as the
+        // Characters button on the login form).
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(match, wrap).apply { topMargin = dp(10) }
+            addView(Button(context).apply {
+                text = "‹  Back to login"
+                setTextColor(Color.parseColor("#E6E6E6"))
+                background = pill()
+                setOnClickListener { callbacks.onPlayLocal() }
+            })
+        })
+
         render()
         probeAll()
     }
@@ -60,22 +94,15 @@ class RemotePickerView(
     }
 
     private fun render() {
-        column.removeAllViews()
-
-        column.addView(heading("Characters"))
+        listColumn.removeAllViews()
 
         val servers = RemoteStore.list(context)
         if (servers.isEmpty()) {
-            column.addView(subtle("No saved characters yet. Scan a pairing QR or add one manually."))
+            listColumn.addView(subtle("No saved characters yet. Scan a pairing QR or add one manually."))
         }
         for (server in servers) {
-            column.addView(serverRow(server))
+            listColumn.addView(serverRow(server))
         }
-
-        column.addView(spacer(dp(16)))
-        column.addView(actionButton("▶  Play on this phone") { callbacks.onPlayLocal() })
-        column.addView(actionButton("⧉  Scan QR to add") { callbacks.onScanQr() })
-        column.addView(actionButton("＋  Add manually") { showManualDialog() })
     }
 
     private fun serverRow(server: RemoteStore.Target): View {
@@ -151,7 +178,7 @@ class RemotePickerView(
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, 0)
         }
-        val nameIn = field("Name (e.g. Rysk)", InputType.TYPE_CLASS_TEXT)
+        val nameIn = field("Label (required, e.g. Rysk)", InputType.TYPE_CLASS_TEXT)
         val hostIn = field("Host (e.g. 192.168.1.21)", InputType.TYPE_TEXT_VARIATION_URI)
         val portIn = field("Port (e.g. 8042)", InputType.TYPE_CLASS_NUMBER)
         val tokenIn = field("Pairing token (optional)", InputType.TYPE_CLASS_TEXT)
@@ -163,14 +190,17 @@ class RemotePickerView(
             .setPositiveButton("Save") { _, _ ->
                 val host = hostIn.text.toString().trim()
                 val port = portIn.text.toString().trim().toIntOrNull()
-                if (host.isEmpty() || port == null || port !in 1..65535) return@setPositiveButton
+                // Label is required: the picker lists entries by it.
                 val label = nameIn.text.toString().trim()
+                if (host.isEmpty() || port == null || port !in 1..65535 || label.isEmpty()) {
+                    return@setPositiveButton
+                }
                 callbacks.onAddManual(
                     RemoteStore.Target(
                         host = host,
                         port = port,
                         token = tokenIn.text.toString().trim(),
-                        name = if (label.isEmpty()) "$host:$port" else label,
+                        name = label,
                     )
                 )
             }
@@ -257,10 +287,6 @@ class RemotePickerView(
         inputType = type
         setTextColor(Color.parseColor("#E6E6E6"))
         setHintTextColor(Color.parseColor("#8A8A8A"))
-    }
-
-    private fun spacer(h: Int) = View(context).apply {
-        layoutParams = LinearLayout.LayoutParams(match, h)
     }
 
     private fun pill(): android.graphics.drawable.GradientDrawable =

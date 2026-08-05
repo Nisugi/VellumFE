@@ -200,6 +200,12 @@ pub struct AppCore {
     /// handle to the socket task — so this is the hand-off point.
     pub reconnect_requested: bool,
 
+    /// Set by a `.launch <character>` in a frontend whose runtime loop owns the
+    /// network (the TUI). Core can't SSH or attach itself, so it stashes the
+    /// character name here and the runtime drains it once per tick, runs the
+    /// SSH-launcher flow, and attaches. `None` = no pending launch.
+    pub launch_requested: Option<String>,
+
     /// Base layout name for autosave reference
     pub base_layout_name: Option<String>,
 
@@ -381,6 +387,7 @@ impl AppCore {
             save_reminder_shown: false,
             force_show_command_input: false,
             reconnect_requested: false,
+            launch_requested: None,
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts: Vec::new(),
@@ -535,6 +542,7 @@ impl AppCore {
             save_reminder_shown: false,
             force_show_command_input: false,
             reconnect_requested: false,
+            launch_requested: None,
             base_layout_name: None,
             keybind_map,
             hotbar_key_conflicts,
@@ -3390,6 +3398,13 @@ impl AppCore {
     /// Returns true at most once per request; the frontend runtime acts on it.
     pub fn take_reconnect_request(&mut self) -> bool {
         std::mem::take(&mut self.reconnect_requested)
+    }
+
+    /// Consume a pending `.launch <character>` request (see `launch_requested`).
+    /// Returns the character name at most once per request; the frontend
+    /// runtime then runs the SSH-launcher flow and attaches.
+    pub fn take_launch_request(&mut self) -> Option<String> {
+        std::mem::take(&mut self.launch_requested)
     }
 
     /// Add a system message to a window that receives the "main" stream.

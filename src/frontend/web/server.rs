@@ -864,6 +864,7 @@ async fn handle_client_message(
             profile_name,
             lich_host,
             lich_port,
+            custom_launch,
         } => state
             .handles
             .event_tx
@@ -877,12 +878,41 @@ async fn handle_client_message(
                 profile_name,
                 lich_host,
                 lich_port,
+                custom_launch,
             })
             .is_ok(),
         ClientMessage::Disconnect => state
             .handles
             .event_tx
             .send(RemoteEvent::SessionDisconnect)
+            .is_ok(),
+        ClientMessage::LauncherSshGet { request_id } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::LauncherSshGet {
+                client_id,
+                request_id,
+            })
+            .is_ok(),
+        ClientMessage::LauncherSshPut {
+            request_id,
+            user,
+            host,
+            port,
+            remote_os,
+            generate_key,
+        } => state
+            .handles
+            .event_tx
+            .send(RemoteEvent::LauncherSshPut {
+                client_id,
+                request_id,
+                user,
+                host,
+                port,
+                remote_os,
+                generate_key,
+            })
             .is_ok(),
         ClientMessage::ConfigGet { request_id, file } => state
             .handles
@@ -1088,6 +1118,7 @@ fn profiles_reply(state: &WebState) -> String {
                         has_password: p.password_saved,
                         host: None,
                         port: None,
+                        custom_launch: None,
                     },
                     LaunchMode::Lich => protocol::ProfileEntry {
                         name: p.name.clone(),
@@ -1098,6 +1129,7 @@ fn profiles_reply(state: &WebState) -> String {
                         has_password: false,
                         host: Some(p.host.clone()),
                         port: Some(p.port),
+                        custom_launch: p.custom_launch.clone(),
                     },
                 })
                 .collect()
@@ -1228,6 +1260,7 @@ async fn handle_client(mut socket: WebSocket, state: Arc<WebState>) {
                     // only the requesting client's task forwards them.
                     if let RemoteDelta::Menu { client_id: target, .. }
                     | RemoteDelta::ConfigFile { client_id: target, .. }
+                    | RemoteDelta::LauncherSsh { client_id: target, .. }
                     | RemoteDelta::Highlights { client_id: target, .. }
                     | RemoteDelta::Colors { client_id: target, .. }
                     | RemoteDelta::TouchWheel { client_id: target, .. }

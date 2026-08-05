@@ -428,6 +428,25 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
                 "saved": saved,
             }),
         ),
+        // client_id stays server-side (ws task already filtered on it).
+        RemoteDelta::LauncherSsh {
+            request_id,
+            settings,
+            public_key,
+            error,
+            saved,
+            ..
+        } => encode(
+            "launcher_ssh",
+            last_seq,
+            serde_json::json!({
+                "request_id": request_id,
+                "settings": settings,
+                "public_key": public_key,
+                "error": error,
+                "saved": saved,
+            }),
+        ),
         // Lich WebUI broadcasts. The phone renders only pages it subscribed
         // to; it drops renders for pages it hasn't opened.
         RemoteDelta::WebUiRender { page, seq, tree } => encode(
@@ -470,6 +489,11 @@ pub struct ProfileEntry {
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// The Lich launch command, if this profile has one (mobile cold-start).
+    /// Present tells the client this saved login will SSH-launch on connect
+    /// if the port is down; the client shows it in the edit form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_launch: Option<String>,
 }
 
 /// Saved-profile list; direct reply to a `get_profiles` request.
@@ -563,6 +587,9 @@ pub enum ClientMessage {
         /// Set (both) for a Lich attach instead of a direct eAccess login.
         lich_host: Option<String>,
         lich_port: Option<u16>,
+        /// Lich launch command (mobile cold-start): SSH-launch if the port is
+        /// down before attaching. Only meaningful with a Lich target.
+        custom_launch: Option<String>,
     },
     /// End the session and suppress reconnection (headless runtime only).
     Disconnect,
@@ -570,6 +597,17 @@ pub enum ClientMessage {
     GetProfiles,
     /// Delete a saved profile (and its stored password if unshared).
     DeleteProfile { name: String },
+    /// Read the SSH-launcher settings (user/host/port/OS + key state).
+    LauncherSshGet { request_id: u64 },
+    /// Write the SSH-launcher settings; `generate_key` mints a fresh key.
+    LauncherSshPut {
+        request_id: u64,
+        user: String,
+        host: String,
+        port: u16,
+        remote_os: String,
+        generate_key: bool,
+    },
     /// Read a whitelisted config file (settings sheet editor).
     ConfigGet { request_id: u64, file: String },
     /// Validate + write a whitelisted config file, then hot-reload.
@@ -837,6 +875,7 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
                 profile_name: opt_str(msg.d.get("profile_name")),
                 lich_host,
                 lich_port,
+                custom_launch: lich.then(|| opt_str(msg.d.get("custom_launch"))).flatten(),
             })
         }
         "map_locations" => {
@@ -853,6 +892,36 @@ pub fn parse_client_message(raw: &str) -> Option<ClientMessage> {
         }
         "disconnect" => Some(ClientMessage::Disconnect),
         "get_profiles" => Some(ClientMessage::GetProfiles),
+        "launcher_ssh_get" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            Some(ClientMessage::LauncherSshGet { request_id })
+        }
+        "launcher_ssh_put" => {
+            let request_id = msg.d.get("request_id")?.as_u64()?;
+            let user = opt_str(msg.d.get("user")).unwrap_or_default();
+            let host = opt_str(msg.d.get("host")).unwrap_or_default();
+            // Port may arrive as number or text; default to 22.
+            let port = match msg.d.get("port") {
+                Some(v) if v.is_u64() => v.as_u64().and_then(|p| u16::try_from(p).ok()),
+                Some(v) => v.as_str().and_then(|s| s.trim().parse::<u16>().ok()),
+                None => None,
+            }
+            .unwrap_or(22);
+            let remote_os = opt_str(msg.d.get("remote_os")).unwrap_or_else(|| "windows".to_string());
+            let generate_key = msg
+                .d
+                .get("generate_key")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(ClientMessage::LauncherSshPut {
+                request_id,
+                user,
+                host,
+                port,
+                remote_os,
+                generate_key,
+            })
+        }
         "config_get" => {
             let request_id = msg.d.get("request_id")?.as_u64()?;
             let file = msg.d.get("file")?.as_str()?.to_string();
@@ -1047,6 +1116,7 @@ mod tests {
                 profile_name: None,
                 lich_host: None,
                 lich_port: None,
+                custom_launch: None,
             })
         );
         // Inline credentials with save.
@@ -1064,6 +1134,7 @@ mod tests {
                 profile_name: Some("Testy".to_string()),
                 lich_host: None,
                 lich_port: None,
+                custom_launch: None,
             })
         );
         // Neither a profile nor complete inline credentials → rejected.
@@ -1088,9 +1159,36 @@ mod tests {
                     profile_name: None,
                     lich_host: Some("100.64.0.7".to_string()),
                     lich_port: Some(8000),
+                    custom_launch: None,
                 })
             );
         }
+        // Lich attach with a launch command (mobile cold-start): the command
+        // rides the connect and only parses in lich mode.
+        assert_eq!(
+            parse_client_message(
+                r#"{"t":"connect","d":{"mode":"lich","host":"100.64.0.7","port":8001,"custom_launch":"rubyw lich.rbw --detachable-client=8001"}}"#
+            ),
+            Some(ClientMessage::Connect {
+                profile: None,
+                account: None,
+                password: None,
+                character: None,
+                game: None,
+                save_password: false,
+                profile_name: None,
+                lich_host: Some("100.64.0.7".to_string()),
+                lich_port: Some(8001),
+                custom_launch: Some("rubyw lich.rbw --detachable-client=8001".to_string()),
+            })
+        );
+        // A launch command in DIRECT mode is ignored (lich-only).
+        assert!(matches!(
+            parse_client_message(
+                r#"{"t":"connect","d":{"account":"ACCT","character":"Testy","custom_launch":"x"}}"#
+            ),
+            Some(ClientMessage::Connect { custom_launch: None, .. })
+        ));
         // Lich mode without a complete target or profile → rejected.
         assert_eq!(
             parse_client_message(r#"{"t":"connect","d":{"mode":"lich","host":"pc.local"}}"#),
@@ -1446,6 +1544,7 @@ mod tests {
                 has_password: true,
                 host: None,
                 port: None,
+                custom_launch: None,
             },
             ProfileEntry {
                 name: "Home Lich".to_string(),
@@ -1456,6 +1555,7 @@ mod tests {
                 has_password: false,
                 host: Some("100.64.0.7".to_string()),
                 port: Some(8000),
+                custom_launch: Some("rubyw lich.rbw --detachable-client=8000".to_string()),
             },
         ];
         let json: serde_json::Value = serde_json::from_str(&profiles(&list, 9)).unwrap();
@@ -1465,9 +1565,15 @@ mod tests {
         assert_eq!(json["d"]["list"][0]["mode"], "direct");
         // Direct entries omit the Lich target fields entirely.
         assert!(json["d"]["list"][0].get("host").is_none());
+        assert!(json["d"]["list"][0].get("custom_launch").is_none());
         assert_eq!(json["d"]["list"][1]["mode"], "lich");
         assert_eq!(json["d"]["list"][1]["host"], "100.64.0.7");
         assert_eq!(json["d"]["list"][1]["port"], 8000);
+        // The launch command is exposed so the client can show/edit it.
+        assert_eq!(
+            json["d"]["list"][1]["custom_launch"],
+            "rubyw lich.rbw --detachable-client=8000"
+        );
     }
 
     #[test]

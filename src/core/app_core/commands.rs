@@ -1692,6 +1692,21 @@ impl AppCore {
                 return Ok(CommandOutcome::Ui(UiAction::Reconnect));
             }
 
+            // SSH launcher: cold-start a headless Lich on the home PC over the
+            // tunnel, then attach. `.launch <character>` runs it; bare `.launch`
+            // (or `.launcher`) opens the editor. Core can't SSH or touch the
+            // socket task, so both hand off to the frontend runtime.
+            "launch" => {
+                let character = parts[1..].join(" ");
+                if character.trim().is_empty() {
+                    return Ok(CommandOutcome::Ui(UiAction::LauncherEditor));
+                }
+                return Ok(CommandOutcome::Ui(UiAction::Launch(character)));
+            }
+            "launcher" => {
+                return Ok(CommandOutcome::Ui(UiAction::LauncherEditor));
+            }
+
             // Map debug: how the stream's room identifiers resolved against
             // the mapdb (go2 plan phase 2).
             "room" => {

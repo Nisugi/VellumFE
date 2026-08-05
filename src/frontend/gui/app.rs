@@ -394,6 +394,7 @@ pub struct VellumGuiApp {
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
     sorter_editor: Option<editors::SorterEditorState>,
     touch_wheel_editor: Option<editors::TouchWheelEditorState>,
+    launcher_editor: Option<editors::LauncherEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
     pack_editor: Option<editors::PackEditorState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
@@ -503,6 +504,11 @@ pub struct VellumGuiApp {
     /// network task; retaining a clone keeps the forwarder alive and lets a
     /// reconnect spawn a fresh task into the same pipeline.
     network_forward_tx: mpsc::Sender<ServerMessage>,
+    /// SSH-launcher progress bridged from the async flow task back to the egui
+    /// update loop. The flow (SSH + poll) runs off-thread; each frame we drain
+    /// this and surface progress, then attach on Ready. `None` receiver until
+    /// the first `.launch`.
+    launch_progress_rx: Option<mpsc::UnboundedReceiver<crate::launcher::flow::LaunchProgress>>,
 }
 
 /// What to do once the Lich WebUI bridge says hello.
@@ -824,6 +830,7 @@ impl VellumGuiApp {
             known_windows_editor: None,
             sorter_editor: None,
             touch_wheel_editor: None,
+            launcher_editor: None,
             doll_calibration: None,
             pack_editor: None,
             pending_editor_raise: None,
@@ -865,6 +872,7 @@ impl VellumGuiApp {
             reconnect_host,
             reconnect_port,
             network_forward_tx,
+            launch_progress_rx: None,
         })
     }
 
@@ -3216,6 +3224,32 @@ impl VellumGuiApp {
                 crate::core::remote::RemoteEvent::Notice(message) => {
                     self.app_core.add_system_message(&message);
                 }
+                crate::core::remote::RemoteEvent::LauncherSshGet {
+                    client_id,
+                    request_id,
+                } => {
+                    self.app_core
+                        .handle_remote_launcher_ssh_get(client_id, request_id);
+                }
+                crate::core::remote::RemoteEvent::LauncherSshPut {
+                    client_id,
+                    request_id,
+                    user,
+                    host,
+                    port,
+                    remote_os,
+                    generate_key,
+                } => {
+                    self.app_core.handle_remote_launcher_ssh_put(
+                        client_id,
+                        request_id,
+                        user,
+                        host,
+                        port,
+                        remote_os,
+                        generate_key,
+                    );
+                }
                 crate::core::remote::RemoteEvent::ConfigGet {
                     client_id,
                     request_id,
@@ -3488,6 +3522,10 @@ impl VellumGuiApp {
         // re-emits to the GUI channel), then the GUI applies them to panels.
         self.app_core.pump_webui();
         self.pump_webui_events();
+
+        // Drain SSH-launcher progress from any in-flight `.launch` flow; this
+        // surfaces status and, on Ready, attaches to the new Lich session.
+        self.pump_launch_progress();
 
         // Flush coalesced state deltas to web clients once per batch
         // (no-op unless [web] is enabled)
@@ -5391,6 +5429,160 @@ impl VellumGuiApp {
         self.app_core.needs_render = true;
     }
 
+    /// Kick off the SSH launcher for `character`. The flow (SSH connect +
+    /// remote spawn + port poll) can take several seconds, so it runs on the
+    /// tokio runtime and reports progress over an unbounded channel we drain
+    /// each frame in [`Self::pump_launch_progress`]. On `Ready` we attach to
+    /// the resulting Lich target exactly like a reconnect.
+    fn start_launch(&mut self, character: &str) {
+        if self.app_core.game_state.connected {
+            self.app_core
+                .add_system_message("Already connected — disconnect before launching a session.");
+            return;
+        }
+        let character = character.trim().to_string();
+        if character.is_empty() {
+            self.open_launcher_editor();
+            return;
+        }
+
+        let config = match crate::launcher::config::LauncherConfig::load() {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                self.app_core
+                    .add_system_message(&format!("Launcher config error: {err:#}"));
+                return;
+            }
+        };
+        if config.character(&character).is_none() {
+            self.app_core.add_system_message(&format!(
+                "No launcher entry for '{character}'. Open the launcher editor with .launcher."
+            ));
+            return;
+        }
+
+        let (tx, rx) = mpsc::unbounded_channel::<crate::launcher::flow::LaunchProgress>();
+        self.launch_progress_rx = Some(rx);
+        self.app_core
+            .add_system_message(&format!("Launching {character}…"));
+        self.app_core.needs_render = true;
+
+        // Host-key trust: over an already-private tunnel with no interactive
+        // prompt wired into the flow task, auto-pin on first use. A changed key
+        // is still hard-rejected inside the flow.
+        let trust = crate::launcher::flow::HostKeyTrust::AutoPinFirstUse;
+        // russh's `Handle` is not provably Send across await points, so the
+        // flow can't be spawned onto the shared multi-thread runtime. Run it on
+        // a dedicated OS thread with its own current-thread runtime instead;
+        // progress still flows back over the channel to the egui loop.
+        std::thread::Builder::new()
+            .name("ssh-launcher".into())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(err) => {
+                        let _ = tx.send(crate::launcher::flow::LaunchProgress::Failed {
+                            reason: format!("Could not start launcher runtime: {err}"),
+                        });
+                        return;
+                    }
+                };
+                rt.block_on(async move {
+                    let tx_progress = tx.clone();
+                    let _ = crate::launcher::flow::launch(&config, &character, trust, |p| {
+                        let _ = tx_progress.send(p);
+                    })
+                    .await;
+                });
+            })
+            .ok();
+    }
+
+    /// Drain launcher progress each frame: surface messages, and on `Ready`
+    /// attach to the Lich target. Called from the egui update loop.
+    fn pump_launch_progress(&mut self) {
+        use crate::launcher::flow::LaunchProgress as LP;
+        let mut ready: Option<(String, u16)> = None;
+        let mut drained_any = false;
+        if let Some(rx) = self.launch_progress_rx.as_mut() {
+            while let Ok(progress) = rx.try_recv() {
+                drained_any = true;
+                match progress {
+                    LP::Resolving { character } => self
+                        .app_core
+                        .add_system_message(&format!("Resolving {character}…")),
+                    LP::AlreadyRunning { host, port } => self.app_core.add_system_message(
+                        &format!("Lich already running at {host}:{port} — attaching."),
+                    ),
+                    LP::Connecting { host, port } => self
+                        .app_core
+                        .add_system_message(&format!("Connecting to {host}:{port} over SSH…")),
+                    LP::HostKeyPrompt { fingerprint } => self.app_core.add_system_message(
+                        &format!("Pinned new host key {fingerprint} (first use)."),
+                    ),
+                    LP::HostKeyChanged => self.app_core.add_system_message(
+                        "⚠ Host key CHANGED — refusing to connect (possible MITM). \
+                         Clear ssh-launcher-known-hosts only if you trust the change.",
+                    ),
+                    LP::Spawning { character } => self
+                        .app_core
+                        .add_system_message(&format!("Starting headless Lich for {character}…")),
+                    LP::WaitingForPort { host, port } => self
+                        .app_core
+                        .add_system_message(&format!("Waiting for Lich on {host}:{port}…")),
+                    LP::Ready { host, port } => {
+                        self.app_core
+                            .add_system_message(&format!("Lich up at {host}:{port} — attaching."));
+                        ready = Some((host, port));
+                    }
+                    LP::Failed { reason } => self
+                        .app_core
+                        .add_system_message(&format!("Launch failed: {reason}")),
+                }
+            }
+        }
+        if drained_any {
+            self.app_core.needs_render = true;
+        }
+        if let Some((host, port)) = ready {
+            self.launch_progress_rx = None;
+            self.attach_lich(host, port);
+        }
+    }
+
+    /// Attach to a headless Lich in detachable-client mode at `host:port`.
+    /// Mirrors the Lich branch of [`Self::reconnect`], and records the target
+    /// so a later `.reconnect` re-attaches to the same session.
+    fn attach_lich(&mut self, host: String, port: u16) {
+        if let Some(handle) = self.network_handle.take() {
+            handle.abort();
+        }
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<String>();
+        self.command_tx = command_tx;
+        let raw_logger = RawLogger::new(&self.app_core.config).ok().flatten();
+        let server_tx = self.network_forward_tx.clone();
+        self.webui_handshake_sent = false;
+
+        // Remember this as the reconnect target (detachable Lich, no key).
+        self.reconnect_direct = None;
+        self.reconnect_login_key = None;
+        self.reconnect_host = host.clone();
+        self.reconnect_port = port;
+
+        let handle = self._runtime.spawn(async move {
+            if let Err(err) =
+                LichConnection::start(&host, port, None, server_tx, command_rx, raw_logger).await
+            {
+                tracing::error!("GUI launch attach (lich) error: {}", err);
+            }
+        });
+        self.network_handle = Some(handle);
+        self.app_core.needs_render = true;
+    }
+
     /// Dispatch an `action:*` string from a popup-menu item (menu items
     /// carry strings). The typed path is [`Self::handle_ui_action`]; this
     /// is the single string bridge into it. Returns false only for
@@ -5435,6 +5627,8 @@ impl VellumGuiApp {
             A::SorterEdit => self.open_sorter_editor(),
             A::TouchWheelEditor => self.open_touch_wheel_editor(),
             A::Reconnect => self.reconnect(),
+            A::Launch(character) => self.start_launch(&character),
+            A::LauncherEditor => self.open_launcher_editor(),
             A::SnapDebug => {
                 self.snap_debug = !self.snap_debug;
                 self.app_core.add_system_message(if self.snap_debug {
