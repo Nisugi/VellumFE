@@ -375,7 +375,7 @@ impl WindowDef {
                     label: None,
                     icon: None,
                     color: None,
-                    background_color: None,
+                    countdown_background_color: None,
                     show_when_zero: None,
                 },
             },
@@ -429,7 +429,7 @@ impl WindowDef {
                 data: HandWidgetData {
                     icon: None,
                     icon_color: None,
-                    text_color: None,
+                    hand_text_color: None,
                     states: Vec::new(),
                 },
             },
@@ -771,5 +771,106 @@ mod blank_tests {
     #[test]
     fn blank_returns_none_for_unknown_type() {
         assert!(WindowDef::blank("definitely_not_a_widget", sample_base()).is_none());
+    }
+
+    /// Regression: `CommandInputWidgetData` and `HandWidgetData` used to each
+    /// carry a `text_color` field which — because the variant `#[serde(flatten)]`s
+    /// BOTH the widget data and `WindowBase` (which also has `text_color`) into one
+    /// map — serialized the key twice. Writing tolerated it; deserializing rejected
+    /// the duplicate ("duplicate field `text_color`"), so any GUI layout containing
+    /// a command_input window produced an unloadable `.vellumpack`. The fields were
+    /// renamed to `input_text_color` / `hand_text_color` (with `alias = "text_color"`
+    /// for read-compat). This asserts a Layout with both window types round-trips
+    /// through JSON (the GUI-pack path) and TOML (the TUI path) without collision,
+    /// even when the widget-specific color is set.
+    #[test]
+    fn command_input_and_hand_round_trip_without_duplicate_text_color() {
+        fn named_base(name: &str) -> WindowBase {
+            let mut b = sample_base();
+            b.name = name.to_string();
+            // Also set the base text_color to prove base + widget colors coexist.
+            b.text_color = Some("#111111".to_string());
+            b
+        }
+
+        let windows = vec![
+            WindowDef::CommandInput {
+                base: named_base("command_input"),
+                data: CommandInputWidgetData {
+                    input_text_color: Some("#222222".to_string()),
+                    ..Default::default()
+                },
+            },
+            WindowDef::Hand {
+                base: named_base("left"),
+                data: HandWidgetData {
+                    icon: Some("L:".to_string()),
+                    icon_color: None,
+                    hand_text_color: Some("#333333".to_string()),
+                    states: Vec::new(),
+                },
+            },
+            // Countdown had the same latent collision: its `background_color`
+            // clashed with `WindowBase.background_color`. Renamed to
+            // `countdown_background_color`; include a set value to prove it.
+            WindowDef::Countdown {
+                base: named_base("roundtime"),
+                data: CountdownWidgetData {
+                    id: Some("roundtime".to_string()),
+                    label: None,
+                    icon: None,
+                    color: None,
+                    countdown_background_color: Some("#444444".to_string()),
+                },
+            },
+        ];
+        let layout = crate::config::Layout {
+            windows: windows.clone(),
+            terminal_width: None,
+            terminal_height: None,
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
+        };
+
+        // JSON path (GUI pack export → import). `Layout` has no `PartialEq`, so
+        // compare the deserialized `windows` (WindowDef: PartialEq) directly.
+        let json = serde_json::to_string_pretty(&layout).expect("serialize layout to JSON");
+        let from_json: crate::config::Layout =
+            serde_json::from_str(&json).expect("GUI layout JSON must round-trip (no duplicate key)");
+        assert_eq!(
+            from_json.windows, windows,
+            "JSON round-trip must preserve the windows"
+        );
+
+        // TOML path (TUI layout.toml).
+        let toml_text = toml::to_string(&layout).expect("serialize layout to TOML");
+        let from_toml: crate::config::Layout =
+            toml::from_str(&toml_text).expect("TUI layout TOML must round-trip");
+        assert_eq!(
+            from_toml.windows, windows,
+            "TOML round-trip must preserve the windows"
+        );
+    }
+
+    /// Old configs wrote the field as `text_color`; the `alias` must still read it
+    /// into the renamed field so upgrading users don't lose their color settings.
+    #[test]
+    fn legacy_text_color_alias_still_reads() {
+        let cmd: CommandInputWidgetData =
+            toml::from_str("text_color = \"#abcdef\"").expect("legacy command_input color parses");
+        assert_eq!(cmd.input_text_color.as_deref(), Some("#abcdef"));
+
+        let hand: HandWidgetData =
+            toml::from_str("text_color = \"#fedcba\"").expect("legacy hand color parses");
+        assert_eq!(hand.hand_text_color.as_deref(), Some("#fedcba"));
+
+        let countdown: CountdownWidgetData = toml::from_str("background_color = \"#010203\"")
+            .expect("legacy countdown background color parses");
+        assert_eq!(
+            countdown.countdown_background_color.as_deref(),
+            Some("#010203")
+        );
     }
 }

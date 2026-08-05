@@ -674,7 +674,7 @@ mod tests {
         let hand_data = crate::config::HandWidgetData {
             icon: Some("R:".to_string()),
             icon_color: None,
-            text_color: None,
+            hand_text_color: None,
             states: vec![
                 crate::config::HandIconState {
                     when: Condition::HandHolds {

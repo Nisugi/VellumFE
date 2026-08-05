@@ -422,8 +422,17 @@ pub struct RoomWidgetData {
 /// Command input widget specific data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct CommandInputWidgetData {
-    #[serde(default)]
-    pub text_color: Option<String>,
+    // Renamed from `text_color` to avoid a `#[serde(flatten)]` key collision
+    // with `WindowBase.text_color` (both flatten into the same JSON/TOML map,
+    // which produced a duplicate-key parse error on GUI-layout round-trip).
+    // `alias` keeps old configs readable; `skip_serializing_if` guarantees no
+    // collision even if a value is set.
+    #[serde(
+        default,
+        alias = "text_color",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub input_text_color: Option<String>,
     #[serde(default)]
     pub cursor_color: Option<String>,
     #[serde(default)]
@@ -536,8 +545,16 @@ pub struct CountdownWidgetData {
     pub icon: Option<char>,
     #[serde(default)]
     pub color: Option<String>,
-    #[serde(default)]
-    pub background_color: Option<String>,
+    // Renamed from `background_color` to avoid a `#[serde(flatten)]` key
+    // collision with `WindowBase.background_color` (both flatten into the same
+    // map → duplicate-key parse error on layout round-trip). `alias` keeps old
+    // configs readable; `skip_serializing_if` guarantees no collision.
+    #[serde(
+        default,
+        alias = "background_color",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub countdown_background_color: Option<String>,
     /// Keep the timer visible at rest, showing "label: 0" with an empty bar,
     /// instead of hiding when it reaches zero. Default false (hide on zero).
     #[serde(default)]
@@ -747,9 +764,11 @@ pub struct HandWidgetData {
     /// Icon color (falls back to window/text color if None)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon_color: Option<String>,
-    /// Text color override (also overrides link color if set)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub text_color: Option<String>,
+    /// Text color override (also overrides link color if set).
+    // Renamed from `text_color` to avoid a `#[serde(flatten)]` key collision
+    // with `WindowBase.text_color`. `alias` keeps old configs readable.
+    #[serde(default, alias = "text_color", skip_serializing_if = "Option::is_none")]
+    pub hand_text_color: Option<String>,
     /// Status-driven icon states, first match wins (hotbar-style). A
     /// matched state's icon/text replace the static icon while its
     /// condition holds; no match falls through to the static settings.

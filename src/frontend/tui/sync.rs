@@ -334,7 +334,7 @@ impl TuiFrontend {
                 cmd_input.set_background_color(background_color);
                 let text_color = cmd_data
                     .as_ref()
-                    .and_then(|d| normalize_color(&d.text_color))
+                    .and_then(|d| normalize_color(&d.input_text_color))
                     .or_else(|| normalize_color(&base.text_color))
                     .or_else(|| color_to_hex_string(&theme.text_primary));
                 cmd_input.set_text_color(text_color);
@@ -738,7 +738,7 @@ impl TuiFrontend {
                             let text_color = data.color.clone().or_else(|| colors.text.clone());
                             countdown_widget.set_text_color(text_color);
                             let bg_color = data
-                                .background_color
+                                .countdown_background_color
                                 .clone()
                                 .or_else(|| def.base().background_color.clone())
                                 .or_else(|| color_to_hex_string(&theme.window_background));
@@ -1975,7 +1975,7 @@ impl TuiFrontend {
                                 (
                                     data.icon.clone(),
                                     data.icon_color.clone(),
-                                    data.text_color.clone(),
+                                    data.hand_text_color.clone(),
                                     state,
                                 )
                             } else {

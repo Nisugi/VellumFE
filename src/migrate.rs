@@ -462,7 +462,7 @@ fn apply_widget_specific_fields(window: &mut WindowDef, table: &toml::value::Tab
                 data.color = Some(v);
             }
             if let Some(v) = get_str(table, "bar_background")? {
-                data.background_color = Some(v);
+                data.countdown_background_color = Some(v);
             }
             if let Some(v) = get_char(table, "icon")? {
                 data.icon = Some(v);

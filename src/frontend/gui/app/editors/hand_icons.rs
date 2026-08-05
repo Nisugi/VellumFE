@@ -217,7 +217,7 @@ impl VellumGuiApp {
                 let preview_data = crate::config::HandWidgetData {
                     icon: None,
                     icon_color: None,
-                    text_color: None,
+                    hand_text_color: None,
                     states: state.working.clone(),
                 };
                 let now_server = chrono::Utc::now().timestamp()

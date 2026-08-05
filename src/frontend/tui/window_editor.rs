@@ -2025,7 +2025,7 @@ impl WindowEditor {
             text_color_input.insert_str(color);
         }
         if let crate::config::WindowDef::CommandInput { data, .. } = &window_def {
-            if let Some(ref color) = data.text_color {
+            if let Some(ref color) = data.input_text_color {
                 text_color_input.insert_str(color);
             }
             if let Some(ref icon) = data.prompt_icon {
@@ -2085,7 +2085,7 @@ impl WindowEditor {
                 // Use the template's text color as the default icon color
                 countdown_color_input.insert_str(color);
             }
-            if let Some(ref color) = data.background_color {
+            if let Some(ref color) = data.countdown_background_color {
                 countdown_bg_color_input.insert_str(color);
             }
         }
@@ -2141,7 +2141,7 @@ impl WindowEditor {
             if let Some(ref c) = data.icon_color {
                 hand_icon_color_input.insert_str(c);
             }
-            if let Some(ref c) = data.text_color {
+            if let Some(ref c) = data.hand_text_color {
                 hand_text_color_input.insert_str(c);
             }
         }
@@ -4788,7 +4788,7 @@ impl WindowEditor {
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.background_color = self
+            data.countdown_background_color = self
                 .countdown_bg_color_input
                 .lines()
                 .get(0)
@@ -4809,7 +4809,7 @@ impl WindowEditor {
                 .get(0)
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
-            data.text_color = self
+            data.hand_text_color = self
                 .hand_text_color_input
                 .lines()
                 .get(0)
@@ -4955,7 +4955,7 @@ impl WindowEditor {
             data.prompt_icon_color =
                 Some(self.prompt_icon_color_input.lines()[0].trim().to_string())
                     .filter(|s| !s.is_empty());
-            data.text_color =
+            data.input_text_color =
                 Some(self.text_color_input.lines()[0].trim().to_string()).filter(|s| !s.is_empty());
             data.cursor_color = Some(self.cursor_color_input.lines()[0].trim().to_string())
                 .filter(|s| !s.is_empty());
