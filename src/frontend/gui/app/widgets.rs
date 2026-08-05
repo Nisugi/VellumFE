@@ -3879,6 +3879,10 @@ impl VellumGuiApp {
         target_cfg: &TargetListConfig,
     ) -> String {
         let mut statuses = Vec::new();
+        // Dead marker leads (reads "Name [ded] [prn]"), via the same abbrev map.
+        if player.dead {
+            statuses.push(format!("[{}]", Self::status_abbreviation("dead", target_cfg)));
+        }
         if let Some(primary) = player.primary_status.as_deref() {
             statuses.push(format!(
                 "[{}]",
@@ -4014,8 +4018,19 @@ impl VellumGuiApp {
             .show(ui, |ui| {
                 for player in &app_core.game_state.room_players {
                     let display_text = Self::format_player_line(player, target_cfg);
+                    // Dead players render dim (dead_color); living players use
+                    // the default label color.
+                    let styled = match player
+                        .dead
+                        .then(|| target_cfg.dead_color.as_deref())
+                        .flatten()
+                        .and_then(parse_hex_color)
+                    {
+                        Some(color) => RichText::new(display_text).color(color),
+                        None => RichText::new(display_text),
+                    };
                     let response = ui
-                        .add(egui::Label::new(display_text).sense(egui::Sense::click()))
+                        .add(egui::Label::new(styled).sense(egui::Sense::click()))
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
 
                     if response.clicked() && clicked_link.is_none() {

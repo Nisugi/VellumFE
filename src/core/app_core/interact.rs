@@ -362,6 +362,7 @@ mod tests {
             id: "-444".into(),
             primary_status: None,
             secondary_status: None,
+            dead: false,
         }];
         core.game_state.compass_dirs = vec!["n".into(), "sw".into(), "out".into()];
         core

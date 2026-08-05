@@ -39,10 +39,11 @@ impl Players {
             .iter()
             .map(|p| {
                 format!(
-                    "{}:{}:{}",
+                    "{}:{}:{}:{}",
                     p.id,
                     p.primary_status.as_deref().unwrap_or(""),
-                    p.secondary_status.as_deref().unwrap_or("")
+                    p.secondary_status.as_deref().unwrap_or(""),
+                    p.dead as u8
                 )
             })
             .collect::<Vec<_>>()
@@ -67,6 +68,17 @@ impl Players {
         for player in room_players.iter() {
             // Build status display with abbreviations
             let mut status_parts = Vec::new();
+
+            // Dead marker leads, so a corpse reads "Name [ded] [prn]".
+            // Uses the same abbrev map as every other status.
+            if player.dead {
+                let abbrev = config
+                    .status_abbrev
+                    .get("dead")
+                    .cloned()
+                    .unwrap_or_else(|| "ded".to_string());
+                status_parts.push(format!("[{}]", abbrev));
+            }
 
             // Primary status (prepended, e.g., "stunned" from "a stunned Player")
             if let Some(ref primary) = player.primary_status {
@@ -118,7 +130,16 @@ impl Players {
                 coord: None,
             });
 
-            self.widget.add_simple_line(display_name, None, link_data);
+            // Dead players render in the configured dim color; living
+            // players keep the widget's default text color (None).
+            let item_text_color = if player.dead {
+                config.dead_color.clone()
+            } else {
+                None
+            };
+
+            self.widget
+                .add_simple_line(display_name, item_text_color, link_data);
             self.count += 1;
         }
 
@@ -266,20 +287,22 @@ mod tests {
                 id: "-1".to_string(),
                 primary_status: None,
                 secondary_status: None,
+                dead: false,
             },
             Player {
                 name: "Jane".to_string(),
                 id: "-2".to_string(),
                 primary_status: Some("stunned".to_string()),
                 secondary_status: Some("prone".to_string()),
+                dead: false,
             },
         ];
 
         let changed = players.update_from_state(&room_players, &config);
         assert!(changed);
         assert_eq!(players.count, 2);
-        // Cache now includes status: "id:primary:secondary"
-        assert_eq!(players.player_ids_cache, "-1::,-2:stunned:prone");
+        // Cache now includes status and dead flag: "id:primary:secondary:dead"
+        assert_eq!(players.player_ids_cache, "-1:::0,-2:stunned:prone:0");
         assert_eq!(players.generation, 1);
     }
 
@@ -292,6 +315,7 @@ mod tests {
             id: "-1".to_string(),
             primary_status: None,
             secondary_status: None,
+            dead: false,
         }];
 
         players.update_from_state(&room_players, &config);
@@ -309,6 +333,7 @@ mod tests {
             id: "-1".to_string(),
             primary_status: None,
             secondary_status: None,
+            dead: false,
         }];
 
         players.update_from_state(&room_players, &config);
@@ -318,13 +343,14 @@ mod tests {
             id: "-2".to_string(),
             primary_status: None,
             secondary_status: None,
+            dead: false,
         }];
 
         let changed = players.update_from_state(&updated_players, &config);
         assert!(changed);
         assert_eq!(players.count, 1);
-        // Cache now includes status: "id:primary:secondary"
-        assert_eq!(players.player_ids_cache, "-2::");
+        // Cache now includes status and dead flag: "id:primary:secondary:dead"
+        assert_eq!(players.player_ids_cache, "-2:::0");
     }
 
     #[test]
@@ -336,6 +362,7 @@ mod tests {
             id: "-101".to_string(),
             primary_status: None,
             secondary_status: None,
+            dead: false,
         }];
 
         players.update_from_state(&room_players, &config);
@@ -360,6 +387,7 @@ mod tests {
             id: "-1".to_string(),
             primary_status: Some("stunned".to_string()),
             secondary_status: Some("prone".to_string()),
+            dead: false,
         }];
 
         players.update_from_state(&room_players, &config);
@@ -384,6 +412,7 @@ mod tests {
             id: "-1".to_string(),
             primary_status: Some("awake".to_string()),
             secondary_status: None,
+            dead: false,
         }];
 
         players.update_from_state(&room_players, &config);
@@ -395,5 +424,63 @@ mod tests {
 
         let line = buffer_line(&buf, 0, area.width);
         assert!(line.trim_end().starts_with("Bob [awa]"));
+    }
+
+    #[test]
+    fn test_render_dead_player_shows_ded_tag() {
+        let mut players = Players::new("Players");
+        let mut config = crate::config::TargetListConfig::default();
+        config.status_position = "end".to_string();
+
+        // A dead player who is also prone (the stacked case from live logs).
+        let room_players = vec![Player {
+            name: "Regyy".to_string(),
+            id: "-1".to_string(),
+            primary_status: None,
+            secondary_status: Some("prone".to_string()),
+            dead: true,
+        }];
+
+        players.update_from_state(&room_players, &config);
+        players.set_border_config(false, None, None);
+
+        let area = Rect::new(0, 0, 30, 1);
+        let mut buf = Buffer::empty(area);
+        players.render(area, &mut buf);
+
+        let line = buffer_line(&buf, 0, area.width);
+        // Dead marker leads the status tags: "Regyy [ded] [prn]".
+        assert!(
+            line.trim_end().starts_with("Regyy [ded] [prn]"),
+            "got: {}",
+            line.trim_end()
+        );
+    }
+
+    #[test]
+    fn test_dead_flag_folds_into_change_cache() {
+        // A living->dead transition on the same id must be detected as a change
+        // (the dead flag is part of the cache key).
+        let mut players = Players::new("Players");
+        let config = crate::config::TargetListConfig::default();
+
+        let living = vec![Player {
+            name: "Regyy".to_string(),
+            id: "-1".to_string(),
+            primary_status: None,
+            secondary_status: None,
+            dead: false,
+        }];
+        players.update_from_state(&living, &config);
+
+        let dead = vec![Player {
+            name: "Regyy".to_string(),
+            id: "-1".to_string(),
+            primary_status: None,
+            secondary_status: None,
+            dead: true,
+        }];
+        let changed = players.update_from_state(&dead, &config);
+        assert!(changed, "living->dead on same id must redraw");
     }
 }

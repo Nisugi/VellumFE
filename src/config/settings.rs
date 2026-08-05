@@ -436,6 +436,11 @@ pub struct TargetListConfig {
     /// Text color for "challenging" creatures (from <crtrStatus>)
     #[serde(default = "default_challenging_color")]
     pub challenging_color: Option<String>,
+    /// Text color for dead players (room roster "the body of <name>") and,
+    /// by extension, any entry flagged dead. Dim by default so corpses read
+    /// as faded rather than competing with living players.
+    #[serde(default = "default_dead_color")]
+    pub dead_color: Option<String>,
 }
 
 fn default_boss_color() -> Option<String> {
@@ -444,6 +449,10 @@ fn default_boss_color() -> Option<String> {
 
 fn default_challenging_color() -> Option<String> {
     Some("#ffaa55".to_string())
+}
+
+fn default_dead_color() -> Option<String> {
+    Some("#888888".to_string())
 }
 
 fn default_target_status_position() -> String {
@@ -487,6 +496,7 @@ impl Default for TargetListConfig {
             excluded_nouns: default_excluded_nouns(),
             boss_color: default_boss_color(),
             challenging_color: default_challenging_color(),
+            dead_color: default_dead_color(),
         }
     }
 }

@@ -7534,6 +7534,7 @@ mod tests {
             id: "-42".to_string(),
             primary_status: Some("stunned".to_string()),
             secondary_status: Some("prone".to_string()),
+            dead: false,
         };
 
         let start = VellumGuiApp::format_player_line(&player, &cfg);
@@ -7542,6 +7543,21 @@ mod tests {
         cfg.status_position = "end".to_string();
         let end = VellumGuiApp::format_player_line(&player, &cfg);
         assert_eq!(end, "Nisugi [stu] [prn]");
+    }
+
+    #[test]
+    fn test_format_player_line_dead_leads_with_ded() {
+        let cfg = TargetListConfig::default(); // status_position defaults to "end"
+        // Dead + prone (the stacked case from live logs).
+        let player = Player {
+            name: "Regyy".to_string(),
+            id: "-1".to_string(),
+            primary_status: None,
+            secondary_status: Some("prone".to_string()),
+            dead: true,
+        };
+        let line = VellumGuiApp::format_player_line(&player, &cfg);
+        assert_eq!(line, "Regyy [ded] [prn]");
     }
 
     #[test]

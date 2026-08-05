@@ -2571,19 +2571,33 @@ impl MessageProcessor {
                                         let name_end = link_section.find("</a>").unwrap();
                                         let player_name = &link_section[name_start + 1..name_end];
 
-                                        // Parse prepended status (e.g., "a stunned")
+                                        // Prefix zone (text before the link):
+                                        // may carry titles ("Lord ", "Arena
+                                        // Occultist ") and/or the corpse marker
+                                        // ("the body of "). Titles are stripped;
+                                        // "the body of" sets the dead flag.
                                         let before_link = &remaining[..link_start];
-                                        let primary_status = Self::parse_prepended_status(before_link);
+                                        let (dead, primary_status) =
+                                            Self::parse_player_prefix(before_link);
 
-                                        // Parse appended status (e.g., "(prone)")
+                                        // Suffix zone (text after the link, up to
+                                        // the next comma that separates players).
+                                        // Holds either the brief "(prone)" form or
+                                        // the verbose "who is lying down" clause.
                                         let after_link = &remaining[link_section_end..];
-                                        let secondary_status = Self::parse_appended_status(after_link);
+                                        let suffix = match after_link.find(',') {
+                                            Some(comma) => &after_link[..comma],
+                                            None => after_link,
+                                        };
+                                        let secondary_status =
+                                            Self::parse_player_suffix_status(suffix);
 
                                         let player = crate::core::state::Player {
                                             id: exist_id.to_string(),
                                             name: player_name.to_string(),
                                             primary_status,
                                             secondary_status,
+                                            dead,
                                         };
 
                                         game_state.room_players.push(player);
@@ -4012,40 +4026,94 @@ impl MessageProcessor {
         entries
     }
 
-    /// Parse prepended status from text before player link
-    /// Format: "a stunned " -> Some("stunned")
-    /// Format: "an invisible " -> Some("invisible")
-    fn parse_prepended_status(text: &str) -> Option<String> {
-        let trimmed = text.trim_end();
-        if let Some(space_pos) = trimmed.rfind(' ') {
-            let potential_status = &trimmed[space_pos + 1..];
-            // Check if there's an article ("a " or "an ") before the status
-            if space_pos >= 2 {
-                let article_check = &trimmed[space_pos - 2..space_pos];
-                if article_check == "a " {
-                    return Some(potential_status.to_string());
-                }
-            }
-            if space_pos >= 3 {
-                let article_check = &trimmed[space_pos - 3..space_pos];
-                if article_check == "an " {
-                    return Some(potential_status.to_string());
-                }
-            }
+    /// Map a verbose "who is <phrase>" posture clause to the canonical status
+    /// name used by the status_abbrev config. Returns `None` for phrases we
+    /// don't recognize so the caller can fall back to the raw phrase (nothing
+    /// is silently dropped). "lying down" is confirmed from live logs; the
+    /// rest are the standard GemStone postures.
+    fn map_verbose_posture(phrase: &str) -> Option<&'static str> {
+        match phrase.trim().to_lowercase().as_str() {
+            "lying down" => Some("prone"),
+            "sitting" => Some("sitting"),
+            "kneeling" => Some("kneeling"),
+            "standing" => Some("standing"),
+            "stunned" => Some("stunned"),
+            "prone" => Some("prone"),
+            _ => None,
         }
-        None
     }
 
-    /// Parse appended status from text after player link
-    /// Format: " (prone), " -> Some("prone")
-    /// Format: " (sitting)" -> Some("sitting")
-    fn parse_appended_status(text: &str) -> Option<String> {
-        let trimmed = text.trim_start();
-        if trimmed.starts_with('(') {
-            if let Some(end_paren) = trimmed.find(')') {
-                return Some(trimmed[1..end_paren].to_string());
+    /// Parse the prefix zone (text before a player's link) into
+    /// `(dead, prepended_status)`.
+    ///
+    /// The zone can carry a corpse marker ("the body of "), a title
+    /// ("Lord ", "Arena Occultist "), and/or the legacy article-gated status
+    /// form ("a stunned "). Corpse marker sets `dead`; a bare title must NOT
+    /// be mistaken for a status (that was the "Arena Occultist -> [Occ]" bug),
+    /// so only the article-gated form yields a prepended status.
+    fn parse_player_prefix(text: &str) -> (bool, Option<String>) {
+        let trimmed = text.trim();
+        // Corpse marker: "the body of" immediately before the link. The game
+        // may also prefix a title ("the body of Lord X"); we only need the
+        // marker to detect death, titles are ignored either way.
+        let dead = trimmed.to_lowercase().contains("the body of");
+
+        // Legacy article-gated prepended status ("a stunned ", "an X ").
+        // Only fires when the LAST token is preceded by "a "/"an "; a plain
+        // title such as "Arena Occultist" or "Lord" has no article and so
+        // yields no status.
+        let end = text.trim_end();
+        let status = end.rfind(' ').and_then(|space_pos| {
+            let word = &end[space_pos + 1..];
+            let before = &end[..space_pos];
+            if before.ends_with(" a") || before == "a" {
+                Some(word.to_string())
+            } else if before.ends_with(" an") || before == "an" {
+                Some(word.to_string())
+            } else {
+                None
             }
+        });
+
+        (dead, status)
+    }
+
+    /// Parse the suffix zone (text after a player's link, already bounded at
+    /// the next comma) into an optional status.
+    ///
+    /// Two forms occur in the same component depending on the player's
+    /// brief/verbose setting:
+    ///   brief:   " (prone)"          -> Some("prone")
+    ///   verbose: " who is lying down" -> Some("prone")  (mapped)
+    /// Unknown verbose phrases pass through raw so nothing is dropped; the
+    /// abbrev layer downstream truncates/abbreviates them.
+    fn parse_player_suffix_status(text: &str) -> Option<String> {
+        let trimmed = text.trim();
+
+        // Brief parenthetical form.
+        if let Some(rest) = trimmed.strip_prefix('(') {
+            if let Some(end_paren) = rest.find(')') {
+                let inner = rest[..end_paren].trim();
+                if !inner.is_empty() {
+                    return Some(inner.to_string());
+                }
+            }
+            return None;
         }
+
+        // Verbose "who is <phrase>" clause.
+        if let Some(phrase) = trimmed.strip_prefix("who is ") {
+            let phrase = phrase.trim().trim_end_matches('.');
+            if phrase.is_empty() {
+                return None;
+            }
+            return Some(
+                Self::map_verbose_posture(phrase)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| phrase.to_string()),
+            );
+        }
+
         None
     }
 
@@ -5382,6 +5450,158 @@ mod tests {
             "Also here: <a exist='-456' noun='Alice'>Alice</a>",
         );
         assert_eq!(game_state.room_players_generation, 2);
+    }
+
+    /// Brief mode: a plain living player, no status.
+    #[test]
+    fn test_room_players_plain_living() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: <a exist=\"-1\" noun=\"Bob\">Bob</a>",
+        );
+        assert_eq!(game_state.room_players.len(), 1);
+        let p = &game_state.room_players[0];
+        assert_eq!(p.name, "Bob");
+        assert!(!p.dead);
+        assert_eq!(p.primary_status, None);
+        assert_eq!(p.secondary_status, None);
+    }
+
+    /// Brief mode: parenthetical status "(sitting)".
+    #[test]
+    fn test_room_players_brief_paren_status() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: <a exist=\"-1\" noun=\"Kerl\">Kerl</a> (sitting), \
+             <a exist=\"-2\" noun=\"Zoleta\">Zoleta</a>",
+        );
+        assert_eq!(game_state.room_players.len(), 2);
+        assert_eq!(game_state.room_players[0].secondary_status.as_deref(), Some("sitting"));
+        // The following player must not absorb Kerl's status.
+        assert_eq!(game_state.room_players[1].secondary_status, None);
+        assert_eq!(game_state.room_players[1].name, "Zoleta");
+    }
+
+    /// Verbose mode: "who is lying down" maps to the canonical "prone".
+    #[test]
+    fn test_room_players_verbose_lying_down_maps_to_prone() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: <a exist=\"-1\" noun=\"Ruuzakilr\">Ruuzakilr</a> who is lying down, \
+             <a exist=\"-2\" noun=\"Torgaben\">Torgaben</a>",
+        );
+        assert_eq!(game_state.room_players.len(), 2);
+        assert_eq!(game_state.room_players[0].secondary_status.as_deref(), Some("prone"));
+        assert!(!game_state.room_players[0].dead);
+        assert_eq!(game_state.room_players[1].secondary_status, None);
+    }
+
+    /// Dead marker: "the body of" sets the dead flag; name stays clean.
+    #[test]
+    fn test_room_players_dead_body_of() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: <a exist=\"-1\" noun=\"Braendon\">Braendon</a>, \
+             the body of <a exist=\"-2\" noun=\"Regyy\">Regyy</a> (prone)",
+        );
+        assert_eq!(game_state.room_players.len(), 2);
+        assert!(!game_state.room_players[0].dead);
+        let regyy = &game_state.room_players[1];
+        assert_eq!(regyy.name, "Regyy");
+        assert!(regyy.dead, "\"the body of\" must set dead");
+        assert_eq!(regyy.secondary_status.as_deref(), Some("prone"));
+    }
+
+    /// The stacked case straight from live logs: dead AND verbose posture.
+    #[test]
+    fn test_room_players_dead_plus_verbose() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: the body of <a exist=\"-1\" noun=\"Lanthilas\">Lanthilas</a> who is lying down",
+        );
+        assert_eq!(game_state.room_players.len(), 1);
+        let p = &game_state.room_players[0];
+        assert_eq!(p.name, "Lanthilas");
+        assert!(p.dead);
+        assert_eq!(p.secondary_status.as_deref(), Some("prone"));
+    }
+
+    /// Title prefixes ("Arena Occultist", "Lord") must NOT become a status
+    /// (regression guard for the "-> [Occ]" / "-> [Lord]" bug).
+    #[test]
+    fn test_room_players_title_prefix_is_not_a_status() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: Arena Occultist <a exist=\"-1\" noun=\"Sugiin\">Sugiin</a>, \
+             Lord <a exist=\"-2\" noun=\"Kazner\">Kazner</a> who is lying down",
+        );
+        assert_eq!(game_state.room_players.len(), 2);
+        let sugiin = &game_state.room_players[0];
+        assert_eq!(sugiin.name, "Sugiin");
+        assert!(!sugiin.dead);
+        assert_eq!(sugiin.primary_status, None, "title must not be a status");
+        assert_eq!(sugiin.secondary_status, None);
+        // Title + verbose posture together: title dropped, posture kept.
+        let kazner = &game_state.room_players[1];
+        assert_eq!(kazner.primary_status, None, "title must not be a status");
+        assert_eq!(kazner.secondary_status.as_deref(), Some("prone"));
+    }
+
+    /// Legacy article-gated prepended status ("a stunned <link>") still works.
+    #[test]
+    fn test_room_players_article_gated_prepended_status() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: a stunned <a exist=\"-1\" noun=\"Bob\">Bob</a>",
+        );
+        assert_eq!(game_state.room_players.len(), 1);
+        assert_eq!(game_state.room_players[0].primary_status.as_deref(), Some("stunned"));
+    }
+
+    /// Unknown verbose posture passes through raw (nothing silently dropped).
+    #[test]
+    fn test_room_players_unknown_verbose_passes_through() {
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        process_component(
+            &mut processor,
+            &mut game_state,
+            "room players",
+            "Also here: <a exist=\"-1\" noun=\"Bob\">Bob</a> who is floating serenely",
+        );
+        assert_eq!(game_state.room_players.len(), 1);
+        assert_eq!(
+            game_state.room_players[0].secondary_status.as_deref(),
+            Some("floating serenely")
+        );
     }
 
     #[test]

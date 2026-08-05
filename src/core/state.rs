@@ -533,8 +533,13 @@ pub struct Player {
     pub id: String,
     /// Primary status (prepended, e.g., "stunned" from "a stunned Player")
     pub primary_status: Option<String>,
-    /// Secondary status (appended, e.g., "prone" from "Player (prone)")
+    /// Secondary status (appended, e.g., "prone" from "Player (prone)" or
+    /// "prone" from the verbose clause "Player who is lying down")
     pub secondary_status: Option<String>,
+    /// True when the room roster shows the player as a corpse, i.e. the
+    /// segment is prefixed with "the body of " before the link. Drives the
+    /// `[ded]` status tag and the dim `dead_color` styling in both frontends.
+    pub dead: bool,
 }
 
 /// A room object (non-creature item) from room objs component
