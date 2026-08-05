@@ -46,6 +46,10 @@ pub(super) enum GuiWindowMenuCommand {
     /// Toggle the per-window position/size lock: locked windows ignore
     /// drag and resize gestures (Move Window above stays available).
     ToggleLock,
+    /// Forget this window's snap anchors (P-A1). Commit-on-detach: the
+    /// resolved rect is written into the store first, so the window stays
+    /// exactly where it is and simply stops following pane edges.
+    ReleaseAnchors,
     ToggleTitleBar,
     MoveTo(GuiShellZone),
     /// Per-window text size override; None reverts to the global size.
@@ -135,6 +139,8 @@ struct WindowMenuView<'a> {
     zone: GuiShellZone,
     /// Position/size lock state, rendered as a checked row.
     locked: bool,
+    /// Window has at least one snap anchor; shows the release row.
+    anchored: bool,
     appearance: WindowAppearanceView,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
@@ -426,6 +432,9 @@ impl VellumGuiApp {
                     self.app_core
                         .add_system_message("This window has no layout entry to lock.");
                 }
+            }
+            GuiWindowMenuCommand::ReleaseAnchors => {
+                self.release_window_anchors(&request.tab_key, request.zone);
             }
             GuiWindowMenuCommand::EditHandIcons => {
                 if let Some(name) = self
@@ -934,6 +943,10 @@ impl VellumGuiApp {
         let view = WindowMenuView {
             zone: request.zone,
             locked: self.window_locked(&request.tab_key),
+            anchored: self
+                .window_anchors
+                .get(&request.tab_key)
+                .is_some_and(|anchors| !anchors.is_free()),
             appearance: self.appearance_view_for_tab(ctx, &request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
@@ -1518,6 +1531,18 @@ impl VellumGuiApp {
             .clicked()
         {
             return Some(GuiWindowMenuCommand::ToggleLock);
+        }
+        if view.anchored
+            && ui
+                .selectable_label(false, "Release Anchors")
+                .on_hover_text(
+                    "Forget this window's snap anchors. It stays exactly where \
+                     it is and stops following the pane edges. (Dragging it \
+                     away from a snap does the same thing.)",
+                )
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::ReleaseAnchors);
         }
         ui.separator();
         // Everything below folds into sections so the menu opens short.

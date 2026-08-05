@@ -1154,6 +1154,10 @@ impl VellumGuiApp {
         if !window_bounds.is_finite() || window_bounds.width() <= 8.0 || window_bounds.height() <= 8.0 {
             return actions;
         }
+        // The anchor space for out-of-frame commit-on-detach (context-menu
+        // "Release anchors" resolves against the pane the window last
+        // rendered in).
+        self.last_zone_pane_rects.insert(zone, window_bounds);
 
         // Clicks anywhere count as "interacting"; used both for rect
         // tracking (only user actions persist geometry) and for relaxing
@@ -1217,6 +1221,12 @@ impl VellumGuiApp {
                     // already lives inside the current bounds.
                     continue;
                 };
+                // P-A1: anchored edges resolve against the live pane BEFORE
+                // the displacement pass — this is what makes a dock follow
+                // splitter drags, zone toggles and OS resizes. The store is
+                // never written; free windows pass through untouched.
+                let stored =
+                    self.resolved_window_rect(&tab.id.key, stored, window_bounds, min_size);
                 let is_main = tab.id.key == TabKey::TextMain
                     || group.is_some_and(|g| g.members.contains(&TabKey::TextMain));
                 infos.push(super::dock::CenterWindowInfo {
@@ -1261,6 +1271,14 @@ impl VellumGuiApp {
                             .get(&tab.id.key)
                             .copied()
                             .and_then(Self::rect_from_snapshot)
+                            .map(|rect| {
+                                self.resolved_window_rect(
+                                    &tab.id.key,
+                                    rect,
+                                    window_bounds,
+                                    Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT),
+                                )
+                            })
                             .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
                             .or_else(|| {
                                 Self::tab_window_rect(window_bounds, layout_bounds, window)
@@ -1352,6 +1370,14 @@ impl VellumGuiApp {
                     .get(&tab.id.key)
                     .copied()
                     .and_then(Self::rect_from_snapshot)
+                    .map(|rect| {
+                        self.resolved_window_rect(
+                            &tab.id.key,
+                            rect,
+                            window_bounds,
+                            min_window_size,
+                        )
+                    })
                     .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
                     .unwrap_or(fallback_rect)
             };

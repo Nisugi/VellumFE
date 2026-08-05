@@ -5,6 +5,7 @@
 //! Detached windows themselves are real OS windows managed in `detached.rs`;
 //! this module only deals with (de)serializing layout state.
 
+use super::window_manager::WindowAnchors;
 use super::*;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -45,6 +46,11 @@ pub(super) struct MainWindowRectSnapshot {
     /// before the field existed load unchanged.
     #[serde(default)]
     pub(super) gap_above: f32,
+    /// Persisted edge anchors (snap permanence, P-A1). Absent/None = free,
+    /// so layouts from before the field load unchanged, and builds from
+    /// before it ignore the unknown field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) anchors: Option<WindowAnchors>,
 }
 
 /// One Center-zone window's inputs to [`VellumGuiApp::compute_center_display_rects`].
@@ -66,6 +72,7 @@ pub(super) struct CenterWindowInfo {
 pub(super) struct RestoredLayoutState {
     pub(super) hidden_tabs: HashSet<TabKey>,
     pub(super) main_window_rects: HashMap<TabKey, [f32; 4]>,
+    pub(super) window_anchors: HashMap<TabKey, WindowAnchors>,
     pub(super) sidebar_gap_above: HashMap<TabKey, f32>,
     /// Sidebars already converted to free-placement rects; the others bake
     /// their legacy gap stack on first render (`bake_sidebar_stack`).
@@ -149,6 +156,24 @@ impl VellumGuiApp {
             })
             .unwrap_or_default();
         main_window_rects.retain(|key, _| available_tabs.contains_key(key));
+        // Anchors ride the same per-window entries and the same liveness
+        // filter. A sibling ref to a non-live key deliberately survives
+        // inside its owner's anchors (it degrades to the free edge until
+        // the target reappears).
+        let window_anchors: HashMap<TabKey, WindowAnchors> = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .main_window_rects
+                    .iter()
+                    .filter(|entry| available_tabs.contains_key(&entry.key))
+                    .filter_map(|entry| {
+                        let anchors = entry.anchors.clone()?;
+                        (!anchors.is_free()).then(|| (entry.key.clone(), anchors))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let sidebar_gap_above: HashMap<TabKey, f32> = snapshot
             .as_ref()
             .map(|snapshot| {
@@ -246,6 +271,7 @@ impl VellumGuiApp {
         RestoredLayoutState {
             hidden_tabs,
             main_window_rects,
+            window_anchors,
             sidebar_gap_above,
             migrated_sidebar_zones,
             tab_zones,
@@ -1066,6 +1092,7 @@ mod tests {
                 key: TabKey::Vitals,
                 rect: [250.0, 300.0, 400.0, 220.0],
                 gap_above: 0.0,
+                anchors: None,
             }],
             tab_zones: Vec::new(),
             no_title_tabs: Vec::new(),
@@ -1388,16 +1415,15 @@ mod tests {
 
     #[test]
     fn pa0_snapshot_persists_raw_pixels_and_no_relationship() {
-        // Schema pin: the persisted per-window geometry is exactly
-        // { key, rect, gap_above } — a raw pixel rect, no anchor or edge
-        // relationship of any kind. P-A1 adds a serde-optional `anchors`
-        // field; this key list then grows by one, and the tolerance half
-        // below becomes the proof that the new field never bricks an old
-        // build reading a new file.
+        // Schema pin, updated by P-A1 as designed: a FREE window's persisted
+        // geometry is still exactly { key, rect, gap_above } — anchors are
+        // skip-if-none, so layouts full of free windows are byte-identical
+        // to pre-anchor files (and old builds reading them see nothing new).
         let snapshot = MainWindowRectSnapshot {
             key: TabKey::Vitals,
             rect: [10.0, 20.0, 300.0, 200.0],
             gap_above: 0.0,
+            anchors: None,
         };
         let value = serde_json::to_value(&snapshot).unwrap();
         let mut keys: Vec<&str> = value
@@ -1409,16 +1435,89 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(keys, ["gap_above", "key", "rect"]);
 
-        // Forward tolerance: a snapshot written by a build that DOES know
-        // anchors still loads here — serde_json ignores the unknown field.
+        // Forward tolerance: a snapshot written by a build that knows the
+        // NEXT field (P-A2's size_role) still loads here — serde_json
+        // ignores unknown fields, so shipping a new optional field can
+        // never brick an older install.
         let mut with_future_field = value.as_object().unwrap().clone();
-        with_future_field.insert(
-            "anchors".to_string(),
-            serde_json::json!({ "x": { "lo": { "ref": "pane_min", "offset": 0.0 } } }),
-        );
+        with_future_field.insert("size_role".to_string(), serde_json::json!("fixed"));
         let parsed: MainWindowRectSnapshot =
             serde_json::from_value(serde_json::Value::Object(with_future_field)).unwrap();
         assert_eq!(parsed.rect, [10.0, 20.0, 300.0, 200.0]);
         assert_eq!(parsed.gap_above, 0.0);
+        assert_eq!(parsed.anchors, None);
+    }
+
+    #[test]
+    fn restore_filters_anchors_to_live_tabs_and_drops_free() {
+        use super::super::window_manager::{AxisAnchoring, AxisSide, EdgeAnchor};
+        let mut available_tabs = HashMap::new();
+        available_tabs.insert(
+            TabKey::Vitals,
+            GuiTab {
+                id: TabId::new(TabKey::Vitals),
+                window_name: "vitals".to_string(),
+            },
+        );
+        let anchored = |key: TabKey, anchors: Option<WindowAnchors>| MainWindowRectSnapshot {
+            key,
+            rect: [10.0, 10.0, 200.0, 200.0],
+            gap_above: 0.0,
+            anchors,
+        };
+        let snapshot = DockStateSnapshot {
+            main_window_rects: vec![
+                // Live tab with a real anchor: restored.
+                anchored(
+                    TabKey::Vitals,
+                    Some(WindowAnchors {
+                        x: AxisAnchoring::Hi(EdgeAnchor::pane(AxisSide::Max)),
+                        y: AxisAnchoring::Free,
+                    }),
+                ),
+                // Tab not live this session: dropped like its rect.
+                anchored(
+                    TabKey::Compass,
+                    Some(WindowAnchors {
+                        x: AxisAnchoring::Lo(EdgeAnchor::pane(AxisSide::Min)),
+                        y: AxisAnchoring::Free,
+                    }),
+                ),
+            ],
+            ..Default::default()
+        };
+        let mut layout = GuiLayoutFileV1::new("profile", "character");
+        layout.dock_state_json = serde_json::to_value(snapshot).unwrap();
+
+        let restored = VellumGuiApp::restore_layout_state(Some(&layout), &available_tabs);
+        assert_eq!(restored.window_anchors.len(), 1);
+        assert!(restored.window_anchors.contains_key(&TabKey::Vitals));
+    }
+
+    #[test]
+    fn snapshot_anchor_round_trip_and_legacy_files_load_free() {
+        // A right-docked window's anchors survive save/load; a legacy
+        // entry (no anchors field at all) deserializes to None.
+        use super::super::window_manager::{AxisAnchoring, AxisSide, EdgeAnchor};
+        let snapshot = MainWindowRectSnapshot {
+            key: TabKey::Vitals,
+            rect: [800.0, 300.0, 200.0, 200.0],
+            gap_above: 0.0,
+            anchors: Some(WindowAnchors {
+                x: AxisAnchoring::Hi(EdgeAnchor::pane(AxisSide::Max)),
+                y: AxisAnchoring::Free,
+            }),
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        let back: MainWindowRectSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.anchors, snapshot.anchors);
+
+        let legacy: MainWindowRectSnapshot = serde_json::from_value(serde_json::json!({
+            "key": back.key,
+            "rect": [1.0, 2.0, 3.0, 4.0],
+        }))
+        .unwrap();
+        assert_eq!(legacy.anchors, None);
+        assert_eq!(legacy.gap_above, 0.0);
     }
 }

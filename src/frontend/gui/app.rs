@@ -40,6 +40,7 @@ mod status_icons;
 mod theme;
 mod webui_panel;
 mod widgets;
+mod window_manager;
 mod zones;
 
 use detached::{DetachedMenuState, DetachedWindowState};
@@ -272,6 +273,14 @@ pub struct VellumGuiApp {
     available_tabs: HashMap<TabKey, GuiTab>,
     hidden_tabs: HashSet<TabKey>,
     main_window_rects: HashMap<TabKey, [f32; 4]>,
+    /// Persisted edge anchors (snap permanence, P-A1): windows absent here
+    /// are free. Solved against the live pane rect every frame at display
+    /// time — the solver never writes `main_window_rects`.
+    window_anchors: HashMap<TabKey, window_manager::WindowAnchors>,
+    /// Each zone's pane rect as of its last render pass; the anchor space
+    /// for commit-on-detach when anchors are released outside a frame's
+    /// solve (context menu).
+    last_zone_pane_rects: HashMap<GuiShellZone, Rect>,
     /// Legacy sidebar stacks: desired empty space above each docked
     /// window. Read once by `bake_sidebar_stack`, which converts the
     /// stack into free-placement rects and drains these entries.
@@ -670,6 +679,7 @@ impl VellumGuiApp {
         let dock::RestoredLayoutState {
             hidden_tabs,
             main_window_rects,
+            window_anchors,
             sidebar_gap_above,
             migrated_sidebar_zones,
             tab_zones,
@@ -759,6 +769,8 @@ impl VellumGuiApp {
             available_tabs,
             hidden_tabs,
             main_window_rects,
+            window_anchors,
+            last_zone_pane_rects: HashMap::new(),
             sidebar_gap_above,
             migrated_sidebar_zones,
             last_center_window_rects: HashMap::new(),
@@ -1436,6 +1448,7 @@ impl VellumGuiApp {
         Self::drop_tab_from_groups(&mut self.tab_groups, key);
         self.hidden_tabs.remove(key);
         self.main_window_rects.remove(key);
+        self.window_anchors.remove(key);
         self.last_center_window_rects.remove(key);
         self.sidebar_gap_above.remove(key);
         self.tab_zones.remove(key);
@@ -2704,6 +2717,11 @@ impl VellumGuiApp {
                             .copied()
                             .filter(|value| value.is_finite() && *value > 0.0)
                             .unwrap_or(0.0),
+                        anchors: self
+                            .window_anchors
+                            .get(key)
+                            .filter(|anchors| !anchors.is_free())
+                            .cloned(),
                     })
                     .collect();
                 rects.sort_by_key(|entry| entry.key.short_id());
@@ -2922,6 +2940,7 @@ impl VellumGuiApp {
         );
         self.hidden_tabs = restored.hidden_tabs;
         self.main_window_rects = restored.main_window_rects;
+        self.window_anchors = restored.window_anchors;
         self.sidebar_gap_above = restored.sidebar_gap_above;
         self.migrated_sidebar_zones = restored.migrated_sidebar_zones;
         self.last_center_window_rects.clear();

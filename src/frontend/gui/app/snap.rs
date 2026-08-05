@@ -23,6 +23,7 @@
 //! Shift suspends snapping and hides the accent lines; the grid overlay
 //! stays up as context.
 
+use super::window_manager::{AxisSide, EdgeRef};
 use super::*;
 
 /// Effective snap tuning, resolved from `GuiUiSettings` per drag frame.
@@ -75,6 +76,11 @@ pub(super) struct SnapGuide {
     pub edge: &'static str,
     /// Sibling window title, when the target is a sibling.
     pub target: Option<String>,
+    /// Anchor target this snap promotes to on release (P-A1: pane edges
+    /// and the pane center). None = not promotable — grid lines have no
+    /// referent that later re-solves, and sibling promotion waits for the
+    /// P-A2 sibling solver.
+    pub promote: Option<EdgeRef>,
 }
 
 /// How the gesture moves the rect along one axis, classified fresh every
@@ -124,6 +130,7 @@ struct AxisCandidate {
     value: f32,
     kind: SnapGuideKind,
     target: Option<usize>,
+    promote: Option<EdgeRef>,
 }
 
 struct AxisSnap {
@@ -132,6 +139,7 @@ struct AxisSnap {
     kind: SnapGuideKind,
     target: Option<usize>,
     edge: &'static str,
+    promote: Option<EdgeRef>,
 }
 
 /// Best snap along one axis, or None when nothing is within radius.
@@ -173,49 +181,64 @@ fn snap_1d(
         extent >= min_extent - 0.01 && extent <= max_extent + 0.01
     };
     let mut best: Option<(f32, AxisSnap)> = None;
-    let mut consider = |pos: f32, edge: &'static str, value: f32, kind, target| {
-        let distance = (value - pos).abs();
-        if distance > params.radius {
-            return;
-        }
-        let delta = value - pos;
-        let (new_lo, new_hi) = match gesture {
-            AxisGesture::MinEdge => (lo + delta, hi),
-            AxisGesture::MaxEdge => (lo, hi + delta),
-            _ => (lo + delta, hi + delta),
-        };
-        if matches!(gesture, AxisGesture::MinEdge | AxisGesture::MaxEdge)
-            && !extent_ok(new_lo, new_hi)
-        {
-            return;
-        }
-        let wins = match &best {
-            None => true,
-            Some((best_distance, best_snap)) => {
-                distance + 0.001 < *best_distance
-                    || ((distance - *best_distance).abs() <= 0.001
-                        && kind_priority(kind) < kind_priority(best_snap.kind))
+    let mut consider =
+        |pos: f32, edge: &'static str, value: f32, kind, target, promote: Option<&EdgeRef>| {
+            let distance = (value - pos).abs();
+            if distance > params.radius {
+                return;
+            }
+            let delta = value - pos;
+            let (new_lo, new_hi) = match gesture {
+                AxisGesture::MinEdge => (lo + delta, hi),
+                AxisGesture::MaxEdge => (lo, hi + delta),
+                _ => (lo + delta, hi + delta),
+            };
+            if matches!(gesture, AxisGesture::MinEdge | AxisGesture::MaxEdge)
+                && !extent_ok(new_lo, new_hi)
+            {
+                return;
+            }
+            let wins = match &best {
+                None => true,
+                Some((best_distance, best_snap)) => {
+                    distance + 0.001 < *best_distance
+                        || ((distance - *best_distance).abs() <= 0.001
+                            && kind_priority(kind) < kind_priority(best_snap.kind))
+                }
+            };
+            if wins {
+                best = Some((
+                    distance,
+                    AxisSnap {
+                        delta,
+                        line: value,
+                        kind,
+                        target,
+                        edge,
+                        promote: promote.cloned(),
+                    },
+                ));
             }
         };
-        if wins {
-            best = Some((
-                distance,
-                AxisSnap { delta, line: value, kind, target, edge },
-            ));
-        }
-    };
 
     for &(pos, edge, is_center) in moving {
         for candidate in candidates {
             if (candidate.kind == SnapGuideKind::Center) != is_center {
                 continue;
             }
-            consider(pos, edge, candidate.value, candidate.kind, candidate.target);
+            consider(
+                pos,
+                edge,
+                candidate.value,
+                candidate.kind,
+                candidate.target,
+                candidate.promote.as_ref(),
+            );
         }
         if params.grid > 0.0 && !is_center {
             let grid_value =
                 grid_origin + ((pos - grid_origin) / params.grid).round() * params.grid;
-            consider(pos, edge, grid_value, SnapGuideKind::Grid, None);
+            consider(pos, edge, grid_value, SnapGuideKind::Grid, None, None);
         }
     }
     best.map(|(_, snap)| snap)
@@ -233,11 +256,13 @@ fn axis_candidates(
             value: bounds_lo,
             kind: SnapGuideKind::Bound,
             target: None,
+            promote: Some(EdgeRef::Pane(AxisSide::Min)),
         });
         candidates.push(AxisCandidate {
             value: bounds_hi,
             kind: SnapGuideKind::Bound,
             target: None,
+            promote: Some(EdgeRef::Pane(AxisSide::Max)),
         });
     }
     if params.to_centers {
@@ -245,19 +270,25 @@ fn axis_candidates(
             value: (bounds_lo + bounds_hi) * 0.5,
             kind: SnapGuideKind::Center,
             target: None,
+            promote: Some(EdgeRef::PaneCenter),
         });
     }
     if params.to_siblings {
+        // Sibling snaps stay visual-only until the P-A2 sibling solver:
+        // no promote payload, so a release on one clears rather than
+        // creates anchors.
         for (index, lo, hi) in siblings {
             candidates.push(AxisCandidate {
                 value: lo,
                 kind: SnapGuideKind::Sibling,
                 target: Some(index),
+                promote: None,
             });
             candidates.push(AxisCandidate {
                 value: hi,
                 kind: SnapGuideKind::Sibling,
                 target: Some(index),
+                promote: None,
             });
         }
     }
@@ -317,6 +348,7 @@ pub(super) fn snap_rect(
             kind: snap.kind,
             edge: snap.edge,
             target: snap.target.map(|index| siblings[index].0.clone()),
+            promote: snap.promote,
         });
     }
 
@@ -354,6 +386,7 @@ pub(super) fn snap_rect(
             kind: snap.kind,
             edge: snap.edge,
             target: snap.target.map(|index| siblings[index].0.clone()),
+            promote: snap.promote,
         });
     }
 
@@ -389,6 +422,7 @@ pub(super) fn snap_rect(
                             kind: SnapGuideKind::Grid,
                             edge: names[0],
                             target: None,
+                            promote: None,
                         });
                     }
                 }
@@ -404,6 +438,7 @@ pub(super) fn snap_rect(
                             kind: SnapGuideKind::Grid,
                             edge: names[1],
                             target: None,
+                            promote: None,
                         });
                     }
                 }
@@ -469,6 +504,14 @@ impl VellumGuiApp {
         let radius = settings.snap_radius.clamp(0.0, 64.0);
         if !settings.snap_enabled || radius <= 0.0 {
             self.zone_snap_drag = None;
+            // With snapping off there is no way to form or re-form an
+            // anchor, so any tracked gesture is free placement: forget the
+            // window's anchors or the next frame's solve would yank it
+            // back onto them. (The gesture's own tracking has already
+            // committed the on-screen rect — commit-on-detach holds.)
+            if self.window_anchors.remove(tab_key).is_some() {
+                self.layout_dirty = true;
+            }
             return reported;
         }
 
@@ -548,6 +591,11 @@ impl VellumGuiApp {
         if pointer_down {
             self.zone_snap_guides = guides;
         } else {
+            // Release frame: promote engaged snaps into persisted anchors
+            // (P-A1, WYSIWYG — the guides the user saw at drop are the
+            // anchors they get; a Shift-suspended release has no guides
+            // and clears the touched axes instead).
+            self.promote_release_anchors(tab_key, gesture_x, gesture_y, &guides);
             self.zone_snap_drag = None;
         }
         snapped
