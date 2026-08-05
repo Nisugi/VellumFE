@@ -1341,4 +1341,84 @@ mod tests {
             vec![key("story")]
         );
     }
+
+    // ── P-A0 pins: snap-permanence characterization ─────────────────────
+    //
+    // Workstream P-A (.beads/artifacts/window-system-redesign/spec.md):
+    // these pin TODAY's dock-is-just-pixels behavior so the P-A1 diff that
+    // introduces persisted edge anchors provably changes it.
+
+    #[test]
+    fn pa0_pane_edge_release_strands_flush_windows() {
+        // The defect P-A1 fixes: a window the user snapped flush against a
+        // pane edge is stored as raw pixels with no relationship, so when
+        // the pane edge moves OUTWARD (sidebar splitter dragged thinner, or
+        // a zone hidden) nothing follows it — the window keeps its old
+        // pixels and a gap opens at the pane edge. Encroachment (edge
+        // moving INWARD) is covered by the displacement tests above; this
+        // pins the release direction, where displacement deliberately does
+        // nothing. Once P-A1 lands, a pane-anchored window follows the
+        // edge and this pin flips to assert the opposite for anchored
+        // windows (free windows keep exactly this behavior).
+        let old_bounds = rect(150.0, 0.0, 1000.0, 800.0);
+        let windows = vec![
+            info("flush_left", rect(150.0, 0.0, 350.0, 200.0), false),
+            info("flush_right", rect(800.0, 300.0, 1000.0, 500.0), false),
+        ];
+        // Sanity: at the old pane both windows sit exactly flush.
+        let out = VellumGuiApp::compute_center_display_rects(&windows, old_bounds);
+        assert_eq!(out[&key("flush_left")].min.x, 150.0);
+        assert_eq!(out[&key("flush_right")].max.x, 1000.0);
+
+        // Left sidebar shrinks 50px and the right sidebar hides entirely:
+        // the pane grows on both sides.
+        let new_bounds = rect(100.0, 0.0, 1100.0, 800.0);
+        let out = VellumGuiApp::compute_center_display_rects(&windows, new_bounds);
+        assert_eq!(
+            out[&key("flush_left")],
+            rect(150.0, 0.0, 350.0, 200.0),
+            "stranded: does NOT follow the pane's left edge out to 100"
+        );
+        assert_eq!(
+            out[&key("flush_right")],
+            rect(800.0, 300.0, 1000.0, 500.0),
+            "stranded: does NOT follow the pane's right edge out to 1100"
+        );
+    }
+
+    #[test]
+    fn pa0_snapshot_persists_raw_pixels_and_no_relationship() {
+        // Schema pin: the persisted per-window geometry is exactly
+        // { key, rect, gap_above } — a raw pixel rect, no anchor or edge
+        // relationship of any kind. P-A1 adds a serde-optional `anchors`
+        // field; this key list then grows by one, and the tolerance half
+        // below becomes the proof that the new field never bricks an old
+        // build reading a new file.
+        let snapshot = MainWindowRectSnapshot {
+            key: TabKey::Vitals,
+            rect: [10.0, 20.0, 300.0, 200.0],
+            gap_above: 0.0,
+        };
+        let value = serde_json::to_value(&snapshot).unwrap();
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["gap_above", "key", "rect"]);
+
+        // Forward tolerance: a snapshot written by a build that DOES know
+        // anchors still loads here — serde_json ignores the unknown field.
+        let mut with_future_field = value.as_object().unwrap().clone();
+        with_future_field.insert(
+            "anchors".to_string(),
+            serde_json::json!({ "x": { "lo": { "ref": "pane_min", "offset": 0.0 } } }),
+        );
+        let parsed: MainWindowRectSnapshot =
+            serde_json::from_value(serde_json::Value::Object(with_future_field)).unwrap();
+        assert_eq!(parsed.rect, [10.0, 20.0, 300.0, 200.0]);
+        assert_eq!(parsed.gap_above, 0.0);
+    }
 }
