@@ -2733,8 +2733,9 @@ impl VellumGuiApp {
     }
 
     /// Paint a dialog label to its EXACT rect honoring Wrayth `justify`
-    /// (4 = left, 5 = center, 6 = right). UberBar right-justifies its value
-    /// columns; ui.put centered them mid-slot, which read as floating gaps.
+    /// (bitfield; see [`crate::data::DialogLabel::align`]). UberBar
+    /// right-justifies its value columns; ui.put centered them mid-slot,
+    /// which read as floating gaps.
     fn paint_panel_label(
         ui: &egui::Ui,
         rect: egui::Rect,
@@ -2743,11 +2744,10 @@ impl VellumGuiApp {
         if label.value.is_empty() {
             return;
         }
-        let (anchor, pos) = match label.justify {
-            Some(6) => (egui::Align2::RIGHT_CENTER, rect.right_center()),
-            Some(5) => (egui::Align2::CENTER_CENTER, rect.center()),
-            // 4 or unspecified: left.
-            _ => (egui::Align2::LEFT_CENTER, rect.left_center()),
+        let (anchor, pos) = match label.align() {
+            crate::data::LabelAlign::Right => (egui::Align2::RIGHT_CENTER, rect.right_center()),
+            crate::data::LabelAlign::Center => (egui::Align2::CENTER_CENTER, rect.center()),
+            crate::data::LabelAlign::Left => (egui::Align2::LEFT_CENTER, rect.left_center()),
         };
         ui.painter().text(
             pos,

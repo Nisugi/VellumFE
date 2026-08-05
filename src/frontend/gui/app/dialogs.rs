@@ -122,15 +122,31 @@ impl VellumGuiApp {
                                 let Some(label) = dialog.display_labels.get(index) else {
                                     continue;
                                 };
-                                // Wrayth right-justifies value columns (justify='6');
-                                // we approximate with a left-aligned label placed at
-                                // the resolved rect — good enough for the grid, and
-                                // wrap is off so rows stay single-line.
-                                ui.put(
-                                    rect,
-                                    egui::Label::new(&label.value)
-                                        .truncate(),
-                                );
+                                // Honor Wrayth `justify` (bitfield; low two bits =
+                                // left/center/right) by painting into the resolved
+                                // rect; rows are single-line.
+                                if !label.value.is_empty() {
+                                    let (anchor, pos) = match label.align() {
+                                        crate::data::LabelAlign::Right => {
+                                            (egui::Align2::RIGHT_CENTER, rect.right_center())
+                                        }
+                                        crate::data::LabelAlign::Center => {
+                                            (egui::Align2::CENTER_CENTER, rect.center())
+                                        }
+                                        crate::data::LabelAlign::Left => {
+                                            (egui::Align2::LEFT_CENTER, rect.left_center())
+                                        }
+                                    };
+                                    ui.painter().text(
+                                        pos,
+                                        anchor,
+                                        &label.value,
+                                        egui::FontId::proportional(
+                                            (rect.height() - 3.0).clamp(8.0, 14.0),
+                                        ),
+                                        ui.visuals().text_color(),
+                                    );
+                                }
                             }
                             crate::data::ui_state::PositionedControlKind::Skin(_) => {
                                 // Backdrop art needs the skin store, which this

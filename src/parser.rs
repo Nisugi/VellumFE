@@ -327,7 +327,9 @@ pub struct DialogLabelSpec {
     pub value: String,
     /// Anchor-grid layout hints (None when the tag carried none).
     pub layout: Option<crate::data::DialogControlLayout>,
-    /// Wrayth `justify` (4 = left, 5 = center, 6 = right).
+    /// Wrayth `justify` bitfield: low two bits = alignment (0 = left,
+    /// 1 = center, 2 = right), bit 4 = flag (so 4/5/6 = flagged variants).
+    /// Decoded by `DialogLabel::align`.
     pub justify: Option<u8>,
 }
 
@@ -5505,6 +5507,45 @@ mod tests {
             .filter(|e| matches!(e, ParsedElement::Label { .. }))
             .collect();
         assert_eq!(labels.len(), 1);
+    }
+
+    #[test]
+    fn effect_duration_label_justify_passes_through() {
+        // Verbatim wire line (Buffs effect row, the single most common
+        // justify usage on the wire: ×10.5M in the 2026-08 log census).
+        // justify='2' = right (bitfield low bits); anchor_right is EMPTY —
+        // parse_control_layout currently drops empty anchors, pinned below.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<dialogData id='Buffs' clear='t'></dialogData><dialogData id='Buffs'><progressBar id='220997' value='100' text=\"Enhancive Stats Boost\" left='22%' top='0' width='76%' height='15' time='00:05:04'/><label id='l220997' value='0:05 ' top='0' left='0' justify='2' anchor_right=''/></dialogData>",
+        );
+
+        let labels: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::DialogFields { id, labels, .. } if id == "Buffs" => Some(labels),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let duration = labels
+            .iter()
+            .find(|l| l.id == "l220997")
+            .expect("duration label ingested into the dialog store");
+        assert_eq!(
+            duration.justify,
+            Some(2),
+            "wire justify='2' (right) must reach the label spec"
+        );
+        // Characterization: empty-string anchors are dropped at parse today
+        // (parse_control_layout filters them). If Wrayth treats an empty
+        // anchor target as "anchor to the parent edge", honoring it is a
+        // future, deliberate change — this assert makes that diff visible.
+        assert_eq!(
+            duration.layout.as_ref().and_then(|l| l.anchor_right.as_deref()),
+            None,
+            "empty anchor_right is currently discarded (pinned behavior)"
+        );
     }
 
     // ==================== UberBar (resident dynamic dialog) ====================

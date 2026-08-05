@@ -645,6 +645,14 @@ impl DialogField {
     }
 }
 
+/// Horizontal text alignment decoded from Wrayth's `justify` attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelAlign {
+    Left,
+    Center,
+    Right,
+}
+
 #[derive(Clone, Debug)]
 pub struct DialogLabel {
     pub id: String,
@@ -652,10 +660,26 @@ pub struct DialogLabel {
     /// Anchor-grid layout hints (None when the tag carried none). Resident
     /// dynamic dialogs like UberBar position their label rows this way.
     pub layout: Option<DialogControlLayout>,
-    /// Wrayth `justify` (the middle row of a 3x3 grid): 4 = left, 5 = center,
-    /// 6 = right. UberBar right-justifies its value columns (justify='6').
-    /// None = left by default.
+    /// Wrayth `justify`, a bitfield: the low two bits are the alignment
+    /// (0 = left, 1 = center, 2 = right) and bit 4 is a flag Wrayth sets on
+    /// some labels (so 4/5/6 are flagged left/center/right). Corpus census
+    /// (11.4 GB of logs, 2026-08): 2 is by far the most common value —
+    /// effect-duration columns in Buffs/Debuffs/Cooldowns/Active Spells —
+    /// then 0 and 4; UberBar sends 4/6. Decode via [`DialogLabel::align`].
     pub justify: Option<u8>,
+}
+
+impl DialogLabel {
+    /// Decode `justify` to a text alignment: low two bits carry it, the
+    /// bit-4 flag is ignored. None (attribute absent) = left.
+    pub fn align(&self) -> LabelAlign {
+        match self.justify.map(|j| j & 3) {
+            Some(1) => LabelAlign::Center,
+            Some(2) => LabelAlign::Right,
+            // 0 = explicit left; 3 is not a valid alignment (treat as left).
+            _ => LabelAlign::Left,
+        }
+    }
 }
 
 /// Progress bar displayed in a dialog
@@ -1278,6 +1302,40 @@ impl PopupMenu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ==================== DialogLabel justify decode Tests ====================
+
+    fn label_with_justify(justify: Option<u8>) -> DialogLabel {
+        DialogLabel {
+            id: "l".to_string(),
+            value: "x".to_string(),
+            layout: None,
+            justify,
+        }
+    }
+
+    #[test]
+    fn justify_decodes_as_bitfield_low_two_bits() {
+        // Real wire values (11.4 GB corpus census 2026-08): 2 is the most
+        // common (×10.5M — effect-duration labels in Buffs/Debuffs/
+        // Cooldowns/Active Spells), then 0 (mapMaster) and 4 (expr's
+        // PTPs/MTPs columns); 5 is rare; UberBar sends 4/6. Bit 4 is a
+        // flag: 4/5/6 are flagged left/center/right.
+        assert_eq!(label_with_justify(Some(0)).align(), LabelAlign::Left);
+        assert_eq!(label_with_justify(Some(1)).align(), LabelAlign::Center);
+        assert_eq!(label_with_justify(Some(2)).align(), LabelAlign::Right);
+        assert_eq!(label_with_justify(Some(4)).align(), LabelAlign::Left);
+        assert_eq!(label_with_justify(Some(5)).align(), LabelAlign::Center);
+        assert_eq!(label_with_justify(Some(6)).align(), LabelAlign::Right);
+    }
+
+    #[test]
+    fn justify_absent_or_invalid_defaults_left() {
+        assert_eq!(label_with_justify(None).align(), LabelAlign::Left);
+        // 3 is not a valid alignment in the low bits; don't guess.
+        assert_eq!(label_with_justify(Some(3)).align(), LabelAlign::Left);
+        assert_eq!(label_with_justify(Some(7)).align(), LabelAlign::Left);
+    }
 
     // ==================== DialogField edit (UTF-8 safety) Tests ====================
 
