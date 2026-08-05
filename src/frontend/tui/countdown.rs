@@ -96,15 +96,35 @@ impl Countdown {
         self.end_time = end_time;
     }
 
-    /// Get remaining seconds
-    /// Applies server_time_offset to local time to account for clock drift
+    /// Get remaining whole seconds, ceiling-rounded ("time until free").
+    ///
+    /// Applies server_time_offset to local time to account for clock drift.
+    /// Uses millisecond precision for "now" so we don't add up to ~1s of
+    /// floor bias on top of the server's whole-second RT/CT timestamp; the
+    /// old `.as_secs()` truncation biased "now" earlier, making the timer
+    /// read high. Ceiling means a displayed "1" persists until RT actually
+    /// clears, then blanks within one ~16ms render frame.
     fn remaining_seconds(&self, server_time_offset: i64) -> i64 {
-        let local_time = SystemTime::now()
+        let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-        let adjusted_time = local_time + server_time_offset;
-        self.end_time - adjusted_time
+            .unwrap_or_default()
+            .as_millis() as i64;
+        Self::remaining_seconds_from(self.end_time, server_time_offset, now_ms)
+    }
+
+    /// Pure ceiling math, split out so the boundary behavior is testable
+    /// without depending on the wall clock. `end_time` and
+    /// `server_time_offset` are whole-second server-domain values;
+    /// `now_ms` carries millisecond precision.
+    fn remaining_seconds_from(end_time: i64, server_time_offset: i64, now_ms: i64) -> i64 {
+        // Lift the whole-second values into the millisecond domain so we
+        // don't add floor bias on top of the server's 1s granularity.
+        let remaining_ms = end_time * 1000 - (now_ms + server_time_offset * 1000);
+        if remaining_ms <= 0 {
+            0
+        } else {
+            (remaining_ms + 999) / 1000 // integer ceiling
+        }
     }
 
     /// Parse a color string to ratatui Color (supports hex and color names)
@@ -281,6 +301,29 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64
+    }
+
+    #[test]
+    fn test_remaining_seconds_ceilings_partial() {
+        // Deterministic boundary check on the pure ceiling helper.
+        // end = 110s, offset 0; sweep "now" across the final two seconds.
+        let end = 110;
+        // 1001ms remaining -> ceilings to 2.
+        assert_eq!(Countdown::remaining_seconds_from(end, 0, 108_999), 2);
+        // Exactly 1000ms remaining -> 1.
+        assert_eq!(Countdown::remaining_seconds_from(end, 0, 109_000), 1);
+        // 1ms remaining -> still 1.
+        assert_eq!(Countdown::remaining_seconds_from(end, 0, 109_999), 1);
+        // 0ms remaining -> 0.
+        assert_eq!(Countdown::remaining_seconds_from(end, 0, 110_000), 0);
+        // Past end -> clamped to 0, never negative.
+        assert_eq!(Countdown::remaining_seconds_from(end, 0, 200_000), 0);
+    }
+
+    #[test]
+    fn test_remaining_seconds_applies_server_offset() {
+        // Server clock 5s ahead: end 110s, now 100_000ms, offset +5 -> 5s.
+        assert_eq!(Countdown::remaining_seconds_from(110, 5, 100_000), 5);
     }
 
     #[test]

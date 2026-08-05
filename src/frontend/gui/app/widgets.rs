@@ -1243,23 +1243,40 @@ impl VellumGuiApp {
         }
     }
 
-    /// Remaining whole seconds on a countdown, adjusted for server clock drift.
+    /// Remaining whole seconds on a countdown, ceiling-rounded ("time until
+    /// free"), adjusted for server clock drift.
+    ///
+    /// `local_unix_time_ms` carries millisecond precision so we don't add up
+    /// to ~1s of floor bias on top of the server's whole-second RT/CT
+    /// timestamp. Ceiling means a displayed "1" persists until the timer
+    /// actually clears. Matches the TUI countdown widget exactly.
     pub(super) fn countdown_remaining_seconds(
         end_time: i64,
         server_time_offset: i64,
-        local_unix_time: i64,
+        local_unix_time_ms: i64,
     ) -> u32 {
-        (end_time - (local_unix_time + server_time_offset)).max(0) as u32
+        // end_time and server_time_offset are whole-second server-domain
+        // values; lift into the millisecond domain to keep the math honest.
+        let remaining_ms = end_time * 1000 - (local_unix_time_ms + server_time_offset * 1000);
+        if remaining_ms <= 0 {
+            0
+        } else {
+            ((remaining_ms + 999) / 1000) as u32 // integer ceiling
+        }
     }
 
     /// Fractional remaining seconds on a countdown, so the drain bar moves a
     /// little on every repaint instead of stepping once per whole second.
+    ///
+    /// Uses the same offset convention as the whole-second helper —
+    /// `end - (now + offset)` — so the bar fill and the displayed number
+    /// agree on drifted clocks (previously the sign was flipped here).
     fn countdown_remaining_seconds_f(
         end_time: i64,
         server_time_offset: i64,
         local_unix_time_f: f64,
     ) -> f32 {
-        ((end_time - server_time_offset) as f64 - local_unix_time_f).max(0.0) as f32
+        (end_time as f64 - (local_unix_time_f + server_time_offset as f64)).max(0.0) as f32
     }
 
     pub(super) fn render_countdown_content(
@@ -1275,7 +1292,7 @@ impl VellumGuiApp {
         let remaining = Self::countdown_remaining_seconds(
             countdown.end_time,
             app_core.server_time_offset,
-            now_f as i64,
+            (now_f * 1000.0) as i64,
         );
 
         let bar_height = ui.spacing().interact_size.y.max(16.0);
@@ -5467,18 +5484,32 @@ mod tests {
 
     #[test]
     fn countdown_remaining_clamps_to_zero_when_elapsed() {
-        assert_eq!(VellumGuiApp::countdown_remaining_seconds(100, 0, 150), 0);
+        // now = 150_000ms (150s), end = 100s -> elapsed
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(100, 0, 150_000), 0);
     }
 
     #[test]
     fn countdown_remaining_counts_down_from_end_time() {
-        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 0, 100), 10);
+        // now = 100_000ms (100s), end = 110s -> exactly 10s left
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 0, 100_000), 10);
     }
 
     #[test]
     fn countdown_remaining_applies_server_offset() {
-        // Server clock runs 5s ahead of local time.
-        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 5, 100), 5);
+        // Server clock runs 5s ahead of local time. now = 100s -> 5s left.
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 5, 100_000), 5);
+    }
+
+    #[test]
+    fn countdown_remaining_ceilings_partial_seconds() {
+        // 1001ms remaining -> displays 2 (ceiling): end 110s, now 108_999ms
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 0, 108_999), 2);
+        // Exactly 1000ms remaining -> displays 1
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 0, 109_000), 1);
+        // 1ms remaining -> still displays 1
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 0, 109_999), 1);
+        // 0ms remaining -> displays 0
+        assert_eq!(VellumGuiApp::countdown_remaining_seconds(110, 0, 110_000), 0);
     }
 
     #[test]
@@ -5499,11 +5530,24 @@ mod tests {
 
     #[test]
     fn countdown_remaining_fraction_applies_server_offset() {
-        // Server clock runs 5s ahead of local time.
+        // Server clock runs 5s ahead of local time: end 110s, now 100s,
+        // offset +5 -> 110 - (100 + 5) = 5.0.
         assert_eq!(
             VellumGuiApp::countdown_remaining_seconds_f(110, 5, 100.0),
             5.0
         );
+    }
+
+    #[test]
+    fn countdown_remaining_fraction_matches_number_sign() {
+        // Regression: the fractional bar and the whole-second number must use
+        // the SAME offset sign, or they disagree on a drifted clock. With a
+        // non-symmetric offset the two must still describe the same remaining
+        // time. end=120s, now=100s (=100_000ms), offset=+3 -> 17s remaining.
+        let f = VellumGuiApp::countdown_remaining_seconds_f(120, 3, 100.0);
+        let n = VellumGuiApp::countdown_remaining_seconds(120, 3, 100_000);
+        assert_eq!(f, 17.0);
+        assert_eq!(n, 17); // number ceilings, but here it's a whole value
     }
 
     #[test]
