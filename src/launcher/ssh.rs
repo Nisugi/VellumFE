@@ -290,13 +290,22 @@ where
             policy.trust(&pubkey)?;
         }
 
+        // The hash-algorithm hint applies ONLY to RSA keys (rsa-sha2-256 /
+        // rsa-sha2-512 negotiation). ed25519 (and ecdsa) have a single fixed
+        // signature algorithm and MUST be given `None` — passing an RSA hash
+        // alongside an ed25519 key makes russh sign with a mismatched
+        // algorithm, which the server rejects as `Failed publickey` even
+        // though the public key is in authorized_keys. Only query the RSA
+        // hash when the key is actually RSA.
+        let hash_alg = if key.algorithm().is_rsa() {
+            session.best_supported_rsa_hash().await?.flatten()
+        } else {
+            None
+        };
         let auth = session
             .authenticate_publickey(
                 target.user,
-                PrivateKeyWithHashAlg::new(
-                    Arc::new(key),
-                    session.best_supported_rsa_hash().await?.flatten(),
-                ),
+                PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
             )
             .await
             .context("SSH public-key authentication errored")?;
