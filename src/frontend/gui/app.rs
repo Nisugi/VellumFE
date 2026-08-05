@@ -4102,9 +4102,18 @@ impl VellumGuiApp {
         }
 
         if consumed_keyboard_input {
-            // Remove keyboard/text events so focused text widgets don't also process consumed keys.
+            // Strip keyboard/text events so focused text widgets don't also
+            // process a consumed key. This MUST retain on the PROCESSED
+            // `input.events`, not `input.raw.events`: egui clones raw.events
+            // into events at begin_pass (before update() runs), and the
+            // command-input TextEdit reads the processed vector. Filtering
+            // raw.events here is a no-op for the current frame -- which is why
+            // alt+key / shift+key leaked their printable Event::Text into the
+            // input line even though the macro fired (consume_key removes only
+            // the Event::Key, never the Event::Text). ctrl+key never leaked
+            // because the OS emits no printable text for control chords.
             ctx.input_mut(|input| {
-                input.raw.events.retain(|event| {
+                input.events.retain(|event| {
                     !matches!(
                         event,
                         egui::Event::Key { .. }
@@ -8257,5 +8266,53 @@ mod tests {
         assert_eq!(event.code, KeyCode::Char(';'));
         assert!(event.modifiers.shift);
         assert_eq!(key_event_to_string(event), "shift+;");
+    }
+
+    // --- Keybind bug #2: alt+key / shift+key produce a printable Event::Text
+    // alongside the Event::Key. When a keybind consumes the press we must strip
+    // BOTH, or the char leaks into the command input. This tests the retain
+    // predicate `handle_global_input` applies to the processed event vector. ---
+
+    /// The consume filter removes the leaked printable Text (and the Key,
+    /// Copy/Cut/Paste) while leaving unrelated events (pointer motion) intact.
+    #[test]
+    fn dispatched_keybind_strips_leaked_text_event() {
+        use eframe::egui::{Event, Key, Modifiers, Pos2};
+
+        // What an alt+2 press looks like in the processed event vector: the Key
+        // (already targeted by consume_key) plus the printable Text egui emits
+        // for alt/shift chords, plus an unrelated pointer event.
+        let mut events = vec![
+            Event::Key {
+                key: Key::Num2,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::ALT,
+            },
+            Event::Text("2".to_string()),
+            Event::PointerMoved(Pos2::new(1.0, 2.0)),
+        ];
+
+        // Identical predicate to handle_global_input's consume block.
+        events.retain(|event| {
+            !matches!(
+                event,
+                Event::Key { .. }
+                    | Event::Text(_)
+                    | Event::Paste(_)
+                    | Event::Copy
+                    | Event::Cut
+            )
+        });
+
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::Text(_))),
+            "the leaked '2' Text event must be stripped so it can't reach the input line"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, Event::PointerMoved(_))),
+            "unrelated pointer events must survive"
+        );
     }
 }
