@@ -114,6 +114,12 @@ pub struct MessageProcessor {
     /// `AppCore::refresh_tts_windows` on layout load and editor saves.
     tts_windows: std::collections::HashSet<String>,
 
+    /// Indicator ids (uppercase) "claimed" by an indicator template's
+    /// condition `states` — a combined indicator owns them, so dashboard
+    /// runtime auto-discovery must not add them as separate orphan cells.
+    /// Rebuilt by `AppCore::refresh_indicator_templates`.
+    claimed_indicator_ids: std::collections::HashSet<String>,
+
     /// Server time offset for countdown synchronization
     pub server_time_offset: i64,
 
@@ -300,6 +306,7 @@ impl MessageProcessor {
             chunk_has_silent_updates: false,
             discard_current_stream: false,
             tts_windows: std::collections::HashSet::new(),
+            claimed_indicator_ids: std::collections::HashSet::new(),
             server_time_offset: 0,
             inventory_buffer: Vec::new(),
             previous_inventory: Vec::new(),
@@ -1358,7 +1365,15 @@ impl MessageProcessor {
                                     break;
                                 }
                             }
-                            if !found {
+                            // Auto-discover a new id ONLY if no indicator
+                            // template already claims it via a condition state
+                            // (a combined indicator owns it; adding the raw id
+                            // too would double it up as an orphan cell).
+                            if !found
+                                && !self
+                                    .claimed_indicator_ids
+                                    .contains(&id.to_ascii_uppercase())
+                            {
                                 indicators.push((id.clone(), if *active { 1 } else { 0 }));
                             }
                         }
@@ -1553,7 +1568,7 @@ impl MessageProcessor {
                 // are mined into those panels — don't offer them as generic
                 // dialog panels too. Only ids WITHOUT a template become
                 // dockable dialog panels (combat, befriend, ...).
-                if Config::get_window_template(Config::dialog_id_to_template(id)).is_some() {
+                if Config::id_has_widget_template(id) {
                     return;
                 }
                 // U3: record the resident dialog as a DialogPanel discovery
@@ -4137,6 +4152,15 @@ impl MessageProcessor {
         self.tts_windows = windows;
     }
 
+    /// Replace the set of indicator ids claimed by template condition states.
+    /// Dashboard runtime auto-discovery skips these (uppercase-keyed).
+    pub fn set_claimed_indicator_ids(
+        &mut self,
+        ids: std::collections::HashSet<String>,
+    ) {
+        self.claimed_indicator_ids = ids;
+    }
+
     /// Refresh the processor's TTS config snapshot. The processor holds its
     /// own Config copy from construction; without this, enabling TTS in the
     /// settings editor wouldn't take effect until restart (enqueue_tts gates
@@ -4891,6 +4915,127 @@ mod tests {
     }
 
     #[test]
+    fn uberbar_real_frame_populates_the_dialog_store() {
+        // A faithful slice of the REAL on-the-wire frame (from Nisugi's log),
+        // including the unescaped apostrophe in title='Nisugi's Uberbar'.
+        // After processing, the UberBar dialog store must hold the bars and
+        // labels — if it does, an empty panel is a RENDER bug, not parse/ingest.
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        let frame = "<closeDialog id='UberBar'/><openDialog type='dynamic' id='UberBar' title='Nisugi's Uberbar' target='UberBar' location='main' height='282' width='190' resident='true'><dialogData id='UberBar' clear='t'><skin id='ubinjury' name='InjuriesPanel' controls='nsys,head' top='5' left='5' width='100' height='150' align='nw'/><image id='nsys' name='nsys' cmd='cure nerves' tooltip='cure nerves' height='0' width='0'/><label id='ublog' value='Today:' justify='4' anchor_left='ubinjury' align='n' top='5' left='5' height='15' width='50'/><label id='ublogv' value='1234' justify='6' anchor_left='ublog' align='n' top='5' left='0' height='15' width='50'/><progressBar id='health' value='95' text='95/100' customText='t' anchor_left='ubinjury' anchor_top='ubbars' top='3' left='4' width='100' height='15'/></dialogData></openDialog>";
+
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        let elements = parser.parse_line(frame);
+        for element in &elements {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        let dialog = ui_state
+            .dialog_store
+            .get("UberBar")
+            .expect("UberBar dialog store entry must exist after processing");
+        assert!(
+            dialog.progress_bars.iter().any(|b| b.id == "health"),
+            "health bar not in store; bars: {:?}",
+            dialog.progress_bars.iter().map(|b| &b.id).collect::<Vec<_>>()
+        );
+        assert!(
+            dialog.display_labels.iter().any(|l| l.id == "ublogv" && l.value == "1234"),
+            "value label not in store; labels: {:?}",
+            dialog.display_labels.iter().map(|l| (&l.id, &l.value)).collect::<Vec<_>>()
+        );
+        assert!(
+            dialog.skins.iter().any(|s| s.name == "InjuriesPanel"),
+            "InjuriesPanel skin not in store"
+        );
+        // And the anchor grid must resolve to positioned controls (non-flow).
+        assert!(
+            dialog.positioned_controls().is_some(),
+            "positioned_controls returned None — panel would render nothing positioned"
+        );
+    }
+
+    #[test]
+    fn uberbar_resident_openDialog_registers_a_dialogpanel_discovery() {
+        // Bug repro: launching uberbar_eo (a resident openDialog id='UberBar')
+        // never adds a row to the Windows list. Trace parse -> process and
+        // assert a DialogPanel discovery is queued for AppCore to register.
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+
+        // The real opening frame the script emits (trimmed).
+        let frame = "<closeDialog id='UberBar'/>\
+            <openDialog type='dynamic' id='UberBar' title=\"Nisugi's Uberbar\" target='UberBar' location='main' height='282' width='190' resident='true'>\
+            <dialogData id='UberBar' clear='t'>\
+            <skin id='ubinjury' name='InjuriesPanel' controls='nsys,leftArm,rightArm' top='5' left='5' width='100' height='150' align='nw'/>\
+            <progressBar id='health' value='95' text='95/100' customText='t' anchor_left='ubinjury' anchor_top='ubbars' top='3' left='4' width='100' height='15'/>\
+            </dialogData></openDialog>";
+
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        let elements = parser.parse_line(frame);
+
+        // The parser must emit a DialogPanelOpen for the resident dialog.
+        assert!(
+            elements
+                .iter()
+                .any(|e| matches!(e, ParsedElement::DialogPanelOpen { id, .. } if id == "UberBar")),
+            "parser did not emit DialogPanelOpen for UberBar; got: {:?}",
+            elements
+                .iter()
+                .map(|e| format!("{:?}", std::mem::discriminant(e)))
+                .collect::<Vec<_>>()
+        );
+
+        for element in &elements {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        // And processing it must queue a DialogPanel discovery.
+        assert!(
+            ui_state.pending_window_discoveries.iter().any(|d| d.id == "UberBar"
+                && d.kind == crate::data::WindowDiscoveryKind::DialogPanel),
+            "no DialogPanel discovery queued for UberBar (is id_has_widget_template('UberBar') wrongly true? \
+             discoveries: {:?})",
+            ui_state
+                .pending_window_discoveries
+                .iter()
+                .map(|d| (&d.id, &d.kind))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn dialog_popup_gated_on_shown_dialog_ids() {
         // U6: a dialog pops up ONLY if the user has shown it (its id in
         // shown_dialog_ids). Empty set = nothing pops up.
@@ -5291,6 +5436,121 @@ mod tests {
         let store = game_state.effects.get("Buffs").expect("Buffs store");
         let indef = store.effects.iter().find(|e| e.id == "905").unwrap();
         assert_eq!(indef.expires_at, None);
+    }
+
+    // ===========================================
+    // dashboard runtime auto-discovery of status indicators
+    // ===========================================
+
+    fn feed_indicator(
+        processor: &mut MessageProcessor,
+        game_state: &mut GameState,
+        ui_state: &mut UiState,
+        id: &str,
+        active: bool,
+    ) {
+        let element = ParsedElement::StatusIndicator {
+            id: id.to_string(),
+            active,
+        };
+        processor.process_element(
+            &element,
+            game_state,
+            ui_state,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+    }
+
+    fn dashboard_ids(ui_state: &UiState) -> Vec<String> {
+        match &ui_state.windows.get("dash").expect("dash window").content {
+            crate::data::WindowContent::Dashboard { indicators } => {
+                indicators.iter().map(|(id, _)| id.clone()).collect()
+            }
+            _ => panic!("dash is not a dashboard"),
+        }
+    }
+
+    fn dash_ui() -> UiState {
+        use crate::data::{
+            geometry::{Col, Height, Row, Width},
+            WidgetType, WindowContent, WindowPosition, WindowState,
+        };
+        let mut ui_state = UiState::default();
+        let win = WindowState {
+            name: "dash".to_string(),
+            widget_type: WidgetType::Dashboard,
+            content: WindowContent::Dashboard { indicators: Vec::new() },
+            position: WindowPosition {
+                x: Col::new(0),
+                y: Row::new(0),
+                width: Width::new(20),
+                height: Height::new(3),
+            },
+            visible: true,
+            focused: false,
+            content_align: None,
+            ephemeral: false,
+        };
+        ui_state.set_window("dash".to_string(), win);
+        ui_state
+    }
+
+    #[test]
+    fn dashboard_auto_discovers_unclaimed_indicator() {
+        // No template claims STANDING -> the game's indicator auto-adds a cell.
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = dash_ui();
+
+        feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STANDING", true);
+        assert_eq!(dashboard_ids(&ui_state), vec!["STANDING"]);
+    }
+
+    #[test]
+    fn dashboard_suppresses_claimed_indicator() {
+        // A combined POSTURE indicator claims STANDING/KNEELING/PRONE/SITTING;
+        // the raw ids must NOT auto-add as orphan cells (no double-up).
+        let mut processor = create_test_processor();
+        processor.set_claimed_indicator_ids(
+            ["STANDING", "KNEELING", "PRONE", "SITTING"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        );
+        let mut game_state = GameState::new();
+        let mut ui_state = dash_ui();
+
+        for id in ["STANDING", "KNEELING", "PRONE", "SITTING"] {
+            feed_indicator(&mut processor, &mut game_state, &mut ui_state, id, true);
+        }
+        assert!(
+            dashboard_ids(&ui_state).is_empty(),
+            "claimed posture ids must not auto-add: {:?}",
+            dashboard_ids(&ui_state)
+        );
+
+        // An UNclaimed id still auto-discovers alongside the claimed ones.
+        feed_indicator(&mut processor, &mut game_state, &mut ui_state, "BLEEDING", true);
+        assert_eq!(dashboard_ids(&ui_state), vec!["BLEEDING"]);
+    }
+
+    #[test]
+    fn dashboard_claim_is_case_insensitive() {
+        // Claimed set is uppercase; the game may send any casing.
+        let mut processor = create_test_processor();
+        processor
+            .set_claimed_indicator_ids(["STANDING".to_string()].into_iter().collect());
+        let mut game_state = GameState::new();
+        let mut ui_state = dash_ui();
+
+        feed_indicator(&mut processor, &mut game_state, &mut ui_state, "standing", true);
+        assert!(dashboard_ids(&ui_state).is_empty());
     }
 
     // ===========================================

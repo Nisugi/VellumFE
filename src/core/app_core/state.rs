@@ -597,6 +597,25 @@ impl AppCore {
             .into_iter()
             .map(|entry| (entry.id.to_ascii_uppercase(), entry))
             .collect();
+
+        // Ids "claimed" by a template's condition states — a combined indicator
+        // (e.g. one POSTURE template with when=Standing/Kneeling/... states)
+        // owns those raw ids, so the dashboard's runtime auto-discovery must
+        // NOT also add them as separate orphan cells. Stored uppercase to match
+        // the parser's Icon-stripped, case-preserved ids.
+        let claimed: std::collections::HashSet<String> = self
+            .indicator_templates
+            .values()
+            .flat_map(|tpl| {
+                let mut ids = Vec::new();
+                for state in &tpl.states {
+                    state.when.referenced_indicator_ids(&mut ids);
+                }
+                ids
+            })
+            .map(|id| id.to_ascii_uppercase())
+            .collect();
+        self.message_processor.set_claimed_indicator_ids(claimed);
     }
 
     /// Look up a status template by id (case-insensitive) from the cache.
@@ -605,6 +624,21 @@ impl AppCore {
         id: &str,
     ) -> Option<&crate::config::IndicatorTemplateEntry> {
         self.indicator_templates.get(&id.to_ascii_uppercase())
+    }
+
+    /// Whether some indicator template's condition `states` reference this id
+    /// (case-insensitive) — i.e. a combined indicator "claims" it, so a raw
+    /// dashboard cell for the id should not be auto-added. Mirrors the claimed
+    /// set the message processor uses for the server-indicator path.
+    pub fn indicator_id_is_claimed(&self, id: &str) -> bool {
+        let target = id.to_ascii_uppercase();
+        self.indicator_templates.values().any(|tpl| {
+            let mut ids = Vec::new();
+            for state in &tpl.states {
+                state.when.referenced_indicator_ids(&mut ids);
+            }
+            ids.iter().any(|rid| rid.to_ascii_uppercase() == target)
+        })
     }
 
     /// Rebuild the message processor's set of TTS-opted windows from the
@@ -797,6 +831,7 @@ impl AppCore {
     /// Flip every indicator/dashboard entry whose id matches (the same
     /// update the server's status indicators perform).
     fn set_custom_status(&mut self, id: &str, active: bool) {
+        let claimed = self.indicator_id_is_claimed(id);
         for window in self.ui_state.windows.values_mut() {
             match &mut window.content {
                 crate::data::WindowContent::Indicator(ref mut indicator) => {
@@ -813,7 +848,9 @@ impl AppCore {
                             break;
                         }
                     }
-                    if !found && active {
+                    // Same claim guard as the server-indicator path: don't
+                    // auto-add an id a combined indicator template owns.
+                    if !found && active && !claimed {
                         indicators.push((id.to_string(), 1));
                     }
                 }
@@ -4237,13 +4274,21 @@ impl AppCore {
     ) {
         // Persistent layout window? (streams, dialog panels, plain widgets)
         if let Some(win) = self.layout.windows.iter().find(|w| w.name() == name) {
-            // Keep the dialog-popup allow-set in sync: a dialog-bound window
-            // being shown/hidden decides whether its openDialog may pop up.
+            // Keep the dialog-popup allow-set in sync — but ONLY for dialogs
+            // that render as a transient popup (bank/shop). A DialogPanel
+            // widget (combat, UberBar) renders the dialog store IN THE PANEL;
+            // adding its id here would ALSO pop it up as an active_dialog,
+            // producing a duplicate (an empty panel + a populated popup, or
+            // vice-versa). So a panel-bound dialog must stay out of the set.
+            let is_dialog_panel =
+                matches!(win, crate::config::WindowDef::DialogPanel { .. });
             if let Some(crate::config::WindowBinding::Dialog(id)) = win.base().binding.clone() {
-                if shown {
-                    self.ui_state.shown_dialog_ids.insert(id);
-                } else {
-                    self.ui_state.shown_dialog_ids.remove(&id);
+                if !is_dialog_panel {
+                    if shown {
+                        self.ui_state.shown_dialog_ids.insert(id);
+                    } else {
+                        self.ui_state.shown_dialog_ids.remove(&id);
+                    }
                 }
             }
             if shown {
@@ -4277,9 +4322,25 @@ impl AppCore {
             return;
         }
 
-        // Not yet materialized. Three possibilities to conjure when shown:
+        // Not yet materialized. Conjure when shown, MOST-SPECIFIC FIRST.
         if shown {
-            // A dialog-store entry → a dialog/panel we can show.
+            // A real widget template ALWAYS wins. It is the least ambiguous
+            // meaning of a name, so it must beat both the generic dialog panel
+            // and the container branches below. This matters because a
+            // deleted-then-reshown widget whose id the game ALSO feeds as a
+            // resident dialog (minivitals, expr, encum, Buffs, injuries,
+            // stance, status indicators, ...) leaves an entry in the always-on
+            // dialog store; without template-first, that store entry would
+            // resurrect the widget as a bare `panel_<id>` instead of the real
+            // widget. (A future container title colliding with a template name
+            // would be the same trap one branch down — template-first closes
+            // both.) show_window adds the def from the template + materializes.
+            if crate::config::Config::get_window_template(name).is_some() {
+                self.show_window(name, terminal_width, terminal_height);
+                return;
+            }
+            // A template-less dialog-store entry (combat, befriend, ...) → a
+            // GENERIC dockable dialog panel rendered from the store by id.
             if self.ui_state.dialog_store.contains_key(name) {
                 self.create_dialog_panel_window(name, name, terminal_width, terminal_height);
                 self.needs_render = true;
@@ -4297,12 +4358,6 @@ impl AppCore {
                 self.ui_state.shown_container_titles.insert(title.clone());
                 self.create_ephemeral_container_window(&title, terminal_width, terminal_height);
                 self.needs_render = true;
-                return;
-            }
-            // A catalog row for a template not yet in the layout → conjure
-            // it (show_window adds from the template and materializes it).
-            if crate::config::Config::get_window_template(name).is_some() {
-                self.show_window(name, terminal_width, terminal_height);
             }
         }
     }
@@ -7439,6 +7494,40 @@ mod tests {
     }
 
     #[test]
+    fn showing_a_dialog_panel_does_not_pop_it_up_as_a_dialog() {
+        // UberBar bug: a DialogPanel-bound dialog renders IN THE PANEL. Showing
+        // it must NOT add its id to shown_dialog_ids, or every dialogData frame
+        // would ALSO fire an active_dialog popup — a duplicate window (empty
+        // panel + populated popup). Only true popup dialogs (bank) join the set.
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        let mut core = core_with_layout(vec![]);
+        core.layout.terminal_width = Some(80);
+        core.layout.terminal_height = Some(24);
+
+        // Register UberBar the way the game does: a DialogPanel discovery.
+        core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+            id: "UberBar".to_string(),
+            title: "Nisugi's Uberbar".to_string(),
+            kind: WindowDiscoveryKind::DialogPanel,
+            save: false,
+        });
+        core.realize_offered_windows(80, 24);
+        assert!(
+            core.layout.windows.iter().any(|w| matches!(
+                w,
+                crate::config::WindowDef::DialogPanel { .. }
+            )),
+            "the discovery should have created a DialogPanel window"
+        );
+
+        core.set_known_window_shown("UberBar", true, 80, 24);
+        assert!(
+            !core.ui_state.shown_dialog_ids.contains("UberBar"),
+            "a DialogPanel must not join the popup allow-set (that causes the duplicate window)"
+        );
+    }
+
+    #[test]
     fn deleting_a_shown_dialog_window_clears_the_popup_allow_set() {
         // Rysk's bug: show a dialog-bound window (seeds shown_dialog_ids),
         // then DELETE it. Delete must scrub the id from the popup allow-set
@@ -7782,6 +7871,60 @@ mod tests {
             .map(|w| w.base().visibility.is_shown())
             .unwrap_or(false));
         assert!(core.ui_state.windows.contains_key("compass"));
+    }
+
+    /// Regression: deleting a widget-backed window whose id the game ALSO
+    /// feeds as a resident dialog (minivitals, expr, encum, Buffs, ...) and
+    /// then re-showing it must restore its real WIDGET, not conjure a generic
+    /// `panel_<id>` dialog panel.
+    ///
+    /// Repro (Rysk/Crinbar): minivitals owns the `minivitals` MiniVitals
+    /// widget template, but the game streams `<dialogData id='minivitals'>`
+    /// every vitals tick, which always accumulates into `dialog_store`. After
+    /// deleting the window, `dialog_store.contains_key("minivitals")` was true,
+    /// so `set_known_window_shown` built `panel_minivitals` instead of the
+    /// widget. `set_known_window_shown` now checks the real widget template
+    /// FIRST, ahead of the dialog-store and container conjure branches, so a
+    /// widget-backed id can never be resurrected as a generic panel.
+    #[test]
+    fn reshowing_deleted_widget_backed_dialog_restores_widget_not_panel() {
+        let minivitals_def = crate::config::Config::get_window_template("minivitals")
+            .expect("minivitals template exists");
+        let mut core = core_with_layout(vec![minivitals_def]);
+        core.init_windows(80, 24);
+        assert!(core.ui_state.windows.contains_key("minivitals"));
+
+        // 1. Delete the widget window (stashed for restore).
+        assert!(core.delete_and_stash_window("minivitals"));
+        assert!(!core.ui_state.windows.contains_key("minivitals"));
+
+        // 2. Game keeps streaming resident minivitals dialogData → dialog_store
+        //    fills even though no window is bound to it.
+        core.inject_test_line(
+            "<dialogData id='minivitals'><progressBar id='mana' value='94' text='mana 386/407' left='76.7%' top='0%' width='23.3%' height='100%'/></dialogData>",
+        );
+        assert!(
+            core.ui_state.dialog_store.contains_key("minivitals"),
+            "resident dialogData should accumulate in the store"
+        );
+
+        // 3. Re-show minivitals from the Windows list.
+        core.set_known_window_shown("minivitals", true, 80, 24);
+
+        // The REAL widget is restored; no generic panel is conjured.
+        assert!(
+            core.ui_state.windows.contains_key("minivitals"),
+            "minivitals widget must be restored"
+        );
+        assert!(
+            !core.ui_state.windows.contains_key("panel_minivitals"),
+            "no generic panel_minivitals may be created"
+        );
+        assert!(
+            core.layout.windows.iter().any(|w| w.name() == "minivitals"
+                && matches!(w, crate::config::WindowDef::MiniVitals { .. })),
+            "restored window is the MiniVitals widget, not a DialogPanel"
+        );
     }
 
     /// Bug #1: a named GUI layout saved on one character carries the full
