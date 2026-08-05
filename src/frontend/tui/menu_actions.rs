@@ -118,6 +118,41 @@ pub fn handle_ui_action(
             app_core.reconnect_requested = true;
             app_core.needs_render = true;
         }
+        UiAction::Launch(character) => {
+            // Same hand-off as reconnect: the runtime loop owns the network,
+            // so stash the character and let the next tick run the flow.
+            let character = character.trim().to_string();
+            if character.is_empty() {
+                app_core.add_system_message(
+                    "Usage: .launch <character>. Launcher config lives in ssh-launcher.toml.",
+                );
+            } else if crate::launcher::config::LauncherConfig::load()
+                .ok()
+                .and_then(|c| c.character(&character).cloned())
+                .is_none()
+            {
+                app_core.add_system_message(&format!(
+                    "No launcher entry for '{character}' in ssh-launcher.toml."
+                ));
+            } else {
+                app_core.add_system_message(&format!("Launching {character}…"));
+                app_core.launch_requested = Some(character);
+            }
+            app_core.needs_render = true;
+        }
+        UiAction::LauncherEditor => {
+            // The rich editor is GUI-only; in the TUI, point at the config file.
+            match crate::launcher::config::LauncherConfig::path() {
+                Ok(path) => app_core.add_system_message(&format!(
+                    "SSH launcher config: {} (GUI editor available with .launcher there).",
+                    path.display()
+                )),
+                Err(err) => {
+                    app_core.add_system_message(&format!("Launcher config path error: {err:#}"))
+                }
+            }
+            app_core.needs_render = true;
+        }
         UiAction::UiExport(args) => {
             // The plain core pack; the GUI adds its live layout on top.
             app_core.uiexport_with(&args, Vec::new());

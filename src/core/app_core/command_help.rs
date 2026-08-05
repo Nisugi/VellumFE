@@ -54,6 +54,16 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "",
                 "Reconnect to the game after a dropped connection"
             ),
+            entry!(
+                &["launch"],
+                "[character]",
+                "SSH to the home PC, cold-start its headless Lich, and attach (bare = open editor)"
+            ),
+            entry!(
+                &["launcher"],
+                "",
+                "Open the SSH launcher editor (host, launch command, per-character ports, key)"
+            ),
             entry!(&["menu"], "", "Open main menu"),
             entry!(&["settings"], "", "Open settings editor"),
             entry!(

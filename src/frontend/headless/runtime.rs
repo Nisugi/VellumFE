@@ -73,6 +73,10 @@ enum SessionRequest {
     /// The user ran `.reconnect`: re-establish the session using the stored
     /// credentials, clearing any intentional-disconnect / backoff state.
     Reconnect,
+    /// The user ran `.launch <character>`: run the SSH-launcher flow to
+    /// cold-start a headless Lich on the home PC, then attach to the resulting
+    /// detachable-client target.
+    Launch(String),
 }
 
 /// A web-requested Lich attach target (detachable-client mode).
@@ -793,6 +797,81 @@ pub async fn async_run(
                         }
                     }
                 }
+                SessionRequest::Launch(character) => {
+                    // `.launch <character>` from a phone/web client: SSH into the
+                    // home PC, cold-start its headless Lich, then attach to the
+                    // resulting detachable-client target exactly like a Lich
+                    // connect. The flow runs inline here (we're already async);
+                    // progress is surfaced as system messages.
+                    if supervisor.connection.is_some() {
+                        app_core.add_system_message(
+                            "Already connected - disconnect before launching a session.",
+                        );
+                        continue;
+                    }
+                    let config = match crate::launcher::config::LauncherConfig::load() {
+                        Ok(cfg) => cfg,
+                        Err(err) => {
+                            app_core
+                                .add_system_message(&format!("Launcher config error: {err:#}"));
+                            continue;
+                        }
+                    };
+                    app_core.set_remote_session_state(
+                        supervisor.status(SessionState::Connecting),
+                    );
+                    // Auto-pin the host key on first use: over an already-private
+                    // tunnel there is no interactive prompt on this path, and a
+                    // changed key is still hard-rejected inside the flow.
+                    let trust = crate::launcher::flow::HostKeyTrust::AutoPinFirstUse;
+                    let launch_result = {
+                        // Collect progress into messages after the flow (the
+                        // callback can't borrow app_core while it's borrowed by
+                        // the surrounding loop).
+                        let mut messages = Vec::new();
+                        let res = crate::launcher::flow::launch(
+                            &config,
+                            &character,
+                            trust,
+                            |p| messages.push(format!("{p:?}")),
+                        )
+                        .await;
+                        for m in messages {
+                            tracing::debug!("launch progress: {m}");
+                        }
+                        res
+                    };
+                    match launch_result {
+                        Ok(target) => {
+                            supervisor.character = Some(target.character.clone());
+                            supervisor.game = None;
+                            supervisor.direct = None;
+                            supervisor.lich_target = Some(LichTarget {
+                                host: target.host.clone(),
+                                port: target.port,
+                            });
+                            supervisor.login_key = None;
+                            supervisor.user_disconnected = false;
+                            supervisor.reconnect_attempt = 0;
+                            supervisor.reconnect_at = None;
+                            app_core.add_system_message(&format!(
+                                "Launched {} — attaching to {}:{}.",
+                                target.character, target.host, target.port
+                            ));
+                            supervisor.spawn(&app_core, server_tx.clone());
+                            app_core.set_remote_session_state(
+                                supervisor.status(SessionState::Connecting),
+                            );
+                        }
+                        Err(err) => {
+                            let message = format!("Launch failed: {err:#}");
+                            app_core.add_system_message(&message);
+                            let mut info = supervisor.status(SessionState::Idle);
+                            info.error = Some(message);
+                            app_core.set_remote_session_state(info);
+                        }
+                    }
+                }
             }
         }
 
@@ -814,7 +893,7 @@ pub async fn async_run(
 /// Command dispatch without a local frontend: same core path as typed input
 /// (echo, dot-commands, quit interception), modeled on the GUI's
 /// What a dispatched command asks the supervisor to do next.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum DispatchResult {
     /// Nothing special; keep the current session.
     None,
@@ -824,6 +903,9 @@ enum DispatchResult {
     /// The user asked to reconnect (`.reconnect`): re-establish the session
     /// using the stored credentials.
     Reconnect,
+    /// The user ran `.launch <character>`: run the SSH-launcher flow to
+    /// cold-start a headless Lich on the home PC, then attach to it.
+    Launch(String),
 }
 
 /// `dispatch_command`. `action:`/`menu:` outputs need a local UI and get a
@@ -883,6 +965,9 @@ fn push_dispatch_request(result: DispatchResult, session_requests: &mut Vec<Sess
         DispatchResult::None => {}
         DispatchResult::Quit => session_requests.push(SessionRequest::UserQuit),
         DispatchResult::Reconnect => session_requests.push(SessionRequest::Reconnect),
+        DispatchResult::Launch(character) => {
+            session_requests.push(SessionRequest::Launch(character))
+        }
     }
 }
 
@@ -925,6 +1010,18 @@ fn dispatch_ui_action(
         A::Reconnect => {
             app_core.add_system_message("Reconnecting...");
             DispatchResult::Reconnect
+        }
+        A::Launch(character) => {
+            let character = character.trim().to_string();
+            if character.is_empty() {
+                app_core.add_system_message(
+                    "Usage: .launch <character>. Configure targets in ssh-launcher.toml.",
+                );
+                DispatchResult::None
+            } else {
+                app_core.add_system_message(&format!("Launching {character}…"));
+                DispatchResult::Launch(character)
+            }
         }
         A::UiExport(args) => {
             app_core.uiexport_with(&args, Vec::new());
@@ -1008,6 +1105,7 @@ fn dispatch_ui_action(
         | A::WebUiPicker
         | A::WebUiOff
         | A::WebUiOpen(_)
+        | A::LauncherEditor
         | A::SnapDebug => desktop_only(app_core),
     }
 }

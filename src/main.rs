@@ -8,6 +8,7 @@ mod config;
 mod core;
 mod data;
 mod frontend;
+mod launcher;
 mod migrate;
 mod network;
 mod parser;

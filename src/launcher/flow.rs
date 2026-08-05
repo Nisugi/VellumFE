@@ -100,7 +100,7 @@ pub async fn launch<P>(
     mut progress: P,
 ) -> Result<LaunchTarget>
 where
-    P: FnMut(LaunchProgress),
+    P: FnMut(LaunchProgress) + Send,
 {
     let result = launch_inner(config, character, trust, &mut progress).await;
     if let Err(e) = &result {
@@ -118,7 +118,7 @@ async fn launch_inner<P>(
     progress: &mut P,
 ) -> Result<LaunchTarget>
 where
-    P: FnMut(LaunchProgress),
+    P: FnMut(LaunchProgress) + Send,
 {
     progress(LaunchProgress::Resolving {
         character: character.to_string(),
