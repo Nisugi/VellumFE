@@ -63,6 +63,19 @@ getrandom = "0.3"  # Web pairing token generation
 # `desktop` feature (desktop uses the OS keyring instead).
 chacha20poly1305 = "0.10"
 
+# SSH client for the launcher: cold-start a headless Lich session on a home
+# PC over an existing WireGuard/Tailscale tunnel, then attach to it. We select
+# the `ring` crypto backend and drop russh's default `aws-lc-rs` — aws-lc-rs
+# pulls aws-lc-sys, a C/CMake build that is painful to cross-compile for
+# iOS/Android; ring is prebuilt-friendly and the mobile builds already share
+# the ring lineage. `flate2` keeps SSH compression; `rsa` is dropped because
+# our launcher key is ed25519 (server host keys we accept can still be RSA —
+# ring verifies those without the `rsa` signing feature).
+russh = { version = "0.62", default-features = false, features = ["ring", "flate2"] }
+# ed25519 keypair generation for the launcher key. russh's own key-gen path
+# uses rand 0.10's rng(); we match it so PrivateKey::random accepts our RNG.
+rand = "0.10"
+
 # Mapdb release downloads (GitHub releases API + asset fetch). Blocking on
 # purpose — it runs on the mapdb-update worker thread. Rides the same
 # native-tls stack as eAccess login; no rustls, no second TLS stack.

@@ -6,6 +6,7 @@ pub mod config;
 pub mod core;
 pub mod data;
 pub mod frontend;
+pub mod launcher;
 pub mod network;
 pub mod parser;
 pub mod performance;
