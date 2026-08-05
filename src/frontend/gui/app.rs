@@ -394,6 +394,7 @@ pub struct VellumGuiApp {
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
     sorter_editor: Option<editors::SorterEditorState>,
     touch_wheel_editor: Option<editors::TouchWheelEditorState>,
+    launcher_editor: Option<editors::LauncherEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
     pack_editor: Option<editors::PackEditorState>,
     /// Editor window Id to raise to the top on the next frame. Set when a
@@ -829,6 +830,7 @@ impl VellumGuiApp {
             known_windows_editor: None,
             sorter_editor: None,
             touch_wheel_editor: None,
+            launcher_editor: None,
             doll_calibration: None,
             pack_editor: None,
             pending_editor_raise: None,
@@ -5399,21 +5401,6 @@ impl VellumGuiApp {
         self.network_handle = Some(handle);
         self.app_core.add_system_message("Reconnecting…");
         self.app_core.needs_render = true;
-    }
-
-    /// Open the SSH launcher editor. Filled in by the launcher-editor step;
-    /// until then, point the user at the config file location so `.launcher`
-    /// is never a silent no-op.
-    fn open_launcher_editor(&mut self) {
-        match crate::launcher::config::LauncherConfig::path() {
-            Ok(path) => self.app_core.add_system_message(&format!(
-                "SSH launcher config: {} — editor UI coming; edit there for now.",
-                path.display()
-            )),
-            Err(err) => self
-                .app_core
-                .add_system_message(&format!("Launcher config path error: {err:#}")),
-        }
     }
 
     /// Kick off the SSH launcher for `character`. The flow (SSH connect +
