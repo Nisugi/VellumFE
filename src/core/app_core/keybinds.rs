@@ -292,6 +292,9 @@ impl AppCore {
             KeyAction::ControllerShift => {
                 tracing::debug!("controller_shift is a hold modifier; nothing to execute");
             }
+            KeyAction::ControllerModifier => {
+                tracing::debug!("controller_modifier is a hold modifier; nothing to execute");
+            }
             KeyAction::ControllerWheel => {
                 tracing::debug!("controller_wheel is a hold modifier; nothing to execute");
             }

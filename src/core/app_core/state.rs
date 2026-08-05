@@ -5981,11 +5981,9 @@ impl AppCore {
                 self.config.keybinds = keybinds;
                 let character = self.config.character.clone();
                 let character = character.as_deref();
+                crate::config::Config::migrate_controller_shift_layers(character);
                 self.config.controller_binds =
                     crate::config::Config::load_controller_binds(character).unwrap_or_default();
-                self.config.controller_shift_binds =
-                    crate::config::Config::load_controller_binds_layer(true, character)
-                        .unwrap_or_default();
                 self.config.controller_wheel =
                     crate::config::Config::load_controller_wheel(character).unwrap_or_default();
                 self.config.controller_wheels =

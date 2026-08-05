@@ -32,7 +32,7 @@ dpad_down = { macro_text = "down\r" }  # Go down
 dpad_right = { macro_text = "out\r" }  # Leave (buildings, rooms)
 dpad_left = { macro_text = ".portal\r" } # Walk the room's door/arch/gate
 south = { macro_text = "look\r" }      # A / cross
-l2 = "controller_shift"                # Hold: buttons use [controller_shift]
+l2 = "controller_modifier"             # Hold: chords other buttons (e.g. l2+south)
 r2 = "controller_wheel"                # Hold: radial command wheel (aim stick picks)
 # On r3, not l3: clicking l3 nudges the LEFT stick - the movement stick -
 # past the walk threshold before the hold registers, causing stray
@@ -41,11 +41,20 @@ r2 = "controller_wheel"                # Hold: radial command wheel (aim stick p
 r3 = "controller_wheel:portals"        # Hold: the room's noun exits (go gate, ...)
 select = "controller_overlay"          # Toggle the binding-legend overlay
 
-# Which bindings the overlay legend shows (curate it - you don't need
-# all of them). "shift/<button>" shows a shift-layer entry. Toggle with
-# the HUD checkboxes in the .controller editor.
+# Modifier chords: hold a button declared `controller_modifier` (l2 above)
+# and press another button to fire its modified binding. The key is the
+# canonical `<modifiers>+<button>` combo; up to two modifiers may be
+# combined (e.g. "l1+r1+south"). Resolution is exact-match on the held set,
+# so l2+south below fires only while l2 is held.
+"l2+dpad_up" = "scroll_current_window_up_page"
+"l2+dpad_down" = "scroll_current_window_down_page"
+"l2+south" = { macro_text = "stand\r" }
+
+# Which bindings the overlay legend shows (curate it - you don't need all
+# of them). Each entry is a bind key: bare ("south") or a modifier combo
+# ("l2+south"). Toggle with the HUD checkboxes in the .controller editor.
 [controller_overlay]
-buttons = ["start", "dpad_left", "l2", "r2", "shift/south"]
+buttons = ["start", "dpad_left", "l2", "r2", "l2+south"]
 
 # Rumble on game events. Patterns: off, short, long, double.
 # Edit in the .controller editor's Rumble tab.
@@ -72,13 +81,6 @@ release_grace_ms = 40      # hush movement briefly after release so firing doesn
 fire_mode = "release"      # "release" | "edge" | "retract" — how a committed leaf fires
 edge_threshold = 90        # % deflection that fires in "edge" mode (no dwell)
 retract_delta = 10         # % inward from peak that fires in "retract" mode
-
-# Bindings while the shift button (l2 above) is held — a second bank for
-# every button. Same format as [controller].
-[controller_shift]
-dpad_up = "scroll_current_window_up_page"
-dpad_down = "scroll_current_window_down_page"
-south = { macro_text = "stand\r" }
 
 # Radial command wheel (hold r2, aim with the wheel/aim stick, dwell to
 # commit, release to fire). Folders auto-open on dwell and reserve a Back

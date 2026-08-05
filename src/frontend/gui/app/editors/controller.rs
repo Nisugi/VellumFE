@@ -10,11 +10,26 @@ use eframe::egui;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ControllerTab {
     Base,
-    Shift,
     Wheels,
     Rumble,
     Tuning,
 }
+
+/// What a controller binding is. `Modifier` declares the button as a member
+/// of the held-modifier set (no action of its own, no Value, no Modifier
+/// dropdowns); `Macro`/`Action` are ordinary press bindings that may carry
+/// up to two modifiers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BindingType {
+    Macro,
+    Action,
+    Modifier,
+}
+
+/// The action string a modifier button carries in `[controller]`.
+const MODIFIER_ACTION: &str = "controller_modifier";
+/// Placeholder shown in the Modifier dropdowns for "no modifier".
+const MODIFIER_NONE: &str = "none";
 
 const RUMBLE_PATTERNS: [&str; 4] = ["off", "short", "long", "double"];
 
@@ -102,10 +117,6 @@ impl ControllerEditorState {
             is_global: true,
         }
     }
-
-    fn shift_layer(&self) -> bool {
-        self.tab == ControllerTab::Shift
-    }
 }
 
 /// Structural edit collected while rendering the slice tree (applied
@@ -165,11 +176,17 @@ fn apply_wheel_op(slices: &mut Vec<WheelSlice>, op: WheelOp) {
 }
 
 struct ControllerFormState {
-    /// Some(button) when editing an existing binding; None when adding.
-    original_button: Option<String>,
+    /// Some(key) when editing an existing binding; None when adding. The key
+    /// is the canonical bind key (bare button or composite `l2+dpad_down`).
+    original_key: Option<String>,
     button: String,
     capture_armed: bool,
-    is_macro: bool,
+    binding_type: BindingType,
+    /// The first / second modifier button (or `MODIFIER_NONE`). Ignored when
+    /// binding_type is Modifier. Modifier 2 is forced to none while Modifier
+    /// 1 is none (no gaps); a button chosen in one is hidden from the other.
+    modifier1: String,
+    modifier2: String,
     action: String,
     macro_text: String,
     error: Option<String>,
@@ -178,34 +195,74 @@ struct ControllerFormState {
 impl ControllerFormState {
     fn empty() -> Self {
         Self {
-            original_button: None,
+            original_key: None,
             button: String::new(),
             capture_armed: false,
-            is_macro: true,
+            binding_type: BindingType::Macro,
+            modifier1: MODIFIER_NONE.to_string(),
+            modifier2: MODIFIER_NONE.to_string(),
             action: String::new(),
             macro_text: String::new(),
             error: None,
         }
     }
 
-    fn from_binding(button: &str, action: &KeyBindAction) -> Self {
-        let (is_macro, action_text, macro_text) = match action {
-            KeyBindAction::Action(name) => (false, name.clone(), String::new()),
+    /// Build a form from an existing binding key + action. The key is split
+    /// into its button and (up to two) modifiers; a `controller_modifier`
+    /// action selects Modifier type.
+    fn from_binding(key: &str, action: &KeyBindAction) -> Self {
+        let parsed = crate::config::ControllerBindKey::parse(key);
+        let (button, mods) = parsed
+            .map(|k| (k.button, k.mods))
+            .unwrap_or_else(|| (key.to_string(), Vec::new()));
+        let (binding_type, action_text, macro_text) = match action {
+            KeyBindAction::Action(name) if name == MODIFIER_ACTION => {
+                (BindingType::Modifier, String::new(), String::new())
+            }
+            KeyBindAction::Action(name) => (BindingType::Action, name.clone(), String::new()),
             KeyBindAction::Macro(macro_action) => {
-                (true, String::new(), macro_action.macro_text.clone())
+                (BindingType::Macro, String::new(), macro_action.macro_text.clone())
             }
         };
+        let modifier1 = mods
+            .first()
+            .cloned()
+            .unwrap_or_else(|| MODIFIER_NONE.to_string());
+        let modifier2 = mods
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| MODIFIER_NONE.to_string());
         Self {
-            original_button: Some(button.to_string()),
-            button: button.to_string(),
+            original_key: Some(key.to_string()),
+            button,
             capture_armed: false,
-            is_macro,
+            binding_type,
+            modifier1,
+            modifier2,
             action: action_text,
             macro_text,
             error: None,
         }
     }
 
+    /// The chosen modifiers as a clean list (dropping `none`, deduped). Only
+    /// meaningful for non-Modifier bindings; Modifier bindings never chord.
+    fn chosen_modifiers(&self) -> Vec<String> {
+        if self.binding_type == BindingType::Modifier {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for m in [&self.modifier1, &self.modifier2] {
+            if m != MODIFIER_NONE && !m.is_empty() && !out.contains(m) {
+                out.push(m.clone());
+            }
+        }
+        out
+    }
+
+    /// Build the canonical bind key + action from the form. Validates the
+    /// button, the modifier pairing (no gaps, no self-modifier), and the
+    /// value for the chosen type.
     fn build_binding(&self) -> Result<(String, KeyBindAction), String> {
         let button = self.button.trim().to_lowercase();
         if button.is_empty() {
@@ -214,23 +271,43 @@ impl ControllerFormState {
         if !super::super::gamepad::GAMEPAD_BUTTON_NAMES.contains(&button.as_str()) {
             return Err(format!("Unknown button '{}'.", button));
         }
-        let action = if self.is_macro {
-            if self.macro_text.is_empty() {
-                return Err("Macro text is required (\\r sends enter).".to_string());
+
+        // Modifier declarations never carry a value or modifiers of their own.
+        if self.binding_type == BindingType::Modifier {
+            return Ok((button, KeyBindAction::Action(MODIFIER_ACTION.to_string())));
+        }
+
+        // No gaps: Modifier 1 = none forces Modifier 2 = none.
+        if self.modifier1 == MODIFIER_NONE && self.modifier2 != MODIFIER_NONE {
+            return Err("Set Modifier 1 before Modifier 2.".to_string());
+        }
+        let mods = self.chosen_modifiers();
+        if mods.iter().any(|m| *m == button) {
+            return Err("A button can't be its own modifier.".to_string());
+        }
+
+        let action = match self.binding_type {
+            BindingType::Macro => {
+                if self.macro_text.is_empty() {
+                    return Err("Macro text is required (\\r sends enter).".to_string());
+                }
+                let text = self.macro_text.replace("\\r", "\r").replace("\\n", "\n");
+                KeyBindAction::Macro(MacroAction { macro_text: text })
             }
-            let text = self.macro_text.replace("\\r", "\r").replace("\\n", "\n");
-            KeyBindAction::Macro(MacroAction { macro_text: text })
-        } else {
-            let name = self.action.trim().to_string();
-            if name.is_empty() {
-                return Err("Pick an action from the list.".to_string());
+            BindingType::Action => {
+                let name = self.action.trim().to_string();
+                if name.is_empty() {
+                    return Err("Pick an action from the list.".to_string());
+                }
+                if KeyAction::from_str(&name).is_none() {
+                    return Err(format!("Unknown action '{}'.", name));
+                }
+                KeyBindAction::Action(name)
             }
-            if KeyAction::from_str(&name).is_none() {
-                return Err(format!("Unknown action '{}'.", name));
-            }
-            KeyBindAction::Action(name)
+            BindingType::Modifier => unreachable!("handled above"),
         };
-        Ok((button, action))
+        let key = crate::config::ControllerBindKey::new(button, mods).canonical();
+        Ok((key, action))
     }
 }
 
@@ -249,6 +326,32 @@ fn wheel_button_from_binds(config: &Config, name_key: &str) -> Option<String> {
         KeyBindAction::Action(name) if *name == wanted => Some(button.clone()),
         _ => None,
     })
+}
+
+/// One `Modifier N` combo row in the Add/Edit form: a `none` sentinel plus
+/// every declared-modifier button, minus `exclude` (the button already chosen
+/// in the other slot, so `l2+l2` is impossible). `ends the grid row itself.
+fn render_modifier_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    pool: &[String],
+    exclude: Option<&str>,
+) {
+    ui.label(label);
+    let id = egui::Id::new("controller_modifier_pick").with(label);
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(value.as_str())
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, MODIFIER_NONE.to_string(), MODIFIER_NONE);
+            for name in pool {
+                if exclude == Some(name.as_str()) {
+                    continue;
+                }
+                ui.selectable_value(value, name.clone(), name);
+            }
+        });
+    ui.end_row();
 }
 
 fn display_action(action: &KeyBindAction) -> String {
@@ -293,50 +396,106 @@ impl VellumGuiApp {
     fn save_controller_bind_from_form(
         &mut self,
         form: &ControllerFormState,
-        shift: bool,
         is_global: bool,
     ) -> Result<(), String> {
-        let (button, action) = form.build_binding()?;
+        let (key, action) = form.build_binding()?;
+
+        // Wheel ↔ modifier are mutually exclusive. Block a Modifier
+        // declaration on a button already assigned as a wheel button, naming
+        // the conflict so the user knows what to clear first.
+        if form.binding_type == BindingType::Modifier {
+            if let Some(wheel) = self.wheel_key_for_button(&form.button) {
+                return Err(format!(
+                    "'{}' opens the {} wheel. Clear that wheel button before making it a modifier.",
+                    form.button, wheel
+                ));
+            }
+        }
+
         let character = self.app_core.config.character.clone();
         let character = character.as_deref();
 
-        if let Some(original) = &form.original_button {
-            // Remove the old entry when the button changed, or when its
-            // scope flipped (the edit lands in the other file, so the
-            // original copy must go).
-            let was_char_override = self.controller_bind_is_character_override(original, shift);
+        if let Some(original) = &form.original_key {
+            // Remove the old entry when the key changed, or when its scope
+            // flipped (the edit lands in the other file, so the original copy
+            // must go).
+            let was_char_override = self.controller_bind_is_character_override(original);
             let scope_changed = was_char_override == is_global; // override != global
-            if *original != button || scope_changed {
+            if *original != key || scope_changed {
                 let orig_global = !was_char_override;
                 if let Err(err) =
-                    Config::delete_single_controller_bind(original, shift, orig_global, character)
+                    Config::delete_single_controller_bind(original, orig_global, character)
                 {
                     tracing::warn!("Failed to remove old controller bind '{}': {}", original, err);
                 }
             }
         }
 
-        Config::save_single_controller_bind(&button, &action, shift, is_global, character)
+        Config::save_single_controller_bind(&key, &action, is_global, character)
             .map_err(|err| format!("Failed to save controller bind: {}", err))?;
         self.reload_controller_binds();
         Ok(())
     }
 
-    /// Whether `button` currently lives in the active character's controller
-    /// file (as opposed to global) for the given layer — used to tag rows and
-    /// route a re-save/delete at the right scope.
-    fn controller_bind_is_character_override(&self, button: &str, shift: bool) -> bool {
-        Config::load_character_controller_binds_only(shift, self.app_core.config.character.as_deref())
-            .map(|binds| binds.contains_key(button))
+    /// Whether `key` currently lives in the active character's controller
+    /// file (as opposed to global) — used to tag rows and route a
+    /// re-save/delete at the right scope.
+    fn controller_bind_is_character_override(&self, key: &str) -> bool {
+        Config::load_character_controller_binds_only(self.app_core.config.character.as_deref())
+            .map(|binds| binds.contains_key(key))
             .unwrap_or(false)
+    }
+
+    /// The wheel a button opens, as a human label ("default" or the wheel
+    /// name), if that button is bound to a `controller_wheel*` action. Used
+    /// for the wheel↔modifier exclusivity warning.
+    fn wheel_key_for_button(&self, button: &str) -> Option<String> {
+        match self.app_core.config.controller_binds.get(button) {
+            Some(KeyBindAction::Action(name)) if name == "controller_wheel" => {
+                Some("default".to_string())
+            }
+            Some(KeyBindAction::Action(name)) => name
+                .strip_prefix("controller_wheel:")
+                .map(|n| n.to_string()),
+            _ => None,
+        }
+    }
+
+    /// True when `button` is currently declared as a modifier. Used to block
+    /// assigning it as a wheel button (wheel↔modifier exclusivity).
+    fn button_is_modifier(&self, button: &str) -> bool {
+        matches!(
+            self.app_core.config.controller_binds.get(button),
+            Some(KeyBindAction::Action(name)) if name == MODIFIER_ACTION
+        )
+    }
+
+    /// Buttons currently declared as modifiers, sorted canonically — the pool
+    /// the form's Modifier dropdowns choose from.
+    fn declared_modifier_buttons(&self) -> Vec<String> {
+        let mut mods: Vec<String> = self
+            .app_core
+            .config
+            .controller_binds
+            .iter()
+            .filter_map(|(btn, action)| match action {
+                KeyBindAction::Action(name) if name == MODIFIER_ACTION => Some(btn.clone()),
+                _ => None,
+            })
+            .collect();
+        mods.sort_by_key(|n| {
+            crate::config::CONTROLLER_BUTTON_ORDER
+                .iter()
+                .position(|b| b == n)
+                .unwrap_or(usize::MAX)
+        });
+        mods
     }
 
     fn reload_controller_binds(&mut self) {
         let character = self.app_core.config.character.as_deref();
         self.app_core.config.controller_binds =
             Config::load_controller_binds(character).unwrap_or_default();
-        self.app_core.config.controller_shift_binds =
-            Config::load_controller_binds_layer(true, character).unwrap_or_default();
     }
 
     pub(in super::super) fn render_controller_editor(&mut self, ctx: &egui::Context) {
@@ -400,20 +559,20 @@ impl VellumGuiApp {
                     state.is_global = true;
                 }
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut state.tab, ControllerTab::Base, "Base");
-                    ui.selectable_value(&mut state.tab, ControllerTab::Shift, "Shift layer");
+                    ui.selectable_value(&mut state.tab, ControllerTab::Base, "Bindings");
                     ui.selectable_value(&mut state.tab, ControllerTab::Wheels, "Wheels");
                     ui.selectable_value(&mut state.tab, ControllerTab::Rumble, "Rumble");
                     ui.selectable_value(&mut state.tab, ControllerTab::Tuning, "Tuning");
                     ui.separator();
-                    if matches!(state.tab, ControllerTab::Base | ControllerTab::Shift)
-                        && ui.button("Add binding").clicked()
-                    {
+                    if state.tab == ControllerTab::Base && ui.button("Add binding").clicked() {
                         open_form = Some(ControllerFormState::empty());
                     }
                 });
-                if state.tab == ControllerTab::Shift {
-                    ui.weak("Bindings while the shift button (bind one to controller_shift) is held.");
+                if state.tab == ControllerTab::Base {
+                    ui.weak(
+                        "Set a button's Type to Modifier to chord: other bindings can then \
+                         require it held (e.g. l2 + dpad_down).",
+                    );
                 }
                 ui.separator();
 
@@ -779,20 +938,28 @@ impl VellumGuiApp {
                     return;
                 }
 
-                let binds = if state.shift_layer() {
-                    &self.app_core.config.controller_shift_binds
-                } else {
-                    &self.app_core.config.controller_binds
-                };
+                let binds = &self.app_core.config.controller_binds;
                 let mut entries: Vec<(&String, &KeyBindAction)> = binds.iter().collect();
-                entries.sort_by(|a, b| a.0.cmp(b.0));
+                // Sort by canonical modifier order then button so composite
+                // combos group under a stable order (bare binds sort first).
+                entries.sort_by(|a, b| {
+                    let ka = crate::config::ControllerBindKey::parse(a.0);
+                    let kb = crate::config::ControllerBindKey::parse(b.0);
+                    match (ka, kb) {
+                        (Some(ka), Some(kb)) => ka
+                            .mods
+                            .len()
+                            .cmp(&kb.mods.len())
+                            .then_with(|| a.0.cmp(b.0)),
+                        _ => a.0.cmp(b.0),
+                    }
+                });
                 let row_count = entries.len();
 
-                // Which buttons are this character's overrides (vs global), so
+                // Which keys are this character's overrides (vs global), so
                 // each row can show a [C]/[G] tag. Loaded once per render, not
                 // per row, to keep the file read off the hot path.
                 let char_binds = Config::load_character_controller_binds_only(
-                    state.shift_layer(),
                     self.app_core.config.character.as_deref(),
                 )
                 .unwrap_or_default();
@@ -801,9 +968,13 @@ impl VellumGuiApp {
                     .id_salt("controller_editor_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for (button, action) in entries {
+                        for (key, action) in entries {
+                            let is_modifier = matches!(
+                                action,
+                                KeyBindAction::Action(name) if name == MODIFIER_ACTION
+                            );
                             ui.horizontal(|ui| {
-                                let scope = if char_binds.contains_key(button) {
+                                let scope = if char_binds.contains_key(key) {
                                     "[C]"
                                 } else {
                                     "[G]"
@@ -816,35 +987,39 @@ impl VellumGuiApp {
                                     });
                                 if ui.small_button("Edit").clicked() {
                                     open_form =
-                                        Some(ControllerFormState::from_binding(button, action));
+                                        Some(ControllerFormState::from_binding(key, action));
                                 }
                                 if ui.small_button("Delete").clicked() {
-                                    delete_request = Some(button.clone());
+                                    delete_request = Some(key.clone());
                                 }
                                 // Curate the binding-legend overlay: only
-                                // checked rows appear in the HUD.
-                                let overlay_entry = if state.shift_layer() {
-                                    format!("shift/{}", button)
-                                } else {
-                                    button.to_string()
-                                };
-                                let mut in_overlay = self
-                                    .app_core
-                                    .config
-                                    .controller_overlay
-                                    .contains(&overlay_entry);
-                                if ui
-                                    .checkbox(&mut in_overlay, "HUD")
-                                    .on_hover_text(
-                                        "Show this binding in the overlay legend \
-                                         (controller_overlay toggles it; Select by default)",
-                                    )
-                                    .changed()
-                                {
-                                    overlay_toggle = Some(overlay_entry);
+                                // checked rows appear in the HUD. The entry is
+                                // the canonical key (bare or composite); a
+                                // modifier declaration has nothing to show.
+                                if !is_modifier {
+                                    let overlay_entry = key.to_string();
+                                    let mut in_overlay = self
+                                        .app_core
+                                        .config
+                                        .controller_overlay
+                                        .contains(&overlay_entry);
+                                    if ui
+                                        .checkbox(&mut in_overlay, "HUD")
+                                        .on_hover_text(
+                                            "Show this binding in the overlay legend \
+                                             (controller_overlay toggles it; Select by default)",
+                                        )
+                                        .changed()
+                                    {
+                                        overlay_toggle = Some(overlay_entry);
+                                    }
                                 }
-                                ui.label(egui::RichText::new(button).monospace().strong());
-                                ui.weak(display_action(action));
+                                ui.label(egui::RichText::new(key).monospace().strong());
+                                if is_modifier {
+                                    ui.weak("(modifier)");
+                                } else {
+                                    ui.weak(display_action(action));
+                                }
                             });
                         }
                         if row_count == 0 {
@@ -895,21 +1070,33 @@ impl VellumGuiApp {
             // (the runtime authority) so the two never silently drift.
             if ok {
                 if let Some(button) = meta.button.as_deref() {
-                    let action = if name == "default" {
-                        "controller_wheel".to_string()
-                    } else {
-                        format!("controller_wheel:{}", name)
-                    };
-                    if let Err(err) = Config::save_single_controller_bind(
-                        button,
-                        &KeyBindAction::Action(action),
-                        false,
-                        scope_global,
-                        scope_char,
-                    ) {
-                        self.app_core
-                            .add_system_message(&format!("Failed to bind wheel button: {}", err));
+                    // Wheel ↔ modifier exclusivity: a wheel button can't also
+                    // be a modifier. Block and name the conflict.
+                    if self.button_is_modifier(button) {
+                        self.app_core.add_system_message(&format!(
+                            "'{}' is a modifier button. Clear its Modifier type before \
+                             assigning it as a wheel button.",
+                            button
+                        ));
                         ok = false;
+                    } else {
+                        let action = if name == "default" {
+                            "controller_wheel".to_string()
+                        } else {
+                            format!("controller_wheel:{}", name)
+                        };
+                        if let Err(err) = Config::save_single_controller_bind(
+                            button,
+                            &KeyBindAction::Action(action),
+                            scope_global,
+                            scope_char,
+                        ) {
+                            self.app_core.add_system_message(&format!(
+                                "Failed to bind wheel button: {}",
+                                err
+                            ));
+                            ok = false;
+                        }
                     }
                 }
             }
@@ -963,16 +1150,15 @@ impl VellumGuiApp {
             }
         }
 
-        if let Some(button) = delete_request {
+        if let Some(key) = delete_request {
             // Delete from whichever file the bind actually lives in, so a
             // per-row Delete works whether it's a global or character bind.
-            let shift = state.shift_layer();
-            let is_char = self.controller_bind_is_character_override(&button, shift);
-            match Config::delete_single_controller_bind(&button, shift, !is_char, scope_char) {
+            let is_char = self.controller_bind_is_character_override(&key);
+            match Config::delete_single_controller_bind(&key, !is_char, scope_char) {
                 Ok(()) => {
                     self.reload_controller_binds();
                     self.app_core
-                        .add_system_message(&format!("Controller bind '{}' deleted.", button));
+                        .add_system_message(&format!("Controller bind '{}' deleted.", key));
                 }
                 Err(err) => self
                     .app_core
@@ -988,7 +1174,7 @@ impl VellumGuiApp {
             let mut form_open = true;
             let mut submitted = false;
             let mut cancelled = false;
-            let title = if form.original_button.is_some() {
+            let title = if form.original_key.is_some() {
                 "Edit Controller Binding"
             } else {
                 "Add Controller Binding"
@@ -1032,41 +1218,78 @@ impl VellumGuiApp {
                                 }
                             });
                             ui.end_row();
+
+                            // Modifier dropdowns are hidden for a Modifier
+                            // declaration (a modifier button chords nothing of
+                            // its own). Shown otherwise, drawing from the pool
+                            // of buttons currently declared as modifiers.
+                            if form.binding_type != BindingType::Modifier {
+                                let mod_pool = self.declared_modifier_buttons();
+                                render_modifier_row(ui, "Modifier 1", &mut form.modifier1, &mod_pool, None);
+                                // Modifier 1 = none forces Modifier 2 = none.
+                                if form.modifier1 == MODIFIER_NONE {
+                                    form.modifier2 = MODIFIER_NONE.to_string();
+                                }
+                                let exclude = (form.modifier1 != MODIFIER_NONE)
+                                    .then(|| form.modifier1.clone());
+                                ui.add_enabled_ui(form.modifier1 != MODIFIER_NONE, |ui| {
+                                    render_modifier_row(
+                                        ui,
+                                        "Modifier 2",
+                                        &mut form.modifier2,
+                                        &mod_pool,
+                                        exclude.as_deref(),
+                                    );
+                                });
+                            }
+
                             ui.label("Type");
                             ui.horizontal(|ui| {
-                                ui.selectable_value(&mut form.is_macro, true, "Macro");
-                                ui.selectable_value(&mut form.is_macro, false, "Action");
+                                ui.selectable_value(&mut form.binding_type, BindingType::Macro, "Macro");
+                                ui.selectable_value(&mut form.binding_type, BindingType::Action, "Action");
+                                ui.selectable_value(&mut form.binding_type, BindingType::Modifier, "Modifier");
                             });
                             ui.end_row();
-                            if form.is_macro {
-                                ui.label("Macro text");
-                                ui.text_edit_singleline(&mut form.macro_text);
-                                ui.end_row();
-                            } else {
-                                ui.label("Action");
-                                egui::ComboBox::from_id_salt("controller_action_pick")
-                                    .selected_text(if form.action.is_empty() {
-                                        "pick..."
-                                    } else {
-                                        form.action.as_str()
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        for name in KeyAction::controller_action_names() {
-                                            ui.selectable_value(
-                                                &mut form.action,
-                                                name.to_string(),
-                                                name,
-                                            );
-                                        }
-                                    });
-                                ui.end_row();
+
+                            // Value is hidden for a Modifier declaration.
+                            match form.binding_type {
+                                BindingType::Macro => {
+                                    ui.label("Macro text");
+                                    ui.text_edit_singleline(&mut form.macro_text);
+                                    ui.end_row();
+                                }
+                                BindingType::Action => {
+                                    ui.label("Action");
+                                    egui::ComboBox::from_id_salt("controller_action_pick")
+                                        .selected_text(if form.action.is_empty() {
+                                            "pick..."
+                                        } else {
+                                            form.action.as_str()
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            for name in KeyAction::controller_action_names() {
+                                                ui.selectable_value(
+                                                    &mut form.action,
+                                                    name.to_string(),
+                                                    name,
+                                                );
+                                            }
+                                        });
+                                    ui.end_row();
+                                }
+                                BindingType::Modifier => {}
                             }
                         });
-                    if form.is_macro {
-                        ui.weak("Use \\r for enter (e.g. \"hide\\r\").");
-                    } else {
-                        ui.weak("Actions that work from a pad; anything else, use a Macro.");
-                    }
+                    match form.binding_type {
+                        BindingType::Macro => ui.weak("Use \\r for enter (e.g. \"hide\\r\")."),
+                        BindingType::Action => {
+                            ui.weak("Actions that work from a pad; anything else, use a Macro.")
+                        }
+                        BindingType::Modifier => ui.weak(
+                            "This button becomes a modifier: hold it while pressing another \
+                             bound button to fire that button's modified binding.",
+                        ),
+                    };
 
                     if let Some(error) = &form.error {
                         ui.colored_label(ui.visuals().error_fg_color, error);
@@ -1084,8 +1307,7 @@ impl VellumGuiApp {
                 });
 
             if submitted {
-                match self.save_controller_bind_from_form(&form, state.shift_layer(), state.is_global)
-                {
+                match self.save_controller_bind_from_form(&form, state.is_global) {
                     Ok(()) => {
                         self.app_core.add_system_message(&format!(
                             "Controller bind '{}' saved.",

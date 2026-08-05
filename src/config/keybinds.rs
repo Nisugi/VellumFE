@@ -13,6 +13,85 @@ pub struct MacroAction {
     pub macro_text: String, // e.g., "sw\r" for southwest movement
 }
 
+/// Canonical controller button order, used to sort a modifier set so that
+/// `l2+r1` and `r1+l2` collapse to one key. Mirrors the frontend's
+/// `GAMEPAD_BUTTON_NAMES`; kept here so the `config` layer stays free of any
+/// `frontend` import (see `tests/architecture.rs`). Buttons not listed sort
+/// after all listed ones, alphabetically, so an unknown name never panics.
+pub const CONTROLLER_BUTTON_ORDER: [&str; 17] = [
+    "south", "east", "north", "west", "dpad_up", "dpad_down", "dpad_left", "dpad_right", "l1",
+    "r1", "l2", "r2", "l3", "r3", "select", "start", "guide",
+];
+
+fn controller_button_rank(name: &str) -> usize {
+    CONTROLLER_BUTTON_ORDER
+        .iter()
+        .position(|b| *b == name)
+        .unwrap_or(CONTROLLER_BUTTON_ORDER.len())
+}
+
+/// A controller binding key: a (possibly empty) set of held modifier buttons
+/// plus the button being pressed. The canonical string form is the modifiers
+/// in [`CONTROLLER_BUTTON_ORDER`] order joined by `+`, followed by the button
+/// — e.g. `"l2+r1+dpad_down"`. A bare binding (no modifiers) is just the
+/// button name, so pre-modifier configs (`south`, `l2`, …) parse unchanged.
+///
+/// This type is the single source of truth for that string form: both the
+/// runtime resolver and the TOML serializer build/parse keys through it, so
+/// the two can never disagree on ordering or separator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControllerBindKey {
+    /// Held modifier buttons, stored in canonical order, deduplicated.
+    pub mods: Vec<String>,
+    /// The button being pressed.
+    pub button: String,
+}
+
+impl ControllerBindKey {
+    /// Build a key from a pressed button and an unordered modifier set,
+    /// canonicalizing the modifiers (sort by [`CONTROLLER_BUTTON_ORDER`],
+    /// dedup, and drop any modifier equal to the pressed button).
+    pub fn new(button: impl Into<String>, mods: impl IntoIterator<Item = String>) -> Self {
+        let button = button.into();
+        let mut mods: Vec<String> = mods.into_iter().filter(|m| *m != button).collect();
+        mods.sort_by(|a, b| {
+            controller_button_rank(a)
+                .cmp(&controller_button_rank(b))
+                .then_with(|| a.cmp(b))
+        });
+        mods.dedup();
+        Self { button, mods }
+    }
+
+    /// Parse a canonical (or bare) key string. The last `+`-segment is the
+    /// pressed button; everything before it is the modifier set. Re-sorts so
+    /// a hand-written out-of-order key still canonicalizes. Returns None on
+    /// an empty string.
+    pub fn parse(key: &str) -> Option<Self> {
+        if key.is_empty() {
+            return None;
+        }
+        let mut parts: Vec<&str> = key.split('+').filter(|s| !s.is_empty()).collect();
+        let button = parts.pop()?.to_string();
+        let mods = parts.into_iter().map(|s| s.to_string());
+        Some(Self::new(button, mods))
+    }
+
+    /// The canonical string form (modifiers in canonical order, then button).
+    pub fn canonical(&self) -> String {
+        if self.mods.is_empty() {
+            self.button.clone()
+        } else {
+            format!("{}+{}", self.mods.join("+"), self.button)
+        }
+    }
+
+    /// True when this key carries no modifiers (a base-layer binding).
+    pub fn is_bare(&self) -> bool {
+        self.mods.is_empty()
+    }
+}
+
 impl KeyBindAction {
     /// Returns the type name of this keybind action
     pub fn type_name(&self) -> &'static str {
@@ -164,7 +243,17 @@ pub enum KeyAction {
     // Controller shift modifier: while the bound button is held, other
     // buttons resolve against [controller_shift]. Handled entirely by the
     // gamepad layer; a no-op from a keyboard key.
+    //
+    // Legacy: superseded by ControllerModifier + composite keys. Retained so
+    // pre-migration configs still parse; auto-migration rewrites these on
+    // load (see migrate_controller_shift_text).
     ControllerShift,
+
+    // Controller modifier button: a button declared as a modifier has no
+    // action of its own; while held it becomes part of the modifier set that
+    // other buttons resolve against (e.g. `l2+dpad_down`). Handled entirely
+    // by the gamepad layer; a no-op from a keyboard key.
+    ControllerModifier,
 
     // Controller radial wheel: hold the bound button to show the command
     // wheel, pick a slice with the left stick, release to fire. Handled
@@ -287,6 +376,7 @@ impl KeyAction {
         // intentionally NOT offered in the generic action dropdown (see
         // controller_action_names); it still parses via from_str's prefix arm.
         ActionDef { name: "controller_shift", action: KeyAction::ControllerShift, label: "Controller Shift Layer", category: "Controller", scope: ActionScope::Controller },
+        ActionDef { name: "controller_modifier", action: KeyAction::ControllerModifier, label: "Controller Modifier", category: "Controller", scope: ActionScope::Controller },
         ActionDef { name: "controller_overlay", action: KeyAction::ControllerOverlay, label: "Toggle Binding Overlay", category: "Controller", scope: ActionScope::Controller },
         // ---- TTS / accessibility ----
         ActionDef { name: "tts_next", action: KeyAction::TtsNext, label: "TTS: Next Message", category: "Speech", scope: ActionScope::Controller },
@@ -1509,6 +1599,51 @@ impl Config {
         layers
     }
 
+    /// Migrate one controller.toml file from the legacy `[controller_shift]`
+    /// bank to composite modifier keys, in place. A no-op when the file is
+    /// absent, unreadable, has no shift table, or is already migrated (the
+    /// marker guards re-runs). Failures are logged and swallowed — a bad
+    /// migration must never wedge startup, and the merge/resolve paths still
+    /// read whatever is on disk.
+    fn migrate_controller_file(path: &std::path::Path) {
+        if !path.exists() {
+            return;
+        }
+        let text = match fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(err) => {
+                tracing::warn!("Controller migration: failed to read {:?}: {}", path, err);
+                return;
+            }
+        };
+        if let Some(migrated) = migrate_controller_shift_text(&text) {
+            match write_atomic(path, migrated) {
+                Ok(()) => tracing::info!(
+                    "Migrated legacy [controller_shift] to modifier keys in {:?}",
+                    path
+                ),
+                Err(err) => {
+                    tracing::warn!("Controller migration: failed to write {:?}: {}", path, err)
+                }
+            }
+        }
+    }
+
+    /// One-time migration entry point: fold the legacy `[controller_shift]`
+    /// bank into composite modifier keys for the global controller.toml and
+    /// the given character's override file. Idempotent (marker-guarded), so
+    /// it is safe to call on every load; runs before the binds are read.
+    pub fn migrate_controller_shift_layers(character: Option<&str>) {
+        if let Ok(path) = Self::common_controller_path() {
+            Self::migrate_controller_file(&path);
+        }
+        if character.is_some() {
+            if let Ok(path) = Self::controller_path(character) {
+                Self::migrate_controller_file(&path);
+            }
+        }
+    }
+
     /// Load the radial default-wheel slices from `[[controller_wheel]]`,
     /// global base with the character's override winning wholesale (the ring
     /// is one array, so a character that defines it replaces it entirely).
@@ -1877,41 +2012,25 @@ impl Config {
         Ok(())
     }
 
-    fn controller_section_name(shift: bool) -> &'static str {
-        if shift {
-            "controller_shift"
-        } else {
-            "controller"
-        }
-    }
-
-    /// Load controller (gamepad) bindings from a `[controller]`-family
-    /// section, merged by button: the global layer is the base and a
-    /// character's controller.toml overrides individual buttons, with unset
-    /// buttons falling through to global. Falls back to the shipped defaults
-    /// when neither layer has the section (pre-refresh installs).
-    pub fn load_controller_binds_layer(
-        shift: bool,
-        character: Option<&str>,
-    ) -> Result<HashMap<String, KeyBindAction>> {
-        let section = Self::controller_section_name(shift);
+    /// Load controller (gamepad) bindings from the `[controller]` section,
+    /// merged by key: the global layer is the base and a character's
+    /// controller.toml overrides individual keys, with unset keys falling
+    /// through to global. Keys are canonical bind keys — a bare button
+    /// (`south`) or a composite modifier combo (`l2+dpad_down`). Falls back
+    /// to the shipped defaults when neither layer has the section.
+    pub fn load_controller_binds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
         Ok(merge_controller_bind_layers(
-            section,
+            "controller",
             &Self::controller_layers(character),
         ))
     }
 
-    /// Base-layer controller bindings (`[controller]`).
-    pub fn load_controller_binds(character: Option<&str>) -> Result<HashMap<String, KeyBindAction>> {
-        Self::load_controller_binds_layer(false, character)
-    }
-
-    /// A character's own controller binds for one layer, NOT merged with
-    /// global — the editor uses this to tell whether a given button is a
-    /// character override (so it can tag the row and route the edit to the
-    /// right file). Empty when the character has no controller.toml.
+    /// A character's own controller binds, NOT merged with global — the
+    /// editor uses this to tell whether a given key is a character override
+    /// (so it can tag the row and route the edit to the right file). Empty
+    /// when the character has no controller.toml. The migration marker is
+    /// filtered out so it never reads as a phantom binding.
     pub fn load_character_controller_binds_only(
-        shift: bool,
         character: Option<&str>,
     ) -> Result<HashMap<String, KeyBindAction>> {
         let path = Self::controller_path(character)?;
@@ -1920,26 +2039,28 @@ impl Config {
         }
         let contents = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read character controller: {:?}", path))?;
-        let binds = toml::from_str::<toml::Value>(&contents)
+        let binds: HashMap<String, KeyBindAction> = toml::from_str::<toml::Value>(&contents)
             .ok()
-            .and_then(|v| v.get(Self::controller_section_name(shift)).cloned())
+            .and_then(|v| v.get("controller").cloned())
+            .map(strip_migration_marker)
             .and_then(|t| t.try_into().ok())
             .unwrap_or_default();
         Ok(binds)
     }
 
-    /// Save one controller binding into a `[controller]`-family section of
-    /// the global controller.toml (created if missing).
+    /// Save one controller binding into the `[controller]` section of the
+    /// global or a character's controller.toml (created if missing). `key`
+    /// is the canonical bind key — a bare button or a composite modifier
+    /// combo (`l2+dpad_down`); such keys are quoted automatically on write.
     pub fn save_single_controller_bind(
-        button: &str,
+        key: &str,
         action: &KeyBindAction,
-        shift: bool,
         is_global: bool,
         character: Option<&str>,
     ) -> Result<()> {
         let (path, mut toml_table) = Self::load_controller_table(is_global, character)?;
         let section = toml_table
-            .entry(Self::controller_section_name(shift).to_string())
+            .entry("controller".to_string())
             .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
         if let toml::Value::Table(table) = section {
             let action_value = match action {
@@ -1953,18 +2074,18 @@ impl Config {
                     toml::Value::Table(macro_table)
                 }
             };
-            table.insert(button.to_string(), action_value);
+            table.insert(key.to_string(), action_value);
         }
         Self::write_controller_table(&path, &toml_table)?;
-        tracing::info!("Saved controller bind '{}' to {:?}", button, path);
+        tracing::info!("Saved controller bind '{}' to {:?}", key, path);
         Ok(())
     }
 
-    /// Delete one controller binding from a `[controller]`-family section
-    /// of the global or a character's controller.toml.
+    /// Delete one controller binding from the `[controller]` section of the
+    /// global or a character's controller.toml. `key` is the canonical bind
+    /// key (bare or composite).
     pub fn delete_single_controller_bind(
-        button: &str,
-        shift: bool,
+        key: &str,
         is_global: bool,
         character: Option<&str>,
     ) -> Result<()> {
@@ -1976,12 +2097,10 @@ impl Config {
             .with_context(|| format!("Failed to read controller file: {:?}", path))?;
         let mut toml_table: toml::value::Table = toml::from_str(&contents)
             .with_context(|| format!("Failed to parse controller file: {:?}", path))?;
-        if let Some(toml::Value::Table(table)) =
-            toml_table.get_mut(Self::controller_section_name(shift))
-        {
-            if table.remove(button).is_some() {
+        if let Some(toml::Value::Table(table)) = toml_table.get_mut("controller") {
+            if table.remove(key).is_some() {
                 Self::write_controller_table(&path, &toml_table)?;
-                tracing::info!("Deleted controller bind '{}' from {:?}", button, path);
+                tracing::info!("Deleted controller bind '{}' from {:?}", key, path);
             }
         }
         Ok(())
@@ -2554,6 +2673,114 @@ pub fn default_keybinds() -> HashMap<String, KeyBindAction> {
     map
 }
 
+// ── Legacy shift-layer migration ────────────────────────────────────────
+
+/// Marker key stamped into `[controller]` once the legacy `[controller_shift]`
+/// bank has been folded into composite modifier keys. Its presence makes
+/// migration idempotent: a re-run is a no-op, so we never double-prefix a
+/// bind or re-stack after the user has since edited things. It is filtered
+/// out on load so it never appears as a phantom button binding.
+pub(crate) const CONTROLLER_MIGRATED_MARKER: &str = "_shift_migrated";
+
+/// Fold a legacy `[controller_shift]` layer into composite modifier keys.
+///
+/// Pure text→text so it is filesystem-free and unit-testable; the file
+/// driver (`migrate_controller_file`) just supplies/writes the string.
+/// Returns `Some(new_text)` when a migration was performed, `None` when
+/// there was nothing to do (no shift table, or already migrated) so the
+/// caller can skip the write.
+///
+/// Transform, given the button(s) declared `controller_shift` in
+/// `[controller]` (the implicit modifier — normally just `l2`):
+///  * each `[controller_shift]` entry `btn = val` becomes
+///    `"<modifier>+btn" = val` in `[controller]` (canonical key order);
+///  * each shift-declaring button flips from `controller_shift` to
+///    `controller_modifier`;
+///  * `[controller_shift]` is removed and the marker is stamped.
+///
+/// If `[controller_shift]` exists but no button declares `controller_shift`
+/// (an orphaned bank), we fall back to `l2` as the modifier and also declare
+/// it — otherwise those binds would become unreachable. Comments and the
+/// `[[controller_wheel]]` arrays are preserved (toml_edit round-trip).
+pub(crate) fn migrate_controller_shift_text(text: &str) -> Option<String> {
+    use toml_edit::{DocumentMut, Item, Table, Value};
+
+    let mut doc = text.parse::<DocumentMut>().ok()?;
+
+    // Nothing to migrate without a shift table.
+    if doc.get("controller_shift").is_none() {
+        return None;
+    }
+    // Idempotent: already migrated (marker present in [controller]).
+    if doc
+        .get("controller")
+        .and_then(Item::as_table)
+        .map(|t| t.contains_key(CONTROLLER_MIGRATED_MARKER))
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    // Which buttons act as the shift modifier in [controller]?
+    let mut modifier_buttons: Vec<String> = Vec::new();
+    if let Some(base) = doc.get("controller").and_then(Item::as_table) {
+        for (btn, item) in base.iter() {
+            if item.as_str() == Some("controller_shift") {
+                modifier_buttons.push(btn.to_string());
+            }
+        }
+    }
+    // Orphaned shift bank (no declaring button): fall back to the historical
+    // default so the binds survive, and declare l2 as the modifier below.
+    let orphaned = modifier_buttons.is_empty();
+    if orphaned {
+        modifier_buttons.push("l2".to_string());
+    }
+
+    // Snapshot the shift entries before mutating the document.
+    let shift_entries: Vec<(String, Value)> = doc
+        .get("controller_shift")
+        .and_then(Item::as_table)
+        .map(|t| {
+            t.iter()
+                .filter_map(|(k, v)| v.as_value().map(|v| (k.to_string(), v.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Ensure a [controller] table exists to write into.
+    if doc.get("controller").is_none() {
+        doc["controller"] = Item::Table(Table::new());
+    }
+    let base = doc["controller"].as_table_mut()?;
+
+    // Flip each declaring button to controller_modifier (and declare the
+    // fallback l2 if the bank was orphaned).
+    for btn in &modifier_buttons {
+        base.insert(btn, toml_edit::value("controller_modifier"));
+    }
+
+    // Fold shift entries into composite keys. A single modifier is the common
+    // case; if several buttons were all `controller_shift`, each gets its own
+    // composite (any of them chords the same way, matching old behavior where
+    // holding any shift button flipped the bank).
+    for (btn, val) in &shift_entries {
+        for modifier in &modifier_buttons {
+            let key = ControllerBindKey::new(btn.clone(), [modifier.clone()]).canonical();
+            base.insert(&key, Item::Value(val.clone()));
+        }
+    }
+
+    // Stamp the marker and drop the legacy table.
+    base.insert(
+        CONTROLLER_MIGRATED_MARKER,
+        toml_edit::value(true),
+    );
+    doc.remove("controller_shift");
+
+    Some(doc.to_string())
+}
+
 // ── Pure controller-layer merge helpers ────────────────────────────────
 // The controller loaders read one or two raw TOML layer strings (global
 // base, then optional character override) and fold them per the section's
@@ -2570,11 +2797,24 @@ fn merge_controller_bind_layers(section: &str, layers: &[String]) -> HashMap<Str
         let binds: HashMap<String, KeyBindAction> = toml::from_str::<toml::Value>(text)
             .ok()
             .and_then(|v| v.get(section).cloned())
+            // Strip the migration marker at the Value level BEFORE converting:
+            // it is a bool, so leaving it in fails the whole-table try_into and
+            // silently drops every binding.
+            .map(strip_migration_marker)
             .and_then(|t| t.try_into().ok())
             .unwrap_or_default();
         merged.extend(binds);
     }
     merged
+}
+
+/// Remove the migration marker key from a `[controller]` table Value so it
+/// never reaches `KeyBindAction` deserialization (it is a bool, not a bind).
+fn strip_migration_marker(mut section: toml::Value) -> toml::Value {
+    if let Some(table) = section.as_table_mut() {
+        table.remove(CONTROLLER_MIGRATED_MARKER);
+    }
+    section
 }
 
 /// Map-merge a named `[table.<name>]` collection across layers, where each
@@ -3315,6 +3555,205 @@ stick = "right"
         let bare = WheelMeta::default();
         let serialized = toml::Value::try_from(&bare).unwrap();
         assert_eq!(serialized.as_table().map(|t| t.len()), Some(0));
+    }
+
+    // ===========================================
+    // ControllerBindKey - canonical modifier keys
+    // ===========================================
+
+    #[test]
+    fn controller_bind_key_collapses_modifier_order() {
+        // l2+r1 and r1+l2 must produce ONE canonical key so the two orders
+        // are the same binding — the whole point of storing them canonically.
+        let a = ControllerBindKey::new("dpad_down", ["l2".into(), "r1".into()]);
+        let b = ControllerBindKey::new("dpad_down", ["r1".into(), "l2".into()]);
+        assert_eq!(a.canonical(), b.canonical());
+        // Canonical order follows CONTROLLER_BUTTON_ORDER (r1 before l2).
+        assert_eq!(a.canonical(), "r1+l2+dpad_down");
+    }
+
+    #[test]
+    fn controller_bind_key_bare_and_dedup_and_self_drop() {
+        // A bare binding is just the button name (pre-modifier configs parse
+        // unchanged).
+        let bare = ControllerBindKey::new("south", std::iter::empty::<String>());
+        assert!(bare.is_bare());
+        assert_eq!(bare.canonical(), "south");
+        // Duplicate modifiers collapse; a modifier equal to the button drops.
+        let k = ControllerBindKey::new("l2", ["l2".into(), "r1".into(), "r1".into()]);
+        assert_eq!(k.canonical(), "r1+l2");
+    }
+
+    #[test]
+    fn controller_bind_key_parse_round_trips() {
+        for key in ["south", "l2+south", "r1+l2+dpad_down"] {
+            let parsed = ControllerBindKey::parse(key).expect("parse");
+            assert_eq!(parsed.canonical(), key, "round-trip for {key}");
+        }
+        // Out-of-order input re-canonicalizes on parse.
+        assert_eq!(
+            ControllerBindKey::parse("l2+r1+dpad_down").unwrap().canonical(),
+            "r1+l2+dpad_down"
+        );
+        assert!(ControllerBindKey::parse("").is_none());
+    }
+
+    // ===========================================
+    // Legacy [controller_shift] migration
+    // ===========================================
+
+    #[test]
+    fn migrate_folds_shift_layer_into_composite_keys() {
+        let legacy = "\
+[controller]
+l2 = \"controller_shift\"
+south = { macro_text = \"look\\r\" }
+
+[controller_shift]
+south = { macro_text = \"stand\\r\" }
+dpad_up = \"scroll_current_window_up_page\"
+";
+        let migrated = migrate_controller_shift_text(legacy).expect("migration runs");
+        let v: toml::Value = toml::from_str(&migrated).expect("valid TOML");
+        let controller = v.get("controller").unwrap();
+
+        // The declaring button flips to controller_modifier.
+        assert_eq!(controller.get("l2").and_then(|x| x.as_str()), Some("controller_modifier"));
+        // Shift entries become composite keys under [controller].
+        assert_eq!(
+            controller.get("l2+south").and_then(|x| x.get("macro_text")).and_then(|m| m.as_str()),
+            Some("stand\r")
+        );
+        assert_eq!(
+            controller.get("l2+dpad_up").and_then(|x| x.as_str()),
+            Some("scroll_current_window_up_page")
+        );
+        // The bare binding is untouched, the legacy table is gone, marker set.
+        assert!(controller.get("south").is_some());
+        assert!(v.get("controller_shift").is_none());
+        assert_eq!(
+            controller.get(CONTROLLER_MIGRATED_MARKER).and_then(|x| x.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn migrate_is_idempotent() {
+        let legacy = "\
+[controller]
+l2 = \"controller_shift\"
+
+[controller_shift]
+south = { macro_text = \"stand\\r\" }
+";
+        let once = migrate_controller_shift_text(legacy).expect("first run migrates");
+        // A second run is a no-op (marker guards it) — no double-prefixing.
+        assert!(
+            migrate_controller_shift_text(&once).is_none(),
+            "re-migration must be a no-op"
+        );
+    }
+
+    #[test]
+    fn migrate_orphaned_shift_bank_falls_back_to_l2() {
+        // A [controller_shift] table with no declaring button still migrates,
+        // declaring l2 as the modifier so the binds aren't lost.
+        let legacy = "[controller_shift]\nsouth = { macro_text = \"stand\\r\" }\n";
+        let migrated = migrate_controller_shift_text(legacy).expect("migration runs");
+        let v: toml::Value = toml::from_str(&migrated).unwrap();
+        let controller = v.get("controller").unwrap();
+        assert_eq!(controller.get("l2").and_then(|x| x.as_str()), Some("controller_modifier"));
+        assert!(controller.get("l2+south").is_some());
+    }
+
+    #[test]
+    fn migrate_marker_filtered_from_loaded_binds() {
+        // The marker must never surface as a phantom binding.
+        let migrated = migrate_controller_shift_text(
+            "[controller]\nl2 = \"controller_shift\"\n\n[controller_shift]\nsouth = \"x\"\n",
+        )
+        .unwrap();
+        let binds = merge_controller_bind_layers("controller", &[migrated]);
+        assert!(!binds.contains_key(CONTROLLER_MIGRATED_MARKER));
+        assert!(binds.contains_key("l2+south"));
+        assert_eq!(
+            binds.get("l2").map(|a| a.display_value()),
+            Some("controller_modifier".to_string())
+        );
+    }
+
+    #[test]
+    fn migrate_noop_without_shift_table() {
+        // A modern config (no [controller_shift]) is left alone.
+        assert!(
+            migrate_controller_shift_text("[controller]\nsouth = \"x\"\n").is_none()
+        );
+    }
+
+    #[test]
+    fn shipped_default_controller_parses_with_composite_keys() {
+        // The embedded default must load cleanly and carry the modifier
+        // declaration + composite keys (no legacy shift table).
+        let binds = merge_controller_bind_layers("controller", &[DEFAULT_CONTROLLER.to_string()]);
+        assert_eq!(
+            binds.get("l2").map(|a| a.display_value()),
+            Some("controller_modifier".to_string())
+        );
+        assert!(binds.contains_key("l2+south"), "default has an l2+south chord");
+        assert!(binds.contains_key("l2+dpad_up"));
+        let v: toml::Value = toml::from_str(DEFAULT_CONTROLLER).unwrap();
+        assert!(v.get("controller_shift").is_none(), "default has no legacy shift table");
+    }
+
+    #[test]
+    fn resolution_precedence_most_modifiers_wins() {
+        // The resolver builds a key from the FULL held-modifier set and does
+        // one exact lookup, so longer combos are naturally reachable and win
+        // over shorter ones. Model that here: both l1+x and l1+r1+x are bound;
+        // the held set determines which exact key is hit.
+        let mut binds: HashMap<String, KeyBindAction> = HashMap::new();
+        binds.insert(
+            ControllerBindKey::new("south", ["l1".into()]).canonical(),
+            KeyBindAction::Action("short".into()),
+        );
+        binds.insert(
+            ControllerBindKey::new("south", ["l1".into(), "r1".into()]).canonical(),
+            KeyBindAction::Action("long".into()),
+        );
+
+        // Holding l1+r1 hits the 2-mod key; holding only l1 hits the 1-mod key.
+        let held_both = ControllerBindKey::new("south", ["r1".into(), "l1".into()]).canonical();
+        let held_one = ControllerBindKey::new("south", ["l1".into()]).canonical();
+        assert_eq!(binds.get(&held_both).map(|a| a.display_value()), Some("long".into()));
+        assert_eq!(binds.get(&held_one).map(|a| a.display_value()), Some("short".into()));
+
+        // Exact-match only: holding a modifier with no matching binding does
+        // NOT fall back to the bare button.
+        binds.insert("south".into(), KeyBindAction::Action("bare".into()));
+        let held_r1_only = ControllerBindKey::new("south", ["r1".into()]).canonical();
+        assert!(binds.get(&held_r1_only).is_none(), "no fall-through to bare");
+    }
+
+    #[test]
+    fn composite_keys_survive_per_character_merge() {
+        // Character layer overrides a composite key per-key; unset composites
+        // fall through to global (same rule as bare buttons).
+        let global = "[controller]\nl2 = \"controller_modifier\"\n\"l2+south\" = { macro_text = \"stand\\r\" }\n";
+        let character = "[controller]\n\"l2+south\" = { macro_text = \"kneel\\r\" }\n";
+        let merged = merge_controller_bind_layers(
+            "controller",
+            &[global.to_string(), character.to_string()],
+        );
+        // Character wins for the overridden composite.
+        assert_eq!(
+            merged.get("l2+south").map(|a| a.display_value()),
+            Some("kneel\r".to_string())
+        );
+        // The modifier declaration falls through from global.
+        assert_eq!(
+            merged.get("l2").map(|a| a.display_value()),
+            Some("controller_modifier".to_string())
+        );
     }
 
     // ===========================================

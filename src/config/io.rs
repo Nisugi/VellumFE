@@ -46,9 +46,10 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
+        // Fold any legacy [controller_shift] bank into composite modifier
+        // keys before reading the binds (idempotent, marker-guarded).
+        Self::migrate_controller_shift_layers(character);
         config.controller_binds = Self::load_controller_binds(character).unwrap_or_default();
-        config.controller_shift_binds =
-            Self::load_controller_binds_layer(true, character).unwrap_or_default();
         config.controller_wheel = Self::load_controller_wheel(character).unwrap_or_default();
         config.controller_wheels = Self::load_controller_wheels(character).unwrap_or_default();
         config.controller_wheels_meta =
@@ -575,9 +576,10 @@ impl Config {
         config.colors = ColorConfig::load(character)?;
         config.highlights = Self::load_highlights(character)?;
         config.keybinds = Self::load_keybinds(character)?;
+        // Fold any legacy [controller_shift] bank into composite modifier
+        // keys before reading the binds (idempotent, marker-guarded).
+        Self::migrate_controller_shift_layers(character);
         config.controller_binds = Self::load_controller_binds(character).unwrap_or_default();
-        config.controller_shift_binds =
-            Self::load_controller_binds_layer(true, character).unwrap_or_default();
         config.controller_wheel = Self::load_controller_wheel(character).unwrap_or_default();
         config.controller_wheels = Self::load_controller_wheels(character).unwrap_or_default();
         config.controller_wheels_meta =
@@ -784,8 +786,7 @@ impl Default for Config {
             },
             highlights: HashMap::new(),     // Loaded from highlights.toml
             keybinds: HashMap::new(),       // Loaded from keybinds.toml
-            controller_binds: HashMap::new(), // Loaded from [controller] of keybinds.toml
-            controller_shift_binds: HashMap::new(), // Loaded from [controller_shift]
+            controller_binds: HashMap::new(), // Loaded from [controller] of controller.toml
             controller_wheel: Vec::new(),   // Loaded from [[controller_wheel]]
             controller_wheels: HashMap::new(), // Loaded from [controller_wheels.<name>]
             touch_wheel: Vec::new(),        // Loaded from [touch_wheel] slices

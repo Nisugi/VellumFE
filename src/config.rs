@@ -49,10 +49,10 @@ pub use hotbars::{
     HotbarStyle, HotbarsConfig, IconMode,
 };
 pub use keybinds::{
-    parse_key_string, touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds, KeyAction,
-    KeyBindAction, MacroAction, MenuKeybindField, MenuKeybinds, RumbleConfig, RumblePattern,
-    TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue, TOUCH_WHEEL_CLIENT_ACTIONS,
-    WHEEL_MIN_SPAN_DEG,
+    parse_key_string, touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds,
+    ControllerBindKey, KeyAction, KeyBindAction, MacroAction, MenuKeybindField, MenuKeybinds,
+    RumbleConfig, RumblePattern, TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue,
+    CONTROLLER_BUTTON_ORDER, TOUCH_WHEEL_CLIENT_ACTIONS, WHEEL_MIN_SPAN_DEG,
 };
 pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
@@ -283,10 +283,13 @@ pub struct Config {
     pub highlights: HashMap<String, HighlightPattern>,
     #[serde(skip)] // Loaded from separate keybinds.toml file
     pub keybinds: HashMap<String, KeyBindAction>,
-    #[serde(skip)] // Loaded from [controller] section of global keybinds.toml
+    // Loaded from [controller] of controller.toml. Keys are canonical
+    // controller bind keys: a bare button (`south`) or a composite modifier
+    // combo (`l2+dpad_down`). Buttons declared `controller_modifier` form the
+    // held-modifier set that composite keys resolve against. (Replaced the
+    // old split base/[controller_shift] banks; legacy configs auto-migrate.)
+    #[serde(skip)]
     pub controller_binds: HashMap<String, KeyBindAction>,
-    #[serde(skip)] // Loaded from [controller_shift] (bindings while shift button held)
-    pub controller_shift_binds: HashMap<String, KeyBindAction>,
     #[serde(skip)] // Loaded from [[controller_wheel]] (default radial wheel)
     pub controller_wheel: Vec<WheelSlice>,
     #[serde(skip)] // Loaded from [controller_wheels.<name>] (named radial wheels)

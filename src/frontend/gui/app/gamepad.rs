@@ -447,7 +447,11 @@ impl VellumGuiApp {
             return;
         }
 
-        let shift_held = self.gamepad_shift_held();
+        // The set of modifier buttons currently held (canonical order).
+        // Empty when no modifier is down, in which case a press resolves
+        // against its bare binding and menu/interact nav stays drivable.
+        let held_mods = self.held_modifier_set();
+        let modified = !held_mods.is_empty();
         let button_name = gamepad_button_name(button);
         // The action this button resolves to in [controller] (base layer),
         // if any — used to drive the configurable menu/interact nav below.
@@ -459,9 +463,9 @@ impl VellumGuiApp {
         // to their historical roles, so menus are drivable out of the box
         // even though those buttons carry movement/look macros elsewhere.
         // East ALWAYS cancels as a hard fallback so a menu can never be
-        // undrivable no matter how things are rebound. Shift always means
-        // "the other bank", so it bypasses this.
-        if self.app_core.ui_state.input_mode == InputMode::Menu && !shift_held {
+        // undrivable no matter how things are rebound. Holding a modifier
+        // means "resolve a composite bind", so it bypasses menu nav.
+        if self.app_core.ui_state.input_mode == InputMode::Menu && !modified {
             let code = match bound_action.as_deref() {
                 Some("menu_up") => Some(KeyCode::Up),
                 Some("menu_down") => Some(KeyCode::Down),
@@ -503,7 +507,7 @@ impl VellumGuiApp {
             || (button == Button::South
                 && !self.controller_action_bound_anywhere("interact_select"));
         if self.app_core.ui_state.input_mode == InputMode::Interact
-            && !shift_held
+            && !modified
             && interact_select
         {
             let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
@@ -514,29 +518,30 @@ impl VellumGuiApp {
         let Some(name) = button_name else {
             return;
         };
-        if shift_held {
-            // Shift layer: strictly the [controller_shift] table (no
-            // fall-through — holding shift means "the other bank").
-            if let Some(binding) = self
-                .app_core
-                .config
-                .controller_shift_binds
-                .get(name)
-                .cloned()
-            {
-                self.execute_macro_keybind(&binding, ctx);
-            }
+        // A button that is itself a modifier has no press action — holding it
+        // only contributes to the modifier set. Never dispatch it (and never
+        // let it match a composite key as the pressed button).
+        if self.controller_button_is_modifier(name) {
             return;
         }
-        if let Some(binding) = self.app_core.config.controller_binds.get(name).cloned() {
+        // Resolve by exact match on the full held-modifier set: the key is
+        // the canonical `mods+button` string. Because we always look up the
+        // FULL set, longer combos win automatically — holding l1+r1 and
+        // pressing x resolves `l1+r1+x`, while holding only l1 resolves
+        // `l1+x`. There is intentionally no fall-through to fewer modifiers:
+        // resolution is exact-match on the modifier set at press time.
+        let key = crate::config::ControllerBindKey::new(name, held_mods).canonical();
+        if let Some(binding) = self.app_core.config.controller_binds.get(&key).cloned() {
             self.execute_macro_keybind(&binding, ctx);
         }
     }
 
-    /// The base-layer `[controller]` action-name bound to a button, if it
-    /// is a plain action (not a macro). Lets the menu/interact handlers
-    /// resolve configurable nav (`menu_up`, `interact_select`, …) from the
-    /// user's binds instead of hardwired buttons.
+    /// The bare-binding `[controller]` action-name bound to a button, if it
+    /// is a plain action (not a macro). Only unmodified bindings count — a
+    /// composite key like `l2+dpad_up` is not a nav binding on `dpad_up`.
+    /// Lets the menu/interact handlers resolve configurable nav (`menu_up`,
+    /// `interact_select`, …) from the user's binds instead of hardwired
+    /// buttons.
     fn controller_base_action(&self, button_name: &str) -> Option<String> {
         match self.app_core.config.controller_binds.get(button_name) {
             Some(crate::config::KeyBindAction::Action(name)) => Some(name.clone()),
@@ -544,19 +549,59 @@ impl VellumGuiApp {
         }
     }
 
-    /// True if any base-layer `[controller]` button is bound to the named
+    /// True if any bare-binding `[controller]` button is bound to the named
     /// action. Used to decide whether a physical fallback (e.g. South =
     /// select) applies: it does not once the user has assigned that action
-    /// to some button explicitly.
+    /// to some button explicitly. Composite (modified) keys are ignored — a
+    /// nav action only counts when bound with no modifiers held.
     fn controller_action_bound_anywhere(&self, action: &str) -> bool {
-        self.app_core.config.controller_binds.values().any(|b| {
-            matches!(b, crate::config::KeyBindAction::Action(name) if name == action)
+        self.app_core.config.controller_binds.iter().any(|(key, b)| {
+            !key.contains('+')
+                && matches!(b, crate::config::KeyBindAction::Action(name) if name == action)
         })
     }
 
-    /// True while any button bound to `controller_shift` is held.
-    fn gamepad_shift_held(&self) -> bool {
-        self.gamepad_action_button_held("controller_shift")
+    /// True when a button is declared as a modifier (`controller_modifier`),
+    /// meaning it has no press action of its own and only contributes to the
+    /// held-modifier set.
+    fn controller_button_is_modifier(&self, button_name: &str) -> bool {
+        matches!(
+            self.app_core.config.controller_binds.get(button_name),
+            Some(crate::config::KeyBindAction::Action(name)) if name == "controller_modifier"
+        )
+    }
+
+    /// The set of modifier buttons currently held, in canonical order. A
+    /// button counts when it is declared `controller_modifier` in
+    /// `[controller]` and is physically pressed. Read from live pad state —
+    /// no held/released bookkeeping to desync.
+    fn held_modifier_set(&self) -> Vec<String> {
+        let Some(gilrs) = self.gamepad.as_ref() else {
+            return Vec::new();
+        };
+        let mut held: Vec<String> = self
+            .app_core
+            .config
+            .controller_binds
+            .iter()
+            .filter(|(_, action)| {
+                matches!(action, crate::config::KeyBindAction::Action(name) if name == "controller_modifier")
+            })
+            .filter_map(|(name, _)| {
+                let button = gamepad_button_from_name(name)?;
+                gilrs
+                    .gamepads()
+                    .any(|(_, pad)| pad.is_pressed(button))
+                    .then(|| name.clone())
+            })
+            .collect();
+        held.sort_by_key(|n| {
+            crate::config::CONTROLLER_BUTTON_ORDER
+                .iter()
+                .position(|b| b == n)
+                .unwrap_or(usize::MAX)
+        });
+        held
     }
 
     /// The wheel key of the wheel button currently held, if any:
@@ -767,29 +812,6 @@ impl VellumGuiApp {
         }
     }
 
-    /// True while any button base-bound to the named action is held. Read
-    /// from live pad state — no held/released bookkeeping to desync.
-    fn gamepad_action_button_held(&self, action_name: &str) -> bool {
-        let Some(gilrs) = self.gamepad.as_ref() else {
-            return false;
-        };
-        let buttons: Vec<gilrs::Button> = self
-            .app_core
-            .config
-            .controller_binds
-            .iter()
-            .filter(|(_, action)| {
-                matches!(action, crate::config::KeyBindAction::Action(name) if name == action_name)
-            })
-            .filter_map(|(name, _)| gamepad_button_from_name(name))
-            .collect();
-        if buttons.is_empty() {
-            return false;
-        }
-        gilrs
-            .gamepads()
-            .any(|(_, pad)| buttons.iter().any(|b| pad.is_pressed(*b)))
-    }
 }
 
 /// Live radial-wheel state: which named wheel is up, the folder path
@@ -2559,9 +2581,15 @@ mod wheel_tests {
 
 impl VellumGuiApp {
     /// Binding-legend overlay: a compact right-edge panel listing the
-    /// curated entries from [controller_overlay] (base and shift/
-    /// bindings), with the shift bank marked. Toggled by the
+    /// curated entries from [controller_overlay]. Each entry is a controller
+    /// bind key — bare (`south`) or composite (`l2+dpad_down`). An entry reads
+    /// strong while its full modifier set is currently held (so the relevant
+    /// chord lights up as you hold it), weak otherwise. Toggled by the
     /// controller_overlay action (Select by default).
+    ///
+    /// Legacy `shift/<button>` entries are normalized on read to whatever
+    /// button was the shift modifier, so pre-migration overlay lists still
+    /// resolve (see migrate_controller_shift_text for the config-side move).
     pub(super) fn render_controller_overlay(&mut self, ctx: &egui::Context) {
         if !self.gp_overlay {
             return;
@@ -2570,7 +2598,7 @@ impl VellumGuiApp {
         if entries.is_empty() {
             return;
         }
-        let shift_held = self.gamepad_shift_held();
+        let held = self.held_modifier_set();
         egui::Area::new(egui::Id::new("controller_overlay"))
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::RIGHT_CENTER, egui::vec2(-12.0, 0.0))
@@ -2579,16 +2607,12 @@ impl VellumGuiApp {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.strong("Controller");
                     for entry in &entries {
-                        let (is_shift, button) = match entry.strip_prefix("shift/") {
-                            Some(rest) => (true, rest),
-                            None => (false, entry.as_str()),
+                        let Some(key) = crate::config::ControllerBindKey::parse(entry) else {
+                            continue;
                         };
-                        let binds = if is_shift {
-                            &self.app_core.config.controller_shift_binds
-                        } else {
-                            &self.app_core.config.controller_binds
-                        };
-                        let Some(action) = binds.get(button) else {
+                        let canonical = key.canonical();
+                        let Some(action) = self.app_core.config.controller_binds.get(&canonical)
+                        else {
                             continue;
                         };
                         let what = match action {
@@ -2597,16 +2621,18 @@ impl VellumGuiApp {
                                 m.macro_text.replace(['\r', '\n'], " ").trim().to_string()
                             }
                         };
-                        let line = if is_shift {
-                            format!("[shift] {} - {}", button, what)
+                        let label = if key.mods.is_empty() {
+                            format!("{} - {}", key.button, what)
                         } else {
-                            format!("{} - {}", button, what)
+                            format!("[{}] {} - {}", key.mods.join("+"), key.button, what)
                         };
-                        // The active bank reads strong while shift is held.
-                        if is_shift == shift_held {
-                            ui.label(egui::RichText::new(line).strong());
+                        // Strong while exactly this entry's modifier set is
+                        // held (an empty set — a bare bind — reads strong only
+                        // when no modifier is down).
+                        if key.mods == held {
+                            ui.label(egui::RichText::new(label).strong());
                         } else {
-                            ui.weak(line);
+                            ui.weak(label);
                         }
                     }
                 });
