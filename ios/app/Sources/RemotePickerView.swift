@@ -231,6 +231,7 @@ private struct ManualAddView: View {
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
                         || host.trimmingCharacters(in: .whitespaces).isEmpty
                         || UInt16(port.trimmingCharacters(in: .whitespaces)) == nil)
+                }
             }
         }
         .preferredColorScheme(.dark)
