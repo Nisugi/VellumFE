@@ -29,4 +29,5 @@
 //!   (`restrict,command="..."`) so a leaked key can only launch the game,
 //!   not open a shell.
 
+pub mod config;
 pub mod ssh;

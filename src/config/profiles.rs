@@ -463,6 +463,21 @@ pub fn delete_password(account: &str) {
     }
 }
 
+/// Seal an arbitrary secret with the same ChaCha20-Poly1305 key the password
+/// store uses (non-desktop builds). Exposed so the SSH launcher can store its
+/// private key sealed-at-rest without duplicating the crypto. On desktop the
+/// launcher uses the OS keyring instead, so these are non-desktop only.
+#[cfg(not(feature = "desktop"))]
+pub fn seal_value(value: &str) -> String {
+    seal::seal(value)
+}
+
+/// Open a value sealed by [`seal_value`] (or a legacy plaintext entry).
+#[cfg(not(feature = "desktop"))]
+pub fn open_value(value: &str) -> Option<String> {
+    seal::open(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
