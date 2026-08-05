@@ -190,7 +190,13 @@
             pairing token. Your phone needs a private path to that machine: home
             Wi-Fi, Tailscale, or a VPN.</p>
         </div>
-        <button id="login-submit" type="submit">Connect</button>
+        <div id="login-actions">
+          <!-- Only inside the app shells (app=1&nativepicker=1): opens the
+               native character picker (saved remote servers / QR / manual). -->
+          <button id="session-characters" type="button" hidden
+                  aria-label="Characters" title="Characters">&#128101;</button>
+          <button id="login-submit" type="submit">Connect</button>
+        </div>
       </form>
     </div>
   </div>

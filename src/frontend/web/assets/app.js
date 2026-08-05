@@ -969,6 +969,14 @@ const SESSION_PROGRESS = {
 const LOGIN_FLOW_STATES = ["idle", "disconnected", "authenticating", "connecting"];
 
 function updateSessionUi(prevState) {
+  updateSessionUiInner(prevState);
+  // Game-only chrome hides while the login overlay is up: the wheel puck
+  // opens the command wheel, which has no meaning before a session exists
+  // (and it visually pollutes the login screen). CSS keys off this class.
+  document.body.classList.toggle("login-open", !sessionOverlay.hidden);
+}
+
+function updateSessionUiInner(prevState) {
   if (!session.session_control) {
     sessionOverlay.hidden = true;
     sessionBanner.hidden = true;
@@ -1126,6 +1134,20 @@ modeRemoteBtn.addEventListener("click", () => setLoginMode("remote"));
 // The Remote tab is a shell-only affordance, and the native picker replaces
 // it when present.
 modeRemoteBtn.hidden = !inShell || nativePicker;
+
+// Characters button in the login form's bottom action row: opens the native
+// character picker (saved remote servers / Scan QR / Add manually). Shell +
+// native-picker builds only — a plain browser has no picker to open. This
+// replaces the shells' old floating top-left overlay icon.
+{
+  const charactersBtn = document.getElementById("session-characters");
+  if (inShell && nativePicker) {
+    charactersBtn.hidden = false;
+    charactersBtn.addEventListener("click", () => {
+      location.href = "vellum://remote/picker";
+    });
+  }
+}
 
 // Deep-linked Lich target: open the Lich tab prefilled and let the user
 // press Connect.
@@ -3339,20 +3361,19 @@ function openSettingsSheet() {
   // same ground. Tuck the four file buttons behind one disclosure so they're
   // reachable for import/export power users without crowding the main sheet.
   sheetButton("Advanced: edit config files…", openAdvancedConfigSheet);
-  // Viewing a desktop server from inside the app shell: the way home. With
-  // the native picker, that's the character list; otherwise the shell's
-  // embedded login page. (Both are shell actions the WebView container
+  // The way to the native character picker from inside the app shell. On
+  // the login screen the form's own Characters button covers this; once
+  // connected, this sheet entry is the only route — so offer it on local
+  // play too, not just remote pages. (Shell actions the WebView container
   // intercepts and swaps the view for.)
-  if (inShell && location.hostname !== "127.0.0.1") {
-    if (nativePicker) {
-      sheetButton("Switch character", () => {
-        location.href = "vellum://remote/picker";
-      });
-    } else {
-      sheetButton("Leave this server (app login)", () => {
-        location.href = "vellum://local";
-      });
-    }
+  if (inShell && nativePicker) {
+    sheetButton("Characters", () => {
+      location.href = "vellum://remote/picker";
+    });
+  } else if (inShell && location.hostname !== "127.0.0.1") {
+    sheetButton("Leave this server (app login)", () => {
+      location.href = "vellum://local";
+    });
   }
 }
 

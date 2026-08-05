@@ -113,8 +113,10 @@ class MainActivity : Activity() {
         }
         // Launch routing (mirrors iOS ContentView.boot):
         //  - a remote deep link → add it and connect (start core lazily);
-        //  - saved servers, no deep link → the native picker;
-        //  - otherwise → local play as before.
+        //  - otherwise → local play. The login page is the app's front door;
+        //    the native character picker (saved remote servers, Scan QR, Add
+        //    manually) is reached from the in-page Characters button
+        //    (vellum://remote/picker), not shown at launch.
         when {
             remoteDeepLink != null -> {
                 if (intent?.data?.getQueryParameter("save") != "0") {
@@ -122,7 +124,6 @@ class MainActivity : Activity() {
                 }
                 startCoreThen { showRemote(remoteDeepLink) }
             }
-            RemoteStore.list(this).isNotEmpty() && lichFragment == null -> showPicker()
             else -> bootAndLoad()
         }
     }
@@ -407,12 +408,13 @@ class MainActivity : Activity() {
             moveTaskToBack(true)
             return
         }
-        // In the WebView: navigate it; at its root, return to the picker when
-        // servers are saved (so remote users land back on the character list),
-        // otherwise background the app.
+        // In the WebView: navigate it. At its root: a remote view returns to
+        // the picker (back to the character list); local play is the app's
+        // root now — the login page is the front door — so Back backgrounds
+        // the app instead of surfacing the picker.
         if (webView.canGoBack()) {
             webView.goBack()
-        } else if (RemoteStore.list(this).isNotEmpty()) {
+        } else if (allowedRemoteHost != null) {
             showPicker()
         } else {
             moveTaskToBack(true)

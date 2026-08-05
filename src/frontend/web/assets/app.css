@@ -1016,6 +1016,10 @@ body.hide-interact #interact-bar { display: none !important; }
 
 #wheel-puck[hidden] { display: none; }
 
+/* Game-screen-only: the puck opens the command wheel, which has no meaning on
+   the login screen. app.js keys .login-open off the session overlay. */
+body.login-open #wheel-puck { display: none; }
+
 body.hide-wheelpuck #wheel-puck { display: none; }
 
 /* Gamepad d-pad focus over sheet items */
@@ -1324,6 +1328,30 @@ body.hide-wheelpuck #wheel-puck { display: none; }
   font: inherit;
   font-size: 12px;
 }
+
+/* Bottom action row: [Characters] [Connect]. The characters button opens the
+   native picker (shell builds only; hidden in plain browsers). */
+#login-actions {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+#login-actions #login-submit { flex: 1; }
+
+#session-characters {
+  width: 48px;
+  padding: 10px 0;
+  background: var(--bg-panel);
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+}
+
+#session-characters[hidden] { display: none; }
 
 #session-form button[type="submit"] {
   padding: 10px;

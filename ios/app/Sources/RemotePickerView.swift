@@ -16,39 +16,64 @@ struct RemotePickerView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    ForEach(model.servers) { server in
-                        Button {
-                            model.connectToSaved(server)
-                        } label: {
-                            row(server)
+            VStack(spacing: 0) {
+                // Saved characters scroll in their own region so a long list
+                // can never push the actions below off-screen.
+                List {
+                    Section {
+                        if model.servers.isEmpty {
+                            Text("No saved characters yet — scan a QR or add one manually.")
+                                .foregroundColor(.secondary)
+                                .font(.callout)
                         }
-                    }
-                    .onDelete { offsets in
-                        for index in offsets {
-                            model.deleteServer(id: model.servers[index].id)
+                        ForEach(model.servers) { server in
+                            Button {
+                                model.connectToSaved(server)
+                            } label: {
+                                row(server)
+                            }
+                        }
+                        .onDelete { offsets in
+                            for index in offsets {
+                                model.deleteServer(id: model.servers[index].id)
+                            }
                         }
                     }
                 }
 
-                Section {
-                    Button {
-                        Task { await model.startLocal() }
-                    } label: {
-                        Label("Play on this phone", systemImage: "iphone")
-                    }
+                // Always-visible actions: add entries, and the way back to the
+                // login page (bottom corner — mirrors the Characters button's
+                // spot on the login form).
+                VStack(spacing: 10) {
                     Button {
                         showScanner = true
                     } label: {
                         Label("Scan QR to add", systemImage: "qrcode.viewfinder")
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.bordered)
                     Button {
                         showManual = true
                     } label: {
                         Label("Add manually", systemImage: "keyboard")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    HStack {
+                        // Back to the login page ("play on this phone" is just
+                        // going back now — the login form is the front door).
+                        Button {
+                            Task { await model.startLocal() }
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                                .font(.system(size: 30))
+                        }
+                        .accessibilityLabel("Back to login")
+                        Spacer()
                     }
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
             }
             .navigationTitle("Characters")
             .toolbar { EditButton() }
@@ -167,7 +192,7 @@ private struct ManualAddView: View {
         NavigationStack {
             Form {
                 Section("Character") {
-                    TextField("Name (e.g. Rysk)", text: $name)
+                    TextField("Label (required, e.g. Rysk)", text: $name)
                         .autocorrectionDisabled()
                 }
                 Section("Server") {
@@ -189,20 +214,23 @@ private struct ManualAddView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
+                        // Label is required: the picker lists entries by it.
                         guard let portNum = UInt16(port.trimmingCharacters(in: .whitespaces)),
                               portNum > 0,
-                              !host.trimmingCharacters(in: .whitespaces).isEmpty
+                              !host.trimmingCharacters(in: .whitespaces).isEmpty,
+                              !name.trimmingCharacters(in: .whitespaces).isEmpty
                         else { return }
                         let h = host.trimmingCharacters(in: .whitespaces)
-                        let label = name.trimmingCharacters(in: .whitespaces)
                         onSave(RemoteStore.Target(
-                            name: label.isEmpty ? "\(h):\(portNum)" : label,
+                            name: name.trimmingCharacters(in: .whitespaces),
                             host: h,
                             port: Int(portNum),
                             token: token.trimmingCharacters(in: .whitespaces)
                         ))
                     }
-                }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty
+                        || host.trimmingCharacters(in: .whitespaces).isEmpty
+                        || UInt16(port.trimmingCharacters(in: .whitespaces)) == nil)
             }
         }
         .preferredColorScheme(.dark)

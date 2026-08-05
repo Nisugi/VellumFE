@@ -50,20 +50,13 @@ final class BootModel: ObservableObject {
         if case .picker = phase { return }
         servers = RemoteStore.list()
 
-        // A lich deep link arriving at launch takes priority: honor it
-        // directly rather than parking on the picker.
-        let hasPrefill = lichFragment != nil
-        if !hasPrefill {
-            // Land on the native picker at launch. It is the only surface for
-            // managing remote servers (nativepicker=1 hides the web client's
-            // Remote tab), so it must be reachable even with zero saved
-            // servers — otherwise a fresh install could never pair a remote
-            // character or reach "Add manually"/"Scan QR". The picker also
-            // offers "Play on this phone", so nothing is lost for local-only
-            // users. The core is started lazily only when they choose it.
-            phase = .picker
-            return
-        }
+        // Land on the login page (local play) at launch — the New-login form
+        // is the app's front door. The native character picker (saved remote
+        // servers, Scan QR, Add manually) stays reachable from the in-page
+        // Characters button (vellum://remote/picker), so nothing is lost;
+        // it's just no longer the landing screen. A lich deep link arriving
+        // at launch rides along: startLocal() picks up lichFragment and the
+        // web client prefills the Lich tab.
         await startLocal()
     }
 
@@ -324,27 +317,11 @@ struct ContentView: View {
                     onShellURL: { model.handleShellURL($0) }
                 )
                 .ignoresSafeArea()
-                // A native "back to the character picker" affordance. The web
-                // client's in-page picker button only renders on non-loopback
-                // pages, so on local play ("Play on this phone") there was no
-                // route back to the picker except force-quitting. Show it only
-                // in local mode; remote mode keeps the web client's own Back.
-                .overlay(alignment: .topLeading) {
-                    if model.allowedRemoteHost == nil {
-                        Button {
-                            model.showPicker()
-                        } label: {
-                            Image(systemName: "person.2.circle.fill")
-                                .font(.system(size: 26))
-                                .foregroundColor(Color(white: 0.85))
-                                .padding(8)
-                                .background(.ultraThinMaterial, in: Circle())
-                        }
-                        .accessibilityLabel("Characters")
-                        .padding(.leading, 10)
-                        .padding(.top, 6)
-                    }
-                }
+                // The route back to the native character picker is now the
+                // web login form's own Characters button (bottom action row,
+                // vellum://remote/picker) — no floating native overlay. The
+                // shell intercepts vellum:// on loopback and remote pages
+                // alike, so both modes have a way home.
             case let .failed(message):
                 // Same dark monospace error page the Android shell renders.
                 VStack(alignment: .leading, spacing: 12) {
