@@ -1686,8 +1686,32 @@ impl MessageProcessor {
                         }
                     }
 
-                    dialog.labels = paired_labels;
-                    dialog.display_labels = standalone_labels;
+                    // Paired labels belong to an input dialog that re-sends its
+                    // full set, so replace them. But standalone (panel) labels
+                    // arrive in PARTIAL updates — a resident panel re-sends only
+                    // the rows that changed (UberBar's update frame carries a
+                    // handful of values, not the whole grid). Merge those by id
+                    // so the label column and untouched values survive, instead
+                    // of being wiped to just the few in this frame.
+                    if !paired_labels.is_empty() {
+                        dialog.labels = paired_labels;
+                    }
+                    for label in standalone_labels {
+                        match dialog.display_labels.iter_mut().find(|l| l.id == label.id) {
+                            // Preserve a prior layout if this partial update
+                            // omitted it (updates often carry value-only).
+                            Some(slot) => {
+                                slot.value = label.value;
+                                if label.layout.is_some() {
+                                    slot.layout = label.layout;
+                                }
+                                if label.justify.is_some() {
+                                    slot.justify = label.justify;
+                                }
+                            }
+                            None => dialog.display_labels.push(label),
+                        }
+                    }
                 }
 
                 let mut focused_index = None;
@@ -4921,19 +4945,31 @@ mod tests {
         let mut processor = create_test_processor();
         let mut game_state = GameState::new();
         let mut ui_state = UiState::default();
-        let frame = include_str!("../../tests/fixtures/uberbar_frame.xml");
+        let frame1 = include_str!("../../tests/fixtures/uberbar_frame.xml");
+        let frame2 = include_str!("../../tests/fixtures/uberbar_update_frame.xml");
         let mut parser = crate::parser::XmlParser::with_presets(
             Vec::new(),
             std::collections::HashMap::new(),
         );
-        for element in &parser.parse_line(frame) {
-            processor.process_element(
-                element, &mut game_state, &mut ui_state,
-                &mut std::collections::HashMap::new(),
-                &mut None, &mut false, &mut None, &mut None, &mut None, None,
-            );
+        let mut feed = |ui_state: &mut UiState, gs: &mut GameState, frame: &str, proc: &mut MessageProcessor| {
+            for element in &parser.parse_line(frame) {
+                proc.process_element(
+                    element, gs, ui_state,
+                    &mut std::collections::HashMap::new(),
+                    &mut None, &mut false, &mut None, &mut None, &mut None, None,
+                );
+            }
+        };
+        feed(&mut ui_state, &mut game_state, frame1, &mut processor);
+        eprintln!("--- after OPEN frame (clear=t) ---");
+        {
+            let d = ui_state.dialog_store.get("UberBar").unwrap();
+            eprintln!("  labels in store: {}", d.display_labels.iter().map(|l| l.id.as_str()).collect::<Vec<_>>().join(","));
         }
+        feed(&mut ui_state, &mut game_state, frame2, &mut processor);
+        eprintln!("--- after UPDATE frame (no clear) ---");
         let dialog = ui_state.dialog_store.get("UberBar").unwrap();
+        eprintln!("  labels in store: {}", dialog.display_labels.iter().map(|l| l.id.as_str()).collect::<Vec<_>>().join(","));
         let (controls, size) = dialog.positioned_controls().unwrap();
         eprintln!("canvas = {:?}", size);
         use crate::data::ui_state::PositionedControlKind as K;
@@ -4948,6 +4984,61 @@ mod tests {
             };
             eprintln!("  {:<22} x={:6.1} y={:6.1} w={:6.1} h={:5.1}", name, c.rect.0, c.rect.1, c.rect.2, c.rect.3);
         }
+    }
+
+    #[test]
+    fn uberbar_partial_update_preserves_the_label_column() {
+        // Resident panels re-send only CHANGED rows (no clear='t'). The bug:
+        // display_labels were REPLACED wholesale, so an update carrying a few
+        // values wiped the whole label column — the "Today:/Pulse:" labels
+        // vanished and value labels jumped (their anchor_left target gone).
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        let mut feed = |ui: &mut UiState, gs: &mut GameState, f: &str, p: &mut MessageProcessor| {
+            for e in &parser.parse_line(f) {
+                p.process_element(e, gs, ui, &mut std::collections::HashMap::new(),
+                    &mut None, &mut false, &mut None, &mut None, &mut None, None);
+            }
+        };
+
+        // Open: a label + its value, both positioned.
+        feed(&mut ui_state, &mut game_state,
+            "<openDialog id='UB' resident='true'><dialogData id='UB' clear='t'>\
+             <label id='ublog' value='Today:' anchor_left='ubinjury' top='5' left='5' width='50' height='15'/>\
+             <label id='ublogv' value='0' justify='6' anchor_left='ublog' top='5' left='0' width='50' height='15'/>\
+             </dialogData></openDialog>", &mut processor);
+
+        // Update: ONLY the value changes, no clear, label not re-sent.
+        feed(&mut ui_state, &mut game_state,
+            "<dialogData id='UB'>\
+             <label id='ublogv' value='42' anchor_left='ublog' top='5' left='0' width='50' height='15'/>\
+             </dialogData>", &mut processor);
+
+        let d = ui_state.dialog_store.get("UB").unwrap();
+        assert!(
+            d.display_labels.iter().any(|l| l.id == "ublog" && l.value == "Today:"),
+            "the label column must survive a partial update; labels: {:?}",
+            d.display_labels.iter().map(|l| &l.id).collect::<Vec<_>>()
+        );
+        assert!(
+            d.display_labels.iter().any(|l| l.id == "ublogv" && l.value == "42"),
+            "the value must update in place"
+        );
+        // And its anchor still resolves (value sits right of the label, not
+        // collapsed to an absolute fallback).
+        let (controls, _) = d.positioned_controls().unwrap();
+        use crate::data::ui_state::PositionedControlKind as K;
+        let xof = |id: &str| {
+            d.display_labels.iter().position(|l| l.id == id).and_then(|i| {
+                controls.iter().find(|c| c.kind == K::Label(i)).map(|c| c.rect.0)
+            })
+        };
+        assert!(xof("ublogv").unwrap() > xof("ublog").unwrap(), "value stays right of its label");
     }
 
     #[test]
