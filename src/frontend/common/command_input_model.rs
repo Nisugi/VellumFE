@@ -458,9 +458,13 @@ impl CommandInputModel {
         true
     }
 
-    pub fn try_complete(&mut self, available_commands: &[String], window_names: &[String]) {
+    /// Dot-command / window-name completion. Returns true when it CHANGED the
+    /// text (started completing, or cycled to a different candidate) — false
+    /// means completion has nothing new to offer, so Tab handlers can fall
+    /// through to the next behavior (accepting a history suggestion).
+    pub fn try_complete(&mut self, available_commands: &[String], window_names: &[String]) -> bool {
         if self.cursor_pos != self.text.chars().count() {
-            return;
+            return false;
         }
         if self.completion_candidates.is_empty() {
             let input = self.text.trim();
@@ -473,7 +477,7 @@ impl CommandInputModel {
             };
 
             if word_to_complete.is_empty() {
-                return;
+                return false;
             }
 
             let mut candidates = Vec::new();
@@ -492,7 +496,7 @@ impl CommandInputModel {
             }
 
             if candidates.is_empty() {
-                return;
+                return false;
             }
 
             candidates.sort();
@@ -505,15 +509,22 @@ impl CommandInputModel {
 
         if let (Some(index), Some(prefix)) = (self.completion_index, &self.completion_prefix) {
             if let Some(candidate) = self.completion_candidates.get(index) {
-                let prefix = prefix.clone();
-                let candidate = candidate.clone();
+                let new_text = format!("{}{}", prefix, candidate);
+                // A single already-applied candidate cycles back to itself:
+                // that's "nothing new" (return false so Tab can fall through
+                // to the history suggestion) and must not spam the undo stack.
+                if new_text == self.text {
+                    return false;
+                }
                 self.push_undo_snapshot();
-                self.text = format!("{}{}", prefix, candidate);
+                self.text = new_text;
                 self.cursor_pos = self.text.chars().count();
                 self.clear_selection();
                 self.redo_stack.clear();
+                return true;
             }
         }
+        false
     }
 
     pub fn reset_completion(&mut self) {
@@ -670,6 +681,71 @@ mod tests {
         model.insert_text(".window m");
         model.try_complete(&commands, &windows);
         assert_eq!(model.text(), ".window main");
+    }
+
+    /// The double-Tab flow: first Tab completes the dot command, second Tab
+    /// (completion settled → try_complete returns false) accepts the ghost.
+    #[test]
+    fn completion_then_history_double_tab_flow() {
+        let commands = vec![".launch".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command(".launch nisugi");
+        model.insert_text(".la");
+
+        assert!(model.try_complete(&commands, &windows), "first Tab completes");
+        assert_eq!(model.text(), ".launch");
+        assert_eq!(model.history_completion().as_deref(), Some(" nisugi"));
+
+        assert!(
+            !model.try_complete(&commands, &windows),
+            "single candidate already applied — nothing new"
+        );
+        assert!(model.accept_history_completion());
+        assert_eq!(model.text(), ".launch nisugi");
+    }
+
+    /// Ambiguous prefixes keep classic candidate cycling: every Tab that
+    /// lands on a DIFFERENT candidate reports true, so the ghost is never
+    /// accepted mid-cycle.
+    #[test]
+    fn ambiguous_completion_keeps_cycling() {
+        let commands = vec![".launch".to_string(), ".layers".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.insert_text(".la");
+
+        assert!(model.try_complete(&commands, &windows));
+        assert_eq!(model.text(), ".launch");
+        assert!(model.try_complete(&commands, &windows));
+        assert_eq!(model.text(), ".layers");
+        assert!(model.try_complete(&commands, &windows));
+        assert_eq!(model.text(), ".launch");
+    }
+
+    /// No candidates → false immediately, so Tab falls through to the ghost.
+    #[test]
+    fn no_completion_candidates_reports_false() {
+        let commands = vec![".launch".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.insert_text(".zz");
+        assert!(!model.try_complete(&commands, &windows));
+    }
+
+    /// A settled completion must not push no-op undo snapshots on repeat Tab.
+    #[test]
+    fn settled_completion_does_not_spam_undo() {
+        let commands = vec![".launch".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.insert_text(".la");
+        assert!(model.try_complete(&commands, &windows));
+        assert!(!model.try_complete(&commands, &windows));
+        assert!(!model.try_complete(&commands, &windows));
+
+        assert!(model.undo(), "one undo back to the typed prefix");
+        assert_eq!(model.text(), ".la");
     }
 
     #[test]

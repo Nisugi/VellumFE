@@ -99,10 +99,13 @@ impl TuiFrontend {
                 KeyCode::Up => cmd_input.history_previous(),
                 KeyCode::Down => cmd_input.history_next(),
                 KeyCode::Tab => {
-                    // History completion takes precedence; retain the existing
-                    // dot-command/window completion when history has no match.
-                    if !cmd_input.accept_history_completion() {
-                        cmd_input.try_complete(available_commands, available_window_names);
+                    // Completion first, ghost second: Tab advances dot-command
+                    // / window-name completion while it has something NEW to
+                    // offer; once it's settled (or never applied), Tab accepts
+                    // the inline history suggestion. `.la` Tab Tab → ".launch"
+                    // → ".launch nisugi".
+                    if !cmd_input.try_complete(available_commands, available_window_names) {
+                        cmd_input.accept_history_completion();
                     }
                 }
                 _ => {}

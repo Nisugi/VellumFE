@@ -186,7 +186,7 @@ row = 47
 col = 0
 rows = 3
 cols = 160
-completion_color = "#808080" # Optional; defaults to theme text_secondary
+completion_color = "#808080" # Optional; defaults to theme text_secondary (TUI; GUI/web use theme colors)
 ```
 
 ## Hidden Windows

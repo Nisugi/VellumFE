@@ -84,6 +84,7 @@ enum FieldRef {
     PromptIconColor,
     CursorColor,
     CursorBg,
+    CompletionColor,
     ContentAlign,
 
     // Checkboxes
@@ -287,6 +288,7 @@ impl FieldRef {
             FieldRef::TextCompact => 113,
             FieldRef::TargetsShowAppendages => 114,
             FieldRef::TargetsStatusPosition => 116,
+            FieldRef::CompletionColor => 123,
         }
     }
 }
@@ -1381,6 +1383,7 @@ pub struct WindowEditor {
     prompt_icon_color_input: TextArea<'static>,
     cursor_color_input: TextArea<'static>,
     cursor_bg_input: TextArea<'static>,
+    completion_color_input: TextArea<'static>,
     content_align_input: TextArea<'static>,
     tab_bar_position_input: TextArea<'static>,
     title_position_input: TextArea<'static>,
@@ -1675,6 +1678,7 @@ impl WindowEditor {
                 fields.push(FieldRef::TextColor);
                 fields.push(FieldRef::CursorColor);
                 fields.push(FieldRef::CursorBg);
+                fields.push(FieldRef::CompletionColor);
             }
             WindowDef::Text { .. } => {
                 // Bounty window is special: hide Streams and BufferSize
@@ -1965,6 +1969,7 @@ impl WindowEditor {
         let mut prompt_icon_color_input = Self::create_textarea();
         let mut cursor_color_input = Self::create_textarea();
         let mut cursor_bg_input = Self::create_textarea();
+        let mut completion_color_input = Self::create_textarea();
         let mut tab_bar_position_input = Self::create_textarea();
         let mut title_position_input = Self::create_textarea();
         title_position_input.insert_str(&window_def.base().title_position);
@@ -2039,6 +2044,9 @@ impl WindowEditor {
             }
             if let Some(ref color) = data.cursor_background_color {
                 cursor_bg_input.insert_str(color);
+            }
+            if let Some(ref color) = data.completion_color {
+                completion_color_input.insert_str(color);
             }
         }
 
@@ -2357,6 +2365,7 @@ impl WindowEditor {
             prompt_icon_color_input,
             cursor_color_input,
             cursor_bg_input,
+            completion_color_input,
             content_align_input,
             tab_bar_position_input,
             title_position_input,
@@ -2589,6 +2598,7 @@ impl WindowEditor {
         let prompt_icon_color_input = Self::create_textarea();
         let cursor_color_input = Self::create_textarea();
         let cursor_bg_input = Self::create_textarea();
+        let completion_color_input = Self::create_textarea();
         let content_align_input = Self::create_textarea();
         let mut tab_bar_position_input = Self::create_textarea();
         tab_bar_position_input.insert_str("top");
@@ -2691,6 +2701,7 @@ impl WindowEditor {
             prompt_icon_color_input,
             cursor_color_input,
             cursor_bg_input,
+            completion_color_input,
             content_align_input,
             tab_bar_position_input,
             title_position_input,
@@ -3511,6 +3522,9 @@ impl WindowEditor {
             }
             _ if id == FieldRef::CursorBg.legacy_field_id() => {
                 self.cursor_bg_input.input(input);
+            }
+            _ if id == FieldRef::CompletionColor.legacy_field_id() => {
+                self.completion_color_input.input(input);
             }
             _ if id == FieldRef::ContentAlign.legacy_field_id() => {
                 self.content_align_input.input(input);
@@ -4961,6 +4975,9 @@ impl WindowEditor {
                 .filter(|s| !s.is_empty());
             data.cursor_background_color =
                 Some(self.cursor_bg_input.lines()[0].trim().to_string()).filter(|s| !s.is_empty());
+            data.completion_color =
+                Some(self.completion_color_input.lines()[0].trim().to_string())
+                    .filter(|s| !s.is_empty());
         }
         if let crate::config::WindowDef::Targets { data, .. } = &mut self.window_def {
             data.entity_id = self.entity_id_input.lines()[0].trim().to_string();
@@ -6247,6 +6264,22 @@ impl WindowEditor {
                     is_focus(FieldRef::CursorBg, self.focused_field),
                 );
                 self.field_click_areas.push((special_row, right_x, FieldRef::CursorBg));
+                special_row += 1;
+
+                // History-suggestion ghost color (falls back to the theme's
+                // text_secondary when blank).
+                self.render_color_field(
+                    FieldRef::CompletionColor.legacy_field_id(),
+                    "Suggest",
+                    &self.completion_color_input,
+                    left_x,
+                    special_row,
+                    8,
+                    buf,
+                    theme,
+                    is_focus(FieldRef::CompletionColor, self.focused_field),
+                );
+                self.field_click_areas.push((special_row, left_x, FieldRef::CompletionColor));
             }
             WindowDef::Text { .. } => {
                 // Bounty window is special: hide Streams and BufferSize

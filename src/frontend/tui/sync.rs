@@ -343,6 +343,7 @@ impl TuiFrontend {
                     .and_then(|d| normalize_color(&d.completion_color))
                     .or_else(|| color_to_hex_string(&theme.text_secondary));
                 cmd_input.set_completion_color(completion_color);
+                cmd_input.set_history_suggestions(app_core.config.ui.history_suggestions);
                 let cursor_fg = cmd_data
                     .as_ref()
                     .and_then(|d| normalize_color(&d.cursor_color))

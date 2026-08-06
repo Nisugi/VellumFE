@@ -393,6 +393,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Echo sent commands into the main window", ui.command_echo),
         bool_entry!("ui.keep_open_on_quit", "Keep Open On Quit", "UI",
             "After .quit, detach but keep the window open (.quit again or .exit closes it)", ui.keep_open_on_quit),
+        bool_entry!("ui.history_suggestions", "History Suggestions", "UI",
+            "Ghost the newest matching history entry in the command input; Tab accepts it", ui.history_suggestions),
         bool_entry!("ui.emoji_shortcodes", "Emoji Shortcodes", "UI",
             "Render :grin:-style shortcodes in incoming text as emoji", ui.emoji_shortcodes),
         bool_entry!("ui.color_emoji", "Color Emoji", "UI",

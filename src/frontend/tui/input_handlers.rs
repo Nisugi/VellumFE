@@ -195,16 +195,22 @@ impl super::TuiFrontend {
                 return self.handle_command_submission(command, app_core);
             }
         } else {
-            // A visible history suggestion always owns plain Tab, regardless
-            // of how Tab is rebound. Other completion behavior remains tied
-            // to the configured switch-window action below.
+            // For plain (non-dot) input, a visible history suggestion owns
+            // plain Tab regardless of how Tab is rebound. Dot input is left
+            // for the switch-window path below, which runs dot-command
+            // completion FIRST and only falls back to the suggestion once
+            // completion has nothing new — so `.la` Tab Tab gives ".launch"
+            // then ".launch nisugi".
             if matches!(code, KeyCode::Tab)
                 && modifiers == crate::data::input::KeyModifiers::NONE
                 && self
                     .widget_manager
                     .command_inputs
                     .get_mut("command_input")
-                    .is_some_and(|input| input.accept_history_completion())
+                    .is_some_and(|input| {
+                        !input.get_input().is_some_and(|text| text.starts_with('.'))
+                            && input.accept_history_completion()
+                    })
             {
                 app_core.needs_render = true;
                 return Ok(None);
@@ -350,8 +356,10 @@ impl super::TuiFrontend {
                     app_core.needs_render = true;
                 } else if is_switch_window_action {
                     // Keep the configured switch-window key in the command
-                    // input for dot-command completion. Plain Tab history
-                    // completion is handled before keybind dispatch above.
+                    // input for dot input. command_input_key's Tab arm runs
+                    // dot-command completion first and falls back to the
+                    // history suggestion once completion is settled. (Plain
+                    // non-dot Tab history accept ran before keybind dispatch.)
                     let should_complete = self
                         .widget_manager
                         .command_inputs
@@ -360,7 +368,6 @@ impl super::TuiFrontend {
                         .is_some_and(|text| text.starts_with('.'));
 
                     if should_complete {
-                        // Accept history or perform dot-command completion.
                         let available_commands = app_core.get_available_commands();
                         let available_window_names = app_core.get_window_names();
                         use crate::frontend::tui::crossterm_bridge;

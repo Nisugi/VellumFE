@@ -1677,6 +1677,7 @@ impl VellumGuiApp {
             command_input_completion: self
                 .available_tabs
                 .get(key)
+                .filter(|_| self.app_core.config.ui.history_suggestions)
                 .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
                 .filter(|window| window.widget_type == WidgetType::CommandInput)
                 .and_then(|_| crate::frontend::common::find_history_completion(
@@ -4966,6 +4967,9 @@ impl VellumGuiApp {
     }
 
     fn command_completion_ready(&self, ctx: &egui::Context) -> bool {
+        if !self.app_core.config.ui.history_suggestions {
+            return false;
+        }
         if crate::frontend::common::find_history_completion(
             &self.command_input,
             &self.command_history,
@@ -6606,10 +6610,18 @@ impl eframe::App for VellumGuiApp {
         if !self.command_input_tab_rendered() {
             egui::Panel::bottom("gui_command_input").show(ui, |ui| {
                 let seed = self.command_input.clone();
-                let completion = crate::frontend::common::find_history_completion(
-                    &seed,
-                    &self.command_history,
-                );
+                let completion = self
+                    .app_core
+                    .config
+                    .ui
+                    .history_suggestions
+                    .then(|| {
+                        crate::frontend::common::find_history_completion(
+                            &seed,
+                            &self.command_history,
+                        )
+                    })
+                    .flatten();
                 // Fixed fallback panel: not a movable window, no grip.
                 Self::render_command_input_widget(ui, &seed, completion.as_deref(), false);
             });

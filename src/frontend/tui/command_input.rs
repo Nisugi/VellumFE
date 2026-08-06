@@ -97,6 +97,7 @@ pub struct CommandInput {
     background_color: Option<String>,
     text_color: Option<String>,        // Input text color
     completion_color: Option<String>,  // History completion suffix color
+    history_suggestions: bool,         // ui.history_suggestions (ghost off when false)
     cursor_fg_color: Option<String>,   // Cursor foreground color
     cursor_bg_color: Option<String>,   // Cursor background color
     prompt_icon: Option<String>,       // Optional prompt icon shown before input
@@ -117,6 +118,7 @@ impl CommandInput {
             background_color: None,
             text_color: None,       // Will use global default
             completion_color: None, // Will use a visible muted fallback
+            history_suggestions: true,
             cursor_fg_color: None,  // Default: black
             cursor_bg_color: None,  // Default: white
             prompt_icon: None,
@@ -161,6 +163,10 @@ impl CommandInput {
 
     pub fn set_completion_color(&mut self, color: Option<String>) {
         self.completion_color = color;
+    }
+
+    pub fn set_history_suggestions(&mut self, enabled: bool) {
+        self.history_suggestions = enabled;
     }
 
     pub fn set_cursor_colors(&mut self, fg: Option<String>, bg: Option<String>) {
@@ -256,6 +262,9 @@ impl CommandInput {
     }
 
     pub fn accept_history_completion(&mut self) -> bool {
+        if !self.history_suggestions {
+            return false;
+        }
         self.model.accept_history_completion()
     }
 
@@ -397,7 +406,11 @@ impl CommandInput {
         let char_widths = text_char_widths(self.model.text());
         let total_width: usize = char_widths.iter().sum();
         let selection = self.model.selection_range();
-        let history_completion = self.model.history_completion();
+        let history_completion = if self.history_suggestions {
+            self.model.history_completion()
+        } else {
+            None
+        };
         let cursor_at_end = self.model.cursor_pos() == total_chars;
         let completion_width = history_completion
             .as_deref()
@@ -635,15 +648,13 @@ impl CommandInput {
     }
 
     /// Try to complete the current input.
-    /// Returns true if a completion was performed.
+    /// Returns true if a completion was performed (the text changed).
     pub fn try_complete(
         &mut self,
         available_commands: &[String],
         available_names: &[String],
     ) -> bool {
-        let before = self.model.text().to_string();
-        self.model.try_complete(available_commands, available_names);
-        before != self.model.text()
+        self.model.try_complete(available_commands, available_names)
     }
 
     /// Get the history file path (~/.vellum-fe/history/<character>.txt or default.txt)

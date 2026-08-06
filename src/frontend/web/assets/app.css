@@ -708,6 +708,10 @@ html, body {
   display: none;
 }
 
+body.hide-suggest #cmd-suggestion {
+  display: none;
+}
+
 #cmd-suggestion-prefix {
   visibility: hidden;
 }

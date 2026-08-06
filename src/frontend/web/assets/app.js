@@ -3224,6 +3224,9 @@ const CHROME_TOGGLES = [
   ["fx", "Effect pills"],
   ["chips", "Stream chips"],
   ["wheelpuck", "Wheel puck"],
+  // Inline history ghost in the command input (Tab accepts). Client-side
+  // pref on purpose: web history itself lives in localStorage.
+  ["suggest", "Input history suggestion"],
 ];
 
 function saveUiPrefs() {
@@ -4620,7 +4623,7 @@ function updateCommandSuggestion() {
   const input = cmdInput.value;
   const cursorAtEnd = cmdInput.selectionStart === input.length
     && cmdInput.selectionEnd === input.length;
-  commandCompletion = input && cursorAtEnd
+  commandCompletion = input && cursorAtEnd && !uiPrefs.hide.suggest
     ? cmdHistory.find((command) => command.startsWith(input) && command.length > input.length) || null
     : null;
   cmdSuggestion.hidden = !commandCompletion;
@@ -4690,7 +4693,7 @@ repeatBtn.addEventListener("click", () => {
 // command history in the input field.
 let historyIndex = -1;
 cmdInput.addEventListener("keydown", (ev) => {
-  if (ev.key === "Tab" && commandCompletion
+  if (ev.key === "Tab" && commandCompletion && !uiPrefs.hide.suggest
       && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
     cmdInput.value = commandCompletion;
     cmdInput.setSelectionRange(commandCompletion.length, commandCompletion.length);
