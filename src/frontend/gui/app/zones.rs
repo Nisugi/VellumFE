@@ -1736,6 +1736,27 @@ impl VellumGuiApp {
                         }
                     }
                 }
+                // Ground-truth fallback: if egui is actually DRAGGING this
+                // window, latch it no matter what `layer_id_at` said — a
+                // Foreground gutter/drawer-handle/backdrop can be topmost
+                // at the press point while egui still routes the body-drag
+                // here. Without the latch the position feed keeps pinning
+                // the content every frame while egui's drag state (and the
+                // skin frame painted from response.rect) walks off with
+                // the pointer — the reported "frame drags away, window
+                // stays, snaps back on release".
+                if pointer_down
+                    && !window_locked
+                    && self.zone_engaged_tab.is_none()
+                    && inner.response.dragged()
+                {
+                    tracing::info!(
+                        "engagement latch via drag fallback: {:?} (layer_id_at disagreed)",
+                        tab.id.key
+                    );
+                    self.zone_engaged_tab = Some(tab.id.key.clone());
+                    ctx.request_repaint();
+                }
                 // `.snapdebug`: the three rects whose divergence explains
                 // every "can't snap to window X" report — the canonical
                 // (candidate source), the display rect fed to egui, and
