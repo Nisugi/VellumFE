@@ -244,6 +244,14 @@ pub struct AppCore {
     /// Updated when dialogs with save='t' are dragged/resized
     pub saved_dialog_positions: SavedDialogPositions,
 
+    /// Discovery memory (window_registry.toml): every dialog/stream
+    /// binding this character has ever seen, so windows stay addable in
+    /// fresh layouts before the game re-declares them. Dark in Phase 1 —
+    /// recorded here, consumed by the Phase 3 Windows-list union.
+    pub window_registry: crate::config::WindowRegistry,
+    /// Unflushed registry changes; written by `tick_layout_autosave`.
+    window_registry_dirty: bool,
+
     // === Lich WebUI bridge (owned in core so BOTH the GUI and the phone
     // render the same trees; see core::app_core::webui) ===
     /// The live bridge socket to Lich's WebUI server. None until a handshake
@@ -409,6 +417,8 @@ impl AppCore {
             gameobj_data: None,
             foreach: Default::default(),
             saved_dialog_positions,
+            window_registry: Default::default(),
+            window_registry_dirty: false,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -442,6 +452,14 @@ impl AppCore {
         // Load saved dialog positions from widget_state.toml
         let saved_dialog_positions = Config::load_dialog_positions(config.character.as_deref())
             .unwrap_or_default();
+
+        // Discovery memory: load (missing/corrupt = empty), then seed the
+        // well-known feeds on first run so a fresh character's registry
+        // starts useful. The constructor never writes; a seeded registry
+        // is marked dirty and the frontend-driven autosave tick flushes
+        // it (keeps constructor-only tests off the filesystem).
+        let mut window_registry = Config::load_window_registry(config.character.as_deref());
+        let window_registry_dirty = window_registry.seed_well_known();
 
         // Create message processor (shares saved_dialog_positions reference)
         let message_processor = MessageProcessor::new(config.clone(), saved_dialog_positions.clone());
@@ -566,6 +584,8 @@ impl AppCore {
             gameobj_data: None,
             foreach: Default::default(),
             saved_dialog_positions,
+            window_registry,
+            window_registry_dirty,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -4476,6 +4496,21 @@ impl AppCore {
         use crate::config::{WindowBinding, WindowVisibility, WindowDef};
         use crate::data::WindowDiscoveryKind;
 
+        // Discovery memory (Phase 1b): every sighting is recorded — even
+        // for ids that already have a bound window (a re-declaration can
+        // carry a better title) and for popup dialogs that never become
+        // layout windows. The write is deferred to the frontend-driven
+        // autosave tick (same driver as the layout), so pure-core tests
+        // never touch the filesystem and a failed write never disturbs
+        // the session.
+        let registry_kind = match d.kind {
+            WindowDiscoveryKind::Stream => "stream",
+            WindowDiscoveryKind::DialogPanel | WindowDiscoveryKind::DialogPopup => "dialog",
+        };
+        if self.window_registry.record(registry_kind, &d.id, &d.title) {
+            self.window_registry_dirty = true;
+        }
+
         if self.layout.has_window_bound_to(&d.id) {
             return;
         }
@@ -5759,6 +5794,16 @@ impl AppCore {
     /// profile auto-save slot once the layout has been stable for
     /// LAYOUT_AUTOSAVE_DEBOUNCE.
     pub fn tick_layout_autosave(&mut self) {
+        // Discovery-memory flush rides the same driver (no debounce —
+        // registrations are rare, one-shot, and tiny).
+        if std::mem::take(&mut self.window_registry_dirty) {
+            if let Err(e) = Config::save_window_registry(
+                self.config.character.as_deref(),
+                &self.window_registry,
+            ) {
+                tracing::warn!("could not write window_registry.toml: {e:#}");
+            }
+        }
         if let Some(changed_at) = self.layout_autosave_pending {
             if changed_at.elapsed() >= Self::LAYOUT_AUTOSAVE_DEBOUNCE {
                 self.autosave_layout();

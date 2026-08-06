@@ -32,6 +32,7 @@ mod settings;
 mod sparse;
 mod templates;
 mod widgets;
+mod window_registry;
 mod window_def;
 
 pub use colors::{
@@ -58,6 +59,7 @@ pub use keybinds::{
 pub use layout::{ContentAlign, Layout, LayoutConfig};
 pub use macros::{MacroButton, MacroGroup, MacroOption, MacrosConfig};
 pub use paths::{is_valid_layout_name, write_atomic, DialogPosition, SavedDialogPositions};
+pub use window_registry::{RegistryBinding, WindowRegistry};
 #[cfg(test)]
 pub use paths::VELLUM_FE_DIR_TEST_LOCK;
 pub use settings::{
