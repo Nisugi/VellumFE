@@ -170,6 +170,22 @@ pub(super) struct CommandInputKeys {
     pub history_prev: Vec<egui::Key>,
     pub history_next: Vec<egui::Key>,
     pub clear_line: Vec<(egui::Key, egui::Modifiers)>,
+    // Editing actions: bound combos are consumed BEFORE the TextEdit sees
+    // them and applied manually (config beats egui built-ins for bound
+    // keys). Each op also accepts its combo + Shift as the selection-
+    // extending variant, mirroring the TUI.
+    pub cursor_left: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_right: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_word_left: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_word_right: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_home: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_end: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_backspace: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_delete: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_delete_word: Vec<(egui::Key, egui::Modifiers)>,
+    pub select_all: Vec<(egui::Key, egui::Modifiers)>,
+    pub copy: Vec<(egui::Key, egui::Modifiers)>,
+    pub paste: Vec<(egui::Key, egui::Modifiers)>,
 }
 
 impl CommandInputKeys {
@@ -4782,7 +4798,7 @@ impl VellumGuiApp {
             submit: vec![egui::Key::Enter],
             history_prev: vec![egui::Key::ArrowUp],
             history_next: vec![egui::Key::ArrowDown],
-            clear_line: Vec::new(),
+            ..Default::default()
         };
         for (event, action) in &self.app_core.keybind_map {
             let KeyBindAction::Action(name) = action else {
@@ -4803,6 +4819,18 @@ impl VellumGuiApp {
                     keys.history_next.push(key)
                 }
                 "cursor_clear_line" => keys.clear_line.push((key, modifiers)),
+                "cursor_left" => keys.cursor_left.push((key, modifiers)),
+                "cursor_right" => keys.cursor_right.push((key, modifiers)),
+                "cursor_word_left" => keys.cursor_word_left.push((key, modifiers)),
+                "cursor_word_right" => keys.cursor_word_right.push((key, modifiers)),
+                "cursor_home" => keys.cursor_home.push((key, modifiers)),
+                "cursor_end" => keys.cursor_end.push((key, modifiers)),
+                "cursor_backspace" => keys.cursor_backspace.push((key, modifiers)),
+                "cursor_delete" => keys.cursor_delete.push((key, modifiers)),
+                "cursor_delete_word" => keys.cursor_delete_word.push((key, modifiers)),
+                "select_all" => keys.select_all.push((key, modifiers)),
+                "copy" => keys.copy.push((key, modifiers)),
+                "paste" => keys.paste.push((key, modifiers)),
                 _ => {}
             }
         }

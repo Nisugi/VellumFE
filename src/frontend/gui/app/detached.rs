@@ -558,7 +558,7 @@ impl VellumGuiApp {
                 submit: vec![egui::Key::Enter],
                 history_prev: vec![egui::Key::ArrowUp],
                 history_next: vec![egui::Key::ArrowDown],
-                clear_line: Vec::new(),
+                ..Default::default()
             });
         ctx.input(|input| {
             for event in &input.raw.events {
