@@ -30,7 +30,7 @@ mod layout;
 pub mod registry;
 mod settings;
 mod sparse;
-mod templates;
+mod presets;
 mod widgets;
 mod window_registry;
 mod window_def;
@@ -67,7 +67,7 @@ pub use settings::{
     SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
     TtsConfig, TtsSubstitution, UiConfig, WebConfig,
 };
-pub use templates::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};
+pub use presets::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};
 pub use widgets::{
     apply_compiled_text_replacements, compile_text_replacements, default_minivitals_bar_order,
     DEFAULT_INJURY_PALETTE,
