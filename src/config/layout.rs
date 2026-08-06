@@ -929,7 +929,15 @@ impl Layout {
         // type (e.g. "dialogpanel" has no template entry but is a valid
         // widget type built via WindowDef::blank). Borrow a default base
         // from a always-present template for the blank path.
-        let name = binding.id().to_string();
+        // A layout window may already own this NAME without owning the
+        // binding (runtime-created widget, custom window): suffix rather
+        // than collide — duplicate names break per-name UI identity.
+        let mut name = binding.id().to_string();
+        let mut counter = 2;
+        while self.windows.iter().any(|w| w.name() == name) {
+            name = format!("{}_{}", binding.id(), counter);
+            counter += 1;
+        }
         let mut window_def = match Config::get_window_template(template_name) {
             Some(def) => def,
             None => {

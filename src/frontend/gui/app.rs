@@ -4574,6 +4574,9 @@ impl VellumGuiApp {
             "scroll_current_window_end" => (2, 0.0),
             _ => return false,
         };
+        // Diagnostic (scroll-to-top hunt): every programmatic scroll names
+        // its action so a runaway producer shows in vellum-fe.log.
+        tracing::info!("scrollreq action={name} window={scroll_id} req={request:?}");
         ctx.data_mut(|d| {
             d.insert_temp(egui::Id::new(("text_scroll_pending", scroll_id)), request)
         });

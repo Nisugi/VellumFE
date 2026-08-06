@@ -317,6 +317,9 @@ impl VellumGuiApp {
             }
         } else if aim_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
             let delta = -aim_y.signum() * aim_y * aim_y * 40.0;
+            // Diagnostic (scroll-to-top hunt): a drifting/deflected right
+            // stick shows up as a stream of these lines.
+            tracing::info!("scrollreq gamepad aim_y={aim_y:.3} delta={delta:.1}");
             ctx.data_mut(|d| {
                 d.insert_temp(
                     egui::Id::new(("text_scroll_pending", "main")),
