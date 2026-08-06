@@ -480,39 +480,49 @@ fn windows_cmdline(program: &str, args: &[String]) -> String {
 /// `GetLastWin32Error()` read, so the error code must be captured in the same
 /// managed frame. `lpCommandLine` is a StringBuilder because CreateProcessW is
 /// allowed to scribble on it (an immutable string marshals as read-only).
+/// What the emitted C# does (kept terse in the payload — sshd runs exec lines
+/// through `cmd.exe /c`, whose 8191-char limit the UTF-16 base64 encoding
+/// approaches fast, so the script carries no comments or long names):
+///
+/// - `V.S(cmdline)` calls `CreateProcessW` with flags `0x09000000` =
+///   `CREATE_BREAKAWAY_FROM_JOB (0x01000000)` — escapes sshd's kill-on-close
+///   job — `| CREATE_NO_WINDOW (0x08000000)` — keeps console apps invisible.
+/// - The child gets REAL std handles (`STARTF_USESTDHANDLES`): rubyw.exe has
+///   no console, and with null stdio the first write (e.g. Lich printing its
+///   nonfatal Gtk.init backtrace when there's no desktop) kills the process.
+///   stdout/stderr go to `%TEMP%\vellum-launcher-spawn.log` (a breadcrumb for
+///   remote failures), stdin reads NUL; both fall back to NUL/null.
+/// - Struct field names are positional abbreviations of STARTUPINFO /
+///   PROCESS_INFORMATION / SECURITY_ATTRIBUTES in their documented order.
 fn windows_breakaway_script(cmdline: &str) -> String {
     // Embed as a PowerShell single-quoted literal: double embedded quotes.
     let ps_literal = cmdline.replace('\'', "''");
     format!(
-        r#"$ProgressPreference = 'SilentlyContinue'
-$sig = @'
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public class VellumSpawn {{
-  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
-  public struct STARTUPINFO {{ public int cb; public string lpReserved; public string lpDesktop; public string lpTitle; public int dwX; public int dwY; public int dwXSize; public int dwYSize; public int dwXCountChars; public int dwYCountChars; public int dwFillAttribute; public int dwFlags; public short wShowWindow; public short cbReserved2; public IntPtr lpReserved2; public IntPtr hStdInput; public IntPtr hStdOutput; public IntPtr hStdError; }}
-  [StructLayout(LayoutKind.Sequential)]
-  public struct PROCESS_INFORMATION {{ public IntPtr hProcess; public IntPtr hThread; public int dwProcessId; public int dwThreadId; }}
-  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
-  static extern bool CreateProcessW(string lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
-  // CREATE_BREAKAWAY_FROM_JOB=0x01000000 escapes sshd's kill-on-close job;
-  // CREATE_NO_WINDOW=0x08000000 keeps console apps invisible.
-  public static string Spawn(string cmdLine) {{
-    STARTUPINFO si = new STARTUPINFO();
-    si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
-    PROCESS_INFORMATION pi;
-    StringBuilder sb = new StringBuilder(cmdLine);
-    bool ok = CreateProcessW(null, sb, IntPtr.Zero, IntPtr.Zero, false, 0x01000000u | 0x08000000u, IntPtr.Zero, null, ref si, out pi);
-    if (!ok) return "err=" + Marshal.GetLastWin32Error();
-    return "pid=" + pi.dwProcessId;
-  }}
-}}
+        r#"$ProgressPreference='SilentlyContinue'
+$d=@'
+using System;using System.Text;using System.Runtime.InteropServices;
+public class V{{
+[StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]public struct SI{{public int cb;public string r1;public string r2;public string r3;public int x;public int y;public int xs;public int ys;public int xc;public int yc;public int fa;public int fl;public short sw;public short r4;public IntPtr r5;public IntPtr hi;public IntPtr ho;public IntPtr he;}}
+[StructLayout(LayoutKind.Sequential)]public struct PI{{public IntPtr hp;public IntPtr ht;public int pid;public int tid;}}
+[StructLayout(LayoutKind.Sequential)]public struct SA{{public int n;public IntPtr sd;public bool ih;}}
+[DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool CreateProcessW(string a,StringBuilder c,IntPtr pa,IntPtr ta,bool ih,uint f,IntPtr e,string wd,ref SI si,out PI pi);
+[DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]static extern IntPtr CreateFileW(string n,uint a,uint s,ref SA sa,uint d,uint fl,IntPtr t);
+static IntPtr O(string n,uint a,uint d){{SA s=new SA();s.n=Marshal.SizeOf(typeof(SA));s.ih=true;return CreateFileW(n,a,3,ref s,d,0x80,IntPtr.Zero);}}
+public static string S(string c){{
+SI si=new SI();si.cb=Marshal.SizeOf(typeof(SI));
+string t=Environment.GetEnvironmentVariable("TEMP");if(t==null)t="C:\\Windows\\Temp";
+IntPtr b=new IntPtr(-1);
+IntPtr o=O(t+"\\vellum-launcher-spawn.log",0x40000000u,2);if(o==b)o=O("NUL",0x40000000u,3);
+IntPtr i=O("NUL",0x80000000u,3);
+si.fl=0x100;si.hi=(i==b)?IntPtr.Zero:i;si.ho=(o==b)?IntPtr.Zero:o;si.he=(o==b)?IntPtr.Zero:o;
+PI pi;StringBuilder sb=new StringBuilder(c);
+if(!CreateProcessW(null,sb,IntPtr.Zero,IntPtr.Zero,true,0x09000000u,IntPtr.Zero,null,ref si,out pi))return "err="+Marshal.GetLastWin32Error();
+return "pid="+pi.pid;}}}}
 '@
-Add-Type -TypeDefinition $sig
-$r = [VellumSpawn]::Spawn('{ps_literal}')
-if ($r.StartsWith('pid=')) {{ Write-Output ('spawned ' + $r); exit 0 }}
-Write-Output ('CreateProcess failed, Win32 ' + $r)
+Add-Type -TypeDefinition $d
+$r=[V]::S('{ps_literal}')
+if($r.StartsWith('pid=')){{Write-Output ('spawned '+$r);exit 0}}
+Write-Output ('CreateProcess failed, Win32 '+$r)
 exit 1
 "#
     )
@@ -662,10 +672,24 @@ mod tests {
         // Encoded so quoting can't be mangled by the remote cmd.exe hop.
         assert!(cmd.starts_with("powershell -NoProfile -EncodedCommand "));
 
+        // sshd runs exec through `cmd.exe /c`, which hard-fails past 8191
+        // chars ("The command line is too long") — keep real headroom for
+        // longer user launch commands.
+        assert!(
+            cmd.len() < 6500,
+            "wrapped command is {} chars; approaching cmd.exe's 8191 limit",
+            cmd.len()
+        );
+
         let script = decode_encoded_command(&cmd);
-        // Escapes sshd's kill-on-close job object — the whole point.
-        assert!(script.contains("0x01000000u | 0x08000000u"));
+        // Escapes sshd's kill-on-close job object (BREAKAWAY|NO_WINDOW) —
+        // the whole point.
+        assert!(script.contains("0x09000000u"));
         assert!(script.contains("CreateProcessW"));
+        // Child must get real std handles — rubyw dies on its first write
+        // otherwise (STARTF_USESTDHANDLES + breadcrumb log / NUL).
+        assert!(script.contains("si.fl=0x100"));
+        assert!(script.contains("vellum-launcher-spawn.log"));
         // The command line reaches the script with every token double-quoted.
         assert!(script.contains(r#""C:/Ruby4Lich5/4.0.3/bin/rubyw.exe" "C:/Gemstone/dev/lich-5/lich.rbw" "--login" "Nisugi" "--gemstone" "--without-frontend" "--detachable-client=8001""#));
         // Failure must exit nonzero so spawn_ok() reports it.
