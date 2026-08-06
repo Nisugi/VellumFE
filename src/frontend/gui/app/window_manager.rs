@@ -548,6 +548,110 @@ impl VellumGuiApp {
         solve_zone_rects(windows, &self.window_anchors, pane, skip)
     }
 
+    /// Contact inference for a window ENTERING a shell zone (owner spec:
+    /// "if its borders are touching the OS side and the partitioner it
+    /// should auto-anchor to those two sides; if the top is touching the
+    /// top or another window, it should auto-anchor — it shouldn't stay a
+    /// free agent unless it's touching nothing"). Same matching as
+    /// `.anchorinfer` (pane edges outrank sibling edges, sibling refs
+    /// cycle-guarded) but scoped to ONE window with a drop-friendly
+    /// tolerance, and it REPLACES the window's anchors wholesale — the
+    /// old zone's anchors were already released on entry, and an edge
+    /// touching nothing stays free. Center entries never auto-anchor.
+    pub(super) fn apply_zone_entry_anchor_inference(&mut self, key: &TabKey, zone: GuiShellZone) {
+        const EPS: f32 = 8.0;
+        if zone == GuiShellZone::Center {
+            return;
+        }
+        let Some(pane) = self.last_zone_pane_rects.get(&zone).copied() else {
+            return;
+        };
+        let Some(rect) = self
+            .main_window_rects
+            .get(key)
+            .copied()
+            .and_then(Self::rect_from_snapshot)
+        else {
+            return;
+        };
+        let rect = Self::clamp_main_window_rect(rect, pane);
+        let siblings: Vec<(TabKey, Rect)> = self
+            .tab_zones
+            .iter()
+            .filter(|(other, assigned)| **assigned == zone && *other != key)
+            .filter(|(other, _)| {
+                !self.hidden_tabs.contains(*other) && !self.detached_tabs.contains_key(*other)
+            })
+            .filter_map(|(other, _)| {
+                self.main_window_rects
+                    .get(other)
+                    .copied()
+                    .and_then(Self::rect_from_snapshot)
+                    .map(|r| (other.clone(), Self::clamp_main_window_rect(r, pane)))
+            })
+            .collect();
+        let infer_edge = |value: f32,
+                          pane_lo: f32,
+                          pane_hi: f32,
+                          sibling_edges: &dyn Fn(&Rect) -> (f32, f32)|
+         -> Option<EdgeRef> {
+            if (value - pane_lo).abs() <= EPS {
+                return Some(EdgeRef::Pane(AxisSide::Min));
+            }
+            if (value - pane_hi).abs() <= EPS {
+                return Some(EdgeRef::Pane(AxisSide::Max));
+            }
+            for (other, other_rect) in &siblings {
+                // The entering window's refs can't form a cycle unless the
+                // sibling's graph already reaches it (its old refs were
+                // pruned on entry, but re-entering the same zone keeps
+                // dependents alive — guard anyway).
+                if sibling_graph_reaches(&self.window_anchors, other, key) {
+                    continue;
+                }
+                let (lo, hi) = sibling_edges(other_rect);
+                if (value - lo).abs() <= EPS {
+                    return Some(EdgeRef::Sibling { key: other.clone(), side: AxisSide::Min });
+                }
+                if (value - hi).abs() <= EPS {
+                    return Some(EdgeRef::Sibling { key: other.clone(), side: AxisSide::Max });
+                }
+            }
+            None
+        };
+        let axis = |lo_val: f32,
+                    hi_val: f32,
+                    pane_lo: f32,
+                    pane_hi: f32,
+                    edges: &dyn Fn(&Rect) -> (f32, f32)|
+         -> AxisAnchoring {
+            let anchor = |t: EdgeRef| EdgeAnchor { target: t, offset: 0.0 };
+            match (
+                infer_edge(lo_val, pane_lo, pane_hi, edges),
+                infer_edge(hi_val, pane_lo, pane_hi, edges),
+            ) {
+                (Some(lo), Some(hi)) => AxisAnchoring::Both { lo: anchor(lo), hi: anchor(hi) },
+                (Some(lo), None) => AxisAnchoring::Lo(anchor(lo)),
+                (None, Some(hi)) => AxisAnchoring::Hi(anchor(hi)),
+                (None, None) => AxisAnchoring::Free,
+            }
+        };
+        let anchors = WindowAnchors {
+            x: axis(rect.min.x, rect.max.x, pane.min.x, pane.max.x, &|r: &Rect| {
+                (r.min.x, r.max.x)
+            }),
+            y: axis(rect.min.y, rect.max.y, pane.min.y, pane.max.y, &|r: &Rect| {
+                (r.min.y, r.max.y)
+            }),
+        };
+        if anchors.is_free() {
+            self.window_anchors.remove(key);
+        } else {
+            tracing::info!("anchor zone-entry {:?} in {:?}: {:?}", key, zone, anchors);
+            self.window_anchors.insert(key.clone(), anchors);
+        }
+    }
+
     /// `.anchorinfer` — one-shot, explicit opt-in (never automatic, so old
     /// layouts load unchanged): synthesize anchors for FREE axes whose
     /// edges already sit flush (±1.5px) against a pane edge or a sibling

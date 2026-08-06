@@ -544,6 +544,12 @@ impl VellumGuiApp {
                 entry[1] = below + 4.0;
                 entry[3] = entry[3].clamp(40.0, 600.0);
             }
+            // Arriving in a shell zone auto-anchors by CONTACT (owner
+            // spec): every edge that lands touching the pane or a
+            // same-zone sibling anchors to it; edges touching nothing
+            // stay free. (The drop path re-runs this after it writes the
+            // final drop position.)
+            self.apply_zone_entry_anchor_inference(&key, zone);
             self.layout_dirty = true;
         }
     }
@@ -603,8 +609,11 @@ impl VellumGuiApp {
         };
         if placed.is_finite() {
             self.main_window_rects
-                .insert(tab_key, Self::rect_to_snapshot(placed));
+                .insert(tab_key.clone(), Self::rect_to_snapshot(placed));
         }
+        // Re-run contact inference against the FINAL drop position (the
+        // entry pass in set_tab_zone saw the pre-drop stack placement).
+        self.apply_zone_entry_anchor_inference(&tab_key, target_zone);
         self.layout_dirty = true;
     }
 
