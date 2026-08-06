@@ -1482,6 +1482,12 @@ impl VellumGuiApp {
     /// window name, so the caller passes it separately.
     fn forget_tab_state(&mut self, key: &TabKey, window_name: &str) {
         Self::drop_tab_from_groups(&mut self.tab_groups, key);
+        // BEFORE dropping this window's own state: strip sibling anchors
+        // referencing it from other windows (their resolved rects commit
+        // first, using this window's still-present rect — nothing
+        // teleports). A hidden window keeps its anchors; only true
+        // deletion lands here.
+        self.prune_sibling_refs_to(key);
         self.hidden_tabs.remove(key);
         self.main_window_rects.remove(key);
         self.window_anchors.remove(key);
@@ -6034,6 +6040,7 @@ impl VellumGuiApp {
                 }
             }
             A::ListLayouts => self.list_layout_checkpoints(),
+            A::AnchorInfer => self.anchor_infer(),
             A::ResizeLayout(None) => {
                 // The GUI tracks the canvas automatically (per-frame anchor
                 // rescale), so bare `.resize` keeps only its FILL intent:

@@ -462,6 +462,12 @@ impl VellumGuiApp {
     fn set_tab_zone_single(&mut self, key: TabKey, zone: GuiShellZone) {
         let current = self.zone_for_tab(&key);
         if current != zone {
+            // Anchors are pane-scoped: moving zones releases this window's
+            // own anchors (commit-on-detach inside) and strips siblings'
+            // refs to it — clearing matches the user's intent better than
+            // leaving danglers pointed across zones.
+            self.release_window_anchors(&key, current);
+            self.prune_sibling_refs_to(&key);
             self.tab_zones.insert(key.clone(), zone);
             if let Some(target_height) = self.target_docked_height(zone) {
                 // Header/footer: append after the zone's right-most window
@@ -1200,7 +1206,8 @@ impl VellumGuiApp {
         // others push) and everything springs back when the zone closes,
         // because `main_window_rects` itself is never touched.
         let center_displays: HashMap<TabKey, Rect> = if zone == GuiShellZone::Center {
-            let mut infos: Vec<super::dock::CenterWindowInfo> = Vec::new();
+            let mut solve_inputs: Vec<super::window_manager::ZoneSolveInput> = Vec::new();
+            let mut meta: Vec<(TabKey, Vec2, bool)> = Vec::new();
             for tab in &tabs {
                 let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
                     continue;
@@ -1228,22 +1235,56 @@ impl VellumGuiApp {
                     // already lives inside the current bounds.
                     continue;
                 };
-                // P-A1: anchored edges resolve against the live pane BEFORE
-                // the displacement pass — this is what makes a dock follow
-                // splitter drags, zone toggles and OS resizes. The store is
-                // never written; free windows pass through untouched.
-                let stored =
-                    self.resolved_window_rect(&tab.id.key, stored, window_bounds, min_size);
                 let is_main = tab.id.key == TabKey::TextMain
                     || group.is_some_and(|g| g.members.contains(&TabKey::TextMain));
-                infos.push(super::dock::CenterWindowInfo {
+                solve_inputs.push(super::window_manager::ZoneSolveInput {
                     key: tab.id.key.clone(),
-                    stored,
+                    free: stored,
+                    min_size,
+                });
+                meta.push((tab.id.key.clone(), min_size, is_main));
+            }
+            // P-A: anchored edges resolve against the live pane BEFORE the
+            // displacement pass — this is what makes a dock follow splitter
+            // drags, zone toggles and OS resizes. One batch per zone so
+            // sibling anchors resolve against their target's SOLVED rect
+            // (toposort inside). The store is never written; free windows
+            // pass through untouched.
+            let solved = self.solve_zone_anchor_rects(&solve_inputs, window_bounds);
+            let infos: Vec<super::dock::CenterWindowInfo> = meta
+                .into_iter()
+                .zip(&solve_inputs)
+                .map(|((key, min_size, is_main), input)| super::dock::CenterWindowInfo {
+                    stored: solved.get(&key).copied().unwrap_or(input.free),
+                    key,
                     min_size,
                     is_main,
-                });
-            }
+                })
+                .collect();
             Self::compute_center_display_rects(&infos, window_bounds)
+        } else {
+            HashMap::new()
+        };
+
+        // Non-center zones feed the solved rects directly (no displacement
+        // pass there); the same one-batch-per-zone rule applies.
+        let zone_solved: HashMap<TabKey, Rect> = if zone != GuiShellZone::Center {
+            let inputs: Vec<super::window_manager::ZoneSolveInput> = tabs
+                .iter()
+                .filter_map(|tab| {
+                    let free = self
+                        .main_window_rects
+                        .get(&tab.id.key)
+                        .copied()
+                        .and_then(Self::rect_from_snapshot)?;
+                    Some(super::window_manager::ZoneSolveInput {
+                        key: tab.id.key.clone(),
+                        free,
+                        min_size: Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT),
+                    })
+                })
+                .collect();
+            self.solve_zone_anchor_rects(&inputs, window_bounds)
         } else {
             HashMap::new()
         };
@@ -1279,12 +1320,7 @@ impl VellumGuiApp {
                             .copied()
                             .and_then(Self::rect_from_snapshot)
                             .map(|rect| {
-                                self.resolved_window_rect(
-                                    &tab.id.key,
-                                    rect,
-                                    window_bounds,
-                                    Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT),
-                                )
+                                zone_solved.get(&tab.id.key).copied().unwrap_or(rect)
                             })
                             .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
                             .or_else(|| {
@@ -1377,14 +1413,7 @@ impl VellumGuiApp {
                     .get(&tab.id.key)
                     .copied()
                     .and_then(Self::rect_from_snapshot)
-                    .map(|rect| {
-                        self.resolved_window_rect(
-                            &tab.id.key,
-                            rect,
-                            window_bounds,
-                            min_window_size,
-                        )
-                    })
+                    .map(|rect| zone_solved.get(&tab.id.key).copied().unwrap_or(rect))
                     .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
                     .unwrap_or(fallback_rect)
             };

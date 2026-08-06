@@ -112,6 +112,11 @@ pub fn handle_ui_action(
         UiAction::SaveSkin(_) => {
             gui_only(app_core, "Saving a skin from the current appearance (.saveskin)")
         }
+        UiAction::AnchorInfer => {
+            // Snap anchors are pixel-geometry docking; the TUI cell grid
+            // has no equivalent.
+            gui_only(app_core, "Inferring snap anchors (.anchorinfer)")
+        }
         UiAction::Reconnect => {
             // The runtime loop owns the network channels; flag it and let
             // the next tick do the actual reconnect.

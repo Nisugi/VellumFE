@@ -1200,6 +1200,7 @@ fn dispatch_ui_action(
         | A::LoadLayout { .. }
         | A::ListLayouts
         | A::ResizeLayout(_)
+        | A::AnchorInfer
         | A::SaveSkin(_)
         | A::PackEditor
         | A::Zone { .. }

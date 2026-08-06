@@ -172,6 +172,11 @@ pub enum UiAction {
     /// window positions/sizes rescaled into the current window — touching
     /// nothing else (no defs, visibility, z-order, skin, or OS geometry).
     ResizeLayout(Option<String>),
+    /// `.anchorinfer` (GUI only) — one-shot opt-in: synthesize snap
+    /// anchors for windows whose edges already sit flush (±1.5px) against
+    /// a pane edge or a sibling edge, and report what was anchored.
+    /// Deliberately never automatic: old layouts must load unchanged.
+    AnchorInfer,
     SaveSkin(String),
     UiExport(Vec<String>),
     UiImport(Vec<String>),
@@ -363,6 +368,7 @@ impl UiAction {
             },
             "layout:list" => UiAction::ListLayouts,
             "layout:resize" => UiAction::ResizeLayout(None),
+            "anchorinfer" => UiAction::AnchorInfer,
             "uiexport" => UiAction::UiExport(Vec::new()),
             "uiimport" => UiAction::UiImport(Vec::new()),
             "packeditor" => UiAction::PackEditor,
@@ -446,6 +452,7 @@ impl std::fmt::Display for UiAction {
             UiAction::ResizeLayout(Some(name)) => {
                 write!(f, "action:layout:resize:{name}")
             }
+            UiAction::AnchorInfer => write!(f, "action:anchorinfer"),
             UiAction::SaveSkin(name) => write!(f, "action:saveskin:{name}"),
             UiAction::UiExport(args) if args.is_empty() => write!(f, "action:uiexport"),
             UiAction::UiExport(args) => write!(f, "action:uiexport:{}", args.join(" ")),
@@ -561,6 +568,7 @@ mod tests {
             UiAction::ListLayouts,
             UiAction::ResizeLayout(None),
             UiAction::ResizeLayout(Some("mine".into())),
+            UiAction::AnchorInfer,
             UiAction::SaveSkin("mine".into()),
             UiAction::UiExport(Vec::new()),
             UiAction::UiExport(vec!["mypack".into(), "highlights".into()]),

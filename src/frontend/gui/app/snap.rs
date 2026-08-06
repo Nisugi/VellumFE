@@ -76,10 +76,9 @@ pub(super) struct SnapGuide {
     pub edge: &'static str,
     /// Sibling window title, when the target is a sibling.
     pub target: Option<String>,
-    /// Anchor target this snap promotes to on release (P-A1: pane edges
-    /// and the pane center). None = not promotable — grid lines have no
-    /// referent that later re-solves, and sibling promotion waits for the
-    /// P-A2 sibling solver.
+    /// Anchor target this snap promotes to on release: pane edges, the
+    /// pane center, and sibling edges. None = not promotable — grid lines
+    /// have no referent that later re-solves.
     pub promote: Option<EdgeRef>,
 }
 
@@ -244,10 +243,10 @@ fn snap_1d(
     best.map(|(_, snap)| snap)
 }
 
-fn axis_candidates(
+fn axis_candidates<'a>(
     bounds_lo: f32,
     bounds_hi: f32,
-    siblings: impl Iterator<Item = (usize, f32, f32)>,
+    siblings: impl Iterator<Item = (usize, &'a TabKey, f32, f32)>,
     params: &SnapParams,
 ) -> Vec<AxisCandidate> {
     let mut candidates = Vec::new();
@@ -274,21 +273,21 @@ fn axis_candidates(
         });
     }
     if params.to_siblings {
-        // Sibling snaps stay visual-only until the P-A2 sibling solver:
-        // no promote payload, so a release on one clears rather than
-        // creates anchors.
-        for (index, lo, hi) in siblings {
+        // P-A2: sibling snaps promote to sibling anchors — "my edge =
+        // that window's edge". The candidate at the sibling's min edge
+        // anchors to Side::Min, its max edge to Side::Max.
+        for (index, key, lo, hi) in siblings {
             candidates.push(AxisCandidate {
                 value: lo,
                 kind: SnapGuideKind::Sibling,
                 target: Some(index),
-                promote: None,
+                promote: Some(EdgeRef::Sibling { key: key.clone(), side: AxisSide::Min }),
             });
             candidates.push(AxisCandidate {
                 value: hi,
                 kind: SnapGuideKind::Sibling,
                 target: Some(index),
-                promote: None,
+                promote: Some(EdgeRef::Sibling { key: key.clone(), side: AxisSide::Max }),
             });
         }
     }
@@ -306,7 +305,7 @@ pub(super) fn snap_rect(
     gesture_x: AxisGesture,
     gesture_y: AxisGesture,
     bounds: Rect,
-    siblings: &[(String, Rect)],
+    siblings: &[(TabKey, String, Rect)],
     min_size: Vec2,
     max_size: Vec2,
     params: &SnapParams,
@@ -320,7 +319,7 @@ pub(super) fn snap_rect(
         siblings
             .iter()
             .enumerate()
-            .map(|(index, (_, sibling))| (index, sibling.min.x, sibling.max.x)),
+            .map(|(index, (key, _, sibling))| (index, key, sibling.min.x, sibling.max.x)),
         params,
     );
     if let Some(snap) = snap_1d(
@@ -347,7 +346,7 @@ pub(super) fn snap_rect(
             line: snap.line,
             kind: snap.kind,
             edge: snap.edge,
-            target: snap.target.map(|index| siblings[index].0.clone()),
+            target: snap.target.map(|index| siblings[index].1.clone()),
             promote: snap.promote,
         });
     }
@@ -358,7 +357,7 @@ pub(super) fn snap_rect(
         siblings
             .iter()
             .enumerate()
-            .map(|(index, (_, sibling))| (index, sibling.min.y, sibling.max.y)),
+            .map(|(index, (key, _, sibling))| (index, key, sibling.min.y, sibling.max.y)),
         params,
     );
     if let Some(snap) = snap_1d(
@@ -385,7 +384,7 @@ pub(super) fn snap_rect(
             line: snap.line,
             kind: snap.kind,
             edge: snap.edge,
-            target: snap.target.map(|index| siblings[index].0.clone()),
+            target: snap.target.map(|index| siblings[index].1.clone()),
             promote: snap.promote,
         });
     }
@@ -552,10 +551,10 @@ impl VellumGuiApp {
                 grid: settings.snap_grid.max(0.0),
                 move_sizes_to_grid: settings.snap_move_sizes_to_grid,
             };
-            let sibling_rects: Vec<(String, Rect)> = siblings
+            let sibling_rects: Vec<(TabKey, String, Rect)> = siblings
                 .iter()
                 .filter(|(key, _, _)| key != tab_key)
-                .map(|(_, name, rect)| (name.clone(), *rect))
+                .cloned()
                 .collect();
             snap_rect(
                 reported,
@@ -718,6 +717,10 @@ mod tests {
         Rect::from_min_max(Pos2::new(x0, y0), Pos2::new(x1, y1))
     }
 
+    fn sib(name: &str, r: Rect) -> (TabKey, String, Rect) {
+        (TabKey::TextByName { id: name.to_string() }, name.to_string(), r)
+    }
+
     const MIN: Vec2 = Vec2::new(120.0, 90.0);
     const MAX: Vec2 = Vec2::new(10_000.0, 10_000.0);
     const BOUNDS: Rect = Rect {
@@ -736,7 +739,7 @@ mod tests {
 
     #[test]
     fn move_butts_left_edge_against_sibling_right_edge() {
-        let siblings = vec![("room".to_string(), rect(100.0, 100.0, 305.5, 300.0))];
+        let siblings = vec![sib("room", rect(100.0, 100.0, 305.5, 300.0))];
         let unsnapped = rect(310.0, 500.0, 470.0, 600.0);
         let (snapped, guides) = snap_rect(
             unsnapped,
@@ -761,7 +764,7 @@ mod tests {
     fn move_aligns_top_edges_flush() {
         // The far-edge case the feature exists for: tops 3px apart snap to
         // the same value.
-        let siblings = vec![("targets".to_string(), rect(600.0, 197.0, 800.0, 400.0))];
+        let siblings = vec![sib("targets", rect(600.0, 197.0, 800.0, 400.0))];
         let unsnapped = rect(100.0, 200.0, 300.0, 350.0);
         let (snapped, guides) = snap_rect(
             unsnapped,
@@ -801,7 +804,7 @@ mod tests {
     fn illegal_near_candidate_does_not_shadow_a_legal_one() {
         // Sibling edge 3px away would shrink the window below min width;
         // the pane bound 6px away is legal and must win instead.
-        let siblings = vec![("a".to_string(), rect(0.0, 0.0, 385.0, 300.0))];
+        let siblings = vec![sib("a", rect(0.0, 0.0, 385.0, 300.0))];
         let bounds = rect(0.0, 0.0, 394.0, 800.0);
         let unsnapped = rect(266.0, 400.0, 388.0, 500.0);
         let (snapped, guides) = snap_rect(
@@ -820,7 +823,7 @@ mod tests {
 
     #[test]
     fn resize_snap_rejected_when_below_min_size() {
-        let siblings = vec![("a".to_string(), rect(0.0, 0.0, 385.0, 300.0))];
+        let siblings = vec![sib("a", rect(0.0, 0.0, 385.0, 300.0))];
         let unsnapped = rect(266.0, 400.0, 389.0, 500.0);
         let (snapped, guides) = snap_rect(
             unsnapped,
@@ -894,7 +897,7 @@ mod tests {
         // A sibling whose center-x is 2px from the moving window's left
         // edge: v1 snapped to it (and flapped between it and real edges);
         // v2 has no sibling-center candidates at all.
-        let siblings = vec![("a".to_string(), rect(200.0, 700.0, 424.0, 780.0))];
+        let siblings = vec![sib("a", rect(200.0, 700.0, 424.0, 780.0))];
         let unsnapped = rect(310.0, 100.0, 460.0, 200.0);
         let (snapped, guides) = snap_rect(
             unsnapped,
@@ -1118,8 +1121,8 @@ mod tests {
     #[test]
     fn closest_candidate_wins() {
         let siblings = vec![
-            ("far".to_string(), rect(100.0, 0.0, 303.0, 50.0)),
-            ("near".to_string(), rect(306.0, 0.0, 500.0, 50.0)),
+            sib("far", rect(100.0, 0.0, 303.0, 50.0)),
+            sib("near", rect(306.0, 0.0, 500.0, 50.0)),
         ];
         let unsnapped = rect(305.0, 400.0, 455.0, 500.0);
         let (snapped, _) = snap_rect(
