@@ -6696,12 +6696,11 @@ impl eframe::App for VellumGuiApp {
                     }
                     ui.separator();
 
-                    // One "Zones" menu: each row is a show/hide button (click
-                    // closes the menu) plus an Overlay checkbox (click keeps
-                    // it open so several zones can be flipped in one visit).
-                    // CloseOnClickOutside: the default CloseOnClick shut the
-                    // menu on the checkbox too; the show/hide buttons close
-                    // explicitly via ui.close().
+                    // One "Zones" menu: each row is a show/hide button plus
+                    // an Overlay checkbox. NOTHING inside closes the menu
+                    // (owner ask: adjust several zones in one visit and
+                    // watch them take effect); only clicking outside does —
+                    // hence CloseOnClickOutside with no ui.close() calls.
                     egui::containers::menu::MenuButton::new("Zones")
                         .config(
                             egui::containers::menu::MenuConfig::new()
@@ -6741,7 +6740,6 @@ impl eframe::App for VellumGuiApp {
                                         GuiShellZone::Center => {}
                                     }
                                     app.layout_dirty = true;
-                                    ui.close();
                                 }
                                 let mut overlay = app.shell_layout.zone_mode(zone)
                                     == zones::ZoneDisplayMode::Overlay;
