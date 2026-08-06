@@ -51,6 +51,22 @@ pub(super) struct MainWindowRectSnapshot {
     /// before it ignore the unknown field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) anchors: Option<WindowAnchors>,
+    /// Size role (P-A2/P-A3): `Fixed` exempts this window's width/height
+    /// from every proportional rescale (OS resize, zoom, pane squeeze) —
+    /// HUD widgets like the compass keep their size while their position
+    /// still tracks. Absent = Proportional (legacy-compatible).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) size_role: Option<SizeRole>,
+}
+
+/// How a window's SIZE responds to proportional rescales; position always
+/// scales. Persisted per window beside its anchors.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum SizeRole {
+    #[default]
+    Proportional,
+    Fixed,
 }
 
 /// One Center-zone window's inputs to [`VellumGuiApp::compute_center_display_rects`].
@@ -73,6 +89,7 @@ pub(super) struct RestoredLayoutState {
     pub(super) hidden_tabs: HashSet<TabKey>,
     pub(super) main_window_rects: HashMap<TabKey, [f32; 4]>,
     pub(super) window_anchors: HashMap<TabKey, WindowAnchors>,
+    pub(super) window_size_roles: HashMap<TabKey, SizeRole>,
     pub(super) sidebar_gap_above: HashMap<TabKey, f32>,
     /// Sidebars already converted to free-placement rects; the others bake
     /// their legacy gap stack on first render (`bake_sidebar_stack`).
@@ -170,6 +187,20 @@ impl VellumGuiApp {
                     .filter_map(|entry| {
                         let anchors = entry.anchors.clone()?;
                         (!anchors.is_free()).then(|| (entry.key.clone(), anchors))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let window_size_roles: HashMap<TabKey, SizeRole> = snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .main_window_rects
+                    .iter()
+                    .filter(|entry| available_tabs.contains_key(&entry.key))
+                    .filter_map(|entry| {
+                        let role = entry.size_role?;
+                        (role == SizeRole::Fixed).then(|| (entry.key.clone(), role))
                     })
                     .collect()
             })
@@ -272,6 +303,7 @@ impl VellumGuiApp {
             hidden_tabs,
             main_window_rects,
             window_anchors,
+            window_size_roles,
             sidebar_gap_above,
             migrated_sidebar_zones,
             tab_zones,
@@ -380,6 +412,82 @@ impl VellumGuiApp {
         true
     }
 
+    /// Zone- and role-aware store rescale (P-A3 + the zoom-drift fix).
+    /// Center windows scale fully proportionally as before. Sidebar
+    /// windows keep their width and FOLLOW their owning edge (left: fixed
+    /// x; right: translated by the width delta) — the pane they live in
+    /// has a user-set fixed width, so scaling their x against the whole
+    /// canvas made them drift inside the pane on zoom (Niffy's Ctrl+/-
+    /// find). Header/footer windows mirror that on the y axis. A `Fixed`
+    /// size role additionally exempts width/height on the proportional
+    /// axes. Every rule is affine per axis with zone-constant parameters,
+    /// so chains still compose exactly and round-trip losslessly.
+    pub(super) fn rescale_main_window_rects_ruled(
+        rects: &mut HashMap<TabKey, [f32; 4]>,
+        from: Vec2,
+        to: Vec2,
+        mut rule_of: impl FnMut(&TabKey) -> (GuiShellZone, SizeRole),
+    ) -> bool {
+        if !from.is_finite() || !to.is_finite() || from.x <= 1.0 || from.y <= 1.0 {
+            return false;
+        }
+        let sx = to.x / from.x;
+        let sy = to.y / from.y;
+        if (sx - 1.0).abs() < 0.001 && (sy - 1.0).abs() < 0.001 {
+            return false;
+        }
+        for (key, rect) in rects.iter_mut() {
+            let (zone, role) = rule_of(key);
+            let fixed = role == SizeRole::Fixed;
+            let (x, w) = match zone {
+                GuiShellZone::LeftSidebar => (rect[0], rect[2]),
+                GuiShellZone::RightSidebar => (rect[0] + (to.x - from.x), rect[2]),
+                _ => (rect[0] * sx, if fixed { rect[2] } else { rect[2] * sx }),
+            };
+            let (y, h) = match zone {
+                GuiShellZone::Header => (rect[1], rect[3]),
+                GuiShellZone::Footer => (rect[1] + (to.y - from.y), rect[3]),
+                _ => (rect[1] * sy, if fixed { rect[3] } else { rect[3] * sy }),
+            };
+            *rect = [x, y, w, h];
+        }
+        true
+    }
+
+    /// P-A3 proportional resolve: map a stored (base-pane space) rect into
+    /// the current center pane. Identity when `pane == base`, so with no
+    /// reserved zone open nothing moves; a reserved zone opening compresses
+    /// only the affected axis. Pure and exactly invertible —
+    /// [`Self::unmap_center_rect`] is the inverse used when a display-space
+    /// gesture rect is written back into the store.
+    pub(super) fn map_center_rect(stored: Rect, base: Rect, pane: Rect, fixed: bool) -> Rect {
+        if !stored.is_finite()
+            || !base.is_finite()
+            || !pane.is_finite()
+            || base.width() <= 1.0
+            || base.height() <= 1.0
+            || pane.width() <= 1.0
+            || pane.height() <= 1.0
+        {
+            return stored;
+        }
+        let sx = pane.width() / base.width();
+        let sy = pane.height() / base.height();
+        let x = pane.min.x + (stored.min.x - base.min.x) * sx;
+        let y = pane.min.y + (stored.min.y - base.min.y) * sy;
+        let (w, h) = if fixed {
+            (stored.width(), stored.height())
+        } else {
+            (stored.width() * sx, stored.height() * sy)
+        };
+        Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h))
+    }
+
+    /// Exact inverse of [`Self::map_center_rect`] (base and pane swap).
+    pub(super) fn unmap_center_rect(display: Rect, base: Rect, pane: Rect, fixed: bool) -> Rect {
+        Self::map_center_rect(display, pane, base, fixed)
+    }
+
     /// The store mutation for a queued layout rescale: a pure proportional
     /// rescale from the reference canvas to the live content size. The store
     /// deliberately holds UNCLAMPED values — min sizes and bounds are applied
@@ -417,6 +525,20 @@ impl VellumGuiApp {
         rects: &mut HashMap<TabKey, [f32; 4]>,
         content: Rect,
     ) -> bool {
+        Self::track_canvas_anchor_ruled(anchor, rects, content, |_| {
+            (GuiShellZone::Center, SizeRole::Proportional)
+        })
+    }
+
+    /// [`Self::track_canvas_anchor`] with per-window zone/role rules (the
+    /// live shell passes real rules; the plain variant above keeps the
+    /// all-proportional behavior for adopt paths and tests).
+    pub(super) fn track_canvas_anchor_ruled(
+        anchor: &mut Option<Vec2>,
+        rects: &mut HashMap<TabKey, [f32; 4]>,
+        content: Rect,
+        rule_of: impl FnMut(&TabKey) -> (GuiShellZone, SizeRole),
+    ) -> bool {
         let content_size = Vec2::new(content.width().max(1.0), content.height().max(1.0));
         if content_size.x <= 1.0 || content_size.y <= 1.0 {
             return false;
@@ -427,7 +549,7 @@ impl VellumGuiApp {
                 false
             }
             Some(from) => {
-                if Self::apply_layout_rescale(rects, from, content) {
+                if Self::rescale_main_window_rects_ruled(rects, from, content_size, rule_of) {
                     *anchor = Some(content_size);
                     true
                 } else {
@@ -917,6 +1039,79 @@ mod tests {
     }
 
     #[test]
+    fn ruled_rescale_sidebars_follow_their_edge_and_keep_width() {
+        // The zoom-drift fix: a right-sidebar window translates with the
+        // right edge (width delta), never scales x; left stays put. Fixed
+        // windows keep w/h on proportional axes. Round trip is exact.
+        let mut rects: HashMap<TabKey, [f32; 4]> = HashMap::new();
+        rects.insert(TabKey::Vitals, [1700.0, 100.0, 280.0, 200.0]); // right bar
+        rects.insert(TabKey::Targets, [10.0, 400.0, 280.0, 200.0]); // left bar
+        rects.insert(TabKey::TextMain, [500.0, 100.0, 800.0, 600.0]); // center
+        rects.insert(TabKey::Compass, [900.0, 700.0, 120.0, 120.0]); // center FIXED
+        let original = rects.clone();
+        let rule = |key: &TabKey| match key {
+            TabKey::Vitals => (GuiShellZone::RightSidebar, SizeRole::Proportional),
+            TabKey::Targets => (GuiShellZone::LeftSidebar, SizeRole::Proportional),
+            TabKey::Compass => (GuiShellZone::Center, SizeRole::Fixed),
+            _ => (GuiShellZone::Center, SizeRole::Proportional),
+        };
+        let from = Vec2::new(2000.0, 1000.0);
+        let to = Vec2::new(2600.0, 1400.0);
+        assert!(VellumGuiApp::rescale_main_window_rects_ruled(&mut rects, from, to, rule));
+
+        let right = rects[&TabKey::Vitals];
+        assert_eq!(right[0], 1700.0 + 600.0, "follows the right edge");
+        assert_eq!(right[2], 280.0, "sidebar width never scales");
+        assert!((right[1] - 100.0 * 1.4).abs() < 0.01, "y still proportional");
+        let left = rects[&TabKey::Targets];
+        assert_eq!(left[0], 10.0, "left sidebar x pinned");
+        assert_eq!(left[2], 280.0);
+        let fixed = rects[&TabKey::Compass];
+        assert_eq!((fixed[2], fixed[3]), (120.0, 120.0), "Fixed keeps size");
+        assert!((fixed[0] - 900.0 * 1.3).abs() < 0.01, "Fixed position scales");
+
+        // Exact round trip back to the original canvas.
+        assert!(VellumGuiApp::rescale_main_window_rects_ruled(&mut rects, to, from, rule));
+        for (key, rect) in &original {
+            for i in 0..4 {
+                assert!(
+                    (rects[key][i] - rect[i]).abs() < 0.01,
+                    "{key:?}[{i}] {} vs {}",
+                    rects[key][i],
+                    rect[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn center_map_identity_compression_and_exact_inverse() {
+        let base = Rect::from_min_max(Pos2::new(0.0, 30.0), Pos2::new(2000.0, 1000.0));
+        let stored = Rect::from_min_max(Pos2::new(1600.0, 100.0), Pos2::new(1900.0, 500.0));
+        // No reserved zones: pane == base → identity.
+        assert_eq!(
+            VellumGuiApp::map_center_rect(stored, base, base, false),
+            stored
+        );
+        // A 300px right sidebar reserves space: x compresses, y untouched.
+        let pane = Rect::from_min_max(Pos2::new(0.0, 30.0), Pos2::new(1700.0, 1000.0));
+        let mapped = VellumGuiApp::map_center_rect(stored, base, pane, false);
+        assert!(mapped.max.x <= pane.max.x + 0.01, "stays inside the pane");
+        assert!((mapped.min.y - stored.min.y).abs() < 0.01, "y identity");
+        assert!(mapped.width() < stored.width(), "x compressed");
+        // Exact inverse: unmap(map(r)) == r.
+        let back = VellumGuiApp::unmap_center_rect(mapped, base, pane, false);
+        assert!((back.min.x - stored.min.x).abs() < 0.01);
+        assert!((back.width() - stored.width()).abs() < 0.01);
+        // Fixed keeps size through the map AND the inverse.
+        let mapped_fixed = VellumGuiApp::map_center_rect(stored, base, pane, true);
+        assert_eq!(mapped_fixed.width(), stored.width());
+        let back_fixed = VellumGuiApp::unmap_center_rect(mapped_fixed, base, pane, true);
+        assert!((back_fixed.min.x - stored.min.x).abs() < 0.01);
+        assert_eq!(back_fixed.width(), stored.width());
+    }
+
+    #[test]
     fn canvas_anchor_ignores_degenerate_content_and_survives_minimize() {
         let mut rects = HashMap::new();
         rects.insert(TabKey::Vitals, [100.0, 100.0, 400.0, 300.0]);
@@ -1093,6 +1288,7 @@ mod tests {
                 rect: [250.0, 300.0, 400.0, 220.0],
                 gap_above: 0.0,
                 anchors: None,
+                size_role: None,
             }],
             tab_zones: Vec::new(),
             no_title_tabs: Vec::new(),
@@ -1424,6 +1620,7 @@ mod tests {
             rect: [10.0, 20.0, 300.0, 200.0],
             gap_above: 0.0,
             anchors: None,
+            size_role: None,
         };
         let value = serde_json::to_value(&snapshot).unwrap();
         let mut keys: Vec<&str> = value
@@ -1464,6 +1661,7 @@ mod tests {
             rect: [10.0, 10.0, 200.0, 200.0],
             gap_above: 0.0,
             anchors,
+            size_role: None,
         };
         let snapshot = DockStateSnapshot {
             main_window_rects: vec![
@@ -1507,6 +1705,7 @@ mod tests {
                 x: AxisAnchoring::Hi(EdgeAnchor::pane(AxisSide::Max)),
                 y: AxisAnchoring::Free,
             }),
+            size_role: None,
         };
         let json = serde_json::to_string(&snapshot).unwrap();
         let back: MainWindowRectSnapshot = serde_json::from_str(&json).unwrap();

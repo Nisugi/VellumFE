@@ -308,6 +308,10 @@ pub struct VellumGuiApp {
     /// are free. Solved against the live pane rect every frame at display
     /// time — the solver never writes `main_window_rects`.
     window_anchors: HashMap<TabKey, window_manager::WindowAnchors>,
+    /// Per-window size role (P-A3): `Fixed` windows keep their width and
+    /// height through every proportional rescale. Persisted beside the
+    /// anchors on each rect snapshot entry.
+    window_size_roles: HashMap<TabKey, dock::SizeRole>,
     /// Each zone's pane rect as of its last render pass; the anchor space
     /// for commit-on-detach when anchors are released outside a frame's
     /// solve (context menu).
@@ -725,6 +729,7 @@ impl VellumGuiApp {
             hidden_tabs,
             main_window_rects,
             window_anchors,
+            window_size_roles,
             sidebar_gap_above,
             migrated_sidebar_zones,
             tab_zones,
@@ -817,6 +822,7 @@ impl VellumGuiApp {
             hidden_tabs,
             main_window_rects,
             window_anchors,
+            window_size_roles,
             last_zone_pane_rects: HashMap::new(),
             sidebar_gap_above,
             migrated_sidebar_zones,
@@ -2791,6 +2797,11 @@ impl VellumGuiApp {
                             .get(key)
                             .filter(|anchors| !anchors.is_free())
                             .cloned(),
+                        size_role: self
+                            .window_size_roles
+                            .get(key)
+                            .copied()
+                            .filter(|role| *role == dock::SizeRole::Fixed),
                     })
                     .collect();
                 rects.sort_by_key(|entry| entry.key.short_id());
@@ -6502,10 +6513,21 @@ impl eframe::App for VellumGuiApp {
         // alone so the real geometry is still the reference on restore.
         {
             let content = ctx.input(|input| input.content_rect());
-            if Self::track_canvas_anchor(
+            // Zone/role rules: sidebar windows follow their owning edge
+            // with fixed width, header/footer mirror on y, Fixed windows
+            // keep their size (Niffy's zoom-drift fix; P-A3).
+            let tab_zones = &self.tab_zones;
+            let size_roles = &self.window_size_roles;
+            if Self::track_canvas_anchor_ruled(
                 &mut self.canonical_canvas,
                 &mut self.main_window_rects,
                 content,
+                |key| {
+                    (
+                        tab_zones.get(key).copied().unwrap_or(GuiShellZone::Center),
+                        size_roles.get(key).copied().unwrap_or_default(),
+                    )
+                },
             ) {
                 self.layout_dirty = true;
             }
