@@ -4296,7 +4296,12 @@ impl VellumGuiApp {
     /// in the fallback bottom panel). Render paths are `&self`, so buffer
     /// edits and key events are stashed as a `CommandInputEcho` in egui
     /// temp data and drained once per frame by the app update loop.
-    pub(super) fn render_command_input_widget(ui: &mut egui::Ui, seed: &str, drag_gutter: bool) {
+    pub(super) fn render_command_input_widget(
+        ui: &mut egui::Ui,
+        seed: &str,
+        completion: Option<&str>,
+        drag_gutter: bool,
+    ) {
         // Copy/Cut priority: when a game-window buffer selection is active, that
         // selection owns the clipboard, not this (often focused-but-unselected)
         // input. The focused TextEdit would otherwise consume the Copy event
@@ -4322,15 +4327,25 @@ impl VellumGuiApp {
         if pad > 0.0 {
             ui.add_space(pad);
         }
+        let edit_id = egui::Id::new(COMMAND_INPUT_EDIT_ID);
+        let end = seed.chars().count();
+        let completion_requested = completion.is_some()
+            && ui.memory(|memory| memory.focused() == Some(edit_id))
+            && egui::TextEdit::load_state(ui.ctx(), edit_id)
+                .and_then(|state| state.cursor.char_range())
+                .is_some_and(|range| {
+                    range.primary.index.0 == end && range.secondary.index.0 == end
+                })
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
         let edit = |ui: &mut egui::Ui, text: &mut String| {
-            ui.add(
-                egui::TextEdit::singleline(text)
-                    .id(egui::Id::new(COMMAND_INPUT_EDIT_ID))
-                    .hint_text("Enter command...")
-                    .desired_width(ui.available_width()),
-            )
+            egui::TextEdit::singleline(text)
+                .id(edit_id)
+                .hint_text("Enter command...")
+                .desired_width(ui.available_width())
+                .lock_focus(true)
+                .show(ui)
         };
-        let response = if drag_gutter {
+        let output = if drag_gutter {
             // Title bar hidden: the TextEdit owns every drag in the body,
             // so this grip is the window's only drag surface. It is
             // hover-only on purpose — drags on it fall through to the
@@ -4357,6 +4372,7 @@ impl VellumGuiApp {
         } else {
             edit(ui, &mut text)
         };
+        let response = &output.response;
         // Which keys drive submit/history/clear-line comes from the keybind
         // config (stashed each frame by stash_command_input_keys), so rebinding
         // works; the defaults Enter/↑/↓ are always included there too.
@@ -4377,7 +4393,11 @@ impl VellumGuiApp {
         }
         // History browsing + clear-line. consume_key keeps these keys from
         // reaching anything else while the input has focus.
+        let cursor_at_end = output.cursor_range.is_some_and(|range| {
+            range.primary.index.0 == end && range.secondary.index.0 == end
+        });
         if response.has_focus() {
+            let accept_completion = completion_requested && text == seed && cursor_at_end;
             let up = keys
                 .history_prev
                 .iter()
@@ -4390,13 +4410,32 @@ impl VellumGuiApp {
                 .clear_line
                 .iter()
                 .any(|(k, m)| ui.input_mut(|i| i.consume_key(*m, *k)));
-            if clear {
+            if accept_completion {
+                text.push_str(completion.unwrap_or_default());
+                echo.text = Some(text.clone());
+                echo.completion_accepted = true;
+            } else if clear {
                 text.clear();
                 echo.text = Some(String::new());
             } else if up {
                 echo.history_prev = true;
             } else if down {
                 echo.history_next = true;
+            }
+        }
+        if text == seed && cursor_at_end {
+            if let (Some(suffix_text), Some(range)) = (completion, output.cursor_range) {
+                let font_id = egui::TextStyle::Body.resolve(ui.style());
+                let suffix = ui.painter().layout_no_wrap(
+                    suffix_text.to_string(),
+                    font_id,
+                    ui.visuals().weak_text_color(),
+                );
+                let cursor = output.galley.pos_from_cursor(range.primary);
+                let pos = output.galley_pos + cursor.min.to_vec2();
+                ui.painter()
+                    .with_clip_rect(output.text_clip_rect)
+                    .galley(pos, suffix, ui.visuals().weak_text_color());
             }
         }
         if text != seed {
@@ -5425,6 +5464,7 @@ impl VellumGuiApp {
                 Self::render_command_input_widget(
                     ui,
                     settings.command_input_seed.as_deref().unwrap_or(""),
+                    settings.command_input_completion.as_deref(),
                     settings.command_input_drag_gutter,
                 );
                 None
@@ -5968,7 +6008,6 @@ mod tests {
         assert!(!VellumGuiApp::active_buffer_selection_present(&ctx));
     }
 }
-
 
 
 

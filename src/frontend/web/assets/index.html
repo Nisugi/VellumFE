@@ -95,8 +95,11 @@
         <div class="vital" id="v-spirit"><div class="vital-fill"></div><span class="vital-label">SP</span></div>
       </div>
       <form id="input-row" autocomplete="off">
-        <input id="cmd-input" type="text" autocomplete="off" autocapitalize="off"
-               autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="command&hellip;">
+        <div id="cmd-input-shell">
+          <div id="cmd-suggestion" aria-hidden="true" hidden><span id="cmd-suggestion-prefix"></span><span id="cmd-suggestion-suffix"></span></div>
+          <input id="cmd-input" type="text" autocomplete="off" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="command&hellip;">
+        </div>
         <button id="repeat-btn" type="button" aria-label="Repeat last command (hold for history)"
                 title="Repeat last command (hold for history)">&#8635;</button>
         <button id="cmd-send" type="submit" aria-label="Send">&#10148;</button>

@@ -6261,6 +6261,7 @@ dependencies = [
  "tracing-subscriber",
  "tts",
  "tui-textarea",
+ "unicode-segmentation",
  "ureq",
  "windows 0.58.0",
  "zip",

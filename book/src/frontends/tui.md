@@ -12,6 +12,13 @@ are laid out on a character grid via
 keyboard-driven with mouse support for links, scrolling, selection, and
 window dragging.
 
+As you type in the command input, the newest command-history entry with
+the same prefix appears as muted text beginning at the cursor. Press `Tab`
+to accept it. When no suggestion or dot-command completion is available,
+`Tab` keeps its normal switch-window behavior; Up/Down still browse the full
+history. The suggestion uses the theme's `text_secondary` color by default;
+set `completion_color` on the command-input window to override it.
+
 ## Terminal Recommendations
 
 - Use a terminal with 24-bit color (Windows Terminal, kitty, alacritty,

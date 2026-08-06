@@ -272,6 +272,16 @@ impl VellumGuiApp {
                 .filter(|menu| menu.tab_key == key);
             let hosts_popup_menus = self.popup_menu_host.as_ref() == Some(&key);
             let render_settings = self.widget_render_settings(&tab.id.key);
+            let command_completion_end = (key == TabKey::CommandInput
+                && render_settings.command_input_completion.is_some())
+                .then(|| {
+                    render_settings
+                        .command_input_seed
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .count()
+                });
             let app_core = &self.app_core;
             let out = ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
                 let mut out = DetachedFrameOutput::default();
@@ -283,6 +293,7 @@ impl VellumGuiApp {
                     menu.as_ref(),
                     hosts_popup_menus,
                     suppress_macro_dispatch,
+                    command_completion_end,
                     &mut out,
                 );
                 out
@@ -373,13 +384,20 @@ impl VellumGuiApp {
         menu: Option<&DetachedMenuState>,
         hosts_popup_menus: bool,
         suppress_macro_dispatch: bool,
+        command_completion_end: Option<usize>,
         out: &mut DetachedFrameOutput,
     ) {
         let ctx = ui.ctx().clone();
 
         // Keybinds first, mirroring handle_global_input's ordering: consumed
         // keys must not reach widgets or the command-line forwarding below.
-        Self::forward_detached_input(&ctx, app_core, suppress_macro_dispatch, out);
+        Self::forward_detached_input(
+            &ctx,
+            app_core,
+            suppress_macro_dispatch,
+            command_completion_end,
+            out,
+        );
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.push_id(&tab.id.key, |ui| {
@@ -459,11 +477,22 @@ impl VellumGuiApp {
         ctx: &egui::Context,
         app_core: &AppCore,
         suppress_macro_dispatch: bool,
+        command_completion_end: Option<usize>,
         out: &mut DetachedFrameOutput,
     ) {
         let key_presses = Self::collect_pressed_key_events(ctx);
         let mut consumed_keyboard_input = false;
         for key_press in key_presses {
+            // The detached command-input TextEdit owns plain Tab when it can
+            // accept a visible history suggestion, matching the root window.
+            if key_press.key_event.code == crate::data::input::KeyCode::Tab
+                && key_press.key_event.modifiers == crate::data::input::KeyModifiers::NONE
+                && command_completion_end
+                    .is_some_and(|end| Self::command_completion_cursor_ready(ctx, end))
+            {
+                continue;
+            }
+
             let target = Self::resolve_global_dispatch_target(
                 key_press.key_event,
                 &app_core.keybind_map,

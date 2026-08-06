@@ -1,5 +1,21 @@
 use std::collections::VecDeque;
 
+/// Return the suffix of the newest history entry that extends `input`.
+/// Exact matches are skipped because they have nothing to complete.
+pub fn find_history_completion(input: &str, history: &VecDeque<String>) -> Option<String> {
+    if input.is_empty() {
+        return None;
+    }
+    history
+        .iter()
+        .find_map(|command| {
+            command
+                .strip_prefix(input)
+                .filter(|suffix| !suffix.is_empty())
+        })
+        .map(str::to_string)
+}
+
 #[derive(Clone, Debug)]
 struct CommandInputSnapshot {
     text: String,
@@ -341,6 +357,31 @@ impl CommandInputModel {
         self.history.get(1).cloned()
     }
 
+    /// The untyped suffix of the newest command beginning with the current
+    /// input. Suggestions are only valid at the end of the input.
+    pub fn history_completion(&self) -> Option<String> {
+        if self.has_selection() || self.cursor_pos != self.text.chars().count() {
+            return None;
+        }
+        find_history_completion(&self.text, &self.history)
+    }
+
+    /// Accept the current history completion, if any.
+    pub fn accept_history_completion(&mut self) -> bool {
+        let Some(suffix) = self.history_completion() else {
+            return false;
+        };
+        self.push_undo_snapshot();
+        self.text.push_str(&suffix);
+        self.cursor_pos = self.text.chars().count();
+        self.history_index = None;
+        self.is_user_typed = true;
+        self.clear_selection();
+        self.reset_completion();
+        self.redo_stack.clear();
+        true
+    }
+
     pub fn history_previous(&mut self) {
         if self.history.is_empty() {
             return;
@@ -629,6 +670,55 @@ mod tests {
         model.insert_text(".window m");
         model.try_complete(&commands, &windows);
         assert_eq!(model.text(), ".window main");
+    }
+
+    #[test]
+    fn history_completion_uses_newest_extending_match() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("prepare 101");
+        model.record_external_command("prepare 102");
+        model.insert_text("prep");
+
+        assert_eq!(model.history_completion().as_deref(), Some("are 102"));
+        assert!(model.accept_history_completion());
+        assert_eq!(model.text(), "prepare 102");
+    }
+
+    #[test]
+    fn history_completion_skips_exact_match_and_requires_cursor_at_end() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("look north");
+        model.record_external_command("look");
+        model.insert_text("look");
+
+        assert_eq!(model.history_completion().as_deref(), Some(" north"));
+        model.move_cursor_left(false);
+        assert_eq!(model.history_completion(), None);
+        assert!(!model.accept_history_completion());
+    }
+
+    #[test]
+    fn history_completion_is_hidden_for_a_selection_ending_at_the_cursor() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("look north");
+        model.insert_text("look");
+        model.move_cursor_home(false);
+        model.move_cursor_end(true);
+
+        assert!(model.has_selection());
+        assert_eq!(model.history_completion(), None);
+    }
+
+    #[test]
+    fn accepted_history_completion_is_undoable() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("café table");
+        model.insert_text("café");
+
+        assert!(model.accept_history_completion());
+        assert_eq!(model.text(), "café table");
+        assert!(model.undo());
+        assert_eq!(model.text(), "café");
     }
 
     #[test]
