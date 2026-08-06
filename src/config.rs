@@ -49,7 +49,8 @@ pub use hotbars::{
     HotbarStyle, HotbarsConfig, IconMode,
 };
 pub use keybinds::{
-    parse_key_string, touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds,
+    keyboard_dead_action_reason, parse_key_string, reserved_combo_conflict,
+    touch_wheel_action_catalog, validate_wheel_spans, AppKeybinds,
     ControllerBindKey, KeyAction, KeyBindAction, MacroAction, MenuKeybindField, MenuKeybinds,
     RumbleConfig, RumblePattern, TuningConfig, WheelMeta, WheelSlice, WheelSpanIssue,
     CONTROLLER_BUTTON_ORDER, TOUCH_WHEEL_CLIENT_ACTIONS, WHEEL_MIN_SPAN_DEG,

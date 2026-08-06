@@ -170,6 +170,22 @@ pub(super) struct CommandInputKeys {
     pub history_prev: Vec<egui::Key>,
     pub history_next: Vec<egui::Key>,
     pub clear_line: Vec<(egui::Key, egui::Modifiers)>,
+    // Editing actions: bound combos are consumed BEFORE the TextEdit sees
+    // them and applied manually (config beats egui built-ins for bound
+    // keys). Each op also accepts its combo + Shift as the selection-
+    // extending variant, mirroring the TUI.
+    pub cursor_left: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_right: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_word_left: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_word_right: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_home: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_end: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_backspace: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_delete: Vec<(egui::Key, egui::Modifiers)>,
+    pub cursor_delete_word: Vec<(egui::Key, egui::Modifiers)>,
+    pub select_all: Vec<(egui::Key, egui::Modifiers)>,
+    pub copy: Vec<(egui::Key, egui::Modifiers)>,
+    pub paste: Vec<(egui::Key, egui::Modifiers)>,
 }
 
 impl CommandInputKeys {
@@ -214,6 +230,8 @@ impl GuiWindowActions {
 enum AppShortcut {
     Quit,
     StartSearch,
+    NextSearchMatch,
+    PrevSearchMatch,
     CloseWindow,
 }
 
@@ -267,6 +285,12 @@ pub struct VellumGuiApp {
     history_pos: Option<usize>,
     /// The in-progress text stashed when browsing starts.
     history_draft: String,
+    /// Dot-command / window-name completion for the input bar (same engine
+    /// the TUI model uses; Tab advances it before the history ghost).
+    input_completion: crate::frontend::common::CompletionState,
+    /// The text our last completion/ghost-accept produced — any divergence
+    /// means the user edited and the candidate set is stale.
+    input_completion_text: String,
     close_requested: bool,
     detached_tabs: HashMap<TabKey, DetachedWindowState>,
     /// Map Explorer native window (separate OS viewport).
@@ -761,6 +785,8 @@ impl VellumGuiApp {
             command_history,
             history_pos: None,
             history_draft: String::new(),
+            input_completion: crate::frontend::common::CompletionState::new(),
+            input_completion_text: String::new(),
             close_requested: false,
             detached_tabs,
             map_explorer: Default::default(),
@@ -4056,15 +4082,31 @@ impl VellumGuiApp {
         let mut consumed_keyboard_input = false;
 
         for key_press in key_presses {
-            // A focused command input with a history completion owns plain
-            // Tab. Leave the event unconsumed so its TextEdit can accept the
-            // suggestion later this frame; otherwise normal Tab keybind
-            // dispatch (switch_current_window by default) remains unchanged.
+            // Plain Tab in a focused command input, mirroring the TUI's rule:
+            //
+            // - Dot input: dot-command / window-name completion advances
+            //   first (classic candidate cycling); once it has nothing new,
+            //   Tab accepts the history ghost. `.la` Tab Tab → ".launch" →
+            //   ".launch nisugi". Handled inline here (needs &mut self), and
+            //   the key is consumed so the TextEdit doesn't insert a tab.
+            // - Plain input with a visible ghost: leave the event unconsumed
+            //   so the TextEdit accepts the suggestion later this frame.
+            // - Otherwise: normal Tab keybind dispatch (switch window).
             if key_press.key_event.code == crate::data::input::KeyCode::Tab
                 && key_press.key_event.modifiers == crate::data::input::KeyModifiers::NONE
-                && self.command_completion_ready(ctx)
             {
-                continue;
+                if self.command_input.starts_with('.')
+                    && Self::command_completion_cursor_ready(
+                        ctx,
+                        self.command_input.chars().count(),
+                    )
+                {
+                    if self.advance_input_completion(ctx) {
+                        continue;
+                    }
+                } else if self.command_completion_ready(ctx) {
+                    continue;
+                }
             }
 
             // Esc cancels an active .go2 trip from anywhere in the GUI. Gated
@@ -4413,6 +4455,14 @@ impl VellumGuiApp {
         if Self::binding_matches_key_event(&app_keybinds.start_search, key_event) {
             return Some(AppShortcut::StartSearch);
         }
+        // The [app] section's own match-step fields (the [user] action
+        // versions route separately via GuiCommandAction).
+        if Self::binding_matches_key_event(&app_keybinds.next_search_match, key_event) {
+            return Some(AppShortcut::NextSearchMatch);
+        }
+        if Self::binding_matches_key_event(&app_keybinds.prev_search_match, key_event) {
+            return Some(AppShortcut::PrevSearchMatch);
+        }
         if Self::binding_matches_key_event(&app_keybinds.close_window, key_event) {
             return Some(AppShortcut::CloseWindow);
         }
@@ -4442,7 +4492,7 @@ impl VellumGuiApp {
     ) {
         match target {
             GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action, ctx),
-            GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut),
+            GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut, ctx),
             GlobalDispatchTarget::GuiCommandAction(name) => {
                 self.try_gui_command_action(&name, ctx);
             }
@@ -4457,7 +4507,12 @@ impl VellumGuiApp {
         let KeyBindAction::Action(name) = action else {
             return false;
         };
-        let scroll_id = "main";
+        // Scroll the CORE-focused window (same one switch_current_window
+        // cycles and search steps through) — not a hardcoded "main". Only
+        // text windows register scroll state; others make this a no-op,
+        // matching the TUI.
+        let focused = self.app_core.get_focused_window_name();
+        let scroll_id: &str = if focused.is_empty() { "main" } else { &focused };
         let view_h: f32 = ctx
             .data_mut(|d| d.get_temp(egui::Id::new(("text_scroll_view_h", scroll_id))))
             .unwrap_or(400.0);
@@ -4518,12 +4573,14 @@ impl VellumGuiApp {
         }
     }
 
-    fn execute_app_shortcut(&mut self, shortcut: AppShortcut) {
+    fn execute_app_shortcut(&mut self, shortcut: AppShortcut, ctx: &egui::Context) {
         match shortcut {
             AppShortcut::Quit => {
                 self.app_core.quit();
                 self.close_requested = true;
             }
+            AppShortcut::NextSearchMatch => self.step_search_match(true, ctx),
+            AppShortcut::PrevSearchMatch => self.step_search_match(false, ctx),
             AppShortcut::StartSearch => {
                 self.app_core.start_search_mode();
                 self.search_bar_needs_focus = true;
@@ -4753,7 +4810,7 @@ impl VellumGuiApp {
             submit: vec![egui::Key::Enter],
             history_prev: vec![egui::Key::ArrowUp],
             history_next: vec![egui::Key::ArrowDown],
-            clear_line: Vec::new(),
+            ..Default::default()
         };
         for (event, action) in &self.app_core.keybind_map {
             let KeyBindAction::Action(name) = action else {
@@ -4774,6 +4831,18 @@ impl VellumGuiApp {
                     keys.history_next.push(key)
                 }
                 "cursor_clear_line" => keys.clear_line.push((key, modifiers)),
+                "cursor_left" => keys.cursor_left.push((key, modifiers)),
+                "cursor_right" => keys.cursor_right.push((key, modifiers)),
+                "cursor_word_left" => keys.cursor_word_left.push((key, modifiers)),
+                "cursor_word_right" => keys.cursor_word_right.push((key, modifiers)),
+                "cursor_home" => keys.cursor_home.push((key, modifiers)),
+                "cursor_end" => keys.cursor_end.push((key, modifiers)),
+                "cursor_backspace" => keys.cursor_backspace.push((key, modifiers)),
+                "cursor_delete" => keys.cursor_delete.push((key, modifiers)),
+                "cursor_delete_word" => keys.cursor_delete_word.push((key, modifiers)),
+                "select_all" => keys.select_all.push((key, modifiers)),
+                "copy" => keys.copy.push((key, modifiers)),
+                "paste" => keys.paste.push((key, modifiers)),
                 _ => {}
             }
         }
@@ -4964,6 +5033,50 @@ impl VellumGuiApp {
                 .collect();
             let _ = std::fs::write(path, joined);
         }
+    }
+
+    /// Plain Tab on dot input (focused, cursor at end): advance dot-command /
+    /// window-name completion, falling back to accepting the history ghost
+    /// once completion has nothing new. Returns true when Tab did something
+    /// (and was consumed); false lets keybind dispatch handle it.
+    fn advance_input_completion(&mut self, ctx: &egui::Context) -> bool {
+        // Any text change since our last completion output invalidates the
+        // candidate set (typing, history nav, submit).
+        if self.command_input != self.input_completion_text {
+            self.input_completion.reset();
+        }
+
+        let commands = self.app_core.get_available_commands();
+        let window_names = self.app_core.get_window_names();
+        if let Some(new_text) =
+            self.input_completion
+                .advance(&self.command_input, &commands, &window_names)
+        {
+            ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+            self.command_input = new_text.clone();
+            self.input_completion_text = new_text;
+            self.command_cursor_to_end(ctx);
+            return true;
+        }
+
+        // Completion settled — accept the ghost, if the feature is on and a
+        // suggestion exists.
+        if !self.app_core.config.ui.history_suggestions {
+            return false;
+        }
+        let Some(suffix) = crate::frontend::common::find_history_completion(
+            &self.command_input,
+            &self.command_history,
+        ) else {
+            return false;
+        };
+        ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+        self.command_input.push_str(&suffix);
+        self.input_completion_text = self.command_input.clone();
+        self.history_pos = None;
+        self.history_draft.clear();
+        self.command_cursor_to_end(ctx);
+        true
     }
 
     fn command_completion_ready(&self, ctx: &egui::Context) -> bool {

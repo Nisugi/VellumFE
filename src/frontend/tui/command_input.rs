@@ -224,6 +224,10 @@ impl CommandInput {
         self.model.delete_word_forward();
     }
 
+    pub fn delete_forward(&mut self) {
+        self.model.delete_forward();
+    }
+
     /// Parse color string (hex or named) using centralized parser
     fn parse_color(&self, color_str: &str) -> Option<Color> {
         super::colors::parse_color_to_ratatui(color_str)
