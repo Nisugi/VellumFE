@@ -219,14 +219,7 @@ impl Layout {
         tracing::warn!(
             "No layout found, using embedded default (this should have been extracted!)"
         );
-        let mut layout: Layout =
-            toml::from_str(LAYOUT_DEFAULT).context("Failed to parse embedded default layout")?;
-        // Consistency with the file-load paths (which run this in
-        // load_from_file); the embedded default carries no broken window,
-        // so this is defensive.
-        Self::heal_spells_text_windows(&mut layout);
-
-        Ok((layout, Some("layout".to_string())))
+        Ok((Self::embedded_default_layout()?, Some("layout".to_string())))
     }
 
     /// Scale all windows proportionally to fit new terminal size
@@ -467,6 +460,52 @@ impl Layout {
         changed
     }
 
+    /// The layout a truly fresh install starts from. MUST apply the same
+    /// normalizations `load_from_file` applies — above all the binding
+    /// backfill: an unbound embedded `room`/`inv`/… window gets duplicated
+    /// by the game's first declaration (found live: two Room rows + a
+    /// GUI widget-id clash on a wiped profile, and later loads couldn't heal it
+    /// because the discovery-created duplicate owned the binding).
+    pub(crate) fn embedded_default_layout() -> Result<Layout> {
+        let mut layout: Layout =
+            toml::from_str(LAYOUT_DEFAULT).context("Failed to parse embedded default layout")?;
+        Self::heal_spells_text_windows(&mut layout);
+        Self::backfill_bindings(&mut layout);
+        Ok(layout)
+    }
+
+    /// Drop hidden windows whose (name, widget_type) duplicates a SHOWN
+    /// window. Layouts written by builds where the embedded-default path
+    /// skipped `backfill_bindings` can carry an unbound shown window plus
+    /// a hidden discovery-created duplicate that owns the binding; the
+    /// duplicate name also collides GUI widget ids. Only the exact
+    /// pathology is healed — same name, same widget type, and the dropped
+    /// copy hidden — so hand-built layouts are never touched.
+    pub(crate) fn heal_duplicate_name_windows(layout: &mut Layout) -> usize {
+        use super::widgets::WindowVisibility;
+
+        let shown: std::collections::HashSet<(String, String)> = layout
+            .windows
+            .iter()
+            .filter(|w| w.base().visibility == WindowVisibility::Shown)
+            .map(|w| (w.name().to_string(), w.widget_type().to_string()))
+            .collect();
+        let before = layout.windows.len();
+        layout.windows.retain(|w| {
+            let keep = w.base().visibility == WindowVisibility::Shown
+                || !shown.contains(&(w.name().to_string(), w.widget_type().to_string()));
+            if !keep {
+                tracing::info!(
+                    "healed duplicate window '{}' ({}): dropped hidden copy shadowing a shown one",
+                    w.name(),
+                    w.widget_type()
+                );
+            }
+            keep
+        });
+        before - layout.windows.len()
+    }
+
     pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
         let contents =
             fs::read_to_string(path).context(format!("Failed to read layout file: {:?}", path))?;
@@ -487,6 +526,12 @@ impl Layout {
         // look broken. Only user-chosen colors should override the theme,
         // so the known shipped values normalize back to "unset".
         Self::normalize_legacy_border_colors(&mut layout);
+
+        // Heal duplicate-name windows created by the pre-backfill embedded
+        // default (an unbound shown window + a hidden discovery duplicate
+        // that grabbed the binding — the fresh-install "two Rooms" bug).
+        // Must run BEFORE backfill so the freed binding lands on the keeper.
+        Self::heal_duplicate_name_windows(&mut layout);
 
         // Redesign Phase 2: derive bindings for pre-binding windows so
         // binding-first identity (Phase 4) finds them. Idempotent; the
@@ -1521,5 +1566,63 @@ border_color = "#807f80"
             Some(B::Dialog("Buffs".into()))
         );
         assert_eq!(Layout::backfill_bindings(&mut reloaded), 0);
+    }
+
+    #[test]
+    fn embedded_default_layout_loads_with_bindings_backfilled() {
+        use crate::config::WindowBinding as B;
+        // The truly-fresh-install path (no layout file anywhere) must hand
+        // the session a fully backfilled layout, or the game's first
+        // `streamWindow 'room'` declaration finds no bound window and
+        // conjures a duplicate (the live "two Rooms on a wiped profile" bug).
+        let mut layout = Layout::embedded_default_layout().expect("embedded default parses");
+        let room = layout
+            .windows
+            .iter()
+            .find(|w| w.widget_type() == "room")
+            .expect("embedded default ships a room window");
+        assert_eq!(room.base().binding, Some(B::Stream("room".into())));
+        assert_eq!(
+            Layout::backfill_bindings(&mut layout),
+            0,
+            "embedded default must come out of the loader already backfilled"
+        );
+    }
+
+    #[test]
+    fn heal_drops_hidden_duplicate_so_backfill_rebinds_the_shown_survivor() {
+        use crate::config::WindowBinding as B;
+        use crate::config::widgets::WindowVisibility;
+        // The poisoned shape a pre-fix fresh install autosaved: a shown
+        // unbound room (from the embedded default) plus a hidden
+        // discovery-created duplicate that owns the binding.
+        let mut layout = Layout::parse_tolerant("windows = []", "test").unwrap();
+        layout.windows.push(template("room"));
+        let mut duplicate = template("room");
+        duplicate.base_mut().visibility = WindowVisibility::Hidden;
+        duplicate.base_mut().binding = Some(B::Stream("room".into()));
+        layout.windows.push(duplicate);
+
+        assert_eq!(Layout::heal_duplicate_name_windows(&mut layout), 1);
+        assert_eq!(layout.windows.len(), 1);
+        assert_eq!(
+            layout.windows[0].base().visibility,
+            WindowVisibility::Shown,
+            "the shown copy is the keeper"
+        );
+        Layout::backfill_bindings(&mut layout);
+        assert_eq!(
+            binding_of(&layout, 0),
+            Some(B::Stream("room".into())),
+            "the freed binding lands on the survivor"
+        );
+
+        // A hidden window with a unique name is never touched.
+        let mut untouched = Layout::parse_tolerant("windows = []", "test").unwrap();
+        let mut lone_hidden = template("thoughts");
+        lone_hidden.base_mut().visibility = WindowVisibility::Hidden;
+        untouched.windows.push(lone_hidden);
+        assert_eq!(Layout::heal_duplicate_name_windows(&mut untouched), 0);
+        assert_eq!(untouched.windows.len(), 1);
     }
 }

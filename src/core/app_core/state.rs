@@ -4749,7 +4749,7 @@ impl AppCore {
         // binding-tagged until the next load (backfill runs at load time),
         // so the game's own declaration would create a bound DUPLICATE
         // under the same name (fresh-profile live test: two 'Room' rows +
-        // an egui id clash). Backfill is idempotent and cheap — tag now
+        // a GUI widget-id clash). Backfill is idempotent and cheap — tag now
         // so has_window_bound_to adopts instead of duplicating.
         if crate::config::Layout::backfill_bindings(&mut self.layout) > 0 {
             self.mark_layout_modified();
