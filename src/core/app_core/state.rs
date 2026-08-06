@@ -4263,10 +4263,17 @@ impl AppCore {
             tracing::debug!("Using saved position for container '{}': ({}, {}) {}x{}", window_name, x, y, width, height);
             (x, y, width, height)
         } else {
-            let (w, h) = (40u16, 15u16);
-            let x = terminal_width.saturating_sub(w) / 2;
-            let y = terminal_height.saturating_sub(h) / 2;
-            (x, y, w, h)
+            // Redesign Phase 3e: one placement policy, honoring the
+            // declaration's own hints when the game sent any. (Container
+            // hints are keyed by container id; only the title reaches
+            // here, so containers ride the kind default until the id is
+            // plumbed through — the panels below DO consume hints.)
+            crate::core::placement::ephemeral_placement(
+                None,
+                (40, 15),
+                crate::core::placement::PlacementAnchor::Center,
+                (terminal_width, terminal_height),
+            )
         };
 
         let window = WindowState {
@@ -4317,16 +4324,25 @@ impl AppCore {
             return;
         }
 
-        // Panels are tall and narrow (combat is ~190x288 px → ~24x18 cells).
-        let (w, h) = (26u16, 20u16);
+        // Redesign Phase 3e: seed rect from the single placement policy —
+        // the dialog's own declaration hints (location/width/height from
+        // openDialog, captured as WindowHints) win over the tall-narrow
+        // kind default (26x20, right edge — combat is ~190x288 px).
+        let (hx, hy, w, h) = crate::core::placement::ephemeral_placement(
+            self.ui_state.window_hints.get(dialog_id).map(|v| v.as_slice()),
+            (26, 20),
+            crate::core::placement::PlacementAnchor::RightEdge,
+            (terminal_width, terminal_height),
+        );
+        // A saved per-id position still beats the hint (user geometry is
+        // always first in the placement precedence).
         let (x, y) = if let Some(saved) = self.saved_dialog_positions.dialogs.get(dialog_id) {
             (
                 saved.x.min(terminal_width.saturating_sub(w)),
                 saved.y.min(terminal_height.saturating_sub(h)),
             )
         } else {
-            // Default toward the right edge, the game's usual hint.
-            (terminal_width.saturating_sub(w + 1), 1)
+            (hx, hy)
         };
 
         let window = WindowState {

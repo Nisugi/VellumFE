@@ -110,6 +110,13 @@ pub struct UiState {
     /// deltas happened to arrive after the user opted in.
     pub dialog_store: HashMap<String, DialogState>,
 
+    /// Latest placement/persistence attributes a window-declaring tag
+    /// carried, per game id, raw (location/resident/save/width/height…) —
+    /// the parser's WindowHints. Ingested always, like the dialog store,
+    /// so placement can honor hints whenever the window materializes
+    /// (redesign Phase 3e).
+    pub window_hints: HashMap<String, Vec<(String, String)>>,
+
     /// Active injuries popup (viewing another player's injuries)
     pub injuries_popup: Option<InjuriesPopupState>,
 
@@ -1032,6 +1039,7 @@ impl UiState {
             active_quickbar_id: None,
             active_dialog: None,
             dialog_store: HashMap::new(),
+            window_hints: HashMap::new(),
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),

@@ -2128,6 +2128,12 @@ impl MessageProcessor {
                     tracing::error!("Failed to open browser: {}", e);
                 }
             }
+            ParsedElement::WindowHints { id, attrs } => {
+                // Always-ingest, like the dialog store: the latest
+                // declaration's placement attrs win, available whenever
+                // the window materializes (redesign Phase 3e).
+                ui_state.window_hints.insert(id.clone(), attrs.clone());
+            }
             _ => {
                 // Other elements handled elsewhere or not yet implemented
             }
