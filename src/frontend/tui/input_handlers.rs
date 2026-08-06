@@ -251,7 +251,9 @@ impl super::TuiFrontend {
                     crate::config::KeyBindAction::Action(s) if matches!(s.as_str(),
                         "cursor_left" | "cursor_right" | "cursor_word_left" | "cursor_word_right" |
                         "cursor_home" | "cursor_end" | "cursor_backspace" | "cursor_delete" |
-                        "previous_command" | "next_command"
+                        "cursor_delete_word" | "cursor_clear_line" |
+                        "previous_command" | "next_command" |
+                        "copy" | "paste" | "select_all"
                     )
                 );
 
@@ -409,18 +411,9 @@ impl super::TuiFrontend {
                     }
                     app_core.needs_render = true;
                 } else if is_command_input_action {
-                    let available_commands = app_core.get_available_commands();
-                    let available_window_names = app_core.get_window_names();
-                    use crate::frontend::tui::crossterm_bridge;
-                    let ct_code = crossterm_bridge::to_crossterm_keycode(code);
-                    let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
-                    self.command_input_key(
-                        "command_input",
-                        ct_code,
-                        ct_mods,
-                        &available_commands,
-                        &available_window_names,
-                    );
+                    if let crate::config::KeyBindAction::Action(name) = &action {
+                        self.apply_command_input_action("command_input", name, modifiers.shift);
+                    }
                     app_core.needs_render = true;
                 } else {
                     match app_core.execute_keybind_action(&action) {

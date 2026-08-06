@@ -12,6 +12,46 @@ impl TuiFrontend {
         }
     }
 
+    /// Dispatch a BOUND command-input editing action by NAME — never by
+    /// re-reading the raw key, so a rebind works no matter which physical
+    /// key fired it (the old path matched the raw key against hardcoded
+    /// arms and only worked when the binding coincided with them).
+    /// `extend` = shift was held (selection-extending cursor moves).
+    pub fn apply_command_input_action(&mut self, window_name: &str, action: &str, extend: bool) {
+        let Some(cmd_input) = self.widget_manager.command_inputs.get_mut(window_name) else {
+            return;
+        };
+        match action {
+            "cursor_left" => cmd_input.move_cursor_left(extend),
+            "cursor_right" => cmd_input.move_cursor_right(extend),
+            "cursor_word_left" => cmd_input.move_cursor_word_left(extend),
+            "cursor_word_right" => cmd_input.move_cursor_word_right(extend),
+            "cursor_home" => cmd_input.move_cursor_home(extend),
+            "cursor_end" => cmd_input.move_cursor_end(extend),
+            "cursor_backspace" => cmd_input.delete_char(),
+            // Honest semantics per the action labels: Delete = one char
+            // forward, Delete Word = the classic ctrl+w backward word.
+            "cursor_delete" => cmd_input.delete_forward(),
+            "cursor_delete_word" => cmd_input.delete_word_backward(),
+            "cursor_clear_line" => cmd_input.clear(),
+            "previous_command" => cmd_input.history_previous(),
+            "next_command" => cmd_input.history_next(),
+            "select_all" => cmd_input.select_all(),
+            "copy" => {
+                if let Some(selected) = cmd_input.get_selected_text() {
+                    if let Err(e) = crate::clipboard::copy(&selected) {
+                        tracing::warn!("Failed to copy to clipboard: {}", e);
+                    }
+                }
+            }
+            "paste" => match crate::clipboard::paste() {
+                Ok(text) => cmd_input.insert_text(&text),
+                Err(e) => tracing::warn!("Failed to paste from clipboard: {}", e),
+            },
+            _ => {}
+        }
+    }
+
     /// Handle keyboard input for command input widget
     pub fn command_input_key(
         &mut self,
@@ -75,7 +115,9 @@ impl TuiFrontend {
                     }
                 }
                 KeyCode::Backspace => cmd_input.delete_char(),
-                KeyCode::Delete => cmd_input.delete_word(), // Delete forward is delete word
+                // Standard Delete: one char forward (delete-word lives on
+                // the cursor_delete_word action / ctrl+w).
+                KeyCode::Delete => cmd_input.delete_forward(),
                 KeyCode::Left => {
                     let extend = modifiers.contains(KeyModifiers::SHIFT);
                     if modifiers.contains(KeyModifiers::CONTROL) {

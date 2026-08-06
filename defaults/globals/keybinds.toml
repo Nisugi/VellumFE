@@ -14,7 +14,8 @@
 #
 # Available actions:
 #   send_command, cursor_left, cursor_right, cursor_word_left, cursor_word_right,
-#   cursor_home, cursor_end, cursor_backspace, cursor_delete,
+#   cursor_home, cursor_end, cursor_backspace, cursor_delete, cursor_delete_word,
+#   cursor_clear_line, copy, paste, select_all,
 #   previous_command, next_command, send_last_command, send_second_last_command,
 #   switch_current_window, scroll_current_window_up_one, scroll_current_window_down_one,
 #   scroll_current_window_up_page, scroll_current_window_down_page,
@@ -97,7 +98,7 @@ tab = "switch_current_window"
 # Word movement
 "ctrl+left" = "cursor_word_left"
 "ctrl+right" = "cursor_word_right"
-"ctrl+w" = "cursor_delete"  # Delete word
+"ctrl+w" = "cursor_delete_word"  # Delete word backward
 
 # Command history shortcuts
 "ctrl+r" = "send_last_command"  # Repeat last command

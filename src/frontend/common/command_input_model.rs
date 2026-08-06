@@ -216,6 +216,24 @@ impl CommandInputModel {
         self.redo_stack.clear();
     }
 
+    /// Forward-delete one char at the cursor (the classic Delete key; the
+    /// `cursor_delete` action). Selection, if any, is deleted instead.
+    pub fn delete_forward(&mut self) {
+        if self.selection.is_some() {
+            self.delete_selection();
+            return;
+        }
+        if self.cursor_pos >= self.text.chars().count() {
+            return;
+        }
+        self.push_undo_snapshot();
+        let byte_idx = self.char_pos_to_byte_idx(self.cursor_pos);
+        self.text.remove(byte_idx);
+        self.reset_completion();
+        self.is_user_typed = true;
+        self.redo_stack.clear();
+    }
+
     pub fn delete_word_forward(&mut self) {
         if self.selection.is_some() {
             self.delete_selection();
