@@ -4456,18 +4456,14 @@ impl AppCore {
                 self.show_window(name, terminal_width, terminal_height);
                 return;
             }
-            // A template-less dialog-store entry (combat, befriend, ...) → a
-            // GENERIC dockable dialog panel rendered from the store by id.
-            if self.ui_state.dialog_store.contains_key(name) {
-                self.create_dialog_panel_window(name, name, terminal_width, terminal_height);
-                self.needs_render = true;
-                return;
-            }
             // A remembered binding from discovery memory
-            // (window_registry.toml) the game hasn't re-declared this
-            // session: conjure the bound window exactly as a live
-            // discovery would, then show it (redesign Phase 3 — the
-            // fresh-layout re-add path).
+            // (window_registry.toml): conjure the bound PERSISTENT window
+            // exactly as a live discovery would, then show it. This
+            // outranks the ephemeral dialog-store branch below — live-test
+            // finding (Nisugi, bank): delete + reshow used to fall to the
+            // store branch and produce a different, session-only
+            // `panel_<id>` window instead of the persistent bound one the
+            // first Show created.
             if let Some(entry) = self
                 .window_registry
                 .bindings
@@ -4501,6 +4497,14 @@ impl AppCore {
                     }
                     return;
                 }
+            }
+            // A dialog-store entry the registry does NOT remember (rare:
+            // discoveries record into the registry) → the legacy GENERIC
+            // ephemeral panel rendered from the store by id.
+            if self.ui_state.dialog_store.contains_key(name) {
+                self.create_dialog_panel_window(name, name, terminal_width, terminal_height);
+                self.needs_render = true;
+                return;
             }
             // A sighted registry container (window name is title-derived) →
             // remember the opt-in and open it.
