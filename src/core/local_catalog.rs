@@ -41,6 +41,24 @@ pub fn seed(key: &str) -> Option<WindowDef> {
     Config::get_window_template(key)
 }
 
+/// The blank "Custom window…" creation flows: (menu label, seed key).
+/// These are the `*_custom` seeds excluded from the catalog rows —
+/// creation flows, not windows.
+pub fn custom_seeds() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("Text", "text_custom"),
+        ("Tabbed text", "tabbedtext_custom"),
+        ("Progress bar", "progress_custom"),
+        ("Countdown", "countdown_custom"),
+        ("Entity list", "entity_custom"),
+        ("Active effects", "active_effects_custom"),
+    ]
+}
+
+/// The seed key for user-created custom text windows (`.addwindow`-class
+/// flows and the GUI custom-window editor).
+pub const CUSTOM_TEXT_SEED: &str = "text_custom";
+
 #[cfg(test)]
 mod tests {
     use super::*;

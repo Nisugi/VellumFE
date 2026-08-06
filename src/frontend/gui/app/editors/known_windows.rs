@@ -41,16 +41,8 @@ struct GroupView {
     leader: crate::frontend::gui::TabKey,
 }
 
-/// Blank custom widgets offered by "Custom window…", label → seed template
-/// (the `*_custom` templates excluded from the catalog rows).
-const CUSTOM_SEEDS: &[(&str, &str)] = &[
-    ("Text", "text_custom"),
-    ("Tabbed text", "tabbedtext_custom"),
-    ("Progress bar", "progress_custom"),
-    ("Countdown", "countdown_custom"),
-    ("Entity list", "entity_custom"),
-    ("Active effects", "active_effects_custom"),
-];
+// The "Custom window…" seeds live in the local-catalog seam (redesign
+// Phase 3d) so creation flows survive the template catalog's deletion.
 
 impl VellumGuiApp {
     pub(in super::super) fn open_known_windows_editor(&mut self) {
@@ -150,7 +142,7 @@ impl VellumGuiApp {
 
                 ui.horizontal(|ui| {
                     ui.menu_button("➕ Custom window…", |ui| {
-                        for (label, template) in CUSTOM_SEEDS {
+                        for (label, template) in crate::core::local_catalog::custom_seeds() {
                             if ui.button(*label).clicked() {
                                 add_template = Some((*template).to_string());
                                 ui.close();

@@ -21,8 +21,9 @@ use crate::data::WindowContent;
 use eframe::egui;
 use std::collections::BTreeMap;
 
-/// The template used to spawn a fresh, auto-named custom text window.
-const CUSTOM_TEXT_TEMPLATE: &str = "text_custom";
+/// The seed used to spawn a fresh, auto-named custom text window —
+/// owned by the local-catalog seam (redesign Phase 3d).
+const CUSTOM_TEXT_TEMPLATE: &str = crate::core::local_catalog::CUSTOM_TEXT_SEED;
 
 pub(in super::super) struct CustomWindowsEditorState {
     /// Draft for the "new window" row.
