@@ -961,13 +961,22 @@ impl Layout {
     }
 
     /// Remove window from layout if it matches the default template
-    /// (keeps layout file minimal by not saving unmodified windows)
+    /// (keeps layout file minimal by not saving unmodified windows).
+    ///
+    /// Redesign Phase 4: BOUND windows are always kept — binding is
+    /// identity, and minimizing one away would forget the feed's home
+    /// (benign file growth, accepted). In practice the derived-PartialEq
+    /// comparison already kept them (a binding differs from the unbound
+    /// template), so this guard states the invariant rather than relying
+    /// on a field-comparison side effect.
     pub fn remove_window_if_default(&mut self, name: &str) {
         if let Some(template) = Config::get_window_template(name) {
             self.windows.retain(|w| {
                 if w.name() == name {
-                    // Compare window to template - if identical, remove (return false to filter out)
-                    // If different, keep (return true)
+                    if w.base().binding.is_some() {
+                        return true;
+                    }
+                    // Identical to the template: drop; modified: keep.
                     w != &template
                 } else {
                     true

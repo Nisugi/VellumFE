@@ -1464,16 +1464,15 @@ impl MessageProcessor {
                     return;
                 }
 
-                // Map dialog ID to template name (they may differ, e.g., "expr" -> "gs4_experience")
-                let template_name = Config::dialog_id_to_template(id);
-
-                // If a widget template exists for this dialog, add it to layout
-                // instead of a popup. Queue the DIALOG ID (not the template
-                // name) so process_pending_window_additions can tag the created
-                // window with its binding — the U2 identity that ties the feed
-                // to the placed window regardless of its display name.
-                if Config::get_window_template(template_name).is_some() {
-                    tracing::debug!("DialogOpen redirected to widget: id={} -> template={}", id, template_name);
+                // A dialog id claimed by a dedicated catalog view becomes a
+                // layout widget instead of a popup (redesign Phase 4:
+                // claims_dialog is the single must-agree guard). Queue the
+                // DIALOG ID (not the view key) so
+                // process_pending_window_additions can tag the created
+                // window with its binding — the U2 identity that ties the
+                // feed to the placed window regardless of display name.
+                if crate::core::local_catalog::claims_dialog(id) {
+                    tracing::debug!("DialogOpen redirected to claimed widget: id={}", id);
                     if !ui_state.pending_window_additions.contains(id) {
                         ui_state.pending_window_additions.push(id.clone());
                     }
@@ -1563,12 +1562,13 @@ impl MessageProcessor {
             }
             ParsedElement::DialogPanelOpen { id, title, save } => {
                 self.chunk_has_silent_updates = true;
-                // Resident dialogs that already have a dedicated widget
+                // Resident dialogs claimed by a dedicated view
                 // (Buffs/Debuffs/Cooldowns/injuries/encum/expr/stance/...)
-                // are mined into those panels — don't offer them as generic
-                // dialog panels too. Only ids WITHOUT a template become
-                // dockable dialog panels (combat, befriend, ...).
-                if Config::id_has_widget_template(id) {
+                // are mined into those widgets — don't offer them as generic
+                // dialog panels too. Same single guard as the DialogOpen
+                // redirect (redesign Phase 4), so the two paths can never
+                // disagree.
+                if crate::core::local_catalog::claims_dialog(id) {
                     return;
                 }
                 // U3: record the resident dialog as a DialogPanel discovery

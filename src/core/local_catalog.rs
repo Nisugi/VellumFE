@@ -41,6 +41,24 @@ pub fn seed(key: &str) -> Option<WindowDef> {
     Config::get_window_template(key)
 }
 
+/// Whether a game dialog id is CLAIMED by a dedicated catalog view
+/// (minivitals, expr, encum, Buffs, injuries, …) rather than rendered
+/// as a generic dialog panel/popup.
+///
+/// Redesign Phase 4: THE single must-agree guard. The two game paths
+/// that previously asked separate functions — the DialogOpen
+/// widget-redirect and the DialogPanelOpen discovery-skip — both ask
+/// this one, so a deleted-then-reshown widget can never resurrect as a
+/// generic `panel_<id>` because the paths disagreed.
+pub fn claims_dialog(id: &str) -> bool {
+    crate::core::view_resolver::resolve_view(
+        &crate::config::WindowBinding::Dialog(id.to_string()),
+        None,
+    )
+    .dedicated_key()
+    .is_some()
+}
+
 /// The blank "Custom window…" creation flows: (menu label, seed key).
 /// These are the `*_custom` seeds excluded from the catalog rows —
 /// creation flows, not windows.

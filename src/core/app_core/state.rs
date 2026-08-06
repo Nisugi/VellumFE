@@ -4031,7 +4031,9 @@ impl AppCore {
         let pending: Vec<String> = self.ui_state.pending_window_additions.drain(..).collect();
 
         for dialog_id in pending {
-            let template_name = crate::config::Config::dialog_id_to_template(&dialog_id).to_string();
+            // The claimed view's seed key, via the resolver (Phase 4).
+            let template_name =
+                Self::seed_template_for(&WindowBinding::Dialog(dialog_id.clone()));
 
             // Already have a window bound to this feed? The game only ever
             // needs one home per feed to create — refresh flows to all bound
