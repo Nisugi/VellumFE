@@ -42,6 +42,16 @@ pub fn visible_by_category(
     Config::get_visible_templates_by_category(layout, shown)
 }
 
+/// Layout windows by category with the edit-picker's include-hidden
+/// reach; `visible_by_category` is the shown-only variant.
+pub fn layout_windows_by_category(
+    layout: &Layout,
+    exclude_essential: bool,
+    include_hidden: bool,
+) -> HashMap<WidgetCategory, Vec<String>> {
+    Config::get_layout_templates_by_category(layout, exclude_essential, include_hidden)
+}
+
 /// Seed a fresh `WindowDef` for a catalog key.
 pub fn seed(key: &str) -> Option<WindowDef> {
     Config::get_window_template(key)

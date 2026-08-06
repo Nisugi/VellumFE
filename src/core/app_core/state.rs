@@ -7086,7 +7086,7 @@ impl AppCore {
     pub fn build_edit_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         // include_hidden: hidden windows stay editable from the picker.
         let categories_map =
-            crate::config::Config::get_layout_templates_by_category(&self.layout, false, true);
+            crate::core::local_catalog::layout_windows_by_category(&self.layout, false, true);
 
         // Sort categories for consistent display
         let mut categories: Vec<_> = categories_map.into_iter().collect();
@@ -7111,7 +7111,7 @@ impl AppCore {
     ) -> Vec<crate::data::ui_state::PopupMenuItem> {
         // include_hidden: hidden windows stay editable from the picker.
         let categories_map =
-            crate::config::Config::get_layout_templates_by_category(&self.layout, false, true);
+            crate::core::local_catalog::layout_windows_by_category(&self.layout, false, true);
 
         if let Some(templates) = categories_map.get(category) {
             // Special handling for Status: Dashboard + Indicators submenu
@@ -7308,7 +7308,7 @@ mod tests {
         };
 
         let with_hidden =
-            crate::config::Config::get_layout_templates_by_category(&layout, false, true);
+            crate::core::local_catalog::layout_windows_by_category(&layout, false, true);
         assert!(with_hidden
             .get(&crate::config::WidgetCategory::Other)
             .is_some_and(|names| names.iter().any(|n| n == "spacer_1")));

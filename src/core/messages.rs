@@ -5259,7 +5259,7 @@ mod tests {
         assert!(
             ui_state.pending_window_discoveries.iter().any(|d| d.id == "UberBar"
                 && d.kind == crate::data::WindowDiscoveryKind::DialogPanel),
-            "no DialogPanel discovery queued for UberBar (is id_has_widget_template('UberBar') wrongly true? \
+            "no DialogPanel discovery queued for UberBar (is claims_dialog('UberBar') wrongly true? \
              discoveries: {:?})",
             ui_state
                 .pending_window_discoveries
