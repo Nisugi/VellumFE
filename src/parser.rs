@@ -876,6 +876,10 @@ impl XmlParser {
         const HINT_ATTRS: &[&str] = &[
             "location", "resident", "save", "scroll", "ifClosed", "appearance",
             "target", "width", "height", "x", "y", "noResize", "noDock",
+            // gswiki Wrayth-protocol page: streamWindow also carries a
+            // per-window timestamp toggle (wiki-attested; never appeared
+            // in the 11.4 GB log sweep).
+            "timestamp",
         ];
         let Some(id) = Self::extract_attribute(tag, "id")
             .or_else(|| Self::extract_attribute(tag, "name"))

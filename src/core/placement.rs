@@ -19,6 +19,9 @@
 pub enum PlacementAnchor {
     Center,
     RightEdge,
+    /// In the wire's location vocabulary per the gswiki protocol page
+    /// (not seen in the log sweep); no kind defaults to it.
+    LeftEdge,
 }
 
 /// Wrayth hint sizes are in PIXELS (combat declares ~190×288 for a
@@ -59,6 +62,7 @@ pub fn ephemeral_placement(
     let anchor = match hint(hints, "location") {
         Some("center") | Some("force-center") => PlacementAnchor::Center,
         Some("right") => PlacementAnchor::RightEdge,
+        Some("left") => PlacementAnchor::LeftEdge,
         _ => default_anchor,
     };
     let (x, y) = match anchor {
@@ -67,6 +71,7 @@ pub fn ephemeral_placement(
             term_h.saturating_sub(h) / 2,
         ),
         PlacementAnchor::RightEdge => (term_w.saturating_sub(w + 1), 1),
+        PlacementAnchor::LeftEdge => (1, 1),
     };
     (x, y, w, h)
 }
