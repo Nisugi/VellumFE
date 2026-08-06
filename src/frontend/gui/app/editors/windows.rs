@@ -802,6 +802,28 @@ impl VellumGuiApp {
         } else {
             Vec::new()
         };
+        // The full stream universe for the tabbed checklist: the persisted
+        // discovery registry (well-known + everything this character's
+        // sessions ever declared) plus streams seen this session, with the
+        // friendly title when one is known. Sorted by label.
+        let known_streams: Vec<(String, String)> = if state.tabs.is_some() {
+            let mut keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut list: Vec<(String, String)> = Vec::new();
+            for binding in &self.app_core.window_registry.bindings {
+                if binding.kind == "stream" && keys.insert(binding.id.to_ascii_lowercase()) {
+                    list.push((binding.id.clone(), binding.title.clone()));
+                }
+            }
+            for (id, label) in &seen_streams {
+                if keys.insert(id.to_ascii_lowercase()) {
+                    list.push((id.clone(), label.clone().unwrap_or_else(|| id.clone())));
+                }
+            }
+            list.sort_by(|a, b| a.1.to_ascii_lowercase().cmp(&b.1.to_ascii_lowercase()));
+            list
+        } else {
+            Vec::new()
+        };
         // Injury-doll windows launch the skin calibrator from here too; it
         // works against the *loaded* skin, so it needs saved doll base art
         // (same gate as the Settings > Appearance button).
@@ -1436,6 +1458,76 @@ impl VellumGuiApp {
                                 ui.end_row();
                             }
                         });
+                    // Known-stream activation list (owner ask): every stream
+                    // the client knows, one checkbox each. Ticking gives the
+                    // stream its own tab named after it; unticking removes it
+                    // from EVERY tab, and a tab left with no streams goes
+                    // away. The grid above stays for renaming, multi-stream
+                    // tabs, and ordering.
+                    if !known_streams.is_empty() {
+                        let mut toggled: Option<(String, String, bool)> = None;
+                        let active: std::collections::HashSet<String> = tabs
+                            .iter()
+                            .flat_map(|tab| tab.streams.split(','))
+                            .map(|s| s.trim().to_ascii_lowercase())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        ui.add_space(4.0);
+                        ui.strong("Known streams");
+                        ui.weak(
+                            "Tick to give a stream its own tab; untick to \
+                             remove it from every tab.",
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("window_editor_known_streams")
+                            .max_height(140.0)
+                            .show(ui, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    for (id, label) in &known_streams {
+                                        let mut on =
+                                            active.contains(&id.to_ascii_lowercase());
+                                        let text = if label.eq_ignore_ascii_case(id) {
+                                            label.clone()
+                                        } else {
+                                            format!("{label} ({id})")
+                                        };
+                                        if ui.checkbox(&mut on, text).changed() {
+                                            toggled =
+                                                Some((id.clone(), label.clone(), on));
+                                        }
+                                    }
+                                });
+                            });
+                        if let Some((id, label, on)) = toggled {
+                            if on {
+                                tabs.push(TabBuffer {
+                                    name: label,
+                                    streams: id,
+                                    ignore_activity: false,
+                                    show_timestamps: false,
+                                    original: None,
+                                });
+                            } else {
+                                let lower = id.to_ascii_lowercase();
+                                for tab in tabs.iter_mut() {
+                                    tab.streams = tab
+                                        .streams
+                                        .split(',')
+                                        .map(str::trim)
+                                        .filter(|s| {
+                                            !s.is_empty()
+                                                && s.to_ascii_lowercase() != lower
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                }
+                                tabs.retain(|tab| !tab.streams.trim().is_empty());
+                                if tabs.is_empty() {
+                                    tabs.push(TabBuffer::empty());
+                                }
+                            }
+                        }
+                    }
                     if ui.button("Add tab").clicked() {
                         tabs.push(TabBuffer::empty());
                     }
