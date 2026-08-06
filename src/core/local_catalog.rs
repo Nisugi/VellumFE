@@ -47,6 +47,17 @@ pub fn seed(key: &str) -> Option<WindowDef> {
     Config::get_window_template(key)
 }
 
+/// Some dialogs declare the WINDOW under one id and stream every
+/// control under another (wire-verified: openDialog id='espMasterDialog'
+/// title='ESP', all content under dialogData id='espMasterData'). The
+/// renderers consult this when the bound slot has no controls.
+pub fn dialog_content_alias(id: &str) -> Option<&'static str> {
+    match id {
+        "espMasterDialog" => Some("espMasterData"),
+        _ => None,
+    }
+}
+
 /// Whether a game dialog id is CLAIMED by a dedicated catalog view
 /// (minivitals, expr, encum, Buffs, injuries, …) rather than rendered
 /// as a generic dialog panel/popup.

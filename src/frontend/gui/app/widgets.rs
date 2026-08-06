@@ -2594,9 +2594,21 @@ impl VellumGuiApp {
         dialog_id: &str,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
-        let Some(dialog) = app_core.ui_state.dialog_store.get(dialog_id) else {
-            ui.weak("Waiting for the game to send this panel…");
-            return;
+        // Cross-id content pairs (ESP: window espMasterDialog, controls
+        // espMasterData): fall through to the alias slot when the bound
+        // slot has nothing to draw.
+        let store = &app_core.ui_state.dialog_store;
+        let primary = store.get(dialog_id);
+        let alias = crate::core::local_catalog::dialog_content_alias(dialog_id)
+            .and_then(|alias_id| store.get(alias_id));
+        let dialog = match (primary, alias) {
+            (Some(d), _) if d.positioned_controls().is_some() || !d.buttons.is_empty() => d,
+            (_, Some(d)) => d,
+            (Some(d), None) => d,
+            (None, None) => {
+                ui.weak("Waiting for the game to send this panel…");
+                return;
+            }
         };
         let queue = |cmd: String| {
             if !cmd.trim().is_empty() {
@@ -2643,7 +2655,14 @@ impl VellumGuiApp {
                                 _ => resp,
                             };
                             if resp.clicked() {
-                                queue(patched_command(ui, &b.command));
+                                if b.is_close {
+                                    // Wrayth's closeButton dismisses the
+                                    // hosting window; routed through the
+                                    // panel-command drain as a client verb.
+                                    queue(format!("__VELLUM_CLOSE_PANEL__{dialog_id}"));
+                                } else {
+                                    queue(patched_command(ui, &b.command));
+                                }
                             }
                         }
                     }

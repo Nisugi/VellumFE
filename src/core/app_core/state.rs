@@ -4650,21 +4650,39 @@ impl AppCore {
     /// re-sent hint can never clobber them. Generic views only: dedicated
     /// widgets (expr, minivitals, …) keep their curated sizes — the
     /// binding is the game's, the presentation is ours.
-    fn apply_declared_size_hint(&mut self, window_name: &str, game_id: &str) {
-        let Some(hints) = self.ui_state.window_hints.get(game_id) else {
-            return;
-        };
+    /// The declared (width, height) px for a game id from THIS session's
+    /// hints; components <= 1 are treated as unset.
+    fn declared_size_from_hints(&self, game_id: &str) -> Option<(f32, f32)> {
+        let hints = self.ui_state.window_hints.get(game_id)?;
         let dim = |name: &str| {
             hints
                 .iter()
                 .find(|(k, _)| k == name)
                 .and_then(|(_, v)| v.parse::<f32>().ok())
                 .filter(|v| *v > 1.0)
+                .unwrap_or(0.0)
         };
         let (w, h) = (dim("width"), dim("height"));
-        if w.is_none() && h.is_none() {
+        (w > 1.0 || h > 1.0).then_some((w, h))
+    }
+
+    fn apply_declared_size_hint(&mut self, window_name: &str, game_id: &str) {
+        // Session hints first; the cross-session registry memory second
+        // (a fresh session's conjure still gets the declared shape).
+        let declared = self.declared_size_from_hints(game_id).or_else(|| {
+            self.window_registry
+                .bindings
+                .iter()
+                .find(|b| b.id == game_id)
+                .and_then(|b| b.declared_size)
+        });
+        let Some((wpx, hpx)) = declared else {
             return;
-        }
+        };
+        let (w, h) = (
+            (wpx > 1.0).then_some(wpx),
+            (hpx > 1.0).then_some(hpx),
+        );
         let Some(def) = self
             .layout
             .windows
@@ -4720,6 +4738,11 @@ impl AppCore {
         };
         if self.window_registry.record(registry_kind, &d.id, &d.title) {
             self.window_registry_dirty = true;
+        }
+        if let Some((w, h)) = self.declared_size_from_hints(&d.id) {
+            if self.window_registry.record_declared_size(&d.id, (w, h)) {
+                self.window_registry_dirty = true;
+            }
         }
 
         if self.layout.has_window_bound_to(&d.id) {

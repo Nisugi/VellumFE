@@ -36,6 +36,11 @@ pub struct RegistryBinding {
     /// across sessions).
     #[serde(default)]
     pub title: String,
+    /// Last DECLARED content size (openDialog/streamWindow width/height,
+    /// px; 0 = unset) — so a window conjured in a session where the game
+    /// hasn't spoken yet is still born at its declared shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_size: Option<(f32, f32)>,
 }
 
 /// Well-known feeds every character can add before the game first speaks:
@@ -96,8 +101,22 @@ impl WindowRegistry {
             kind: kind.to_string(),
             id: id.to_string(),
             title: title.to_string(),
+            declared_size: None,
         });
         true
+    }
+
+    /// Remember the declared size for a known binding (any kind slot with
+    /// this id). Returns whether anything changed.
+    pub fn record_declared_size(&mut self, id: &str, size: (f32, f32)) -> bool {
+        let mut changed = false;
+        for binding in self.bindings.iter_mut().filter(|b| b.id == id) {
+            if binding.declared_size != Some(size) {
+                binding.declared_size = Some(size);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// First-run seed: add every well-known feed not already present.
@@ -111,6 +130,7 @@ impl WindowRegistry {
                     kind: kind.to_string(),
                     id: id.to_string(),
                     title: title.to_string(),
+                    declared_size: None,
                 });
                 changed = true;
             }

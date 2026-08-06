@@ -3607,6 +3607,29 @@ impl VellumGuiApp {
         let panel_commands: Vec<String> =
             self.app_core.ui_state.pending_panel_commands.borrow_mut().drain(..).collect();
         for command in panel_commands {
+            // Client-side panel verbs never reach the game. A dialog's
+            // closeButton hides the window hosting it (bound layout window
+            // by binding id, or the legacy ephemeral panel_<id>).
+            if let Some(dialog_id) = command.strip_prefix("__VELLUM_CLOSE_PANEL__") {
+                let name = self
+                    .app_core
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|w| {
+                        w.base()
+                            .binding
+                            .as_ref()
+                            .is_some_and(|b| b.id() == dialog_id)
+                    })
+                    .map(|w| w.name().to_string())
+                    .unwrap_or_else(|| {
+                        format!("panel_{}", dialog_id.replace(' ', "_").to_lowercase())
+                    });
+                let (w, h) = self.core_layout_size;
+                self.app_core.set_known_window_shown(&name, false, w, h);
+                continue;
+            }
             self.dispatch_raw_command(command);
         }
 
