@@ -1893,6 +1893,15 @@ impl MessageProcessor {
                         ui_state.input_mode = InputMode::Normal;
                     }
                 }
+                // Redesign Phase 4d: a window this session SHOWED via an
+                // expose verb is dismissed by the matching closeDialog
+                // (bank sends one on leaving ×3,911). Queued — hiding a
+                // layout window needs the layout-capable tick. The game
+                // also closes never-opened ids defensively
+                // (withdraw/deposit); the drain no-ops those.
+                if ui_state.expose_shown_ids.contains(id) {
+                    ui_state.pending_expose_closes.push(id.clone());
+                }
             }
             ParsedElement::ClearDialogData { id } => {
                 self.chunk_has_silent_updates = true;
@@ -2133,6 +2142,16 @@ impl MessageProcessor {
                 // declaration's placement attrs win, available whenever
                 // the window materializes (redesign Phase 3e).
                 ui_state.window_hints.insert(id.clone(), attrs.clone());
+            }
+            ParsedElement::Expose { kind, id } => {
+                // Redesign Phase 4d: expose = show. The processor can't
+                // reach the layout, so queue for the frontend tick
+                // (realize_offered_windows). Containers keep their own
+                // sighting/opt-in flow for now.
+                self.chunk_has_silent_updates = true;
+                if kind != "container" {
+                    ui_state.pending_exposes.push((kind.clone(), id.clone()));
+                }
             }
             _ => {
                 // Other elements handled elsewhere or not yet implemented

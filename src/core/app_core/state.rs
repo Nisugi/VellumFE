@@ -4535,6 +4535,93 @@ impl AppCore {
             self.register_window_discovery(d);
         }
 
+        // Redesign Phase 4d — expose = show. Rules (owner-decided, wire
+        // verified): a KNOWN window's Show flag is the permission — Hidden
+        // blocks the expose (Hidden already means "suppress game
+        // auto-spawn", the U3 unified rule); an id arriving via expose for
+        // the FIRST time registers bound and shows (default allowed). A
+        // popup currently active under this id stays the popup path's
+        // business (bank: openDialog popup + exposeDialog ride together;
+        // U5's persistent bank row remains deferred).
+        let exposes: Vec<(String, String)> =
+            self.ui_state.pending_exposes.drain(..).collect();
+        for (kind, id) in exposes {
+            if self
+                .ui_state
+                .active_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.id == id)
+            {
+                continue;
+            }
+            if self.layout.has_window_bound_to(&id) {
+                let target = self
+                    .layout
+                    .windows
+                    .iter()
+                    .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+                    .map(|w| (w.name().to_string(), w.base().visibility));
+                if let Some((name, visibility)) = target {
+                    use crate::config::WindowVisibility;
+                    if visibility == WindowVisibility::Hidden {
+                        tracing::debug!("expose {kind} {id}: blocked (user hid the window)");
+                        continue;
+                    }
+                    if !self.ui_state.windows.contains_key(&name) {
+                        self.show_window(&name, terminal_width, terminal_height);
+                        self.needs_render = true;
+                    }
+                    self.ui_state.expose_shown_ids.insert(id);
+                }
+                continue;
+            }
+            // First arrival via expose. Streams (charprofile-class, the
+            // wire-verified case) register bound and show — the expose
+            // default. Unknown DIALOG ids stay with the popup machinery
+            // for now: bank's exposeDialog rides beside its popup flow,
+            // and registering it as a panel would duplicate the popup
+            // (its persistent hidden-unless-exposed row is U5's save-attr
+            // work).
+            if kind == "stream" {
+                use crate::config::WindowBinding;
+                let binding = WindowBinding::Stream(id.clone());
+                let template = Self::seed_template_for(&binding);
+                if let Some(name) =
+                    self.layout.register_discovered_window(binding, &template)
+                {
+                    self.mark_layout_modified();
+                    self.show_window(&name, terminal_width, terminal_height);
+                    self.ui_state.expose_shown_ids.insert(id);
+                    self.needs_render = true;
+                }
+            } else {
+                tracing::debug!("expose {kind} {id}: unbound dialog left to the popup path");
+            }
+        }
+
+        // The matching dismissals: dematerialize exactly the windows an
+        // expose showed this session — WITHOUT flipping their persisted
+        // visibility to Hidden (Hidden is the user's block lever; a game
+        // dismissal must not eat the NEXT expose — bank re-exposes every
+        // visit). Never-opened ids the game closes defensively
+        // (withdraw/deposit) no-op here.
+        let closes: Vec<String> = self.ui_state.pending_expose_closes.drain(..).collect();
+        for id in closes {
+            if !self.ui_state.expose_shown_ids.remove(&id) {
+                continue;
+            }
+            let name = self
+                .layout
+                .windows
+                .iter()
+                .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == id))
+                .map(|w| w.name().to_string());
+            if let Some(name) = name {
+                self.ui_state.remove_window(&name);
+                self.needs_render = true;
+            }
+        }
+
         if let Some((_id, title)) = self.message_processor.newly_registered_container.take() {
             // U3: a sighted container (re)opens only if the user opted it in
             // this session (via the Windows list). Ephemeral, wiped on relog.
@@ -8464,5 +8551,77 @@ mod tests {
             1,
             "no duplicate row after conjuring"
         );
+    }
+
+    #[test]
+    fn expose_lifecycle_show_dismiss_reshow_and_user_block() {
+        // Redesign Phase 4d gate: expose = show; closeDialog dismisses
+        // without eating the NEXT expose; the user's Hidden is the block.
+        let mut core = core_with_layout(vec![]);
+
+        // 1. First arrival via exposeStream: registers bound and SHOWS
+        //    (the expose default), unlike plain discoveries (hidden).
+        core.ui_state
+            .pending_exposes
+            .push(("stream".to_string(), "charprofile".to_string()));
+        core.realize_offered_windows(80, 24);
+        let vis = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| {
+                w.base().binding.as_ref().is_some_and(|b| b.id() == "charprofile")
+            })
+            .map(|w| (w.name().to_string(), w.base().visibility))
+            .expect("expose registered a bound window");
+        assert!(vis.1.is_shown(), "expose default is SHOWN");
+        assert!(
+            core.ui_state.windows.contains_key(&vis.0),
+            "and the window materialized"
+        );
+
+        // 2. The matching closeDialog dismisses the DISPLAY only: the
+        //    runtime window goes, the persisted visibility does not flip
+        //    to Hidden (a game dismissal is not a user block).
+        core.ui_state
+            .pending_expose_closes
+            .push("charprofile".to_string());
+        core.ui_state.expose_shown_ids.insert("charprofile".to_string());
+        core.realize_offered_windows(80, 24);
+        assert!(!core.ui_state.windows.contains_key(&vis.0), "dematerialized");
+        let still_shown = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == vis.0)
+            .unwrap()
+            .base()
+            .visibility
+            .is_shown();
+        assert!(still_shown, "persisted visibility untouched by game close");
+
+        // 3. Re-expose re-materializes (the walk-back-into-the-bank flow).
+        core.ui_state
+            .pending_exposes
+            .push(("stream".to_string(), "charprofile".to_string()));
+        core.realize_offered_windows(80, 24);
+        assert!(core.ui_state.windows.contains_key(&vis.0), "re-shown");
+
+        // 4. The user hides it: that IS the block — the next expose no-ops.
+        core.set_known_window_shown(&vis.0, false, 80, 24);
+        core.ui_state
+            .pending_exposes
+            .push(("stream".to_string(), "charprofile".to_string()));
+        core.realize_offered_windows(80, 24);
+        assert!(
+            !core.ui_state.windows.contains_key(&vis.0),
+            "expose blocked by the user's Hidden"
+        );
+
+        // 5. Defensive closes of never-opened ids (withdraw/deposit) no-op.
+        core.ui_state
+            .pending_expose_closes
+            .push("withdraw".to_string());
+        core.realize_offered_windows(80, 24);
     }
 }

@@ -117,6 +117,18 @@ pub struct UiState {
     /// (redesign Phase 3e).
     pub window_hints: HashMap<String, Vec<(String, String)>>,
 
+    /// Expose verbs awaiting the layout-capable tick (redesign Phase 4d):
+    /// (kind, id) from `<exposeDialog>`/`<exposeStream>` — the game
+    /// saying "show this window NOW".
+    pub pending_exposes: Vec<(String, String)>,
+    /// `<closeDialog>` ids awaiting dismissal of EXPOSE-shown windows
+    /// (popup closes are handled inline; this only carries layout-window
+    /// dismissals).
+    pub pending_expose_closes: Vec<String>,
+    /// Windows shown by an expose this session — the exact set a
+    /// `<closeDialog>` may dismiss again.
+    pub expose_shown_ids: std::collections::HashSet<String>,
+
     /// Active injuries popup (viewing another player's injuries)
     pub injuries_popup: Option<InjuriesPopupState>,
 
@@ -1040,6 +1052,9 @@ impl UiState {
             active_dialog: None,
             dialog_store: HashMap::new(),
             window_hints: HashMap::new(),
+            pending_exposes: Vec::new(),
+            pending_expose_closes: Vec::new(),
+            expose_shown_ids: std::collections::HashSet::new(),
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
