@@ -881,15 +881,25 @@ impl XmlParser {
             // in the 11.4 GB log sweep).
             "timestamp",
         ];
-        let Some(id) = Self::extract_attribute(tag, "id")
-            .or_else(|| Self::extract_attribute(tag, "name"))
+        // The DECLARING element's attributes only: a paired openDialog
+        // block carries its inner dialogData controls in the same string,
+        // and their width/height (double-quoted on the wire, vs the
+        // openDialog's single quotes) must never shadow the declaration's
+        // own (found live: bank's declared 0x130 came out as the balance
+        // label's 190x20).
+        let head = match tag.find('>') {
+            Some(end) => &tag[..end],
+            None => tag,
+        };
+        let Some(id) = Self::extract_attribute(head, "id")
+            .or_else(|| Self::extract_attribute(head, "name"))
         else {
             return;
         };
         let attrs: Vec<(String, String)> = HINT_ATTRS
             .iter()
             .filter_map(|name| {
-                Self::extract_attribute(tag, name).map(|value| (name.to_string(), value))
+                Self::extract_attribute(head, name).map(|value| (name.to_string(), value))
             })
             .collect();
         if !attrs.is_empty() {

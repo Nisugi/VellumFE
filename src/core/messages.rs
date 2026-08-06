@@ -2142,6 +2142,27 @@ impl MessageProcessor {
                 // declaration's placement attrs win, available whenever
                 // the window materializes (redesign Phase 3e).
                 ui_state.window_hints.insert(id.clone(), attrs.clone());
+                // A dialog's declared width/height feeds the anchor grid's
+                // vertical compass (bank: openDialog height='130' — the
+                // e/w rows center against it, align='s' bottoms against
+                // it). EXISTING slots only: hints also fire for stream/
+                // container ids, which must not conjure phantom dialog
+                // slots. Ordering holds because the openDialog block's
+                // inner dialogData elements (which create the slot) are
+                // pushed before the trailing WindowHints element.
+                if let Some(dialog) = ui_state.dialog_store.get_mut(id) {
+                    let dim = |name: &str| {
+                        attrs
+                            .iter()
+                            .find(|(k, _)| k == name)
+                            .and_then(|(_, v)| v.parse::<f32>().ok())
+                            .unwrap_or(0.0)
+                    };
+                    let (w, h) = (dim("width"), dim("height"));
+                    if w > 1.0 || h > 1.0 {
+                        dialog.declared_size = Some((w, h));
+                    }
+                }
             }
             ParsedElement::Expose { kind, id } => {
                 // Redesign Phase 4d: expose = show. The processor can't
@@ -5006,6 +5027,8 @@ mod tests {
                 K::Button(i) => format!("btn:{}", dialog.buttons[i].id),
                 K::DropDown(i) => format!("dd:{}", dialog.dropdowns[i].id),
                 K::Image(i) => format!("img:{}", dialog.images[i].id),
+                K::Link(i) => format!("link:{}", dialog.links[i].id),
+                K::SpinBox(i) => format!("spin:{}", dialog.spinboxes[i].id),
             };
             eprintln!("  {:<22} x={:6.1} y={:6.1} w={:6.1} h={:5.1}", name, c.rect.0, c.rect.1, c.rect.2, c.rect.3);
         }
@@ -7118,5 +7141,66 @@ mod tests {
                 expected_window
             );
         }
+    }
+
+    #[test]
+    fn bank_open_dialog_block_sets_declared_size_and_grids_all_controls() {
+        // End-to-end over the WIRE-VERBATIM bank block (GST log
+        // 2026-02-08): parser -> processor -> anchor grid. Pins the
+        // element ordering the declared-size capture relies on (the inner
+        // dialogData controls create the store slot BEFORE the trailing
+        // WindowHints element) and that links + spinboxes land in the
+        // grid at compass-resolved rows instead of overlapping at the top
+        // (live-test screenshot, 2026-08-06).
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='bank' title='Bank' location='right' save='t' height='130' width='0'><dialogData id=\"bank\"><label id=\"balance\" value=\"Balance: 5041236\" align=\"n\" top=\"0\" left=\"0\" height=\"20\" width=\"190\"/><cmdButton id=\"depositBtn\" value=\"Deposit\" echo=\"deposit %depositSB%\" cmd=\"deposit %depositSB%\" align=\"e\" top=\"-25\" left=\"0\" height=\"25\" width=\"80\"/><cmdButton id=\"withdrawBtn\" value=\"Withdraw\" echo=\"withdraw %withdrawSB%\" cmd=\"withdraw %withdrawSB%\" align=\"e\" top=\"5\" left=\"0\" height=\"25\" width=\"80\"/><upDownEditBox id=\"depositSB\" min=\"0\" max=\"0\" value=\"0\" align=\"w\" top=\"-25\" left=\"0\" height=\"25\" width=\"100\"/><upDownEditBox id=\"withdrawSB\" min=\"0\" max=\"5041236\" value=\"5000\" align=\"w\" top=\"5\" left=\"0\" height=\"25\" width=\"100\"/></dialogData></openDialog>",
+        );
+        assert!(!elements.is_empty());
+
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        for element in &elements {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        let dialog = ui_state.dialog_store.get("bank").expect("bank slot ingested");
+        assert_eq!(
+            dialog.declared_size,
+            Some((0.0, 130.0)),
+            "openDialog height reached the store (ordering held)"
+        );
+        assert_eq!(dialog.spinboxes.len(), 2);
+
+        let (controls, _) = dialog.positioned_controls().expect("positioned");
+        use crate::data::ui_state::PositionedControlKind as K;
+        let spin_rows: Vec<f32> = controls
+            .iter()
+            .filter(|c| matches!(c.kind, K::SpinBox(_)))
+            .map(|c| c.rect.1)
+            .collect();
+        assert_eq!(spin_rows.len(), 2, "spinboxes are IN the grid");
+        // Compass rows: deposit above withdraw, both center-referenced.
+        let (lo, hi) = (
+            spin_rows.iter().cloned().fold(f32::MAX, f32::min),
+            spin_rows.iter().cloned().fold(f32::MIN, f32::max),
+        );
+        assert_eq!(lo, 65.0 - 12.5 - 25.0);
+        assert_eq!(hi, 65.0 - 12.5 + 5.0);
     }
 }

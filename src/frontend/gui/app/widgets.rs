@@ -2604,6 +2604,21 @@ impl VellumGuiApp {
             }
         };
 
+        // Spinbox edits live in egui temp memory (this path is immutable);
+        // every command resolves against a probe carrying those edits, so
+        // 'withdraw %withdrawSB%' sends what the user dialed in.
+        let spin_mem =
+            |id: &str| egui::Id::new(("panel_spin", dialog_id.to_string(), id.to_string()));
+        let patched_command = |ui: &egui::Ui, cmd: &str| -> String {
+            let mut probe = dialog.clone();
+            for spin in probe.spinboxes.iter_mut() {
+                if let Some(v) = ui.ctx().data(|d| d.get_temp::<i32>(spin_mem(&spin.id))) {
+                    spin.value = v;
+                }
+            }
+            probe.command_with_placeholders(cmd)
+        };
+
         let positioned = dialog.positioned_controls();
         let (content_w, content_h) = positioned
             .as_ref()
@@ -2628,7 +2643,7 @@ impl VellumGuiApp {
                                 _ => resp,
                             };
                             if resp.clicked() {
-                                queue(dialog.command_with_placeholders(&b.command));
+                                queue(patched_command(ui, &b.command));
                             }
                         }
                     }
@@ -2666,6 +2681,34 @@ impl VellumGuiApp {
                             Self::paint_dialog_skin(ui, rect, skin, dialog, skin_art);
                         }
                     }
+                    PositionedControlKind::Link(i) => {
+                        if let Some(link) = dialog.links.get(i) {
+                            let text = egui::RichText::new(&link.label)
+                                .color(ui.visuals().hyperlink_color);
+                            if ui
+                                .put(rect, egui::Button::new(text).small().frame(false))
+                                .clicked()
+                            {
+                                queue(patched_command(ui, &link.command));
+                            }
+                        }
+                    }
+                    PositionedControlKind::SpinBox(i) => {
+                        if let Some(spin) = dialog.spinboxes.get(i) {
+                            let mem = spin_mem(&spin.id);
+                            let mut value = ui
+                                .ctx()
+                                .data_mut(|d| *d.get_temp_mut_or(mem, spin.value));
+                            let range = spin.min..=spin.max.max(spin.min);
+                            let resp = ui.put(
+                                rect,
+                                egui::DragValue::new(&mut value).range(range).speed(25),
+                            );
+                            if resp.changed() {
+                                ui.ctx().data_mut(|d| d.insert_temp(mem, value));
+                            }
+                        }
+                    }
                     // Anchor-only images (ubbars, wound points) are never drawn.
                     PositionedControlKind::Image(_) => {}
                 }
@@ -2701,11 +2744,15 @@ impl VellumGuiApp {
                 }
             });
         }
-        if !dialog.links.is_empty() {
+        // Footer row: only links WITHOUT layout data (combat's
+        // configure/skin/search line); positioned links rendered above.
+        let footer_links: Vec<_> =
+            dialog.links.iter().filter(|l| l.layout.is_none()).collect();
+        if !footer_links.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                for link in &dialog.links {
+                for link in footer_links {
                     if ui.link(&link.label).clicked() {
-                        queue(dialog.command_with_placeholders(&link.command));
+                        queue(patched_command(ui, &link.command));
                     }
                 }
             });
