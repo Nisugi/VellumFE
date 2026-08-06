@@ -1729,7 +1729,29 @@ impl VellumGuiApp {
                         // The press hits this window's body or its resize ring
                         // (the edge band extends a few px outside the frame).
                         let in_window = rect.expand(RESIZE_GRAB).contains(pos);
-                        let topmost = ctx.layer_id_at(pos) == Some(inner.response.layer_id);
+                        // Topmost at the press point — OR the point sits over
+                        // bare background. The OUTER half of the resize band
+                        // is outside the window's area, so layer_id_at
+                        // reports the panel there and the claim used to fail:
+                        // the size pin stayed on and egui's resize was forced
+                        // back every frame. That was the "cursor shows but
+                        // can't grab until the pointer is half inside the
+                        // border" dead zone. A press over ANOTHER window's
+                        // area still yields to that window's own claim.
+                        let top_layer = ctx.layer_id_at(pos);
+                        // Over background, claim only when UNCONTESTED: if a
+                        // neighbor's ring also covers the point (windows a
+                        // few px apart), stay conservative and let the
+                        // inside-half claims disambiguate as before.
+                        let contested = snap_siblings.iter().any(|(other, _, sibling)| {
+                            *other != tab.id.key
+                                && sibling.expand(RESIZE_GRAB).contains(pos)
+                        });
+                        let topmost = top_layer == Some(inner.response.layer_id)
+                            || (!contested
+                                && top_layer.is_none_or(|layer| {
+                                    layer.order == egui::Order::Background
+                                }));
                         if in_window && topmost {
                             self.zone_engaged_tab = Some(tab.id.key.clone());
                             ctx.request_repaint();
