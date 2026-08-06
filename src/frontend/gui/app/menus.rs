@@ -108,6 +108,9 @@ pub(super) enum GuiWindowMenuCommand {
     /// Content alignment for the shared layout def ("center", "bottom-left",
     /// ...); None reverts to the default top-left flow.
     SetContentAlign(Option<String>),
+    /// Size role (P-A3): true = Fixed — the window keeps its width/height
+    /// through every proportional rescale (OS resize, zoom, zone squeeze).
+    SetFixedSize(bool),
     /// Lock this window together with another one.
     GroupWith(TabKey),
     /// Remove one specific member from this window's group.
@@ -141,6 +144,8 @@ struct WindowMenuView<'a> {
     locked: bool,
     /// Window has at least one snap anchor; shows the release row.
     anchored: bool,
+    /// Size role is Fixed (keeps its size through proportional rescales).
+    fixed_size: bool,
     appearance: WindowAppearanceView,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
@@ -439,6 +444,15 @@ impl VellumGuiApp {
             }
             GuiWindowMenuCommand::ReleaseAnchors => {
                 self.release_window_anchors(&request.tab_key, request.zone);
+            }
+            GuiWindowMenuCommand::SetFixedSize(fixed) => {
+                if fixed {
+                    self.window_size_roles
+                        .insert(request.tab_key.clone(), super::dock::SizeRole::Fixed);
+                } else {
+                    self.window_size_roles.remove(&request.tab_key);
+                }
+                self.layout_dirty = true;
             }
             GuiWindowMenuCommand::EditHandIcons => {
                 if let Some(name) = self
@@ -963,6 +977,8 @@ impl VellumGuiApp {
                 .window_anchors
                 .get(&request.tab_key)
                 .is_some_and(|anchors| !anchors.is_free()),
+            fixed_size: self.window_size_roles.get(&request.tab_key).copied()
+                == Some(super::dock::SizeRole::Fixed),
             appearance: self.appearance_view_for_tab(ctx, &request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
@@ -1568,6 +1584,19 @@ impl VellumGuiApp {
         ui.collapsing("Arrange", |ui| {
             if ui.selectable_label(false, "Move Window").clicked() {
                 command = Some(GuiWindowMenuCommand::StartMove);
+            }
+            let mut fixed = view.fixed_size;
+            if ui
+                .checkbox(&mut fixed, "Fixed size")
+                .on_hover_text(
+                    "Keep this window's exact width and height when the app \
+                     window resizes, zooms, or a zone squeezes the layout — \
+                     only its position adapts. Good for HUD widgets like the \
+                     compass or hands.",
+                )
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetFixedSize(fixed));
             }
             ui.label("Move to");
             for target in GuiShellZone::all() {
