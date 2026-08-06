@@ -6696,16 +6696,49 @@ impl eframe::App for VellumGuiApp {
                     }
                     ui.separator();
 
-                    // Each zone button: left-click toggles visibility,
-                    // right-click offers the display mode (overlay drawer
-                    // floating over the center vs classic reserved space).
-                    let zone_mode_menu =
-                        |app: &mut Self, response: &egui::Response, zone: GuiShellZone| {
-                            response.context_menu(|ui| {
+                    // One "Zones" menu: each row is a show/hide button (click
+                    // closes the menu) plus an Overlay checkbox (click keeps
+                    // it open so several zones can be flipped in one visit).
+                    ui.menu_button("Zones", |ui| {
+                        ui.set_min_width(200.0);
+                        let zone_row = |app: &mut Self,
+                                        ui: &mut egui::Ui,
+                                        zone: GuiShellZone,
+                                        shown: bool,
+                                        name: &str| {
+                            ui.horizontal(|ui| {
+                                let label =
+                                    format!("{} {}", if shown { "Hide" } else { "Show" }, name);
+                                if ui
+                                    .add_sized([120.0, 20.0], egui::Button::new(label))
+                                    .clicked()
+                                {
+                                    match zone {
+                                        GuiShellZone::Header => {
+                                            app.shell_layout.header_visible =
+                                                !app.shell_layout.header_visible
+                                        }
+                                        GuiShellZone::Footer => {
+                                            app.shell_layout.footer_visible =
+                                                !app.shell_layout.footer_visible
+                                        }
+                                        GuiShellZone::LeftSidebar => {
+                                            app.shell_layout.left_sidebar_collapsed =
+                                                !app.shell_layout.left_sidebar_collapsed
+                                        }
+                                        GuiShellZone::RightSidebar => {
+                                            app.shell_layout.right_sidebar_collapsed =
+                                                !app.shell_layout.right_sidebar_collapsed
+                                        }
+                                        GuiShellZone::Center => {}
+                                    }
+                                    app.layout_dirty = true;
+                                    ui.close();
+                                }
                                 let mut overlay = app.shell_layout.zone_mode(zone)
                                     == zones::ZoneDisplayMode::Overlay;
                                 if ui
-                                    .checkbox(&mut overlay, "Overlay drawer")
+                                    .checkbox(&mut overlay, "Overlay")
                                     .on_hover_text(
                                         "Float this zone over the center like a drawer \
                                          instead of reserving its own space.",
@@ -6721,52 +6754,38 @@ impl eframe::App for VellumGuiApp {
                                         },
                                     );
                                     app.layout_dirty = true;
-                                    ui.close();
                                 }
                             });
                         };
-                    let response = ui.small_button(if self.shell_layout.header_visible {
-                        "Hide Header"
-                    } else {
-                        "Show Header"
+                        zone_row(
+                            self,
+                            ui,
+                            GuiShellZone::Header,
+                            self.shell_layout.header_visible,
+                            "Header",
+                        );
+                        zone_row(
+                            self,
+                            ui,
+                            GuiShellZone::Footer,
+                            self.shell_layout.footer_visible,
+                            "Footer",
+                        );
+                        zone_row(
+                            self,
+                            ui,
+                            GuiShellZone::LeftSidebar,
+                            !self.shell_layout.left_sidebar_collapsed,
+                            "Left Bar",
+                        );
+                        zone_row(
+                            self,
+                            ui,
+                            GuiShellZone::RightSidebar,
+                            !self.shell_layout.right_sidebar_collapsed,
+                            "Right Bar",
+                        );
                     });
-                    if response.clicked() {
-                        self.shell_layout.header_visible = !self.shell_layout.header_visible;
-                        self.layout_dirty = true;
-                    }
-                    zone_mode_menu(self, &response, GuiShellZone::Header);
-                    let response = ui.small_button(if self.shell_layout.footer_visible {
-                        "Hide Footer"
-                    } else {
-                        "Show Footer"
-                    });
-                    if response.clicked() {
-                        self.shell_layout.footer_visible = !self.shell_layout.footer_visible;
-                        self.layout_dirty = true;
-                    }
-                    zone_mode_menu(self, &response, GuiShellZone::Footer);
-                    let response = ui.small_button(if self.shell_layout.left_sidebar_collapsed {
-                        "Show Left Bar"
-                    } else {
-                        "Hide Left Bar"
-                    });
-                    if response.clicked() {
-                        self.shell_layout.left_sidebar_collapsed =
-                            !self.shell_layout.left_sidebar_collapsed;
-                        self.layout_dirty = true;
-                    }
-                    zone_mode_menu(self, &response, GuiShellZone::LeftSidebar);
-                    let response = ui.small_button(if self.shell_layout.right_sidebar_collapsed {
-                        "Show Right Bar"
-                    } else {
-                        "Hide Right Bar"
-                    });
-                    if response.clicked() {
-                        self.shell_layout.right_sidebar_collapsed =
-                            !self.shell_layout.right_sidebar_collapsed;
-                        self.layout_dirty = true;
-                    }
-                    zone_mode_menu(self, &response, GuiShellZone::RightSidebar);
 
                     // U6: the "Windows" button opens the single Windows
                     // manager (show/hide + zone + add-window, grouped by
