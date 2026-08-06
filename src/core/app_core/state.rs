@@ -4445,6 +4445,45 @@ impl AppCore {
                 self.needs_render = true;
                 return;
             }
+            // A remembered binding from discovery memory
+            // (window_registry.toml) the game hasn't re-declared this
+            // session: conjure the bound window exactly as a live
+            // discovery would, then show it (redesign Phase 3 — the
+            // fresh-layout re-add path).
+            if let Some(entry) = self
+                .window_registry
+                .bindings
+                .iter()
+                .find(|b| b.id == name)
+                .cloned()
+            {
+                let binding = match entry.kind.as_str() {
+                    "stream" => Some(crate::config::WindowBinding::Stream(entry.id.clone())),
+                    "dialog" => Some(crate::config::WindowBinding::Dialog(entry.id.clone())),
+                    _ => None,
+                };
+                if let Some(binding) = binding {
+                    let template = Self::seed_template_for(&binding);
+                    if let Some(win_name) =
+                        self.layout.register_discovered_window(binding, &template)
+                    {
+                        if !entry.title.is_empty() {
+                            if let Some(def) = self
+                                .layout
+                                .windows
+                                .iter_mut()
+                                .find(|w| w.name() == win_name)
+                            {
+                                def.base_mut().title = Some(entry.title.clone());
+                            }
+                        }
+                        self.mark_layout_modified();
+                        self.show_window(&win_name, terminal_width, terminal_height);
+                        self.needs_render = true;
+                    }
+                    return;
+                }
+            }
             // A sighted registry container (window name is title-derived) →
             // remember the opt-in and open it.
             let container_title = self
@@ -4492,6 +4531,20 @@ impl AppCore {
     /// Streams and resident dialog panels become persistent Hidden layout
     /// windows (known forever); hidden-until-shown is the universal
     /// default. No-op if a window is already bound to this id.
+    /// The seed key a bound window is created from, via the presentation
+    /// resolver (redesign Phase 3): a dedicated view's widget template,
+    /// or the generic view for the binding's kind.
+    fn seed_template_for(binding: &crate::config::WindowBinding) -> String {
+        use crate::core::view_resolver::resolve_view;
+        use crate::data::view_kind::ViewKind;
+        match resolve_view(binding, None) {
+            ViewKind::Dedicated(key) => key,
+            ViewKind::Text => "text_custom".to_string(),
+            ViewKind::DialogPanel => "dialogpanel".to_string(),
+            ViewKind::Container => "container".to_string(),
+        }
+    }
+
     fn register_window_discovery(&mut self, d: crate::data::WindowDiscovery) {
         use crate::config::{WindowBinding, WindowVisibility, WindowDef};
         use crate::data::WindowDiscoveryKind;
@@ -4567,12 +4620,7 @@ impl AppCore {
             // (U5 gives bank a first-class row).
             WindowDiscoveryKind::DialogPopup => return,
         };
-        let template = match resolve_view(&binding, None) {
-            ViewKind::Dedicated(key) => key,
-            ViewKind::Text => "text_custom".to_string(),
-            ViewKind::DialogPanel => "dialogpanel".to_string(),
-            ViewKind::Container => "container".to_string(),
-        };
+        let template = Self::seed_template_for(&binding);
 
         if let Some(name) = self.layout.register_discovered_window(binding, &template) {
             // A new discovery changes the layout — mark it so the autosave
@@ -6508,6 +6556,56 @@ impl AppCore {
             });
         }
 
+        // Discovery memory (redesign Phase 3): bindings this character has
+        // seen in past sessions (or the well-known seeds) that no row
+        // above covers — so "Bounty" is addable in a FRESH layout before
+        // the game re-declares it. Strict union: dedicated-view ids stay
+        // owned by the template rows above (including their game-type
+        // gating), bound layout windows already listed, and name
+        // collisions defer to the existing row. Ticking one conjures a
+        // bound window exactly as a live discovery would.
+        let existing: std::collections::HashSet<String> =
+            out.iter().map(|k| k.name.to_ascii_lowercase()).collect();
+        for entry in &self.window_registry.bindings {
+            let (binding, kind, widget_type) = match entry.kind.as_str() {
+                "stream" => (
+                    crate::config::WindowBinding::Stream(entry.id.clone()),
+                    KnownWindowKind::Stream,
+                    "text",
+                ),
+                "dialog" => (
+                    crate::config::WindowBinding::Dialog(entry.id.clone()),
+                    KnownWindowKind::Dialog,
+                    "dialogpanel",
+                ),
+                _ => continue,
+            };
+            if self.layout.has_window_bound_to(&entry.id) {
+                continue;
+            }
+            if crate::core::view_resolver::resolve_view(&binding, None)
+                .dedicated_key()
+                .is_some()
+            {
+                continue;
+            }
+            if existing.contains(&entry.id.to_ascii_lowercase()) {
+                continue;
+            }
+            out.push(KnownWindow {
+                name: entry.id.clone(),
+                title: if entry.title.is_empty() {
+                    entry.id.clone()
+                } else {
+                    entry.title.clone()
+                },
+                kind,
+                widget_type: widget_type.to_string(),
+                shown: false,
+                ephemeral: false,
+            });
+        }
+
         out
     }
 
@@ -8288,5 +8386,65 @@ mod tests {
             .map(|w| w.base().binding.clone())
             .collect();
         assert_eq!(bindings_after, bindings_before, "bindings untouched");
+    }
+
+    #[test]
+    fn registry_bindings_join_known_windows_and_conjure_bound_windows() {
+        // Redesign Phase 3: discovery memory joins the Windows-list union
+        // — a feed seen in a PAST session is re-addable in a fresh layout
+        // before the game re-declares it.
+        use crate::core::known_windows::KnownWindowKind;
+        let mut core = core_with_layout(vec![]);
+        core.window_registry.record("stream", "voln", "Voln");
+        core.window_registry.record("dialog", "combat", "Combat");
+        // Dedicated-view ids stay owned by their template rows (with the
+        // template pass's game gating) — no duplicate registry row.
+        core.window_registry.record("stream", "inv", "Inventory");
+
+        let known = core.enumerate_known_windows();
+        let row = |name: &str| known.iter().find(|k| k.name == name);
+        let voln = row("voln").expect("registry stream row");
+        assert_eq!(voln.kind, KnownWindowKind::Stream);
+        assert!(!voln.shown);
+        let combat = row("combat").expect("registry dialog row");
+        assert_eq!(combat.kind, KnownWindowKind::Dialog);
+        assert!(row("inv").is_none(), "dedicated view owned by the template row");
+
+        // Ticking the rows conjures bound windows exactly as a live
+        // discovery would, and shows them.
+        core.set_known_window_shown("voln", true, 80, 24);
+        let win = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == "voln")
+            .expect("conjured layout window");
+        assert_eq!(
+            win.base().binding,
+            Some(crate::config::WindowBinding::Stream("voln".into()))
+        );
+        assert!(win.base().visibility.is_shown());
+        assert_eq!(win.widget_type(), "text");
+
+        core.set_known_window_shown("combat", true, 80, 24);
+        let win = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.name() == "combat")
+            .expect("conjured dialog panel");
+        assert_eq!(
+            win.base().binding,
+            Some(crate::config::WindowBinding::Dialog("combat".into()))
+        );
+        assert_eq!(win.widget_type(), "dialogpanel");
+
+        // Re-enumerating lists them as layout rows now, not registry rows.
+        let known = core.enumerate_known_windows();
+        assert_eq!(
+            known.iter().filter(|k| k.name == "voln").count(),
+            1,
+            "no duplicate row after conjuring"
+        );
     }
 }
