@@ -132,25 +132,26 @@ impl SshConfig {
         }
     }
 
-    /// Split the templated command into (program, args) with placeholders
-    /// substituted for one character. Splitting is whitespace-based on the
-    /// template; each arg then has placeholders replaced, so a path with a
-    /// space must not appear un-quoted in the template (paths with spaces are
-    /// rare for Ruby/Lich installs, and the detach wrapper re-quotes anyway).
+    /// Substitute placeholders for one character, then split the command with
+    /// the same quote-aware splitter the mobile path uses
+    /// ([`crate::launcher::ssh::split_command`]). Users paste quoted paths
+    /// (`"C:\...\lich.rbw"`) straight from the guide — a naive whitespace
+    /// split keeps the quote characters inside the token, the detach wrapper
+    /// then escapes them for real, and Ruby fails with
+    /// `Invalid argument -- "C:/..." (LoadError)`.
     pub fn resolve_command(&self, character: &str, launch: &CharacterLaunch) -> Result<(String, Vec<String>)> {
         if self.lich_command.trim().is_empty() {
             bail!("Launch command template is empty — set it in the launcher editor");
         }
-        let substitute = |s: &str| -> String {
-            s.replace("{character}", character)
-                .replace("{game}", &launch.game)
-                .replace("{port}", &launch.port.to_string())
-        };
-        let mut parts = self.lich_command.split_whitespace().map(substitute);
-        let program = parts
-            .next()
-            .context("Launch command template has no program")?;
-        let args: Vec<String> = parts.collect();
+        let line = self
+            .lich_command
+            .replace("{character}", character)
+            .replace("{game}", &launch.game)
+            .replace("{port}", &launch.port.to_string());
+        let (program, args) = crate::launcher::ssh::split_command(&line);
+        if program.is_empty() {
+            bail!("Launch command template has no program");
+        }
         Ok((program, args))
     }
 }
@@ -390,6 +391,49 @@ mod tests {
             },
             characters,
         }
+    }
+
+    /// Users paste launch commands with the script path double-quoted (the
+    /// setup guide's own example). The quotes must be STRIPPED by the split,
+    /// not carried into the arg — the detach wrapper re-quotes, and a token
+    /// with embedded quotes reaches Ruby as a literally-quoted path:
+    /// `Invalid argument -- "C:/..." (LoadError)`. Regression for the live
+    /// .launch failure of 2026-08-05.
+    #[test]
+    fn resolve_command_strips_quotes_from_pasted_paths() {
+        let mut cfg = sample();
+        cfg.ssh.lich_command =
+            r#"C:\Ruby4Lich5\4.0.3\bin\rubyw.exe "C:\Gemstone\dev\lich-5\lich.rbw" --login {character} --{game} --without-frontend --detachable-client={port}"#
+                .to_string();
+        let (program, args) = cfg
+            .ssh
+            .resolve_command("Nisugi", &cfg.characters["Nisugi"])
+            .unwrap();
+        assert_eq!(program, r"C:\Ruby4Lich5\4.0.3\bin\rubyw.exe");
+        // Quotes stripped, path intact as ONE token.
+        assert_eq!(args[0], r"C:\Gemstone\dev\lich-5\lich.rbw");
+        assert!(args.iter().all(|a| !a.contains('"')));
+        assert!(args.contains(&"--login".to_string()));
+        assert!(args.contains(&"Nisugi".to_string()));
+        assert!(args.contains(&"--gemstone".to_string()));
+        assert!(args.contains(&"--detachable-client=8001".to_string()));
+    }
+
+    /// A quoted path with spaces stays one token, and a trailing "&" pasted
+    /// from a PowerShell one-liner is dropped (same as the mobile path).
+    #[test]
+    fn resolve_command_handles_spaces_and_trailing_ampersand() {
+        let mut cfg = sample();
+        cfg.ssh.lich_command =
+            r#""C:\Program Files\Ruby\rubyw.exe" "C:\My Games\lich\lich.rbw" --detachable-client={port} "&""#
+                .to_string();
+        let (program, args) = cfg
+            .ssh
+            .resolve_command("Nisugi", &cfg.characters["Nisugi"])
+            .unwrap();
+        assert_eq!(program, r"C:\Program Files\Ruby\rubyw.exe");
+        assert_eq!(args[0], r"C:\My Games\lich\lich.rbw");
+        assert!(!args.iter().any(|a| a == "&"));
     }
 
     #[test]
