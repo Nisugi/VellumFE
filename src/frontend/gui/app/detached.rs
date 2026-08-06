@@ -59,6 +59,9 @@ struct DetachedFrameOutput {
     typed_text: String,
     backspaces: usize,
     submit_command: bool,
+    history_prev: bool,
+    history_next: bool,
+    clear_line: bool,
     popup_command: Option<GuiMenuCommand>,
     popup_should_close: bool,
     info: Option<egui::ViewportInfo>,
@@ -312,11 +315,20 @@ impl VellumGuiApp {
             if out.popup_command.is_some() || out.popup_should_close {
                 self.apply_popup_menu_layer_result(out.popup_command, out.popup_should_close);
             }
+            if out.clear_line {
+                self.command_input.clear();
+            }
             for _ in 0..out.backspaces {
                 self.command_input.pop();
             }
             if !out.typed_text.is_empty() {
                 self.command_input.push_str(&out.typed_text);
+            }
+            if out.history_prev {
+                self.history_previous();
+            }
+            if out.history_next {
+                self.history_next();
             }
             if out.submit_command {
                 self.submit_command();
@@ -536,18 +548,60 @@ impl VellumGuiApp {
 
         // No text widgets live in detached windows, so unconsumed typing
         // routes to the root command input (a MUD client should accept
-        // commands no matter which of its windows is focused).
+        // commands no matter which of its windows is focused). Submit /
+        // history / clear-line honor the SAME per-frame key stash as the
+        // root input widget, so rebinds work here too (the detached
+        // viewport shares the root egui context, and with it the stash).
+        let keys = ctx
+            .data(|data| data.get_temp::<super::CommandInputKeys>(super::CommandInputKeys::id()))
+            .unwrap_or_else(|| super::CommandInputKeys {
+                submit: vec![egui::Key::Enter],
+                history_prev: vec![egui::Key::ArrowUp],
+                history_next: vec![egui::Key::ArrowDown],
+                clear_line: Vec::new(),
+            });
         ctx.input(|input| {
             for event in &input.raw.events {
                 match event {
                     egui::Event::Text(text) => out.typed_text.push_str(text),
                     egui::Event::Paste(text) => out.typed_text.push_str(text),
                     egui::Event::Key {
-                        key: egui::Key::Enter,
+                        key,
                         pressed: true,
                         repeat: false,
+                        modifiers,
                         ..
-                    } => out.submit_command = true,
+                    } if modifiers.is_none() && keys.submit.contains(key) => {
+                        out.submit_command = true;
+                    }
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if modifiers.is_none() && keys.history_prev.contains(key) => {
+                        out.history_prev = true;
+                    }
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if modifiers.is_none() && keys.history_next.contains(key) => {
+                        out.history_next = true;
+                    }
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } if keys
+                        .clear_line
+                        .iter()
+                        .any(|(k, m)| k == key && *m == *modifiers) =>
+                    {
+                        out.clear_line = true;
+                    }
                     egui::Event::Key {
                         key: egui::Key::Backspace,
                         pressed: true,

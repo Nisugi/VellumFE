@@ -16,6 +16,91 @@ pub fn find_history_completion(input: &str, history: &VecDeque<String>) -> Optio
         .map(str::to_string)
 }
 
+/// Dot-command / window-name completion engine, shared by both desktop
+/// frontends (the TUI drives it through [`CommandInputModel::try_complete`],
+/// the GUI holds one beside its egui text buffer). Pure text logic — no
+/// frontend types.
+#[derive(Clone, Debug, Default)]
+pub struct CompletionState {
+    candidates: Vec<String>,
+    index: Option<usize>,
+    prefix: Option<String>,
+}
+
+impl CompletionState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Forget the current candidate set (call when the text changes by any
+    /// means other than [`CompletionState::advance`]).
+    pub fn reset(&mut self) {
+        self.candidates.clear();
+        self.index = None;
+        self.prefix = None;
+    }
+
+    /// Advance completion for `text`: start a candidate set on first call,
+    /// cycle to the next candidate on repeats. Returns the NEW text when it
+    /// differs from `text`; `None` means completion has nothing new to offer
+    /// (no candidates, or a single already-applied candidate) — the caller's
+    /// Tab can fall through to the next behavior (history-ghost accept).
+    ///
+    /// The word being completed is the last whitespace-separated token: a
+    /// leading-dot token completes against `commands`, anything else against
+    /// `window_names` (`.editwindow ma<Tab>` → window names).
+    pub fn advance(
+        &mut self,
+        text: &str,
+        commands: &[String],
+        window_names: &[String],
+    ) -> Option<String> {
+        if self.candidates.is_empty() {
+            let input = text.trim();
+            let (prefix, word_to_complete) = if let Some(pos) = input.rfind(char::is_whitespace) {
+                (input[..=pos].to_string(), &input[pos + 1..])
+            } else {
+                (String::new(), input)
+            };
+
+            if word_to_complete.is_empty() {
+                return None;
+            }
+
+            let mut candidates: Vec<String> = if word_to_complete.starts_with('.') {
+                commands
+                    .iter()
+                    .filter(|c| c.starts_with(word_to_complete))
+                    .cloned()
+                    .collect()
+            } else {
+                window_names
+                    .iter()
+                    .filter(|n| n.starts_with(word_to_complete))
+                    .cloned()
+                    .collect()
+            };
+
+            if candidates.is_empty() {
+                return None;
+            }
+
+            candidates.sort();
+            self.candidates = candidates;
+            self.prefix = Some(prefix);
+            self.index = Some(0);
+        } else if let Some(index) = self.index.as_mut() {
+            *index = (*index + 1) % self.candidates.len();
+        }
+
+        let (index, prefix) = (self.index?, self.prefix.as_ref()?);
+        let candidate = self.candidates.get(index)?;
+        let new_text = format!("{prefix}{candidate}");
+        // A single already-applied candidate cycles back to itself.
+        (new_text != text).then_some(new_text)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CommandInputSnapshot {
     text: String,
@@ -37,9 +122,7 @@ pub struct CommandInputModel {
     max_history: usize,
     min_command_length: usize,
     is_user_typed: bool,
-    completion_candidates: Vec<String>,
-    completion_index: Option<usize>,
-    completion_prefix: Option<String>,
+    completion: CompletionState,
 }
 
 impl CommandInputModel {
@@ -56,9 +139,7 @@ impl CommandInputModel {
             max_history,
             min_command_length: 3,
             is_user_typed: false,
-            completion_candidates: Vec::new(),
-            completion_index: None,
-            completion_prefix: None,
+            completion: CompletionState::new(),
         }
     }
 
@@ -466,71 +547,22 @@ impl CommandInputModel {
         if self.cursor_pos != self.text.chars().count() {
             return false;
         }
-        if self.completion_candidates.is_empty() {
-            let input = self.text.trim();
-            let (prefix, word_to_complete) = if let Some(pos) = input.rfind(char::is_whitespace) {
-                let prefix = &input[..=pos];
-                let word = &input[pos + 1..];
-                (prefix.to_string(), word)
-            } else {
-                ("".to_string(), input)
-            };
-
-            if word_to_complete.is_empty() {
-                return false;
-            }
-
-            let mut candidates = Vec::new();
-            if word_to_complete.starts_with('.') {
-                for cmd in available_commands {
-                    if cmd.starts_with(word_to_complete) {
-                        candidates.push(cmd.clone());
-                    }
-                }
-            } else {
-                for name in window_names {
-                    if name.starts_with(word_to_complete) {
-                        candidates.push(name.clone());
-                    }
-                }
-            }
-
-            if candidates.is_empty() {
-                return false;
-            }
-
-            candidates.sort();
-            self.completion_candidates = candidates;
-            self.completion_prefix = Some(prefix);
-            self.completion_index = Some(0);
-        } else if let Some(index) = self.completion_index.as_mut() {
-            *index = (*index + 1) % self.completion_candidates.len();
-        }
-
-        if let (Some(index), Some(prefix)) = (self.completion_index, &self.completion_prefix) {
-            if let Some(candidate) = self.completion_candidates.get(index) {
-                let new_text = format!("{}{}", prefix, candidate);
-                // A single already-applied candidate cycles back to itself:
-                // that's "nothing new" (return false so Tab can fall through
-                // to the history suggestion) and must not spam the undo stack.
-                if new_text == self.text {
-                    return false;
-                }
-                self.push_undo_snapshot();
-                self.text = new_text;
-                self.cursor_pos = self.text.chars().count();
-                self.clear_selection();
-                self.redo_stack.clear();
-                return true;
-            }
-        }
-        false
+        let Some(new_text) = self
+            .completion
+            .advance(&self.text, available_commands, window_names)
+        else {
+            return false;
+        };
+        self.push_undo_snapshot();
+        self.text = new_text;
+        self.cursor_pos = self.text.chars().count();
+        self.clear_selection();
+        self.redo_stack.clear();
+        true
     }
 
     pub fn reset_completion(&mut self) {
-        self.completion_candidates.clear();
-        self.completion_index = None;
-        self.completion_prefix = None;
+        self.completion.reset();
     }
 
     pub fn history(&self) -> &VecDeque<String> {
@@ -612,7 +644,7 @@ impl CommandInputModel {
 
 #[cfg(test)]
 mod tests {
-    use super::CommandInputModel;
+    use super::{CommandInputModel, CompletionState};
 
     #[test]
     fn select_all_and_delete() {
@@ -681,6 +713,32 @@ mod tests {
         model.insert_text(".window m");
         model.try_complete(&commands, &windows);
         assert_eq!(model.text(), ".window main");
+    }
+
+    /// The standalone engine (as the GUI drives it): advance starts/cycles,
+    /// returns None when settled, and reset() invalidates after edits.
+    #[test]
+    fn completion_state_advance_and_reset() {
+        let commands = vec![".launch".to_string(), ".layers".to_string()];
+        let windows = vec!["main".to_string()];
+        let mut state = CompletionState::new();
+
+        assert_eq!(
+            state.advance(".la", &commands, &windows).as_deref(),
+            Some(".launch")
+        );
+        assert_eq!(
+            state.advance(".launch", &commands, &windows).as_deref(),
+            Some(".layers")
+        );
+        // Second word completes against window names.
+        state.reset();
+        assert_eq!(
+            state.advance(".editwindow ma", &commands, &windows).as_deref(),
+            Some(".editwindow main")
+        );
+        // Settled single candidate: nothing new.
+        assert_eq!(state.advance(".editwindow main", &commands, &windows), None);
     }
 
     /// The double-Tab flow: first Tab completes the dot command, second Tab
