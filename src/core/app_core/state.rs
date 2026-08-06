@@ -6305,7 +6305,7 @@ impl AppCore {
 
     /// Build the top-level "Add Window" menu showing widget categories
     pub fn build_add_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::config::Config::get_addable_templates_by_category(&self.layout, self.game_type());
+        let categories_map = crate::core::local_catalog::addable_by_category(&self.layout, self.game_type());
 
         // Sort categories for consistent display
         let mut categories: Vec<_> = categories_map.into_iter().collect();
@@ -6327,7 +6327,7 @@ impl AppCore {
     /// `(category display name, [(template name, display name)])`, for
     /// frontends that render native menus instead of the popup-menu stack.
     pub fn addable_window_templates(&self) -> Vec<(String, Vec<(String, String)>)> {
-        let categories_map = crate::config::Config::get_addable_templates_by_category(
+        let categories_map = crate::core::local_catalog::addable_by_category(
             &self.layout,
             self.game_type(),
         );
@@ -6361,7 +6361,7 @@ impl AppCore {
         &self,
         category: &crate::config::WidgetCategory,
     ) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::config::Config::get_addable_templates_by_category(&self.layout, self.game_type());
+        let categories_map = crate::core::local_catalog::addable_by_category(&self.layout, self.game_type());
 
         if let Some(templates) = categories_map.get(category) {
             // Filter out templates already present in the layout (so they disappear once added)
@@ -6530,7 +6530,7 @@ impl AppCore {
         let existing: std::collections::HashSet<String> =
             out.iter().map(|k| k.name.to_ascii_lowercase()).collect();
         for template_name in
-            crate::config::Config::list_window_templates_for_game(self.game_type())
+            crate::core::local_catalog::creatable_for_game(self.game_type())
         {
             if template_name == "spacer" || template_name.ends_with("_custom") {
                 continue;
@@ -6671,7 +6671,7 @@ impl AppCore {
 
 
     pub fn build_hide_window_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
-        let categories_map = crate::config::Config::get_visible_templates_by_category(&self.layout, true);
+        let categories_map = crate::core::local_catalog::visible_by_category(&self.layout, true);
 
         // Sort categories for consistent display
         let mut categories: Vec<_> = categories_map.into_iter().collect();
@@ -6695,7 +6695,7 @@ impl AppCore {
         category: &crate::config::WidgetCategory,
     ) -> Vec<crate::data::ui_state::PopupMenuItem> {
         let categories_map =
-            crate::config::Config::get_visible_templates_by_category(&self.layout, true);
+            crate::core::local_catalog::visible_by_category(&self.layout, true);
 
         if let Some(templates) = categories_map.get(category) {
             // Special handling for Status: Dashboard item + Indicators submenu
@@ -7131,7 +7131,7 @@ mod tests {
             .is_some_and(|names| names.iter().any(|n| n == "spacer_1")));
 
         let visible_only =
-            crate::config::Config::get_visible_templates_by_category(&layout, false);
+            crate::core::local_catalog::visible_by_category(&layout, false);
         assert!(!visible_only
             .get(&crate::config::WidgetCategory::Other)
             .is_some_and(|names| names.iter().any(|n| n == "spacer_1")));

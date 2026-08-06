@@ -27,6 +27,7 @@ pub mod mapdb;
 pub mod mapdb_update;
 pub mod menu_actions;
 pub mod known_windows;
+pub mod local_catalog;
 pub mod messages;
 pub mod pathing;
 pub mod remote;

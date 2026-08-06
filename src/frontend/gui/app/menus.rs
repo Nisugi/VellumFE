@@ -1278,7 +1278,7 @@ impl VellumGuiApp {
         }
 
         if command == "__SUBMENU_INDICATORS" {
-            let templates = crate::config::Config::get_addable_templates_by_category(
+            let templates = crate::core::local_catalog::addable_by_category(
                 &self.app_core.layout,
                 self.app_core.game_type(),
             )
