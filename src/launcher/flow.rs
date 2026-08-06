@@ -318,12 +318,24 @@ where
     });
 
     if !wait_for_port(&attach_host, attach_port, PORT_WAIT, POLL_INTERVAL).await {
+        // Include what the spawner said — a breakaway/CreateProcess failure
+        // message here is the difference between a diagnosis and a mystery.
+        let spawner = {
+            let combined = format!("{} {}", run.stdout.trim(), run.stderr.trim());
+            let combined = combined.trim();
+            if combined.is_empty() {
+                String::new()
+            } else {
+                format!(" (spawner said: {combined})")
+            }
+        };
         anyhow::bail!(
             "Launched Lich but {}:{} never opened within {}s — check the launch command and \
-             that the character/game are valid",
+             that the character/game are valid{}",
             attach_host,
             attach_port,
-            PORT_WAIT.as_secs()
+            PORT_WAIT.as_secs(),
+            spawner
         );
     }
 
