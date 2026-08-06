@@ -4552,26 +4552,29 @@ impl AppCore {
             }
         }
 
-        // Pick the template + binding for this discovery kind.
-        let (binding, template) = match d.kind {
-            WindowDiscoveryKind::Stream => {
-                // A stream id with a dedicated widget (spells/inventory/reserve/
-                // room) routes to that widget's template; everything else gets a
-                // blank text window bound to the id. Centralized in
-                // Config::stream_id_to_template so the mapping isn't scattered.
-                let template = crate::config::Config::stream_id_to_template(&d.id);
-                (WindowBinding::Stream(d.id.clone()), template)
-            }
-            WindowDiscoveryKind::DialogPanel => {
-                (WindowBinding::Dialog(d.id.clone()), "dialogpanel")
-            }
+        // Pick the seed view + binding for this discovery kind through the
+        // presentation resolver (redesign Phase 3: the discovery base
+        // comes from resolve_view, not scattered id-maps — a dedicated
+        // view resolves to its widget's seed, everything else to the
+        // generic view for its kind).
+        use crate::core::view_resolver::resolve_view;
+        use crate::data::view_kind::ViewKind;
+        let binding = match d.kind {
+            WindowDiscoveryKind::Stream => WindowBinding::Stream(d.id.clone()),
+            WindowDiscoveryKind::DialogPanel => WindowBinding::Dialog(d.id.clone()),
             // Popups (bank) aren't layout widgets; they're handled by the
             // active_dialog popup path. Skip layout registration for now
             // (U5 gives bank a first-class row).
             WindowDiscoveryKind::DialogPopup => return,
         };
+        let template = match resolve_view(&binding, None) {
+            ViewKind::Dedicated(key) => key,
+            ViewKind::Text => "text_custom".to_string(),
+            ViewKind::DialogPanel => "dialogpanel".to_string(),
+            ViewKind::Container => "container".to_string(),
+        };
 
-        if let Some(name) = self.layout.register_discovered_window(binding, template) {
+        if let Some(name) = self.layout.register_discovered_window(binding, &template) {
             // A new discovery changes the layout — mark it so the autosave
             // (or .savelayout) persists it, making the window known forever.
             self.mark_layout_modified();
