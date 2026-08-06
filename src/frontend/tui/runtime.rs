@@ -263,6 +263,8 @@ async fn async_run(
     // The TUI has no fallback input bar (the GUI does), so the command
     // input window renders even when the layout marks it hidden.
     app_core.force_show_command_input = true;
+    // This runtime drains disconnect_requested, so keep-open `.quit` works.
+    app_core.detach_quit_supported = true;
 
     // Start the web frontend sidecar if enabled (off by default). The
     // server runs as a tokio task; core feeds it via the attached sink,
@@ -567,6 +569,16 @@ async fn async_run(
                 };
                 app_core.add_system_message("Reconnecting…");
             }
+            app_core.needs_render = true;
+        }
+
+        // Keep-open `.quit`: core asked us to drop the connection but keep
+        // the app (and scrollback) alive. Aborting the task closes the socket
+        // — that IS the Lich detach — and no ServerMessage::Disconnected will
+        // arrive from a killed task, so flip the flag ourselves.
+        if app_core.take_disconnect_request() {
+            network_handle.abort();
+            app_core.game_state.connected = false;
             app_core.needs_render = true;
         }
 

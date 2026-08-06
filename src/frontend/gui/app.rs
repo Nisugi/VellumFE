@@ -530,6 +530,9 @@ impl VellumGuiApp {
     ) -> Result<Self> {
         let core_layout_size = (initial_width.max(1.0) as u16, initial_height.max(1.0) as u16);
         app_core.init_windows(core_layout_size.0, core_layout_size.1);
+        // This frontend drains disconnect_requested each frame, so keep-open
+        // `.quit` works.
+        app_core.detach_quit_supported = true;
         let is_direct_connection = direct.is_some();
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
@@ -6343,6 +6346,15 @@ impl eframe::App for VellumGuiApp {
         // through the same dispatch as typed commands.
         for command in self.app_core.take_pending_client_commands() {
             self.dispatch_command(command);
+        }
+        // Keep-open `.quit`: drop the connection but keep the app alive.
+        // Aborting the task closes the socket (that IS the Lich detach); a
+        // killed task sends no ServerMessage::Disconnected, so flip the flag.
+        if self.app_core.take_disconnect_request() {
+            if let Some(handle) = self.network_handle.take() {
+                handle.abort();
+            }
+            self.app_core.game_state.connected = false;
         }
         // Keep painting while the map worker, mapdb download, or walk
         // executor is busy so results and progress appear without waiting

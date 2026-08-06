@@ -46,7 +46,13 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
     CommandHelpSection {
         title: "APPLICATION",
         entries: &[
-            entry!(&["quit", "q"], "", "Exit VellumFE"),
+            entry!(
+                &["quit", "q"],
+                "",
+                "Disconnect but keep the window open; repeat to exit",
+                &["Set ui.keep_open_on_quit off in Settings to make .quit close immediately."]
+            ),
+            entry!(&["exit"], "", "Exit VellumFE"),
             entry!(&["help", "h", "?"], "", "Show this help"),
             entry!(&["version", "ver"], "", "Show version info"),
             entry!(

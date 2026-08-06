@@ -99,6 +99,12 @@ pub struct UiConfig {
     // Command echo settings
     #[serde(default = "default_command_echo")]
     pub command_echo: bool, // Echo sent commands into main window
+    /// After `.quit`: detach from the game/Lich but keep the app window open
+    /// (a second `.quit`, or `.exit`, closes it). Off restores the old
+    /// behavior — `.quit` closes the window immediately. Desktop only; the
+    /// phone/web client has no OS window and is unaffected.
+    #[serde(default = "default_true")]
+    pub keep_open_on_quit: bool,
     /// Render `:grin:`-style shortcodes in incoming text as emoji
     #[serde(default = "default_true")]
     pub emoji_shortcodes: bool,
@@ -235,6 +241,7 @@ impl Default for UiConfig {
             drag_modifier_key: default_drag_modifier_key(),
             min_command_length: default_min_command_length(),
             command_echo: default_command_echo(),
+            keep_open_on_quit: true,
             emoji_shortcodes: true,
             color_emoji: true,
             custom_emoji_size: default_custom_emoji_size(),
