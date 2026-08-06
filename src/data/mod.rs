@@ -9,6 +9,7 @@ pub mod input;
 pub mod remote_buffer;
 pub mod ui_action;
 pub mod ui_state;
+pub mod view_kind;
 pub mod webui;
 pub mod widget;
 pub mod window;

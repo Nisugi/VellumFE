@@ -34,6 +34,7 @@ pub mod sorter;
 pub mod spell_table;
 pub mod travel;
 pub mod state;
+pub mod view_resolver;
 pub mod uipack;
 pub mod window_style;
 
