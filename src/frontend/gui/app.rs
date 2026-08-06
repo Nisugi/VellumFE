@@ -7306,6 +7306,14 @@ pub fn run_native_gui(
             cc.egui_ctx.global_style_mut(|style| {
                 style.debug.warn_if_rect_changes_id = false;
             });
+            cc.egui_ctx.global_style_mut(|style| {
+                // Resize hot-zones default to 3px beyond each side and a
+                // 20x20 square centered on each corner — the resize cursor
+                // appears while the pointer is still over empty background
+                // near a window. Tighten so it only shows at the frame.
+                style.interaction.resize_grab_radius_side = 2.0;
+                style.interaction.resize_grab_radius_corner = 5.0;
+            });
             app.set_repaint_context(cc.egui_ctx.clone());
             Ok(Box::new(app))
         }),
