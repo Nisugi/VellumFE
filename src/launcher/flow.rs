@@ -37,9 +37,11 @@ const PORT_WAIT: Duration = Duration::from_secs(60);
 /// Quick "is it already up?" probe timeout before we bother SSHing.
 const PREFLIGHT_PROBE: Duration = Duration::from_secs(2);
 
-/// Interval between attach-port polls after launching (the mobile flow polls
-/// "every 5 seconds until it's available").
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// Interval between attach-port polls after launching. Lich opens the port
+/// ~3-5s after spawn (Ruby boot + eAccess login), and a bare TCP connect is
+/// free even over a tunnel — a coarse interval just quantizes the user's
+/// wait (at 5s, up to 4 extra seconds staring at "Waiting for Lich…").
+const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Progress the flow reports as it runs. Frontends map these to user-facing
 /// status (a phone toast, a TUI line, a GUI spinner label).
