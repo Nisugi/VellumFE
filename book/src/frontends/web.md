@@ -68,7 +68,8 @@ port.
 - **Send commands** — identical to typing at the PC, including
   dot-commands. With a keyboard, Up/Down browse command history; the ↻
   button resends the last command, and long-pressing it opens a history
-  sheet.
+  sheet. The newest history entry matching what you type appears in dim
+  text after the cursor; press Tab to accept it.
 - **Tap links, nouns, and exits** — context menus open in a bottom
   sheet; a mini **compass** floats over the text pane (exits light up,
   tap to move). It starts bottom-right; hold it about half a second to

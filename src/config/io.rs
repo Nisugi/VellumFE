@@ -780,6 +780,8 @@ impl Default for Config {
                 color_mode: ColorMode::default(),
                 timestamp_position: TimestampPosition::default(),
                 command_echo: default_command_echo(),
+                keep_open_on_quit: true,
+                history_suggestions: true,
                 betrayer_active_color: default_betrayer_active_color(),
                 focus: FocusConfig::default(),
                 terminal_title: String::new(),

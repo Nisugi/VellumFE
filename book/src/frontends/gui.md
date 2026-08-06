@@ -300,5 +300,7 @@ nine-slice borders, icon sprites, a sprite compass and paperdoll. See
 - `Ctrl+F` opens in-window search with match highlighting.
 - Up/Down in the input bar browse command history; whatever you were
   typing is stashed and restored when you come back down.
+- The newest history entry matching what you type appears as dim text after
+  the cursor; press `Tab` to accept it.
 - Terminal-only commands (`.setpalette`, `.resetpalette`, `.transparent`)
   don't apply; themes handle appearance instead.

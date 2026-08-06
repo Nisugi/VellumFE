@@ -1676,6 +1676,24 @@ impl AppCore {
             // vice versa; the test extracts them from this source span)
             // Application commands
             "quit" | "q" => {
+                // Keep-open mode (desktop default): first .quit detaches from
+                // the game/Lich but leaves the window and scrollback up; a
+                // second .quit — the connection is already down — falls
+                // through to the real exit. `.exit` always closes in one step.
+                if self.detach_quit_supported
+                    && self.config.ui.keep_open_on_quit
+                    && self.game_state.connected
+                {
+                    self.save_on_quit();
+                    self.disconnect_requested = true;
+                    self.add_system_message(
+                        "Detached — window stays open. .reconnect or .launch <character> to resume; .quit again or .exit to close.",
+                    );
+                } else {
+                    self.quit();
+                }
+            }
+            "exit" => {
                 self.quit();
             }
             "help" | "h" | "?" => {
@@ -2663,6 +2681,63 @@ mod portal_tests {
             portal_candidates(wayto.iter()),
             vec!["go door".to_string(), "climb stair".to_string()]
         );
+    }
+
+    /// Keep-open `.quit` (desktop default): first `.quit` while connected
+    /// detaches (flag for the runtime) and keeps the app running; a second
+    /// `.quit` — now disconnected — exits; `.exit` always exits.
+    #[test]
+    fn quit_keeps_window_open_then_second_quit_exits() {
+        let mut core = AppCore::new_for_test();
+        core.detach_quit_supported = true;
+        core.game_state.connected = true;
+        assert!(core.config.ui.keep_open_on_quit, "keep-open is the default");
+
+        core.send_command(".quit".to_string());
+        assert!(core.disconnect_requested, "first .quit requests detach");
+        assert!(core.running, "app stays up after first .quit");
+
+        // Runtime drained the request and closed the socket.
+        core.disconnect_requested = false;
+        core.game_state.connected = false;
+
+        core.send_command(".quit".to_string());
+        assert!(!core.running, "second .quit exits");
+    }
+
+    #[test]
+    fn exit_always_exits_even_while_connected() {
+        let mut core = AppCore::new_for_test();
+        core.detach_quit_supported = true;
+        core.game_state.connected = true;
+        core.send_command(".exit".to_string());
+        assert!(!core.running);
+        assert!(!core.disconnect_requested);
+    }
+
+    /// Toggle off restores the old behavior: `.quit` closes immediately.
+    #[test]
+    fn quit_exits_immediately_when_keep_open_disabled() {
+        let mut core = AppCore::new_for_test();
+        core.detach_quit_supported = true;
+        core.game_state.connected = true;
+        core.config.ui.keep_open_on_quit = false;
+        core.send_command(".quit".to_string());
+        assert!(!core.running);
+        assert!(!core.disconnect_requested);
+    }
+
+    /// Frontends that don't drain disconnect_requested (headless/web) keep
+    /// today's `.quit` semantics — otherwise a phone `.quit` would set a flag
+    /// nobody reads and become a no-op.
+    #[test]
+    fn quit_exits_when_frontend_lacks_detach_support() {
+        let mut core = AppCore::new_for_test();
+        core.game_state.connected = true;
+        assert!(!core.detach_quit_supported, "headless default");
+        core.send_command(".quit".to_string());
+        assert!(!core.running);
+        assert!(!core.disconnect_requested);
     }
 
     #[test]

@@ -657,22 +657,63 @@ html, body {
   background: var(--fg-dim);
 }
 
-#cmd-input {
+#cmd-input-shell {
+  position: relative;
   flex: 1;
   min-width: 0;
-  padding: 8px 10px;
   background: var(--bg);
-  color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
+  overflow: hidden;
+}
+
+#cmd-input-shell:focus-within {
+  border-color: var(--fg-dim);
+}
+
+#cmd-input,
+#cmd-suggestion {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
   font: inherit;
   /* 16px stops iOS Safari from zooming the page on focus */
   font-size: 16px;
 }
 
+#cmd-input {
+  position: relative;
+  z-index: 1;
+  display: block;
+  background: transparent;
+  color: var(--fg);
+  border: none;
+}
+
 #cmd-input:focus {
   outline: none;
-  border-color: var(--fg-dim);
+}
+
+#cmd-suggestion {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  color: var(--fg-dim);
+  white-space: pre;
+  pointer-events: none;
+}
+
+#cmd-suggestion[hidden] {
+  display: none;
+}
+
+body.hide-suggest #cmd-suggestion {
+  display: none;
+}
+
+#cmd-suggestion-prefix {
+  visibility: hidden;
 }
 
 #cmd-send {

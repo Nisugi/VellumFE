@@ -9,6 +9,6 @@ pub mod rect;
 pub mod text_input;
 
 pub use color::{Color, NamedColor};
-pub use command_input_model::CommandInputModel;
+pub use command_input_model::{find_history_completion, CommandInputModel, CompletionState};
 pub use rect::Rect;
 pub use text_input::TextInput;

@@ -195,6 +195,27 @@ impl super::TuiFrontend {
                 return self.handle_command_submission(command, app_core);
             }
         } else {
+            // For plain (non-dot) input, a visible history suggestion owns
+            // plain Tab regardless of how Tab is rebound. Dot input is left
+            // for the switch-window path below, which runs dot-command
+            // completion FIRST and only falls back to the suggestion once
+            // completion has nothing new — so `.la` Tab Tab gives ".launch"
+            // then ".launch nisugi".
+            if matches!(code, KeyCode::Tab)
+                && modifiers == crate::data::input::KeyModifiers::NONE
+                && self
+                    .widget_manager
+                    .command_inputs
+                    .get_mut("command_input")
+                    .is_some_and(|input| {
+                        !input.get_input().is_some_and(|text| text.starts_with('.'))
+                            && input.accept_history_completion()
+                    })
+            {
+                app_core.needs_render = true;
+                return Ok(None);
+            }
+
             // Check for keybinds first - normalize to lowercase for consistent matching
             let normalized_code = match code {
                 KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
@@ -230,7 +251,9 @@ impl super::TuiFrontend {
                     crate::config::KeyBindAction::Action(s) if matches!(s.as_str(),
                         "cursor_left" | "cursor_right" | "cursor_word_left" | "cursor_word_right" |
                         "cursor_home" | "cursor_end" | "cursor_backspace" | "cursor_delete" |
-                        "previous_command" | "next_command"
+                        "cursor_delete_word" | "cursor_clear_line" |
+                        "previous_command" | "next_command" |
+                        "copy" | "paste" | "select_all"
                     )
                 );
 
@@ -334,17 +357,19 @@ impl super::TuiFrontend {
                     }
                     app_core.needs_render = true;
                 } else if is_switch_window_action {
-                    // Check if command input has text that should trigger tab completion
+                    // Keep the configured switch-window key in the command
+                    // input for dot input. command_input_key's Tab arm runs
+                    // dot-command completion first and falls back to the
+                    // history suggestion once completion is settled. (Plain
+                    // non-dot Tab history accept ran before keybind dispatch.)
                     let should_complete = self
                         .widget_manager
                         .command_inputs
                         .get("command_input")
                         .and_then(|cmd| cmd.get_input())
-                        .map(|text| text.starts_with('.'))
-                        .unwrap_or(false);
+                        .is_some_and(|text| text.starts_with('.'));
 
                     if should_complete {
-                        // Do tab completion for dot commands
                         let available_commands = app_core.get_available_commands();
                         let available_window_names = app_core.get_window_names();
                         use crate::frontend::tui::crossterm_bridge;
@@ -386,18 +411,9 @@ impl super::TuiFrontend {
                     }
                     app_core.needs_render = true;
                 } else if is_command_input_action {
-                    let available_commands = app_core.get_available_commands();
-                    let available_window_names = app_core.get_window_names();
-                    use crate::frontend::tui::crossterm_bridge;
-                    let ct_code = crossterm_bridge::to_crossterm_keycode(code);
-                    let ct_mods = crossterm_bridge::to_crossterm_modifiers(modifiers);
-                    self.command_input_key(
-                        "command_input",
-                        ct_code,
-                        ct_mods,
-                        &available_commands,
-                        &available_window_names,
-                    );
+                    if let crate::config::KeyBindAction::Action(name) = &action {
+                        self.apply_command_input_action("command_input", name, modifiers.shift);
+                    }
                     app_core.needs_render = true;
                 } else {
                     match app_core.execute_keybind_action(&action) {

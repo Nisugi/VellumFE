@@ -434,6 +434,8 @@ pub struct CommandInputWidgetData {
     )]
     pub input_text_color: Option<String>,
     #[serde(default)]
+    pub completion_color: Option<String>,
+    #[serde(default)]
     pub cursor_color: Option<String>,
     #[serde(default)]
     pub cursor_background_color: Option<String>,
@@ -1244,7 +1246,18 @@ fn is_default_bar_order(order: &Vec<String>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::MiniVitalsWidgetData;
+    use super::{CommandInputWidgetData, MiniVitalsWidgetData};
+
+    #[test]
+    fn command_input_completion_color_round_trips() {
+        let data: CommandInputWidgetData =
+            toml::from_str("completion_color = \"#6b7280\"").unwrap();
+        assert_eq!(data.completion_color.as_deref(), Some("#6b7280"));
+
+        let serialized = toml::to_string(&data).unwrap();
+        let round_trip: CommandInputWidgetData = toml::from_str(&serialized).unwrap();
+        assert_eq!(round_trip, data);
+    }
 
     #[test]
     fn minivitals_depleted_color_defaults_to_none() {

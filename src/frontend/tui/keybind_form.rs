@@ -398,6 +398,27 @@ impl KeybindFormWidget {
             }
         };
 
+        // Reserved combos (GUI OS-event floor): a saved bind applies to both
+        // frontends, so refuse here too, with the reason on the status line.
+        let action_for_check = match self.action_type {
+            KeybindActionType::Action => crate::config::KeyBindAction::Action(value.clone()),
+            KeybindActionType::Macro => {
+                crate::config::KeyBindAction::Macro(crate::config::MacroAction {
+                    macro_text: value.clone(),
+                })
+            }
+        };
+        if let Some(reason) =
+            crate::config::reserved_combo_conflict(&key_combo, &action_for_check)
+        {
+            self.status_message = reason;
+            return None;
+        }
+        if let Some(reason) = crate::config::keyboard_dead_action_reason(&action_for_check) {
+            self.status_message = reason;
+            return None;
+        }
+
         Some(KeybindFormResult::Save {
             key_combo,
             action_type: self.action_type.clone(),

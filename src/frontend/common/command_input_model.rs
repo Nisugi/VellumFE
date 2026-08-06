@@ -1,5 +1,106 @@
 use std::collections::VecDeque;
 
+/// Return the suffix of the newest history entry that extends `input`.
+/// Exact matches are skipped because they have nothing to complete.
+pub fn find_history_completion(input: &str, history: &VecDeque<String>) -> Option<String> {
+    if input.is_empty() {
+        return None;
+    }
+    history
+        .iter()
+        .find_map(|command| {
+            command
+                .strip_prefix(input)
+                .filter(|suffix| !suffix.is_empty())
+        })
+        .map(str::to_string)
+}
+
+/// Dot-command / window-name completion engine, shared by both desktop
+/// frontends (the TUI drives it through [`CommandInputModel::try_complete`],
+/// the GUI holds one beside its egui text buffer). Pure text logic — no
+/// frontend types.
+#[derive(Clone, Debug, Default)]
+pub struct CompletionState {
+    candidates: Vec<String>,
+    index: Option<usize>,
+    prefix: Option<String>,
+}
+
+impl CompletionState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Forget the current candidate set (call when the text changes by any
+    /// means other than [`CompletionState::advance`]).
+    pub fn reset(&mut self) {
+        self.candidates.clear();
+        self.index = None;
+        self.prefix = None;
+    }
+
+    /// Advance completion for `text`: start a candidate set on first call,
+    /// cycle to the next candidate on repeats. Returns the NEW text when it
+    /// differs from `text`; `None` means completion has nothing new to offer
+    /// (no candidates, or a single already-applied candidate) — the caller's
+    /// Tab can fall through to the next behavior (history-ghost accept).
+    ///
+    /// The word being completed is the last whitespace-separated token: a
+    /// leading-dot token completes against `commands`, anything else against
+    /// `window_names` (`.editwindow ma<Tab>` → window names).
+    pub fn advance(
+        &mut self,
+        text: &str,
+        commands: &[String],
+        window_names: &[String],
+    ) -> Option<String> {
+        if self.candidates.is_empty() {
+            let input = text.trim();
+            let (prefix, word_to_complete) = if let Some(pos) = input.rfind(char::is_whitespace) {
+                (input[..=pos].to_string(), &input[pos + 1..])
+            } else {
+                (String::new(), input)
+            };
+
+            if word_to_complete.is_empty() {
+                return None;
+            }
+
+            let mut candidates: Vec<String> = if word_to_complete.starts_with('.') {
+                commands
+                    .iter()
+                    .filter(|c| c.starts_with(word_to_complete))
+                    .cloned()
+                    .collect()
+            } else {
+                window_names
+                    .iter()
+                    .filter(|n| n.starts_with(word_to_complete))
+                    .cloned()
+                    .collect()
+            };
+
+            if candidates.is_empty() {
+                return None;
+            }
+
+            candidates.sort();
+            self.candidates = candidates;
+            self.prefix = Some(prefix);
+            self.index = Some(0);
+        } else if let Some(index) = self.index.as_mut() {
+            *index = (*index + 1) % self.candidates.len();
+        }
+
+        let (index, prefix) = (self.index?, self.prefix.as_ref()?);
+        let candidate = self.candidates.get(index)?;
+        let new_text = format!("{prefix}{candidate}");
+        // A single already-applied candidate cycles back to itself.
+        (new_text != text).then_some(new_text)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct CommandInputSnapshot {
     text: String,
@@ -21,9 +122,7 @@ pub struct CommandInputModel {
     max_history: usize,
     min_command_length: usize,
     is_user_typed: bool,
-    completion_candidates: Vec<String>,
-    completion_index: Option<usize>,
-    completion_prefix: Option<String>,
+    completion: CompletionState,
 }
 
 impl CommandInputModel {
@@ -40,9 +139,7 @@ impl CommandInputModel {
             max_history,
             min_command_length: 3,
             is_user_typed: false,
-            completion_candidates: Vec::new(),
-            completion_index: None,
-            completion_prefix: None,
+            completion: CompletionState::new(),
         }
     }
 
@@ -114,6 +211,24 @@ impl CommandInputModel {
         let byte_idx = self.char_pos_to_byte_idx(self.cursor_pos - 1);
         self.text.remove(byte_idx);
         self.cursor_pos -= 1;
+        self.reset_completion();
+        self.is_user_typed = true;
+        self.redo_stack.clear();
+    }
+
+    /// Forward-delete one char at the cursor (the classic Delete key; the
+    /// `cursor_delete` action). Selection, if any, is deleted instead.
+    pub fn delete_forward(&mut self) {
+        if self.selection.is_some() {
+            self.delete_selection();
+            return;
+        }
+        if self.cursor_pos >= self.text.chars().count() {
+            return;
+        }
+        self.push_undo_snapshot();
+        let byte_idx = self.char_pos_to_byte_idx(self.cursor_pos);
+        self.text.remove(byte_idx);
         self.reset_completion();
         self.is_user_typed = true;
         self.redo_stack.clear();
@@ -341,6 +456,31 @@ impl CommandInputModel {
         self.history.get(1).cloned()
     }
 
+    /// The untyped suffix of the newest command beginning with the current
+    /// input. Suggestions are only valid at the end of the input.
+    pub fn history_completion(&self) -> Option<String> {
+        if self.has_selection() || self.cursor_pos != self.text.chars().count() {
+            return None;
+        }
+        find_history_completion(&self.text, &self.history)
+    }
+
+    /// Accept the current history completion, if any.
+    pub fn accept_history_completion(&mut self) -> bool {
+        let Some(suffix) = self.history_completion() else {
+            return false;
+        };
+        self.push_undo_snapshot();
+        self.text.push_str(&suffix);
+        self.cursor_pos = self.text.chars().count();
+        self.history_index = None;
+        self.is_user_typed = true;
+        self.clear_selection();
+        self.reset_completion();
+        self.redo_stack.clear();
+        true
+    }
+
     pub fn history_previous(&mut self) {
         if self.history.is_empty() {
             return;
@@ -417,68 +557,30 @@ impl CommandInputModel {
         true
     }
 
-    pub fn try_complete(&mut self, available_commands: &[String], window_names: &[String]) {
+    /// Dot-command / window-name completion. Returns true when it CHANGED the
+    /// text (started completing, or cycled to a different candidate) — false
+    /// means completion has nothing new to offer, so Tab handlers can fall
+    /// through to the next behavior (accepting a history suggestion).
+    pub fn try_complete(&mut self, available_commands: &[String], window_names: &[String]) -> bool {
         if self.cursor_pos != self.text.chars().count() {
-            return;
+            return false;
         }
-        if self.completion_candidates.is_empty() {
-            let input = self.text.trim();
-            let (prefix, word_to_complete) = if let Some(pos) = input.rfind(char::is_whitespace) {
-                let prefix = &input[..=pos];
-                let word = &input[pos + 1..];
-                (prefix.to_string(), word)
-            } else {
-                ("".to_string(), input)
-            };
-
-            if word_to_complete.is_empty() {
-                return;
-            }
-
-            let mut candidates = Vec::new();
-            if word_to_complete.starts_with('.') {
-                for cmd in available_commands {
-                    if cmd.starts_with(word_to_complete) {
-                        candidates.push(cmd.clone());
-                    }
-                }
-            } else {
-                for name in window_names {
-                    if name.starts_with(word_to_complete) {
-                        candidates.push(name.clone());
-                    }
-                }
-            }
-
-            if candidates.is_empty() {
-                return;
-            }
-
-            candidates.sort();
-            self.completion_candidates = candidates;
-            self.completion_prefix = Some(prefix);
-            self.completion_index = Some(0);
-        } else if let Some(index) = self.completion_index.as_mut() {
-            *index = (*index + 1) % self.completion_candidates.len();
-        }
-
-        if let (Some(index), Some(prefix)) = (self.completion_index, &self.completion_prefix) {
-            if let Some(candidate) = self.completion_candidates.get(index) {
-                let prefix = prefix.clone();
-                let candidate = candidate.clone();
-                self.push_undo_snapshot();
-                self.text = format!("{}{}", prefix, candidate);
-                self.cursor_pos = self.text.chars().count();
-                self.clear_selection();
-                self.redo_stack.clear();
-            }
-        }
+        let Some(new_text) = self
+            .completion
+            .advance(&self.text, available_commands, window_names)
+        else {
+            return false;
+        };
+        self.push_undo_snapshot();
+        self.text = new_text;
+        self.cursor_pos = self.text.chars().count();
+        self.clear_selection();
+        self.redo_stack.clear();
+        true
     }
 
     pub fn reset_completion(&mut self) {
-        self.completion_candidates.clear();
-        self.completion_index = None;
-        self.completion_prefix = None;
+        self.completion.reset();
     }
 
     pub fn history(&self) -> &VecDeque<String> {
@@ -560,7 +662,7 @@ impl CommandInputModel {
 
 #[cfg(test)]
 mod tests {
-    use super::CommandInputModel;
+    use super::{CommandInputModel, CompletionState};
 
     #[test]
     fn select_all_and_delete() {
@@ -629,6 +731,146 @@ mod tests {
         model.insert_text(".window m");
         model.try_complete(&commands, &windows);
         assert_eq!(model.text(), ".window main");
+    }
+
+    /// The standalone engine (as the GUI drives it): advance starts/cycles,
+    /// returns None when settled, and reset() invalidates after edits.
+    #[test]
+    fn completion_state_advance_and_reset() {
+        let commands = vec![".launch".to_string(), ".layers".to_string()];
+        let windows = vec!["main".to_string()];
+        let mut state = CompletionState::new();
+
+        assert_eq!(
+            state.advance(".la", &commands, &windows).as_deref(),
+            Some(".launch")
+        );
+        assert_eq!(
+            state.advance(".launch", &commands, &windows).as_deref(),
+            Some(".layers")
+        );
+        // Second word completes against window names.
+        state.reset();
+        assert_eq!(
+            state.advance(".editwindow ma", &commands, &windows).as_deref(),
+            Some(".editwindow main")
+        );
+        // Settled single candidate: nothing new.
+        assert_eq!(state.advance(".editwindow main", &commands, &windows), None);
+    }
+
+    /// The double-Tab flow: first Tab completes the dot command, second Tab
+    /// (completion settled → try_complete returns false) accepts the ghost.
+    #[test]
+    fn completion_then_history_double_tab_flow() {
+        let commands = vec![".launch".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command(".launch nisugi");
+        model.insert_text(".la");
+
+        assert!(model.try_complete(&commands, &windows), "first Tab completes");
+        assert_eq!(model.text(), ".launch");
+        assert_eq!(model.history_completion().as_deref(), Some(" nisugi"));
+
+        assert!(
+            !model.try_complete(&commands, &windows),
+            "single candidate already applied — nothing new"
+        );
+        assert!(model.accept_history_completion());
+        assert_eq!(model.text(), ".launch nisugi");
+    }
+
+    /// Ambiguous prefixes keep classic candidate cycling: every Tab that
+    /// lands on a DIFFERENT candidate reports true, so the ghost is never
+    /// accepted mid-cycle.
+    #[test]
+    fn ambiguous_completion_keeps_cycling() {
+        let commands = vec![".launch".to_string(), ".layers".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.insert_text(".la");
+
+        assert!(model.try_complete(&commands, &windows));
+        assert_eq!(model.text(), ".launch");
+        assert!(model.try_complete(&commands, &windows));
+        assert_eq!(model.text(), ".layers");
+        assert!(model.try_complete(&commands, &windows));
+        assert_eq!(model.text(), ".launch");
+    }
+
+    /// No candidates → false immediately, so Tab falls through to the ghost.
+    #[test]
+    fn no_completion_candidates_reports_false() {
+        let commands = vec![".launch".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.insert_text(".zz");
+        assert!(!model.try_complete(&commands, &windows));
+    }
+
+    /// A settled completion must not push no-op undo snapshots on repeat Tab.
+    #[test]
+    fn settled_completion_does_not_spam_undo() {
+        let commands = vec![".launch".to_string()];
+        let windows: Vec<String> = Vec::new();
+        let mut model = CommandInputModel::new(10);
+        model.insert_text(".la");
+        assert!(model.try_complete(&commands, &windows));
+        assert!(!model.try_complete(&commands, &windows));
+        assert!(!model.try_complete(&commands, &windows));
+
+        assert!(model.undo(), "one undo back to the typed prefix");
+        assert_eq!(model.text(), ".la");
+    }
+
+    #[test]
+    fn history_completion_uses_newest_extending_match() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("prepare 101");
+        model.record_external_command("prepare 102");
+        model.insert_text("prep");
+
+        assert_eq!(model.history_completion().as_deref(), Some("are 102"));
+        assert!(model.accept_history_completion());
+        assert_eq!(model.text(), "prepare 102");
+    }
+
+    #[test]
+    fn history_completion_skips_exact_match_and_requires_cursor_at_end() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("look north");
+        model.record_external_command("look");
+        model.insert_text("look");
+
+        assert_eq!(model.history_completion().as_deref(), Some(" north"));
+        model.move_cursor_left(false);
+        assert_eq!(model.history_completion(), None);
+        assert!(!model.accept_history_completion());
+    }
+
+    #[test]
+    fn history_completion_is_hidden_for_a_selection_ending_at_the_cursor() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("look north");
+        model.insert_text("look");
+        model.move_cursor_home(false);
+        model.move_cursor_end(true);
+
+        assert!(model.has_selection());
+        assert_eq!(model.history_completion(), None);
+    }
+
+    #[test]
+    fn accepted_history_completion_is_undoable() {
+        let mut model = CommandInputModel::new(10);
+        model.record_external_command("café table");
+        model.insert_text("café");
+
+        assert!(model.accept_history_completion());
+        assert_eq!(model.text(), "café table");
+        assert!(model.undo());
+        assert_eq!(model.text(), "café");
     }
 
     #[test]

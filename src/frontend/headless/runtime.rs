@@ -343,6 +343,12 @@ pub async fn async_run(
     config.web.enabled = true;
 
     let mut app_core = AppCore::new(config)?;
+    // This runtime drains disconnect_requested (below) into
+    // SessionRequest::Disconnect, so keep-open `.quit` detaches to the login
+    // screen instead of tearing the whole engine down. Before this, a phone
+    // `.quit` set running=false and killed the embedded web server out from
+    // under the UI — a dead "Reconnecting…" screen nothing could revive.
+    app_core.detach_quit_supported = true;
 
     let session_label = character
         .clone()
@@ -727,6 +733,28 @@ pub async fn async_run(
         }
         if let Some(handshake) = app_core.take_webui_handshake() {
             app_core.start_webui(&tokio::runtime::Handle::current(), &handshake);
+        }
+
+        // Keep-open `.quit`: core asked to drop the connection without
+        // exiting — on this runtime that is exactly SessionRequest::Disconnect
+        // (abort the session task, suppress auto-reconnect, land the web
+        // client on the login screen).
+        if app_core.take_disconnect_request() {
+            session_requests.push(SessionRequest::Disconnect);
+        }
+
+        // Mobile embedded engine: there is NO process to exit. `.exit` (or a
+        // `.quit` while already disconnected) must mean "leave the session,
+        // show the login screen" — never "kill the web server serving this
+        // UI", which leaves the app a dead Reconnecting… screen until it's
+        // force-closed. Desktop headless keeps real exit semantics.
+        #[cfg(not(feature = "desktop"))]
+        if !app_core.running {
+            app_core.running = true;
+            app_core.add_system_message(
+                "This client has no exit — returning to the login screen instead.",
+            );
+            session_requests.push(SessionRequest::Disconnect);
         }
 
         // Apply session-control requests from web clients.

@@ -353,6 +353,10 @@ where
 
         // Drain until the channel closes. The detach wrapper returns quickly,
         // so this does not block on the long-lived Lich process.
+        //
+        // Do NOT break on Eof: OpenSSH sends `exit-status` after EOF, so
+        // breaking there loses the exit code (and a silent `None` used to be
+        // treated as spawn success). Only Close / stream-end terminate.
         loop {
             let Some(msg) = channel.wait().await else {
                 break;
@@ -364,7 +368,13 @@ where
                     exit_status = Some(code);
                     // Keep draining — more data may follow the status.
                 }
-                ChannelMsg::Close | ChannelMsg::Eof => break,
+                // The server refused the exec request outright (bad shell,
+                // restricted key, MaxSessions…). Surface it — pretending it
+                // ran and timing out on the port poll is a debugging trap.
+                ChannelMsg::Failure => {
+                    bail!("SSH server rejected the exec request (channel failure)");
+                }
+                ChannelMsg::Close => break,
                 _ => {}
             }
         }
@@ -407,9 +417,17 @@ impl DetachedRun {
 /// Wrap a bare launch command so the spawned process survives the SSH channel
 /// closing, choosing the right mechanism for the *remote* OS.
 ///
-/// - Windows: `powershell Start-Process -WindowStyle Hidden` fully detaches;
-///   the process is reparented to the service host, not the SSH session, so it
-///   outlives the connection. `rubyw.exe` is already windowless.
+/// - Windows: Win32-OpenSSH places every exec in a job object with
+///   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — ALL children (including ones from
+///   `Start-Process`) are killed the instant the exec command exits, before
+///   the launcher even starts polling the port. The job does set
+///   `JOB_OBJECT_LIMIT_BREAKAWAY_OK`, so the one sanctioned escape is spawning
+///   with `CREATE_BREAKAWAY_FROM_JOB`. No stock CLI passes that flag, so we
+///   emit a small PowerShell Add-Type/P-Invoke `CreateProcessW` call, encoded
+///   as `-EncodedCommand` (UTF-16LE base64) so no quoting survives the cmd.exe
+///   hop. `CREATE_NO_WINDOW` keeps console apps (ruby.exe) invisible.
+///   (Task Scheduler and WMI `Win32_Process.Create` are NOT alternatives here:
+///   both are access-denied or inert for a standard user's network logon.)
 /// - Unix: `nohup ... &` + redirecting stdio detaches from the controlling
 ///   terminal so an SSH channel close doesn't SIGHUP it.
 ///
@@ -418,20 +436,16 @@ impl DetachedRun {
 pub fn detach_wrap(remote_os: RemoteOs, program: &str, args: &[String]) -> String {
     match remote_os {
         RemoteOs::Windows => {
-            // Start-Process takes the file and an -ArgumentList array. Quote
-            // each arg for PowerShell single-quoted string literals (double any
-            // embedded single quote).
-            let arg_list = args
-                .iter()
-                .map(|a| format!("'{}'", a.replace('\'', "''")))
-                .collect::<Vec<_>>()
-                .join(",");
-            let prog = program.replace('\'', "''");
-            if arg_list.is_empty() {
-                format!("powershell -NoProfile -Command \"Start-Process -WindowStyle Hidden -FilePath '{prog}'\"")
-            } else {
-                format!("powershell -NoProfile -Command \"Start-Process -WindowStyle Hidden -FilePath '{prog}' -ArgumentList {arg_list}\"")
-            }
+            use base64::Engine as _;
+            let script = windows_breakaway_script(&windows_cmdline(program, args));
+            let utf16: Vec<u8> = script
+                .encode_utf16()
+                .flat_map(|u| u.to_le_bytes())
+                .collect();
+            format!(
+                "powershell -NoProfile -EncodedCommand {}",
+                base64::engine::general_purpose::STANDARD.encode(utf16)
+            )
         }
         RemoteOs::Unix => {
             let quoted = std::iter::once(program.to_string())
@@ -442,6 +456,76 @@ pub fn detach_wrap(remote_os: RemoteOs, program: &str, args: &[String]) -> Strin
             format!("nohup {quoted} >/dev/null 2>&1 &")
         }
     }
+}
+
+/// Build a Windows command line from program + args: every token
+/// double-quoted, embedded double quotes backslash-escaped. Pragmatic C-rules
+/// quoting for launch commands (paths + flags), same spirit as
+/// [`split_command`], not a full CommandLineToArgvW inverse.
+fn windows_cmdline(program: &str, args: &[String]) -> String {
+    std::iter::once(program)
+        .chain(args.iter().map(String::as_str))
+        .map(|t| format!("\"{}\"", t.replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// PowerShell script that spawns `cmdline` with `CREATE_BREAKAWAY_FROM_JOB` so
+/// it escapes sshd's kill-on-close job object (see [`detach_wrap`]). Prints
+/// `spawned pid=N` and exits 0 on success; prints the Win32 error and exits 1
+/// on failure, so [`DetachedRun::spawn_ok`] is meaningful.
+///
+/// The whole CreateProcessW call lives inside the C# helper: PowerShell runs
+/// pipeline machinery between a P/Invoke returning and any later
+/// `GetLastWin32Error()` read, so the error code must be captured in the same
+/// managed frame. `lpCommandLine` is a StringBuilder because CreateProcessW is
+/// allowed to scribble on it (an immutable string marshals as read-only).
+/// What the emitted C# does (kept terse in the payload — sshd runs exec lines
+/// through `cmd.exe /c`, whose 8191-char limit the UTF-16 base64 encoding
+/// approaches fast, so the script carries no comments or long names):
+///
+/// - `V.S(cmdline)` calls `CreateProcessW` with flags `0x09000000` =
+///   `CREATE_BREAKAWAY_FROM_JOB (0x01000000)` — escapes sshd's kill-on-close
+///   job — `| CREATE_NO_WINDOW (0x08000000)` — keeps console apps invisible.
+/// - The child gets REAL std handles (`STARTF_USESTDHANDLES`): rubyw.exe has
+///   no console, and with null stdio the first write (e.g. Lich printing its
+///   nonfatal Gtk.init backtrace when there's no desktop) kills the process.
+///   stdout/stderr go to `%TEMP%\vellum-launcher-spawn.log` (a breadcrumb for
+///   remote failures), stdin reads NUL; both fall back to NUL/null.
+/// - Struct field names are positional abbreviations of STARTUPINFO /
+///   PROCESS_INFORMATION / SECURITY_ATTRIBUTES in their documented order.
+fn windows_breakaway_script(cmdline: &str) -> String {
+    // Embed as a PowerShell single-quoted literal: double embedded quotes.
+    let ps_literal = cmdline.replace('\'', "''");
+    format!(
+        r#"$ProgressPreference='SilentlyContinue'
+$d=@'
+using System;using System.Text;using System.Runtime.InteropServices;
+public class V{{
+[StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]public struct SI{{public int cb;public string r1;public string r2;public string r3;public int x;public int y;public int xs;public int ys;public int xc;public int yc;public int fa;public int fl;public short sw;public short r4;public IntPtr r5;public IntPtr hi;public IntPtr ho;public IntPtr he;}}
+[StructLayout(LayoutKind.Sequential)]public struct PI{{public IntPtr hp;public IntPtr ht;public int pid;public int tid;}}
+[StructLayout(LayoutKind.Sequential)]public struct SA{{public int n;public IntPtr sd;public bool ih;}}
+[DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]static extern bool CreateProcessW(string a,StringBuilder c,IntPtr pa,IntPtr ta,bool ih,uint f,IntPtr e,string wd,ref SI si,out PI pi);
+[DllImport("kernel32.dll",SetLastError=true,CharSet=CharSet.Unicode)]static extern IntPtr CreateFileW(string n,uint a,uint s,ref SA sa,uint d,uint fl,IntPtr t);
+static IntPtr O(string n,uint a,uint d){{SA s=new SA();s.n=Marshal.SizeOf(typeof(SA));s.ih=true;return CreateFileW(n,a,3,ref s,d,0x80,IntPtr.Zero);}}
+public static string S(string c){{
+SI si=new SI();si.cb=Marshal.SizeOf(typeof(SI));
+string t=Environment.GetEnvironmentVariable("TEMP");if(t==null)t="C:\\Windows\\Temp";
+IntPtr b=new IntPtr(-1);
+IntPtr o=O(t+"\\vellum-launcher-spawn.log",0x40000000u,2);if(o==b)o=O("NUL",0x40000000u,3);
+IntPtr i=O("NUL",0x80000000u,3);
+si.fl=0x100;si.hi=(i==b)?IntPtr.Zero:i;si.ho=(o==b)?IntPtr.Zero:o;si.he=(o==b)?IntPtr.Zero:o;
+PI pi;StringBuilder sb=new StringBuilder(c);
+if(!CreateProcessW(null,sb,IntPtr.Zero,IntPtr.Zero,true,0x09000000u,IntPtr.Zero,null,ref si,out pi))return "err="+Marshal.GetLastWin32Error();
+return "pid="+pi.pid;}}}}
+'@
+Add-Type -TypeDefinition $d
+$r=[V]::S('{ps_literal}')
+if($r.StartsWith('pid=')){{Write-Output ('spawned '+$r);exit 0}}
+Write-Output ('CreateProcess failed, Win32 '+$r)
+exit 1
+"#
+    )
 }
 
 /// Which OS the *remote* (home PC) runs, so [`detach_wrap`] picks the right
@@ -554,8 +638,25 @@ mod tests {
         assert_ne!(a.private_openssh, b.private_openssh);
     }
 
+    /// Decode the `-EncodedCommand` payload back to the PowerShell script.
+    fn decode_encoded_command(wrapped: &str) -> String {
+        use base64::Engine as _;
+        let b64 = wrapped
+            .rsplit(' ')
+            .next()
+            .expect("wrapper ends with the base64 payload");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .expect("payload is valid base64");
+        let utf16: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16(&utf16).expect("payload is valid UTF-16LE")
+    }
+
     #[test]
-    fn detach_wrap_windows_quotes_args() {
+    fn detach_wrap_windows_breaks_away_from_job() {
         let cmd = detach_wrap(
             RemoteOs::Windows,
             "C:/Ruby4Lich5/4.0.3/bin/rubyw.exe",
@@ -568,12 +669,31 @@ mod tests {
                 "--detachable-client=8001".to_string(),
             ],
         );
-        assert!(cmd.contains("Start-Process"));
-        assert!(cmd.contains("-WindowStyle Hidden"));
-        assert!(cmd.contains("rubyw.exe"));
-        assert!(cmd.contains("--detachable-client=8001"));
-        // Every arg becomes a single-quoted PowerShell literal.
-        assert!(cmd.contains("'--login'"));
+        // Encoded so quoting can't be mangled by the remote cmd.exe hop.
+        assert!(cmd.starts_with("powershell -NoProfile -EncodedCommand "));
+
+        // sshd runs exec through `cmd.exe /c`, which hard-fails past 8191
+        // chars ("The command line is too long") — keep real headroom for
+        // longer user launch commands.
+        assert!(
+            cmd.len() < 6500,
+            "wrapped command is {} chars; approaching cmd.exe's 8191 limit",
+            cmd.len()
+        );
+
+        let script = decode_encoded_command(&cmd);
+        // Escapes sshd's kill-on-close job object (BREAKAWAY|NO_WINDOW) —
+        // the whole point.
+        assert!(script.contains("0x09000000u"));
+        assert!(script.contains("CreateProcessW"));
+        // Child must get real std handles — rubyw dies on its first write
+        // otherwise (STARTF_USESTDHANDLES + breadcrumb log / NUL).
+        assert!(script.contains("si.fl=0x100"));
+        assert!(script.contains("vellum-launcher-spawn.log"));
+        // The command line reaches the script with every token double-quoted.
+        assert!(script.contains(r#""C:/Ruby4Lich5/4.0.3/bin/rubyw.exe" "C:/Gemstone/dev/lich-5/lich.rbw" "--login" "Nisugi" "--gemstone" "--without-frontend" "--detachable-client=8001""#));
+        // Failure must exit nonzero so spawn_ok() reports it.
+        assert!(script.contains("exit 1"));
     }
 
     #[test]
@@ -591,8 +711,10 @@ mod tests {
     #[test]
     fn detach_wrap_escapes_single_quotes() {
         let win = detach_wrap(RemoteOs::Windows, "C:/it's here/rubyw.exe", &[]);
-        // Embedded single quote doubled for PowerShell.
-        assert!(win.contains("it''s here"));
+        // Embedded single quote doubled inside the PowerShell literal that
+        // carries the command line.
+        let script = decode_encoded_command(&win);
+        assert!(script.contains("it''s here"));
 
         let nix = detach_wrap(RemoteOs::Unix, "/it's/ruby", &[]);
         // Embedded single quote closed/escaped/reopened for POSIX sh.

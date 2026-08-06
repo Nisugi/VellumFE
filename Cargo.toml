@@ -3,7 +3,7 @@ members = ["android/rust", "ios/rust"]
 
 [package]
 name = "vellum-fe"
-version = "0.3.0-beta.31"
+version = "0.3.0-beta.32"
 edition = "2021"
 authors = ["Nisugi"]
 description = "Modern, high-performance multi-frontend (TUI/GUI) client for GemStone IV"
@@ -28,6 +28,7 @@ ratatui = { version = "0.29", optional = true }
 # phase-2 work (Windows VT input for numpad under Alacritty/ConPTY) has a home.
 crossterm = { git = "https://github.com/Nisugi/crossterm.git", branch = "dev", features = ["event-stream"], optional = true }
 tui-textarea = { version = "0.7", optional = true }
+unicode-segmentation = { version = "1", optional = true }
 
 # GUI (numpad-aware fork)
 egui = { git = "https://github.com/Nisugi/egui.git", branch = "numpad-support", package = "egui", optional = true }
@@ -135,7 +136,7 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 # The Android build is `--no-default-features`: core + parser + network +
 # web frontend + (Phase A2) headless runtime only.
 default = ["tui", "gui", "sound", "tts", "desktop", "gamepad"]
-tui = ["dep:ratatui", "dep:crossterm", "dep:tui-textarea"]
+tui = ["dep:ratatui", "dep:crossterm", "dep:tui-textarea", "dep:unicode-segmentation"]
 gui = ["dep:egui", "dep:eframe", "dep:fontdb", "dep:skrifa", "dep:image"]
 gamepad = ["dep:gilrs"]
 sound = ["dep:rodio"]

@@ -200,6 +200,19 @@ pub struct AppCore {
     /// handle to the socket task — so this is the hand-off point.
     pub reconnect_requested: bool,
 
+    /// Set by `.quit` when `ui.keep_open_on_quit` applies: the frontend
+    /// runtime drains this once per tick and closes the network connection
+    /// WITHOUT exiting the app (scrollback stays; `.reconnect`/`.launch`
+    /// resume, a second `.quit` or `.exit` closes the window).
+    pub disconnect_requested: bool,
+
+    /// Whether the running frontend honors `disconnect_requested` (set at
+    /// startup by the desktop TUI/GUI runtimes). The headless/web runtime
+    /// doesn't — its `.quit` keeps today's semantics — and without this gate
+    /// a keep-open `.quit` there would set a flag nobody drains and become a
+    /// no-op.
+    pub detach_quit_supported: bool,
+
     /// Set by a `.launch <character>` in a frontend whose runtime loop owns the
     /// network (the TUI). Core can't SSH or attach itself, so it stashes the
     /// character name here and the runtime drains it once per tick, runs the
@@ -387,6 +400,8 @@ impl AppCore {
             save_reminder_shown: false,
             force_show_command_input: false,
             reconnect_requested: false,
+            disconnect_requested: false,
+            detach_quit_supported: false,
             launch_requested: None,
             base_layout_name: None,
             keybind_map,
@@ -542,6 +557,8 @@ impl AppCore {
             save_reminder_shown: false,
             force_show_command_input: false,
             reconnect_requested: false,
+            disconnect_requested: false,
+            detach_quit_supported: false,
             launch_requested: None,
             base_layout_name: None,
             keybind_map,
@@ -3398,6 +3415,13 @@ impl AppCore {
     /// Returns true at most once per request; the frontend runtime acts on it.
     pub fn take_reconnect_request(&mut self) -> bool {
         std::mem::take(&mut self.reconnect_requested)
+    }
+
+    /// Consume a pending keep-open `.quit` request (see
+    /// `disconnect_requested`). Returns true at most once per request; the
+    /// frontend runtime closes the connection but keeps the app running.
+    pub fn take_disconnect_request(&mut self) -> bool {
+        std::mem::take(&mut self.disconnect_requested)
     }
 
     /// Consume a pending `.launch <character>` request (see `launch_requested`).
