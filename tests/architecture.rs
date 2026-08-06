@@ -149,3 +149,42 @@ fn config_root_stays_a_facade() {
          Move new types/impls into the appropriate src/config/ submodule."
     );
 }
+
+#[test]
+fn catalog_access_goes_through_the_seams() {
+    // Window-system redesign Phase 6: the template catalog's enumeration,
+    // gating and id-mapping surface is reachable ONLY through the seams
+    // (core::local_catalog, core::view_resolver) and inside config itself.
+    // The three id-maps are deleted outright; referencing them anywhere is
+    // an error. The rest are Config methods production code must reach via
+    // the seam so catalog swaps stay provable.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let needles = [
+        "dialog_id_to_template",
+        "stream_id_to_template",
+        "id_has_widget_template",
+        "Config::list_window_templates",
+        "Config::template_game_type",
+        "Config::get_templates_by_category",
+        "Config::get_addable_templates_by_category",
+        "Config::get_visible_templates_by_category",
+        "Config::get_layout_templates_by_category",
+        "Config::get_window_template",
+    ];
+    let mut violations = Vec::new();
+    scan_dir(&src, &needles, &mut violations);
+    violations.retain(|v| {
+        let path = v.split(".rs:").next().unwrap_or("").replace('\\', "/");
+        let in_allowed = path.contains("/src/config")
+            || path.ends_with("/src/core/local_catalog")
+            || path.ends_with("/src/core/view_resolver");
+        let line = v.rsplit(": ").next().unwrap_or("");
+        let comment_only = line.trim_start().starts_with("//");
+        !in_allowed && !comment_only
+    });
+    assert!(
+        violations.is_empty(),
+        "catalog access outside the seams (route through core::local_catalog / core::view_resolver):\n{}",
+        violations.join("\n")
+    );
+}

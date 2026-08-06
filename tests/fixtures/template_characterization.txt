@@ -1,0 +1,1922 @@
+# Template catalog characterization (generated — see file header test)
+
+[template_list.all]
+health
+mana
+stamina
+spirit
+stance
+progress_custom
+dashboard
+poisoned
+bleeding
+diseased
+stunned
+webbed
+standing
+kneeling
+sitting
+prone
+hidden
+invisible
+joined
+dead
+main
+thoughts
+speech
+announcements
+loot
+death
+logons
+familiar
+ambients
+bounty
+society
+text_custom
+chat
+tabbedtext_custom
+targets
+players
+items
+entity_custom
+roundtime
+casttime
+stuntime
+countdown_custom
+left
+right
+spell
+buffs
+debuffs
+cooldowns
+active_spells
+active_effects_custom
+inventory
+room
+spells
+compass
+map
+injuries
+quickbar
+hotkeybar
+spacer
+encum
+
+[template_list.gs4]
+health
+mana
+stamina
+spirit
+stance
+progress_custom
+dashboard
+poisoned
+bleeding
+diseased
+stunned
+webbed
+standing
+kneeling
+sitting
+prone
+hidden
+invisible
+joined
+dead
+main
+thoughts
+speech
+announcements
+loot
+death
+logons
+familiar
+ambients
+bounty
+society
+text_custom
+chat
+tabbedtext_custom
+targets
+players
+items
+entity_custom
+roundtime
+casttime
+stuntime
+countdown_custom
+left
+right
+spell
+buffs
+debuffs
+cooldowns
+active_spells
+active_effects_custom
+inventory
+reserve
+room
+spells
+compass
+map
+injuries
+quickbar
+hotkeybar
+spacer
+gs4_experience
+encum
+minivitals
+betrayer
+
+[template_list.dr]
+health
+mana
+stamina
+spirit
+concentration
+stance
+progress_custom
+dashboard
+poisoned
+bleeding
+diseased
+stunned
+webbed
+standing
+kneeling
+sitting
+prone
+hidden
+invisible
+joined
+dead
+main
+thoughts
+speech
+announcements
+loot
+death
+logons
+familiar
+ambients
+bounty
+society
+text_custom
+chat
+tabbedtext_custom
+targets
+players
+items
+entity_custom
+roundtime
+casttime
+stuntime
+countdown_custom
+left
+right
+spell
+buffs
+debuffs
+cooldowns
+active_spells
+active_effects_custom
+inventory
+room
+spells
+compass
+map
+injuries
+quickbar
+hotkeybar
+spacer
+perception
+experience
+encum
+
+[template_game_type]
+health = None
+mana = None
+stamina = None
+spirit = None
+concentration = Some(DR)
+stance = None
+progress_custom = None
+dashboard = None
+poisoned = None
+bleeding = None
+diseased = None
+stunned = None
+webbed = None
+standing = None
+kneeling = None
+sitting = None
+prone = None
+hidden = None
+invisible = None
+joined = None
+dead = None
+main = None
+thoughts = None
+speech = None
+announcements = None
+loot = None
+death = None
+logons = None
+familiar = None
+ambients = None
+bounty = None
+society = None
+text_custom = None
+chat = None
+tabbedtext_custom = None
+targets = None
+players = None
+items = None
+entity_custom = None
+roundtime = None
+casttime = None
+stuntime = None
+countdown_custom = None
+left = None
+right = None
+spell = None
+buffs = None
+debuffs = None
+cooldowns = None
+active_spells = None
+active_effects_custom = None
+inventory = None
+reserve = Some(GS4)
+room = None
+spells = None
+compass = None
+map = None
+injuries = None
+quickbar = None
+hotkeybar = None
+spacer = None
+perception = Some(DR)
+experience = Some(DR)
+gs4_experience = Some(GS4)
+encum = None
+minivitals = Some(GS4)
+betrayer = Some(GS4)
+
+[id_maps]
+"inv": dialog="inv" stream="inventory" has_widget=false
+"reserve": dialog="reserve" stream="reserve" has_widget=true
+"room": dialog="room" stream="room" has_widget=true
+"Spells": dialog="Spells" stream="spells" has_widget=false
+"thoughts": dialog="thoughts" stream="text_custom" has_widget=true
+"speech": dialog="speech" stream="text_custom" has_widget=true
+"familiar": dialog="familiar" stream="text_custom" has_widget=true
+"voln": dialog="voln" stream="text_custom" has_widget=false
+"logons": dialog="logons" stream="text_custom" has_widget=true
+"death": dialog="death" stream="text_custom" has_widget=true
+"combat": dialog="combat" stream="text_custom" has_widget=false
+"charprofile": dialog="charprofile" stream="text_custom" has_widget=false
+"minivitals": dialog="minivitals" stream="text_custom" has_widget=true
+"expr": dialog="gs4_experience" stream="text_custom" has_widget=true
+"encum": dialog="encum" stream="text_custom" has_widget=true
+"stance": dialog="stance" stream="text_custom" has_widget=true
+"injuries": dialog="injuries" stream="text_custom" has_widget=true
+"IconBAR": dialog="IconBAR" stream="text_custom" has_widget=false
+"compass": dialog="compass" stream="text_custom" has_widget=true
+"Buffs": dialog="buffs" stream="text_custom" has_widget=true
+"Debuffs": dialog="debuffs" stream="text_custom" has_widget=true
+"Cooldowns": dialog="cooldowns" stream="text_custom" has_widget=true
+"Active Spells": dialog="active_spells" stream="text_custom" has_widget=true
+"bank": dialog="bank" stream="text_custom" has_widget=false
+"befriend": dialog="befriend" stream="text_custom" has_widget=false
+"quick": dialog="quick" stream="text_custom" has_widget=false
+"quick-simu": dialog="quick-simu" stream="text_custom" has_widget=false
+"quick-combat": dialog="quick-combat" stream="text_custom" has_widget=false
+"tables": dialog="tables" stream="text_custom" has_widget=false
+"espMasterDialog": dialog="espMasterDialog" stream="text_custom" has_widget=false
+"mapViewMain": dialog="mapViewMain" stream="text_custom" has_widget=false
+"BetrayerPanel": dialog="BetrayerPanel" stream="text_custom" has_widget=false
+"lumnis_day": dialog="lumnis_day" stream="text_custom" has_widget=false
+"injuries-10154507": dialog="injuries-10154507" stream="text_custom" has_widget=false
+"UberBar": dialog="UberBar" stream="text_custom" has_widget=false
+"bugDialogBox": dialog="bugDialogBox" stream="text_custom" has_widget=false
+"no_such_id": dialog="no_such_id" stream="text_custom" has_widget=false
+"": dialog="" stream="text_custom" has_widget=false
+
+[templates_by_category]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, reserve, spells, injuries, perception, experience, gs4_experience, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Dialog: betrayer
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, concentration, stance, progress_custom, minivitals
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
+[addable_on_empty_layout.all]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, spells, injuries, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, stance, progress_custom
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
+[addable_on_empty_layout.gs4]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, reserve, spells, injuries, gs4_experience, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Dialog: betrayer
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, stance, progress_custom, minivitals
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
+[addable_on_empty_layout.dr]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, spells, injuries, perception, experience, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, concentration, stance, progress_custom
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
+[template.health]
+  widget_type = "progress"
+  name = "health"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Health"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  id = "health"
+  label = "Health"
+  color = "#6e0202"
+  numbers_only = false
+  current_only = false
+
+[template.mana]
+  widget_type = "progress"
+  name = "mana"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Mana"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  id = "mana"
+  label = "Mana"
+  color = "#08086d"
+  numbers_only = false
+  current_only = false
+
+[template.stamina]
+  widget_type = "progress"
+  name = "stamina"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Stamina"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  id = "stamina"
+  label = "Stamina"
+  color = "#bd7b00"
+  numbers_only = false
+  current_only = false
+
+[template.spirit]
+  widget_type = "progress"
+  name = "spirit"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Spirit"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  id = "spirit"
+  label = "Spirit"
+  color = "#6e727c"
+  numbers_only = false
+  current_only = false
+
+[template.concentration]
+  widget_type = "progress"
+  name = "concentration"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Concentration"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  id = "concentration"
+  label = "Conc"
+  color = "#00a0a0"
+  numbers_only = false
+  current_only = false
+
+[template.stance]
+  widget_type = "progress"
+  name = "stance"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Stance"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  id = "pbarStance"
+  label = "Stance"
+  color = "#000080"
+  numbers_only = false
+  current_only = false
+
+[template.progress_custom]
+  widget_type = "progress"
+  name = ""
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Custom"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  numbers_only = false
+  current_only = false
+
+[template.dashboard]
+  widget_type = "dashboard"
+  name = "dashboard"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 10
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Dashboard"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 1
+  min_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  dashboard_layout = "horizontal"
+  dashboard_spacing = 1
+  dashboard_hide_inactive = true
+  dashboard_indicators = []
+
+[template.poisoned]
+  widget_type = "indicator"
+  name = "poisoned"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Poisoned"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+  indicator_id = "POISONED"
+  active_color = "#00ff00"
+  default_color = "#00ff00"
+
+[template.bleeding]
+  widget_type = "indicator"
+  name = "bleeding"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Bleeding"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+  indicator_id = "BLEEDING"
+  active_color = "#ff0000"
+  default_color = "#ff0000"
+
+[template.diseased]
+  widget_type = "indicator"
+  name = "diseased"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Diseased"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+  indicator_id = "DISEASED"
+  active_color = "#8b4513"
+  default_color = "#8b4513"
+
+[template.stunned]
+  widget_type = "indicator"
+  name = "stunned"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Stunned"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = "󱐌"
+  indicator_id = "STUNNED"
+  active_color = "#ffff00"
+  default_color = "#ffff00"
+
+[template.webbed]
+  widget_type = "indicator"
+  name = "webbed"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Webbed"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = "󰯊"
+  indicator_id = "WEBBED"
+  active_color = "#cccccc"
+  default_color = "#cccccc"
+
+[template.standing]
+  widget_type = "indicator"
+  name = "standing"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Standing"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = "St"
+  indicator_id = "STANDING"
+  active_color = "#55b86c"
+  default_color = "#55b86c"
+
+[template.kneeling]
+  widget_type = "indicator"
+  name = "kneeling"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Kneeling"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = "Kn"
+  indicator_id = "KNEELING"
+  active_color = "#c9a54d"
+  default_color = "#c9a54d"
+
+[template.sitting]
+  widget_type = "indicator"
+  name = "sitting"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Sitting"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = "Si"
+  indicator_id = "SITTING"
+  active_color = "#c9a54d"
+  default_color = "#c9a54d"
+
+[template.prone]
+  widget_type = "indicator"
+  name = "prone"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Prone"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = "Pr"
+  indicator_id = "PRONE"
+  active_color = "#d67d3e"
+  default_color = "#d67d3e"
+
+[template.hidden]
+  widget_type = "indicator"
+  name = "hidden"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Hidden"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+  indicator_id = "HIDDEN"
+  active_color = "#7a7aa8"
+  default_color = "#7a7aa8"
+
+[template.invisible]
+  widget_type = "indicator"
+  name = "invisible"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Invisible"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+  indicator_id = "INVISIBLE"
+  active_color = "#9a9ac0"
+  default_color = "#9a9ac0"
+
+[template.joined]
+  widget_type = "indicator"
+  name = "joined"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Joined"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+  indicator_id = "JOINED"
+  active_color = "#5aa0d0"
+  default_color = "#5aa0d0"
+
+[template.dead]
+  widget_type = "indicator"
+  name = "dead"
+  row = 0
+  col = 0
+  rows = 2
+  cols = 1
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Dead"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 2
+  max_rows = 2
+  min_cols = 1
+  max_cols = 1
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+  indicator_id = "DEAD"
+  active_color = "#cd4d4d"
+  default_color = "#cd4d4d"
+
+[template.main]
+  widget_type = "text"
+  name = "main"
+  row = 0
+  col = 0
+  rows = 37
+  cols = 120
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Story"
+  title_position = "top-left"
+  transparent_background = false
+  locked = true
+  visibility = "shown"
+  tts_speak = false
+  streams = ["main"]
+  buffer_size = 10000
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.thoughts]
+  widget_type = "text"
+  name = "thoughts"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Thoughts"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["thoughts"]
+  buffer_size = 10000
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.speech]
+  widget_type = "text"
+  name = "speech"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Speech"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["speech"]
+  buffer_size = 10000
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.announcements]
+  widget_type = "text"
+  name = "announcements"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 50
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Announcements"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["announcements"]
+  buffer_size = 500
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.loot]
+  widget_type = "text"
+  name = "loot"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Loot"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["loot"]
+  buffer_size = 500
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.death]
+  widget_type = "text"
+  name = "death"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Death"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["death"]
+  buffer_size = 500
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.logons]
+  widget_type = "text"
+  name = "logons"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Logons"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["logons"]
+  buffer_size = 500
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.familiar]
+  widget_type = "text"
+  name = "familiar"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Familiar"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["familiar"]
+  buffer_size = 10000
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.ambients]
+  widget_type = "text"
+  name = "ambients"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Ambients"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["ambients"]
+  buffer_size = 500
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.bounty]
+  widget_type = "text"
+  name = "bounty"
+  row = 0
+  col = 0
+  rows = 15
+  cols = 50
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Bounties"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["bounty"]
+  buffer_size = 10
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.society]
+  widget_type = "text"
+  name = "society"
+  row = 0
+  col = 0
+  rows = 15
+  cols = 50
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Society Tasks"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["society"]
+  buffer_size = 10
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.text_custom]
+  widget_type = "text"
+  name = ""
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  streams = ["custom"]
+  buffer_size = 10000
+  wordwrap = true
+  show_timestamps = false
+  compact = false
+
+[template.chat]
+  widget_type = "tabbedtext"
+  name = "chat"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 60
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Chat"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  buffer_size = 5000
+  tab_bar_position = "top"
+  tab_separator = true
+  
+  [[tabs]]
+  name = "Thoughts"
+  streams = ["thoughts"]
+  ignore_activity = false
+  
+  [[tabs]]
+  name = "Speech"
+  streams = ["speech"]
+  ignore_activity = false
+  
+  [[tabs]]
+  name = "Announcements"
+  streams = ["announcements"]
+  ignore_activity = false
+  
+  [[tabs]]
+  name = "Loot"
+  streams = ["loot"]
+  ignore_activity = false
+  
+  [[tabs]]
+  name = "Ambients"
+  streams = ["ambients"]
+  ignore_activity = false
+
+[template.tabbedtext_custom]
+  widget_type = "tabbedtext"
+  name = ""
+  row = 0
+  col = 0
+  rows = 10
+  cols = 60
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  buffer_size = 5000
+  tab_bar_position = "top"
+  tab_separator = true
+  
+  [[tabs]]
+  name = "Main"
+  streams = ["main"]
+  ignore_activity = false
+
+[template.targets]
+  widget_type = "targets"
+  name = "targets"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Targets"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 4
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  entity_id = "targetcount"
+  show_body_part_count = false
+
+[template.players]
+  widget_type = "players"
+  name = "players"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Players"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 4
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  entity_id = "playercount"
+
+[template.items]
+  widget_type = "items"
+  name = "items"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Items"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 4
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  entity_id = "items"
+
+[template.entity_custom]
+  widget_type = "targets"
+  name = ""
+  row = 0
+  col = 0
+  rows = 10
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Custom"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 4
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  entity_id = ""
+  show_body_part_count = false
+
+[template.roundtime]
+  widget_type = "countdown"
+  name = "roundtime"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "RT"
+  title_position = "top-left"
+  text_color = "#FF0000"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  id = "roundtime"
+  icon = ""
+
+[template.casttime]
+  widget_type = "countdown"
+  name = "casttime"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Cast"
+  title_position = "top-left"
+  text_color = "#00BFFF"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  id = "casttime"
+  icon = ""
+
+[template.stuntime]
+  widget_type = "countdown"
+  name = "stuntime"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Stun"
+  title_position = "top-left"
+  text_color = "#FFFF00"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  id = "stuntime"
+  icon = ""
+
+[template.countdown_custom]
+  widget_type = "countdown"
+  name = ""
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Custom"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  icon = ""
+
+[template.left]
+  widget_type = "hand"
+  name = "left"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Left Hand"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  icon = "L:"
+
+[template.right]
+  widget_type = "hand"
+  name = "right"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Right Hand"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  icon = "R:"
+
+[template.spell]
+  widget_type = "hand"
+  name = "spell"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 20
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Spell"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  icon = "S:"
+
+[template.buffs]
+  widget_type = "active_effects"
+  name = "buffs"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Buffs"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  category = "Buffs"
+
+[template.debuffs]
+  widget_type = "active_effects"
+  name = "debuffs"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Debuffs"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  category = "Debuffs"
+
+[template.cooldowns]
+  widget_type = "active_effects"
+  name = "cooldowns"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Cooldowns"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  category = "Cooldowns"
+
+[template.active_spells]
+  widget_type = "active_effects"
+  name = "active_spells"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Active Spells"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  category = "ActiveSpells"
+
+[template.active_effects_custom]
+  widget_type = "active_effects"
+  name = ""
+  row = 0
+  col = 0
+  rows = 10
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Custom"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  category = ""
+
+[template.inventory]
+  widget_type = "inventory"
+  name = "inventory"
+  row = 0
+  col = 0
+  rows = 20
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Inventory"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 4
+  visibility = "shown"
+  tts_speak = false
+  streams = ["inv"]
+  buffer_size = 0
+  wordwrap = true
+  show_timestamps = false
+
+[template.reserve]
+  widget_type = "reserve"
+  name = "reserve"
+  row = 0
+  col = 0
+  rows = 20
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Reserve"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 4
+  visibility = "shown"
+  tts_speak = false
+  streams = ["reserve"]
+  buffer_size = 0
+  wordwrap = true
+  show_timestamps = false
+
+[template.room]
+  widget_type = "room"
+  name = "room"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 80
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Room"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 5
+  visibility = "shown"
+  tts_speak = false
+  buffer_size = 0
+  show_desc = true
+  show_objs = true
+  show_players = true
+  show_exits = true
+  show_name = false
+
+[template.spells]
+  widget_type = "spells"
+  name = "spells"
+  row = 0
+  col = 0
+  rows = 20
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Spells"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+
+[template.compass]
+  widget_type = "compass"
+  name = "compass"
+  row = 0
+  col = 0
+  rows = 5
+  cols = 9
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Compass"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  min_cols = 7
+  visibility = "shown"
+  content_align = "center"
+  tts_speak = false
+  active_color = "#00FF00"
+  inactive_color = "#333333"
+
+[template.map]
+  widget_type = "map"
+  name = "map"
+  row = 0
+  col = 0
+  rows = 12
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Map"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 5
+  min_cols = 10
+  visibility = "shown"
+  tts_speak = false
+
+[template.injuries]
+  widget_type = "injury_doll"
+  name = "injuries"
+  row = 0
+  col = 0
+  rows = 8
+  cols = 10
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Injuries"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 6
+  min_cols = 8
+  visibility = "shown"
+  content_align = "center"
+  tts_speak = false
+  injury1_color = "#aa5500"
+  injury2_color = "#ff8800"
+  injury3_color = "#ff0000"
+  scar1_color = "#999999"
+  scar2_color = "#777777"
+  scar3_color = "#555555"
+
+[template.quickbar]
+  widget_type = "quickbar"
+  name = "quickbar"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 120
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = false
+  title = "Quickbar"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+
+[template.hotkeybar]
+  widget_type = "hotkeybar"
+  name = "hotkeybar"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 60
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = false
+  title = "Actions"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  visibility = "shown"
+  tts_speak = false
+  bar = "default"
+  orientation = "horizontal"
+
+[template.spacer]
+  widget_type = "spacer"
+  name = ""
+  row = 0
+  col = 0
+  rows = 2
+  cols = 2
+  show_border = false
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = false
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+
+[template.perception]
+  widget_type = "perception"
+  name = "perception"
+  row = 0
+  col = 0
+  rows = 20
+  cols = 40
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Perceptions"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 5
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  stream = "percWindow"
+  buffer_size = 100
+  sort_direction = "descending"
+  text_replacements = []
+  use_short_spell_names = false
+
+[template.experience]
+  widget_type = "experience"
+  name = "experience"
+  row = 0
+  col = 0
+  rows = 20
+  cols = 35
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Experience"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 5
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  align = "left"
+
+[template.gs4_experience]
+  widget_type = "gs4_experience"
+  name = "gs4_experience"
+  row = 0
+  col = 0
+  rows = 5
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Experience"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 7
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  align = "center"
+  show_level = true
+  show_exp_bar = true
+  show_mind_bar = true
+  show_total_exp = false
+  show_ascension_exp = false
+
+[template.encum]
+  widget_type = "encum"
+  name = "encum"
+  row = 0
+  col = 0
+  rows = 4
+  cols = 25
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Encumbrance"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 4
+  min_cols = 15
+  visibility = "shown"
+  tts_speak = false
+  align = "left"
+  show_label = true
+  show_bar = true
+
+[template.minivitals]
+  widget_type = "minivitals"
+  name = "minivitals"
+  row = 0
+  col = 0
+  rows = 3
+  cols = 80
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 3
+  min_cols = 40
+  visibility = "shown"
+  tts_speak = false
+  numbers_only = false
+  current_only = false
+
+[template.betrayer]
+  widget_type = "betrayer"
+  name = "betrayer"
+  row = 0
+  col = 0
+  rows = 4
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Betrayer"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  max_rows = 12
+  min_cols = 20
+  visibility = "shown"
+  tts_speak = false
+  show_items = true

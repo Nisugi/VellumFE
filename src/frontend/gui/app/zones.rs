@@ -166,6 +166,19 @@ pub(super) fn effective_sidebar_gaps(zone_height: f32, items: &[(f32, f32)]) -> 
         .collect()
 }
 
+/// How a shell zone occupies the screen. `Reserve` carves its slice out
+/// of the center pane (classic behavior: center windows displace/squeeze
+/// while the zone is open). `Overlay` floats the zone above the center
+/// like a Wrayth-style drawer — the center layout never moves; the
+/// covered strip is occluded until the drawer closes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum ZoneDisplayMode {
+    #[default]
+    Reserve,
+    Overlay,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct ShellLayoutSnapshot {
@@ -179,6 +192,12 @@ pub(super) struct ShellLayoutSnapshot {
     pub(super) footer_visible: bool,
     pub(super) left_sidebar_collapsed: bool,
     pub(super) right_sidebar_collapsed: bool,
+    // Per-zone display mode; serde default (= Reserve) keeps every
+    // pre-mode layout byte-compatible with today's behavior.
+    pub(super) header_mode: ZoneDisplayMode,
+    pub(super) footer_mode: ZoneDisplayMode,
+    pub(super) left_sidebar_mode: ZoneDisplayMode,
+    pub(super) right_sidebar_mode: ZoneDisplayMode,
 }
 
 const fn serde_default_true() -> bool {
@@ -197,6 +216,10 @@ impl Default for ShellLayoutSnapshot {
             footer_visible: false,
             left_sidebar_collapsed: true,
             right_sidebar_collapsed: true,
+            header_mode: ZoneDisplayMode::default(),
+            footer_mode: ZoneDisplayMode::default(),
+            left_sidebar_mode: ZoneDisplayMode::default(),
+            right_sidebar_mode: ZoneDisplayMode::default(),
         }
     }
 }
@@ -215,6 +238,28 @@ impl ShellLayoutSnapshot {
         self.footer_height = self.footer_height.clamp(96.0, 420.0);
         self.left_sidebar_width = self.left_sidebar_width.clamp(220.0, 700.0);
         self.right_sidebar_width = self.right_sidebar_width.clamp(220.0, 700.0);
+    }
+
+    /// The display mode for a zone (Center is always Reserve — it IS the
+    /// reserved surface).
+    pub(super) fn zone_mode(&self, zone: GuiShellZone) -> ZoneDisplayMode {
+        match zone {
+            GuiShellZone::Header => self.header_mode,
+            GuiShellZone::Footer => self.footer_mode,
+            GuiShellZone::LeftSidebar => self.left_sidebar_mode,
+            GuiShellZone::RightSidebar => self.right_sidebar_mode,
+            GuiShellZone::Center => ZoneDisplayMode::Reserve,
+        }
+    }
+
+    pub(super) fn set_zone_mode(&mut self, zone: GuiShellZone, mode: ZoneDisplayMode) {
+        match zone {
+            GuiShellZone::Header => self.header_mode = mode,
+            GuiShellZone::Footer => self.footer_mode = mode,
+            GuiShellZone::LeftSidebar => self.left_sidebar_mode = mode,
+            GuiShellZone::RightSidebar => self.right_sidebar_mode = mode,
+            GuiShellZone::Center => {}
+        }
     }
 
     /// Per-frame sanitize: range clamps ONLY.
@@ -247,6 +292,10 @@ pub(super) struct GuiWindowMoveState {
     pub(super) tab_key: TabKey,
     /// Stored rect at move start, restored on cancel
     pub(super) original_rect: Option<[f32; 4]>,
+    /// Anchors released at move start (a deliberate re-place, so the
+    /// preview follows the pointer on every axis); restored on cancel,
+    /// dropped on placement.
+    pub(super) original_anchors: Option<super::window_manager::WindowAnchors>,
     /// True until the first overlay frame; the menu click that started the
     /// move must not count as the placement click.
     pub(super) just_started: bool,
@@ -269,21 +318,12 @@ pub(super) struct GuiZoneDropResult {
 }
 
 impl VellumGuiApp {
-    pub(super) fn default_zone_for_tab_key(tab_key: &TabKey) -> GuiShellZone {
-        match tab_key {
-            TabKey::LeftHand | TabKey::RightHand | TabKey::SpellHand => GuiShellZone::Header,
-            TabKey::Compass
-            | TabKey::Quickbar { .. }
-            | TabKey::Indicators
-            | TabKey::Vitals
-            | TabKey::Countdown { .. }
-            | TabKey::Dashboard
-            | TabKey::Encumbrance
-            | TabKey::Experience
-            | TabKey::Perception
-            | TabKey::InjuryDoll => GuiShellZone::Footer,
-            _ => GuiShellZone::Center,
-        }
+    /// Every window defaults to Center (owner decision, 2026-08-06 fresh-
+    /// profile test): the old per-widget Header/Footer opinions pre-placed
+    /// windows into zones the user may not even have shown. The zone
+    /// dropdown remains the way to opt a window into a shell zone.
+    pub(super) fn default_zone_for_tab_key(_tab_key: &TabKey) -> GuiShellZone {
+        GuiShellZone::Center
     }
 
     pub(super) fn zone_for_tab(&self, key: &TabKey) -> GuiShellZone {
@@ -295,15 +335,10 @@ impl VellumGuiApp {
 
     /// Where a window of this widget type would land by default — the
     /// widget-type mirror of `default_zone_for_tab_key`, for windows that
-    /// aren't live tabs yet (the Windows window's zone dropdown).
-    pub(super) fn default_zone_for_widget_type(widget_type: &str) -> GuiShellZone {
-        match widget_type {
-            "hand" => GuiShellZone::Header,
-            "compass" | "quickbar" | "hotkeybar" | "indicator" | "minivitals" | "countdown"
-            | "dashboard" | "encum" | "experience" | "gs4_experience" | "perception"
-            | "injury_doll" => GuiShellZone::Footer,
-            _ => GuiShellZone::Center,
-        }
+    /// aren't live tabs yet (the Windows window's zone dropdown). Center
+    /// for everything, same as above.
+    pub(super) fn default_zone_for_widget_type(_widget_type: &str) -> GuiShellZone {
+        GuiShellZone::Center
     }
 
     fn target_docked_height(&self, zone: GuiShellZone) -> Option<f32> {
@@ -458,6 +493,12 @@ impl VellumGuiApp {
     fn set_tab_zone_single(&mut self, key: TabKey, zone: GuiShellZone) {
         let current = self.zone_for_tab(&key);
         if current != zone {
+            // Anchors are pane-scoped: moving zones releases this window's
+            // own anchors (commit-on-detach inside) and strips siblings'
+            // refs to it — clearing matches the user's intent better than
+            // leaving danglers pointed across zones.
+            self.release_window_anchors(&key, current);
+            self.prune_sibling_refs_to(&key);
             self.tab_zones.insert(key.clone(), zone);
             if let Some(target_height) = self.target_docked_height(zone) {
                 // Header/footer: append after the zone's right-most window
@@ -503,6 +544,12 @@ impl VellumGuiApp {
                 entry[1] = below + 4.0;
                 entry[3] = entry[3].clamp(40.0, 600.0);
             }
+            // Arriving in a shell zone auto-anchors by CONTACT (owner
+            // spec): every edge that lands touching the pane or a
+            // same-zone sibling anchors to it; edges touching nothing
+            // stay free. (The drop path re-runs this after it writes the
+            // final drop position.)
+            self.apply_zone_entry_anchor_inference(&key, zone);
             self.layout_dirty = true;
         }
     }
@@ -562,8 +609,11 @@ impl VellumGuiApp {
         };
         if placed.is_finite() {
             self.main_window_rects
-                .insert(tab_key, Self::rect_to_snapshot(placed));
+                .insert(tab_key.clone(), Self::rect_to_snapshot(placed));
         }
+        // Re-run contact inference against the FINAL drop position (the
+        // entry pass in set_tab_zone saw the pre-drop stack placement).
+        self.apply_zone_entry_anchor_inference(&tab_key, target_zone);
         self.layout_dirty = true;
     }
 
@@ -813,9 +863,18 @@ impl VellumGuiApp {
         zone_rects: &[(GuiShellZone, Rect)],
         pointer_pos: Pos2,
     ) -> Option<GuiShellZone> {
+        // Overlay drawers overlap the center rect; a shell zone hit must
+        // win over Center so drops target what the pointer visually sits on.
         zone_rects
             .iter()
-            .find_map(|(zone, rect)| rect.contains(pointer_pos).then_some(*zone))
+            .find_map(|(zone, rect)| {
+                (*zone != GuiShellZone::Center && rect.contains(pointer_pos)).then_some(*zone)
+            })
+            .or_else(|| {
+                zone_rects
+                    .iter()
+                    .find_map(|(zone, rect)| rect.contains(pointer_pos).then_some(*zone))
+            })
     }
 
     pub(super) fn render_zone_drop_overlay(
@@ -920,6 +979,9 @@ impl VellumGuiApp {
                 None => {
                     self.main_window_rects.remove(&state.tab_key);
                 }
+            }
+            if let Some(anchors) = state.original_anchors.clone() {
+                self.window_anchors.insert(state.tab_key.clone(), anchors);
             }
             self.window_move_state = None;
             return;
@@ -1108,6 +1170,75 @@ impl VellumGuiApp {
         }
     }
 
+    /// Store a window's tracked rect. Center-zone gestures happen in
+    /// DISPLAY space (the P-A3 map applied), so they invert through the
+    /// base pane before landing in the store — identity when no reserved
+    /// zone is open. Other zones store screen rects directly as before.
+    pub(super) fn track_zone_window_rect(
+        &mut self,
+        zone: GuiShellZone,
+        key: &TabKey,
+        display: Rect,
+        pane: Rect,
+    ) {
+        if zone == GuiShellZone::Center {
+            let base = self
+                .center_base_pane
+                .map(|rect| rect.shrink(1.0))
+                .unwrap_or(pane);
+            let fixed = self.window_size_roles.get(key).copied()
+                == Some(super::dock::SizeRole::Fixed);
+            let stored = Self::unmap_center_rect(display, base, pane, fixed);
+            self.track_main_window_rect(key, stored, base);
+        } else {
+            self.track_main_window_rect(key, display, pane);
+        }
+    }
+
+    /// Opaque drawer backdrop for an overlay zone: a Foreground-order area
+    /// covering the drawer rect. It fills the strip, draws the inner-edge
+    /// divider, and — by allocating the whole rect interactively — swallows
+    /// clicks and scroll that would otherwise fall through to the occluded
+    /// Middle-order center windows beneath. Registered before the zone's
+    /// windows the first time the drawer appears, so within Foreground the
+    /// windows stack above it.
+    pub(super) fn render_overlay_backdrop(
+        &self,
+        ctx: &egui::Context,
+        zone: GuiShellZone,
+        rect: Rect,
+    ) {
+        let inner_stroke = egui::Stroke::new(
+            1.5,
+            ctx.global_style().visuals.window_stroke.color,
+        );
+        egui::Area::new(egui::Id::new(("gui_overlay_backdrop", zone.label())))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.min)
+            .show(ctx, |ui| {
+                let (alloc, _response) =
+                    ui.allocate_exact_size(rect.size(), egui::Sense::click_and_drag());
+                ui.painter()
+                    .rect_filled(alloc, 0.0, ui.style().visuals.panel_fill);
+                let painter = ui.painter();
+                match zone {
+                    GuiShellZone::Header => {
+                        painter.hline(alloc.x_range(), alloc.max.y - 0.75, inner_stroke);
+                    }
+                    GuiShellZone::Footer => {
+                        painter.hline(alloc.x_range(), alloc.min.y + 0.75, inner_stroke);
+                    }
+                    GuiShellZone::LeftSidebar => {
+                        painter.vline(alloc.max.x - 0.75, alloc.y_range(), inner_stroke);
+                    }
+                    GuiShellZone::RightSidebar => {
+                        painter.vline(alloc.min.x + 0.75, alloc.y_range(), inner_stroke);
+                    }
+                    GuiShellZone::Center => {}
+                }
+            });
+    }
+
     pub(super) fn render_zone_surface(
         &mut self,
         ctx: &egui::Context,
@@ -1127,6 +1258,11 @@ impl VellumGuiApp {
         }
         let layout_bounds = self.main_surface_bounds(&tabs);
         let is_sidebar = matches!(zone, GuiShellZone::LeftSidebar | GuiShellZone::RightSidebar);
+        // An overlay drawer's windows live on the Foreground layer so they
+        // (and the drawer backdrop beneath them) reliably cover the Middle-
+        // order center windows they float over.
+        let overlay_zone = zone != GuiShellZone::Center
+            && self.shell_layout.zone_mode(zone) == ZoneDisplayMode::Overlay;
         let secondary_click_pos = ctx.input(|input| {
             if input.pointer.secondary_clicked() {
                 input.pointer.interact_pos()
@@ -1154,6 +1290,10 @@ impl VellumGuiApp {
         if !window_bounds.is_finite() || window_bounds.width() <= 8.0 || window_bounds.height() <= 8.0 {
             return actions;
         }
+        // The anchor space for out-of-frame commit-on-detach (context-menu
+        // "Release anchors" resolves against the pane the window last
+        // rendered in).
+        self.last_zone_pane_rects.insert(zone, window_bounds);
 
         // Clicks anywhere count as "interacting"; used both for rect
         // tracking (only user actions persist geometry) and for relaxing
@@ -1183,13 +1323,21 @@ impl VellumGuiApp {
             }
         }
 
-        // Center windows render at *display* rects computed from their
-        // canonical rects and the current bounds: shell zones claiming
-        // space displace windows for the frame (story window shrinks,
-        // others push) and everything springs back when the zone closes,
-        // because `main_window_rects` itself is never touched.
+        // Center windows render at *display* rects computed per frame from
+        // their canonical rects and the current pane (P-A3): free windows
+        // map proportionally from the base pane (identity with no reserved
+        // zone open), anchored edges then override against the live pane.
+        // `main_window_rects` itself is never touched, so closing a zone
+        // restores everything exactly. The old push-your-neighbor
+        // displacement pass (story window absorbing) is gone.
         let center_displays: HashMap<TabKey, Rect> = if zone == GuiShellZone::Center {
-            let mut infos: Vec<super::dock::CenterWindowInfo> = Vec::new();
+            // Same 1px shrink the pane got, so no-zones-open is EXACT
+            // identity (base == pane) rather than off by the border.
+            let base_pane = self
+                .center_base_pane
+                .map(|rect| rect.shrink(1.0))
+                .unwrap_or(window_bounds);
+            let mut solve_inputs: Vec<super::window_manager::ZoneSolveInput> = Vec::new();
             for tab in &tabs {
                 let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
                     continue;
@@ -1217,16 +1365,43 @@ impl VellumGuiApp {
                     // already lives inside the current bounds.
                     continue;
                 };
-                let is_main = tab.id.key == TabKey::TextMain
-                    || group.is_some_and(|g| g.members.contains(&TabKey::TextMain));
-                infos.push(super::dock::CenterWindowInfo {
+                let fixed = self.window_size_roles.get(&tab.id.key).copied()
+                    == Some(super::dock::SizeRole::Fixed);
+                solve_inputs.push(super::window_manager::ZoneSolveInput {
                     key: tab.id.key.clone(),
-                    stored,
+                    free: Self::map_center_rect(stored, base_pane, window_bounds, fixed),
                     min_size,
-                    is_main,
                 });
             }
-            Self::compute_center_display_rects(&infos, window_bounds)
+            // P-A: anchored edges resolve against the live pane on top of
+            // the proportional map — this is what makes a dock follow
+            // splitter drags, zone toggles and OS resizes exactly instead
+            // of approximately. One batch per zone so sibling anchors
+            // resolve against their target's SOLVED rect (toposort inside).
+            self.solve_zone_anchor_rects(&solve_inputs, window_bounds)
+        } else {
+            HashMap::new()
+        };
+
+        // Non-center zones feed the solved rects directly (no displacement
+        // pass there); the same one-batch-per-zone rule applies.
+        let zone_solved: HashMap<TabKey, Rect> = if zone != GuiShellZone::Center {
+            let inputs: Vec<super::window_manager::ZoneSolveInput> = tabs
+                .iter()
+                .filter_map(|tab| {
+                    let free = self
+                        .main_window_rects
+                        .get(&tab.id.key)
+                        .copied()
+                        .and_then(Self::rect_from_snapshot)?;
+                    Some(super::window_manager::ZoneSolveInput {
+                        key: tab.id.key.clone(),
+                        free,
+                        min_size: Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT),
+                    })
+                })
+                .collect();
+            self.solve_zone_anchor_rects(&inputs, window_bounds)
         } else {
             HashMap::new()
         };
@@ -1261,6 +1436,9 @@ impl VellumGuiApp {
                             .get(&tab.id.key)
                             .copied()
                             .and_then(Self::rect_from_snapshot)
+                            .map(|rect| {
+                                zone_solved.get(&tab.id.key).copied().unwrap_or(rect)
+                            })
                             .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
                             .or_else(|| {
                                 Self::tab_window_rect(window_bounds, layout_bounds, window)
@@ -1352,6 +1530,7 @@ impl VellumGuiApp {
                     .get(&tab.id.key)
                     .copied()
                     .and_then(Self::rect_from_snapshot)
+                    .map(|rect| zone_solved.get(&tab.id.key).copied().unwrap_or(rect))
                     .map(|rect| Self::clamp_main_window_rect(rect, window_bounds))
                     .unwrap_or(fallback_rect)
             };
@@ -1417,6 +1596,9 @@ impl VellumGuiApp {
                 .collapsible(false)
                 .constrain_to(window_bounds)
                 .frame(docked_window_frame);
+            if overlay_zone {
+                window_builder = window_builder.order(egui::Order::Foreground);
+            }
             window_builder = self.style_window_title_bar(&tab.id.key, window_builder);
             let being_moved = self
                 .window_move_state
@@ -1460,9 +1642,21 @@ impl VellumGuiApp {
             let engaging_press = press_origin
                 .is_some_and(|pos| initial_rect.expand(12.0).contains(pos));
             let already_latched = self.zone_engaged_tab.as_ref() == Some(&tab.id.key);
+            // The pre-latch `engaging_press` fallback counts ONLY on the
+            // press frame (the latch doesn't exist yet within it); from the
+            // next frame the topmost-at-press latch is authoritative. Left
+            // open-ended, a press the latch never claims — the sidebar
+            // splitter gutter is a Foreground layer sitting inside every
+            // flush window's 12px ring — kept this window "engaged" for the
+            // whole splitter drag: its position feed suspended (an anchored
+            // window couldn't follow the pane edge it is anchored to), and
+            // the phantom fed-vs-rendered divergence ran the snap hook,
+            // whose release pass then promoted/cleared anchors for a
+            // gesture that never happened.
             let user_engaging_window = !window_locked
                 && pointer_interacting
-                && (already_latched || (self.zone_engaged_tab.is_none() && engaging_press));
+                && (already_latched
+                    || (self.zone_engaged_tab.is_none() && engaging_press && just_pressed));
             // The size pin only relaxes once the press becomes a real drag —
             // a stationary title-bar click keeps the pin, so egui can't snap
             // the window (grouped windows especially, whose max height is the
@@ -1615,13 +1809,15 @@ impl VellumGuiApp {
                         snap_suspended,
                         pointer_down,
                     );
-                    self.track_main_window_rect(
+                    self.track_zone_window_rect(
+                        zone,
                         &tab.id.key,
                         normalize_height(tracked),
                         window_bounds,
                     );
                 } else if should_track_rect {
-                    self.track_main_window_rect(
+                    self.track_zone_window_rect(
+                        zone,
                         &tab.id.key,
                         normalize_height(inner.response.rect),
                         window_bounds,
@@ -1704,6 +1900,64 @@ mod tests {
     use super::*;
 
     #[test]
+    fn zone_display_modes_default_reserve_and_round_trip() {
+        // A pre-mode snapshot (no mode fields) must load as all-Reserve so
+        // every existing layout keeps today's space-claiming behavior.
+        let legacy: ShellLayoutSnapshot = serde_json::from_str(
+            r#"{"header_height":140.0,"footer_height":180.0,
+                "left_sidebar_width":300.0,"right_sidebar_width":300.0,
+                "header_visible":true,"footer_visible":false,
+                "left_sidebar_collapsed":false,"right_sidebar_collapsed":true}"#,
+        )
+        .expect("legacy snapshot loads");
+        for zone in [
+            GuiShellZone::Header,
+            GuiShellZone::Footer,
+            GuiShellZone::LeftSidebar,
+            GuiShellZone::RightSidebar,
+        ] {
+            assert_eq!(legacy.zone_mode(zone), ZoneDisplayMode::Reserve);
+        }
+        // Center is structurally Reserve; set_zone_mode on it is a no-op.
+        let mut layout = legacy.clone();
+        layout.set_zone_mode(GuiShellZone::Center, ZoneDisplayMode::Overlay);
+        assert_eq!(layout.zone_mode(GuiShellZone::Center), ZoneDisplayMode::Reserve);
+
+        // A chosen mode survives the serde round trip.
+        layout.set_zone_mode(GuiShellZone::LeftSidebar, ZoneDisplayMode::Overlay);
+        let json = serde_json::to_string(&layout).expect("serialize");
+        let reloaded: ShellLayoutSnapshot = serde_json::from_str(&json).expect("reload");
+        assert_eq!(
+            reloaded.zone_mode(GuiShellZone::LeftSidebar),
+            ZoneDisplayMode::Overlay
+        );
+        assert_eq!(reloaded.zone_mode(GuiShellZone::RightSidebar), ZoneDisplayMode::Reserve);
+    }
+
+    #[test]
+    fn zone_for_pointer_prefers_drawer_over_center() {
+        // Overlay drawers overlap the center rect; a pointer inside both
+        // must resolve to the drawer so drops land on what the user sees.
+        let center = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1000.0, 800.0));
+        let drawer = Rect::from_min_max(Pos2::new(700.0, 0.0), Pos2::new(1000.0, 800.0));
+        // Center pushed FIRST, mirroring the shell pass.
+        let rects = vec![
+            (GuiShellZone::Center, center),
+            (GuiShellZone::RightSidebar, drawer),
+        ];
+        assert_eq!(
+            VellumGuiApp::zone_for_pointer(&rects, Pos2::new(850.0, 400.0)),
+            Some(GuiShellZone::RightSidebar),
+            "inside the drawer strip"
+        );
+        assert_eq!(
+            VellumGuiApp::zone_for_pointer(&rects, Pos2::new(300.0, 400.0)),
+            Some(GuiShellZone::Center),
+            "outside the drawer"
+        );
+    }
+
+    #[test]
     fn sanitize_preserves_stored_sidebar_width_on_narrow_window() {
         // Regression: the old width-aware squeeze in sanitize() wrote the clamp
         // back into the persisted width, so a narrow window permanently shrank
@@ -1740,16 +1994,16 @@ mod tests {
 
     #[test]
     fn test_default_zone_for_tab_key_assignments() {
+        // Owner decision (2026-08-06 fresh-profile test): EVERY window
+        // defaults to Center; shell zones are opt-in via the dropdown.
+        for key in [TabKey::LeftHand, TabKey::Compass, TabKey::TextMain] {
+            assert_eq!(
+                VellumGuiApp::default_zone_for_tab_key(&key),
+                super::GuiShellZone::Center
+            );
+        }
         assert_eq!(
-            VellumGuiApp::default_zone_for_tab_key(&TabKey::LeftHand),
-            super::GuiShellZone::Header
-        );
-        assert_eq!(
-            VellumGuiApp::default_zone_for_tab_key(&TabKey::Compass),
-            super::GuiShellZone::Footer
-        );
-        assert_eq!(
-            VellumGuiApp::default_zone_for_tab_key(&TabKey::TextMain),
+            VellumGuiApp::default_zone_for_widget_type("hand"),
             super::GuiShellZone::Center
         );
     }

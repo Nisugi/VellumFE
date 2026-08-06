@@ -1432,7 +1432,7 @@ impl MessageProcessor {
                     ui_state.quickbar_order.push(id.clone());
                 }
             }
-            ParsedElement::DialogOpen { id, title, save } => {
+            ParsedElement::DialogOpen { id, title, save, location } => {
                 self.chunk_has_silent_updates = true;
                 tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
 
@@ -1440,7 +1440,13 @@ impl MessageProcessor {
                 // are mined into panels). Hidden-until-shown: a dialog the
                 // user never showed doesn't pop up, but the store still
                 // ingests its data so the window can be shown later.
-                if !Self::dialog_should_popup(ui_state, id) {
+                // EXCEPTION: the detach/save='false' utility-popup class
+                // (bugDialogBox, alert boxes) is a direct response to the
+                // user's own command — it pops without opt-in (live-test
+                // report: bug dialogs never appeared for anyone).
+                let utility_popup =
+                    location.as_deref() == Some("detach") && !save;
+                if !utility_popup && !Self::dialog_should_popup(ui_state, id) {
                     tracing::debug!("DialogOpen suppressed (not shown by user): id={}", id);
                     return;
                 }
@@ -1464,16 +1470,15 @@ impl MessageProcessor {
                     return;
                 }
 
-                // Map dialog ID to template name (they may differ, e.g., "expr" -> "gs4_experience")
-                let template_name = Config::dialog_id_to_template(id);
-
-                // If a widget template exists for this dialog, add it to layout
-                // instead of a popup. Queue the DIALOG ID (not the template
-                // name) so process_pending_window_additions can tag the created
-                // window with its binding — the U2 identity that ties the feed
-                // to the placed window regardless of its display name.
-                if Config::get_window_template(template_name).is_some() {
-                    tracing::debug!("DialogOpen redirected to widget: id={} -> template={}", id, template_name);
+                // A dialog id claimed by a dedicated catalog view becomes a
+                // layout widget instead of a popup (redesign Phase 4:
+                // claims_dialog is the single must-agree guard). Queue the
+                // DIALOG ID (not the view key) so
+                // process_pending_window_additions can tag the created
+                // window with its binding — the U2 identity that ties the
+                // feed to the placed window regardless of display name.
+                if crate::core::local_catalog::claims_dialog(id) {
+                    tracing::debug!("DialogOpen redirected to claimed widget: id={}", id);
                     if !ui_state.pending_window_additions.contains(id) {
                         ui_state.pending_window_additions.push(id.clone());
                     }
@@ -1563,12 +1568,13 @@ impl MessageProcessor {
             }
             ParsedElement::DialogPanelOpen { id, title, save } => {
                 self.chunk_has_silent_updates = true;
-                // Resident dialogs that already have a dedicated widget
+                // Resident dialogs claimed by a dedicated view
                 // (Buffs/Debuffs/Cooldowns/injuries/encum/expr/stance/...)
-                // are mined into those panels — don't offer them as generic
-                // dialog panels too. Only ids WITHOUT a template become
-                // dockable dialog panels (combat, befriend, ...).
-                if Config::id_has_widget_template(id) {
+                // are mined into those widgets — don't offer them as generic
+                // dialog panels too. Same single guard as the DialogOpen
+                // redirect (redesign Phase 4), so the two paths can never
+                // disagree.
+                if crate::core::local_catalog::claims_dialog(id) {
                     return;
                 }
                 // U3: record the resident dialog as a DialogPanel discovery
@@ -1893,6 +1899,15 @@ impl MessageProcessor {
                         ui_state.input_mode = InputMode::Normal;
                     }
                 }
+                // Redesign Phase 4d: a window this session SHOWED via an
+                // expose verb is dismissed by the matching closeDialog
+                // (bank sends one on leaving ×3,911). Queued — hiding a
+                // layout window needs the layout-capable tick. The game
+                // also closes never-opened ids defensively
+                // (withdraw/deposit); the drain no-ops those.
+                if ui_state.expose_shown_ids.contains(id) {
+                    ui_state.pending_expose_closes.push(id.clone());
+                }
             }
             ParsedElement::ClearDialogData { id } => {
                 self.chunk_has_silent_updates = true;
@@ -2128,6 +2143,43 @@ impl MessageProcessor {
                     tracing::error!("Failed to open browser: {}", e);
                 }
             }
+            ParsedElement::WindowHints { id, attrs } => {
+                // Always-ingest, like the dialog store: the latest
+                // declaration's placement attrs win, available whenever
+                // the window materializes (redesign Phase 3e).
+                ui_state.window_hints.insert(id.clone(), attrs.clone());
+                // A dialog's declared width/height feeds the anchor grid's
+                // vertical compass (bank: openDialog height='130' — the
+                // e/w rows center against it, align='s' bottoms against
+                // it). EXISTING slots only: hints also fire for stream/
+                // container ids, which must not conjure phantom dialog
+                // slots. Ordering holds because the openDialog block's
+                // inner dialogData elements (which create the slot) are
+                // pushed before the trailing WindowHints element.
+                if let Some(dialog) = ui_state.dialog_store.get_mut(id) {
+                    let dim = |name: &str| {
+                        attrs
+                            .iter()
+                            .find(|(k, _)| k == name)
+                            .and_then(|(_, v)| v.parse::<f32>().ok())
+                            .unwrap_or(0.0)
+                    };
+                    let (w, h) = (dim("width"), dim("height"));
+                    if w > 1.0 || h > 1.0 {
+                        dialog.declared_size = Some((w, h));
+                    }
+                }
+            }
+            ParsedElement::Expose { kind, id } => {
+                // Redesign Phase 4d: expose = show. The processor can't
+                // reach the layout, so queue for the frontend tick
+                // (realize_offered_windows). Containers keep their own
+                // sighting/opt-in flow for now.
+                self.chunk_has_silent_updates = true;
+                if kind != "container" {
+                    ui_state.pending_exposes.push((kind.clone(), id.clone()));
+                }
+            }
             _ => {
                 // Other elements handled elsewhere or not yet implemented
             }
@@ -2150,7 +2202,15 @@ impl MessageProcessor {
     /// Hidden dialogs stay in the store only. If the currently-shown
     /// dialog is a *different* id, leave it be (one popup at a time).
     fn sync_shown_dialog(&self, ui_state: &mut UiState, id: &str, show: bool) {
-        if !show {
+        // Content arriving for the popup that is ALREADY on screen always
+        // refreshes it — the openDialog block emits DialogOpen first and
+        // its controls after, so without this the popup kept the empty
+        // clone it was born with (bugDialogBox rendered blank).
+        let refreshing_active = ui_state
+            .active_dialog
+            .as_ref()
+            .is_some_and(|d| d.id == id);
+        if !show && !refreshing_active {
             return;
         }
         // Don't steal the screen from a different open dialog.
@@ -4882,6 +4942,7 @@ mod tests {
                 id: "bank".to_string(),
                 title: Some("Bank".to_string()),
                 save: true,
+                location: None,
             },
             ParsedElement::StreamWindow {
                 id: "thoughts".to_string(),
@@ -4925,6 +4986,7 @@ mod tests {
                 id: "bank".to_string(),
                 title: Some("Bank".to_string()),
                 save: true,
+                location: None,
             },
             &mut game_state,
             &mut ui_state,
@@ -4981,6 +5043,8 @@ mod tests {
                 K::Button(i) => format!("btn:{}", dialog.buttons[i].id),
                 K::DropDown(i) => format!("dd:{}", dialog.dropdowns[i].id),
                 K::Image(i) => format!("img:{}", dialog.images[i].id),
+                K::Link(i) => format!("link:{}", dialog.links[i].id),
+                K::SpinBox(i) => format!("spin:{}", dialog.spinboxes[i].id),
             };
             eprintln!("  {:<22} x={:6.1} y={:6.1} w={:6.1} h={:5.1}", name, c.rect.0, c.rect.1, c.rect.2, c.rect.3);
         }
@@ -5195,7 +5259,7 @@ mod tests {
         assert!(
             ui_state.pending_window_discoveries.iter().any(|d| d.id == "UberBar"
                 && d.kind == crate::data::WindowDiscoveryKind::DialogPanel),
-            "no DialogPanel discovery queued for UberBar (is id_has_widget_template('UberBar') wrongly true? \
+            "no DialogPanel discovery queued for UberBar (is claims_dialog('UberBar') wrongly true? \
              discoveries: {:?})",
             ui_state
                 .pending_window_discoveries
@@ -5216,7 +5280,8 @@ mod tests {
             id: id.to_string(),
             title: Some(id.to_string()),
             save: false,
-        };
+            location: None,
+            };
 
         // Not shown → no popup.
         processor.process_element(
@@ -7093,5 +7158,113 @@ mod tests {
                 expected_window
             );
         }
+    }
+
+    #[test]
+    fn bank_open_dialog_block_sets_declared_size_and_grids_all_controls() {
+        // End-to-end over the WIRE-VERBATIM bank block (GST log
+        // 2026-02-08): parser -> processor -> anchor grid. Pins the
+        // element ordering the declared-size capture relies on (the inner
+        // dialogData controls create the store slot BEFORE the trailing
+        // WindowHints element) and that links + spinboxes land in the
+        // grid at compass-resolved rows instead of overlapping at the top
+        // (live-test screenshot, 2026-08-06).
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='bank' title='Bank' location='right' save='t' height='130' width='0'><dialogData id=\"bank\"><label id=\"balance\" value=\"Balance: 5041236\" align=\"n\" top=\"0\" left=\"0\" height=\"20\" width=\"190\"/><cmdButton id=\"depositBtn\" value=\"Deposit\" echo=\"deposit %depositSB%\" cmd=\"deposit %depositSB%\" align=\"e\" top=\"-25\" left=\"0\" height=\"25\" width=\"80\"/><cmdButton id=\"withdrawBtn\" value=\"Withdraw\" echo=\"withdraw %withdrawSB%\" cmd=\"withdraw %withdrawSB%\" align=\"e\" top=\"5\" left=\"0\" height=\"25\" width=\"80\"/><upDownEditBox id=\"depositSB\" min=\"0\" max=\"0\" value=\"0\" align=\"w\" top=\"-25\" left=\"0\" height=\"25\" width=\"100\"/><upDownEditBox id=\"withdrawSB\" min=\"0\" max=\"5041236\" value=\"5000\" align=\"w\" top=\"5\" left=\"0\" height=\"25\" width=\"100\"/></dialogData></openDialog>",
+        );
+        assert!(!elements.is_empty());
+
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        for element in &elements {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        let dialog = ui_state.dialog_store.get("bank").expect("bank slot ingested");
+        assert_eq!(
+            dialog.declared_size,
+            Some((0.0, 130.0)),
+            "openDialog height reached the store (ordering held)"
+        );
+        assert_eq!(dialog.spinboxes.len(), 2);
+
+        let (controls, _) = dialog.positioned_controls().expect("positioned");
+        use crate::data::ui_state::PositionedControlKind as K;
+        let spin_rows: Vec<f32> = controls
+            .iter()
+            .filter(|c| matches!(c.kind, K::SpinBox(_)))
+            .map(|c| c.rect.1)
+            .collect();
+        assert_eq!(spin_rows.len(), 2, "spinboxes are IN the grid");
+        // Compass rows: deposit above withdraw, both center-referenced.
+        let (lo, hi) = (
+            spin_rows.iter().cloned().fold(f32::MAX, f32::min),
+            spin_rows.iter().cloned().fold(f32::MIN, f32::max),
+        );
+        assert_eq!(lo, 65.0 - 12.5 - 25.0);
+        assert_eq!(hi, 65.0 - 12.5 + 5.0);
+    }
+
+    #[test]
+    fn bug_dialog_box_popup_populates_despite_name_keyed_dialog_data() {
+        // Wire-verbatim (GSIV log 2025-12-31): openDialog id='bugDialogBox'
+        // whose INNER dialogData keys on name= — the embedded extractors
+        // saw nothing, so the popup arrived empty and never usable
+        // (live-test report: "we don't get any bug dialog windows").
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='bugDialogBox' title='Submit Bug Report' location='detach' height='190' width='500' save='false' noResize='' noDock=''><dialogData name='bugDialogBox'><label id='categoryLabel' value='Category' justify='4' top='5' left='25' width='65'/><dropDownBox id='category' value='ROOM' content_text='CHARACTER,ROOM,TYPO' content_value='CHARACTER,ROOM,TYPO' top='5' left='95' width='330'/><cmdButton id='submitBtn' value='Submit' cmd='bugreport submit' top='160' left='120' width='120'/></dialogData></openDialog>",
+        );
+
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        for element in &elements {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        let dialog = ui_state
+            .dialog_store
+            .get("bugDialogBox")
+            .expect("store slot under the id");
+        assert!(!dialog.dropdowns.is_empty(), "category dropdown ingested");
+        assert!(!dialog.buttons.is_empty(), "submit button ingested");
+        assert!(
+            ui_state
+                .active_dialog
+                .as_ref()
+                .is_some_and(|d| d.id == "bugDialogBox"),
+            "the popup actually shows"
+        );
     }
 }

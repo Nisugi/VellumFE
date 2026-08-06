@@ -246,7 +246,7 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
     let template_name = mapping.template_name;
 
     // Get the template - if not found, try a fallback based on widget_type
-    let mut window = Config::get_window_template(&template_name)
+    let mut window = crate::core::local_catalog::seed(&template_name)
         .or_else(|| {
             // Fallback to generic template by widget_type
             let fallback = match widget_type.as_str() {
@@ -265,7 +265,7 @@ fn convert_window(win_val: Value, verbose: bool) -> Result<Option<WindowDef>> {
                         fb, template_name
                     );
                 }
-                Config::get_window_template(fb)
+                crate::core::local_catalog::seed(fb)
             } else {
                 None
             }

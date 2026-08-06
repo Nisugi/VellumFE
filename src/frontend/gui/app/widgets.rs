@@ -2594,14 +2594,41 @@ impl VellumGuiApp {
         dialog_id: &str,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
-        let Some(dialog) = app_core.ui_state.dialog_store.get(dialog_id) else {
-            ui.weak("Waiting for the game to send this panel…");
-            return;
+        // Cross-id content pairs (ESP: window espMasterDialog, controls
+        // espMasterData): fall through to the alias slot when the bound
+        // slot has nothing to draw.
+        let store = &app_core.ui_state.dialog_store;
+        let primary = store.get(dialog_id);
+        let alias = crate::core::local_catalog::dialog_content_alias(dialog_id)
+            .and_then(|alias_id| store.get(alias_id));
+        let dialog = match (primary, alias) {
+            (Some(d), _) if d.positioned_controls().is_some() || !d.buttons.is_empty() => d,
+            (_, Some(d)) => d,
+            (Some(d), None) => d,
+            (None, None) => {
+                ui.weak("Waiting for the game to send this panel…");
+                return;
+            }
         };
         let queue = |cmd: String| {
             if !cmd.trim().is_empty() {
                 app_core.ui_state.pending_panel_commands.borrow_mut().push(cmd);
             }
+        };
+
+        // Spinbox edits live in egui temp memory (this path is immutable);
+        // every command resolves against a probe carrying those edits, so
+        // 'withdraw %withdrawSB%' sends what the user dialed in.
+        let spin_mem =
+            |id: &str| egui::Id::new(("panel_spin", dialog_id.to_string(), id.to_string()));
+        let patched_command = |ui: &egui::Ui, cmd: &str| -> String {
+            let mut probe = dialog.clone();
+            for spin in probe.spinboxes.iter_mut() {
+                if let Some(v) = ui.ctx().data(|d| d.get_temp::<i32>(spin_mem(&spin.id))) {
+                    spin.value = v;
+                }
+            }
+            probe.command_with_placeholders(cmd)
         };
 
         let positioned = dialog.positioned_controls();
@@ -2628,7 +2655,14 @@ impl VellumGuiApp {
                                 _ => resp,
                             };
                             if resp.clicked() {
-                                queue(dialog.command_with_placeholders(&b.command));
+                                if b.is_close {
+                                    // Wrayth's closeButton dismisses the
+                                    // hosting window; routed through the
+                                    // panel-command drain as a client verb.
+                                    queue(format!("__VELLUM_CLOSE_PANEL__{dialog_id}"));
+                                } else {
+                                    queue(patched_command(ui, &b.command));
+                                }
                             }
                         }
                     }
@@ -2666,6 +2700,34 @@ impl VellumGuiApp {
                             Self::paint_dialog_skin(ui, rect, skin, dialog, skin_art);
                         }
                     }
+                    PositionedControlKind::Link(i) => {
+                        if let Some(link) = dialog.links.get(i) {
+                            let text = egui::RichText::new(&link.label)
+                                .color(ui.visuals().hyperlink_color);
+                            if ui
+                                .put(rect, egui::Button::new(text).small().frame(false))
+                                .clicked()
+                            {
+                                queue(patched_command(ui, &link.command));
+                            }
+                        }
+                    }
+                    PositionedControlKind::SpinBox(i) => {
+                        if let Some(spin) = dialog.spinboxes.get(i) {
+                            let mem = spin_mem(&spin.id);
+                            let mut value = ui
+                                .ctx()
+                                .data_mut(|d| *d.get_temp_mut_or(mem, spin.value));
+                            let range = spin.min..=spin.max.max(spin.min);
+                            let resp = ui.put(
+                                rect,
+                                egui::DragValue::new(&mut value).range(range).speed(25),
+                            );
+                            if resp.changed() {
+                                ui.ctx().data_mut(|d| d.insert_temp(mem, value));
+                            }
+                        }
+                    }
                     // Anchor-only images (ubbars, wound points) are never drawn.
                     PositionedControlKind::Image(_) => {}
                 }
@@ -2701,11 +2763,15 @@ impl VellumGuiApp {
                 }
             });
         }
-        if !dialog.links.is_empty() {
+        // Footer row: only links WITHOUT layout data (combat's
+        // configure/skin/search line); positioned links rendered above.
+        let footer_links: Vec<_> =
+            dialog.links.iter().filter(|l| l.layout.is_none()).collect();
+        if !footer_links.is_empty() {
             ui.horizontal_wrapped(|ui| {
-                for link in &dialog.links {
+                for link in footer_links {
                     if ui.link(&link.label).clicked() {
-                        queue(dialog.command_with_placeholders(&link.command));
+                        queue(patched_command(ui, &link.command));
                     }
                 }
             });
@@ -3904,9 +3970,40 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         effects_content: &crate::data::ActiveEffectsContent,
         settings: WidgetRenderSettings,
+        content_align: Option<&str>,
     ) {
         if effects_content.effects.is_empty() {
-            ui.label(format!("No active {}.", effects_content.category));
+            // content_align applies ONLY to this placeholder (owner ask):
+            // the effect bars themselves always fill top-down.
+            let text = format!("No active {}.", effects_content.category);
+            match content_align.map(crate::config::ContentAlign::from_str) {
+                None => {
+                    ui.label(text);
+                }
+                Some(align) => {
+                    use crate::config::ContentAlign as CA;
+                    let anchor = match align {
+                        CA::TopLeft => egui::Align2::LEFT_TOP,
+                        CA::Top => egui::Align2::CENTER_TOP,
+                        CA::TopRight => egui::Align2::RIGHT_TOP,
+                        CA::Left => egui::Align2::LEFT_CENTER,
+                        CA::Center => egui::Align2::CENTER_CENTER,
+                        CA::Right => egui::Align2::RIGHT_CENTER,
+                        CA::BottomLeft => egui::Align2::LEFT_BOTTOM,
+                        CA::Bottom => egui::Align2::CENTER_BOTTOM,
+                        CA::BottomRight => egui::Align2::RIGHT_BOTTOM,
+                    };
+                    let (rect, _) =
+                        ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+                    ui.painter().text(
+                        anchor.pos_in_rect(&rect),
+                        anchor,
+                        text,
+                        egui::FontId::proportional(settings.text_size),
+                        ui.visuals().text_color(),
+                    );
+                }
+            }
             return;
         }
 
@@ -5532,7 +5629,12 @@ impl VellumGuiApp {
                 )
             }
             WindowContent::ActiveEffects(content) => {
-                Self::render_active_effects_content(ui, content, settings);
+                Self::render_active_effects_content(
+                    ui,
+                    content,
+                    settings,
+                    window.content_align.as_deref(),
+                );
                 None
             }
             WindowContent::WebUi(content) => {

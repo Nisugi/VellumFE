@@ -64,6 +64,7 @@ impl VellumGuiApp {
 
                 let mut clicked_index: Option<usize> = None;
                 let mut dropdown_change: Option<(usize, String)> = None;
+                let mut link_clicked: Option<usize> = None;
 
                 if let Some((controls, (content_w, content_h))) = positioned {
                     // Anchor-grid mode (combat window etc.): controls at
@@ -148,6 +149,33 @@ impl VellumGuiApp {
                                     );
                                 }
                             }
+                            crate::data::ui_state::PositionedControlKind::Link(index) => {
+                                let Some(link) = dialog.links.get(index) else {
+                                    continue;
+                                };
+                                let text = egui::RichText::new(&link.label)
+                                    .color(ui.visuals().hyperlink_color);
+                                if ui
+                                    .put(rect, egui::Button::new(text).small().frame(false))
+                                    .clicked()
+                                {
+                                    link_clicked = Some(index);
+                                }
+                            }
+                            crate::data::ui_state::PositionedControlKind::SpinBox(index) => {
+                                // The popup owns its dialog mutably: edit the
+                                // value in place; %id% placeholders pick it up.
+                                let Some(spin) = dialog.spinboxes.get_mut(index) else {
+                                    continue;
+                                };
+                                let range = spin.min..=spin.max.max(spin.min);
+                                ui.put(
+                                    rect,
+                                    egui::DragValue::new(&mut spin.value)
+                                        .range(range)
+                                        .speed(25),
+                                );
+                            }
                             crate::data::ui_state::PositionedControlKind::Skin(_) => {
                                 // Backdrop art needs the skin store, which this
                                 // popup path doesn't thread; skins are a resident
@@ -204,6 +232,17 @@ impl VellumGuiApp {
                         .dropdowns
                         .get(index)
                         .map(|d| d.command.clone())
+                        .unwrap_or_default();
+                    if !command.trim().is_empty() {
+                        let resolved = dialog.command_with_placeholders(&command);
+                        command_to_send = Some(format!("{}\n", resolved));
+                    }
+                }
+                if let Some(index) = link_clicked {
+                    let command = dialog
+                        .links
+                        .get(index)
+                        .map(|l| l.command.clone())
                         .unwrap_or_default();
                     if !command.trim().is_empty() {
                         let resolved = dialog.command_with_placeholders(&command);

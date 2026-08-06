@@ -1522,9 +1522,9 @@ impl WindowEditor {
         let mut templates = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
-        for template_name in Config::list_window_templates() {
+        for template_name in crate::core::local_catalog::all_seed_keys() {
             if let Some(crate::config::WindowDef::Indicator { data, .. }) =
-                Config::get_window_template(&template_name)
+                crate::core::local_catalog::seed(&template_name)
             {
                 let id = data
                     .indicator_id
@@ -2805,7 +2805,7 @@ impl WindowEditor {
     /// Uses Layout::generate_widget_name() for other types (custom-{type}-N pattern)
     pub fn new_window_with_layout(widget_type: String, layout: &crate::config::Layout) -> Self {
         // Prefer the configured template (so defaults like tabs/streams are respected)
-        let mut editor = if let Some(template) = Config::get_window_template(&widget_type) {
+        let mut editor = if let Some(template) = crate::core::local_catalog::seed(&widget_type) {
             WindowEditor::new_from_template(template)
         } else {
             WindowEditor::new_window(widget_type.clone())

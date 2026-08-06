@@ -100,6 +100,17 @@ fn positioned_band_cells(dialog: &DialogState) -> Option<Vec<Vec<BandCell>>> {
                 .display_labels
                 .get(index)
                 .map(|l| BandCell::Label { text: l.value.clone() }),
+            // Links/spinboxes surface read-only in the banded TUI view
+            // (activation stays with the GUI panel; the TUI popup path
+            // keeps its own focus flow).
+            PositionedControlKind::Link(index) => dialog
+                .links
+                .get(index)
+                .map(|l| BandCell::Label { text: format!("[{}]", l.label) }),
+            PositionedControlKind::SpinBox(index) => dialog
+                .spinboxes
+                .get(index)
+                .map(|s| BandCell::Label { text: format!("<{}>", s.value) }),
             // Skins + anchor-only images have no TUI representation.
             PositionedControlKind::Skin(_) | PositionedControlKind::Image(_) => None,
         };

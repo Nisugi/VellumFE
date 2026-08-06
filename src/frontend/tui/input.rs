@@ -2750,7 +2750,7 @@ impl TuiFrontend {
             app_core.needs_render = true;
         } else if command == "__SUBMENU_INDICATORS" {
             // Indicator submenu under Status (replaces deep_submenu since we're at level 4)
-            let templates = crate::config::Config::get_addable_templates_by_category(&app_core.layout, app_core.game_type())
+            let templates = crate::core::local_catalog::addable_by_category(&app_core.layout, app_core.game_type())
                 .get(&crate::config::WidgetCategory::Status)
                 .cloned()
                 .unwrap_or_default();

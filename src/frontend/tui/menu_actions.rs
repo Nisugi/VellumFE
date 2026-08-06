@@ -112,6 +112,11 @@ pub fn handle_ui_action(
         UiAction::SaveSkin(_) => {
             gui_only(app_core, "Saving a skin from the current appearance (.saveskin)")
         }
+        UiAction::AnchorInfer => {
+            // Snap anchors are pixel-geometry docking; the TUI cell grid
+            // has no equivalent.
+            gui_only(app_core, "Inferring snap anchors (.anchorinfer)")
+        }
         UiAction::Reconnect => {
             // The runtime loop owns the network channels; flag it and let
             // the next tick do the actual reconnect.
@@ -171,7 +176,7 @@ pub fn handle_ui_action(
             // Safeguard: prevent opening if a window editor is already open
             if frontend.window_editor.is_some() {
                 tracing::debug!("Window editor already open, ignoring createwindow request");
-            } else if let Some(_template) = config::Config::get_window_template(&widget_type) {
+            } else if let Some(_template) = crate::core::local_catalog::seed(&widget_type) {
                 // Open window editor with template (proper defaults + marked as new)
                 // Use new_window_with_layout for spacers to enable auto-naming
                 frontend.window_editor = Some(

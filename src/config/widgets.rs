@@ -79,7 +79,7 @@ impl<'de> serde::Deserialize<'de> for WindowVisibility {
 /// (or several) windows a dialog/stream/container feed belongs to by id,
 /// independent of the user's display name. This is the identity that
 /// prevents duplicate auto-spawns and lets multiple windows share a feed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "id", rename_all = "lowercase")]
 pub enum WindowBinding {
     /// A game dialog id (expr, stance, combat, encum, ...).

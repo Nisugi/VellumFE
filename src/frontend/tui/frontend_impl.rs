@@ -380,8 +380,19 @@ impl Frontend for TuiFrontend {
                     WindowContent::DialogPanel { dialog_id } => {
                         // Render the resident dialog panel from the store as
                         // banded rows (defense | stance ▼ | offense, ...).
-                        if let Some(dialog) =
-                            app_core.ui_state.dialog_store.get(dialog_id)
+                        let slot = app_core
+                            .ui_state
+                            .dialog_store
+                            .get(dialog_id)
+                            .filter(|d| {
+                                d.positioned_controls().is_some() || !d.buttons.is_empty()
+                            })
+                            .or_else(|| {
+                                crate::core::local_catalog::dialog_content_alias(dialog_id)
+                                    .and_then(|a| app_core.ui_state.dialog_store.get(a))
+                            })
+                            .or_else(|| app_core.ui_state.dialog_store.get(dialog_id));
+                        if let Some(dialog) = slot
                         {
                             crate::frontend::tui::dialog::render_dialog_panel(
                                 dialog,

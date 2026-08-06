@@ -110,6 +110,25 @@ pub struct UiState {
     /// deltas happened to arrive after the user opted in.
     pub dialog_store: HashMap<String, DialogState>,
 
+    /// Latest placement/persistence attributes a window-declaring tag
+    /// carried, per game id, raw (location/resident/save/width/height…) —
+    /// the parser's WindowHints. Ingested always, like the dialog store,
+    /// so placement can honor hints whenever the window materializes
+    /// (redesign Phase 3e).
+    pub window_hints: HashMap<String, Vec<(String, String)>>,
+
+    /// Expose verbs awaiting the layout-capable tick (redesign Phase 4d):
+    /// (kind, id) from `<exposeDialog>`/`<exposeStream>` — the game
+    /// saying "show this window NOW".
+    pub pending_exposes: Vec<(String, String)>,
+    /// `<closeDialog>` ids awaiting dismissal of EXPOSE-shown windows
+    /// (popup closes are handled inline; this only carries layout-window
+    /// dismissals).
+    pub pending_expose_closes: Vec<String>,
+    /// Windows shown by an expose this session — the exact set a
+    /// `<closeDialog>` may dismiss again.
+    pub expose_shown_ids: std::collections::HashSet<String>,
+
     /// Active injuries popup (viewing another player's injuries)
     pub injuries_popup: Option<InjuriesPopupState>,
 
@@ -326,6 +345,12 @@ pub struct DialogState {
     pub skins: Vec<DialogSkin>,
     /// Integer spinners (`<upDownEditBox>`), e.g. quickstrike offset.
     pub spinboxes: Vec<DialogSpinBox>,
+    /// Content size the game DECLARED (`openDialog width/height`, px;
+    /// 0 = unset), captured from WindowHints. The anchor grid's vertical
+    /// compass (`align` e/w/c center-referenced, s bottom-referenced)
+    /// resolves against the declared height; without it those aligns
+    /// fall back to top-referenced (the pre-fix behavior).
+    pub declared_size: Option<(f32, f32)>,
     /// Manual position override (None = auto-center)
     pub position: Option<(u16, u16)>,
     /// Manual size override (None = auto-size based on content)
@@ -353,6 +378,7 @@ impl DialogState {
             images: Vec::new(),
             skins: Vec::new(),
             spinboxes: Vec::new(),
+            declared_size: None,
             position: None,
             size: None,
             save_position: false,
@@ -707,6 +733,13 @@ pub enum PositionedControlKind {
     /// Index into `images` — an ANCHOR-ONLY point (never drawn as a control;
     /// e.g. UberBar's invisible `ubbars` background that vitals anchor to).
     Image(usize),
+    /// Index into `links` — ONLY links that carry layout data enter the
+    /// grid (bank's Deposit All / Check Notes at explicit positions);
+    /// layout-less links keep the renderers' footer row.
+    Link(usize),
+    /// Index into `spinboxes` — likewise layout-carrying only (bank's
+    /// deposit/withdraw amounts).
+    SpinBox(usize),
 }
 
 /// A dialog control resolved to a pixel-space rect by the anchor grid.
@@ -786,6 +819,29 @@ impl DialogState {
                 rect: (0.0, 0.0, 60.0, 15.0),
             });
         }
+        for (i, link) in self.links.iter().enumerate() {
+            // Layout-less links stay out: the renderers' footer row owns
+            // them (combat's configure/skin/search line), and a default
+            // rect here would pile them at the origin.
+            if link.layout.is_some() {
+                entries.push(Entry {
+                    id: link.id.clone(),
+                    layout: link.layout.clone(),
+                    kind: PositionedControlKind::Link(i),
+                    rect: (0.0, 0.0, 90.0, 20.0),
+                });
+            }
+        }
+        for (i, spinbox) in self.spinboxes.iter().enumerate() {
+            if spinbox.layout.is_some() {
+                entries.push(Entry {
+                    id: spinbox.id.clone(),
+                    layout: spinbox.layout.clone(),
+                    kind: PositionedControlKind::SpinBox(i),
+                    rect: (0.0, 0.0, 100.0, 25.0),
+                });
+            }
+        }
         // Images participate as ANCHOR POINTS only (never drawn as controls):
         // UberBar's `ubbars`/PanelBackground is an invisible <image> that the
         // vitals bars hang from via anchor_top='ubbars'. Without it in the grid
@@ -831,7 +887,21 @@ impl DialogState {
                 "ne" | "e" | "se" => canvas - w - left,
                 _ => left, // nw/w/sw and anything unknown: from the left
             };
-            entry.rect = (x, top, w, h);
+            // Vertical compass (bank fixture, wire-verified): e/w/c rows
+            // reference the DECLARED height's vertical center (bank's
+            // deposit row is align='e' top='-25' = 25px above center),
+            // s/se/sw the bottom edge (closeButton align='s' top='0' sits
+            // ON the bottom). n/nw/ne and dialogs with no declared height
+            // stay top-referenced — combat and UberBar are unchanged.
+            let canvas_h = self
+                .declared_size
+                .and_then(|(_, dh)| (dh > 1.0).then_some(dh));
+            let y = match (align, canvas_h) {
+                ("e" | "w" | "c", Some(dh)) => dh / 2.0 - h / 2.0 + top,
+                ("s" | "se" | "sw", Some(dh)) => dh - h + top,
+                _ => top,
+            };
+            entry.rect = (x, y, w, h);
         }
 
         // Which entries participate in implicit vertical flow: Wrayth stacks
@@ -1032,6 +1102,10 @@ impl UiState {
             active_quickbar_id: None,
             active_dialog: None,
             dialog_store: HashMap::new(),
+            window_hints: HashMap::new(),
+            pending_exposes: Vec::new(),
+            pending_expose_closes: Vec::new(),
+            expose_shown_ids: std::collections::HashSet::new(),
             injuries_popup: None,
             dialog_drag: None,
             pending_window_additions: Vec::new(),
@@ -2249,5 +2323,143 @@ mod tests {
         };
         let dialog = dialog_with(vec![plain], Vec::new());
         assert!(dialog.positioned_controls().is_none());
+    }
+
+    #[test]
+    fn anchor_grid_resolves_the_bank_dialog_verbatim() {
+        // Wire-verbatim fixture (GST log 2026-02-08; live-test screenshot
+        // 2026-08-06 showed everything smashed at the top): the vertical
+        // compass semantics. openDialog declares height=130; align e/w
+        // rows reference the vertical CENTER (deposit row top=-25 sits
+        // above center, withdraw top=5 below), align s the bottom edge,
+        // align n the top. Links and spinboxes carry layout and must be
+        // IN the grid (they were footer/invisible before).
+        use crate::data::ui_state::PositionedControlKind;
+        let la = |align: &str, top: i32, left: i32, w: u16, h: u16| DialogControlLayout {
+            top: Some(top),
+            left: Some(left),
+            width: Some(w),
+            height: Some(h),
+            align: Some(align.to_string()),
+            ..Default::default()
+        };
+        let mut dialog = DialogState::empty("bank".to_string(), Some("Bank".to_string()));
+        dialog.declared_size = Some((0.0, 130.0));
+        dialog.display_labels.push(DialogLabel {
+            id: "balance".to_string(),
+            value: "Balance: 5041236".to_string(),
+            justify: None,
+            layout: Some(la("n", 0, 0, 190, 20)),
+        });
+        dialog.buttons.push(button("depositBtn", la("e", -25, 0, 80, 25)));
+        dialog.buttons.push(button("withdrawBtn", la("e", 5, 0, 80, 25)));
+        dialog.buttons.push(button("closeMe", la("s", 0, 0, 80, 20)));
+        dialog.spinboxes.push(DialogSpinBox {
+            id: "depositSB".to_string(),
+            value: 0,
+            min: 0,
+            max: 0,
+            layout: Some(la("w", -25, 0, 100, 25)),
+        });
+        dialog.spinboxes.push(DialogSpinBox {
+            id: "withdrawSB".to_string(),
+            value: 5000,
+            min: 0,
+            max: 5041236,
+            layout: Some(la("w", 5, 0, 100, 25)),
+        });
+        dialog.links.push(DialogLink {
+            id: "depositallLnk".to_string(),
+            label: "Deposit All".to_string(),
+            command: "deposit all".to_string(),
+            layout: Some(la("w", 30, 0, 90, 30)),
+        });
+        dialog.links.push(DialogLink {
+            id: "wealthnotesLnk".to_string(),
+            label: "Check Notes".to_string(),
+            command: "wealth notes".to_string(),
+            layout: Some(la("e", 30, 0, 90, 30)),
+        });
+
+        let (controls, (_, canvas_h)) = dialog.positioned_controls().expect("positioned");
+        let rect_of = |want: &PositionedControlKind| {
+            controls
+                .iter()
+                .find(|c| {
+                    std::mem::discriminant(&c.kind) == std::mem::discriminant(want)
+                        && match (&c.kind, want) {
+                            (
+                                PositionedControlKind::Button(a),
+                                PositionedControlKind::Button(b),
+                            )
+                            | (
+                                PositionedControlKind::Link(a),
+                                PositionedControlKind::Link(b),
+                            )
+                            | (
+                                PositionedControlKind::SpinBox(a),
+                                PositionedControlKind::SpinBox(b),
+                            )
+                            | (
+                                PositionedControlKind::Label(a),
+                                PositionedControlKind::Label(b),
+                            ) => a == b,
+                            _ => true,
+                        }
+                })
+                .map(|c| c.rect)
+                .expect("control in grid")
+        };
+
+        let balance = rect_of(&PositionedControlKind::Label(0));
+        let deposit_btn = rect_of(&PositionedControlKind::Button(0));
+        let withdraw_btn = rect_of(&PositionedControlKind::Button(1));
+        let close = rect_of(&PositionedControlKind::Button(2));
+        let deposit_sb = rect_of(&PositionedControlKind::SpinBox(0));
+        let withdraw_sb = rect_of(&PositionedControlKind::SpinBox(1));
+        let deposit_lnk = rect_of(&PositionedControlKind::Link(0));
+        let notes_lnk = rect_of(&PositionedControlKind::Link(1));
+
+        // Balance banner across the top.
+        assert_eq!((balance.0, balance.1), (0.0, 0.0));
+        // Deposit row 25px above vertical center: spinner west, button east,
+        // side by side without overlap.
+        assert_eq!(deposit_sb.1, deposit_btn.1);
+        assert_eq!(deposit_btn.1, 65.0 - 12.5 - 25.0);
+        assert_eq!(deposit_sb.0, 0.0);
+        assert_eq!(deposit_btn.0, 190.0 - 80.0);
+        assert!(deposit_sb.0 + deposit_sb.2 <= deposit_btn.0, "row does not overlap");
+        // Withdraw row 5px below center, BELOW the deposit row.
+        assert_eq!(withdraw_btn.1, 65.0 - 12.5 + 5.0);
+        assert!(withdraw_btn.1 > deposit_btn.1 + deposit_btn.3 - 1.0);
+        assert_eq!(withdraw_sb.1, withdraw_btn.1);
+        // Links row below both button rows.
+        assert_eq!(deposit_lnk.1, 65.0 - 15.0 + 30.0);
+        assert_eq!(notes_lnk.1, deposit_lnk.1);
+        assert!(deposit_lnk.1 >= withdraw_btn.1 + withdraw_btn.3 - 3.0);
+        assert!(deposit_lnk.0 + deposit_lnk.2 <= notes_lnk.0, "links side by side");
+        // Close button ON the bottom edge, centered.
+        assert_eq!(close.1, 130.0 - 20.0);
+        assert_eq!(close.0, 95.0 - 40.0);
+        // The canvas covers the declared height.
+        assert!(canvas_h >= 130.0);
+    }
+
+    #[test]
+    fn vertical_compass_without_declared_height_stays_top_referenced() {
+        // Regression guard: dialogs that never declared a height (combat,
+        // UberBar) must keep the pre-fix vertical behavior exactly.
+        let la = DialogControlLayout {
+            top: Some(5),
+            left: Some(0),
+            width: Some(80),
+            height: Some(25),
+            align: Some("e".to_string()),
+            ..Default::default()
+        };
+        let mut dialog = DialogState::empty("combat".to_string(), None);
+        dialog.buttons.push(button("x", la));
+        let (controls, _) = dialog.positioned_controls().expect("positioned");
+        assert_eq!(controls[0].rect.1, 5.0, "no declared height: top-referenced");
     }
 }

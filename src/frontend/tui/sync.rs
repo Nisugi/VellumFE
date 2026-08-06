@@ -649,8 +649,12 @@ impl TuiFrontend {
                             let bar_color = if let Some(ref color) = data.color {
                                 Some(color.clone())
                             } else {
-                                // Fallback to VellumFE template colors for known progress bars
-                                match name.as_str() {
+                                // Fallback colors for known progress FEEDS, keyed
+                                // on the bound feed id — NOT the window name.
+                                // (Redesign Phase 2: last name-as-identity
+                                // consumer retired; a renamed "health" window
+                                // keeps its red.)
+                                match data.id.as_deref().unwrap_or(name.as_str()) {
                                     "health" => Some("#6e0202".to_string()),     // Dark red
                                     "mana" => Some("#08086d".to_string()),       // Dark blue
                                     "stamina" => Some("#bd7b00".to_string()),    // Orange
@@ -1860,7 +1864,7 @@ impl TuiFrontend {
                 perf_data = Some(app_core.perf_overlay_data(true));
                 if base.is_none() {
                     if let Some(crate::config::WindowDef::Performance { base: tpl_base, .. }) =
-                        crate::config::Config::get_window_template("performance")
+                        crate::core::local_catalog::seed("performance")
                     {
                         base = Some(tpl_base.clone());
                     }
@@ -1868,7 +1872,7 @@ impl TuiFrontend {
             } else if base.is_none() || perf_data.is_none() {
                 // Fallback to performance template for layout-based performance windows
                 if let Some(crate::config::WindowDef::Performance { base: tpl_base, data: tpl_data }) =
-                    crate::config::Config::get_window_template("performance")
+                    crate::core::local_catalog::seed("performance")
                 {
                     if base.is_none() {
                         base = Some(tpl_base.clone());

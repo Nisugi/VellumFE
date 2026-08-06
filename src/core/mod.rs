@@ -27,6 +27,8 @@ pub mod mapdb;
 pub mod mapdb_update;
 pub mod menu_actions;
 pub mod known_windows;
+pub mod local_catalog;
+pub mod placement;
 pub mod messages;
 pub mod pathing;
 pub mod remote;
@@ -34,6 +36,7 @@ pub mod sorter;
 pub mod spell_table;
 pub mod travel;
 pub mod state;
+pub mod view_resolver;
 pub mod uipack;
 pub mod window_style;
 

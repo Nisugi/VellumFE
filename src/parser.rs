@@ -176,6 +176,30 @@ pub enum ParsedElement {
     CloseDialog {
         id: String,
     },
+    /// Game verb `<exposeDialog id=.../>` / `<exposeStream>` /
+    /// `<exposeContainer>` — "show this window NOW" (wire-verified: bank
+    /// sends exposeDialog ×4,265). `kind` is "dialog"/"stream"/
+    /// "container". DARK in redesign Phase 1; expose-=-show semantics
+    /// land in Phase 4.
+    Expose {
+        kind: String,
+        id: String,
+    },
+    /// `<deleteContainer id=.../>` (×7,559 on the wire) — container
+    /// removal; clearContainer was handled, delete was silently dropped.
+    /// DARK in Phase 1.
+    DeleteContainer {
+        id: String,
+    },
+    /// Placement/persistence attributes riding a window-declaring tag
+    /// (`streamWindow`/`openDialog`/`container`), raw — the PlacementHint
+    /// input (location/resident/save/scroll/ifClosed/appearance/size…).
+    /// Emitted alongside the declaration's own element; the core layer
+    /// owns the mapping, like CreatureStatus. DARK in Phase 1.
+    WindowHints {
+        id: String,
+        attrs: Vec<(String, String)>,
+    },
     /// Login-time application info: `<app char="Nisugi" game="GS" .../>`.
     /// The authoritative source of the character name in the game feed.
     AppInfo {
@@ -235,6 +259,9 @@ pub enum ParsedElement {
         id: String,
         title: Option<String>,
         save: bool, // true if save='t' - position should be persisted
+        /// openDialog `location` (right/center/detach/…): detach marks the
+        /// utility-popup class (bugDialogBox) that pops without opt-in.
+        location: Option<String>,
     },
     DialogButtons {
         id: String,
@@ -736,9 +763,27 @@ impl XmlParser {
         } else if tag.starts_with("<compass") {
             self.handle_compass(tag, elements);
         } else if tag.starts_with("<dialogData ") {
-            self.handle_dialog_data(tag, elements);
+            // A few dialogs key on name= instead of id= (bugDialogBox);
+            // normalize so every downstream id extraction sees them.
+            if !tag.contains(" id=") && tag.contains(" name=") {
+                let patched = tag.replacen(" name=", " id=", 1);
+                self.handle_dialog_data(&patched, elements);
+            } else {
+                self.handle_dialog_data(tag, elements);
+            }
         } else if tag.starts_with("<openDialog ") {
-            self.handle_open_dialog(tag, elements);
+            // Normalize name-keyed inner dialogData for the embedded
+            // extractors too (bugDialogBox: openDialog carries id= but its
+            // dialogData uses name= — the popup arrived EMPTY and never
+            // showed).
+            if tag.contains("<dialogData name=") {
+                let patched = tag.replace("<dialogData name=", "<dialogData id=");
+                self.handle_open_dialog(&patched, elements);
+                self.emit_window_hints(&patched, elements);
+            } else {
+                self.handle_open_dialog(tag, elements);
+                self.emit_window_hints(tag, elements);
+            }
         } else if tag.starts_with("<closeDialog ") {
             self.handle_close_dialog(tag, elements);
         } else if tag.starts_with("<switchQuickBar ") {
@@ -755,6 +800,17 @@ impl XmlParser {
             self.handle_app(tag, elements);
         } else if tag.starts_with("<streamWindow ") {
             self.handle_stream_window(tag, elements);
+            self.emit_window_hints(tag, elements);
+        } else if tag.starts_with("<exposeDialog ") {
+            self.handle_expose(tag, elements, "dialog");
+        } else if tag.starts_with("<exposeStream ") {
+            self.handle_expose(tag, elements, "stream");
+        } else if tag.starts_with("<exposeContainer ") {
+            self.handle_expose(tag, elements, "container");
+        } else if tag.starts_with("<deleteContainer ") {
+            if let Some(id) = Self::extract_attribute(tag, "id") {
+                elements.push(ParsedElement::DeleteContainer { id });
+            }
         } else if tag.starts_with("<d ") || tag == "<d>" {
             self.handle_d_tag(tag);
         } else if Self::is_close_tag(tag, "d") {
@@ -783,6 +839,7 @@ impl XmlParser {
         // Handle container tags
         else if tag.starts_with("<container ") {
             self.handle_container(tag, elements);
+            self.emit_window_hints(tag, elements);
         } else if tag.starts_with("<clearContainer ") {
             self.handle_clear_container(tag, elements);
         }
@@ -809,9 +866,57 @@ impl XmlParser {
             || tag == "</compDef>"
             || tag.starts_with("<streamWindow ")
             || tag.starts_with("<skin ")
-            || tag.starts_with("<exposeContainer ")
         {
             // Ignore these (UI layout tags)
+        }
+    }
+
+    /// The expose verbs: `<exposeDialog id='bank'/>` and kin — the game
+    /// (or a lich script) saying "show this window NOW".
+    fn handle_expose(&mut self, tag: &str, elements: &mut Vec<ParsedElement>, kind: &str) {
+        let id = Self::extract_attribute(tag, "id")
+            .or_else(|| Self::extract_attribute(tag, "name"));
+        if let Some(id) = id {
+            elements.push(ParsedElement::Expose { kind: kind.to_string(), id });
+        }
+    }
+
+    /// Collect the placement/persistence attributes a window-declaring tag
+    /// carries (previously extracted-and-dropped) into a raw WindowHints
+    /// element beside the declaration. Only attributes actually present
+    /// are emitted; nothing is emitted when none are.
+    fn emit_window_hints(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        const HINT_ATTRS: &[&str] = &[
+            "location", "resident", "save", "scroll", "ifClosed", "appearance",
+            "target", "width", "height", "x", "y", "noResize", "noDock",
+            // gswiki Wrayth-protocol page: streamWindow also carries a
+            // per-window timestamp toggle (wiki-attested; never appeared
+            // in the 11.4 GB log sweep).
+            "timestamp",
+        ];
+        // The DECLARING element's attributes only: a paired openDialog
+        // block carries its inner dialogData controls in the same string,
+        // and their width/height (double-quoted on the wire, vs the
+        // openDialog's single quotes) must never shadow the declaration's
+        // own (found live: bank's declared 0x130 came out as the balance
+        // label's 190x20).
+        let head = match tag.find('>') {
+            Some(end) => &tag[..end],
+            None => tag,
+        };
+        let Some(id) = Self::extract_attribute(head, "id")
+            .or_else(|| Self::extract_attribute(head, "name"))
+        else {
+            return;
+        };
+        let attrs: Vec<(String, String)> = HINT_ATTRS
+            .iter()
+            .filter_map(|name| {
+                Self::extract_attribute(head, name).map(|value| (name.to_string(), value))
+            })
+            .collect();
+        if !attrs.is_empty() {
+            elements.push(ParsedElement::WindowHints { id, attrs });
         }
     }
 
@@ -1530,8 +1635,14 @@ impl XmlParser {
                         save: save_position,
                     });
                 } else {
+                    let location = Self::extract_attribute(tag_head, "location");
                     tracing::debug!("Parser emitting DialogOpen: id={}, title={:?}, save={}", id, title, save_position);
-                    elements.push(ParsedElement::DialogOpen { id, title, save: save_position });
+                    elements.push(ParsedElement::DialogOpen {
+                        id,
+                        title,
+                        save: save_position,
+                        location,
+                    });
                 }
             }
         }
@@ -5687,5 +5798,104 @@ mod tests {
             "the skin lists the body-part controls it backs"
         );
         assert_eq!(injury.layout.as_ref().and_then(|l| l.width), Some(100));
+    }
+
+    // ==================== Redesign Phase 1c: window vocabulary ====================
+
+    #[test]
+    fn expose_verbs_parse_for_all_three_kinds() {
+        // Wire-verbatim: the game sends exposeDialog for the bank ×4,265;
+        // exposeStream carries popup-like streams (charprofile).
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<exposeDialog id='bank'/><exposeStream id='charprofile'/><exposeContainer id='stow'/>",
+        );
+        let exposes: Vec<_> = elements
+            .iter()
+            .filter_map(|e| match e {
+                ParsedElement::Expose { kind, id } => Some((kind.as_str(), id.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            exposes,
+            [("dialog", "bank"), ("stream", "charprofile"), ("container", "stow")]
+        );
+    }
+
+    #[test]
+    fn delete_container_parses() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line("<deleteContainer id='stow'/>");
+        assert!(elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::DeleteContainer { id } if id == "stow")));
+    }
+
+    #[test]
+    fn dialog_data_name_attribute_normalizes_to_id() {
+        // bugDialogBox keys on name= instead of id= (×6 on the wire); it
+        // must flow through the same paths as an id= dialog.
+        let mut parser = test_parser();
+        let by_name = parser.parse_line("<dialogData name='bugDialogBox' clear='t'></dialogData>");
+        let mut parser = test_parser();
+        let by_id = parser.parse_line("<dialogData id='bugDialogBox' clear='t'></dialogData>");
+        assert!(!by_id.is_empty(), "id= form produces elements");
+        assert_eq!(
+            format!("{by_name:?}"),
+            format!("{by_id:?}"),
+            "name= form produces exactly the id= form's elements"
+        );
+    }
+
+    #[test]
+    fn stream_window_placement_attrs_become_window_hints() {
+        // These attributes were previously extracted-and-dropped; the
+        // PlacementHint pipeline (Phase 3) reads them from WindowHints.
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<streamWindow id='charprofile' title='Profile' location='force-center' resident='false' save='' scroll='manual' ifClosed=''/>",
+        );
+        let hints = elements
+            .iter()
+            .find_map(|e| match e {
+                ParsedElement::WindowHints { id, attrs } => Some((id.clone(), attrs.clone())),
+                _ => None,
+            })
+            .expect("streamWindow emits hints");
+        assert_eq!(hints.0, "charprofile");
+        let get = |k: &str| hints.1.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("location"), Some("force-center"));
+        assert_eq!(get("resident"), Some("false"));
+        assert_eq!(get("scroll"), Some("manual"));
+        assert_eq!(get("save"), Some(""));
+        // The declaration element itself still arrives beside the hints.
+        assert!(elements
+            .iter()
+            .any(|e| matches!(e, ParsedElement::StreamWindow { id, .. } if id == "charprofile")));
+    }
+
+    #[test]
+    fn open_dialog_size_hints_are_captured_and_absent_attrs_emit_nothing() {
+        let mut parser = test_parser();
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='espMasterDialog' title='ESP' location='right' height='2100' resident='true'><dialogData id='espMasterDialog'></dialogData></openDialog>",
+        );
+        let hints = elements
+            .iter()
+            .find_map(|e| match e {
+                ParsedElement::WindowHints { id, attrs } => Some((id.clone(), attrs.clone())),
+                _ => None,
+            })
+            .expect("openDialog emits hints");
+        assert_eq!(hints.0, "espMasterDialog");
+        let get = |k: &str| hints.1.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("location"), Some("right"));
+        assert_eq!(get("height"), Some("2100"), "viewport-busting sizes arrive raw; clamping is the placement engine's job");
+
+        // A declaration with no placement attributes emits NO hints.
+        let mut parser = test_parser();
+        let bare = parser.parse_line("<streamWindow id='thoughts' title='Thoughts'/>");
+        assert!(!bare.iter().any(|e| matches!(e, ParsedElement::WindowHints { .. })));
     }
 }

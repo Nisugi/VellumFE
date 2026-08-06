@@ -46,6 +46,10 @@ pub(super) enum GuiWindowMenuCommand {
     /// Toggle the per-window position/size lock: locked windows ignore
     /// drag and resize gestures (Move Window above stays available).
     ToggleLock,
+    /// Forget this window's snap anchors (P-A1). Commit-on-detach: the
+    /// resolved rect is written into the store first, so the window stays
+    /// exactly where it is and simply stops following pane edges.
+    ReleaseAnchors,
     ToggleTitleBar,
     MoveTo(GuiShellZone),
     /// Per-window text size override; None reverts to the global size.
@@ -104,6 +108,9 @@ pub(super) enum GuiWindowMenuCommand {
     /// Content alignment for the shared layout def ("center", "bottom-left",
     /// ...); None reverts to the default top-left flow.
     SetContentAlign(Option<String>),
+    /// Size role (P-A3): true = Fixed — the window keeps its width/height
+    /// through every proportional rescale (OS resize, zoom, zone squeeze).
+    SetFixedSize(bool),
     /// Lock this window together with another one.
     GroupWith(TabKey),
     /// Remove one specific member from this window's group.
@@ -135,6 +142,10 @@ struct WindowMenuView<'a> {
     zone: GuiShellZone,
     /// Position/size lock state, rendered as a checked row.
     locked: bool,
+    /// Window has at least one snap anchor; shows the release row.
+    anchored: bool,
+    /// Size role is Fixed (keeps its size through proportional rescales).
+    fixed_size: bool,
     appearance: WindowAppearanceView,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
@@ -243,8 +254,12 @@ pub(super) struct WindowAppearanceView {
     /// Border fields from the shared layout def; None when the window has
     /// no def (border controls are hidden then).
     border: Option<BorderView>,
-    /// Content alignment from the shared layout def (text-list widgets).
+    /// Content alignment from the shared layout def (text-list widgets;
+    /// active-effects windows apply it to the empty placeholder only).
     content_align: Option<String>,
+    /// Widgets showing the alignment control: text-list ones plus
+    /// active effects.
+    supports_content_align: bool,
 }
 
 /// Snapshot of a layout def's border configuration.
@@ -427,6 +442,18 @@ impl VellumGuiApp {
                         .add_system_message("This window has no layout entry to lock.");
                 }
             }
+            GuiWindowMenuCommand::ReleaseAnchors => {
+                self.release_window_anchors(&request.tab_key, request.zone);
+            }
+            GuiWindowMenuCommand::SetFixedSize(fixed) => {
+                if fixed {
+                    self.window_size_roles
+                        .insert(request.tab_key.clone(), super::dock::SizeRole::Fixed);
+                } else {
+                    self.window_size_roles.remove(&request.tab_key);
+                }
+                self.layout_dirty = true;
+            }
             GuiWindowMenuCommand::EditHandIcons => {
                 if let Some(name) = self
                     .available_tabs
@@ -446,6 +473,11 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::StartMove => {
+                // A move is a deliberate re-place: suspend any anchors
+                // (commit-on-detach inside) so the preview follows the
+                // pointer on every axis; Esc restores them.
+                let original_anchors =
+                    self.release_window_anchors(&request.tab_key, request.zone);
                 // Windows that were never repositioned have no stored rect;
                 // seed it from where the window actually rendered.
                 self.main_window_rects
@@ -454,6 +486,7 @@ impl VellumGuiApp {
                 self.window_move_state = Some(GuiWindowMoveState {
                     tab_key: request.tab_key.clone(),
                     original_rect: self.main_window_rects.get(&request.tab_key).copied(),
+                    original_anchors,
                     just_started: true,
                 });
             }
@@ -767,6 +800,11 @@ impl VellumGuiApp {
                     | WidgetType::Container
             )
         );
+        // Active-effects windows honor content alignment too — for the
+        // "No active X." placeholder only, never the bars — so they get
+        // the alignment control without the wrap toggle.
+        let supports_content_align =
+            supports_wrap || widget_type == Some(WidgetType::ActiveEffects);
         let is_doll = widget_type == Some(WidgetType::InjuryDoll);
         // Pool scan only for doll windows — no disk walk for every menu.
         let doll_images = if is_doll {
@@ -818,6 +856,7 @@ impl VellumGuiApp {
             text_size_override: self.text_size_override_for_tab(tab_key),
             global_text_size: self.ui_settings.text_size,
             supports_wrap,
+            supports_content_align,
             is_map: widget_type == Some(WidgetType::Map),
             map_zoom: self
                 .tab_settings
@@ -934,6 +973,12 @@ impl VellumGuiApp {
         let view = WindowMenuView {
             zone: request.zone,
             locked: self.window_locked(&request.tab_key),
+            anchored: self
+                .window_anchors
+                .get(&request.tab_key)
+                .is_some_and(|anchors| !anchors.is_free()),
+            fixed_size: self.window_size_roles.get(&request.tab_key).copied()
+                == Some(super::dock::SizeRole::Fixed),
             appearance: self.appearance_view_for_tab(ctx, &request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
@@ -1259,7 +1304,7 @@ impl VellumGuiApp {
         }
 
         if command == "__SUBMENU_INDICATORS" {
-            let templates = crate::config::Config::get_addable_templates_by_category(
+            let templates = crate::core::local_catalog::addable_by_category(
                 &self.app_core.layout,
                 self.app_core.game_type(),
             )
@@ -1287,11 +1332,11 @@ impl VellumGuiApp {
             // "Custom (blank)" menu items carry a widget type, not a template
             // name. Route to the matching `*_custom` blank template — its
             // add path drops the user into the window editor to configure it.
-            let template = crate::config::Config::list_window_templates()
+            let template = crate::core::local_catalog::all_seed_keys()
                 .into_iter()
                 .find(|name| {
                     name.ends_with("_custom")
-                        && crate::config::Config::get_window_template(name)
+                        && crate::core::local_catalog::seed(name)
                             .is_some_and(|t| t.widget_type().eq_ignore_ascii_case(widget_type))
                 });
             match template {
@@ -1519,6 +1564,18 @@ impl VellumGuiApp {
         {
             return Some(GuiWindowMenuCommand::ToggleLock);
         }
+        if view.anchored
+            && ui
+                .selectable_label(false, "Release Anchors")
+                .on_hover_text(
+                    "Forget this window's snap anchors. It stays exactly where \
+                     it is and stops following the pane edges. (Dragging it \
+                     away from a snap does the same thing.)",
+                )
+                .clicked()
+        {
+            return Some(GuiWindowMenuCommand::ReleaseAnchors);
+        }
         ui.separator();
         // Everything below folds into sections so the menu opens short.
         // Commands are collected instead of returned early so the layout
@@ -1527,6 +1584,19 @@ impl VellumGuiApp {
         ui.collapsing("Arrange", |ui| {
             if ui.selectable_label(false, "Move Window").clicked() {
                 command = Some(GuiWindowMenuCommand::StartMove);
+            }
+            let mut fixed = view.fixed_size;
+            if ui
+                .checkbox(&mut fixed, "Fixed size")
+                .on_hover_text(
+                    "Keep this window's exact width and height when the app \
+                     window resizes, zooms, or a zone squeezes the layout — \
+                     only its position adapts. Good for HUD widgets like the \
+                     compass or hands.",
+                )
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetFixedSize(fixed));
             }
             ui.label("Move to");
             for target in GuiShellZone::all() {
@@ -1958,6 +2028,8 @@ impl VellumGuiApp {
                 if ui.checkbox(&mut wrap, "Word wrap").changed() {
                     command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
                 }
+            }
+            if view.supports_content_align {
                 ui.horizontal(|ui| {
                     ui.label("Content alignment");
                     const ALIGNS: [(Option<&str>, &str); 10] = [

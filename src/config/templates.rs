@@ -124,6 +124,81 @@ pub struct WindowTemplateStore {
 }
 
 
+/// THE ordered catalog: every built-in window key with its game gating
+/// (redesign Phase 6 — one source of truth; formerly a 67-entry parallel
+/// name list plus a separate `template_game_type` match). Order is the
+/// catalog order the Phase 0 golden fixture pins. User presets from the
+/// template stores layer on top in `list_window_templates`.
+pub const CATALOG: &[(&str, Option<GameType>)] = &[
+    ("health", None),
+    ("mana", None),
+    ("stamina", None),
+    ("spirit", None),
+    ("concentration", Some(GameType::DR)),
+    ("stance", None),
+    ("progress_custom", None),
+    ("dashboard", None),
+    ("poisoned", None),
+    ("bleeding", None),
+    ("diseased", None),
+    ("stunned", None),
+    ("webbed", None),
+    ("standing", None),
+    ("kneeling", None),
+    ("sitting", None),
+    ("prone", None),
+    ("hidden", None),
+    ("invisible", None),
+    ("joined", None),
+    ("dead", None),
+    ("main", None),
+    ("thoughts", None),
+    ("speech", None),
+    ("announcements", None),
+    ("loot", None),
+    ("death", None),
+    ("logons", None),
+    ("familiar", None),
+    ("ambients", None),
+    ("bounty", None),
+    ("society", None),
+    ("text_custom", None),
+    ("chat", None),
+    ("tabbedtext_custom", None),
+    ("targets", None),
+    ("players", None),
+    ("items", None),
+    ("entity_custom", None),
+    ("roundtime", None),
+    ("casttime", None),
+    ("stuntime", None),
+    ("countdown_custom", None),
+    ("left", None),
+    ("right", None),
+    ("spell", None),
+    ("buffs", None),
+    ("debuffs", None),
+    ("cooldowns", None),
+    ("active_spells", None),
+    ("active_effects_custom", None),
+    ("inventory", None),
+    ("reserve", Some(GameType::GS4)),
+    ("room", None),
+    ("spells", None),
+    ("compass", None),
+    ("map", None),
+    ("injuries", None),
+    ("quickbar", None),
+    ("hotkeybar", None),
+    ("spacer", None),
+    ("perception", Some(GameType::DR)),
+    ("experience", Some(GameType::DR)),
+    ("gs4_experience", Some(GameType::GS4)),
+    ("encum", None),
+    ("minivitals", Some(GameType::GS4)),
+    ("betrayer", Some(GameType::GS4)),
+];
+
 impl Config {
     /// Get a window template by name
     /// Returns a WindowDef with default positioning that can be customized
@@ -1685,88 +1760,11 @@ impl Config {
     /// Get list of all available window templates
     /// Returns all windows that can be added via .menu
     pub fn list_window_templates() -> Vec<String> {
-        let mut templates = vec![
-            // Progress bars
-            "health".to_string(),
-            "mana".to_string(),
-            "stamina".to_string(),
-            "spirit".to_string(),
-            "concentration".to_string(), // DR-specific
-            "stance".to_string(),
-            "progress_custom".to_string(),
-            "dashboard".to_string(),
-            "poisoned".to_string(),
-            "bleeding".to_string(),
-            "diseased".to_string(),
-            "stunned".to_string(),
-            "webbed".to_string(),
-            // Posture + presence indicators (game reports Icon{...}; StatusInfo)
-            "standing".to_string(),
-            "kneeling".to_string(),
-            "sitting".to_string(),
-            "prone".to_string(),
-            "hidden".to_string(),
-            "invisible".to_string(),
-            "joined".to_string(),
-            "dead".to_string(),
-            // Text windows
-            "main".to_string(),
-            "thoughts".to_string(),
-            "speech".to_string(),
-            "announcements".to_string(),
-            "loot".to_string(),
-            "death".to_string(),
-            "logons".to_string(),
-            "familiar".to_string(),
-            "ambients".to_string(),
-            "bounty".to_string(),
-            "society".to_string(),
-            "text_custom".to_string(),
-            // Tabbed text windows
-            "chat".to_string(),
-            "tabbedtext_custom".to_string(),
-            // Entity
-            "targets".to_string(),
-            "players".to_string(),
-            "items".to_string(),
-            "entity_custom".to_string(),
-            // Countdowns
-            "roundtime".to_string(),
-            "casttime".to_string(),
-            "stuntime".to_string(),
-            "countdown_custom".to_string(),
-            // Hands
-            "left".to_string(),
-            "right".to_string(),
-            "spell".to_string(),
-            // Active Effects
-            "buffs".to_string(),
-            "debuffs".to_string(),
-            "cooldowns".to_string(),
-            "active_spells".to_string(),
-            "active_effects_custom".to_string(),
-            // Other
-            "inventory".to_string(),
-            "reserve".to_string(),
-            "room".to_string(),
-            "spells".to_string(),
-            "compass".to_string(),
-            "map".to_string(),
-            "injuries".to_string(),
-            "quickbar".to_string(),
-            "hotkeybar".to_string(),
-            "spacer".to_string(),
-            // "performance" removed - now overlay-only via F12
-            "perception".to_string(),
-            "experience".to_string(),     // DR-specific
-            "gs4_experience".to_string(), // GS4-specific
-            "encum".to_string(),          // Available for both games
-            "minivitals".to_string(),     // GS4-specific
-            "betrayer".to_string(),       // GS4-specific
-            // command_input is NOT in this list - it's always present and can't be added/removed
-        ];
+        // Built-ins from THE catalog table, then the user preset stores
+        // (the never-die layer) appended with case-insensitive dedup.
+        let mut templates: Vec<String> =
+            CATALOG.iter().map(|(name, _)| name.to_string()).collect();
 
-        // Add enabled global window templates
         if let Ok(store) = Self::load_window_template_store() {
             for tpl in store.templates {
                 if !tpl.enabled {
@@ -1797,75 +1795,17 @@ impl Config {
     /// Get the game type requirement for a template
     /// Returns None if template is available for all games
     pub fn template_game_type(name: &str) -> Option<GameType> {
-        match name {
-            // DR-specific templates
-            "experience" | "concentration" | "perception" => Some(GameType::DR),
-            // GS4-specific templates
-            "gs4_experience" | "betrayer" | "minivitals" | "reserve" => Some(GameType::GS4),
-            // All others (including encum) available for both games
-            _ => None,
-        }
+        // Phase 6: gating lives in THE catalog table (user presets and
+        // unknown names gate to None, available for both games).
+        CATALOG
+            .iter()
+            .find(|(key, _)| *key == name)
+            .and_then(|(_, game)| *game)
     }
 
-    /// Map dialog ID to template name when they differ.
-    /// Most dialogs use the same ID as the template, but some have special mappings.
-    pub fn dialog_id_to_template(dialog_id: &str) -> &str {
-        match dialog_id {
-            // GS4 expr dialog -> gs4_experience template
-            "expr" => "gs4_experience",
-            // The active-effects dialogs arrive capitalized (and "Active
-            // Spells" has a space), but their templates are lowercase. Without
-            // these, get_window_template(dialog_id_to_template(id)) returns
-            // None, the "already has a dedicated widget" guard in
-            // messages.rs::DialogPanelOpen fails to fire, and Buffs/Debuffs/
-            // Cooldowns/Active Spells get spawned as generic (empty) dialog
-            // panels instead of their ActiveEffects widget.
-            "Buffs" => "buffs",
-            "Debuffs" => "debuffs",
-            "Cooldowns" => "cooldowns",
-            "Active Spells" | "ActiveSpells" => "active_spells",
-            // Most dialogs use the same ID as the template
-            _ => dialog_id,
-        }
-    }
-
-    /// Whether a game dialog/window `id` is backed by a dedicated widget
-    /// template (minivitals, expr, encum, Buffs, ...) rather than being a
-    /// generic dockable dialog panel (combat, befriend, ...).
-    ///
-    /// This is the single source of truth for the "already has a widget"
-    /// decision. Two paths need it and MUST agree, or a deleted-then-reshown
-    /// widget gets resurrected as a generic `panel_<id>` instead of its real
-    /// widget:
-    /// - `DialogPanelOpen` (messages.rs): skip DialogPanel discovery for ids
-    ///   that own a widget.
-    /// - `set_known_window_shown` (state.rs): a widget id must restore its
-    ///   template, not conjure a dialog panel from the always-on dialog store.
-    pub fn id_has_widget_template(id: &str) -> bool {
-        Self::get_window_template(Self::dialog_id_to_template(id)).is_some()
-    }
-
-    /// The window template a discovered `<streamWindow>` id should use.
-    ///
-    /// Most streams are plain text (bounty, loot, society, thoughts, …) and get
-    /// the blank `text_custom` template. A few stream ids have a DEDICATED
-    /// widget whose specialized pipeline (buffer replay, clickable links,
-    /// structured parsing) only feeds that widget's content variant — a generic
-    /// text window bound to the id renders empty or broken. Route those to
-    /// their widget template so auto-discovery produces the right window type
-    /// instead of defaulting everything to text.
-    pub fn stream_id_to_template(stream_id: &str) -> &'static str {
-        match stream_id {
-            // Spellbook: replayed from a buffer into WindowContent::Spells only.
-            "Spells" => "spells",
-            // Inventory / reserve / room have structured widgets; a text window
-            // bound to these never populates correctly.
-            "inv" => "inventory",
-            "reserve" => "reserve",
-            "room" => "room",
-            _ => "text_custom",
-        }
-    }
+    // Phase 6: the dialog/stream id-maps (dialog_id_to_template,
+    // id_has_widget_template, stream_id_to_template) moved into
+    // core::view_resolver as the dedicated-view tables.
 
     /// List window templates filtered by game type
     pub fn list_window_templates_for_game(game: Option<GameType>) -> Vec<String> {
@@ -2221,26 +2161,8 @@ impl Config {
 mod dialog_template_mapping_tests {
     use super::*;
 
-    #[test]
-    fn effect_dialog_ids_resolve_to_their_widget_templates() {
-        // The active-effects dialogs come capitalized/spaced; each must map to
-        // a real widget template so the DialogPanelOpen guard recognizes them
-        // as widget-backed (and doesn't spawn a generic empty panel).
-        for (id, expected) in [
-            ("Buffs", "buffs"),
-            ("Debuffs", "debuffs"),
-            ("Cooldowns", "cooldowns"),
-            ("Active Spells", "active_spells"),
-            ("expr", "gs4_experience"),
-        ] {
-            let tpl = Config::dialog_id_to_template(id);
-            assert_eq!(tpl, expected, "dialog '{id}' should map to '{expected}'");
-            assert!(
-                Config::get_window_template(tpl).is_some(),
-                "template '{tpl}' for dialog '{id}' must exist so the guard fires"
-            );
-        }
-    }
+    // effect_dialog_ids_resolve_to_their_widget_templates moved to
+    // core::view_resolver (Phase 6: the mapping lives there now).
 
     #[test]
     fn standard_status_indicators_all_have_templates() {

@@ -152,6 +152,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "[name]",
                 "Refit windows to the current size; with a layout name, adopt just its geometry (GUI)"
             ),
+            entry!(
+                &["anchorinfer"],
+                "",
+                "Anchor windows whose edges already sit flush against a pane edge or neighbor (GUI)"
+            ),
         ],
     },
     CommandHelpSection {

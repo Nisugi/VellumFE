@@ -1997,6 +1997,10 @@ impl AppCore {
                     parts.get(1).map(|name| name.to_string()),
                 )));
             }
+            "anchorinfer" => {
+                // One-shot: synthesize snap anchors from flush edges (GUI).
+                return Ok(CommandOutcome::Ui(UiAction::AnchorInfer));
+            }
             // Bake the current GUI appearance into a skin. Core knows the
             // command so the TUI can answer "GUI-only" instead of
             // "Unknown command".

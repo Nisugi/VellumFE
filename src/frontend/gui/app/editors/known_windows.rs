@@ -41,16 +41,8 @@ struct GroupView {
     leader: crate::frontend::gui::TabKey,
 }
 
-/// Blank custom widgets offered by "Custom window…", label → seed template
-/// (the `*_custom` templates excluded from the catalog rows).
-const CUSTOM_SEEDS: &[(&str, &str)] = &[
-    ("Text", "text_custom"),
-    ("Tabbed text", "tabbedtext_custom"),
-    ("Progress bar", "progress_custom"),
-    ("Countdown", "countdown_custom"),
-    ("Entity list", "entity_custom"),
-    ("Active effects", "active_effects_custom"),
-];
+// The "Custom window…" seeds live in the local-catalog seam (redesign
+// Phase 3d) so creation flows survive the template catalog's deletion.
 
 impl VellumGuiApp {
     pub(in super::super) fn open_known_windows_editor(&mut self) {
@@ -150,7 +142,7 @@ impl VellumGuiApp {
 
                 ui.horizontal(|ui| {
                     ui.menu_button("➕ Custom window…", |ui| {
-                        for (label, template) in CUSTOM_SEEDS {
+                        for (label, template) in crate::core::local_catalog::custom_seeds() {
                             if ui.button(*label).clicked() {
                                 add_template = Some((*template).to_string());
                                 ui.close();
@@ -202,13 +194,13 @@ impl VellumGuiApp {
                                         );
                                     });
                                     ui.indent(("group_members", &group.title), |ui| {
-                                        for name in &group.member_names {
+                                        for (member_index, name) in
+                                            group.member_names.iter().enumerate()
+                                        {
                                             if let Some(row) =
                                                 rows.iter().find(|r| &r.name == name)
                                             {
-                                                Self::known_window_row(
-                                                    ui,
-                                                    row,
+                                                Self::known_window_row(ui, member_index, row,
                                                     &mut toggle,
                                                     &mut zone_change,
                                                 );
@@ -241,10 +233,8 @@ impl VellumGuiApp {
                                         category == WidgetCategory::Status
                                             && r.widget_type == "indicator"
                                     });
-                                for row in plain {
-                                    Self::known_window_row(
-                                        ui,
-                                        row,
+                                for (row_index, row) in plain.iter().enumerate() {
+                                    Self::known_window_row(ui, row_index, row,
                                         &mut toggle,
                                         &mut zone_change,
                                     );
@@ -254,10 +244,10 @@ impl VellumGuiApp {
                                         .id_salt("known_windows_indicators")
                                         .default_open(false)
                                         .show(ui, |ui| {
-                                            for row in indicators {
-                                                Self::known_window_row(
-                                                    ui,
-                                                    row,
+                                            for (row_index, row) in
+                                                indicators.iter().enumerate()
+                                            {
+                                                Self::known_window_row(ui, row_index, row,
                                                     &mut toggle,
                                                     &mut zone_change,
                                                 );
@@ -301,6 +291,7 @@ impl VellumGuiApp {
     /// One catalog row: show/hide checkbox + zone dropdown.
     fn known_window_row(
         ui: &mut egui::Ui,
+        row_index: usize,
         row: &Row,
         toggle: &mut Option<(String, bool)>,
         zone_change: &mut Option<(String, GuiShellZone)>,
@@ -315,7 +306,11 @@ impl VellumGuiApp {
                 *toggle = Some((row.name.clone(), checked));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::ComboBox::from_id_salt(("known_windows_zone", &row.name))
+                egui::ComboBox::from_id_salt((
+                    "known_windows_zone",
+                    &row.name,
+                    row_index,
+                ))
                     .selected_text(row.zone_display.label())
                     .show_ui(ui, |ui| {
                         for target in GuiShellZone::all() {
