@@ -7584,12 +7584,17 @@ pub fn run_native_gui(
                 style.debug.warn_if_rect_changes_id = false;
             });
             cc.egui_ctx.global_style_mut(|style| {
-                // Resize hot-zones default to 3px beyond each side and a
-                // 20x20 square centered on each corner — the resize cursor
-                // appears while the pointer is still over empty background
-                // near a window. Tighten so it only shows at the frame.
-                style.interaction.resize_grab_radius_side = 2.0;
-                style.interaction.resize_grab_radius_corner = 5.0;
+                // Resize hot-zones: stock egui is 3px sides and a 20x20
+                // square on each corner, which floats the resize cursor
+                // over empty background near a window. The first tighten
+                // (2/5) made the band so thin that aiming at a chunky skin
+                // frame's visual border missed it and started a body-drag
+                // MOVE instead (anchored windows then snap back on release
+                // — the reported "grabs the frame skin and drags it away").
+                // 5/6 keeps the cursor close to the frame while making the
+                // border art actually grabbable.
+                style.interaction.resize_grab_radius_side = 5.0;
+                style.interaction.resize_grab_radius_corner = 6.0;
             });
             app.set_repaint_context(cc.egui_ctx.clone());
             Ok(Box::new(app))
