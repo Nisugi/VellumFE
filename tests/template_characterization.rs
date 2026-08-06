@@ -91,16 +91,29 @@ fn build_golden() -> String {
         writeln!(out, "{name} = {:?}", Config::template_game_type(&name)).unwrap();
     }
 
-    // ── 3. The three id-mapping functions over the probe inventory ──────
+    // ── 3. The dedicated-view tables over the probe inventory (Phase 6:
+    //      the resolver IS the implementation now; this section's text
+    //      must stay byte-identical to what the deleted id-maps wrote) ──
+    use vellum_fe::core::view_resolver;
+    use vellum_fe::data::view_kind::ViewKind;
+    let stream_view = |id: &str| -> String {
+        match view_resolver::resolve_view(
+            &vellum_fe::config::WindowBinding::Stream(id.to_string()),
+            None,
+        ) {
+            ViewKind::Dedicated(key) => key,
+            _ => "text_custom".to_string(),
+        }
+    };
     writeln!(out, "\n[id_maps]").unwrap();
     for id in PROBE_IDS {
         writeln!(
             out,
             "{:?}: dialog={:?} stream={:?} has_widget={}",
             id,
-            Config::dialog_id_to_template(id),
-            Config::stream_id_to_template(id),
-            Config::id_has_widget_template(id),
+            view_resolver::dialog_seed_alias(id),
+            stream_view(id),
+            vellum_fe::core::local_catalog::claims_dialog(id),
         )
         .unwrap();
     }
@@ -212,14 +225,14 @@ fn every_listed_template_seeds_a_window_def() {
 /// kind-fallback layer must reproduce exactly this.
 #[test]
 fn unknown_ids_fall_through_to_defaults() {
-    assert_eq!(Config::dialog_id_to_template("no_such_id"), "no_such_id");
-    assert_eq!(Config::stream_id_to_template("no_such_id"), "text_custom");
-    assert!(!Config::id_has_widget_template("no_such_id"));
+    use vellum_fe::core::{local_catalog, view_resolver};
+    assert_eq!(view_resolver::dialog_seed_alias("no_such_id"), "no_such_id");
+    assert!(!local_catalog::claims_dialog("no_such_id"));
     // Per-entity dialog ids (other players' injury dolls) must NOT be
-    // claimed by the exact-id maps.
+    // claimed by the exact-id tables.
     assert_eq!(
-        Config::dialog_id_to_template("injuries-10154507"),
+        view_resolver::dialog_seed_alias("injuries-10154507"),
         "injuries-10154507"
     );
-    assert!(!Config::id_has_widget_template("injuries-10154507"));
+    assert!(!local_catalog::claims_dialog("injuries-10154507"));
 }

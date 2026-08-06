@@ -22,6 +22,33 @@
 use crate::config::{Config, WindowBinding};
 use crate::data::view_kind::ViewKind;
 
+/// Stream ids with a DEDICATED widget view (Phase 6: formerly
+/// `stream_id_to_template`). Everything else is generic text.
+fn dedicated_stream_view(id: &str) -> Option<&'static str> {
+    match id {
+        "Spells" => Some("spells"),
+        "inv" => Some("inventory"),
+        "reserve" => Some("reserve"),
+        "room" => Some("room"),
+        _ => None,
+    }
+}
+
+/// Dialog id → catalog seed key when they differ (Phase 6: formerly
+/// `dialog_id_to_template`). Most dialogs share their id with the key;
+/// the active-effects dialogs arrive capitalized and expr maps to the
+/// GS4 experience widget.
+pub fn dialog_seed_alias(id: &str) -> &str {
+    match id {
+        "expr" => "gs4_experience",
+        "Buffs" => "buffs",
+        "Debuffs" => "debuffs",
+        "Cooldowns" => "cooldowns",
+        "Active Spells" | "ActiveSpells" => "active_spells",
+        other => other,
+    }
+}
+
 /// Resolve which renderer presents the window bound to `binding`.
 /// `view_override` is the per-window user override (checked first, so a
 /// user can flip any dialog to the raw dynamic rendering — or a stream
@@ -36,19 +63,20 @@ pub fn resolve_view(binding: &WindowBinding, view_override: Option<&str>) -> Vie
             key => ViewKind::Dedicated(key.to_string()),
         };
     }
-    // Layer 2 (Phase 1: catalog delegation) + layer 3 (kind fallback).
+    // Layer 2 (Phase 6: THE dedicated-view tables, formerly three
+    // scattered id-map functions) + layer 3 (kind fallback). A dialog id
+    // is claimed exactly when its aliased key seeds a catalog view —
+    // reproducing the old id_has_widget_template contract, pinned by the
+    // Phase 0 golden.
     match binding {
-        WindowBinding::Stream(id) => {
-            let template = Config::stream_id_to_template(id);
-            if template == "text_custom" {
-                ViewKind::Text
-            } else {
-                ViewKind::Dedicated(template.to_string())
-            }
-        }
+        WindowBinding::Stream(id) => match dedicated_stream_view(id) {
+            Some(view) => ViewKind::Dedicated(view.to_string()),
+            None => ViewKind::Text,
+        },
         WindowBinding::Dialog(id) => {
-            if Config::id_has_widget_template(id) {
-                ViewKind::Dedicated(Config::dialog_id_to_template(id).to_string())
+            let key = dialog_seed_alias(id);
+            if Config::get_window_template(key).is_some() {
+                ViewKind::Dedicated(key.to_string())
             } else {
                 ViewKind::DialogPanel
             }
@@ -61,11 +89,9 @@ pub fn resolve_view(binding: &WindowBinding, view_override: Option<&str>) -> Vie
 mod tests {
     use super::*;
 
-    /// The façade must agree with the raw catalog maps for every id in
-    /// the Phase 0 probe inventory — the equivalence proof that lets
-    /// Phase 3 consumers move here without behavior change. When Phase 4
-    /// replaces the delegation with the DEDICATED_VIEWS table, THIS test
-    /// (plus the Phase 0 golden) is what proves the table complete.
+    /// Phase 6: the id-maps are deleted; the resolver IS the
+    /// implementation. The Phase 0 golden fixture (frozen text) remains
+    /// the oracle proving these tables reproduce the old maps exactly.
     #[test]
     fn resolver_is_equivalent_to_the_catalog_maps() {
         let probe_ids = [
@@ -103,26 +129,29 @@ mod tests {
             "",
         ];
         for id in probe_ids {
-            // Streams: dedicated iff the catalog maps to a non-text
-            // template; the dedicated key IS that template.
+            // Streams: dedicated iff the table names a view; otherwise
+            // generic text (the old "text_custom" fallback).
             let stream = resolve_view(&WindowBinding::Stream(id.to_string()), None);
-            let stream_template = Config::stream_id_to_template(id);
             match &stream {
-                ViewKind::Text => assert_eq!(stream_template, "text_custom", "{id}"),
-                ViewKind::Dedicated(key) => assert_eq!(key, stream_template, "{id}"),
+                ViewKind::Text => assert!(dedicated_stream_view(id).is_none(), "{id}"),
+                ViewKind::Dedicated(key) => {
+                    assert_eq!(Some(key.as_str()), dedicated_stream_view(id), "{id}")
+                }
                 other => panic!("stream {id} resolved to {other:?}"),
             }
 
-            // Dialogs: dedicated iff id_has_widget_template; the key IS
-            // dialog_id_to_template's answer.
+            // Dialogs: dedicated iff the aliased key seeds a view.
             let dialog = resolve_view(&WindowBinding::Dialog(id.to_string()), None);
             match &dialog {
                 ViewKind::Dedicated(key) => {
-                    assert!(Config::id_has_widget_template(id), "{id}");
-                    assert_eq!(key, Config::dialog_id_to_template(id), "{id}");
+                    assert_eq!(key, dialog_seed_alias(id), "{id}");
+                    assert!(Config::get_window_template(key).is_some(), "{id}");
                 }
                 ViewKind::DialogPanel => {
-                    assert!(!Config::id_has_widget_template(id), "{id}")
+                    assert!(
+                        Config::get_window_template(dialog_seed_alias(id)).is_none(),
+                        "{id}"
+                    )
                 }
                 other => panic!("dialog {id} resolved to {other:?}"),
             }
@@ -131,6 +160,27 @@ mod tests {
             assert_eq!(
                 resolve_view(&WindowBinding::Container(id.to_string()), None),
                 ViewKind::Container
+            );
+        }
+    }
+
+    /// The active-effects dialogs come capitalized/spaced; each must map
+    /// to a real widget seed so claims_dialog recognizes them as
+    /// widget-backed (and never spawns a generic empty panel). Moved from
+    /// templates.rs in Phase 6.
+    #[test]
+    fn effect_dialog_ids_resolve_to_their_widget_views() {
+        for (id, expected) in [
+            ("Buffs", "buffs"),
+            ("Debuffs", "debuffs"),
+            ("Cooldowns", "cooldowns"),
+            ("Active Spells", "active_spells"),
+            ("expr", "gs4_experience"),
+        ] {
+            assert_eq!(
+                resolve_view(&WindowBinding::Dialog(id.to_string()), None),
+                ViewKind::Dedicated(expected.to_string()),
+                "dialog '{id}' should resolve to '{expected}'"
             );
         }
     }

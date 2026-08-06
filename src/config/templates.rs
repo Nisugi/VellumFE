@@ -1807,65 +1807,9 @@ impl Config {
         }
     }
 
-    /// Map dialog ID to template name when they differ.
-    /// Most dialogs use the same ID as the template, but some have special mappings.
-    pub fn dialog_id_to_template(dialog_id: &str) -> &str {
-        match dialog_id {
-            // GS4 expr dialog -> gs4_experience template
-            "expr" => "gs4_experience",
-            // The active-effects dialogs arrive capitalized (and "Active
-            // Spells" has a space), but their templates are lowercase. Without
-            // these, get_window_template(dialog_id_to_template(id)) returns
-            // None, the "already has a dedicated widget" guard in
-            // messages.rs::DialogPanelOpen fails to fire, and Buffs/Debuffs/
-            // Cooldowns/Active Spells get spawned as generic (empty) dialog
-            // panels instead of their ActiveEffects widget.
-            "Buffs" => "buffs",
-            "Debuffs" => "debuffs",
-            "Cooldowns" => "cooldowns",
-            "Active Spells" | "ActiveSpells" => "active_spells",
-            // Most dialogs use the same ID as the template
-            _ => dialog_id,
-        }
-    }
-
-    /// Whether a game dialog/window `id` is backed by a dedicated widget
-    /// template (minivitals, expr, encum, Buffs, ...) rather than being a
-    /// generic dockable dialog panel (combat, befriend, ...).
-    ///
-    /// This is the single source of truth for the "already has a widget"
-    /// decision. Two paths need it and MUST agree, or a deleted-then-reshown
-    /// widget gets resurrected as a generic `panel_<id>` instead of its real
-    /// widget:
-    /// - `DialogPanelOpen` (messages.rs): skip DialogPanel discovery for ids
-    ///   that own a widget.
-    /// - `set_known_window_shown` (state.rs): a widget id must restore its
-    ///   template, not conjure a dialog panel from the always-on dialog store.
-    pub fn id_has_widget_template(id: &str) -> bool {
-        Self::get_window_template(Self::dialog_id_to_template(id)).is_some()
-    }
-
-    /// The window template a discovered `<streamWindow>` id should use.
-    ///
-    /// Most streams are plain text (bounty, loot, society, thoughts, …) and get
-    /// the blank `text_custom` template. A few stream ids have a DEDICATED
-    /// widget whose specialized pipeline (buffer replay, clickable links,
-    /// structured parsing) only feeds that widget's content variant — a generic
-    /// text window bound to the id renders empty or broken. Route those to
-    /// their widget template so auto-discovery produces the right window type
-    /// instead of defaulting everything to text.
-    pub fn stream_id_to_template(stream_id: &str) -> &'static str {
-        match stream_id {
-            // Spellbook: replayed from a buffer into WindowContent::Spells only.
-            "Spells" => "spells",
-            // Inventory / reserve / room have structured widgets; a text window
-            // bound to these never populates correctly.
-            "inv" => "inventory",
-            "reserve" => "reserve",
-            "room" => "room",
-            _ => "text_custom",
-        }
-    }
+    // Phase 6: the dialog/stream id-maps (dialog_id_to_template,
+    // id_has_widget_template, stream_id_to_template) moved into
+    // core::view_resolver as the dedicated-view tables.
 
     /// List window templates filtered by game type
     pub fn list_window_templates_for_game(game: Option<GameType>) -> Vec<String> {
@@ -2221,26 +2165,8 @@ impl Config {
 mod dialog_template_mapping_tests {
     use super::*;
 
-    #[test]
-    fn effect_dialog_ids_resolve_to_their_widget_templates() {
-        // The active-effects dialogs come capitalized/spaced; each must map to
-        // a real widget template so the DialogPanelOpen guard recognizes them
-        // as widget-backed (and doesn't spawn a generic empty panel).
-        for (id, expected) in [
-            ("Buffs", "buffs"),
-            ("Debuffs", "debuffs"),
-            ("Cooldowns", "cooldowns"),
-            ("Active Spells", "active_spells"),
-            ("expr", "gs4_experience"),
-        ] {
-            let tpl = Config::dialog_id_to_template(id);
-            assert_eq!(tpl, expected, "dialog '{id}' should map to '{expected}'");
-            assert!(
-                Config::get_window_template(tpl).is_some(),
-                "template '{tpl}' for dialog '{id}' must exist so the guard fires"
-            );
-        }
-    }
+    // effect_dialog_ids_resolve_to_their_widget_templates moved to
+    // core::view_resolver (Phase 6: the mapping lives there now).
 
     #[test]
     fn standard_status_indicators_all_have_templates() {
