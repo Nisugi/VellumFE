@@ -259,6 +259,9 @@ pub enum ParsedElement {
         id: String,
         title: Option<String>,
         save: bool, // true if save='t' - position should be persisted
+        /// openDialog `location` (right/center/detach/…): detach marks the
+        /// utility-popup class (bugDialogBox) that pops without opt-in.
+        location: Option<String>,
     },
     DialogButtons {
         id: String,
@@ -769,8 +772,18 @@ impl XmlParser {
                 self.handle_dialog_data(tag, elements);
             }
         } else if tag.starts_with("<openDialog ") {
-            self.handle_open_dialog(tag, elements);
-            self.emit_window_hints(tag, elements);
+            // Normalize name-keyed inner dialogData for the embedded
+            // extractors too (bugDialogBox: openDialog carries id= but its
+            // dialogData uses name= — the popup arrived EMPTY and never
+            // showed).
+            if tag.contains("<dialogData name=") {
+                let patched = tag.replace("<dialogData name=", "<dialogData id=");
+                self.handle_open_dialog(&patched, elements);
+                self.emit_window_hints(&patched, elements);
+            } else {
+                self.handle_open_dialog(tag, elements);
+                self.emit_window_hints(tag, elements);
+            }
         } else if tag.starts_with("<closeDialog ") {
             self.handle_close_dialog(tag, elements);
         } else if tag.starts_with("<switchQuickBar ") {
@@ -1622,8 +1635,14 @@ impl XmlParser {
                         save: save_position,
                     });
                 } else {
+                    let location = Self::extract_attribute(tag_head, "location");
                     tracing::debug!("Parser emitting DialogOpen: id={}, title={:?}, save={}", id, title, save_position);
-                    elements.push(ParsedElement::DialogOpen { id, title, save: save_position });
+                    elements.push(ParsedElement::DialogOpen {
+                        id,
+                        title,
+                        save: save_position,
+                        location,
+                    });
                 }
             }
         }

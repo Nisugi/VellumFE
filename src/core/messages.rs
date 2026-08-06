@@ -1432,7 +1432,7 @@ impl MessageProcessor {
                     ui_state.quickbar_order.push(id.clone());
                 }
             }
-            ParsedElement::DialogOpen { id, title, save } => {
+            ParsedElement::DialogOpen { id, title, save, location } => {
                 self.chunk_has_silent_updates = true;
                 tracing::debug!("DialogOpen received: id={}, title={:?}, save={}", id, title, save);
 
@@ -1440,7 +1440,13 @@ impl MessageProcessor {
                 // are mined into panels). Hidden-until-shown: a dialog the
                 // user never showed doesn't pop up, but the store still
                 // ingests its data so the window can be shown later.
-                if !Self::dialog_should_popup(ui_state, id) {
+                // EXCEPTION: the detach/save='false' utility-popup class
+                // (bugDialogBox, alert boxes) is a direct response to the
+                // user's own command — it pops without opt-in (live-test
+                // report: bug dialogs never appeared for anyone).
+                let utility_popup =
+                    location.as_deref() == Some("detach") && !save;
+                if !utility_popup && !Self::dialog_should_popup(ui_state, id) {
                     tracing::debug!("DialogOpen suppressed (not shown by user): id={}", id);
                     return;
                 }
@@ -2196,7 +2202,15 @@ impl MessageProcessor {
     /// Hidden dialogs stay in the store only. If the currently-shown
     /// dialog is a *different* id, leave it be (one popup at a time).
     fn sync_shown_dialog(&self, ui_state: &mut UiState, id: &str, show: bool) {
-        if !show {
+        // Content arriving for the popup that is ALREADY on screen always
+        // refreshes it — the openDialog block emits DialogOpen first and
+        // its controls after, so without this the popup kept the empty
+        // clone it was born with (bugDialogBox rendered blank).
+        let refreshing_active = ui_state
+            .active_dialog
+            .as_ref()
+            .is_some_and(|d| d.id == id);
+        if !show && !refreshing_active {
             return;
         }
         // Don't steal the screen from a different open dialog.
@@ -4928,6 +4942,7 @@ mod tests {
                 id: "bank".to_string(),
                 title: Some("Bank".to_string()),
                 save: true,
+                location: None,
             },
             ParsedElement::StreamWindow {
                 id: "thoughts".to_string(),
@@ -4971,6 +4986,7 @@ mod tests {
                 id: "bank".to_string(),
                 title: Some("Bank".to_string()),
                 save: true,
+                location: None,
             },
             &mut game_state,
             &mut ui_state,
@@ -5264,7 +5280,8 @@ mod tests {
             id: id.to_string(),
             title: Some(id.to_string()),
             save: false,
-        };
+            location: None,
+            };
 
         // Not shown → no popup.
         processor.process_element(
@@ -7202,5 +7219,52 @@ mod tests {
         );
         assert_eq!(lo, 65.0 - 12.5 - 25.0);
         assert_eq!(hi, 65.0 - 12.5 + 5.0);
+    }
+
+    #[test]
+    fn bug_dialog_box_popup_populates_despite_name_keyed_dialog_data() {
+        // Wire-verbatim (GSIV log 2025-12-31): openDialog id='bugDialogBox'
+        // whose INNER dialogData keys on name= — the embedded extractors
+        // saw nothing, so the popup arrived empty and never usable
+        // (live-test report: "we don't get any bug dialog windows").
+        let mut parser = crate::parser::XmlParser::with_presets(
+            Vec::new(),
+            std::collections::HashMap::new(),
+        );
+        let elements = parser.parse_line(
+            "<openDialog type='dynamic' id='bugDialogBox' title='Submit Bug Report' location='detach' height='190' width='500' save='false' noResize='' noDock=''><dialogData name='bugDialogBox'><label id='categoryLabel' value='Category' justify='4' top='5' left='25' width='65'/><dropDownBox id='category' value='ROOM' content_text='CHARACTER,ROOM,TYPO' content_value='CHARACTER,ROOM,TYPO' top='5' left='95' width='330'/><cmdButton id='submitBtn' value='Submit' cmd='bugreport submit' top='160' left='120' width='120'/></dialogData></openDialog>",
+        );
+
+        let mut processor = create_test_processor();
+        let mut game_state = GameState::new();
+        let mut ui_state = UiState::default();
+        for element in &elements {
+            processor.process_element(
+                element,
+                &mut game_state,
+                &mut ui_state,
+                &mut std::collections::HashMap::new(),
+                &mut None,
+                &mut false,
+                &mut None,
+                &mut None,
+                &mut None,
+                None,
+            );
+        }
+
+        let dialog = ui_state
+            .dialog_store
+            .get("bugDialogBox")
+            .expect("store slot under the id");
+        assert!(!dialog.dropdowns.is_empty(), "category dropdown ingested");
+        assert!(!dialog.buttons.is_empty(), "submit button ingested");
+        assert!(
+            ui_state
+                .active_dialog
+                .as_ref()
+                .is_some_and(|d| d.id == "bugDialogBox"),
+            "the popup actually shows"
+        );
     }
 }

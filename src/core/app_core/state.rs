@@ -4491,6 +4491,7 @@ impl AppCore {
                                 def.base_mut().title = Some(entry.title.clone());
                             }
                         }
+                        self.apply_declared_size_hint(&win_name, &entry.id);
                         self.mark_layout_modified();
                         self.show_window(&win_name, terminal_width, terminal_height);
                         self.needs_render = true;
@@ -4593,6 +4594,7 @@ impl AppCore {
                 if let Some(name) =
                     self.layout.register_discovered_window(binding, &template)
                 {
+                    self.apply_declared_size_hint(&name, &id);
                     self.mark_layout_modified();
                     self.show_window(&name, terminal_width, terminal_height);
                     self.ui_state.expose_shown_ids.insert(id);
@@ -4640,6 +4642,53 @@ impl AppCore {
     /// Streams and resident dialog panels become persistent Hidden layout
     /// windows (known forever); hidden-until-shown is the universal
     /// default. No-op if a window is already bound to this id.
+    /// Apply the game's DECLARED size (openDialog/streamWindow
+    /// width/height px, captured as WindowHints) to a newly created bound
+    /// window. CREATION TIME ONLY — the precedence is saved local
+    /// geometry → declared size → default, and applying only at creation
+    /// means user resizes and saved layouts always win afterward and a
+    /// re-sent hint can never clobber them. Generic views only: dedicated
+    /// widgets (expr, minivitals, …) keep their curated sizes — the
+    /// binding is the game's, the presentation is ours.
+    fn apply_declared_size_hint(&mut self, window_name: &str, game_id: &str) {
+        let Some(hints) = self.ui_state.window_hints.get(game_id) else {
+            return;
+        };
+        let dim = |name: &str| {
+            hints
+                .iter()
+                .find(|(k, _)| k == name)
+                .and_then(|(_, v)| v.parse::<f32>().ok())
+                .filter(|v| *v > 1.0)
+        };
+        let (w, h) = (dim("width"), dim("height"));
+        if w.is_none() && h.is_none() {
+            return;
+        }
+        let Some(def) = self
+            .layout
+            .windows
+            .iter_mut()
+            .find(|def| def.name() == window_name)
+        else {
+            return;
+        };
+        if !matches!(def.widget_type(), "text" | "dialogpanel" | "container") {
+            return;
+        }
+        let base = def.base_mut();
+        if let Some(hpx) = h {
+            // Content px → cells (~16px rows) + title-bar row.
+            let rows = ((hpx / 16.0).ceil() as u16 + 1).clamp(3, 80);
+            base.rows = crate::data::geometry::Height::new(rows);
+        }
+        if let Some(wpx) = w {
+            let cols = ((wpx / 8.0).ceil() as u16 + 2).clamp(12, 240);
+            base.cols = crate::data::geometry::Width::new(cols);
+        }
+        self.mark_layout_modified();
+    }
+
     /// The seed key a bound window is created from, via the presentation
     /// resolver (redesign Phase 3): a dedicated view's widget template,
     /// or the generic view for the binding's kind.
@@ -4735,6 +4784,8 @@ impl AppCore {
             // A new discovery changes the layout — mark it so the autosave
             // (or .savelayout) persists it, making the window known forever.
             self.mark_layout_modified();
+            // Size from the game's own declaration when it sent one.
+            self.apply_declared_size_hint(&name, &d.id);
             // Set a friendly title + Shown/Hidden default.
             if let Some(def) = self.layout.windows.iter_mut().find(|w| w.name() == name) {
                 if !d.title.is_empty() {
@@ -8627,5 +8678,62 @@ mod tests {
             .pending_expose_closes
             .push("withdraw".to_string());
         core.realize_offered_windows(80, 24);
+    }
+
+    #[test]
+    fn declared_size_hint_shapes_new_windows_but_never_dedicated_views() {
+        // Owner rule: every window respects the game's declared size at
+        // creation; saved/user geometry wins afterward (creation-time-only
+        // application), and dedicated views keep their curated sizes.
+        let mut core = core_with_layout(vec![]);
+        core.ui_state.window_hints.insert(
+            "charprofile".to_string(),
+            vec![
+                ("location".to_string(), "force-center".to_string()),
+                ("height".to_string(), "320".to_string()),
+                ("width".to_string(), "400".to_string()),
+            ],
+        );
+        core.ui_state
+            .pending_exposes
+            .push(("stream".to_string(), "charprofile".to_string()));
+        core.realize_offered_windows(120, 60);
+        let def = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| {
+                w.base().binding.as_ref().is_some_and(|b| b.id() == "charprofile")
+            })
+            .expect("expose registered");
+        assert_eq!(def.base().rows.get(), 320 / 16 + 1, "declared height in cells");
+        assert_eq!(def.base().cols.get(), 400 / 8 + 2, "declared width in cells");
+
+        // A dedicated view (inventory via its claimed stream) keeps its
+        // template size even when the game hints something else.
+        core.ui_state.window_hints.insert(
+            "inv".to_string(),
+            vec![("height".to_string(), "2100".to_string())],
+        );
+        core.ui_state.pending_window_discoveries.push(crate::data::WindowDiscovery {
+            id: "inv".to_string(),
+            title: "Inventory".to_string(),
+            kind: crate::data::WindowDiscoveryKind::Stream,
+            save: false,
+        });
+        core.realize_offered_windows(120, 60);
+        let inv = core
+            .layout
+            .windows
+            .iter()
+            .find(|w| w.base().binding.as_ref().is_some_and(|b| b.id() == "inv"))
+            .expect("inv discovered");
+        assert_eq!(inv.widget_type(), "inventory");
+        let template_rows = crate::core::local_catalog::seed("inventory")
+            .unwrap()
+            .base()
+            .rows
+            .get();
+        assert_eq!(inv.base().rows.get(), template_rows, "dedicated view untouched");
     }
 }
