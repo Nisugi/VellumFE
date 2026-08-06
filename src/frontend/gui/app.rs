@@ -230,6 +230,8 @@ impl GuiWindowActions {
 enum AppShortcut {
     Quit,
     StartSearch,
+    NextSearchMatch,
+    PrevSearchMatch,
     CloseWindow,
 }
 
@@ -4453,6 +4455,14 @@ impl VellumGuiApp {
         if Self::binding_matches_key_event(&app_keybinds.start_search, key_event) {
             return Some(AppShortcut::StartSearch);
         }
+        // The [app] section's own match-step fields (the [user] action
+        // versions route separately via GuiCommandAction).
+        if Self::binding_matches_key_event(&app_keybinds.next_search_match, key_event) {
+            return Some(AppShortcut::NextSearchMatch);
+        }
+        if Self::binding_matches_key_event(&app_keybinds.prev_search_match, key_event) {
+            return Some(AppShortcut::PrevSearchMatch);
+        }
         if Self::binding_matches_key_event(&app_keybinds.close_window, key_event) {
             return Some(AppShortcut::CloseWindow);
         }
@@ -4482,7 +4492,7 @@ impl VellumGuiApp {
     ) {
         match target {
             GlobalDispatchTarget::Macro(action) => self.execute_macro_keybind(&action, ctx),
-            GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut),
+            GlobalDispatchTarget::Shortcut(shortcut) => self.execute_app_shortcut(shortcut, ctx),
             GlobalDispatchTarget::GuiCommandAction(name) => {
                 self.try_gui_command_action(&name, ctx);
             }
@@ -4563,12 +4573,14 @@ impl VellumGuiApp {
         }
     }
 
-    fn execute_app_shortcut(&mut self, shortcut: AppShortcut) {
+    fn execute_app_shortcut(&mut self, shortcut: AppShortcut, ctx: &egui::Context) {
         match shortcut {
             AppShortcut::Quit => {
                 self.app_core.quit();
                 self.close_requested = true;
             }
+            AppShortcut::NextSearchMatch => self.step_search_match(true, ctx),
+            AppShortcut::PrevSearchMatch => self.step_search_match(false, ctx),
             AppShortcut::StartSearch => {
                 self.app_core.start_search_mode();
                 self.search_bar_needs_focus = true;

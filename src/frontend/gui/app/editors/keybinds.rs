@@ -142,6 +142,12 @@ impl VellumGuiApp {
 
     fn save_keybind_from_form(&mut self, form: &KeybindFormState) -> Result<(), String> {
         let (key, action) = form.build_binding()?;
+        if let Some(reason) = crate::config::reserved_combo_conflict(&key, &action) {
+            return Err(reason);
+        }
+        if let Some(reason) = crate::config::keyboard_dead_action_reason(&action) {
+            return Err(reason);
+        }
         let character = self.app_core.config.character.clone();
 
         if let Some(original) = &form.original_key {

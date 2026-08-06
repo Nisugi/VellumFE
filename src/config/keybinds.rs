@@ -13,6 +13,75 @@ pub struct MacroAction {
     pub macro_text: String, // e.g., "sw\r" for southwest movement
 }
 
+/// GUI-frontend reserved key combos: the OS/winit layer synthesizes
+/// Copy/Cut/Paste EVENTS for these beneath the key layer, and the GUI cannot
+/// reliably consume them. Binding a DIFFERENT action there would make one
+/// key do two things, so both keybind editors refuse the bind and show the
+/// returned reason. Binding the matching clipboard action itself is allowed
+/// (same behavior, just stated explicitly). The TUI has no such floor — a
+/// raw-mode terminal owns its keys — so this check is GUI-scoped; the combos
+/// are refused outright because a saved bind applies to both frontends.
+pub fn reserved_combo_conflict(key: &str, action: &KeyBindAction) -> Option<String> {
+    let normalized: String = key
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let (natural, event_name) = match normalized.as_str() {
+        "ctrl+c" | "cmd+c" => ("copy", "copy"),
+        // No `cut` action exists in the vocabulary, so ctrl+x is always
+        // refused — anything bound there would double with the OS cut.
+        "ctrl+x" | "cmd+x" => ("", "cut"),
+        "ctrl+v" | "cmd+v" => ("paste", "paste"),
+        _ => return None,
+    };
+    if let KeyBindAction::Action(name) = action {
+        if !natural.is_empty() && name.eq_ignore_ascii_case(natural) {
+            return None;
+        }
+    }
+    Some(format!(
+        "'{key}' is reserved in the GUI frontend: the OS delivers it as a {event_name} event \
+         beneath the key layer, so this binding would make one key do two things there. Pick \
+         another combo{}.",
+        if natural.is_empty() {
+            String::new()
+        } else {
+            format!(" (binding the '{natural}' action to an additional key is fine)")
+        }
+    ))
+}
+
+/// Actions that only function inside the controller layer — the gamepad
+/// runtime interprets them directly, and the keyboard dispatch path routes
+/// them into arms no frontend implements. Bound to a keyboard key they would
+/// be silently dead, so the keybind editors refuse them with this reason.
+/// (Distinct from `ActionScope::Controller`, which keyboard-functional
+/// actions like the scroll set also use for editor grouping.)
+pub fn keyboard_dead_action_reason(action: &KeyBindAction) -> Option<String> {
+    let KeyBindAction::Action(name) = action else {
+        return None;
+    };
+    let dead = matches!(
+        name.as_str(),
+        "interact_select"
+            | "menu_up"
+            | "menu_down"
+            | "menu_left"
+            | "menu_right"
+            | "menu_cancel"
+            | "controller_shift"
+            | "controller_modifier"
+    ) || name.starts_with("controller_wheel");
+    dead.then(|| {
+        format!(
+            "'{name}' only works from a controller (the gamepad layer interprets it directly) — \
+             a keyboard bind would do nothing. Configure it in the Controller editor instead."
+        )
+    })
+}
+
 /// Canonical controller button order, used to sort a modifier set so that
 /// `l2+r1` and `r1+l2` collapse to one key. Mirrors the frontend's
 /// `GAMEPAD_BUTTON_NAMES`; kept here so the `config` layer stays free of any
@@ -2850,6 +2919,42 @@ fn last_controller_value<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reserved GUI combos: Ctrl+C/X/V carry OS-synthesized clipboard events
+    /// beneath the key layer, so binding a DIFFERENT action there is refused
+    /// with a reason; binding the matching clipboard action (or any other
+    /// combo) is allowed.
+    #[test]
+    fn reserved_combos_refuse_conflicting_actions() {
+        let other = KeyBindAction::Action("clear_search".to_string());
+        let makro = KeyBindAction::Macro(MacroAction {
+            macro_text: "hide\r".to_string(),
+        });
+
+        assert!(reserved_combo_conflict("ctrl+c", &other).is_some());
+        assert!(reserved_combo_conflict("Ctrl+V", &makro).is_some());
+        // ctrl+x has no matching action in the vocabulary — always refused.
+        assert!(reserved_combo_conflict(
+            "ctrl+x",
+            &KeyBindAction::Action("copy".to_string())
+        )
+        .is_some());
+
+        // The natural clipboard action on its own combo is fine.
+        assert!(reserved_combo_conflict(
+            "ctrl+c",
+            &KeyBindAction::Action("copy".to_string())
+        )
+        .is_none());
+        assert!(reserved_combo_conflict(
+            "ctrl+v",
+            &KeyBindAction::Action("paste".to_string())
+        )
+        .is_none());
+        // Everything else is untouched.
+        assert!(reserved_combo_conflict("ctrl+q", &other).is_none());
+        assert!(reserved_combo_conflict("f5", &makro).is_none());
+    }
 
     /// The [menu] section that save_menu_keybinds writes must survive a
     /// serialize → deserialize round trip with every field intact (the save
