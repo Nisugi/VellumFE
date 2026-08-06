@@ -3970,9 +3970,40 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         effects_content: &crate::data::ActiveEffectsContent,
         settings: WidgetRenderSettings,
+        content_align: Option<&str>,
     ) {
         if effects_content.effects.is_empty() {
-            ui.label(format!("No active {}.", effects_content.category));
+            // content_align applies ONLY to this placeholder (owner ask):
+            // the effect bars themselves always fill top-down.
+            let text = format!("No active {}.", effects_content.category);
+            match content_align.map(crate::config::ContentAlign::from_str) {
+                None => {
+                    ui.label(text);
+                }
+                Some(align) => {
+                    use crate::config::ContentAlign as CA;
+                    let anchor = match align {
+                        CA::TopLeft => egui::Align2::LEFT_TOP,
+                        CA::Top => egui::Align2::CENTER_TOP,
+                        CA::TopRight => egui::Align2::RIGHT_TOP,
+                        CA::Left => egui::Align2::LEFT_CENTER,
+                        CA::Center => egui::Align2::CENTER_CENTER,
+                        CA::Right => egui::Align2::RIGHT_CENTER,
+                        CA::BottomLeft => egui::Align2::LEFT_BOTTOM,
+                        CA::Bottom => egui::Align2::CENTER_BOTTOM,
+                        CA::BottomRight => egui::Align2::RIGHT_BOTTOM,
+                    };
+                    let (rect, _) =
+                        ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+                    ui.painter().text(
+                        anchor.pos_in_rect(&rect),
+                        anchor,
+                        text,
+                        egui::FontId::proportional(settings.text_size),
+                        ui.visuals().text_color(),
+                    );
+                }
+            }
             return;
         }
 
@@ -5598,7 +5629,12 @@ impl VellumGuiApp {
                 )
             }
             WindowContent::ActiveEffects(content) => {
-                Self::render_active_effects_content(ui, content, settings);
+                Self::render_active_effects_content(
+                    ui,
+                    content,
+                    settings,
+                    window.content_align.as_deref(),
+                );
                 None
             }
             WindowContent::WebUi(content) => {

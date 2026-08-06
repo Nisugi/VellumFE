@@ -249,8 +249,12 @@ pub(super) struct WindowAppearanceView {
     /// Border fields from the shared layout def; None when the window has
     /// no def (border controls are hidden then).
     border: Option<BorderView>,
-    /// Content alignment from the shared layout def (text-list widgets).
+    /// Content alignment from the shared layout def (text-list widgets;
+    /// active-effects windows apply it to the empty placeholder only).
     content_align: Option<String>,
+    /// Widgets showing the alignment control: text-list ones plus
+    /// active effects.
+    supports_content_align: bool,
 }
 
 /// Snapshot of a layout def's border configuration.
@@ -782,6 +786,11 @@ impl VellumGuiApp {
                     | WidgetType::Container
             )
         );
+        // Active-effects windows honor content alignment too — for the
+        // "No active X." placeholder only, never the bars — so they get
+        // the alignment control without the wrap toggle.
+        let supports_content_align =
+            supports_wrap || widget_type == Some(WidgetType::ActiveEffects);
         let is_doll = widget_type == Some(WidgetType::InjuryDoll);
         // Pool scan only for doll windows — no disk walk for every menu.
         let doll_images = if is_doll {
@@ -833,6 +842,7 @@ impl VellumGuiApp {
             text_size_override: self.text_size_override_for_tab(tab_key),
             global_text_size: self.ui_settings.text_size,
             supports_wrap,
+            supports_content_align,
             is_map: widget_type == Some(WidgetType::Map),
             map_zoom: self
                 .tab_settings
@@ -1989,6 +1999,8 @@ impl VellumGuiApp {
                 if ui.checkbox(&mut wrap, "Word wrap").changed() {
                     command = Some(GuiWindowMenuCommand::SetWrapText(wrap));
                 }
+            }
+            if view.supports_content_align {
                 ui.horizontal(|ui| {
                     ui.label("Content alignment");
                     const ALIGNS: [(Option<&str>, &str); 10] = [
