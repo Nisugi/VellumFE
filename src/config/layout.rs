@@ -385,6 +385,88 @@ impl Layout {
         toml::to_string_pretty(&value).context("Failed to serialize layout")
     }
 
+    /// Load-time binding backfill (window-system redesign Phase 2; spec
+    /// in `.beads/artifacts/window-system-redesign/spec.md`).
+    ///
+    /// Windows created before bindings existed are identified only by
+    /// convention (name / widget type). This derives their
+    /// `WindowBase.binding` so binding-first identity finds them:
+    /// **data-first** — a window's own data names its feed (a
+    /// single-entry streams list, the active-effects category) — with a
+    /// widget-type fallback for the dedicated views whose game feed was
+    /// purely conventional (room, spells, injuries, minivitals, expr,
+    /// encum, BetrayerPanel: the wire-verified claimed ids).
+    ///
+    /// Deliberately NEVER backfilled: data views (single progress bars,
+    /// compass, hands, indicators, targets, players, dashboards — they
+    /// are GameState-fed, not game-declared), multi-stream tabbedtext
+    /// (tab routing already adopts), the unnamed "main" story stream,
+    /// and any window that already has a binding. One binding per feed:
+    /// on a contested id the first window in layout order wins, matching
+    /// `has_window_bound_to`'s single-home invariant. Idempotent — a
+    /// backfilled file re-backfills to itself.
+    pub(crate) fn backfill_bindings(layout: &mut Layout) -> usize {
+        use super::widgets::WindowBinding;
+        use std::collections::HashSet;
+
+        let mut claimed: HashSet<WindowBinding> = layout
+            .windows
+            .iter()
+            .filter_map(|w| w.base().binding.clone())
+            .collect();
+        let mut changed = 0;
+        for window in &mut layout.windows {
+            if window.base().binding.is_some() {
+                continue;
+            }
+            let candidate = match window {
+                WindowDef::Text { data, .. } => (data.streams.len() == 1
+                    && data.streams[0] != "main")
+                    .then(|| WindowBinding::Stream(data.streams[0].clone())),
+                WindowDef::Inventory { data, .. } => Some(WindowBinding::Stream(
+                    data.streams.first().cloned().unwrap_or_else(|| "inv".to_string()),
+                )),
+                WindowDef::Reserve { data, .. } => Some(WindowBinding::Stream(
+                    data.streams
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "reserve".to_string()),
+                )),
+                WindowDef::ActiveEffects { data, .. } if !data.category.is_empty() => {
+                    // The wire spells it "Active Spells"; the widget data
+                    // historically stores "ActiveSpells".
+                    let id = match data.category.as_str() {
+                        "ActiveSpells" => "Active Spells".to_string(),
+                        other => other.to_string(),
+                    };
+                    Some(WindowBinding::Dialog(id))
+                }
+                _ => match window.widget_type() {
+                    "room" => Some(WindowBinding::Stream("room".to_string())),
+                    "spells" => Some(WindowBinding::Stream("Spells".to_string())),
+                    "injury_doll" => Some(WindowBinding::Dialog("injuries".to_string())),
+                    "minivitals" => Some(WindowBinding::Dialog("minivitals".to_string())),
+                    "gs4_experience" => Some(WindowBinding::Dialog("expr".to_string())),
+                    "encum" => Some(WindowBinding::Dialog("encum".to_string())),
+                    "betrayer" => {
+                        Some(WindowBinding::Dialog("BetrayerPanel".to_string()))
+                    }
+                    _ => None,
+                },
+            };
+            if let Some(binding) = candidate {
+                if claimed.insert(binding.clone()) {
+                    window.base_mut().binding = Some(binding);
+                    changed += 1;
+                }
+            }
+        }
+        if changed > 0 {
+            tracing::info!("backfilled bindings for {changed} window(s)");
+        }
+        changed
+    }
+
     pub fn load_from_file(path: &std::path::Path) -> Result<Self> {
         let contents =
             fs::read_to_string(path).context(format!("Failed to read layout file: {:?}", path))?;
@@ -405,6 +487,11 @@ impl Layout {
         // look broken. Only user-chosen colors should override the theme,
         // so the known shipped values normalize back to "unset".
         Self::normalize_legacy_border_colors(&mut layout);
+
+        // Redesign Phase 2: derive bindings for pre-binding windows so
+        // binding-first identity (Phase 4) finds them. Idempotent; the
+        // one and only "migration" of the window-system redesign.
+        Self::backfill_bindings(&mut layout);
 
         // Migration: Ensure command_input exists in windows array with valid values
         if let Some(idx) = layout
@@ -1331,5 +1418,91 @@ border_color = "#807f80"
         let b = layout.windows[0].base();
         assert_eq!(b.cols.get(), 50); // 40*2=80 capped at max_cols 50
         assert_eq!(b.rows.get(), 15); // 10*0.5=5 raised to min_rows 15
+    }
+
+    // ==================== Redesign Phase 2: binding backfill ====================
+
+    fn template(name: &str) -> WindowDef {
+        crate::config::Config::get_window_template(name).expect(name)
+    }
+
+    fn binding_of(layout: &Layout, index: usize) -> Option<crate::config::WindowBinding> {
+        layout.windows[index].base().binding.clone()
+    }
+
+    #[test]
+    fn backfill_derives_bindings_data_first_and_never_touches_data_views() {
+        use crate::config::WindowBinding as B;
+        let mut layout = Layout::parse_tolerant("windows = []", "test").unwrap();
+        for name in [
+            "thoughts",   // 0: single-stream text -> Stream(thoughts)
+            "main",       // 1: the unnamed story stream -> stays free
+            "inventory",  // 2: -> Stream(inv)
+            "buffs",      // 3: active_effects category -> Dialog(Buffs)
+            "injuries",   // 4: widget-type fallback -> Dialog(injuries)
+            "health",     // 5: decomposed data view -> NEVER backfilled
+            "minivitals", // 6: claimed dialog -> Dialog(minivitals)
+            "compass",    // 7: data view -> never
+        ] {
+            layout.windows.push(template(name));
+        }
+
+        let changed = Layout::backfill_bindings(&mut layout);
+        assert_eq!(
+            changed, 5,
+            "thoughts + inventory + buffs + injuries + minivitals"
+        );
+
+        assert_eq!(binding_of(&layout, 0), Some(B::Stream("thoughts".into())));
+        assert_eq!(binding_of(&layout, 1), None, "main story stream stays free");
+        assert_eq!(binding_of(&layout, 2), Some(B::Stream("inv".into())));
+        assert_eq!(binding_of(&layout, 3), Some(B::Dialog("Buffs".into())));
+        assert_eq!(binding_of(&layout, 4), Some(B::Dialog("injuries".into())));
+        assert_eq!(binding_of(&layout, 5), None, "single progress bar is a data view");
+        assert_eq!(binding_of(&layout, 6), Some(B::Dialog("minivitals".into())));
+        assert_eq!(binding_of(&layout, 7), None, "compass is a data view");
+
+        // Idempotence: a backfilled layout re-backfills to itself.
+        assert_eq!(Layout::backfill_bindings(&mut layout), 0);
+    }
+
+    #[test]
+    fn backfill_first_window_wins_a_contested_feed_and_existing_bindings_hold() {
+        use crate::config::WindowBinding as B;
+        let mut layout = Layout::parse_tolerant("windows = []", "test").unwrap();
+        // A window already bound by the user keeps its binding, and its
+        // claim blocks the backfill from double-binding the feed.
+        let mut prebound = template("thoughts");
+        prebound.base_mut().binding = Some(B::Stream("thoughts".into()));
+        layout.windows.push(prebound);
+        layout.windows.push(template("thoughts"));
+
+        assert_eq!(Layout::backfill_bindings(&mut layout), 0);
+        assert_eq!(binding_of(&layout, 0), Some(B::Stream("thoughts".into())));
+        assert_eq!(binding_of(&layout, 1), None, "one binding per feed");
+    }
+
+    #[test]
+    fn backfilled_layout_round_trips_through_serialization() {
+        use crate::config::WindowBinding as B;
+        let mut layout = Layout::parse_tolerant("windows = []", "test").unwrap();
+        layout.windows.push(template("thoughts"));
+        layout.windows.push(template("buffs"));
+        Layout::backfill_bindings(&mut layout);
+
+        // `binding` is a long-standing serde-optional WindowBase field, so
+        // a backfilled file loads on any release that knows bindings (the
+        // compat bar the plan sets) — and re-backfills to itself.
+        let toml = layout.to_toml_string_preserving().expect("serialize");
+        let mut reloaded = Layout::parse_tolerant(&toml, "roundtrip").expect("reload");
+        assert_eq!(
+            reloaded.windows[0].base().binding,
+            Some(B::Stream("thoughts".into()))
+        );
+        assert_eq!(
+            reloaded.windows[1].base().binding,
+            Some(B::Dialog("Buffs".into()))
+        );
+        assert_eq!(Layout::backfill_bindings(&mut reloaded), 0);
     }
 }

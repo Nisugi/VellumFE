@@ -8231,6 +8231,59 @@ mod tests {
         core.realize_offered_windows(80, 24);
         assert!(core.ui_state.windows.contains_key("my_pack"));
     }
+
+    #[test]
+    fn discovery_burst_on_backfilled_layout_creates_zero_windows() {
+        // Redesign Phase 2 gate: after the load-time binding backfill, a
+        // login burst re-declaring every feed the layout already hosts
+        // must create NOTHING — binding identity short-circuits before
+        // adoption even runs.
+        use crate::data::{WindowDiscovery, WindowDiscoveryKind};
+        let mut windows: Vec<WindowDef> = ["thoughts", "inventory", "buffs", "injuries"]
+            .iter()
+            .map(|name| crate::config::Config::get_window_template(name).expect(name))
+            .collect();
+        let mut layout = crate::config::Layout {
+            windows: std::mem::take(&mut windows),
+            terminal_width: Some(80),
+            terminal_height: Some(24),
+            base_layout: None,
+            theme: None,
+            unknown_windows: Vec::new(),
+            deleted_windows: Vec::new(),
+        };
+        assert!(crate::config::Layout::backfill_bindings(&mut layout) > 0);
+        let mut core = core_with_layout(std::mem::take(&mut layout.windows));
+
+        let before = core.layout.windows.len();
+        let bindings_before: Vec<_> = core
+            .layout
+            .windows
+            .iter()
+            .map(|w| w.base().binding.clone())
+            .collect();
+        for (id, kind) in [
+            ("thoughts", WindowDiscoveryKind::Stream),
+            ("inv", WindowDiscoveryKind::Stream),
+            ("Buffs", WindowDiscoveryKind::DialogPanel),
+            ("injuries", WindowDiscoveryKind::DialogPanel),
+        ] {
+            core.ui_state.pending_window_discoveries.push(WindowDiscovery {
+                id: id.to_string(),
+                title: id.to_string(),
+                kind,
+                save: false,
+            });
+        }
+        core.realize_offered_windows(80, 24);
+
+        assert_eq!(core.layout.windows.len(), before, "zero windows created");
+        let bindings_after: Vec<_> = core
+            .layout
+            .windows
+            .iter()
+            .map(|w| w.base().binding.clone())
+            .collect();
+        assert_eq!(bindings_after, bindings_before, "bindings untouched");
+    }
 }
-
-
