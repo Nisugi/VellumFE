@@ -384,6 +384,17 @@ pub struct VellumGuiApp {
     /// scroll or cycle from the leftover deflection.
     #[cfg(feature = "gamepad")]
     gp_aim_recenter_needed: bool,
+    /// Stale-axis guard for the level-triggered story scroll: the aim
+    /// value last seen and when it last changed. A live stick jitters
+    /// every few frames; a bit-identical deflected value for seconds is a
+    /// frozen driver cache (seen live: aim_y=0.808 for 2,546 straight
+    /// frames pinning the story window at the top) and must not scroll.
+    #[cfg(feature = "gamepad")]
+    gp_aim_prev: (f32, f32),
+    #[cfg(feature = "gamepad")]
+    gp_aim_last_change: Option<std::time::Instant>,
+    #[cfg(feature = "gamepad")]
+    gp_aim_stale_logged: bool,
     /// Binding-legend overlay visibility (controller_overlay toggles it).
     #[cfg(feature = "gamepad")]
     gp_overlay: bool,
@@ -846,6 +857,12 @@ impl VellumGuiApp {
             gp_wheel_last_fire: None,
             #[cfg(feature = "gamepad")]
             gp_aim_recenter_needed: false,
+            #[cfg(feature = "gamepad")]
+            gp_aim_prev: (0.0, 0.0),
+            #[cfg(feature = "gamepad")]
+            gp_aim_last_change: None,
+            #[cfg(feature = "gamepad")]
+            gp_aim_stale_logged: false,
             #[cfg(feature = "gamepad")]
             gp_overlay: false,
             #[cfg(feature = "gamepad")]

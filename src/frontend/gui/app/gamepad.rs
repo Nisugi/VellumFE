@@ -186,6 +186,23 @@ impl VellumGuiApp {
         // movement must be silenced while that wheel is open.
         let aim_is_move_stick = aim_on_right == move_on_right;
 
+        // Stale-axis guard: a live analog stick jitters every few frames,
+        // so a deflected value that stays BIT-IDENTICAL for seconds is a
+        // frozen driver cache, not the user (seen live: aim_y=0.808 for
+        // 2,546 straight frames pinning the story window at the top).
+        // Only the level-triggered scroll below consults this — movement
+        // and interact cycling are edge-triggered and self-limiting. A
+        // pegged full-tilt hold clamps to a constant too, so a long max-
+        // speed scroll pauses after this window; wiggling resumes it.
+        if (aim_x, aim_y) != self.gp_aim_prev {
+            self.gp_aim_prev = (aim_x, aim_y);
+            self.gp_aim_last_change = Some(std::time::Instant::now());
+            self.gp_aim_stale_logged = false;
+        }
+        let aim_stale = self
+            .gp_aim_last_change
+            .is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(2));
+
         for button in pressed {
             // The controller editor's "press a button" capture wins over
             // dispatch while armed.
@@ -316,16 +333,25 @@ impl VellumGuiApp {
                 self.gp_right_dir = dir;
             }
         } else if aim_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
-            let delta = -aim_y.signum() * aim_y * aim_y * 40.0;
-            // Diagnostic (scroll-to-top hunt): a drifting/deflected right
-            // stick shows up as a stream of these lines.
-            tracing::info!("scrollreq gamepad aim_y={aim_y:.3} delta={delta:.1}");
-            ctx.data_mut(|d| {
-                d.insert_temp(
-                    egui::Id::new(("text_scroll_pending", "main")),
-                    (0u8, delta),
-                )
-            });
+            if aim_stale {
+                if !self.gp_aim_stale_logged {
+                    self.gp_aim_stale_logged = true;
+                    tracing::warn!(
+                        "gamepad aim stick frozen at {aim_y:.3} for >2s — ignoring until it moves"
+                    );
+                }
+            } else {
+                let delta = -aim_y.signum() * aim_y * aim_y * 40.0;
+                // Diagnostic (scroll-to-top hunt): a drifting/deflected right
+                // stick shows up as a stream of these lines.
+                tracing::info!("scrollreq gamepad aim_y={aim_y:.3} delta={delta:.1}");
+                ctx.data_mut(|d| {
+                    d.insert_temp(
+                        egui::Id::new(("text_scroll_pending", "main")),
+                        (0u8, delta),
+                    )
+                });
+            }
         }
 
         // Haptics: core detects the transitions (RT end, stun, death);
