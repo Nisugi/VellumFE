@@ -312,6 +312,11 @@ pub struct VellumGuiApp {
     /// height through every proportional rescale. Persisted beside the
     /// anchors on each rect snapshot entry.
     window_size_roles: HashMap<TabKey, dock::SizeRole>,
+    /// This frame's center BASE pane: the center rect as it would be with
+    /// no reserved zones open (the space the store's rects live in). The
+    /// per-frame P-A3 resolve maps store→current pane from this reference;
+    /// gesture writes invert through it. None until the first shell pass.
+    center_base_pane: Option<egui::Rect>,
     /// Each zone's pane rect as of its last render pass; the anchor space
     /// for commit-on-detach when anchors are released outside a frame's
     /// solve (context menu).
@@ -823,6 +828,7 @@ impl VellumGuiApp {
             main_window_rects,
             window_anchors,
             window_size_roles,
+            center_base_pane: None,
             last_zone_pane_rects: HashMap::new(),
             sidebar_gap_above,
             migrated_sidebar_zones,
@@ -7006,6 +7012,26 @@ impl eframe::App for VellumGuiApp {
                 Pos2::new(center_min_x, root.min.y),
                 Pos2::new(center_max_x, root.max.y),
             );
+            // The center BASE pane: where the store's rects live — the
+            // center with no reserved zone open. Root already excludes
+            // reserved header/footer (they are egui panels above this
+            // pass), so expand back by their heights; width is the full
+            // root (sidebars carve from it). The P-A3 resolve maps
+            // base→center_rect per frame; identity when they're equal.
+            let reserved_header_h = if self.shell_layout.header_visible && !header_overlay {
+                self.shell_layout.header_height
+            } else {
+                0.0
+            };
+            let reserved_footer_h = if self.shell_layout.footer_visible && !footer_overlay {
+                self.shell_layout.footer_height
+            } else {
+                0.0
+            };
+            self.center_base_pane = Some(Rect::from_min_max(
+                Pos2::new(root.min.x, root.min.y - reserved_header_h),
+                Pos2::new(root.max.x, root.max.y + reserved_footer_h),
+            ));
             // Overlay header/footer drawers carve their strips out of the
             // full root (their reserved twins are egui panels above this
             // pass and never reach here).

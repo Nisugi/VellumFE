@@ -1161,6 +1161,31 @@ impl VellumGuiApp {
         }
     }
 
+    /// Store a window's tracked rect. Center-zone gestures happen in
+    /// DISPLAY space (the P-A3 map applied), so they invert through the
+    /// base pane before landing in the store — identity when no reserved
+    /// zone is open. Other zones store screen rects directly as before.
+    pub(super) fn track_zone_window_rect(
+        &mut self,
+        zone: GuiShellZone,
+        key: &TabKey,
+        display: Rect,
+        pane: Rect,
+    ) {
+        if zone == GuiShellZone::Center {
+            let base = self
+                .center_base_pane
+                .map(|rect| rect.shrink(1.0))
+                .unwrap_or(pane);
+            let fixed = self.window_size_roles.get(key).copied()
+                == Some(super::dock::SizeRole::Fixed);
+            let stored = Self::unmap_center_rect(display, base, pane, fixed);
+            self.track_main_window_rect(key, stored, base);
+        } else {
+            self.track_main_window_rect(key, display, pane);
+        }
+    }
+
     /// Opaque drawer backdrop for an overlay zone: a Foreground-order area
     /// covering the drawer rect. It fills the strip, draws the inner-edge
     /// divider, and — by allocating the whole rect interactively — swallows
@@ -1289,14 +1314,21 @@ impl VellumGuiApp {
             }
         }
 
-        // Center windows render at *display* rects computed from their
-        // canonical rects and the current bounds: shell zones claiming
-        // space displace windows for the frame (story window shrinks,
-        // others push) and everything springs back when the zone closes,
-        // because `main_window_rects` itself is never touched.
+        // Center windows render at *display* rects computed per frame from
+        // their canonical rects and the current pane (P-A3): free windows
+        // map proportionally from the base pane (identity with no reserved
+        // zone open), anchored edges then override against the live pane.
+        // `main_window_rects` itself is never touched, so closing a zone
+        // restores everything exactly. The old push-your-neighbor
+        // displacement pass (story window absorbing) is gone.
         let center_displays: HashMap<TabKey, Rect> = if zone == GuiShellZone::Center {
+            // Same 1px shrink the pane got, so no-zones-open is EXACT
+            // identity (base == pane) rather than off by the border.
+            let base_pane = self
+                .center_base_pane
+                .map(|rect| rect.shrink(1.0))
+                .unwrap_or(window_bounds);
             let mut solve_inputs: Vec<super::window_manager::ZoneSolveInput> = Vec::new();
-            let mut meta: Vec<(TabKey, Vec2, bool)> = Vec::new();
             for tab in &tabs {
                 let Some(window) = self.app_core.ui_state.windows.get(&tab.window_name) else {
                     continue;
@@ -1324,33 +1356,20 @@ impl VellumGuiApp {
                     // already lives inside the current bounds.
                     continue;
                 };
-                let is_main = tab.id.key == TabKey::TextMain
-                    || group.is_some_and(|g| g.members.contains(&TabKey::TextMain));
+                let fixed = self.window_size_roles.get(&tab.id.key).copied()
+                    == Some(super::dock::SizeRole::Fixed);
                 solve_inputs.push(super::window_manager::ZoneSolveInput {
                     key: tab.id.key.clone(),
-                    free: stored,
+                    free: Self::map_center_rect(stored, base_pane, window_bounds, fixed),
                     min_size,
                 });
-                meta.push((tab.id.key.clone(), min_size, is_main));
             }
-            // P-A: anchored edges resolve against the live pane BEFORE the
-            // displacement pass — this is what makes a dock follow splitter
-            // drags, zone toggles and OS resizes. One batch per zone so
-            // sibling anchors resolve against their target's SOLVED rect
-            // (toposort inside). The store is never written; free windows
-            // pass through untouched.
-            let solved = self.solve_zone_anchor_rects(&solve_inputs, window_bounds);
-            let infos: Vec<super::dock::CenterWindowInfo> = meta
-                .into_iter()
-                .zip(&solve_inputs)
-                .map(|((key, min_size, is_main), input)| super::dock::CenterWindowInfo {
-                    stored: solved.get(&key).copied().unwrap_or(input.free),
-                    key,
-                    min_size,
-                    is_main,
-                })
-                .collect();
-            Self::compute_center_display_rects(&infos, window_bounds)
+            // P-A: anchored edges resolve against the live pane on top of
+            // the proportional map — this is what makes a dock follow
+            // splitter drags, zone toggles and OS resizes exactly instead
+            // of approximately. One batch per zone so sibling anchors
+            // resolve against their target's SOLVED rect (toposort inside).
+            self.solve_zone_anchor_rects(&solve_inputs, window_bounds)
         } else {
             HashMap::new()
         };
@@ -1781,13 +1800,15 @@ impl VellumGuiApp {
                         snap_suspended,
                         pointer_down,
                     );
-                    self.track_main_window_rect(
+                    self.track_zone_window_rect(
+                        zone,
                         &tab.id.key,
                         normalize_height(tracked),
                         window_bounds,
                     );
                 } else if should_track_rect {
-                    self.track_main_window_rect(
+                    self.track_zone_window_rect(
+                        zone,
                         &tab.id.key,
                         normalize_height(inner.response.rect),
                         window_bounds,
