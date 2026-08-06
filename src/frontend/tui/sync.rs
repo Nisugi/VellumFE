@@ -1864,7 +1864,7 @@ impl TuiFrontend {
                 perf_data = Some(app_core.perf_overlay_data(true));
                 if base.is_none() {
                     if let Some(crate::config::WindowDef::Performance { base: tpl_base, .. }) =
-                        crate::config::Config::get_window_template("performance")
+                        crate::core::local_catalog::seed("performance")
                     {
                         base = Some(tpl_base.clone());
                     }
@@ -1872,7 +1872,7 @@ impl TuiFrontend {
             } else if base.is_none() || perf_data.is_none() {
                 // Fallback to performance template for layout-based performance windows
                 if let Some(crate::config::WindowDef::Performance { base: tpl_base, data: tpl_data }) =
-                    crate::config::Config::get_window_template("performance")
+                    crate::core::local_catalog::seed("performance")
                 {
                     if base.is_none() {
                         base = Some(tpl_base.clone());

@@ -1306,11 +1306,11 @@ impl VellumGuiApp {
             // "Custom (blank)" menu items carry a widget type, not a template
             // name. Route to the matching `*_custom` blank template — its
             // add path drops the user into the window editor to configure it.
-            let template = crate::config::Config::list_window_templates()
+            let template = crate::core::local_catalog::all_seed_keys()
                 .into_iter()
                 .find(|name| {
                     name.ends_with("_custom")
-                        && crate::config::Config::get_window_template(name)
+                        && crate::core::local_catalog::seed(name)
                             .is_some_and(|t| t.widget_type().eq_ignore_ascii_case(widget_type))
                 });
             match template {

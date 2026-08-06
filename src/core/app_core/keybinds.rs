@@ -461,7 +461,7 @@ impl AppCore {
     fn build_perf_overlay_def(&self) -> WindowDef {
         // Get base from template if available, otherwise use defaults
         let base = if let Some(WindowDef::Performance { base, .. }) =
-            Config::get_window_template("performance")
+            crate::core::local_catalog::seed("performance")
         {
             let mut base = base;
             // Override position/size with config.ui settings

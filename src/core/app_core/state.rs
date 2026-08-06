@@ -3998,7 +3998,7 @@ impl AppCore {
     /// (see layout_has_equivalent_window for the identity rules), or None.
     fn layout_equivalent_window_name(&self, template_name: &str) -> Option<String> {
         use crate::config::WindowDef;
-        let template = crate::config::Config::get_window_template(template_name)?;
+        let template = crate::core::local_catalog::seed(template_name)?;
         let tmpl_type = template.widget_type();
         self.layout
             .windows
@@ -4452,7 +4452,7 @@ impl AppCore {
             // widget. (A future container title colliding with a template name
             // would be the same trap one branch down — template-first closes
             // both.) show_window adds the def from the template + materializes.
-            if crate::config::Config::get_window_template(name).is_some() {
+            if crate::core::local_catalog::seed(name).is_some() {
                 self.show_window(name, terminal_width, terminal_height);
                 return;
             }
@@ -6514,7 +6514,7 @@ impl AppCore {
                 .any(|name| name.ends_with("_custom"));
             if allow_custom && !has_explicit_custom {
                 if let Some(first) = available_templates.first() {
-                    if let Some(widget_type) = crate::config::Config::get_window_template(first)
+                    if let Some(widget_type) = crate::core::local_catalog::seed(first)
                         .map(|t| t.widget_type().to_string())
                     {
                         items.push(crate::data::ui_state::PopupMenuItem {
@@ -6643,7 +6643,7 @@ impl AppCore {
             if existing.contains(&template_name.to_ascii_lowercase()) {
                 continue;
             }
-            let Some(template) = crate::config::Config::get_window_template(&template_name)
+            let Some(template) = crate::core::local_catalog::seed(&template_name)
             else {
                 continue;
             };
@@ -7089,7 +7089,7 @@ impl AppCore {
 
     /// Get display name for a window (uses title from template, or falls back to name)
     pub fn get_window_display_name(&self, name: &str) -> String {
-        crate::config::Config::get_window_template(name)
+        crate::core::local_catalog::seed(name)
             .and_then(|t| t.base().title.clone())
             .unwrap_or_else(|| name.to_string())
     }
@@ -7683,7 +7683,7 @@ mod tests {
         // A widget the user placed via the Windows list: built from a
         // template (so category/id fields are set) but the editor renamed
         // it to a custom-* display name, losing the template name.
-        let mut def = crate::config::Config::get_window_template(template_name)
+        let mut def = crate::core::local_catalog::seed(template_name)
             .unwrap_or_else(|| panic!("no template '{}'", template_name));
         def.base_mut().name = display_name.to_string();
         def
@@ -7752,7 +7752,7 @@ mod tests {
         // (no new spawn) and windows_bound_to lists all of them for delivery.
         let mut core = core_with_layout(vec![]);
         for i in 0..3 {
-            let mut def = crate::config::Config::get_window_template("gs4_experience").unwrap();
+            let mut def = crate::core::local_catalog::seed("gs4_experience").unwrap();
             def.base_mut().name = format!("xp{}", i);
             def.base_mut().binding =
                 Some(crate::config::WindowBinding::Dialog("expr".to_string()));
@@ -7812,7 +7812,7 @@ mod tests {
         let mut core = core_with_layout(vec![]);
         core.layout.terminal_width = Some(80);
         core.layout.terminal_height = Some(24);
-        let mut bank = crate::config::Config::get_window_template("stance").unwrap();
+        let mut bank = crate::core::local_catalog::seed("stance").unwrap();
         bank.base_mut().name = "bank".to_string();
         bank.base_mut().binding = Some(WindowBinding::Dialog("bank".to_string()));
         bank.base_mut().visibility = crate::config::WindowVisibility::Hidden;
@@ -7884,7 +7884,7 @@ mod tests {
         let mut core = core_with_layout(vec![]);
         core.layout.terminal_width = Some(80);
         core.layout.terminal_height = Some(24);
-        let mut win = crate::config::Config::get_window_template("stance").unwrap();
+        let mut win = crate::core::local_catalog::seed("stance").unwrap();
         win.base_mut().name = "activespells".to_string();
         win.base_mut().binding = Some(WindowBinding::Dialog("activespells".to_string()));
         win.base_mut().visibility = crate::config::WindowVisibility::Hidden;
@@ -7918,7 +7918,7 @@ mod tests {
         use crate::data::{WindowDiscovery, WindowDiscoveryKind};
         let mut core = core_with_layout(vec![]);
         // Simulate a reloaded layout: combat already bound + Hidden.
-        let mut combat = crate::config::Config::get_window_template("stance").unwrap();
+        let mut combat = crate::core::local_catalog::seed("stance").unwrap();
         combat.base_mut().name = "combat".to_string();
         combat.base_mut().binding = Some(WindowBinding::Dialog("combat".to_string()));
         combat.base_mut().visibility = WindowVisibility::Hidden;
@@ -7949,7 +7949,7 @@ mod tests {
 
         // A single-stream text window already subscribes to "thoughts"
         // (like the default layout's thoughts window, unbound).
-        let mut thoughts = crate::config::Config::get_window_template("text_custom").unwrap();
+        let mut thoughts = crate::core::local_catalog::seed("text_custom").unwrap();
         thoughts.base_mut().name = "Thoughts".to_string();
         if let WindowDef::Text { data, .. } = &mut thoughts {
             data.streams.push("thoughts".to_string());
@@ -7978,7 +7978,7 @@ mod tests {
         use crate::data::{WindowDiscovery, WindowDiscoveryKind};
 
         // A tabbedtext window has a tab subscribing to "thoughts".
-        let mut tabbed = crate::config::Config::get_window_template("tabbedtext_custom").unwrap();
+        let mut tabbed = crate::core::local_catalog::seed("tabbedtext_custom").unwrap();
         tabbed.base_mut().name = "chat".to_string();
         if let WindowDef::TabbedText { data, .. } = &mut tabbed {
             data.tabs.push(crate::config::TabbedTextTab {
@@ -8156,7 +8156,7 @@ mod tests {
         // A bound (discovered) hidden dialog window, an unbound plain
         // widget, and the un-hideable essentials.
         let mut core = core_with_layout(vec![]);
-        let mut combat = crate::config::Config::get_window_template("stance").unwrap();
+        let mut combat = crate::core::local_catalog::seed("stance").unwrap();
         combat.base_mut().name = "combat".to_string();
         combat.base_mut().title = Some("Combat".to_string());
         combat.base_mut().binding =
@@ -8235,7 +8235,7 @@ mod tests {
     /// widget-backed id can never be resurrected as a generic panel.
     #[test]
     fn reshowing_deleted_widget_backed_dialog_restores_widget_not_panel() {
-        let minivitals_def = crate::config::Config::get_window_template("minivitals")
+        let minivitals_def = crate::core::local_catalog::seed("minivitals")
             .expect("minivitals template exists");
         let mut core = core_with_layout(vec![minivitals_def]);
         core.init_windows(80, 24);
@@ -8447,7 +8447,7 @@ mod tests {
         use crate::data::{WindowDiscovery, WindowDiscoveryKind};
         let mut windows: Vec<WindowDef> = ["thoughts", "inventory", "buffs", "injuries"]
             .iter()
-            .map(|name| crate::config::Config::get_window_template(name).expect(name))
+            .map(|name| crate::core::local_catalog::seed(name).expect(name))
             .collect();
         let mut layout = crate::config::Layout {
             windows: std::mem::take(&mut windows),

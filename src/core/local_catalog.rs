@@ -18,6 +18,12 @@ pub fn creatable_for_game(game: Option<GameType>) -> Vec<String> {
     Config::list_window_templates_for_game(game)
 }
 
+/// Every seed key regardless of game gating (editor pickers that must
+/// show the whole vocabulary).
+pub fn all_seed_keys() -> Vec<String> {
+    Config::list_window_templates()
+}
+
 /// Creatable entries not already visible in the layout, by category —
 /// the Add menus' source.
 pub fn addable_by_category(

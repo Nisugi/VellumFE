@@ -176,7 +176,7 @@ pub fn handle_ui_action(
             // Safeguard: prevent opening if a window editor is already open
             if frontend.window_editor.is_some() {
                 tracing::debug!("Window editor already open, ignoring createwindow request");
-            } else if let Some(_template) = config::Config::get_window_template(&widget_type) {
+            } else if let Some(_template) = crate::core::local_catalog::seed(&widget_type) {
                 // Open window editor with template (proper defaults + marked as new)
                 // Use new_window_with_layout for spacers to enable auto-naming
                 frontend.window_editor = Some(
