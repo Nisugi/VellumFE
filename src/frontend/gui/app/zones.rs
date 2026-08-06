@@ -273,21 +273,12 @@ pub(super) struct GuiZoneDropResult {
 }
 
 impl VellumGuiApp {
-    pub(super) fn default_zone_for_tab_key(tab_key: &TabKey) -> GuiShellZone {
-        match tab_key {
-            TabKey::LeftHand | TabKey::RightHand | TabKey::SpellHand => GuiShellZone::Header,
-            TabKey::Compass
-            | TabKey::Quickbar { .. }
-            | TabKey::Indicators
-            | TabKey::Vitals
-            | TabKey::Countdown { .. }
-            | TabKey::Dashboard
-            | TabKey::Encumbrance
-            | TabKey::Experience
-            | TabKey::Perception
-            | TabKey::InjuryDoll => GuiShellZone::Footer,
-            _ => GuiShellZone::Center,
-        }
+    /// Every window defaults to Center (owner decision, 2026-08-06 fresh-
+    /// profile test): the old per-widget Header/Footer opinions pre-placed
+    /// windows into zones the user may not even have shown. The zone
+    /// dropdown remains the way to opt a window into a shell zone.
+    pub(super) fn default_zone_for_tab_key(_tab_key: &TabKey) -> GuiShellZone {
+        GuiShellZone::Center
     }
 
     pub(super) fn zone_for_tab(&self, key: &TabKey) -> GuiShellZone {
@@ -299,15 +290,10 @@ impl VellumGuiApp {
 
     /// Where a window of this widget type would land by default — the
     /// widget-type mirror of `default_zone_for_tab_key`, for windows that
-    /// aren't live tabs yet (the Windows window's zone dropdown).
-    pub(super) fn default_zone_for_widget_type(widget_type: &str) -> GuiShellZone {
-        match widget_type {
-            "hand" => GuiShellZone::Header,
-            "compass" | "quickbar" | "hotkeybar" | "indicator" | "minivitals" | "countdown"
-            | "dashboard" | "encum" | "experience" | "gs4_experience" | "perception"
-            | "injury_doll" => GuiShellZone::Footer,
-            _ => GuiShellZone::Center,
-        }
+    /// aren't live tabs yet (the Windows window's zone dropdown). Center
+    /// for everything, same as above.
+    pub(super) fn default_zone_for_widget_type(_widget_type: &str) -> GuiShellZone {
+        GuiShellZone::Center
     }
 
     fn target_docked_height(&self, zone: GuiShellZone) -> Option<f32> {
@@ -1814,16 +1800,16 @@ mod tests {
 
     #[test]
     fn test_default_zone_for_tab_key_assignments() {
+        // Owner decision (2026-08-06 fresh-profile test): EVERY window
+        // defaults to Center; shell zones are opt-in via the dropdown.
+        for key in [TabKey::LeftHand, TabKey::Compass, TabKey::TextMain] {
+            assert_eq!(
+                VellumGuiApp::default_zone_for_tab_key(&key),
+                super::GuiShellZone::Center
+            );
+        }
         assert_eq!(
-            VellumGuiApp::default_zone_for_tab_key(&TabKey::LeftHand),
-            super::GuiShellZone::Header
-        );
-        assert_eq!(
-            VellumGuiApp::default_zone_for_tab_key(&TabKey::Compass),
-            super::GuiShellZone::Footer
-        );
-        assert_eq!(
-            VellumGuiApp::default_zone_for_tab_key(&TabKey::TextMain),
+            VellumGuiApp::default_zone_for_widget_type("hand"),
             super::GuiShellZone::Center
         );
     }
