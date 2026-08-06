@@ -105,7 +105,37 @@ fn build_golden() -> String {
         .unwrap();
     }
 
-    // ── 4. Golden TOML of every template's seeded WindowDef ─────────────
+    // ── 4. Menu content: categories and the addable list on an empty
+    //      layout, per game — the "no dead menu" tripwires. Phase 3 swaps
+    //      these paths to the resolver+catalog; the snapshots must stay
+    //      green UNCHANGED (the transparency proof).
+    let categorized = |label: &str,
+                       map: std::collections::HashMap<vellum_fe::config::WidgetCategory, Vec<String>>,
+                       out: &mut String| {
+        writeln!(out, "\n[{label}]").unwrap();
+        let mut entries: Vec<_> = map.into_iter().collect();
+        entries.sort_by_key(|(category, _)| format!("{category:?}"));
+        for (category, names) in entries {
+            writeln!(out, "{category:?}: {}", names.join(", ")).unwrap();
+        }
+    };
+    categorized("templates_by_category", Config::get_templates_by_category(), &mut out);
+    // Layout has no Default; a windowless TOML is the empty layout.
+    let empty_layout: vellum_fe::config::Layout =
+        toml::from_str("windows = []").expect("empty layout parses");
+    for (label, game) in [
+        ("all", None),
+        ("gs4", Some(GameType::GS4)),
+        ("dr", Some(GameType::DR)),
+    ] {
+        categorized(
+            &format!("addable_on_empty_layout.{label}"),
+            Config::get_addable_templates_by_category(&empty_layout, game),
+            &mut out,
+        );
+    }
+
+    // ── 5. Golden TOML of every template's seeded WindowDef ─────────────
     for name in Config::list_window_templates() {
         writeln!(out, "\n[template.{name}]").unwrap();
         match Config::get_window_template(&name) {

@@ -302,6 +302,60 @@ betrayer = Some(GS4)
 "no_such_id": dialog="no_such_id" stream="text_custom" has_widget=false
 "": dialog="" stream="text_custom" has_widget=false
 
+[templates_by_category]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, reserve, spells, injuries, perception, experience, gs4_experience, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Dialog: betrayer
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, concentration, stance, progress_custom, minivitals
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
+[addable_on_empty_layout.all]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, spells, injuries, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, stance, progress_custom
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
+[addable_on_empty_layout.gs4]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, reserve, spells, injuries, gs4_experience, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Dialog: betrayer
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, stance, progress_custom, minivitals
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
+[addable_on_empty_layout.dr]
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+Character: inventory, spells, injuries, perception, experience, encum
+Countdown: roundtime, casttime, stuntime, countdown_custom
+Entity: targets, players, items, entity_custom
+Hand: left, right, spell
+Hotbars: quickbar, hotkeybar
+Navigation: room, compass, map
+Other: spacer
+ProgressBar: health, mana, stamina, spirit, concentration, stance, progress_custom
+Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, kneeling, sitting, prone, hidden, invisible, joined, dead
+TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
+
 [template.health]
   widget_type = "progress"
   name = "health"
