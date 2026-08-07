@@ -85,6 +85,9 @@ pub struct DayPassInputs<'a> {
     pub cache: &'a crate::core::day_pass::DayPassCache,
     /// Current Unix time for expiry checks.
     pub now_epoch: i64,
+    /// Hidden or invisible — the buy conversation must `unhide` before asking
+    /// the clerk (they won't respond otherwise).
+    pub hidden: bool,
 }
 
 /// Inputs for the silver-funding pre-flight, from GameState + config.
@@ -1302,9 +1305,18 @@ impl TravelTask {
         // Held valid pass for THIS edge's pair, and whether buying is permitted
         // (config matches the pair AND Get Silvers is on to cover a shortfall).
         let held = inputs.and_then(|i| i.cache.valid_pass_id(a, b, i.now_epoch));
+        // Buy permission is the config alone (Lich parity): silver on hand can
+        // cover the purchase without any bank involvement. Get Silvers only
+        // gates the BANK DETOUR inside the conversation (BuyTick.get_silvers).
         let buy = inputs
-            .map(|i| i.get_silvers && crate::core::day_pass::buy_permits(i.buy_day_pass, a, b))
+            .map(|i| crate::core::day_pass::buy_permits(i.buy_day_pass, a, b))
             .unwrap_or(false);
+        // Drop expired passes from the sack before getting/buying (Lich's
+        // `_drag ##{id} drop` sweep). The cache keeps the (expired) entries —
+        // they just re-drop harmlessly if a stale id lingers.
+        let expired: Vec<String> = inputs
+            .map(|i| i.cache.expired_ids(i.now_epoch))
+            .unwrap_or_default();
 
         // Build the crossing as a WalkAction script and run it through the
         // normal scripted-edge machinery (tick_script) — so it reuses the
@@ -1315,6 +1327,9 @@ impl TravelTask {
         let mut script: Vec<W> = Vec::new();
         if let Some(sack) = sack {
             script.push(W::Put(format!("open #{sack}"))); // harmless if already open
+        }
+        for id in &expired {
+            script.push(W::Put(format!("_drag #{id} drop")));
         }
         // Free a hand for the pass (the clerk won't hand it over otherwise) —
         // our real stash primitive, not a raw `empty hands` string.
@@ -1370,6 +1385,9 @@ impl TravelTask {
         // start the conversation, letting EmptyHands run as its first step.
         if let Some(sack) = sack {
             events.push(TravelEvent::Send(format!("open #{sack}")));
+        }
+        for id in &expired {
+            events.push(TravelEvent::Send(format!("_drag #{id} drop")));
         }
         // Empty a hand via the stash primitive, then begin the conversation.
         let resume = Box::new(Step::DayPassBuy(super::day_pass_buy::BuyState::new(dep, dest)));
@@ -1547,6 +1565,7 @@ impl TravelTask {
             rt_remaining: ctx.rt_remaining,
             left_hand: ctx.hands.and_then(|h| hand_ref(h.left_hand)),
             right_hand: ctx.hands.and_then(|h| hand_ref(h.right_hand)),
+            hidden: ctx.day_pass.map(|i| i.hidden).unwrap_or(false),
         };
         for ev in state.tick(tick) {
             match ev {
@@ -1593,6 +1612,17 @@ impl TravelTask {
                         self.arrive();
                     } else {
                         self.repath(ctx.db, dest, events);
+                    }
+                    // If the FillHands retrieval is still running, suspend into
+                    // Stashing over whatever step arrive/repath chose —
+                    // otherwise nothing ever ticks the stash task again, and
+                    // the `stash.is_none()` arrival guard blocks the trip's
+                    // completion forever (repath-to-self → "too many
+                    // restarts").
+                    if self.stash.is_some() {
+                        self.step = Step::Stashing {
+                            resume: Box::new(self.step.clone()),
+                        };
                     }
                     return;
                 }
@@ -3330,6 +3360,7 @@ mod tests {
                     get_silvers: false,
                     cache: &cache,
                     now_epoch: 0,
+                    hidden: false,
                 };
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
@@ -3399,6 +3430,7 @@ mod tests {
                     get_silvers: true,
                     cache: &cache,
                     now_epoch: 0,
+                    hidden: false,
                 };
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,

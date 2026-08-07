@@ -394,12 +394,14 @@ re!(
     // The real form is `h[:towns].include?("Wehnimer's Landing") and
     // h[:towns].include?('Icemule Trace')` — note `[:towns].include`, and each
     // town double- OR single-quoted (single for a town with no apostrophe).
-    // Anchor on `.include?(` (ignoring the `h[:towns]` prefix) and accept
-    // either quote per side. Rust regex has no backreferences, so each side is
-    // a double|single alternation — keeping the apostrophe inside the double-
-    // quoted `"Wehnimer's Landing"`.
+    // Anchor the FIRST side on `towns].include?(` so the body's other
+    // `.include?` calls (e.g. `DownstreamHook.list.include?('mapdb_day_pass_
+    // monitor')` near the top) can never bind as town A, even if the inlined
+    // src arrives newline-joined. Accept either quote per side: Rust regex has
+    // no backreferences, so each side is a double|single alternation — keeping
+    // the apostrophe inside the double-quoted `"Wehnimer's Landing"`.
     DAY_PASS_PAIR,
-    r#"\.include\?\((?:"(?P<a>[^"]+)"|'(?P<a2>[^']+)')\) and .*?\.include\?\((?:"(?P<b>[^"]+)"|'(?P<b2>[^']+)')\)"#
+    r#"towns\]\.include\?\((?:"(?P<a>[^"]+)"|'(?P<a2>[^']+)')\) and .*?\.include\?\((?:"(?P<b>[^"]+)"|'(?P<b2>[^']+)')\)"#
 );
 
 /// Routable day-pass town pairs → edge cost, keyed by a normalized

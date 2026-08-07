@@ -1166,6 +1166,7 @@ impl AppCore {
                 get_silvers: self.config.go2.get_silvers,
                 cache: &self.game_state.day_passes,
                 now_epoch: chrono::Utc::now().timestamp(),
+                hidden: self.game_state.status.hidden || self.game_state.status.invisible,
             }),
         };
         let events = self.travel.tick(ctx);
@@ -1328,11 +1329,12 @@ impl AppCore {
                 for dep in day_pass::DEPARTURES {
                     for dest in dep.destinations {
                         let (a, b) = dest.pair;
+                        // Buy routing needs only the config (Lich parity):
+                        // silver on hand can cover the purchase; Get Silvers
+                        // gates just the in-conversation bank detour.
                         let cost = if self.game_state.day_passes.has_valid_pass(a, b, now_epoch) {
                             Some(0.8)
-                        } else if self.config.go2.get_silvers
-                            && day_pass::buy_permits(&self.config.go2.buy_day_pass, a, b)
-                        {
+                        } else if day_pass::buy_permits(&self.config.go2.buy_day_pass, a, b) {
                             Some(dest.buy_cost)
                         } else {
                             None

@@ -140,6 +140,9 @@ patterns! {
         "not a Chronomage teleportation waiting room",
         "not valid for departures",
         "As you go to raise your pass, you realize",
+        // Lich's raise wait also matches these failure shapes.
+        "pass is expired",
+        "Raise what",
     ],
     MoveFailedRemovable => [
         "You can't go there",

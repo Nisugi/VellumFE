@@ -38,9 +38,11 @@ re!(
 );
 // The description in STRIPPED (plain-text) form — the id comes from the line's
 // pass link, supplied by the caller (the feed strips `<a>` markup to text).
+// NOT anchored: the stripped line keeps the lead-in (`Bold calligraphy states
+// simply, "This pass entitles…`), so the phrase sits mid-line.
 re!(
     PASS_DESC_TEXT,
-    r#"^This pass entitles the original purchaser to one \(1\) day of unlimited travel between the towns of (?P<a>.+?) and (?P<b>.+?), commencing"#
+    r#"This pass entitles the original purchaser to one \(1\) day of unlimited travel between the towns of (?P<a>.+?) and (?P<b>.+?), commencing"#
 );
 // "…the <a exist="12345" noun="pass">pass…" preceded by the EXPIRED stamp.
 re!(
@@ -267,7 +269,7 @@ impl DayPassCache {
             self.pending_id = Some(id.to_string());
             return true;
         }
-        if line.contains("EXPIRED") {
+        if line.contains("\"EXPIRED\" appear") {
             if let Some(id) = pass_id {
                 self.passes
                     .insert(id.to_string(), DayPass { towns: Vec::new(), expires: 0 });
@@ -376,10 +378,15 @@ impl DayPassCache {
     }
 }
 
-/// Cheap prefix gate: does this line look like day-pass description text? Keeps
-/// the regex work off the hot path for ordinary lines.
+/// Cheap gate: does this line look like day-pass description text? Keeps the
+/// regex work off the hot path for ordinary lines. Matches the STRIPPED text
+/// shapes the feed sees (markup gone), plus the raw-markup form for raw-line
+/// callers.
 pub fn line_is_day_pass(line: &str) -> bool {
-    line.contains("noun=\"pass\">pass") || line.starts_with("[Your pass will expire on")
+    line.contains("This pass entitles the original purchaser")
+        || line.contains("\"EXPIRED\" appear")
+        || line.starts_with("[Your pass will expire on")
+        || line.contains("noun=\"pass\">pass")
 }
 
 fn expiry_epoch(c: &regex::Captures) -> Option<i64> {
@@ -459,6 +466,26 @@ mod tests {
         // No id supplied → the description is ignored (can't key it).
         let mut c2 = DayPassCache::default();
         assert!(!c2.observe(desc, None));
+    }
+
+    #[test]
+    fn observe_matches_the_wire_shaped_stripped_lines() {
+        // The feed strips <a> markup but KEEPS the lead-in text — the lines the
+        // client actually hands to observe() look like these (the live bug:
+        // the old gate wanted raw markup and the old regex was ^-anchored).
+        let desc = r#"Bold calligraphy states simply, "This pass entitles the original purchaser to one (1) day of unlimited travel between the towns of Solhaven and Wehnimer's Landing, commencing at the eleventh hour."#;
+        assert!(line_is_day_pass(desc));
+        let mut c = DayPassCache::default();
+        assert!(c.observe(desc, Some("321")));
+        assert!(c.observe(EXPIRES, None));
+        assert!(c.has_valid_pass("Solhaven", "Wehnimer's Landing", 0));
+        // The stripped EXPIRED stamp line.
+        let expired = r#"Bold red block letters spelling out "EXPIRED" appear to have been stamped across the face and reverse of the pass."#;
+        assert!(line_is_day_pass(expired));
+        assert!(c.observe(expired, Some("321")));
+        assert!(!c.has_valid_pass("Solhaven", "Wehnimer's Landing", 0));
+        // A random line containing EXPIRED elsewhere is NOT treated as a stamp.
+        assert!(!c.observe("The sign reads EXPIRED PERMITS DESK", Some("9")));
     }
 
     #[test]
