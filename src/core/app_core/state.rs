@@ -251,6 +251,10 @@ pub struct AppCore {
     pub window_registry: crate::config::WindowRegistry,
     /// Unflushed registry changes; written by `tick_layout_autosave`.
     window_registry_dirty: bool,
+    /// Character state changed since the last persist; flushed to the session
+    /// cache by `tick_layout_autosave` (rare, so no debounce — same as the
+    /// registry). The generation last written, to detect real changes.
+    character_state_saved_gen: u64,
 
     // === Lich WebUI bridge (owned in core so BOTH the GUI and the phone
     // render the same trees; see core::app_core::webui) ===
@@ -419,6 +423,7 @@ impl AppCore {
             saved_dialog_positions,
             window_registry: Default::default(),
             window_registry_dirty: false,
+            character_state_saved_gen: 0,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -586,6 +591,7 @@ impl AppCore {
             saved_dialog_positions,
             window_registry,
             window_registry_dirty,
+            character_state_saved_gen: 0,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -1420,6 +1426,14 @@ impl AppCore {
         let Some(cache) = crate::session_cache::load(self.config.character.as_deref()) else {
             return;
         };
+
+        // Warm-start the character state (society/house/profession/citizenship)
+        // so the travel gates work immediately on connect. The live feed stays
+        // authoritative — any SOCIETY/INFO/PROFILE output or a resign/join/step
+        // event overwrites this via the parser.
+        if let Some(character) = cache.character.clone() {
+            self.game_state.character = character;
+        }
 
         if !cache.quickbars.is_empty() {
             let allowed_ids = self.allowed_quickbar_ids();
@@ -6137,6 +6151,12 @@ impl AppCore {
                 tracing::warn!("could not write window_registry.toml: {e:#}");
             }
         }
+        // Persist character state when it actually changed (rare — the parser
+        // only bumps the generation on a real value change). No debounce: the
+        // write is tiny and infrequent, same as the registry above.
+        if self.game_state.character.generation != self.character_state_saved_gen {
+            self.persist_character_state();
+        }
         if let Some(changed_at) = self.layout_autosave_pending {
             if changed_at.elapsed() >= Self::LAYOUT_AUTOSAVE_DEBOUNCE {
                 self.autosave_layout();
@@ -6282,13 +6302,30 @@ impl AppCore {
             .as_ref()
             .and_then(|id| if allowed_ids.contains(id) { Some(id.clone()) } else { None });
 
+        let character = (self.game_state.character != Default::default())
+            .then(|| self.game_state.character.clone());
         let cache = crate::session_cache::SessionCache {
             quickbars,
             quickbar_order,
             active_quickbar_id,
+            character,
         };
         if let Err(err) = crate::session_cache::save(self.config.character.as_deref(), &cache) {
             tracing::warn!("Failed to save session cache: {}", err);
+        }
+    }
+
+    /// Persist just the character state into the session cache, preserving the
+    /// rest (quickbars). Called by the autosave tick when the state changed.
+    fn persist_character_state(&mut self) {
+        let character = self.config.character.as_deref();
+        // Merge into the existing cache so we don't clobber quickbars.
+        let mut cache = crate::session_cache::load(character).unwrap_or_default();
+        cache.character = (self.game_state.character != Default::default())
+            .then(|| self.game_state.character.clone());
+        match crate::session_cache::save(character, &cache) {
+            Ok(()) => self.character_state_saved_gen = self.game_state.character.generation,
+            Err(e) => tracing::warn!("could not persist character state: {e:#}"),
         }
     }
 

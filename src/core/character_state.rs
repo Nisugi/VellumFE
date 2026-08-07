@@ -87,24 +87,35 @@ re!(PROFILE_NO_CITIZENSHIP, r"^No citizenship$");
 
 /// Parsed character state driving travel gates. `None`/empty fields mean
 /// "not yet known" (the relevant command hasn't been run this session).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+///
+/// Persisted per-character in the session cache (these attributes change
+/// rarely and the game announces changes, which the parser catches). The
+/// runtime-only `in_profile`/`generation` fields are not serialized.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CharacterState {
     /// Society name (Lich `society.status`), e.g. "Order of Voln", or "None".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub society: Option<String>,
     /// Society rank/step (Lich `society.rank`). Master → 26 (Voln) / 20.
+    #[serde(default)]
     pub society_rank: u32,
     /// Profession (Lich `stat.profession`), e.g. "Ranger".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profession: Option<String>,
     /// CHE / House affiliation, normalized (Lich `che`), e.g. "twilight_hall"
     /// or "none".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub che: Option<String>,
     /// Home-town citizenship (Lich `citizenship`), or "None".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citizenship: Option<String>,
     /// True while inside a PROFILE block (between PERSONAL INFORMATION and the
     /// house line) — the house line is only trusted then, matching Lich's
-    /// State::Profile gate.
+    /// State::Profile gate. Runtime-only.
+    #[serde(skip)]
     in_profile: bool,
-    /// Bumped on any change; callers diff on it.
+    /// Bumped on any change; callers diff on it. Runtime-only.
+    #[serde(skip)]
     pub generation: u64,
 }
 
@@ -349,6 +360,28 @@ mod tests {
         s.parse_line("PERSONAL INFORMATION");
         s.parse_line("No House affiliation");
         assert_eq!(s.che.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn round_trips_through_toml_for_persistence() {
+        let mut s = CharacterState::default();
+        s.parse_line("   You are a Master of the Guardians of Sunfist.");
+        s.parse_line("Name: Nisugi Race: Half-Elf  Profession: Ranger (shown as: Hero)");
+        s.parse_line("PERSONAL INFORMATION");
+        s.parse_line("Member of House of Paupers");
+        s.parse_line("You currently have full citizenship in Kraken's Fall.");
+
+        let toml = toml::to_string(&s).unwrap();
+        let back: CharacterState = toml::from_str(&toml).unwrap();
+        // The persisted attributes survive; the runtime-only fields reset.
+        assert_eq!(back.society.as_deref(), Some("Guardians of Sunfist"));
+        assert_eq!(back.society_rank, 20);
+        assert_eq!(back.profession.as_deref(), Some("Ranger"));
+        assert_eq!(back.che.as_deref(), Some("paupers"));
+        assert_eq!(back.citizenship.as_deref(), Some("Kraken's Fall"));
+        // Reloaded state still drives the gates.
+        assert_eq!(back.guild_tag("guild").as_deref(), Some("ranger guild"));
+        assert_eq!(back.locker_tags()[0], "meta:che:paupers:locker");
     }
 
     #[test]
