@@ -886,6 +886,47 @@ pub struct Go2Config {
     /// ("Your route is: ...") — never hand-edited.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub pathcodes: std::collections::BTreeMap<String, Vec<String>>,
+    /// Container the hands-stow cascade drops a WEAPON into when the READY
+    /// sheath doesn't cover it (Lich's `UserVars.weaponsack`). By display
+    /// name; the stow resolves it against your tracked containers. Empty =
+    /// unset (falls through to lootsack / any container).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub weaponsack: String,
+    /// Fallback container the hands-stow cascade uses for anything not routed
+    /// by ready/sheath/weaponsack (Lich's `UserVars.lootsack`). By display
+    /// name. Empty = unset (falls through to any inventory container).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub lootsack: String,
+    /// When native `.go2` reaches an edge it can't cross yet, fall back to
+    /// Lich's `;go2 <dest>` (a regression bandaid, off by default). Only fires
+    /// on a Lich connection — a direct connection has no Lich to hand off to.
+    #[serde(default)]
+    pub lich_fallback: bool,
+    /// Route through Voln Symbol of Seeking edges (Lich's `$go2_use_seeking`).
+    /// Only takes effect for a Voln Master (rank 26) — enabling it as a
+    /// non-seeker is a no-op at routing time. Off by default.
+    #[serde(default)]
+    pub use_seeking: bool,
+    /// Route through portmaster (ship travel) edges (Lich's
+    /// `UserVars.mapdb_use_portmasters`). These cost silver; keep enough on
+    /// hand or enable `get_silvers` for auto bank-withdraw. Off by default.
+    #[serde(default)]
+    pub use_portmasters: bool,
+    /// Permission for go2 to withdraw from the bank to fund paid travel
+    /// (Lich's `$go2_get_silvers`). When on and you're short, go2 routes to
+    /// the nearest bank, withdraws the shortfall, and continues. Off by
+    /// default.
+    #[serde(default)]
+    pub get_silvers: bool,
+    /// Also pre-fund the return trip when withdrawing (Lich's
+    /// `get return trip silvers`). Off by default.
+    #[serde(default)]
+    pub get_return_trip_silvers: bool,
+    /// Route through urchin-guide edges (Lich's `UserVars.mapdb_use_urchins`).
+    /// Requires active (non-expired) urchin access — run `urchin status` to
+    /// refresh it. Auto-disabled while mounted. Off by default.
+    #[serde(default)]
+    pub use_urchins: bool,
 }
 
 impl Default for Go2Config {
@@ -894,6 +935,14 @@ impl Default for Go2Config {
             saved: Default::default(),
             native_map_clicks: true,
             pathcodes: Default::default(),
+            weaponsack: String::new(),
+            lootsack: String::new(),
+            lich_fallback: false,
+            use_seeking: false,
+            use_portmasters: false,
+            get_silvers: false,
+            get_return_trip_silvers: false,
+            use_urchins: false,
         }
     }
 }

@@ -125,6 +125,11 @@ pub struct AppCore {
     jinx_nudge_pending: bool,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
+    /// A `.go2` waiting on a `urchin status` refresh: (destination, deadline).
+    /// When urchin travel is enabled but the cached access is stale, go2 sends
+    /// `urchin status` and defers planning until the reply parses (Lich's
+    /// `update_urchin_expire`), or the deadline passes. Drained per tick.
+    pending_urchin_refresh: Option<(u32, std::time::Instant)>,
     /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
     /// their pause, drained by take_outbound once due (insertion order
     /// preserved among same-tick due commands).
@@ -251,6 +256,10 @@ pub struct AppCore {
     pub window_registry: crate::config::WindowRegistry,
     /// Unflushed registry changes; written by `tick_layout_autosave`.
     window_registry_dirty: bool,
+    /// Character state changed since the last persist; flushed to the session
+    /// cache by `tick_layout_autosave` (rare, so no debounce — same as the
+    /// registry). The generation last written, to detect real changes.
+    character_state_saved_gen: u64,
 
     // === Lich WebUI bridge (owned in core so BOTH the GUI and the phone
     // render the same trees; see core::app_core::webui) ===
@@ -366,6 +375,7 @@ impl AppCore {
             jinx_catalog: None,
             jinx_nudge_pending: true,
             travel: Default::default(),
+            pending_urchin_refresh: None,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -419,6 +429,7 @@ impl AppCore {
             saved_dialog_positions,
             window_registry: Default::default(),
             window_registry_dirty: false,
+            character_state_saved_gen: 0,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -533,6 +544,7 @@ impl AppCore {
             jinx_catalog: None,
             jinx_nudge_pending: true,
             travel: Default::default(),
+            pending_urchin_refresh: None,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -586,6 +598,7 @@ impl AppCore {
             saved_dialog_positions,
             window_registry,
             window_registry_dirty,
+            character_state_saved_gen: 0,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -803,6 +816,7 @@ impl AppCore {
             };
             self.add_system_message(&format!("[map] {text}"));
         }
+        self.tick_urchin_refresh();
         self.tick_travel();
         self.tick_foreach();
         self.poll_jinx();
@@ -987,13 +1001,46 @@ impl AppCore {
     /// after every processed network line and once per frontend frame (the
     /// frame tick covers time-based waits like roundtime when the game is
     /// quiet).
+    /// Resolve a deferred `.go2` waiting on `urchin status` (see start_travel).
+    /// Once the reply has parsed (access now valid) or the deadline passes, the
+    /// trip is re-planned. Mirrors Lich's `update_urchin_expire` pre-flight.
+    fn tick_urchin_refresh(&mut self) {
+        let Some((destination, deadline)) = self.pending_urchin_refresh else {
+            return;
+        };
+        let now_epoch = chrono::Utc::now().timestamp();
+        let now_valid = self.game_state.character.urchins_valid(
+            now_epoch,
+            self.game_state.status.hidden,
+            self.game_state.status.invisible,
+        );
+        let expired = std::time::Instant::now() >= deadline;
+        if now_valid || expired {
+            // Clear the pending marker FIRST so the re-invoked start_travel
+            // sees `is_none()` and proceeds to planning instead of re-deferring.
+            self.pending_urchin_refresh = None;
+            if !now_valid {
+                self.add_system_message(
+                    "[go2] no active urchin access - routing without urchin guides",
+                );
+            }
+            self.start_travel(destination);
+        }
+    }
+
     pub fn tick_travel(&mut self) {
         if !self.travel.is_traveling() {
+            // Not walking: don't let feedback accumulate unboundedly.
+            self.game_state.move_feedback.clear();
             return;
         }
         let Some(db) = self.map.mapdb().cloned() else {
             return;
         };
+        // Drain the move-feedback queue for this tick (edge-triggered events,
+        // each consumed exactly once — §09).
+        let feedback: Vec<crate::core::move_feedback::MoveFeedback> =
+            self.game_state.move_feedback.drain(..).collect();
         // Active spell numbers for scripted-edge checkspell branches.
         let active_spells: Vec<u16> = self
             .game_state
@@ -1007,6 +1054,75 @@ impl AppCore {
                     .collect()
             })
             .unwrap_or_default();
+
+        // Assemble the hands stow inputs into OWNED locals, so `ctx` doesn't
+        // hold a borrow of self.game_state across the &mut self.travel tick.
+        // Resolve the configured weaponsack/lootsack names to container
+        // command-ids, gather the other tracked containers as last-resort
+        // stow targets, and classify each hand's item as a weapon.
+        use crate::core::game_objects::Hand;
+        // gameobj_data() takes &mut self (lazy load), so resolve it before we
+        // hold the immutable objects borrow.
+        let gameobj_data = self.gameobj_data();
+        let objects = &self.game_state.objects;
+        let resolve_bag = |name: &str| -> Option<String> {
+            if name.trim().is_empty() {
+                return None;
+            }
+            objects.find_container(name).map(|c| c.command_target())
+        };
+        let weaponsack = resolve_bag(&self.config.go2.weaponsack);
+        let lootsack = resolve_bag(&self.config.go2.lootsack);
+        let reserved: std::collections::HashSet<&str> = weaponsack
+            .as_deref()
+            .into_iter()
+            .chain(lootsack.as_deref())
+            .collect();
+        let other_containers: Vec<String> = objects
+            .containers()
+            .map(|c| c.command_target())
+            .filter(|id| !reserved.contains(id.as_str()))
+            .collect();
+        let is_weapon = |item: Option<&crate::core::game_objects::GameItem>| -> bool {
+            match item {
+                Some(i) => gameobj_data.is_type(&i.name, &i.noun, "weapon"),
+                None => false,
+            }
+        };
+        // Confluence landmark scan reads ground loot + linked room scenery
+        // (Lich's `GameObj.loot`): the tranquility point and pit appear as
+        // room objects. Collect their nouns/names while we hold `objects`.
+        let loot_nouns: Vec<String> = objects
+            .ground()
+            .iter()
+            .chain(objects.room_desc().iter())
+            .map(|item| item.name.clone())
+            .collect();
+        let left_hand = objects.hand(Hand::Left).cloned();
+        let right_hand = objects.hand(Hand::Right).cloned();
+        let left_is_weapon = is_weapon(left_hand.as_ref());
+        let right_is_weapon = is_weapon(right_hand.as_ref());
+        let ready_stow = objects.ready_stow().clone();
+        let hands = crate::core::travel::executor::StashInputs {
+            left_hand: left_hand.as_ref(),
+            right_hand: right_hand.as_ref(),
+            ready_stow: &ready_stow,
+            weaponsack: weaponsack.as_deref(),
+            lootsack: lootsack.as_deref(),
+            other_containers: &other_containers,
+            // Bandolier-bag resolution (Lich's find_bandolier_bag) is a
+            // multi-container "swirling mist" look-scan we don't run yet; the
+            // retrieval command is ported (rub #bag), but live bag lookup is a
+            // follow-up. Ethereal items need no resolution (retrieved by noun).
+            left_bandolier: None,
+            right_bandolier: None,
+            left_is_weapon,
+            right_is_weapon,
+        };
+
+        // Live compass exits (XMLData.room_exits) for the Confluence explorer.
+        let compass_dirs: Vec<String> = self.game_state.compass_dirs.clone();
+
         let ctx = crate::core::travel::TravelContext {
             db: &db,
             current_room: self.map.current_room_id,
@@ -1019,6 +1135,27 @@ impl AppCore {
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.travel.now_ms(),
             pathcodes: &self.config.go2.pathcodes,
+            hands: Some(hands),
+            feedback: &feedback,
+            // The fallback is a Lich-only bandaid: gated on the setting AND a
+            // non-direct connection (a direct connection has no Lich to hand
+            // off to). webui_available() is our "connected via Lich" proxy.
+            lich_fallback: self.config.go2.lich_fallback && self.webui_available(),
+            funding: Some(crate::core::travel::executor::FundingInputs {
+                silver: self.game_state.silver,
+                get_silvers: self.config.go2.get_silvers,
+                get_return_trip: self.config.go2.get_return_trip_silvers,
+            }),
+            at_pinefar_depository: self
+                .game_state
+                .room_name
+                .as_deref()
+                .is_some_and(|t| t.contains("Pinefar, Depository")),
+            // Confluence explorer's live view of the shifting maze: the
+            // current room's compass exits and ground-loot nouns (the
+            // tranquility point / pit landmarks live in ground + room_desc).
+            compass_dirs: &compass_dirs,
+            loot_nouns: &loot_nouns,
         };
         let events = self.travel.tick(ctx);
         for event in events {
@@ -1037,6 +1174,16 @@ impl AppCore {
                 }
                 crate::core::travel::TravelEvent::Failed(reason) => {
                     self.add_system_message(&format!("[go2] {reason}"));
+                }
+                crate::core::travel::TravelEvent::LichFallback { destination } => {
+                    // Native travel can't cross this edge; hand off to Lich.
+                    // Stop the native task and send `;go2 <dest>` — Lich walks
+                    // the rest. (The event only fires on a Lich connection.)
+                    self.travel.stop();
+                    self.queue_timed_command(
+                        std::time::Duration::ZERO,
+                        format!(";go2 {destination}"),
+                    );
                 }
                 crate::core::travel::TravelEvent::Send(_) => unreachable!("queued by the service"),
             }
@@ -1111,6 +1258,51 @@ impl AppCore {
             ));
             return;
         }
+        // Sync the gated-travel routing flags before planning (Lich's
+        // $go2_use_seeking / UserVars.mapdb_use_portmasters globals).
+        // Seeking only takes effect for a Voln Master, so its toggle is gated
+        // on can_seek(); portmasters are open to anyone with the silver.
+        crate::core::pathing::transpile::set_use_seeking(
+            self.config.go2.use_seeking,
+            self.game_state.character.can_seek(),
+        );
+        crate::core::pathing::transpile::set_use_portmasters(self.config.go2.use_portmasters);
+        // Urchin access refresh (Lich's update_urchin_expire): if urchin travel
+        // is enabled but the cached access is missing/expired, ask the game
+        // (`urchin status`) and defer this trip until the reply parses. Without
+        // this, a route would silently skip urchin edges whenever the client
+        // hasn't yet seen an `urchin status` line this session.
+        let now_epoch = chrono::Utc::now().timestamp();
+        if self.config.go2.use_urchins
+            && self.pending_urchin_refresh.is_none()
+            && !self.game_state.character.urchins_valid(
+                now_epoch,
+                self.game_state.status.hidden,
+                self.game_state.status.invisible,
+            )
+            && !self.game_state.status.hidden
+            && !self.game_state.status.invisible
+        {
+            // Stale/unknown access (not merely hidden) — refresh before routing.
+            self.add_system_message("[go2] checking urchin access...");
+            self.travel.queue_command("urchin status".to_string());
+            self.pending_urchin_refresh = Some((
+                destination,
+                std::time::Instant::now() + std::time::Duration::from_secs(4),
+            ));
+            return;
+        }
+        // Urchins: valid only when enabled AND access hasn't expired AND not
+        // hidden/invisible (Lich's combined urchin timeto gate). Also lets
+        // dijkstra route through the urchin-hideout hubs this trip.
+        crate::core::pathing::transpile::set_urchins_valid(
+            self.config.go2.use_urchins
+                && self.game_state.character.urchins_valid(
+                    now_epoch,
+                    self.game_state.status.hidden,
+                    self.game_state.status.invisible,
+                ),
+        );
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",
@@ -1334,6 +1526,14 @@ impl AppCore {
         let Some(cache) = crate::session_cache::load(self.config.character.as_deref()) else {
             return;
         };
+
+        // Warm-start the character state (society/house/profession/citizenship)
+        // so the travel gates work immediately on connect. The live feed stays
+        // authoritative — any SOCIETY/INFO/PROFILE output or a resign/join/step
+        // event overwrites this via the parser.
+        if let Some(character) = cache.character.clone() {
+            self.game_state.character = character;
+        }
 
         if !cache.quickbars.is_empty() {
             let allowed_ids = self.allowed_quickbar_ids();
@@ -1797,16 +1997,19 @@ impl AppCore {
                 return None; // flat wheel: portals have no folders
             }
             let slices: Vec<crate::config::WheelSlice> = self
-                .portal_commands()
+                .portal_candidate_list()
                 .into_iter()
-                .map(|command| crate::config::WheelSlice {
-                    // "go gate" reads as "gate" on the wedge; the full
-                    // command still shows in the hub.
-                    label: command
+                .map(|c| crate::config::WheelSlice {
+                    // The wedge shows the movement label (verb-stripped for a
+                    // plain "go gate" -> "gate"); a StringProc edge's label is
+                    // already the movement (e.g. "climb footpath"). The pick
+                    // runs c.command (a .go2 <id> for proc edges).
+                    label: c
+                        .label
                         .split_once(' ')
                         .map(|(_, rest)| rest.to_string())
-                        .unwrap_or_else(|| command.clone()),
-                    command,
+                        .unwrap_or_else(|| c.label.clone()),
+                    command: c.command,
                     // Dynamic slices carry no span/inner/color: the portals
                     // ring stays evenly spaced with the global dead zone.
                     ..Default::default()
@@ -6048,6 +6251,12 @@ impl AppCore {
                 tracing::warn!("could not write window_registry.toml: {e:#}");
             }
         }
+        // Persist character state when it actually changed (rare — the parser
+        // only bumps the generation on a real value change). No debounce: the
+        // write is tiny and infrequent, same as the registry above.
+        if self.game_state.character.generation != self.character_state_saved_gen {
+            self.persist_character_state();
+        }
         if let Some(changed_at) = self.layout_autosave_pending {
             if changed_at.elapsed() >= Self::LAYOUT_AUTOSAVE_DEBOUNCE {
                 self.autosave_layout();
@@ -6193,13 +6402,30 @@ impl AppCore {
             .as_ref()
             .and_then(|id| if allowed_ids.contains(id) { Some(id.clone()) } else { None });
 
+        let character = (self.game_state.character != Default::default())
+            .then(|| self.game_state.character.clone());
         let cache = crate::session_cache::SessionCache {
             quickbars,
             quickbar_order,
             active_quickbar_id,
+            character,
         };
         if let Err(err) = crate::session_cache::save(self.config.character.as_deref(), &cache) {
             tracing::warn!("Failed to save session cache: {}", err);
+        }
+    }
+
+    /// Persist just the character state into the session cache, preserving the
+    /// rest (quickbars). Called by the autosave tick when the state changed.
+    fn persist_character_state(&mut self) {
+        let character = self.config.character.as_deref();
+        // Merge into the existing cache so we don't clobber quickbars.
+        let mut cache = crate::session_cache::load(character).unwrap_or_default();
+        cache.character = (self.game_state.character != Default::default())
+            .then(|| self.game_state.character.clone());
+        match crate::session_cache::save(character, &cache) {
+            Ok(()) => self.character_state_saved_gen = self.game_state.character.generation,
+            Err(e) => tracing::warn!("could not persist character state: {e:#}"),
         }
     }
 

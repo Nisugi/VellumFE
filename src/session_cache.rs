@@ -21,6 +21,12 @@ pub struct SessionCache {
     pub quickbar_order: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_quickbar_id: Option<String>,
+    /// Character attributes (society/house/profession/citizenship) parsed from
+    /// the game feed. They change rarely and the game announces changes, so
+    /// persisting warm-starts the travel gates on the next connect. `None`
+    /// when never captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character: Option<crate::core::character_state::CharacterState>,
 }
 
 fn cache_path(character: Option<&str>) -> Result<PathBuf> {

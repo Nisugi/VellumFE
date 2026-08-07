@@ -22,6 +22,12 @@ const ASSET_NAME: &str = "mapdb.json";
 /// `overrides-<tag>.json` beside the mapdb and loaded read-only underneath
 /// the user's personal overrides.
 const OVERRIDES_ASSET_NAME: &str = "overrides.json";
+/// The StringProc bodies asset: a gzipped tar of `stringprocs/wayto/*.rb` and
+/// `stringprocs/timeto/*.rb`. Cartographer stores each edge's script in the
+/// mapdb as `Cartographer.evaluate_script('wayto/room-N-to-M.rb')`; the body
+/// lives in this tarball. Extracted next to the mapdb so a direct-connect
+/// (no-Lich) client can resolve every proc edge natively.
+const STRINGPROCS_ASSET_NAME: &str = "stringprocs.tar.gz";
 /// Newest plus one rollback version.
 const KEEP_VERSIONS: usize = 2;
 
@@ -315,8 +321,94 @@ fn check_and_download(
             tracing::warn!("community overrides download failed for {tag}: {e}");
         }
     }
+    // StringProc bodies: download + extract the tarball to `stringprocs-<tag>/`
+    // beside the mapdb. Optional — a release without it (or a failed fetch)
+    // just means proc edges stay uncrossable, never fails the mapdb install.
+    if let Some(sp_asset) = release
+        .assets
+        .iter()
+        .find(|a| a.name == STRINGPROCS_ASSET_NAME)
+    {
+        if let Err(e) = download_and_extract_stringprocs(
+            &agent,
+            &sp_asset.browser_download_url,
+            &stringprocs_dir(dir, &tag),
+        ) {
+            tracing::warn!("stringprocs download/extract failed for {tag}: {e}");
+        }
+    }
     prune(dir);
     Ok(UpdateStatus::Updated { tag })
+}
+
+/// Where a version's extracted StringProc bodies live: `stringprocs-<tag>/`
+/// beside `mapdb-<tag>.json`. Inside it, `wayto/room-N-to-M.rb` etc.
+pub fn stringprocs_dir(dir: &Path, tag: &str) -> PathBuf {
+    dir.join(format!("stringprocs-{tag}"))
+}
+
+/// Download `stringprocs.tar.gz` and extract it into `dest`. The tarball's
+/// top-level entry is a `stringprocs/` directory; we flatten that so `dest`
+/// directly contains `wayto/` and `timeto/`.
+fn download_and_extract_stringprocs(
+    agent: &ureq::Agent,
+    url: &str,
+    dest: &Path,
+) -> Result<(), String> {
+    use std::io::Read;
+    let resp = agent
+        .get(url)
+        .call()
+        .map_err(|e| format!("stringprocs download failed: {e}"))?;
+    // Cap the compressed download; the real asset is a few MB.
+    let mut gz = Vec::new();
+    resp.into_reader()
+        .take(64 * 1024 * 1024)
+        .read_to_end(&mut gz)
+        .map_err(|e| format!("stringprocs read failed: {e}"))?;
+
+    // Fresh extract: drop any stale version first.
+    let _ = std::fs::remove_dir_all(dest);
+    std::fs::create_dir_all(dest)
+        .map_err(|e| format!("create {} failed: {e}", dest.display()))?;
+
+    let decoder = flate2::read::GzDecoder::new(&gz[..]);
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("tar read failed: {e}"))?
+    {
+        let mut entry = entry.map_err(|e| format!("tar entry failed: {e}"))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("tar path failed: {e}"))?
+            .into_owned();
+        // Strip a leading `stringprocs/` component so `dest` holds wayto/timeto
+        // directly, and reject any path that escapes `dest` (tar traversal).
+        let rel: PathBuf = path
+            .components()
+            .skip_while(|c| c.as_os_str() == "stringprocs")
+            .collect();
+        if rel.as_os_str().is_empty()
+            || rel
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            continue;
+        }
+        let out = dest.join(&rel);
+        if entry.header().entry_type().is_dir() {
+            std::fs::create_dir_all(&out).ok();
+        } else {
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent).ok();
+            }
+            entry
+                .unpack(&out)
+                .map_err(|e| format!("extract {} failed: {e}", out.display()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Fetch a small asset straight to disk (no progress reporting), capped so a

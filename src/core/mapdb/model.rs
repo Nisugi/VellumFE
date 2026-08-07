@@ -64,6 +64,15 @@ impl Room {
             .any(|t| t.to_lowercase().contains("urchin hideout"))
     }
 
+    /// A vehicle/transport room (ferry, sloop, caravan, tunnel) tagged
+    /// `meta:transport`. The game carries you through these on its own schedule
+    /// (a portmaster escort, a ferry ride) and they usually have no walkable
+    /// exits — so the walk executor waits inside them and re-plans the route
+    /// the moment the ride deposits you back in a normal room.
+    pub fn is_transport(&self) -> bool {
+        self.tags.iter().any(|t| t == "meta:transport")
+    }
+
     pub fn from_json(value: &Value) -> Option<Room> {
         let obj = value.as_object()?;
         let id = obj.get("id")?.as_u64()? as u32;

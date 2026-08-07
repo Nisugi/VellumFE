@@ -9,11 +9,14 @@
 //!   (go2 handles "already there" before pathing).
 //! - `estimate_time` defaults missing timeto entries to 0.2s (the dijkstra
 //!   itself does NOT — an edge without a cost is unroutable).
+//! - Routing weights edges by `timeto` ALONE, exactly like Lich. A proc
+//!   `wayto` with a numeric `timeto` IS routable; interpreting the proc is
+//!   the walk executor's job at the edge, not the router's.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-use crate::core::mapdb::{is_proc_command, MapDb, Room, TimeTo};
+use crate::core::mapdb::{MapDb, Room, TimeTo};
 
 /// What the search is looking for.
 #[derive(Debug, Clone, Copy)]
@@ -32,15 +35,50 @@ pub struct Dijkstra {
     pub distance: HashMap<u32, f64>,
 }
 
+impl Dijkstra {
+    /// Reconstruct the path from `source` to `destination` using this search's
+    /// `previous` pointers (a cheap walk, no new search). Excludes `source`,
+    /// includes `destination` — the same shape as [`path_to`]. `None` if the
+    /// search never reached `destination`.
+    pub fn reconstruct(&self, source: u32, destination: u32) -> Option<Vec<u32>> {
+        if destination == source {
+            return Some(Vec::new());
+        }
+        self.previous.get(&destination)?;
+        let mut path = vec![destination];
+        loop {
+            let &prev = self.previous.get(path.last().expect("non-empty"))?;
+            if prev == source {
+                break;
+            }
+            path.push(prev);
+        }
+        path.reverse();
+        Some(path)
+    }
+}
+
 /// The cost of stepping from `room` to its wayto neighbor `dest`.
 /// `None` = edge not routable (see module docs for the rules).
 ///
-/// Scripted commands are admitted when the transpiler understands them;
-/// scripted costs resolve through `transpile::resolve_timeto` (delegation
-/// follows, settings gates default off, negative costs — which would
-/// corrupt the search — are rejected).
-fn edge_cost(db: &MapDb, room: &Room, dest: u32, command: &str) -> Option<f64> {
-    if room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout() {
+/// Routing depends ONLY on `timeto`, never on whether we can interpret the
+/// `wayto` command — a faithful match for Lich's `Room#dijkstra`, which
+/// weights edges by `timeto[adj]` and evaluates proc costs lazily, never
+/// consulting `wayto`. Whether a proc edge can actually be *walked* is an
+/// execution concern: the walk executor transpiles the command when it
+/// reaches the edge, and only there does an un-interpretable proc fail
+/// (falling back to Lich `;go2` if enabled, else banning the edge and
+/// re-pathing). Scripted costs resolve through `transpile::resolve_timeto`
+/// (delegation follows, settings gates default off, negative costs — which
+/// would corrupt the search — are rejected).
+fn edge_cost(db: &MapDb, room: &Room, dest: u32, _command: &str) -> Option<f64> {
+    // Urchin-hideout hubs are excluded by default (they'd shortcut every
+    // route), but when urchin travel is valid this session we let them route —
+    // the per-edge timeto proc gates the actual cost (transpile::urchins_valid
+    // and TIMETO_URCHIN).
+    if !super::transpile::urchins_valid()
+        && (room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout())
+    {
         return None;
     }
     // Curated overrides make an edge walkable regardless of its script.
@@ -49,9 +87,6 @@ fn edge_cost(db: &MapDb, room: &Room, dest: u32, command: &str) -> Option<f64> {
             .cost
             .or_else(|| super::transpile::resolve_timeto(db, room, dest))
             .or(Some(0.2));
-    }
-    if is_proc_command(command) && !super::transpile::transpilable(command) {
-        return None;
     }
     super::transpile::resolve_timeto(db, room, dest)
 }
@@ -203,6 +238,31 @@ pub fn estimate_time(db: &MapDb, rooms: &[u32]) -> f64 {
         .sum()
 }
 
+/// Total silver cost along `rooms` (a full path INCLUDING the source), read
+/// from `silver-cost:<next_room_id>:<value>` room tags — a port of go2's
+/// `get_silver_cost`. Each room is scanned for a tag naming the next room in
+/// the path; a numeric value adds directly. Non-numeric (StringProc) cost
+/// values are the rare settings-gated dynamic ones we can't evaluate — they
+/// contribute 0 (v1), same as an unhandled proc elsewhere.
+pub fn silver_cost(db: &MapDb, rooms: &[u32]) -> u64 {
+    let mut total = 0u64;
+    for pair in rooms.windows(2) {
+        let (Some(room), next) = (db.room(pair[0]), pair[1]) else {
+            continue;
+        };
+        let prefix = format!("silver-cost:{next}:");
+        for tag in &room.tags {
+            if let Some(value) = tag.strip_prefix(&prefix) {
+                if let Ok(n) = value.parse::<u64>() {
+                    total += n;
+                }
+                // A non-numeric value is a dynamic-cost StringProc; skip (0).
+            }
+        }
+    }
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,23 +326,40 @@ mod tests {
     }
 
     #[test]
-    fn edges_without_timeto_or_with_procs_are_unroutable() {
+    fn routing_depends_on_timeto_not_wayto_interpretability() {
+        // Lich parity: an edge routes when its `timeto` resolves to a number,
+        // regardless of whether we can yet transpile the `wayto` command.
+        // Interpreting the proc is the executor's job at the edge.
         let db = graph(
             &[
-                (1, 2, "east", None),                 // wayto but no timeto: Lich skips it
-                (1, 3, ";e fput 'go boat'", Some(0.2)), // proc command: v1 can't walk it
+                (1, 2, "east", None), // wayto but no timeto: Lich skips it
+                // proc wayto with a NUMERIC timeto: routable (executor
+                // transpiles/handles it, or falls back, at the edge).
+                (1, 3, ";e fput 'go boat'; move 'go boat'", Some(0.2)),
             ],
             r#"{"id": 4, "uid": [9000004], "location": "Test", "title": ["[Room 4]"],
                 "wayto": {"1": "west"}, "timeto": {"1": ";e Settings[:foo] ? 0.2 : nil"},
                 "paths": ""}"#,
         );
-        assert_eq!(path_to(&db, 1, 2), None, "missing timeto");
-        assert_eq!(path_to(&db, 1, 3), None, "proc wayto");
-        assert_eq!(path_to(&db, 4, 1), None, "proc timeto gate");
+        assert_eq!(path_to(&db, 1, 2), None, "missing timeto is unroutable");
+        assert_eq!(
+            path_to(&db, 1, 3),
+            Some(vec![3]),
+            "proc wayto with numeric timeto IS routable (Lich weights on timeto only)"
+        );
+        assert_eq!(
+            path_to(&db, 4, 1),
+            None,
+            "proc timeto that resolves to nil (settings gate off) is unroutable"
+        );
     }
 
     #[test]
     fn urchin_hideouts_never_shortcut_a_route() {
+        // Share the pathing gate lock: urchin exclusion depends on the global
+        // urchins_valid() flag, which the transpile tests also toggle.
+        let _g = super::super::transpile::GATE_LOCK.lock().unwrap();
+        super::super::transpile::set_urchins_valid(false);
         // Long honest road 1→2→3 (0.4) vs a hideout teleport 1→99→3 (0.2).
         let db = graph(
             &[
@@ -343,5 +420,56 @@ mod tests {
         let time = estimate_time(&db, &[1, 2, 3]);
         assert!((time - 0.7).abs() < 1e-9);
         assert_eq!(estimate_time(&db, &[1]), 0.0);
+    }
+
+    #[test]
+    fn silver_cost_sums_the_path_tags() {
+        // Room 1 → 2 costs 25000 (portmaster), 2 → 3 is free.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Dock]"],
+                 "tags": ["silver-cost:2:25000", "silver-cost:9:12500"],
+                 "wayto": {"2": "board"}, "timeto": {"2": 1.0}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Port]"],
+                 "wayto": {"3": "north"}, "timeto": {"3": 0.2}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[Town]"],
+                 "wayto": {"2": "south"}, "timeto": {"2": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        // The full path includes the source room (Lich's get_silver_cost shape).
+        assert_eq!(silver_cost(&db, &[1, 2, 3]), 25000);
+        // Only the 1→2 tag counts; the 1→9 tag is a different destination.
+        assert_eq!(silver_cost(&db, &[2, 3]), 0);
+        assert_eq!(silver_cost(&db, &[1]), 0);
+    }
+
+    #[test]
+    fn reconstruct_matches_path_to_from_one_search() {
+        // A single AnyOf search's `reconstruct` must yield the same path as a
+        // dedicated path_to — the basis of the one-Dijkstra bank search that
+        // replaced 72 separate path_to calls (the UI-freeze fix).
+        let db = graph(
+            &[
+                (1, 2, "n", Some(0.2)),
+                (2, 3, "n", Some(0.2)),
+                (3, 4, "n", Some(0.2)),
+                (1, 5, "e", Some(5.0)),
+                (5, 4, "n", Some(5.0)),
+            ],
+            "",
+        );
+        let targets = [4u32];
+        let search = dijkstra(&db, 1, Some(PathTarget::AnyOf(&targets)));
+        assert_eq!(
+            search.reconstruct(1, 4),
+            path_to(&db, 1, 4),
+            "reconstruct equals path_to"
+        );
+        // Source-to-source is the empty path.
+        assert_eq!(search.reconstruct(1, 1), Some(Vec::new()));
+        // An unreached room reconstructs to None.
+        let none_search = dijkstra(&db, 1, Some(PathTarget::Room(2)));
+        assert_eq!(none_search.reconstruct(1, 999), None);
     }
 }

@@ -730,6 +730,22 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         // ---- Travel --------------------------------------------------
         bool_entry!("go2.native_map_clicks", "Native Map Clicks", "Travel",
             "Map clicks travel natively instead of sending ;go2", go2.native_map_clicks),
+        text_entry!("go2.weaponsack", "Weapon Sack", "Travel",
+            "Container the hands-stow uses for a weapon when your ready sheath doesn't cover it (name)", go2.weaponsack),
+        text_entry!("go2.lootsack", "Loot Sack", "Travel",
+            "Fallback container the hands-stow uses for anything not routed by ready/sheath/weapon sack (name)", go2.lootsack),
+        bool_entry!("go2.lich_fallback", "Lich ;go2 Fallback", "Travel",
+            "When native .go2 can't cross an edge, hand off to Lich's ;go2 (Lich connections only)", go2.lich_fallback),
+        bool_entry!("go2.use_seeking", "Use Voln Seeking", "Travel",
+            "Route through Voln Symbol of Seeking edges (only takes effect for a Voln Master)", go2.use_seeking),
+        bool_entry!("go2.use_portmasters", "Use Portmasters", "Travel",
+            "Route through portmaster ship travel (costs silver - keep enough on hand or enable Get Silvers)", go2.use_portmasters),
+        bool_entry!("go2.get_silvers", "Get Silvers", "Travel",
+            "Let go2 withdraw from the bank to fund paid travel when you're short", go2.get_silvers),
+        bool_entry!("go2.get_return_trip_silvers", "Get Return Trip Silvers", "Travel",
+            "Also withdraw enough to fund the return trip", go2.get_return_trip_silvers),
+        bool_entry!("go2.use_urchins", "Use Urchin Guides", "Travel",
+            "Route through urchin guides (needs active access - run 'urchin status'; off while mounted)", go2.use_urchins),
     ];
     defs.sort_by_key(|def| def.key);
     defs
