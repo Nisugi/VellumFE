@@ -739,7 +739,11 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         bool_entry!("go2.use_seeking", "Use Voln Seeking", "Travel",
             "Route through Voln Symbol of Seeking edges (only takes effect for a Voln Master)", go2.use_seeking),
         bool_entry!("go2.use_portmasters", "Use Portmasters", "Travel",
-            "Route through portmaster ship travel (costs silver - keep enough on hand)", go2.use_portmasters),
+            "Route through portmaster ship travel (costs silver - keep enough on hand or enable Get Silvers)", go2.use_portmasters),
+        bool_entry!("go2.get_silvers", "Get Silvers", "Travel",
+            "Let go2 withdraw from the bank to fund paid travel when you're short", go2.get_silvers),
+        bool_entry!("go2.get_return_trip_silvers", "Get Return Trip Silvers", "Travel",
+            "Also withdraw enough to fund the return trip", go2.get_return_trip_silvers),
     ];
     defs.sort_by_key(|def| def.key);
     defs

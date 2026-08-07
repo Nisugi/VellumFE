@@ -209,6 +209,31 @@ pub fn estimate_time(db: &MapDb, rooms: &[u32]) -> f64 {
         .sum()
 }
 
+/// Total silver cost along `rooms` (a full path INCLUDING the source), read
+/// from `silver-cost:<next_room_id>:<value>` room tags — a port of go2's
+/// `get_silver_cost`. Each room is scanned for a tag naming the next room in
+/// the path; a numeric value adds directly. Non-numeric (StringProc) cost
+/// values are the rare settings-gated dynamic ones we can't evaluate — they
+/// contribute 0 (v1), same as an unhandled proc elsewhere.
+pub fn silver_cost(db: &MapDb, rooms: &[u32]) -> u64 {
+    let mut total = 0u64;
+    for pair in rooms.windows(2) {
+        let (Some(room), next) = (db.room(pair[0]), pair[1]) else {
+            continue;
+        };
+        let prefix = format!("silver-cost:{next}:");
+        for tag in &room.tags {
+            if let Some(value) = tag.strip_prefix(&prefix) {
+                if let Ok(n) = value.parse::<u64>() {
+                    total += n;
+                }
+                // A non-numeric value is a dynamic-cost StringProc; skip (0).
+            }
+        }
+    }
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +387,27 @@ mod tests {
         let time = estimate_time(&db, &[1, 2, 3]);
         assert!((time - 0.7).abs() < 1e-9);
         assert_eq!(estimate_time(&db, &[1]), 0.0);
+    }
+
+    #[test]
+    fn silver_cost_sums_the_path_tags() {
+        // Room 1 → 2 costs 25000 (portmaster), 2 → 3 is free.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Dock]"],
+                 "tags": ["silver-cost:2:25000", "silver-cost:9:12500"],
+                 "wayto": {"2": "board"}, "timeto": {"2": 1.0}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Port]"],
+                 "wayto": {"3": "north"}, "timeto": {"3": 0.2}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[Town]"],
+                 "wayto": {"2": "south"}, "timeto": {"2": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        // The full path includes the source room (Lich's get_silver_cost shape).
+        assert_eq!(silver_cost(&db, &[1, 2, 3]), 25000);
+        // Only the 1→2 tag counts; the 1→9 tag is a different destination.
+        assert_eq!(silver_cost(&db, &[2, 3]), 0);
+        assert_eq!(silver_cost(&db, &[1]), 0);
     }
 }

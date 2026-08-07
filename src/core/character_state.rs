@@ -253,6 +253,21 @@ fn normalize_name(s: &str) -> String {
         .replace(['\'', ':'], "")
 }
 
+// "You have 1,234,567 silver with you." / "no silver" / "but one silver".
+re!(WEALTH, r"^You have (no|[\d,]+|but one) silver with you");
+
+/// Parse silver-on-hand from a `wealth`/`wealth quiet` line (go2's
+/// `wealth_quiet`). `no` → 0, `but one` → 1, commas stripped. None if the
+/// line isn't a wealth line.
+pub fn parse_wealth_line(line: &str) -> Option<u64> {
+    let c = WEALTH.captures(line.trim())?;
+    Some(match &c[1] {
+        "no" => 0,
+        "but one" => 1,
+        n => n.replace(',', "").parse().ok()?,
+    })
+}
+
 /// Cheap gate: could this line carry character state? Lets the feed skip the
 /// full regex battery on ordinary lines.
 pub fn line_is_character_state(line: &str) -> bool {
@@ -360,6 +375,17 @@ mod tests {
         s.parse_line("PERSONAL INFORMATION");
         s.parse_line("No House affiliation");
         assert_eq!(s.che.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn parses_wealth_lines() {
+        assert_eq!(
+            parse_wealth_line("You have 1,234,567 silver with you."),
+            Some(1_234_567)
+        );
+        assert_eq!(parse_wealth_line("You have no silver with you."), Some(0));
+        assert_eq!(parse_wealth_line("You have but one silver with you."), Some(1));
+        assert_eq!(parse_wealth_line("A cat wanders by."), None);
     }
 
     #[test]

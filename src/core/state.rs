@@ -159,6 +159,10 @@ pub struct GameState {
     /// `core::character_state`.
     pub character: crate::core::character_state::CharacterState,
 
+    /// Silver on hand, parsed from `wealth`/`wealth quiet` output. `None`
+    /// until first seen. Drives go2's silver-funding for paid travel.
+    pub silver: Option<u64>,
+
     /// DragonRealms experience/skill component state
     pub dr_experience: DRExperienceState,
 
@@ -959,6 +963,7 @@ impl GameState {
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
             character: crate::core::character_state::CharacterState::default(),
+            silver: None,
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),

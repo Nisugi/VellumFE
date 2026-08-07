@@ -111,6 +111,9 @@ pub struct MessageProcessor {
     /// fed into `game_state.character` at the prompt. Society/profession/CHE/
     /// citizenship output from SOCIETY/INFO/PROFILE/CITIZENSHIP.
     pending_character_lines: Vec<String>,
+    /// Silver on hand parsed from a `wealth` line during flush; applied to
+    /// `game_state.silver` at the prompt.
+    pending_silver: Option<u64>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -314,6 +317,7 @@ impl MessageProcessor {
             pending_ready_stow: Vec::new(),
             pending_move_feedback: Vec::new(),
             pending_character_lines: Vec::new(),
+            pending_silver: None,
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
@@ -789,6 +793,9 @@ impl MessageProcessor {
                 // house parse is stateful).
                 for line in self.pending_character_lines.drain(..) {
                     game_state.character.parse_line(&line);
+                }
+                if let Some(silver) = self.pending_silver.take() {
+                    game_state.silver = Some(silver);
                 }
 
                 // Container contents extracted from a main-stream look line
@@ -3065,6 +3072,13 @@ impl MessageProcessor {
         // the PROFILE house parse is stateful across lines. Cheap prefix gate.
         if crate::core::character_state::line_is_character_state(&full_text) {
             self.pending_character_lines.push(full_text.clone());
+        }
+
+        // Silver on hand (from `wealth`/`wealth quiet`) — drives go2 funding.
+        if full_text.starts_with("You have ") && full_text.contains("silver with you") {
+            if let Some(silver) = crate::core::character_state::parse_wealth_line(&full_text) {
+                self.pending_silver = Some(silver);
+            }
         }
 
         // READY/STOW list rows: observe (don't squelch — the player asked for

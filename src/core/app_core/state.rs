@@ -1094,6 +1094,16 @@ impl AppCore {
             // non-direct connection (a direct connection has no Lich to hand
             // off to). webui_available() is our "connected via Lich" proxy.
             lich_fallback: self.config.go2.lich_fallback && self.webui_available(),
+            funding: Some(crate::core::travel::executor::FundingInputs {
+                silver: self.game_state.silver,
+                get_silvers: self.config.go2.get_silvers,
+                get_return_trip: self.config.go2.get_return_trip_silvers,
+            }),
+            at_pinefar_depository: self
+                .game_state
+                .room_name
+                .as_deref()
+                .is_some_and(|t| t.contains("Pinefar, Depository")),
         };
         let events = self.travel.tick(ctx);
         for event in events {

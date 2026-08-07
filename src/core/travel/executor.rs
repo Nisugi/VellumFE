@@ -52,6 +52,23 @@ pub struct TravelContext<'a> {
     /// `;go2 <dest>` instead of banning + re-pathing. Only true on a Lich
     /// connection with the setting enabled (the caller gates on direct-mode).
     pub lich_fallback: bool,
+    /// Silver-funding inputs for paid travel (portmaster/day-pass). `None`
+    /// when the caller doesn't supply them.
+    pub funding: Option<FundingInputs>,
+    /// True at the Pinefar Depository, whose withdraw uses `ask banker for`
+    /// with a 20-silver minimum (go2's special case).
+    pub at_pinefar_depository: bool,
+}
+
+/// Inputs for the silver-funding pre-flight, from GameState + config.
+#[derive(Clone, Copy)]
+pub struct FundingInputs {
+    /// Silver on hand (`game_state.silver`); None until a wealth line is seen.
+    pub silver: Option<u64>,
+    /// Permission to withdraw from the bank when short (`go2.get_silvers`).
+    pub get_silvers: bool,
+    /// Also pre-fund the return trip (`go2.get_return_trip_silvers`).
+    pub get_return_trip: bool,
 }
 
 /// The world snapshot the hands stow cascade needs, threaded through
@@ -142,6 +159,10 @@ enum Step {
     /// the edge. This is the §11 suspend/resume seam, same shape as
     /// AwaitStand suspending for a `stand`.
     Stashing { resume: Box<Step> },
+    /// The silver-funding pre-flight (paid travel). Runs before the walk:
+    /// check the trip cost, `wealth quiet`, and if short + permitted, redirect
+    /// to a bank, withdraw, then re-plan to the real destination.
+    Funding(FundingPhase),
     /// A move was sent; waiting to arrive in `expected`.
     AwaitArrival {
         expected: u32,
@@ -164,6 +185,20 @@ enum Step {
         /// far side instead of re-pathing back into the scramble.
         dest_inside: bool,
     },
+}
+
+/// The silver-funding pre-flight state (Step::Funding). Ported from go2.lic's
+/// bank-withdraw routine (2210-2293).
+#[derive(Debug, Clone, PartialEq)]
+enum FundingPhase {
+    /// `wealth quiet` sent; waiting for `game_state.silver` to update.
+    AwaitWealth { sent_ms: u64 },
+    /// Walking to the chosen bank (the task's path was redirected there).
+    /// `real_dest` is the destination to re-plan to once funded.
+    RoutingToBank { real_dest: u32, need: u64 },
+    /// `withdraw`/`ask banker for` sent at the bank; waiting for the silver to
+    /// reflect the withdrawal, then re-plan to `real_dest`.
+    AwaitWithdraw { real_dest: u32, need: u64, sent_ms: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -233,6 +268,11 @@ pub struct TravelTask {
     /// The LIFO stow stack carried from an EmptyHands to its later FillHands
     /// on the same edge (Lich's $fill_hands_actions).
     stash_stack: Vec<super::stash::Stowed>,
+    /// The silver the trip needs (0 = free). Set at start; drives funding.
+    silver_need: u64,
+    /// True while walking the funding detour to a bank (so arrival there
+    /// triggers the withdraw rather than a normal arrival).
+    funding_bank: Option<u32>,
 }
 
 impl TravelTask {
@@ -249,11 +289,20 @@ impl TravelTask {
             .ok_or_else(|| {
                 format!("no route from room {from} to {destination} (see .room for how this room resolved)")
             })?;
+        // Silver the trip needs (from silver-cost path tags). If non-zero, the
+        // funding pre-flight runs before the walk.
+        let full_path: Vec<u32> = std::iter::once(from).chain(path.iter().copied()).collect();
+        let silver_need = pathing::silver_cost(db, &full_path);
+        let step = if silver_need > 0 {
+            Step::Funding(FundingPhase::AwaitWealth { sent_ms: now_ms })
+        } else {
+            Step::Prepare
+        };
         Ok(TravelTask {
             destination,
             path,
             idx: 0,
-            step: Step::Prepare,
+            step,
             banned: HashSet::new(),
             edge_retries: 0,
             restarts: 0,
@@ -261,6 +310,8 @@ impl TravelTask {
             muckle_announced: false,
             stash: None,
             stash_stack: Vec::new(),
+            silver_need,
+            funding_bank: None,
         })
     }
 
@@ -319,7 +370,10 @@ impl TravelTask {
             // Unresolved (unmapped room / db still loading): hold.
             return events;
         };
-        if current == self.destination {
+        // Arrival at the real destination ends the trip — UNLESS we're on a
+        // funding detour (the destination stays the real one; the bank is a
+        // separate waypoint handled by the funding phase).
+        if current == self.destination && self.funding_bank.is_none() {
             events.push(TravelEvent::Arrived {
                 destination: self.destination,
                 seconds: (ctx.now_ms.saturating_sub(self.started_ms)) as f64 / 1000.0,
@@ -369,6 +423,9 @@ impl TravelTask {
             }
             Step::Stashing { resume } => {
                 self.tick_stashing(resume, current, ctx, &mut events);
+            }
+            Step::Funding(phase) => {
+                self.tick_funding(phase, current, ctx, &mut events);
             }
             Step::RunScript {
                 actions,
@@ -454,6 +511,20 @@ impl TravelTask {
     fn arrive(&mut self) {
         self.idx += 1;
         self.edge_retries = 0;
+        // On a funding detour, reaching the bank returns to the funding phase
+        // (to withdraw) rather than continuing as a normal walk.
+        if let Some(bank) = self.funding_bank {
+            if self.idx >= self.path.len() {
+                // Path to the bank is done — hand back to funding. real_dest /
+                // need are recovered from silver_need + the stored destination.
+                self.step = Step::Funding(FundingPhase::RoutingToBank {
+                    real_dest: self.destination,
+                    need: self.silver_need,
+                });
+                let _ = bank;
+                return;
+            }
+        }
         self.step = Step::Prepare;
     }
 
@@ -881,6 +952,167 @@ impl TravelTask {
         }
     }
 
+    /// The silver-funding pre-flight (Step::Funding). Ported from go2.lic's
+    /// bank-withdraw routine.
+    fn tick_funding(
+        &mut self,
+        phase: FundingPhase,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        let funding = ctx.funding;
+        match phase {
+            FundingPhase::AwaitWealth { sent_ms } => {
+                // Send `wealth quiet` once, then wait for the silver to update.
+                // (sent_ms == started: first entry — fire the check.)
+                if sent_ms == self.started_ms {
+                    events.push(TravelEvent::Send("wealth quiet".into()));
+                    // Move sent_ms forward so we don't re-send every tick.
+                    self.step = Step::Funding(FundingPhase::AwaitWealth {
+                        sent_ms: ctx.now_ms.max(self.started_ms + 1),
+                    });
+                    return;
+                }
+                let Some(silver) = funding.and_then(|f| f.silver) else {
+                    // Still waiting for the wealth line (or no funding inputs).
+                    if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
+                        // No wealth response — proceed and hope for the best
+                        // (Lich's routine only runs under GS; we don't block).
+                        self.begin_walk(current, ctx, events);
+                    }
+                    return;
+                };
+                if silver >= self.silver_need {
+                    // Funded — walk the real trip.
+                    events.push(TravelEvent::Status(format!(
+                        "trip costs {} silver, you have {silver} - funded",
+                        self.silver_need
+                    )));
+                    self.begin_walk(current, ctx, events);
+                    return;
+                }
+                // Short on silver.
+                let get_silvers = funding.map(|f| f.get_silvers).unwrap_or(false);
+                if !get_silvers {
+                    events.push(TravelEvent::Status(format!(
+                        "trip costs {} silver, you have {silver} - short; enable Get Silvers to auto-withdraw. Continuing anyway.",
+                        self.silver_need
+                    )));
+                    self.begin_walk(current, ctx, events);
+                    return;
+                }
+                // Find the nearest bank we can afford to WALK to (its own path
+                // cost must be within current silver — Lich's affordability
+                // check), then redirect the trip there.
+                let real_dest = self.destination;
+                let need = self.silver_need;
+                match self.nearest_affordable_bank(current, silver, ctx.db) {
+                    Some(bank) => {
+                        // Redirect the WALK to the bank (path only — the real
+                        // destination stays put; funding_bank marks the detour).
+                        let Some(bank_path) = pathing::path_to(ctx.db, current, bank) else {
+                            events.push(TravelEvent::Failed(
+                                "lost the route to the bank - travel aborted".into(),
+                            ));
+                            return;
+                        };
+                        events.push(TravelEvent::Status(format!(
+                            "short {} silver - routing to the nearest bank (room {bank}) to withdraw",
+                            need.saturating_sub(silver)
+                        )));
+                        self.path = bank_path;
+                        self.idx = 0;
+                        self.funding_bank = Some(bank);
+                        self.step = Step::Funding(FundingPhase::RoutingToBank { real_dest, need });
+                        self.tick_funding(
+                            FundingPhase::RoutingToBank { real_dest, need },
+                            current,
+                            ctx,
+                            events,
+                        );
+                    }
+                    None => {
+                        events.push(TravelEvent::Failed(
+                            "you're too poor to even reach a bank - travel aborted".into(),
+                        ));
+                    }
+                }
+            }
+            FundingPhase::RoutingToBank { real_dest, need } => {
+                // Arrived at the bank? Withdraw. Else keep walking (Prepare).
+                if Some(current) == self.funding_bank {
+                    let have = funding.and_then(|f| f.silver).unwrap_or(0);
+                    let amount = need.saturating_sub(have);
+                    let cmd = if ctx.at_pinefar_depository {
+                        format!("ask banker for {} silvers", amount.max(20))
+                    } else {
+                        format!("withdraw {amount} silvers")
+                    };
+                    events.push(TravelEvent::Send(cmd));
+                    self.funding_bank = None;
+                    self.step = Step::Funding(FundingPhase::AwaitWithdraw {
+                        real_dest,
+                        need,
+                        sent_ms: ctx.now_ms,
+                    });
+                } else {
+                    // Still en route — let the normal walk machinery run.
+                    self.step = Step::Prepare;
+                    self.tick_prepare(current, ctx, events);
+                }
+            }
+            FundingPhase::AwaitWithdraw {
+                real_dest,
+                need,
+                sent_ms,
+            } => {
+                let have = funding.and_then(|f| f.silver).unwrap_or(0);
+                if have >= need {
+                    // Funded — re-plan to the real destination and walk.
+                    events.push(TravelEvent::Status(format!(
+                        "withdrew to {have} silver - continuing to room {real_dest}"
+                    )));
+                    self.destination = real_dest;
+                    self.repath(ctx.db, current, events);
+                } else if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
+                    events.push(TravelEvent::Failed(
+                        "couldn't withdraw enough silver for the trip - aborted".into(),
+                    ));
+                }
+                // else keep waiting for the silver to reflect the withdrawal.
+            }
+        }
+    }
+
+    /// Leave the funding pre-flight and start walking the current path.
+    fn begin_walk(&mut self, current: u32, ctx: TravelContext, events: &mut Vec<TravelEvent>) {
+        self.step = Step::Prepare;
+        self.tick_prepare(current, ctx, events);
+    }
+
+    /// Nearest bank reachable within `silver` (its walk cost affordable), the
+    /// go2 affordability check. None if every bank costs more to reach than we
+    /// have.
+    fn nearest_affordable_bank(&self, from: u32, silver: u64, db: &MapDb) -> Option<u32> {
+        let mut banks: Vec<u32> = db.room_ids_with_tag("bank").to_vec();
+        // Nearest first by travel time.
+        banks.sort_by_key(|&b| {
+            pathing::path_to(db, from, b)
+                .map(|p| {
+                    let full: Vec<u32> = std::iter::once(from).chain(p).collect();
+                    (pathing::estimate_time(db, &full) * 1000.0) as u64
+                })
+                .unwrap_or(u64::MAX)
+        });
+        banks.into_iter().find(|&b| {
+            pathing::path_to(db, from, b).is_some_and(|p| {
+                let full: Vec<u32> = std::iter::once(from).chain(p).collect();
+                pathing::silver_cost(db, &full) <= silver
+            })
+        })
+    }
+
     fn tick_prepare(&mut self, current: u32, ctx: TravelContext, events: &mut Vec<TravelEvent>) {
         if ctx.muckled {
             if !self.muckle_announced {
@@ -1185,6 +1417,8 @@ mod tests {
         pathcodes: std::collections::BTreeMap<String, Vec<String>>,
         feedback: Vec<crate::core::move_feedback::MoveFeedback>,
         lich_fallback: bool,
+        funding: Option<FundingInputs>,
+        pinefar: bool,
     }
 
     impl Sim {
@@ -1202,6 +1436,8 @@ mod tests {
                 pathcodes: Default::default(),
                 feedback: Vec::new(),
                 lich_fallback: false,
+                funding: None,
+                pinefar: false,
             }
         }
 
@@ -1221,6 +1457,8 @@ mod tests {
                 hands: None,
                 feedback: &self.feedback,
                 lich_fallback: self.lich_fallback,
+                funding: self.funding,
+                at_pinefar_depository: self.pinefar,
             }
         }
     }
@@ -1502,6 +1740,8 @@ mod tests {
                 hands: Some(hands),
                 feedback: &[],
                 lich_fallback: false,
+                funding: None,
+                at_pinefar_depository: false,
             }
         }
 
@@ -1678,6 +1918,96 @@ mod tests {
         // It re-paths around via room 3.
         sim.now += 100;
         assert_eq!(sent(&task.tick(sim.ctx(&db))), ["east"], "re-routes natively");
+    }
+
+    fn funding_db() -> MapDb {
+        // Room 1 (dock) -> 2 (far port) costs 25000 silver. Room 1 -> 3 is a
+        // free walk to a bank.
+        MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Dock]"],
+                 "tags": ["silver-cost:2:25000"],
+                 "wayto": {"2": "board", "3": "west"}, "timeto": {"2": 1.0, "3": 0.2},
+                 "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Far Port]"],
+                 "wayto": {"1": "board"}, "timeto": {"1": 1.0}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[Bank, Teller]"],
+                 "tags": ["bank"], "wayto": {"1": "east"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap()
+    }
+
+    fn fund(silver: Option<u64>, get_silvers: bool) -> FundingInputs {
+        FundingInputs { silver, get_silvers, get_return_trip: false }
+    }
+
+    #[test]
+    fn funded_trip_walks_after_wealth_check() {
+        let db = funding_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.funding = Some(fund(None, false));
+        // Tick 1: funding pre-flight sends `wealth quiet`.
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
+        // The wealth line lands: 40000 silver, enough for the 25000 trip.
+        sim.now += 100;
+        sim.funding = Some(fund(Some(40000), false));
+        // Next tick: funded → the trip walks (sends the board move).
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["board"], "funded → walks the trip");
+    }
+
+    #[test]
+    fn short_without_permission_warns_and_proceeds() {
+        let db = funding_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.funding = Some(fund(None, false));
+        task.tick(sim.ctx(&db)); // wealth quiet
+        sim.now += 100;
+        sim.funding = Some(fund(Some(100), false)); // short, no get_silvers
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("short"))),
+            "warns about being short"
+        );
+        assert_eq!(sent(&events), ["board"], "proceeds anyway");
+    }
+
+    #[test]
+    fn short_with_permission_routes_to_bank_and_withdraws() {
+        let db = funding_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.funding = Some(fund(None, false));
+        task.tick(sim.ctx(&db)); // wealth quiet
+        sim.now += 100;
+        sim.funding = Some(fund(Some(100), true)); // short, but get_silvers on
+        // Redirects to the bank (room 3) and starts walking there.
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&events), ["west"], "routes toward the bank");
+        // Arrive at the bank (this tick registers arrival + hands back to
+        // the funding phase).
+        sim.current = 3;
+        sim.now += 100;
+        task.tick(sim.ctx(&db));
+        // Next tick at the bank: withdraw the shortfall.
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&events),
+            ["withdraw 24900 silvers"],
+            "withdraws the shortfall (25000 - 100)"
+        );
+        // The withdrawal reflects: now 25000 silver → re-plan to the real dest.
+        sim.now += 100;
+        sim.funding = Some(fund(Some(25000), true));
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("continuing"))),
+            "funded → continues to the real destination: {events:?}"
+        );
     }
 
     #[test]

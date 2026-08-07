@@ -909,9 +909,19 @@ pub struct Go2Config {
     pub use_seeking: bool,
     /// Route through portmaster (ship travel) edges (Lich's
     /// `UserVars.mapdb_use_portmasters`). These cost silver; keep enough on
-    /// hand (auto bank-withdraw is a future addition). Off by default.
+    /// hand or enable `get_silvers` for auto bank-withdraw. Off by default.
     #[serde(default)]
     pub use_portmasters: bool,
+    /// Permission for go2 to withdraw from the bank to fund paid travel
+    /// (Lich's `$go2_get_silvers`). When on and you're short, go2 routes to
+    /// the nearest bank, withdraws the shortfall, and continues. Off by
+    /// default.
+    #[serde(default)]
+    pub get_silvers: bool,
+    /// Also pre-fund the return trip when withdrawing (Lich's
+    /// `get return trip silvers`). Off by default.
+    #[serde(default)]
+    pub get_return_trip_silvers: bool,
 }
 
 impl Default for Go2Config {
@@ -925,6 +935,8 @@ impl Default for Go2Config {
             lich_fallback: false,
             use_seeking: false,
             use_portmasters: false,
+            get_silvers: false,
+            get_return_trip_silvers: false,
         }
     }
 }
