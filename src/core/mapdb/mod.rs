@@ -97,6 +97,17 @@ impl MapDb {
             for cmd in room.wayto.values_mut() {
                 inline(cmd);
             }
+            // Cartographer stores the timeto proc in its own sidecar too (e.g.
+            // the urchin/portmaster gates delegate to a hub room whose timeto
+            // is `;e UserVars.mapdb_use_urchins ... ? 0.1 : nil`). Without this
+            // the router sees an unparseable evaluate_script ref, treats the
+            // edge as uncosted, and never routes through it — the whole reason
+            // urchin/confluence edges were invisible to dijkstra.
+            for tt in room.timeto.values_mut() {
+                if let TimeTo::Proc(cmd) = tt {
+                    inline(cmd);
+                }
+            }
         }
     }
 
@@ -363,9 +374,17 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("stringprocs-v9.9.9/wayto")).unwrap();
+        std::fs::create_dir_all(tmp.join("stringprocs-v9.9.9/timeto")).unwrap();
         std::fs::write(
             tmp.join("stringprocs-v9.9.9/wayto/room-1-to-2.rb"),
             "empty_hands; move 'climb footpath'; fill_hands\n",
+        )
+        .unwrap();
+        // A timeto sidecar too — the urchin/portmaster gates live here, and
+        // they were NOT being inlined (so the router couldn't cost the edge).
+        std::fs::write(
+            tmp.join("stringprocs-v9.9.9/timeto/room-1-to-2.rb"),
+            "UserVars.mapdb_use_urchins == true ? 0.1 : nil\n",
         )
         .unwrap();
         let mapdb = tmp.join("mapdb-v9.9.9.json");
@@ -374,7 +393,8 @@ mod tests {
             r#"[
                 {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
                  "wayto": {"2": ";e Cartographer.evaluate_script('wayto/room-1-to-2.rb')"},
-                 "timeto": {"2": 0.2}, "paths": ""},
+                 "timeto": {"2": ";e Cartographer.evaluate_script('timeto/room-1-to-2.rb')"},
+                 "paths": ""},
                 {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
                  "wayto": {"1": "back"}, "timeto": {"1": 0.2}, "paths": ""}
             ]"#,
@@ -384,6 +404,15 @@ mod tests {
         let db = MapDb::load(&mapdb).unwrap();
         let edge = db.room(1).unwrap().wayto.get(&2).unwrap();
         assert_eq!(edge, ";e empty_hands; move 'climb footpath'; fill_hands");
+        // The timeto sidecar must be inlined too, or the router can't cost it.
+        match db.room(1).unwrap().timeto.get(&2).unwrap() {
+            TimeTo::Proc(body) => assert_eq!(
+                body,
+                ";e UserVars.mapdb_use_urchins == true ? 0.1 : nil",
+                "timeto sidecar ref was inlined"
+            ),
+            other => panic!("expected an inlined proc, got {other:?}"),
+        }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
