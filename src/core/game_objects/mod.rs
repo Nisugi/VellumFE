@@ -28,8 +28,10 @@
 
 pub mod inv_scan;
 pub mod parse;
+pub mod ready_stow;
 
 pub use parse::parse_anchor;
+pub use ready_stow::{ReadyKey, ReadyStow, StowKey};
 
 use std::collections::HashMap;
 
@@ -179,6 +181,9 @@ pub struct GameObjects {
     right_hand: Option<GameItem>,
     /// exist id -> status, from the last INVENTORY FULL scan.
     statuses: HashMap<String, ItemStatus>,
+    /// READY/STOW list state (sheath + default stow container + store rules),
+    /// filled from the game feed. Drives the hands stow cascade (P2).
+    ready_stow: ReadyStow,
     pub generation: u64,
 }
 
@@ -362,6 +367,21 @@ impl GameObjects {
     /// Record mark/registration status for an item (from an INV FULL scan).
     pub fn set_status(&mut self, item_id: String, status: ItemStatus) {
         self.statuses.insert(item_id, status);
+    }
+
+    /// Feed a game line to the READY/STOW parser (from `ready list`/`stow
+    /// list` output). `text` is the flat line; `link` is the first item link
+    /// on it, if any. Bumps the generation when it touches ready/stow state.
+    pub fn parse_ready_stow_line(&mut self, text: &str, link: Option<GameItem>) {
+        if self.ready_stow.parse(text, link) {
+            self.generation += 1;
+        }
+    }
+
+    /// The READY/STOW state (sheath, default stow, store rules) — read by the
+    /// hands stow cascade.
+    pub fn ready_stow(&self) -> &ReadyStow {
+        &self.ready_stow
     }
 
     // ---- queries (the consumer surface) ----

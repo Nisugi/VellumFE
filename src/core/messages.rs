@@ -100,6 +100,9 @@ pub struct MessageProcessor {
     /// caller in `process_element`. (container_id, items)
     pending_container_ingest:
         Option<(String, Vec<crate::core::game_objects::GameItem>)>,
+    /// READY/STOW list rows captured during flush (no `game_state` there);
+    /// drained into `game_state.objects` at the prompt. (line_text, item).
+    pending_ready_stow: Vec<(String, Option<crate::core::game_objects::GameItem>)>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -300,6 +303,7 @@ impl MessageProcessor {
             sorter_gameobj: None,
             inv_scan: Default::default(),
             pending_container_ingest: None,
+            pending_ready_stow: Vec::new(),
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
@@ -750,6 +754,12 @@ impl MessageProcessor {
                     for (id, status) in self.inv_scan.finish() {
                         game_state.objects.set_status(id, status);
                     }
+                }
+
+                // READY/STOW list rows captured during flush feed the
+                // ready/stow state now that game_state is in hand.
+                for (text, link) in self.pending_ready_stow.drain(..) {
+                    game_state.objects.parse_ready_stow_line(&text, link);
                 }
 
                 // Container contents extracted from a main-stream look line
@@ -3010,6 +3020,24 @@ impl MessageProcessor {
         if is_blank_line && !self.chunk_has_main_text {
             self.current_segments.clear();
             return;
+        }
+
+        // READY/STOW list rows: observe (don't squelch — the player asked for
+        // the list). Buffer the flat text + the first item link; the prompt
+        // handler feeds them into game_state.objects' ready/stow state, which
+        // drives the hands stow cascade (P2). Cheap: a couple of prefix checks
+        // gate the work, so ordinary lines pay almost nothing.
+        if crate::core::game_objects::ready_stow::line_is_ready_stow(&full_text) {
+            let link = self.current_segments.iter().find_map(|seg| {
+                seg.link_data.as_ref().map(|l| {
+                    crate::core::game_objects::GameItem::new(
+                        l.exist_id.clone(),
+                        l.noun.clone(),
+                        l.text.clone(),
+                    )
+                })
+            });
+            self.pending_ready_stow.push((full_text.clone(), link));
         }
 
         // Active INVENTORY FULL scan: capture status lines into the scan
