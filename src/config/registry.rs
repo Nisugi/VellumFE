@@ -738,6 +738,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "When native .go2 can't cross an edge, hand off to Lich's ;go2 (Lich connections only)", go2.lich_fallback),
         bool_entry!("go2.use_seeking", "Use Voln Seeking", "Travel",
             "Route through Voln Symbol of Seeking edges (only takes effect for a Voln Master)", go2.use_seeking),
+        bool_entry!("go2.use_portmasters", "Use Portmasters", "Travel",
+            "Route through portmaster ship travel (costs silver - keep enough on hand)", go2.use_portmasters),
     ];
     defs.sort_by_key(|def| def.key);
     defs

@@ -907,6 +907,11 @@ pub struct Go2Config {
     /// non-seeker is a no-op at routing time. Off by default.
     #[serde(default)]
     pub use_seeking: bool,
+    /// Route through portmaster (ship travel) edges (Lich's
+    /// `UserVars.mapdb_use_portmasters`). These cost silver; keep enough on
+    /// hand (auto bank-withdraw is a future addition). Off by default.
+    #[serde(default)]
+    pub use_portmasters: bool,
 }
 
 impl Default for Go2Config {
@@ -919,6 +924,7 @@ impl Default for Go2Config {
             lootsack: String::new(),
             lich_fallback: false,
             use_seeking: false,
+            use_portmasters: false,
         }
     }
 }

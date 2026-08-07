@@ -328,6 +328,28 @@ pub fn use_seeking() -> bool {
     USE_SEEKING.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// Portmaster edges: ";e UserVars.mapdb_use_portmasters == true ? 1200 : nil".
+// The number is the silver COST (the funding routine withdraws it). Routable
+// only when portmasters are enabled — mirrors Lich reading the UserVar.
+re!(
+    TIMETO_PORTMASTER,
+    r"^;e\s+UserVars\.mapdb_use_portmasters == true \? ([\d.]+) : nil$"
+);
+
+/// Whether portmaster edges are routable (Lich's `UserVars.mapdb_use_portmasters`).
+static USE_PORTMASTERS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Enable/disable portmaster routing.
+pub fn set_use_portmasters(enable: bool) {
+    USE_PORTMASTERS.store(enable, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether portmaster routing is enabled.
+pub fn use_portmasters() -> bool {
+    USE_PORTMASTERS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Resolve a timeto entry to seconds, following one level of delegation.
 /// `None` = edge disabled (settings-gated costs default off in v1).
 pub fn resolve_timeto(db: &MapDb, room: &Room, dest: u32) -> Option<f64> {
@@ -360,6 +382,11 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
                 // possible for a Voln Master — set_use_seeking gates it).
                 return use_seeking().then(|| c[1].parse().ok()).flatten();
             }
+            if let Some(c) = TIMETO_PORTMASTER.captures(src) {
+                // Routable only when portmasters are enabled; the number is
+                // the silver cost the funding routine covers.
+                return use_portmasters().then(|| c[1].parse().ok()).flatten();
+            }
             // Other settings gates (portmasters, day passes), event vars
             // ($mapdb_instability_timeto), and everything else: off.
             None
@@ -370,6 +397,10 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serializes tests that touch the process-global seeking/portmaster
+    /// gates, since cargo runs tests in parallel and they share those atomics.
+    static GATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn corpus_idioms_transpile() {
@@ -578,6 +609,9 @@ mod tests {
         .unwrap();
         let r1 = db.room(1).unwrap();
         let r2 = db.room(2).unwrap();
+        // The gated globals are process-shared; lock + pin for determinism.
+        let _g = GATE_LOCK.lock().unwrap();
+        set_use_portmasters(false);
         assert_eq!(resolve_timeto(&db, r1, 2), Some(40.5), "delegation follows");
         assert_eq!(resolve_timeto(&db, r2, 3), Some(30.0), "ternary takes the max");
         assert_eq!(resolve_timeto(&db, r2, 4), None, "portmasters default off");
@@ -598,6 +632,7 @@ mod tests {
         )
         .unwrap();
         let r1 = db.room(1).unwrap();
+        let _g = GATE_LOCK.lock().unwrap();
 
         // Default off → the seeking edge is unroutable.
         set_use_seeking(false, true);
@@ -613,6 +648,38 @@ mod tests {
 
         // Reset so the global doesn't leak into other tests.
         set_use_seeking(false, true);
+    }
+
+    #[test]
+    fn portmaster_edges_route_when_enabled_and_transpile() {
+        use WalkAction::*;
+        // The crossing already transpiles via the multifput+waitfor pattern.
+        assert_eq!(
+            transpile(";e multifput 'ask portmaster about travel 4','ask portmaster about travel 4';waitfor 'A crew member escorts you off the ship.'"),
+            Some(vec![
+                Put("ask portmaster about travel 4".into()),
+                Move("ask portmaster about travel 4".into())
+            ])
+        );
+        // The timeto gates routing on the portmaster flag.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Dock]"],
+                 "wayto": {"2": ";e multifput 'ask portmaster about travel 1','ask portmaster about travel 1';waitfor 'A crew member escorts you off the ship.'"},
+                 "timeto": {"2": ";e UserVars.mapdb_use_portmasters == true ? 1200 : nil"},
+                 "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Far Port]"],
+                 "wayto": {"1": "board"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let r1 = db.room(1).unwrap();
+        let _g = GATE_LOCK.lock().unwrap();
+        set_use_portmasters(false);
+        assert_eq!(resolve_timeto(&db, r1, 2), None, "off by default");
+        set_use_portmasters(true);
+        assert_eq!(resolve_timeto(&db, r1, 2), Some(1200.0), "routes when enabled");
+        set_use_portmasters(false);
     }
 
     #[test]

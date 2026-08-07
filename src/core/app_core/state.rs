@@ -1196,13 +1196,15 @@ impl AppCore {
             ));
             return;
         }
-        // Sync the Voln-seeking routing flag before planning (Lich's
-        // $go2_use_seeking). It only takes effect for a Voln Master, so
-        // set_use_seeking gates the config toggle on can_seek().
+        // Sync the gated-travel routing flags before planning (Lich's
+        // $go2_use_seeking / UserVars.mapdb_use_portmasters globals).
+        // Seeking only takes effect for a Voln Master, so its toggle is gated
+        // on can_seek(); portmasters are open to anyone with the silver.
         crate::core::pathing::transpile::set_use_seeking(
             self.config.go2.use_seeking,
             self.game_state.character.can_seek(),
         );
+        crate::core::pathing::transpile::set_use_portmasters(self.config.go2.use_portmasters);
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",
