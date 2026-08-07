@@ -11,6 +11,7 @@
 
 pub mod executor;
 pub mod mazes;
+pub mod stash;
 pub mod target;
 
 use std::collections::VecDeque;
