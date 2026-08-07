@@ -24,6 +24,7 @@ pub mod jinx;
 pub mod layout_engine;
 pub mod map_service;
 pub mod mapdb;
+pub mod move_feedback;
 pub mod mapdb_update;
 pub mod menu_actions;
 pub mod known_windows;

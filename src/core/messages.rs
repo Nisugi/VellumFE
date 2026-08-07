@@ -103,6 +103,10 @@ pub struct MessageProcessor {
     /// READY/STOW list rows captured during flush (no `game_state` there);
     /// drained into `game_state.objects` at the prompt. (line_text, item).
     pending_ready_stow: Vec<(String, Option<crate::core::game_objects::GameItem>)>,
+    /// Move-feedback events classified during flush (no `game_state` there);
+    /// drained into `game_state.move_feedback` at the prompt so the walk
+    /// executor sees each one exactly once.
+    pending_move_feedback: Vec<crate::core::move_feedback::MoveFeedback>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -304,6 +308,7 @@ impl MessageProcessor {
             inv_scan: Default::default(),
             pending_container_ingest: None,
             pending_ready_stow: Vec::new(),
+            pending_move_feedback: Vec::new(),
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
@@ -550,6 +555,13 @@ impl MessageProcessor {
             ParsedElement::RoomId { id } => {
                 *nav_room_id = Some(id.clone());
                 *room_window_dirty = true;
+                // A <nav> tag is the universal "you moved" signal (Lich's
+                // room_count increment). Push it for the walk executor even
+                // if the room can't be resolved to a mapdb id — arrival
+                // detection then never hangs on an unmapped room (§12).
+                game_state
+                    .move_feedback
+                    .push_back(crate::core::move_feedback::MoveFeedback::NavArrived);
                 tracing::debug!("Room ID updated: {}", id);
             }
             ParsedElement::RoomMeta { attrs } => {
@@ -761,6 +773,12 @@ impl MessageProcessor {
                 for (text, link) in self.pending_ready_stow.drain(..) {
                     game_state.objects.parse_ready_stow_line(&text, link);
                 }
+
+                // Move-feedback events captured during flush queue for the
+                // walk executor (drained by tick_travel).
+                game_state
+                    .move_feedback
+                    .extend(self.pending_move_feedback.drain(..));
 
                 // Container contents extracted from a main-stream look line
                 // during flush (which lacks game_state) land here.
@@ -3020,6 +3038,15 @@ impl MessageProcessor {
         if is_blank_line && !self.chunk_has_main_text {
             self.current_segments.clear();
             return;
+        }
+
+        // Move feedback: classify the line into a typed recovery event (hands
+        // full, closed door, fell, hard/soft move failure, …) for the walk
+        // executor. Buffered here (no game_state); drained at the prompt into
+        // game_state.move_feedback so each event fires exactly once. The
+        // aho-corasick matcher is cheap on non-matching lines.
+        if let Some(fb) = crate::core::move_feedback::classify_line(&full_text) {
+            self.pending_move_feedback.push(fb);
         }
 
         // READY/STOW list rows: observe (don't squelch — the player asked for

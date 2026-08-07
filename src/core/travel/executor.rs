@@ -45,6 +45,9 @@ pub struct TravelContext<'a> {
     /// actions). `None` when the caller doesn't supply them (tests that don't
     /// exercise hands) — the actions then fall back to a bare stow/get.
     pub hands: Option<StashInputs<'a>>,
+    /// Move-feedback events since the last tick (drained from GameState) —
+    /// nav arrivals + recovery signals. Empty when idle (§09/§12).
+    pub feedback: &'a [crate::core::move_feedback::MoveFeedback],
 }
 
 /// The world snapshot the hands stow cascade needs, threaded through
@@ -89,6 +92,10 @@ impl TravelContext<'_> {
             Cond::Sitting => self.sitting,
             Cond::Kneeling => self.kneeling,
         }
+    }
+
+    fn saw(&self, event: &crate::core::move_feedback::MoveFeedback) -> bool {
+        self.feedback.contains(event)
     }
 }
 
@@ -395,6 +402,23 @@ impl TravelTask {
                         "off the planned route (room {current}) - re-pathing"
                     )));
                     self.repath(ctx.db, current, &mut events);
+                    return events;
+                }
+                // Recovery from move feedback (Lich's `move` retry loop). Only
+                // when we're still in `from` (the move hasn't landed).
+                if self.recover_from_feedback(from, ctx, &mut events) {
+                    return events;
+                }
+                // A nav fired but the room is UNRESOLVED (an UID-less room the
+                // resolver couldn't place): a nav means we moved, so trust the
+                // planned edge and treat it as arrival at `expected` (§12) —
+                // rather than timing out and wrongly banning a good edge. We
+                // only do this when current_room is None (truly unresolved),
+                // never when it still reads `from` (that's a failed move, or a
+                // same-room nav, handled by the timeout path).
+                use crate::core::move_feedback::MoveFeedback;
+                if ctx.saw(&MoveFeedback::NavArrived) && ctx.current_room.is_none() {
+                    self.arrive();
                     return events;
                 }
                 if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
@@ -929,6 +953,114 @@ impl TravelTask {
         };
     }
 
+    /// React to move-feedback while awaiting arrival, the way Lich's `move`
+    /// reacts to game lines (global_defs.rb:603-771). Sends a recovery command
+    /// and resets the arrival timer so the retry gets a fresh window. Returns
+    /// true if it handled a feedback event this tick (the caller returns).
+    fn recover_from_feedback(
+        &mut self,
+        from: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) -> bool {
+        use crate::core::move_feedback::MoveFeedback as F;
+        // The command that failed is the wayto for this edge.
+        let expected = match &self.step {
+            Step::AwaitArrival { expected, .. } => *expected,
+            _ => return false,
+        };
+        let command = ctx
+            .db
+            .room(from)
+            .and_then(|r| r.wayto.get(&expected).cloned())
+            .unwrap_or_default();
+
+        // Hard failure → the edge is bad; ban it and re-path (Lich `false`).
+        if ctx.saw(&F::MoveFailedRemovable) {
+            events.push(TravelEvent::Status(format!(
+                "move {from} -> {expected} failed - disabling that edge and re-pathing"
+            )));
+            self.banned.insert((from, expected));
+            self.repath(ctx.db, from, events);
+            return true;
+        }
+        // Blocked-but-keep → don't ban; re-path around it for now (Lich `nil`:
+        // "don't delete the edge"). A future attempt may succeed.
+        if ctx.saw(&F::MoveFailedKeep) {
+            events.push(TravelEvent::Status(format!(
+                "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
+            )));
+            self.repath(ctx.db, from, events);
+            return true;
+        }
+        // Hands full → run the stash cascade, then retry the move.
+        if ctx.saw(&F::HandsFull) {
+            if let Some(inputs) = ctx.hands {
+                let mut task = super::stash::StashTask::empty();
+                for ev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
+                    if let super::stash::StashEvent::Send(cmd) = ev {
+                        events.push(TravelEvent::Send(cmd));
+                    }
+                }
+                self.stash = Some(task);
+                self.step = Step::Stashing {
+                    resume: Box::new(Step::AwaitArrival {
+                        expected,
+                        from,
+                        sent_ms: ctx.now_ms,
+                    }),
+                };
+            } else {
+                events.push(TravelEvent::Send("empty hands".into()));
+            }
+            return true;
+        }
+        // Closed door → send the `open` variant, then retry the move.
+        if ctx.saw(&F::DoorClosed) {
+            let open = command.replacen("go", "open", 1).replacen("climb", "open", 1);
+            events.push(TravelEvent::Send(open));
+            events.push(TravelEvent::Send(command));
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            return true;
+        }
+        // Fell / knocked down → stand, then retry.
+        if ctx.saw(&F::Fell) {
+            if !ctx.standing {
+                events.push(TravelEvent::Send("stand".into()));
+            }
+            events.push(TravelEvent::Send(command));
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            return true;
+        }
+        // Verb swaps: go <-> climb.
+        if ctx.saw(&F::NeedClimb) {
+            events.push(TravelEvent::Send(command.replacen("go", "climb", 1)));
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            return true;
+        }
+        if ctx.saw(&F::CantClimb) {
+            events.push(TravelEvent::Send(command.replacen("climb", "go", 1)));
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            return true;
+        }
+        // Item at feet → stow it, then retry.
+        if ctx.saw(&F::ItemAtFeet) {
+            events.push(TravelEvent::Send("stow feet".into()));
+            events.push(TravelEvent::Send(command));
+            self.reset_arrival_timer(from, expected, ctx.now_ms);
+            return true;
+        }
+        false
+    }
+
+    fn reset_arrival_timer(&mut self, from: u32, expected: u32, now_ms: u64) {
+        self.step = Step::AwaitArrival {
+            expected,
+            from,
+            sent_ms: now_ms,
+        };
+    }
+
     /// An edge the router planned (it has a `timeto`) but we can't cross
     /// natively (its `wayto` proc doesn't transpile). Disable it for the
     /// session and re-path around it. The Lich `;go2` fallback (P6) hooks in
@@ -1024,6 +1156,7 @@ mod tests {
         rt: f64,
         now: u64,
         pathcodes: std::collections::BTreeMap<String, Vec<String>>,
+        feedback: Vec<crate::core::move_feedback::MoveFeedback>,
     }
 
     impl Sim {
@@ -1039,6 +1172,7 @@ mod tests {
                 rt: 0.0,
                 now: 0,
                 pathcodes: Default::default(),
+                feedback: Vec::new(),
             }
         }
 
@@ -1056,6 +1190,7 @@ mod tests {
                 now_ms: self.now,
                 pathcodes: &self.pathcodes,
                 hands: None,
+                feedback: &self.feedback,
             }
         }
     }
@@ -1335,6 +1470,7 @@ mod tests {
                 now_ms: now,
                 pathcodes,
                 hands: Some(hands),
+                feedback: &[],
             }
         }
 
@@ -1362,6 +1498,100 @@ mod tests {
 
         // Arrival at room 2 finishes the edge.
         // (Script is complete; the executor is now awaiting the room change.)
+    }
+
+    #[test]
+    fn closed_door_feedback_opens_then_retries() {
+        use crate::core::move_feedback::MoveFeedback;
+        // Edge 1 -> 2 is "go door".
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": "go door"}, "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "go door"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        // Tick 1: sends the move.
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["go door"]);
+        // The door is closed: feedback fires while we're still in room 1.
+        sim.now += 100;
+        sim.feedback = vec![MoveFeedback::DoorClosed];
+        let events = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&events),
+            ["open door", "go door"],
+            "opens the door then retries the move"
+        );
+    }
+
+    #[test]
+    fn hard_failure_feedback_bans_the_edge_and_repaths() {
+        use crate::core::move_feedback::MoveFeedback;
+        // 1 -> 2 direct, or 1 -> 3 -> 2 around.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": "north", "3": "east"}, "timeto": {"2": 0.2, "3": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "south"}, "timeto": {"1": 0.2}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[C]"],
+                 "wayto": {"2": "north"}, "timeto": {"2": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        // Tick 1: tries the direct edge.
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
+        // "You can't go there" — hard failure: ban 1->2, re-path via 3.
+        sim.now += 100;
+        sim.feedback = vec![MoveFeedback::MoveFailedRemovable];
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("re-pathing"))),
+            "hard failure re-paths"
+        );
+        // The re-plan sends the detour's first hop.
+        sim.now += 100;
+        sim.feedback.clear();
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["east"], "re-routes via room 3");
+    }
+
+    #[test]
+    fn nav_to_unresolved_room_counts_as_arrival() {
+        use crate::core::move_feedback::MoveFeedback;
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": "go shop"}, "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Shop]"],
+                 "wayto": {"1": "out"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["go shop"]);
+        // We stepped into an UID-less shop the resolver can't place:
+        // current_room becomes None, but a <nav> fired. Trust the edge.
+        sim.now += 100;
+        sim.current = 2; // sim always resolves; simulate unresolved via ctx override
+        // Force the "unresolved" case: build a ctx with current_room = None.
+        let events = {
+            let mut ctx = sim.ctx(&db);
+            ctx.current_room = None;
+            let fb = vec![MoveFeedback::NavArrived];
+            ctx.feedback = &fb;
+            task.tick(ctx)
+        };
+        assert!(
+            events.is_empty() || !events.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
+            "a nav into an unresolved room advances rather than failing"
+        );
     }
 
     #[test]

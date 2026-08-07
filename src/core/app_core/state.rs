@@ -989,11 +989,17 @@ impl AppCore {
     /// quiet).
     pub fn tick_travel(&mut self) {
         if !self.travel.is_traveling() {
+            // Not walking: don't let feedback accumulate unboundedly.
+            self.game_state.move_feedback.clear();
             return;
         }
         let Some(db) = self.map.mapdb().cloned() else {
             return;
         };
+        // Drain the move-feedback queue for this tick (edge-triggered events,
+        // each consumed exactly once — §09).
+        let feedback: Vec<crate::core::move_feedback::MoveFeedback> =
+            self.game_state.move_feedback.drain(..).collect();
         // Active spell numbers for scripted-edge checkspell branches.
         let active_spells: Vec<u16> = self
             .game_state
@@ -1077,6 +1083,7 @@ impl AppCore {
             now_ms: self.travel.now_ms(),
             pathcodes: &self.config.go2.pathcodes,
             hands: Some(hands),
+            feedback: &feedback,
         };
         let events = self.travel.tick(ctx);
         for event in events {
