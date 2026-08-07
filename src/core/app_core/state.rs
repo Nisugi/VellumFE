@@ -1862,16 +1862,19 @@ impl AppCore {
                 return None; // flat wheel: portals have no folders
             }
             let slices: Vec<crate::config::WheelSlice> = self
-                .portal_commands()
+                .portal_candidate_list()
                 .into_iter()
-                .map(|command| crate::config::WheelSlice {
-                    // "go gate" reads as "gate" on the wedge; the full
-                    // command still shows in the hub.
-                    label: command
+                .map(|c| crate::config::WheelSlice {
+                    // The wedge shows the movement label (verb-stripped for a
+                    // plain "go gate" -> "gate"); a StringProc edge's label is
+                    // already the movement (e.g. "climb footpath"). The pick
+                    // runs c.command (a .go2 <id> for proc edges).
+                    label: c
+                        .label
                         .split_once(' ')
                         .map(|(_, rest)| rest.to_string())
-                        .unwrap_or_else(|| command.clone()),
-                    command,
+                        .unwrap_or_else(|| c.label.clone()),
+                    command: c.command,
                     // Dynamic slices carry no span/inner/color: the portals
                     // ring stays evenly spaced with the global dead zone.
                     ..Default::default()

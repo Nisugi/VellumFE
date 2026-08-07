@@ -17,24 +17,71 @@ const PORTAL_NOUNS: [&str; 18] = [
     "ladder", "trapdoor", "opening", "entrance", "path", "trail", "bridge", "ramp", "curtain",
 ];
 
-/// Distinct non-compass, non-StringProc movement commands from a room's
-/// wayto edges, in stable (BTreeMap value) order.
-fn portal_candidates<'a>(wayto: impl Iterator<Item = &'a String>) -> Vec<String> {
+/// One pickable portal exit: what the user SEES (`label`, the movement) and
+/// what a pick SENDS (`command`). For a plain string edge the two are the
+/// same command; for a StringProc edge the label is the movement extracted
+/// from the transpiled script and the command is `.go2 <destid>`, which
+/// routes/walks the edge natively (P1) — the user never sees `.go2 <id>`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PortalCandidate {
+    pub label: String,
+    pub command: String,
+}
+
+/// Non-compass wayto exits of a room as labeled portal candidates, including
+/// StringProc edges (shown by their movement). `db` resolves proc-edge
+/// scripts to a movement label. Stable (BTreeMap) order, deduped by label.
+fn portal_candidates(
+    room: &crate::core::mapdb::Room,
+    db: &crate::core::mapdb::MapDb,
+) -> Vec<PortalCandidate> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
-    for command in wayto {
+    for (&dest, command) in &room.wayto {
         let trimmed = command.trim();
         if crate::core::mapdb::is_proc_command(trimmed) {
+            // A StringProc edge: show the movement it performs, send a native
+            // .go2 to that neighbor. Skip ones we can't interpret at all.
+            let Some(label) = proc_edge_label(trimmed, db) else {
+                continue;
+            };
+            if COMPASS_WORDS.contains(&label.to_ascii_lowercase().as_str()) {
+                continue;
+            }
+            if seen.insert(label.to_ascii_lowercase()) {
+                out.push(PortalCandidate {
+                    label,
+                    command: format!(".go2 {dest}"),
+                });
+            }
             continue;
         }
         if COMPASS_WORDS.contains(&trimmed.to_ascii_lowercase().as_str()) {
             continue;
         }
         if seen.insert(trimmed.to_ascii_lowercase()) {
-            out.push(trimmed.to_string());
+            out.push(PortalCandidate {
+                label: trimmed.to_string(),
+                command: trimmed.to_string(),
+            });
         }
     }
     out
+}
+
+/// The movement a StringProc edge performs, for display — the first
+/// `Move`/`Put` target in its transpiled actions (e.g. "climb footpath").
+/// `None` when the edge doesn't transpile to any movement.
+fn proc_edge_label(
+    command: &str,
+    db: &crate::core::mapdb::MapDb,
+) -> Option<String> {
+    use crate::core::pathing::edge::WalkAction;
+    let actions = crate::core::pathing::transpile::transpile_edge(db, command)?;
+    actions.into_iter().find_map(|a| match a {
+        WalkAction::Move(cmd) | WalkAction::Put(cmd) => Some(cmd),
+        _ => None,
+    })
 }
 
 /// Seconds encoded by a macro sleep segment: the whole segment (modulo
@@ -444,32 +491,52 @@ impl AppCore {
         self.add_system_message(&summary);
     }
 
-    /// The current room's portal commands ("go arch", "climb stair"):
-    /// the mapdb room's wayto edges, falling back to portal-looking
-    /// nouns among the room objects when the map doesn't know the room.
-    /// Shared by `.portal` and the dynamic `portals` controller wheel.
-    pub fn portal_commands(&self) -> Vec<String> {
-        let mut candidates: Vec<String> = Vec::new();
+    /// The current room's portal exits as labeled candidates (Ask B): the
+    /// mapdb room's non-compass wayto edges — string AND StringProc — UNIONED
+    /// with portal-looking room-object nouns from the server, deduped by
+    /// label. Shared by `.portal` and the dynamic `portals` controller wheel.
+    pub fn portal_candidate_list(&self) -> Vec<PortalCandidate> {
+        let mut out: Vec<PortalCandidate> = Vec::new();
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+        // Mapdb wayto edges (string + StringProc).
         if let (Some(room_id), Some(db)) = (self.map.current_room_id, self.map.mapdb()) {
             if let Some(room) = db.room(room_id) {
-                candidates = portal_candidates(room.wayto.values());
+                for c in portal_candidates(room, db) {
+                    if seen.insert(c.label.to_ascii_lowercase()) {
+                        out.push(c);
+                    }
+                }
             }
         }
-        if candidates.is_empty() {
-            candidates = self
-                .game_state
-                .room_objects
-                .iter()
-                .filter_map(|obj| {
-                    let noun = obj.noun.as_deref()?;
-                    PORTAL_NOUNS
-                        .contains(&noun.to_ascii_lowercase().as_str())
-                        .then(|| format!("go {}", noun))
-                })
-                .collect();
-            candidates.dedup();
+
+        // Union in the server's portal-looking room-object nouns. These are
+        // the host's noun exits (doors/gates/arches) — useful even when the
+        // mapdb already knows the room, and the only source when it doesn't.
+        for obj in &self.game_state.room_objects {
+            if let Some(noun) = obj.noun.as_deref() {
+                if PORTAL_NOUNS.contains(&noun.to_ascii_lowercase().as_str()) {
+                    let command = format!("go {noun}");
+                    if seen.insert(command.to_ascii_lowercase()) {
+                        out.push(PortalCandidate {
+                            label: command.clone(),
+                            command,
+                        });
+                    }
+                }
+            }
         }
-        candidates
+        out
+    }
+
+    /// The current room's portal commands — back-compat flat command list for
+    /// the controller wheel and phone snapshot. Prefer `portal_candidate_list`
+    /// where labels matter.
+    pub fn portal_commands(&self) -> Vec<String> {
+        self.portal_candidate_list()
+            .into_iter()
+            .map(|c| c.command)
+            .collect()
     }
 
     /// `.portal [n|text]` — walk through the room's non-compass exit
@@ -478,23 +545,24 @@ impl AppCore {
     /// from `portal_commands`. Returns the movement command to send
     /// upstream, or None.
     fn handle_portal_command(&mut self, args: &[String]) -> Option<String> {
-        let mut candidates = self.portal_commands();
+        let mut candidates = self.portal_candidate_list();
 
         match (candidates.len(), args.first()) {
             (0, _) => {
                 self.add_system_message("No portal found here.");
                 None
             }
-            (1, None) => Some(candidates.remove(0)),
+            (1, None) => Some(candidates.remove(0).command),
             (_, None) => {
                 // Several portals: open a local popup menu — keyboard and
                 // controller navigable on the desktop frontends. Phones
                 // (whose menus are server-driven) get the listing message.
+                // The menu SHOWS the movement label, RUNS the command.
                 let items: Vec<crate::data::ui_state::PopupMenuItem> = candidates
                     .iter()
-                    .map(|cmd| crate::data::ui_state::PopupMenuItem {
-                        text: cmd.clone(),
-                        command: cmd.clone(),
+                    .map(|c| crate::data::ui_state::PopupMenuItem {
+                        text: c.label.clone(),
+                        command: c.command.clone(),
                         disabled: false,
                     })
                     .collect();
@@ -506,7 +574,7 @@ impl AppCore {
                 let listing = candidates
                     .iter()
                     .enumerate()
-                    .map(|(i, cmd)| format!("{}) {}", i + 1, cmd))
+                    .map(|(i, c)| format!("{}) {}", i + 1, c.label))
                     .collect::<Vec<_>>()
                     .join("  ");
                 self.add_system_message(&format!(
@@ -518,15 +586,15 @@ impl AppCore {
             (_, Some(pick)) => {
                 if let Ok(index) = pick.parse::<usize>() {
                     if index >= 1 && index <= candidates.len() {
-                        return Some(candidates.remove(index - 1));
+                        return Some(candidates.remove(index - 1).command);
                     }
                 }
                 let needle = pick.to_ascii_lowercase();
                 if let Some(found) = candidates
                     .iter()
-                    .position(|cmd| cmd.to_ascii_lowercase().contains(&needle))
+                    .position(|c| c.label.to_ascii_lowercase().contains(&needle))
                 {
-                    return Some(candidates.remove(found));
+                    return Some(candidates.remove(found).command);
                 }
                 self.add_system_message(&format!("No portal matches '{}'.", pick));
                 None
@@ -2668,22 +2736,39 @@ mod portal_tests {
     use crate::core::state::RoomObject;
 
     #[test]
-    fn candidates_skip_compass_and_procs_and_dupes() {
-        let wayto: Vec<String> = [
-            "north",
-            "sw",
-            "go door",
-            "go door", // second edge through the same door
-            "climb stair",
-            ";e StringProc stuff",
-            "Out",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    fn candidates_skip_compass_dedupe_and_surface_procs_by_movement() {
+        // A room whose edges mix cardinals, string portals, and a StringProc
+        // footpath edge. Compass words are excluded; the proc edge appears by
+        // its movement label ("climb footpath") with a .go2 <dest> command;
+        // an un-interpretable proc is skipped.
+        let db = crate::core::mapdb::MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Road]"],
+                 "wayto": {
+                    "2": "north",
+                    "3": "go door",
+                    "4": "climb stair",
+                    "5": ";e empty_hands; move 'climb footpath'; fill_hands",
+                    "6": ";e some_unparseable_confluence_thing"
+                 },
+                 "timeto": {"2": 0.2, "3": 0.2, "4": 0.2, "5": 0.2, "6": 0.2},
+                 "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[N]"],
+                 "wayto": {"1": "south"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let room = db.room(1).unwrap();
+        let got = portal_candidates(room, &db);
         assert_eq!(
-            portal_candidates(wayto.iter()),
-            vec!["go door".to_string(), "climb stair".to_string()]
+            got,
+            vec![
+                PortalCandidate { label: "go door".into(), command: "go door".into() },
+                PortalCandidate { label: "climb stair".into(), command: "climb stair".into() },
+                // The proc footpath shows its movement, runs .go2 to room 5.
+                PortalCandidate { label: "climb footpath".into(), command: ".go2 5".into() },
+            ],
+            "compass excluded, string edges verbatim, proc edge by movement"
         );
     }
 
