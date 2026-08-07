@@ -1594,9 +1594,28 @@ impl TravelTask {
         use crate::core::move_feedback::MoveFeedback as F;
         // The command that failed is the wayto for this edge.
         let expected = match &self.step {
-            Step::AwaitArrival { expected, .. } => *expected,
+            Step::AwaitArrival { expected, sent_ms, slow, .. } => (*expected, *sent_ms, *slow),
             _ => return false,
         };
+        let (expected, sent_ms, slow) = expected;
+        // Arrival wins over any failure line (Lich's `room_count > room_count`
+        // guard, global_defs.rb:587): if a room-change signal fired this tick,
+        // the move succeeded — ignore a co-queued failure line, which is stale
+        // or spurious (a lagged/raced rejection for a move that actually
+        // landed). Reset the arrival window and wait for the room to resolve.
+        // Without this, a failure racing the room change bans a good edge and
+        // strands the trip (the live Trollfang 1280->1281 abort).
+        if ctx.saw(&F::NavArrived) {
+            self.edge_retries = 0;
+            self.step = Step::AwaitArrival {
+                expected,
+                from,
+                sent_ms: ctx.now_ms,
+                slow,
+            };
+            return true;
+        }
+        let _ = (sent_ms, slow);
         let command = ctx
             .db
             .room(from)
@@ -1615,13 +1634,29 @@ impl TravelTask {
             return true;
         }
 
-        // Hard failure → the edge is bad; ban it and re-path (Lich `false`).
+        // Apparent hard failure. A move-rejection line can be spurious: it may
+        // be combat/ambient text that merely contains a failure phrase, or a
+        // real rejection that raced a lagged room change (the move actually
+        // succeeded — Lich guards this with `room_count > room_count`). So we
+        // do NOT ban a cardinal edge on the first failure. We retry the move a
+        // couple of times; if the room already changed, next tick's arrival
+        // check wins and the edge is never touched. Only after the retries are
+        // exhausted (a genuinely dead edge) do we ban it and re-path — matching
+        // Lich's `return false` but after its retry loop, not before it.
         if ctx.saw(&F::MoveFailedRemovable) {
-            events.push(TravelEvent::Status(format!(
-                "move {from} -> {expected} failed - disabling that edge and re-pathing"
-            )));
-            self.banned.insert((from, expected));
-            self.repath(ctx.db, from, events);
+            if self.edge_retries >= MAX_EDGE_RETRIES {
+                events.push(TravelEvent::Status(format!(
+                    "move {from} -> {expected} keeps failing - disabling that edge and re-pathing"
+                )));
+                self.banned.insert((from, expected));
+                self.repath(ctx.db, from, events);
+            } else {
+                self.edge_retries += 1;
+                if !command.is_empty() && ctx.rt_remaining <= 0.0 {
+                    events.push(TravelEvent::Send(command));
+                }
+                self.reset_arrival_timer(from, expected, ctx.now_ms);
+            }
             return true;
         }
         // Blocked-but-keep → don't ban; re-path around it for now (Lich `nil`:
@@ -2270,18 +2305,77 @@ mod tests {
         let mut sim = Sim::new(1);
         // Tick 1: tries the direct edge.
         assert_eq!(sent(&task.tick(sim.ctx(&db))), ["north"]);
-        // "You can't go there" — hard failure: ban 1->2, re-path via 3.
+        // "You can't go there" — but a failure line can race a lagged room
+        // change or be spurious, so we RETRY the move rather than banning the
+        // edge on the first hit. The retries re-send `north`.
+        for _ in 0..MAX_EDGE_RETRIES {
+            sim.now += 100;
+            sim.feedback = vec![MoveFeedback::MoveFailedRemovable];
+            assert_eq!(
+                sent(&task.tick(sim.ctx(&db))),
+                ["north"],
+                "a failure retries the move before giving up"
+            );
+        }
+        // Now the retries are exhausted: ban 1->2 and re-path via 3.
         sim.now += 100;
         sim.feedback = vec![MoveFeedback::MoveFailedRemovable];
         let events = task.tick(sim.ctx(&db));
         assert!(
-            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("re-pathing"))),
-            "hard failure re-paths"
+            events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("keeps failing"))),
+            "repeated failure finally bans + re-paths: {events:?}"
         );
         // The re-plan sends the detour's first hop.
         sim.now += 100;
         sim.feedback.clear();
         assert_eq!(sent(&task.tick(sim.ctx(&db))), ["east"], "re-routes via room 3");
+    }
+
+    #[test]
+    fn arrival_wins_over_a_raced_failure_line() {
+        use crate::core::move_feedback::MoveFeedback;
+        // The live Trollfang bug: `south` succeeds (room changes) but a failure
+        // line races in the same tick. The nav must win — the good edge is NOT
+        // banned.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": "south", "3": "east"}, "timeto": {"2": 0.2, "3": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "north"}, "timeto": {"1": 0.2}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[C]"],
+                 "wayto": {"2": "north"}, "timeto": {"2": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["south"]);
+        // A failure line AND a nav (room changed) arrive the same tick, but the
+        // resolver hasn't updated current_room to 2 yet (still reads 1).
+        sim.now += 100;
+        sim.feedback = vec![
+            MoveFeedback::MoveFailedRemovable,
+            MoveFeedback::NavArrived,
+        ];
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("disabling") || s.contains("keeps failing"))),
+            "the raced failure does NOT ban the edge: {ev:?}"
+        );
+        assert!(
+            !task.banned.contains(&(1, 2)),
+            "edge 1->2 stays in the graph"
+        );
+        // The room resolves to 2 → arrival.
+        sim.current = 2;
+        sim.now += 100;
+        sim.feedback.clear();
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 2, .. })),
+            "arrives normally: {ev:?}"
+        );
     }
 
     #[test]

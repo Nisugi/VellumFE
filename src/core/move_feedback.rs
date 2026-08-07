@@ -102,11 +102,17 @@ patterns! {
     ],
     MoveFailedRemovable => [
         "You can't go there",
-        "in that direction",
+        // Specific to a move rejection ("You can't go/swim in that direction");
+        // the bare "in that direction" alone matched combat/ambient prose.
+        "go in that direction",
+        "swim in that direction",
         "Where are you trying to go",
         "I could not find what you were referring to",
         "How do you plan to do that here",
-        "You cannot do that",
+        // "You cannot do that" alone is far too common in combat/social text.
+        // The move-rejection form is "You cannot do that while ..." — but that
+        // is handled by more specific events (Mounted etc.), so drop the bare
+        // substring entirely.
         "is too far away",
         "You may not pass",
         "become impassable",
