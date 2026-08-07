@@ -238,6 +238,12 @@ enum Step {
         sent_from: u32,
         sent_ms: u64,
     },
+    /// The response-driven Chronomage day-pass BUY (Lich's dothistimeout flow).
+    /// Each phase sends a command and waits for its game-response event before
+    /// advancing — ask → offer → confirm → (bank trip if too poor) → pass in
+    /// hand → walk back to the waiting room → raise → travel. See
+    /// travel::day_pass_buy.
+    DayPassBuy(super::day_pass_buy::BuyState),
 }
 
 /// A Confluence move in flight: where it was sent from and which direction, so
@@ -353,6 +359,11 @@ pub struct TravelTask {
     /// caravan). We wait silently aboard and re-plan the route the moment the
     /// ride drops us in a normal room.
     in_transport: bool,
+    /// The day-pass sack id (for putting the bought pass back), carried across
+    /// the response-driven buy conversation (Step::DayPassBuy).
+    day_pass_buy_sack: Option<String>,
+    /// The day-pass edge's destination room, for the raise-arrival check.
+    day_pass_buy_dest: u32,
 }
 
 impl TravelTask {
@@ -395,6 +406,8 @@ impl TravelTask {
             confluence: None,
             silver_at_withdraw: None,
             in_transport: false,
+            day_pass_buy_sack: None,
+            day_pass_buy_dest: 0,
         })
     }
 
@@ -517,6 +530,9 @@ impl TravelTask {
             }
             Step::Funding(phase) => {
                 self.tick_funding(phase, current, ctx, &mut events);
+            }
+            Step::DayPassBuy(state) => {
+                self.tick_day_pass_buy(state, current, ctx, &mut events);
             }
             Step::ScriptWalk {
                 actions,
@@ -1302,37 +1318,27 @@ impl TravelTask {
         script.push(W::EmptyHands);
 
         if let Some(pass) = held {
-            // USE: get the held pass, raise it (this travels), put it back.
+            // USE: a simple, self-contained WalkAction script (no waiting on
+            // conversation) — get the held pass, raise it (this travels), put
+            // it back, recover the original items, close. Runs through
+            // tick_script so it uses the EmptyHands/FillHands stash primitives.
             script.push(W::Put(format!("get #{pass}")));
             script.push(W::Move(format!("raise #{pass}")));
             if let Some(sack) = sack {
                 script.push(W::Put(format!("_drag #{pass} #{sack}")));
             }
-        } else if buy {
-            // BUY: step to the NPC, ask (twice — the confirm), fund at this
-            // town's bank if short, re-ask, then the pass is in hand; look at
-            // it and raise it (travels). Ids unknown pre-buy, so use the `pass`
-            // noun (Lich resolves it from the hand). Every walk is a StepMove
-            // (waits to arrive before the next command) so we don't `withdraw`
-            // before reaching the bank; only the final `raise` is the terminal
-            // Move that lands us at the destination.
-            script.push(W::StepMove(dep.enter_move.to_string()));
-            script.push(W::Put(format!("ask {} for {}", dep.npc, dest.ask_word)));
-            script.push(W::Put(format!("ask {} for {}", dep.npc, dest.ask_word)));
-            for dir in dep.to_bank {
-                script.push(W::StepMove((*dir).to_string()));
-            }
-            script.push(W::Put("withdraw 5000".into()));
-            for dir in dep.from_bank {
-                script.push(W::StepMove((*dir).to_string()));
-            }
-            script.push(W::Put(format!("ask {} for {}", dep.npc, dest.ask_word)));
-            script.push(W::Put("look pass".into()));
-            script.push(W::Move("raise pass".into()));
+            script.push(W::FillHands);
             if let Some(sack) = sack {
-                script.push(W::Put(format!("_drag #pass #{sack}")));
+                script.push(W::Put(format!("close #{sack}")));
             }
-        } else {
+            events.push(TravelEvent::Status(format!(
+                "day pass to {} - using held pass",
+                dest.ask_word
+            )));
+            self.tick_script(script, 0, None, next, from, ctx, events);
+            return;
+        }
+        if !buy {
             // No pass and no buy permission — can't cross. Ban + re-path.
             events.push(TravelEvent::Status(
                 "no valid day pass held and buying is off - re-pathing".into(),
@@ -1342,18 +1348,59 @@ impl TravelTask {
             return;
         }
 
-        // Recover the original held items (LIFO, from the EmptyHands above).
-        script.push(W::FillHands);
-        if let Some(sack) = sack {
-            script.push(W::Put(format!("close #{sack}")));
-        }
-
+        // BUY is a response-driven conversation (ask → offer → confirm → maybe
+        // fund → pass in hand → walk back → raise), so it can't be a flat
+        // script — each step waits for its game response. We hand the empty
+        // hand off first (via the stash primitive), then run the conversation
+        // in Step::DayPassBuy; the raise + put-back happen once it signals
+        // ReadyToRaise. Stash the params the raise/cleanup will need.
+        self.day_pass_buy_sack = sack.map(str::to_string);
+        self.day_pass_buy_dest = next;
         events.push(TravelEvent::Status(format!(
-            "day pass to {} - {}",
-            dest.ask_word,
-            if held.is_some() { "using held pass" } else { "buying" }
+            "day pass to {} - buying",
+            dest.ask_word
         )));
-        self.tick_script(script, 0, None, next, from, ctx, events);
+        // First: open sack + empty a hand (primitive), resuming into the buy
+        // conversation. We model that as a tiny script whose FillHands-free
+        // tail transitions to DayPassBuy — simplest is to send the open now and
+        // start the conversation, letting EmptyHands run as its first step.
+        if let Some(sack) = sack {
+            events.push(TravelEvent::Send(format!("open #{sack}")));
+        }
+        // Empty a hand via the stash primitive, then begin the conversation.
+        let resume = Box::new(Step::DayPassBuy(super::day_pass_buy::BuyState::new(dep, dest)));
+        self.begin_stash_then(resume, ctx, events);
+    }
+
+    /// Run an EmptyHands stash cycle, then continue at `resume`. Used to free a
+    /// hand before a response-driven crossing (day-pass buy). If there's
+    /// nothing to stow it continues immediately.
+    fn begin_stash_then(
+        &mut self,
+        resume: Box<Step>,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        let Some(inputs) = ctx.hands else {
+            self.step = *resume;
+            return;
+        };
+        let mut task = super::stash::StashTask::empty();
+        let mut done = false;
+        for ev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
+            match ev {
+                super::stash::StashEvent::Send(cmd) => events.push(TravelEvent::Send(cmd)),
+                super::stash::StashEvent::Done => done = true,
+                super::stash::StashEvent::Failed(_) => done = true,
+            }
+        }
+        if done {
+            self.stash_stack = task.take_stack();
+            self.step = *resume;
+        } else {
+            self.stash = Some(task);
+            self.step = Step::Stashing { resume };
+        }
     }
 
     /// Collapse a `;e true` pass-through edge (`from` -> `virtual`) with the
@@ -1470,6 +1517,69 @@ impl TravelTask {
                 self.step = *resume;
             }
         }
+    }
+
+    /// Drive the response-driven day-pass BUY conversation one tick. Relays the
+    /// machine's Send commands; on Traveled, put the pass away + fill hands +
+    /// close the sack and arrive; on Failed, abort the trip.
+    fn tick_day_pass_buy(
+        &mut self,
+        mut state: super::day_pass_buy::BuyState,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        use super::day_pass_buy::BuyEvent;
+        let tick = super::day_pass_buy::BuyTick {
+            feedback: ctx.feedback,
+            current_room: ctx.current_room,
+            get_silvers: ctx.day_pass.map(|i| i.get_silvers).unwrap_or(false),
+            now_ms: ctx.now_ms,
+            rt_remaining: ctx.rt_remaining,
+        };
+        for ev in state.tick(tick) {
+            match ev {
+                BuyEvent::Send(cmd) => events.push(TravelEvent::Send(cmd)),
+                BuyEvent::Traveled => {
+                    // The raise teleported us. Put the pass back, recover the
+                    // original items, close the sack — then arrive.
+                    if let Some(sack) = self.day_pass_buy_sack.clone() {
+                        events.push(TravelEvent::Send(format!("_drag #pass #{sack}")));
+                    }
+                    // FillHands via the stash primitive (recovers what
+                    // EmptyHands stowed at the start of the buy).
+                    if let Some(inputs) = ctx.hands {
+                        let mut task =
+                            super::stash::StashTask::fill(std::mem::take(&mut self.stash_stack));
+                        let mut done = false;
+                        for sev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
+                            match sev {
+                                super::stash::StashEvent::Send(c) => {
+                                    events.push(TravelEvent::Send(c))
+                                }
+                                super::stash::StashEvent::Done
+                                | super::stash::StashEvent::Failed(_) => done = true,
+                            }
+                        }
+                        if !done {
+                            self.stash = Some(task);
+                        }
+                    }
+                    if let Some(sack) = self.day_pass_buy_sack.take() {
+                        events.push(TravelEvent::Send(format!("close #{sack}")));
+                    }
+                    self.arrive();
+                    return;
+                }
+                BuyEvent::Failed(why) => {
+                    events.push(TravelEvent::Status(format!("day pass: {why} - re-pathing")));
+                    self.banned.insert((current, self.day_pass_buy_dest));
+                    self.repath(ctx.db, current, events);
+                    return;
+                }
+            }
+        }
+        self.step = Step::DayPassBuy(state);
     }
 
     /// The silver-funding pre-flight (Step::Funding). Ported from go2.lic's
@@ -3253,8 +3363,11 @@ mod tests {
         let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
         let cache = DayPassCache::default(); // no passes held
 
+        use crate::core::move_feedback::MoveFeedback as F;
+        // ctx with a room, clock, AND feedback events (the buy machine waits on
+        // the clerk's responses, not just room changes).
         macro_rules! buyctx {
-            ($now:expr, $cur:expr) => {{
+            ($now:expr, $cur:expr, $fb:expr) => {{
                 let dp = DayPassInputs {
                     sack_id: Some("99"),
                     buy_day_pass: "wl,imt",
@@ -3266,62 +3379,80 @@ mod tests {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
-                    hands: None, feedback: &[], lich_fallback: false, funding: None,
+                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
                     day_pass: Some(dp),
                 }
             }};
         }
 
-        // The BUY crossing paces each walk move (StepMove) — it sends the move
-        // then WAITS for the room to change before the next command, so it never
-        // floods (no `withdraw` before reaching the bank). Tick 1: open sack,
-        // EmptyHands primitive, then the enter step-move to the clerk, and STOP.
-        let ev = task.tick(buyctx!(0, 8635));
-        assert_eq!(
-            sent(&ev),
-            ["open #99", "stow both", "south"],
-            "opens sack, stows, steps to the clerk — then waits to arrive: {ev:?}"
-        );
-        assert!(!sent(&ev).iter().any(|c| *c == "empty hands"), "uses the stash primitive");
-        // Still in 8635 (the step hasn't landed): nothing more is sent.
-        assert!(sent(&task.tick(buyctx!(1_000, 8635))).is_empty(), "waits for the room change");
-        // Arrive at the clerk room (any new room) → the two asks fire, then it
-        // steps toward the bank and waits again.
-        let ev = task.tick(buyctx!(2_000, 900));
-        let s: Vec<&str> = sent(&ev);
-        assert_eq!(
-            s,
-            ["ask clerk for icemule", "ask clerk for icemule", "up"],
-            "asks the clerk (twice), then steps toward the bank: {ev:?}"
-        );
-        // Walk the bank path: each StepMove waits to arrive before the next.
-        // Drive ticks, giving a fresh room each time the previous step landed,
-        // and record when `withdraw 5000` appears relative to the moves.
         let mut all: Vec<String> = Vec::new();
-        let mut room = 902u32;
-        let mut moves_before_withdraw = 0usize;
-        let mut withdrawn = false;
-        for i in 0..30 {
-            // Advance to a new room each tick so a pending StepMove resolves.
+
+        // Tick 1: open the sack. (Hands aren't wired in this test, so the
+        // EmptyHands primitive is a no-op — no `stow both` — and never a raw
+        // `empty hands` string.) The enter step follows on the next tick.
+        let ev = task.tick(buyctx!(0, 8635, &[]));
+        let first: Vec<String> = sent(&ev).iter().map(|c| c.to_string()).collect();
+        all.extend(first.clone());
+        assert_eq!(first, ["open #99"], "opens the day-pass sack");
+        assert!(!first.iter().any(|c| c == "empty hands"), "never a raw `empty hands` string");
+
+        // Now drive the response-driven conversation. Each tick we advance the
+        // room and, based on the LAST command the machine sent, feed the game
+        // response it's waiting on. This exercises the real ask→offer→confirm→
+        // too-poor→bank→withdraw→re-ask→in-hand→walk-back→raise flow.
+        let mut room = 900u32;
+        let mut asks = 0;
+        let mut withdrew = false;
+        let mut withdrew_before_bank_walk = false;
+        let mut raised = false;
+        let mut bank_walk_steps = 0;
+        let mut now = 1_000u64;
+        for _ in 0..60 {
+            let last = all.last().cloned().unwrap_or_default();
+            let fb: Vec<F> = if last.starts_with("ask ") {
+                asks += 1;
+                // 1st ask after (re)arriving at clerk → offer; the confirm ask
+                // → too-poor the first round, in-hand after funding.
+                if asks % 2 == 1 {
+                    vec![F::DayPassOffered]
+                } else if !withdrew {
+                    vec![F::DayPassTooPoor]
+                } else {
+                    vec![F::DayPassInHand]
+                }
+            } else if last == "withdraw 5000" {
+                vec![F::WithdrawOk]
+            } else if last == "raise pass" {
+                vec![F::RaiseTraveled]
+            } else {
+                vec![]
+            };
             room += 1;
-            let ev = task.tick(buyctx!(3_000 + i * 1_000, room));
+            let cur = if last == "raise pass" { 8916 } else { room };
+            let ev = task.tick(buyctx!(now, cur, &fb));
+            now += 1_000;
             for c in sent(&ev) {
                 if c == "withdraw 5000" {
-                    withdrawn = true;
-                } else if !withdrawn && (c.len() <= 4 || c.starts_with("go ") || c == "out") {
-                    moves_before_withdraw += 1;
+                    withdrew = true;
+                    if bank_walk_steps == 0 {
+                        withdrew_before_bank_walk = true;
+                    }
+                } else if c == "raise pass" {
+                    raised = true;
+                } else if !withdrew && (c.len() <= 5 || c.starts_with("go ") || c == "out") && !c.starts_with("ask") {
+                    bank_walk_steps += 1;
                 }
                 all.push(c.to_string());
             }
-            if all.iter().any(|c| c == "raise pass") {
+            if raised {
                 break;
             }
         }
-        assert!(withdrawn, "withdraws at the bank during the buy walk: {all:?}");
-        // The withdraw came AFTER walking (there were bank-walk moves first).
-        assert!(moves_before_withdraw >= 1, "walks toward the bank before withdrawing: {all:?}");
-        assert!(all.iter().any(|c| c == "raise pass"), "eventually raises the bought pass: {all:?}");
+        assert!(all.iter().any(|c| c == "ask clerk for icemule"), "asks the clerk: {all:?}");
+        assert!(withdrew, "funds at the bank when too poor: {all:?}");
+        assert!(!withdrew_before_bank_walk, "walks to the bank before withdrawing: {all:?}");
+        assert!(raised, "raises the bought pass (in the waiting room) to travel: {all:?}");
     }
 
     // ---- Pass-through (`;e true`) edges: virtual urchin hideouts ------------

@@ -45,6 +45,24 @@ pub enum MoveFeedback {
     /// "You cannot do that while mounted." — urchin travel is incompatible
     /// with being mounted; drop it and re-path (Lich go2:2336-2346).
     Mounted,
+    // --- Chronomage day-pass buy responses (Lich's dothistimeout waits) ---
+    /// The clerk/agent responded to `ask ... for <town>` — the offer/confirm
+    /// prompt ("...says to you, ...will be free of charge / cost N silvers.
+    /// ASK me again..."). Lich's first-ask wait `/says to you/`.
+    DayPassOffered,
+    /// The pass was handed over: "quickly hands you a Chronomage day pass".
+    DayPassInHand,
+    /// Can't afford it: "...don't have enough...". Triggers the bank trip.
+    DayPassTooPoor,
+    /// A bank withdrawal completed ("the teller carefully records" / "flips
+    /// through the books"). Ends the day-pass funding wait.
+    WithdrawOk,
+    /// `raise`ing the pass teleported us: "whirlwind of color subsides".
+    RaiseTraveled,
+    /// `raise` failed because we're not in the Chronomage waiting room
+    /// ("not a Chronomage teleportation waiting room" / "not valid for
+    /// departures" / "As you go to raise your pass, you realize").
+    RaiseWrongRoom,
 }
 
 macro_rules! patterns {
@@ -99,6 +117,29 @@ patterns! {
     ],
     Mounted => [
         "You cannot do that while mounted",
+    ],
+    DayPassInHand => [
+        "quickly hands you a Chronomage day pass",
+    ],
+    DayPassTooPoor => [
+        "don't have enough",
+    ],
+    DayPassOffered => [
+        // The clerk/agent's offer or confirm prompt.
+        "ASK me again",
+        "day pass to",
+    ],
+    WithdrawOk => [
+        "carefully records the transaction",
+        "flips through the books",
+    ],
+    RaiseTraveled => [
+        "whirlwind of color subsides",
+    ],
+    RaiseWrongRoom => [
+        "not a Chronomage teleportation waiting room",
+        "not valid for departures",
+        "As you go to raise your pass, you realize",
     ],
     MoveFailedRemovable => [
         "You can't go there",
