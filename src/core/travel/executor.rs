@@ -316,6 +316,10 @@ pub struct TravelTask {
     /// fresh reading landed) before judging whether the withdrawal covered the
     /// trip.
     silver_at_withdraw: Option<u64>,
+    /// True while riding a `meta:transport` room (a portmaster ship, ferry,
+    /// caravan). We wait silently aboard and re-plan the route the moment the
+    /// ride drops us in a normal room.
+    in_transport: bool,
 }
 
 impl TravelTask {
@@ -357,6 +361,7 @@ impl TravelTask {
             funding_bank: None,
             confluence: None,
             silver_at_withdraw: None,
+            in_transport: false,
         })
     }
 
@@ -506,22 +511,44 @@ impl TravelTask {
                 if current == expected {
                     // Arrived on schedule; next step (or the destination
                     // check next tick).
+                    self.in_transport = false;
                     self.arrive();
                     return events;
                 }
+                // A vehicle is carrying us. `meta:transport` rooms (portmaster
+                // ships, ferries, caravans) move you on the game's own schedule
+                // and have no walkable exits — so wait aboard silently and, the
+                // moment the ride drops us in a normal room, re-plan the route
+                // to the destination from wherever we landed (Nisugi's model).
+                let on_transport = ctx
+                    .current_room
+                    .and_then(|r| ctx.db.room(r))
+                    .is_some_and(|r| r.is_transport());
+                if on_transport {
+                    if !self.in_transport {
+                        events.push(TravelEvent::Status(
+                            "aboard a transport - waiting for the ride to finish".into(),
+                        ));
+                        self.in_transport = true;
+                    }
+                    return events;
+                }
+                if self.in_transport {
+                    // The ride ended in a normal room (not the planned edge's
+                    // `expected`, which we already checked). Re-plan from here.
+                    self.in_transport = false;
+                    events.push(TravelEvent::Status(format!(
+                        "off the transport (room {current}) - re-pathing to the destination"
+                    )));
+                    self.repath(ctx.db, current, &mut events);
+                    return events;
+                }
                 if current != from {
-                    // A slow escort crossing (portmaster ship, urchin guide)
-                    // moves you THROUGH intermediate rooms before depositing you
-                    // at `expected` — the game does the walking. Landing in an
-                    // unplanned room mid-escort is normal, not off-route: keep
-                    // waiting for the escort to finish (or the slow timeout to
-                    // fire) rather than re-pathing from a ship in open ocean
-                    // (which has no route and aborts the trip). A non-slow move
-                    // ending up elsewhere IS off-route (fled, hand-moved).
+                    // A slow escort that walks you through NON-transport
+                    // intermediate rooms (rare): keep waiting for it to finish
+                    // rather than re-pathing mid-escort. A non-slow move ending
+                    // up elsewhere IS off-route (fled, hand-moved).
                     if slow {
-                        // Anchor the wait to the new room so a genuine failure
-                        // still times out, but don't treat the transit room as
-                        // a destination or a re-path trigger.
                         return events;
                     }
                     events.push(TravelEvent::Status(format!(
@@ -2653,6 +2680,64 @@ mod tests {
             e,
             TravelEvent::Failed(s) if s.contains("no pathcode heard")
         )));
+    }
+
+    // ---- Transport rooms (portmaster ships, ferries): wait + recalc --------
+
+    #[test]
+    fn waits_aboard_transport_then_repaths_on_arrival() {
+        // Pier (1) boards a ship via the portmaster; the ship (2) is a
+        // meta:transport room with no exits — the game sails it. It deposits us
+        // at a landing (3) that ISN'T the portmaster edge's nominal dest, and
+        // from there we walk to the real destination (4).
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Pier]"],
+                 "wayto": {"9": "ask portmaster about travel 1"}, "timeto": {"9": 1.0},
+                 "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Sloop, Ocean Voyage]"],
+                 "tags": ["meta:transport"], "wayto": {}, "timeto": {}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[Landing]"],
+                 "wayto": {"4": "north"}, "timeto": {"4": 0.2}, "paths": ""},
+                {"id": 4, "uid": [9000004], "location": "T", "title": ["[Town Square]"],
+                 "wayto": {"3": "south"}, "timeto": {"3": 0.2}, "paths": ""},
+                {"id": 9, "uid": [9000009], "location": "T", "title": ["[Far Dock]"],
+                 "wayto": {"3": "off"}, "timeto": {"3": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 4, 0).unwrap();
+        let mut sim = Sim::new(1);
+        // Board: sends the portmaster ask, awaits arrival at the edge dest (9).
+        let ev = task.tick(sim.ctx(&db));
+        assert!(sent(&ev).iter().any(|c| c.contains("portmaster")), "boards: {ev:?}");
+        // The escort puts us on the SHIP (room 2, meta:transport) first.
+        sim.current = 2;
+        sim.now += 100;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("aboard a transport"))),
+            "waits aboard the transport: {ev:?}"
+        );
+        assert!(sent(&ev).is_empty(), "sends nothing while sailing: {ev:?}");
+        // Still sailing next tick — still silent.
+        sim.now += 5_000;
+        assert!(sent(&task.tick(sim.ctx(&db))).is_empty(), "still waiting aboard");
+        // The ride drops us at the landing (3), a normal room → re-plan to the
+        // real destination (4) and walk.
+        sim.current = 3;
+        sim.now += 100;
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("off the transport"))),
+            "re-paths on leaving the transport: {ev:?}"
+        );
+        // Then it walks the final leg to the destination.
+        let log = walk_to_completion(&db, &mut task, &mut sim);
+        assert!(
+            matches!(log.last(), Some(TravelEvent::Arrived { destination: 4, .. })),
+            "reaches the real destination: {log:?}"
+        );
     }
 
     // ---- Pass-through (`;e true`) edges: virtual urchin hideouts ------------
