@@ -125,6 +125,11 @@ pub struct AppCore {
     jinx_nudge_pending: bool,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
+    /// A `.go2` waiting on a `urchin status` refresh: (destination, deadline).
+    /// When urchin travel is enabled but the cached access is stale, go2 sends
+    /// `urchin status` and defers planning until the reply parses (Lich's
+    /// `update_urchin_expire`), or the deadline passes. Drained per tick.
+    pending_urchin_refresh: Option<(u32, std::time::Instant)>,
     /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
     /// their pause, drained by take_outbound once due (insertion order
     /// preserved among same-tick due commands).
@@ -370,6 +375,7 @@ impl AppCore {
             jinx_catalog: None,
             jinx_nudge_pending: true,
             travel: Default::default(),
+            pending_urchin_refresh: None,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -538,6 +544,7 @@ impl AppCore {
             jinx_catalog: None,
             jinx_nudge_pending: true,
             travel: Default::default(),
+            pending_urchin_refresh: None,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -809,6 +816,7 @@ impl AppCore {
             };
             self.add_system_message(&format!("[map] {text}"));
         }
+        self.tick_urchin_refresh();
         self.tick_travel();
         self.tick_foreach();
         self.poll_jinx();
@@ -993,6 +1001,33 @@ impl AppCore {
     /// after every processed network line and once per frontend frame (the
     /// frame tick covers time-based waits like roundtime when the game is
     /// quiet).
+    /// Resolve a deferred `.go2` waiting on `urchin status` (see start_travel).
+    /// Once the reply has parsed (access now valid) or the deadline passes, the
+    /// trip is re-planned. Mirrors Lich's `update_urchin_expire` pre-flight.
+    fn tick_urchin_refresh(&mut self) {
+        let Some((destination, deadline)) = self.pending_urchin_refresh else {
+            return;
+        };
+        let now_epoch = chrono::Utc::now().timestamp();
+        let now_valid = self.game_state.character.urchins_valid(
+            now_epoch,
+            self.game_state.status.hidden,
+            self.game_state.status.invisible,
+        );
+        let expired = std::time::Instant::now() >= deadline;
+        if now_valid || expired {
+            // Clear the pending marker FIRST so the re-invoked start_travel
+            // sees `is_none()` and proceeds to planning instead of re-deferring.
+            self.pending_urchin_refresh = None;
+            if !now_valid {
+                self.add_system_message(
+                    "[go2] no active urchin access - routing without urchin guides",
+                );
+            }
+            self.start_travel(destination);
+        }
+    }
+
     pub fn tick_travel(&mut self) {
         if !self.travel.is_traveling() {
             // Not walking: don't let feedback accumulate unboundedly.
@@ -1232,10 +1267,34 @@ impl AppCore {
             self.game_state.character.can_seek(),
         );
         crate::core::pathing::transpile::set_use_portmasters(self.config.go2.use_portmasters);
+        // Urchin access refresh (Lich's update_urchin_expire): if urchin travel
+        // is enabled but the cached access is missing/expired, ask the game
+        // (`urchin status`) and defer this trip until the reply parses. Without
+        // this, a route would silently skip urchin edges whenever the client
+        // hasn't yet seen an `urchin status` line this session.
+        let now_epoch = chrono::Utc::now().timestamp();
+        if self.config.go2.use_urchins
+            && self.pending_urchin_refresh.is_none()
+            && !self.game_state.character.urchins_valid(
+                now_epoch,
+                self.game_state.status.hidden,
+                self.game_state.status.invisible,
+            )
+            && !self.game_state.status.hidden
+            && !self.game_state.status.invisible
+        {
+            // Stale/unknown access (not merely hidden) — refresh before routing.
+            self.add_system_message("[go2] checking urchin access...");
+            self.travel.queue_command("urchin status".to_string());
+            self.pending_urchin_refresh = Some((
+                destination,
+                std::time::Instant::now() + std::time::Duration::from_secs(4),
+            ));
+            return;
+        }
         // Urchins: valid only when enabled AND access hasn't expired AND not
         // hidden/invisible (Lich's combined urchin timeto gate). Also lets
         // dijkstra route through the urchin-hideout hubs this trip.
-        let now_epoch = chrono::Utc::now().timestamp();
         crate::core::pathing::transpile::set_urchins_valid(
             self.config.go2.use_urchins
                 && self.game_state.character.urchins_valid(

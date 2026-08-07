@@ -90,6 +90,12 @@ impl TravelService {
     pub fn take_outbound(&mut self) -> Vec<String> {
         self.outbound.drain(..).collect()
     }
+
+    /// Queue a raw command to be sent to the game through the normal outbound
+    /// path (used by go2 pre-flight probes like `urchin status`).
+    pub fn queue_command(&mut self, command: String) {
+        self.outbound.push_back(command);
+    }
 }
 
 /// "1:04" / "0:07" — go2-style ETA formatting.

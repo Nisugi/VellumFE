@@ -537,4 +537,29 @@ mod tests {
         assert_eq!(s.che.as_deref(), Some("paupers"));
         assert_eq!(s.locker_tags()[0], "meta:che:paupers:locker");
     }
+
+    #[test]
+    fn parses_real_urchin_status_line() {
+        // Nisugi's live `urchin status` output (CST timezone, far-future date).
+        let mut s = CharacterState::default();
+        s.parse_line("You will have access to the urchin guides until 1/18/2038 21:14:07 CST.");
+        assert!(s.urchins_expire > 0, "expiry parsed from the live line");
+        // Far future → valid now, when not hidden/invisible.
+        let now = chrono::Utc::now().timestamp();
+        assert!(s.urchins_valid(now, false, false));
+        // Hidden or invisible closes the gate (Lich's combined condition).
+        assert!(!s.urchins_valid(now, true, false));
+        assert!(!s.urchins_valid(now, false, true));
+    }
+
+    #[test]
+    fn urchin_status_survives_session_cache_round_trip() {
+        let mut s = CharacterState::default();
+        s.parse_line("You will have access to the urchin guides until 1/18/2038 21:14:07 CST.");
+        let expire = s.urchins_expire;
+        // Serialize → deserialize (the session_cache path).
+        let json = serde_json::to_string(&s).unwrap();
+        let restored: CharacterState = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.urchins_expire, expire, "expiry persists");
+    }
 }
