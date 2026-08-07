@@ -64,6 +64,27 @@ pub struct TravelContext<'a> {
     /// Ground-loot nouns in the current room — the Confluence explorer scans
     /// these for the tranquility point / pit landmarks (`GameObj.loot`).
     pub loot_nouns: &'a [String],
+    /// Chronomage day-pass crossing inputs, when the planned edge is a day-pass
+    /// edge and the caller supplies them (`None` otherwise).
+    pub day_pass: Option<DayPassInputs<'a>>,
+}
+
+/// What the day-pass crossing needs from live state. The specific pass id and
+/// buy-permission are computed per-edge in `begin_day_pass` from the pair, so
+/// this stays edge-agnostic: the sack id, the buy config + funding flag, the
+/// live cache, and `now` for expiry checks.
+#[derive(Clone, Copy)]
+pub struct DayPassInputs<'a> {
+    /// The resolved `day_pass_sack` container command-id, if found.
+    pub sack_id: Option<&'a str>,
+    /// The `buy_day_pass` config value (on/off/pair-list).
+    pub buy_day_pass: &'a str,
+    /// Whether Get Silvers is on (required to fund a buy shortfall).
+    pub get_silvers: bool,
+    /// The live day-pass cache (for the held-pass lookup by pair).
+    pub cache: &'a crate::core::day_pass::DayPassCache,
+    /// Current Unix time for expiry checks.
+    pub now_epoch: i64,
 }
 
 /// Inputs for the silver-funding pre-flight, from GameState + config.
@@ -205,6 +226,28 @@ enum Step {
         /// on arrival we can record `learned[from][dir] = arrived`.
         pending: Option<ConfluencePending>,
     },
+    /// Crossing a Chronomage day-pass edge — a self-contained per-town script
+    /// (open sack → use/buy a pass → raise it to travel → put it back). See
+    /// travel::day_pass and core::day_pass. `queue` is the remaining literal
+    /// commands to send (built up-front from the edge's departure metadata +
+    /// the live pass/sack ids); `sent_ms` paces them; `expected` is the
+    /// destination room.
+    DayPass {
+        queue: std::collections::VecDeque<DayPassCmd>,
+        sent_ms: u64,
+        expected: u32,
+        from: u32,
+    },
+}
+
+/// One step of a day-pass crossing script: a command to send, and how long to
+/// wait before the next. Movement/raise steps get the slow window; quick sack
+/// pokes get a short gap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DayPassCmd {
+    send: String,
+    /// Extra pace (ms) after this command before the next (beyond RT).
+    gap_ms: u64,
 }
 
 /// A Confluence move in flight: where it was sent from and which direction, so
@@ -271,6 +314,9 @@ const MAX_RESTARTS: u32 = 10;
 const MAZE_ASK_TIMEOUT_MS: u64 = 12_000;
 /// Gap between maze route commands beyond waiting out RT.
 const MAZE_STEP_GAP_MS: u64 = 1_400;
+/// Gap between day-pass script commands beyond RT (the proc's dothistimeout
+/// waits are ~10s, but our commands are simple; a modest beat avoids flooding).
+const DAY_PASS_STEP_GAP_MS: u64 = 900;
 /// Settle time after the last route command (or a `search`) before the
 /// landing room is judged.
 const MAZE_SETTLE_MS: u64 = 2_500;
@@ -460,6 +506,14 @@ impl TravelTask {
             }
             Step::Confluence { pending } => {
                 self.tick_confluence(pending, current, ctx, &mut events);
+            }
+            Step::DayPass {
+                queue,
+                sent_ms,
+                expected,
+                from,
+            } => {
+                self.tick_day_pass(queue, sent_ms, expected, from, current, ctx, &mut events);
             }
             Step::AwaitStand { sent_ms, attempts } => {
                 if ctx.standing {
@@ -1182,6 +1236,172 @@ impl TravelTask {
         };
     }
 
+    /// Build the day-pass crossing command queue and enter Step::DayPass. The
+    /// queue is the edge's literal script (from the departure metadata) with
+    /// the two live substitutions — the sack id (config) and the held pass id
+    /// (cache) — resolved from `ctx.day_pass`. When no pass is held and buying
+    /// isn't set up, we bail to a normal re-path with a message.
+    fn begin_day_pass(
+        &mut self,
+        from: u32,
+        next: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        use crate::core::day_pass;
+        let Some((dep, dest)) = day_pass::edge(from, next) else {
+            self.repath(ctx.db, from, events);
+            return;
+        };
+        let inputs = ctx.day_pass;
+        let sack = inputs.and_then(|i| i.sack_id);
+        let (a, b) = dest.pair;
+        // Held valid pass for THIS edge's pair, and whether buying is permitted
+        // (config matches the pair AND Get Silvers is on to cover a shortfall).
+        let held = inputs.and_then(|i| i.cache.valid_pass_id(a, b, i.now_epoch));
+        let buy = inputs
+            .map(|i| i.get_silvers && crate::core::day_pass::buy_permits(i.buy_day_pass, a, b))
+            .unwrap_or(false);
+
+        // Quick sack pokes get a short gap; moves/asks/raise get a longer beat.
+        let quick = |s: String| DayPassCmd { send: s, gap_ms: 400 };
+        let beat = |s: String| DayPassCmd { send: s, gap_ms: 1_200 };
+        let mut q: std::collections::VecDeque<DayPassCmd> = std::collections::VecDeque::new();
+
+        // Open the sack (if we know it). `look in` is harmless if already open.
+        if let Some(sack) = sack {
+            q.push_back(quick(format!("open #{sack}")));
+        }
+        q.push_back(quick("empty hands".into()));
+
+        let raise_and_stow = |q: &mut std::collections::VecDeque<DayPassCmd>, pass: &str| {
+            q.push_back(beat(format!("raise #{pass}")));
+            if let Some(sack) = sack {
+                q.push_back(quick(format!("_drag #{pass} #{sack}")));
+            }
+        };
+
+        if let Some(pass) = held {
+            // USE: get the held pass, raise it (travels), put it back.
+            q.push_back(quick(format!("get #{pass}")));
+            raise_and_stow(&mut q, pass);
+        } else if buy {
+            // BUY: walk to the NPC, ask, (fund at the bank if short), then the
+            // pass is in hand — look at it (registers expiry) and raise it. The
+            // raise/put-back use the just-bought pass, whose id we don't know
+            // ahead of time, so raise the generic `pass` noun (Lich resolves it
+            // from the hand after the buy).
+            q.push_back(beat(dep.enter_move.to_string()));
+            q.push_back(beat(format!("ask {} for {}", dep.npc, dest.ask_word)));
+            q.push_back(beat(format!("ask {} for {}", dep.npc, dest.ask_word)));
+            // Funding leg (only fires if short; sending it unconditionally is
+            // Lich's behavior gated on get_silvers — the caller only enables
+            // `buy` when get_silvers is on).
+            for dir in dep.to_bank {
+                q.push_back(beat((*dir).to_string()));
+            }
+            q.push_back(beat("withdraw 5000".into()));
+            for dir in dep.from_bank {
+                q.push_back(beat((*dir).to_string()));
+            }
+            q.push_back(beat(format!("ask {} for {}", dep.npc, dest.ask_word)));
+            q.push_back(quick("look pass".into()));
+            q.push_back(beat("raise pass".into()));
+            if let Some(sack) = sack {
+                q.push_back(quick(format!("_drag #pass #{sack}")));
+            }
+        } else {
+            // No pass and no buy permission — can't cross. Ban + re-path.
+            events.push(TravelEvent::Status(
+                "no valid day pass held and buying is off - re-pathing".into(),
+            ));
+            self.banned.insert((from, next));
+            self.repath(ctx.db, from, events);
+            return;
+        }
+
+        q.push_back(quick("get pass".into())); // fill_hand: recover the pass
+        if sack.is_some() {
+            q.push_back(quick("close pass_sack".into()));
+        }
+
+        events.push(TravelEvent::Status(format!(
+            "day pass to {} - {}",
+            dest.ask_word,
+            if held.is_some() { "using held pass" } else { "buying" }
+        )));
+        // Kick the first command out this tick, then hold the rest in the step.
+        self.tick_day_pass(q, 0, next, from, from, ctx, events);
+    }
+
+    /// Pace the day-pass command queue: send the front command when RT is clear
+    /// and the previous command's gap has elapsed. The `raise` lands us at the
+    /// destination (arrival ends the trip via the top-of-tick check once the
+    /// queue drains). Off-route mid-script (the buy bank-walk) is expected, so
+    /// we don't re-path on room changes — only the final destination matters.
+    #[allow(clippy::too_many_arguments)]
+    fn tick_day_pass(
+        &mut self,
+        mut queue: std::collections::VecDeque<DayPassCmd>,
+        sent_ms: u64,
+        expected: u32,
+        from: u32,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        if current == expected {
+            // The raise dropped us at the destination. Finish any trailing
+            // put-back/close, then arrive.
+            for cmd in queue.drain(..) {
+                if cmd.send.contains("_drag")
+                    || cmd.send.starts_with("get ")
+                    || cmd.send.starts_with("close")
+                {
+                    events.push(TravelEvent::Send(cmd.send));
+                }
+            }
+            self.arrive();
+            return;
+        }
+        if ctx.muckled {
+            if !self.muckle_announced {
+                events.push(TravelEvent::Status(
+                    "stunned/webbed - waiting until you can move".into(),
+                ));
+                self.muckle_announced = true;
+            }
+            self.step = Step::DayPass { queue, sent_ms, expected, from };
+            return;
+        }
+        self.muckle_announced = false;
+        // Pace: wait out RT and the previous command's gap.
+        let waited = ctx.now_ms.saturating_sub(sent_ms);
+        if ctx.rt_remaining > 0.0 || (sent_ms != 0 && waited < DAY_PASS_STEP_GAP_MS) {
+            self.step = Step::DayPass { queue, sent_ms, expected, from };
+            return;
+        }
+        match queue.pop_front() {
+            Some(cmd) => {
+                events.push(TravelEvent::Send(cmd.send));
+                self.step = Step::DayPass {
+                    queue,
+                    sent_ms: ctx.now_ms.max(1),
+                    expected,
+                    from,
+                };
+            }
+            None => {
+                // Queue drained but not at the destination — the raise didn't
+                // land (expired pass, wrong dest). Re-path from where we are.
+                events.push(TravelEvent::Status(
+                    "day pass didn't complete - re-pathing".into(),
+                ));
+                self.repath(ctx.db, current, events);
+            }
+        }
+    }
+
     /// Collapse a `;e true` pass-through edge (`from` -> `virtual`) with the
     /// real crossing command that lives on the virtual room's wayto. Sends the
     /// virtual room's command for the route's next room and arrival-watches for
@@ -1557,6 +1777,14 @@ impl TravelTask {
         // Curated override beats whatever the mapdb says about this edge.
         if let Some(ov) = crate::core::pathing::overrides::edge_override(current, next) {
             self.tick_script(ov.actions.clone(), 0, None, next, current, ctx, events);
+            return;
+        }
+        // Chronomage day-pass edge: a self-contained per-town script (open sack
+        // → use/buy a pass → raise it → put it back). Its proc is far too large
+        // to transpile; instead we build the literal command queue from the
+        // edge's departure metadata + the live pass/sack ids and pace it.
+        if crate::core::day_pass::edge(current, next).is_some() {
+            self.begin_day_pass(current, next, ctx, events);
             return;
         }
         if crate::core::mapdb::is_proc_command(&command) {
@@ -1949,6 +2177,7 @@ mod tests {
                 at_pinefar_depository: self.pinefar,
                 compass_dirs: &self.compass_dirs,
                 loot_nouns: &self.loot_nouns,
+                day_pass: None,
             }
         }
     }
@@ -2234,6 +2463,7 @@ mod tests {
                 at_pinefar_depository: false,
                 compass_dirs: &[],
                 loot_nouns: &[],
+                day_pass: None,
             }
         }
 
@@ -2324,6 +2554,7 @@ mod tests {
                     at_pinefar_depository: false,
                     compass_dirs: &[],
                     loot_nouns: &[],
+                    day_pass: None,
                 }
             }};
         }
@@ -2936,6 +3167,132 @@ mod tests {
             matches!(log.last(), Some(TravelEvent::Arrived { destination: 4, .. })),
             "reaches the real destination: {log:?}"
         );
+    }
+
+    // ---- Chronomage day-pass crossing --------------------------------------
+
+    #[test]
+    fn day_pass_use_crossing_raises_a_held_pass() {
+        use crate::core::day_pass::DayPassCache;
+        // Edge 8635 (Wehnimer's departure) -> 8916 (Icemule), a real day-pass
+        // edge. A valid Icemule/Wehnimer's pass (#77) is held in sack #99.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 8635, "uid": [98635], "location": "T", "title": ["[Wehnimer's Shop]"],
+                 "wayto": {"8916": ";e day_pass_proc"}, "timeto": {"8916": 0.8}, "paths": ""},
+                {"id": 8916, "uid": [98916], "location": "T", "title": ["[Icemule Loci]"],
+                 "wayto": {"8635": ";e day_pass_proc"}, "timeto": {"8635": 0.8}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let mut cache = DayPassCache::default();
+        cache.parse_line(r#"This <a exist="77" noun="pass">pass</a> entitles the original purchaser to one (1) day of unlimited travel between the towns of Icemule Trace and Wehnimer's Landing, commencing now."#);
+        cache.parse_line("[Your pass will expire on Fri Aug 22 14:30:00 ET 2038.");
+
+        macro_rules! dpctx {
+            ($now:expr, $cur:expr) => {{
+                let dp = DayPassInputs {
+                    sack_id: Some("99"),
+                    buy_day_pass: "",
+                    get_silvers: false,
+                    cache: &cache,
+                    now_epoch: 0,
+                };
+                TravelContext {
+                    db: &db, current_room: Some($cur), dead: false, muckled: false,
+                    standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
+                    hands: None, feedback: &[], lich_fallback: false, funding: None,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    day_pass: Some(dp),
+                }
+            }};
+        }
+
+        // Tick 1: begin the crossing — opens the sack (first queued command).
+        let ev = task.tick(dpctx!(0, 8635));
+        assert_eq!(sent(&ev), ["open #99"], "opens the day-pass sack: {ev:?}");
+        // Drive the paced queue until the raise is sent.
+        let mut all: Vec<String> = sent(&ev).iter().map(|s| s.to_string()).collect();
+        let mut now = 0u64;
+        for _ in 0..12 {
+            now += 2_000;
+            let ev = task.tick(dpctx!(now, 8635));
+            all.extend(sent(&ev).iter().map(|s| s.to_string()));
+            if all.iter().any(|c| c.starts_with("raise #77")) {
+                break;
+            }
+        }
+        // The USE script: get the held pass then raise it (no ask/withdraw).
+        assert!(all.contains(&"get #77".to_string()), "gets the held pass: {all:?}");
+        assert!(all.contains(&"raise #77".to_string()), "raises it to travel: {all:?}");
+        assert!(
+            !all.iter().any(|c| c.contains("ask ") || c.contains("withdraw")),
+            "USE path never asks/withdraws: {all:?}"
+        );
+        // The raise lands us at 8916 → arrival finishes the trip.
+        now += 2_000;
+        let ev = task.tick(dpctx!(now, 8916));
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            "arrives at the destination: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn day_pass_buy_crossing_asks_clerk_and_funds() {
+        use crate::core::day_pass::DayPassCache;
+        // Same edge but NO held pass; buying enabled for wl,imt + get_silvers.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 8635, "uid": [98635], "location": "T", "title": ["[Wehnimer's Shop]"],
+                 "wayto": {"8916": ";e day_pass_proc"}, "timeto": {"8916": 4.4}, "paths": ""},
+                {"id": 8916, "uid": [98916], "location": "T", "title": ["[Icemule Loci]"],
+                 "wayto": {"8635": ";e day_pass_proc"}, "timeto": {"8635": 4.4}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let cache = DayPassCache::default(); // no passes held
+
+        macro_rules! buyctx {
+            ($now:expr, $cur:expr) => {{
+                let dp = DayPassInputs {
+                    sack_id: Some("99"),
+                    buy_day_pass: "wl,imt",
+                    get_silvers: true,
+                    cache: &cache,
+                    now_epoch: 0,
+                };
+                TravelContext {
+                    db: &db, current_room: Some($cur), dead: false, muckled: false,
+                    standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
+                    hands: None, feedback: &[], lich_fallback: false, funding: None,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    day_pass: Some(dp),
+                }
+            }};
+        }
+
+        task.tick(buyctx!(0, 8635));
+        let mut all: Vec<String> = Vec::new();
+        let mut now = 0u64;
+        for _ in 0..40 {
+            now += 2_000;
+            let ev = task.tick(buyctx!(now, 8635));
+            all.extend(sent(&ev).iter().map(|s| s.to_string()));
+            if all.iter().any(|c| c == "raise pass") {
+                break;
+            }
+        }
+        // The BUY script: Wehnimer's clerk, ask for icemule, fund at the bank,
+        // then raise the just-bought pass.
+        assert!(all.iter().any(|c| c == "ask clerk for icemule"), "asks the clerk: {all:?}");
+        assert!(all.iter().any(|c| c == "withdraw 5000"), "funds at the bank: {all:?}");
+        assert!(all.iter().any(|c| c == "go bank"), "walks the town's bank path: {all:?}");
+        assert!(all.iter().any(|c| c == "raise pass"), "raises the bought pass: {all:?}");
     }
 
     // ---- Pass-through (`;e true`) edges: virtual urchin hideouts ------------

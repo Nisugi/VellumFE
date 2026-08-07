@@ -746,6 +746,12 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Also withdraw enough to fund the return trip", go2.get_return_trip_silvers),
         bool_entry!("go2.use_urchins", "Use Urchin Guides", "Travel",
             "Route through urchin guides (needs active access - run 'urchin status'; off while mounted)", go2.use_urchins),
+        bool_entry!("go2.use_day_pass", "Use Day Passes", "Travel",
+            "Route through Chronomage day-pass edges using a valid pass in your Day Pass Sack", go2.use_day_pass),
+        text_entry!("go2.buy_day_pass", "Buy Day Pass", "Travel",
+            "When to buy a pass if none is held: on/yes, off/no, or a town-pair list like 'sol,wl imt,wl' (needs Get Silvers)", go2.buy_day_pass),
+        text_entry!("go2.day_pass_sack", "Day Pass Sack", "Travel",
+            "Container holding your Chronomage day passes (noun or name fragment)", go2.day_pass_sack),
     ];
     defs.sort_by_key(|def| def.key);
     defs

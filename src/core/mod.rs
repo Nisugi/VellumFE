@@ -7,6 +7,7 @@
 pub mod app_core;
 pub mod bounty_parser;
 pub mod character_state;
+pub mod day_pass;
 pub mod conditions;
 pub mod custom_emoji;
 pub mod data_pack;

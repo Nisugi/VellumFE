@@ -927,6 +927,24 @@ pub struct Go2Config {
     /// refresh it. Auto-disabled while mounted. Off by default.
     #[serde(default)]
     pub use_urchins: bool,
+    /// Route through Chronomage day-pass edges (Lich's
+    /// `UserVars.mapdb_use_day_pass`). Uses a valid pass held in
+    /// [`day_pass_sack`]; buying is gated separately by [`buy_day_pass`]. Off
+    /// by default.
+    #[serde(default)]
+    pub use_day_pass: bool,
+    /// Whether/when to BUY a day pass when none is held (Lich's tri-state
+    /// `UserVars.mapdb_buy_day_pass`): "on"/"yes"/"true" = buy for any pair,
+    /// "off"/"no"/empty = never buy (use-only), or a comma town-pair list like
+    /// "sol,wl imt,wl" limiting buys to those routes. Requires Get Silvers to
+    /// cover a shortfall. Empty = never buy.
+    #[serde(default)]
+    pub buy_day_pass: String,
+    /// The container holding your Chronomage day passes (Lich's
+    /// `UserVars.day_pass_sack`) — a noun or name fragment, resolved against
+    /// inventory. Day-pass travel is skipped if unset or unresolvable.
+    #[serde(default)]
+    pub day_pass_sack: String,
 }
 
 impl Default for Go2Config {
@@ -943,6 +961,9 @@ impl Default for Go2Config {
             get_silvers: false,
             get_return_trip_silvers: false,
             use_urchins: false,
+            use_day_pass: false,
+            buy_day_pass: String::new(),
+            day_pass_sack: String::new(),
         }
     }
 }

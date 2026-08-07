@@ -1073,6 +1073,7 @@ impl AppCore {
         };
         let weaponsack = resolve_bag(&self.config.go2.weaponsack);
         let lootsack = resolve_bag(&self.config.go2.lootsack);
+        let day_pass_sack = resolve_bag(&self.config.go2.day_pass_sack);
         let reserved: std::collections::HashSet<&str> = weaponsack
             .as_deref()
             .into_iter()
@@ -1156,6 +1157,16 @@ impl AppCore {
             // tranquility point / pit landmarks live in ground + room_desc).
             compass_dirs: &compass_dirs,
             loot_nouns: &loot_nouns,
+            // Day-pass crossing inputs: the resolved sack container, buy config,
+            // and the live pass cache (begin_day_pass computes the per-edge
+            // held-pass / buy-permission from the town pair).
+            day_pass: Some(crate::core::travel::executor::DayPassInputs {
+                sack_id: day_pass_sack.as_deref(),
+                buy_day_pass: &self.config.go2.buy_day_pass,
+                get_silvers: self.config.go2.get_silvers,
+                cache: &self.game_state.day_passes,
+                now_epoch: chrono::Utc::now().timestamp(),
+            }),
         };
         let events = self.travel.tick(ctx);
         for event in events {
@@ -1303,6 +1314,37 @@ impl AppCore {
                     self.game_state.status.invisible,
                 ),
         );
+        // Day-pass: for each of the three town pairs, decide the routable cost.
+        // A held valid pass → 0.8 (use it); no pass but the buy config permits
+        // the pair (with Get Silvers to cover a shortfall) → 7.4 (buy it); else
+        // not routable. Off entirely unless use_day_pass is set.
+        {
+            use crate::core::day_pass;
+            let mut routable: Vec<((String, String), f64)> = Vec::new();
+            if self.config.go2.use_day_pass {
+                // Each departure's destinations carry the pair + per-source buy
+                // cost. A held valid pass → 0.8; else buyable (config + Get
+                // Silvers) → that edge's buy cost; else not routable.
+                for dep in day_pass::DEPARTURES {
+                    for dest in dep.destinations {
+                        let (a, b) = dest.pair;
+                        let cost = if self.game_state.day_passes.has_valid_pass(a, b, now_epoch) {
+                            Some(0.8)
+                        } else if self.config.go2.get_silvers
+                            && day_pass::buy_permits(&self.config.go2.buy_day_pass, a, b)
+                        {
+                            Some(dest.buy_cost)
+                        } else {
+                            None
+                        };
+                        if let Some(cost) = cost {
+                            routable.push(((a.to_string(), b.to_string()), cost));
+                        }
+                    }
+                }
+            }
+            crate::core::pathing::transpile::set_day_pass_routable(&routable);
+        }
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",
