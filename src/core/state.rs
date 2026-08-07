@@ -153,6 +153,12 @@ pub struct GameState {
     /// exactly once. See `core::move_feedback` and §09/§12 of the go2 plan.
     pub move_feedback: std::collections::VecDeque<crate::core::move_feedback::MoveFeedback>,
 
+    /// Character state parsed from the feed (society status/rank, profession,
+    /// CHE/House, citizenship) — gates seeking, guild, and locker travel.
+    /// Populated by SOCIETY/INFO/PROFILE/CITIZENSHIP output. See
+    /// `core::character_state`.
+    pub character: crate::core::character_state::CharacterState,
+
     /// DragonRealms experience/skill component state
     pub dr_experience: DRExperienceState,
 
@@ -952,6 +958,7 @@ impl GameState {
             room_meta: RoomMetaState::default(),
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
+            character: crate::core::character_state::CharacterState::default(),
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),

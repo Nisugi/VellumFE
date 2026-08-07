@@ -107,6 +107,10 @@ pub struct MessageProcessor {
     /// drained into `game_state.move_feedback` at the prompt so the walk
     /// executor sees each one exactly once.
     pending_move_feedback: Vec<crate::core::move_feedback::MoveFeedback>,
+    /// Character-state lines captured during flush (no `game_state` there);
+    /// fed into `game_state.character` at the prompt. Society/profession/CHE/
+    /// citizenship output from SOCIETY/INFO/PROFILE/CITIZENSHIP.
+    pending_character_lines: Vec<String>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -309,6 +313,7 @@ impl MessageProcessor {
             pending_container_ingest: None,
             pending_ready_stow: Vec::new(),
             pending_move_feedback: Vec::new(),
+            pending_character_lines: Vec::new(),
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
@@ -779,6 +784,12 @@ impl MessageProcessor {
                 game_state
                     .move_feedback
                     .extend(self.pending_move_feedback.drain(..));
+
+                // Character-state lines feed the parser in order (the PROFILE
+                // house parse is stateful).
+                for line in self.pending_character_lines.drain(..) {
+                    game_state.character.parse_line(&line);
+                }
 
                 // Container contents extracted from a main-stream look line
                 // during flush (which lacks game_state) land here.
@@ -3047,6 +3058,13 @@ impl MessageProcessor {
         // aho-corasick matcher is cheap on non-matching lines.
         if let Some(fb) = crate::core::move_feedback::classify_line(&full_text) {
             self.pending_move_feedback.push(fb);
+        }
+
+        // Character state (society/profession/CHE/citizenship). Buffer the line
+        // for the prompt handler to feed into game_state.character IN ORDER —
+        // the PROFILE house parse is stateful across lines. Cheap prefix gate.
+        if crate::core::character_state::line_is_character_state(&full_text) {
+            self.pending_character_lines.push(full_text.clone());
         }
 
         // READY/STOW list rows: observe (don't squelch — the player asked for
