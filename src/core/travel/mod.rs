@@ -9,6 +9,7 @@
 //! commands; frontends drain the queue through their normal typed-command
 //! path (so travel moves echo like anything the user types).
 
+pub mod confluence;
 pub mod executor;
 pub mod mazes;
 pub mod stash;

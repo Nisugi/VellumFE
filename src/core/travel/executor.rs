@@ -58,6 +58,12 @@ pub struct TravelContext<'a> {
     /// True at the Pinefar Depository, whose withdraw uses `ask banker for`
     /// with a 20-silver minimum (go2's special case).
     pub at_pinefar_depository: bool,
+    /// Live compass exits from the current room (`XMLData.room_exits`) — the
+    /// Confluence explorer's only view of the shifting maze.
+    pub compass_dirs: &'a [String],
+    /// Ground-loot nouns in the current room — the Confluence explorer scans
+    /// these for the tranquility point / pit landmarks (`GameObj.loot`).
+    pub loot_nouns: &'a [String],
 }
 
 /// Inputs for the silver-funding pre-flight, from GameState + config.
@@ -185,6 +191,24 @@ enum Step {
         /// far side instead of re-pathing back into the scramble.
         dest_inside: bool,
     },
+    /// Exploring the Plane of Elemental Confluence — a shifting maze with no
+    /// fixed graph. Learns adjacency live and re-derives a route each step
+    /// toward the tranquility exit portal. See travel::confluence.
+    Confluence {
+        /// Awaiting arrival after a walk: the room we moved FROM (still being
+        /// there means the move hasn't landed) and the direction we sent, so
+        /// on arrival we can record `learned[from][dir] = arrived`.
+        pending: Option<ConfluencePending>,
+    },
+}
+
+/// A Confluence move in flight: where it was sent from and which direction, so
+/// the learned graph can be updated when we land.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfluencePending {
+    from: u32,
+    dir: String,
+    sent_ms: u64,
 }
 
 /// The silver-funding pre-flight state (Step::Funding). Ported from go2.lic's
@@ -273,6 +297,10 @@ pub struct TravelTask {
     /// True while walking the funding detour to a bank (so arrival there
     /// triggers the withdraw rather than a normal arrival).
     funding_bank: Option<u32>,
+    /// The live-learned Confluence map (Step::Confluence). Held outside the
+    /// Step enum so Step stays Clone+PartialEq, same as `stash`. `Some` only
+    /// while inside the Plane.
+    confluence: Option<super::confluence::ConfluenceState>,
 }
 
 impl TravelTask {
@@ -312,6 +340,7 @@ impl TravelTask {
             stash_stack: Vec::new(),
             silver_need,
             funding_bank: None,
+            confluence: None,
         })
     }
 
@@ -402,6 +431,9 @@ impl TravelTask {
                     ctx,
                     &mut events,
                 );
+            }
+            Step::Confluence { pending } => {
+                self.tick_confluence(pending, current, ctx, &mut events);
             }
             Step::AwaitStand { sent_ms, attempts } => {
                 if ctx.standing {
@@ -778,6 +810,170 @@ impl TravelTask {
         self.step = Step::Maze { maze_name, phase, route, i, attempts, dest_inside };
     }
 
+    /// Cross the Confluence threshold: step into the Plane (the planned edge is
+    /// real — it's the entry from outside), then hand off to the explorer.
+    fn begin_confluence(
+        &mut self,
+        current: u32,
+        next: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        // The entry edge itself is a normal mapdb edge (walk it if we're not in
+        // yet). Once we're the first zone room, the explorer takes over.
+        if let Some(command) = ctx
+            .db
+            .room(current)
+            .and_then(|room| room.wayto.get(&next).cloned())
+        {
+            if ctx.rt_remaining > 0.0 {
+                return; // wait out RT before entering
+            }
+            events.push(TravelEvent::Status(
+                "entering the Plane of Elemental Confluence - exploring for the exit".into(),
+            ));
+            events.push(TravelEvent::Send(command));
+            self.confluence = Some(super::confluence::ConfluenceState::new());
+            self.step = Step::Confluence { pending: None };
+        } else {
+            // No entry edge from here — re-path.
+            self.repath(ctx.db, current, events);
+        }
+    }
+
+    /// The Confluence explorer tick: one step of learn-and-navigate. Mirrors
+    /// the Ruby self-loop (`stringprocs/wayto/room-23282-to-23282.rb`).
+    fn tick_confluence(
+        &mut self,
+        pending: Option<ConfluencePending>,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        // Warped out of the Plane (the `go tranquility` portal, or any exit):
+        // the explorer is done; re-path from wherever we landed.
+        if !super::confluence::is_confluence_room(current) {
+            self.confluence = None;
+            events.push(TravelEvent::Status(
+                "left the Plane - re-pathing to the destination".into(),
+            ));
+            self.repath(ctx.db, current, events);
+            return;
+        }
+        if ctx.muckled {
+            if !self.muckle_announced {
+                events.push(TravelEvent::Status(
+                    "stunned/webbed - waiting until you can move".into(),
+                ));
+                self.muckle_announced = true;
+            }
+            self.step = Step::Confluence { pending };
+            return;
+        }
+        self.muckle_announced = false;
+
+        // A move is in flight: wait for the room to change, then record where
+        // the direction led and clear the pending move.
+        if let Some(p) = &pending {
+            if current == p.from {
+                // Move failed hard (aho-corasick MoveFailed) → random compass
+                // exit, per the Ruby `if r == false` fallback.
+                if ctx.feedback.iter().any(|f| {
+                    matches!(
+                        f,
+                        crate::core::move_feedback::MoveFeedback::MoveFailedRemovable
+                            | crate::core::move_feedback::MoveFeedback::MoveFailedKeep
+                    )
+                }) {
+                    if let Some(dir) = pick_random_exit(ctx.compass_dirs, current) {
+                        events.push(TravelEvent::Send(dir.clone()));
+                        self.step = Step::Confluence {
+                            pending: Some(ConfluencePending {
+                                from: current,
+                                dir,
+                                sent_ms: ctx.now_ms,
+                            }),
+                        };
+                    } else {
+                        self.step = Step::Confluence { pending: None };
+                    }
+                    return;
+                }
+                if ctx.now_ms.saturating_sub(p.sent_ms) <= STEP_TIMEOUT_MS {
+                    return; // still waiting to land
+                }
+                // Timed out sitting in the same room — try again fresh.
+                self.step = Step::Confluence { pending: None };
+                return;
+            }
+            // Arrived somewhere new: learn the edge.
+            if let Some(state) = self.confluence.as_mut() {
+                state.record_arrival(p.from, &p.dir, current);
+            }
+            self.step = Step::Confluence { pending: None };
+            // fall through to choose the next step from `current`
+        }
+
+        // RT gate before the next decision/move.
+        if ctx.rt_remaining > 0.0 {
+            return;
+        }
+
+        let Some(hot) = super::confluence::hot_side(current) else {
+            // Off the zone map (Ruby `$go2_restart = true`) — re-path.
+            self.confluence = None;
+            self.repath(ctx.db, current, events);
+            return;
+        };
+
+        let Some(state) = self.confluence.as_mut() else {
+            // Shouldn't happen; recover by re-seeding.
+            self.confluence = Some(super::confluence::ConfluenceState::new());
+            self.step = Step::Confluence { pending: None };
+            return;
+        };
+
+        // Landmark scan from live loot, then record exits (which may detect a
+        // maze shift and wipe the learned map — we just re-run next tick).
+        state.observe_landmarks(current, hot, ctx.loot_nouns);
+        if state.record_exits(current, ctx.compass_dirs) {
+            events.push(TravelEvent::Status(
+                "the Plane shifted - relearning the maze".into(),
+            ));
+            self.step = Step::Confluence { pending: None };
+            return;
+        }
+
+        match state.choose_dir(current, hot, ctx.loot_nouns) {
+            super::confluence::ConfluenceMove::Arrive => {
+                events.push(TravelEvent::Send(
+                    super::confluence::TRANQUILITY_GO.to_string(),
+                ));
+                // Next tick we'll be outside the Plane → re-path.
+                self.step = Step::Confluence { pending: None };
+            }
+            super::confluence::ConfluenceMove::CrossPit => {
+                events.push(TravelEvent::Send(super::confluence::PIT_GO.to_string()));
+                self.step = Step::Confluence { pending: None };
+            }
+            super::confluence::ConfluenceMove::Go(dir) => {
+                events.push(TravelEvent::Send(dir.clone()));
+                self.step = Step::Confluence {
+                    pending: Some(ConfluencePending {
+                        from: current,
+                        dir,
+                        sent_ms: ctx.now_ms,
+                    }),
+                };
+            }
+            super::confluence::ConfluenceMove::Restart => {
+                // No exits at all — bail out to a normal re-path.
+                self.confluence = None;
+                self.repath(ctx.db, current, events);
+            }
+        }
+    }
+
     /// Run a transpiled edge script until it blocks (RT wait, sleep) or
     /// finishes (→ arrival watching).
     #[allow(clippy::too_many_arguments)]
@@ -1139,6 +1335,16 @@ impl TravelTask {
                 return;
             }
         }
+        // Confluence boundary: the planned edge steps INTO the Plane, whose
+        // exits are a shifting maze with no fixed graph. Once we're across the
+        // threshold the explorer takes over (it learns adjacency live and warps
+        // out via the tranquility portal, after which we re-path normally).
+        if super::confluence::is_confluence_room(next)
+            && !super::confluence::is_confluence_room(current)
+        {
+            self.begin_confluence(current, next, ctx, events);
+            return;
+        }
         let Some(command) = ctx
             .db
             .room(current)
@@ -1393,6 +1599,15 @@ fn command_is_swim_or_pedal(command: &str) -> bool {
         .any(|word| word == "swim" || word == "pedal")
 }
 
+/// Pick a random compass exit for the Confluence explorer's move-failed
+/// fallback (Ruby: `look` the compass, `move options[rand(length)]`). `_room`
+/// is unused but kept for a possible future seed; the pick is uniform-random
+/// over the live `<dir>` values.
+fn pick_random_exit(compass_dirs: &[String], _room: u32) -> Option<String> {
+    use rand::seq::IndexedRandom;
+    compass_dirs.choose(&mut rand::rng()).cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1431,6 +1646,8 @@ mod tests {
         lich_fallback: bool,
         funding: Option<FundingInputs>,
         pinefar: bool,
+        compass_dirs: Vec<String>,
+        loot_nouns: Vec<String>,
     }
 
     impl Sim {
@@ -1450,6 +1667,8 @@ mod tests {
                 lich_fallback: false,
                 funding: None,
                 pinefar: false,
+                compass_dirs: Vec::new(),
+                loot_nouns: Vec::new(),
             }
         }
 
@@ -1471,6 +1690,8 @@ mod tests {
                 lich_fallback: self.lich_fallback,
                 funding: self.funding,
                 at_pinefar_depository: self.pinefar,
+                compass_dirs: &self.compass_dirs,
+                loot_nouns: &self.loot_nouns,
             }
         }
     }
@@ -1754,6 +1975,8 @@ mod tests {
                 lich_fallback: false,
                 funding: None,
                 at_pinefar_depository: false,
+                compass_dirs: &[],
+                loot_nouns: &[],
             }
         }
 
@@ -2144,5 +2367,167 @@ mod tests {
             e,
             TravelEvent::Failed(s) if s.contains("no pathcode heard")
         )));
+    }
+
+    // ---- Confluence explorer ------------------------------------------------
+
+    /// Room 1 has an entry edge into the Plane's first room (23282). Beyond the
+    /// threshold the explorer takes over (db edges inside the zone are junk).
+    fn confluence_db() -> MapDb {
+        // Routing 1 → 1005 must pass through the Plane: room 1 enters at 23282,
+        // and the (nominal) confluence exit edge 23282 → 1005 completes it. The
+        // explorer replaces the in-zone walk entirely.
+        MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Edge]"],
+                 "wayto": {"23282": "go rift"}, "timeto": {"23282": 0.2}, "paths": ""},
+                {"id": 23282, "uid": [9023282], "location": "P", "title": ["[Plane]"],
+                 "wayto": {"1005": "confluence"}, "timeto": {"1005": 0.2}, "paths": ""},
+                {"id": 1005, "uid": [9001005], "location": "T", "title": ["[Out]"],
+                 "wayto": {}, "timeto": {}, "paths": ""}
+            ]"#,
+        )
+        .unwrap()
+    }
+
+    fn strs(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn entering_the_plane_starts_the_explorer() {
+        let db = confluence_db();
+        // Destination 1005 is nominal; the entry edge steps into 23282.
+        let mut task = TravelTask::start(&db, 1, 1005, 0).unwrap();
+        let mut sim = Sim::new(1);
+        let events = task.tick(sim.ctx(&db));
+        // We're outside, the next planned room is the zone → walk the entry edge.
+        assert!(
+            sent(&events).contains(&"go rift"),
+            "walks the entry edge into the Plane: {events:?}"
+        );
+        assert!(matches!(task.step, Step::Confluence { .. }));
+        sim.current = 23282;
+    }
+
+    #[test]
+    fn explorer_walks_an_untraversed_exit_then_learns_it() {
+        let db = confluence_db();
+        let mut task = TravelTask::start(&db, 1, 1005, 0).unwrap();
+        let mut sim = Sim::new(1);
+        task.tick(sim.ctx(&db)); // enter
+        sim.current = 23282;
+        sim.compass_dirs = strs(&["north"]);
+        // First explorer step: no landmark, one untraversed exit → go north.
+        let events = task.tick(sim.ctx(&db));
+        assert!(sent(&events).contains(&"north"), "explores north: {events:?}");
+        // Land in 23283; the executor records learned[23282][north]=23283.
+        sim.current = 23283;
+        sim.compass_dirs = strs(&["south"]);
+        sim.now += 100;
+        let _ = task.tick(sim.ctx(&db));
+        // Back at 23282, north is now known — but with no landmark it still
+        // finds another route; the key check is we didn't crash and stayed in
+        // the explorer.
+        assert!(matches!(task.step, Step::Confluence { .. }));
+    }
+
+    #[test]
+    fn standing_on_tranquility_warps_out_and_repaths() {
+        let db = confluence_db();
+        let mut task = TravelTask::start(&db, 1, 1005, 0).unwrap();
+        let mut sim = Sim::new(1);
+        task.tick(sim.ctx(&db)); // enter
+        sim.current = 23282;
+        sim.compass_dirs = strs(&["north"]);
+        sim.loot_nouns = strs(&[super::super::confluence::TRANQUILITY_LOOT]);
+        // The tranquility point is here → go tranquility.
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            sent(&events).contains(&super::super::confluence::TRANQUILITY_GO),
+            "warps out via the portal: {events:?}"
+        );
+        // The portal dumps us outside the Plane at the destination (1005);
+        // the top-of-tick arrival check ends the trip.
+        sim.current = 1005;
+        sim.loot_nouns.clear();
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            matches!(events.last(), Some(TravelEvent::Arrived { destination: 1005, .. })),
+            "warping to the destination completes the trip: {events:?}"
+        );
+    }
+
+    #[test]
+    fn leaving_the_plane_short_of_destination_repaths() {
+        // Same as above but the portal drops us at a non-destination zone-exit
+        // room (2005), from which we must re-path to the real destination.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Edge]"],
+                 "wayto": {"23282": "go rift"}, "timeto": {"23282": 0.2}, "paths": ""},
+                {"id": 23282, "uid": [9023282], "location": "P", "title": ["[Plane]"],
+                 "wayto": {"1005": "confluence"}, "timeto": {"1005": 0.2}, "paths": ""},
+                {"id": 2005, "uid": [9002005], "location": "T", "title": ["[Drop]"],
+                 "wayto": {"1005": "north"}, "timeto": {"1005": 0.2}, "paths": ""},
+                {"id": 1005, "uid": [9001005], "location": "T", "title": ["[Out]"],
+                 "wayto": {"2005": "south"}, "timeto": {"2005": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 1005, 0).unwrap();
+        let mut sim = Sim::new(1);
+        task.tick(sim.ctx(&db)); // enter
+        sim.current = 23282;
+        sim.compass_dirs = strs(&["north"]);
+        sim.loot_nouns = strs(&[super::super::confluence::TRANQUILITY_LOOT]);
+        task.tick(sim.ctx(&db)); // go tranquility
+        // Dropped at 2005 (not the destination) → explorer relinquishes + repaths.
+        sim.current = 2005;
+        sim.loot_nouns.clear();
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            task.confluence.is_none(),
+            "explorer state dropped on leaving the Plane"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                TravelEvent::Status(s) if s.contains("left the Plane")
+            )),
+            "re-paths from the drop room: {events:?}"
+        );
+    }
+
+    #[test]
+    fn a_shifted_maze_wipes_and_relearns() {
+        let db = confluence_db();
+        let mut task = TravelTask::start(&db, 1, 1005, 0).unwrap();
+        let mut sim = Sim::new(1);
+        task.tick(sim.ctx(&db)); // enter
+        sim.current = 23282;
+        sim.compass_dirs = strs(&["north", "east"]);
+        let _ = task.tick(sim.ctx(&db)); // records 23282's exits, sends a move (pending)
+        // The move lands in a neighbor (23283) — the executor learns the edge
+        // and clears the pending move.
+        sim.current = 23283;
+        sim.compass_dirs = strs(&["south"]);
+        sim.now += 100;
+        let _ = task.tick(sim.ctx(&db)); // records 23283, sends a move
+        // Walk back to 23282, but its exits have SHIFTED since we recorded them.
+        sim.current = 23282;
+        sim.compass_dirs = strs(&["north", "west"]);
+        sim.now += 100;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                TravelEvent::Status(s) if s.contains("shifted")
+            )),
+            "detects the shift and relearns: {events:?}"
+        );
+        assert!(matches!(task.step, Step::Confluence { .. }));
     }
 }

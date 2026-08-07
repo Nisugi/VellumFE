@@ -1054,6 +1054,15 @@ impl AppCore {
                 None => false,
             }
         };
+        // Confluence landmark scan reads ground loot + linked room scenery
+        // (Lich's `GameObj.loot`): the tranquility point and pit appear as
+        // room objects. Collect their nouns/names while we hold `objects`.
+        let loot_nouns: Vec<String> = objects
+            .ground()
+            .iter()
+            .chain(objects.room_desc().iter())
+            .map(|item| item.name.clone())
+            .collect();
         let left_hand = objects.hand(Hand::Left).cloned();
         let right_hand = objects.hand(Hand::Right).cloned();
         let left_is_weapon = is_weapon(left_hand.as_ref());
@@ -1075,6 +1084,9 @@ impl AppCore {
             left_is_weapon,
             right_is_weapon,
         };
+
+        // Live compass exits (XMLData.room_exits) for the Confluence explorer.
+        let compass_dirs: Vec<String> = self.game_state.compass_dirs.clone();
 
         let ctx = crate::core::travel::TravelContext {
             db: &db,
@@ -1104,6 +1116,11 @@ impl AppCore {
                 .room_name
                 .as_deref()
                 .is_some_and(|t| t.contains("Pinefar, Depository")),
+            // Confluence explorer's live view of the shifting maze: the
+            // current room's compass exits and ground-loot nouns (the
+            // tranquility point / pit landmarks live in ground + room_desc).
+            compass_dirs: &compass_dirs,
+            loot_nouns: &loot_nouns,
         };
         let events = self.travel.tick(ctx);
         for event in events {
