@@ -1054,6 +1054,12 @@ impl AppCore {
             weaponsack: weaponsack.as_deref(),
             lootsack: lootsack.as_deref(),
             other_containers: &other_containers,
+            // Bandolier-bag resolution (Lich's find_bandolier_bag) is a
+            // multi-container "swirling mist" look-scan we don't run yet; the
+            // retrieval command is ported (rub #bag), but live bag lookup is a
+            // follow-up. Ethereal items need no resolution (retrieved by noun).
+            left_bandolier: None,
+            right_bandolier: None,
             left_is_weapon,
             right_is_weapon,
         };

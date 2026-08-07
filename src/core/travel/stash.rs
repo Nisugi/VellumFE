@@ -60,6 +60,12 @@ pub struct StashContext<'a> {
     /// Any other inventory container ids, tried last (Lich's
     /// `inventory containers` scan). Ordered; first that works wins.
     pub other_containers: &'a [String],
+    /// Bandolier bag id for the currently-held weapon, if the caller resolved
+    /// one (Lich's `find_bandolier_bag`). A bandolier weapon retrieves with
+    /// `rub #bag` and re-forms in hand, so we don't drag it to a container.
+    /// Indexed by hand: (left, right).
+    pub left_bandolier: Option<&'a str>,
+    pub right_bandolier: Option<&'a str>,
     /// True when an item's classified type contains "weapon" — the caller
     /// resolves this via gameobj-data (we don't carry type on GameItem).
     /// Indexed by hand: (left_is_weapon, right_is_weapon).
@@ -85,6 +91,22 @@ pub enum Retrieve {
     Get(String),
     /// Worn gear put to inventory: `remove #id`.
     Remove(String),
+    /// Ethereal item (a tattoo): `rub <noun> tattoo` (stash.rb:184-186).
+    /// The item dissolves on stow and re-forms on rub, so it's identified by
+    /// noun, not id.
+    RubTattoo(String),
+    /// Bandolier weapon: `rub #<bandolier-bag-id>` (stash.rb:187-189). The
+    /// bag id is resolved by find_bandolier_bag at empty time.
+    RubBandolier { bag_id: String },
+}
+
+/// True for an ethereal tattoo item (Lich's `/^ethereal \w+$/` on the name).
+fn is_ethereal(name: &str) -> bool {
+    let rest = match name.strip_prefix("ethereal ") {
+        Some(r) => r,
+        None => return false,
+    };
+    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphabetic())
 }
 
 /// One remembered stow: which hand it came from and how to get it back.
@@ -207,7 +229,7 @@ impl StashTask {
         for hand in [Hand::Left, Hand::Right] {
             if let Some(item) = ctx.hand(hand) {
                 let is_weapon = ctx.is_weapon(hand);
-                let (command, retrieve) = plan_stow(item, is_weapon, hand, ctx);
+                let (command, retrieve) = plan_stow(item, is_weapon, ctx.bandolier(hand), ctx);
                 self.stack.push(Stowed {
                     hand,
                     item: item.clone(),
@@ -269,6 +291,8 @@ impl StashTask {
             let command = match &stowed.retrieve {
                 Retrieve::Get(id) => format!("get #{id}"),
                 Retrieve::Remove(id) => format!("remove #{id}"),
+                Retrieve::RubTattoo(noun) => format!("rub {noun} tattoo"),
+                Retrieve::RubBandolier { bag_id } => format!("rub #{bag_id}"),
             };
             events.push(StashEvent::Send(command));
             self.phase = Phase::Await {
@@ -283,19 +307,47 @@ impl StashTask {
 }
 
 /// The Lich stow cascade for one item. Returns the command to send and how to
-/// retrieve it later.
+/// retrieve it later. `bandolier` is the resolved bandolier-bag id for this
+/// item, if any.
 fn plan_stow(
     item: &GameItem,
     is_weapon: bool,
-    _hand: Hand,
+    bandolier: Option<&str>,
     ctx: StashContext,
 ) -> (String, Retrieve) {
-    // Worn shields/bows: wear to inventory, retrieved with `remove`.
-    if is_worn_gear(&item.noun) {
+    // Ethereal tattoo item: it dissolves when stowed and re-forms on
+    // `rub <noun> tattoo`. Stow it normally (into the cascade destination);
+    // only the retrieval differs. Checked before worn-gear because an
+    // "ethereal shield" is a tattoo, not a worn shield.
+    let ethereal = is_ethereal(&item.name);
+    // Worn shields/bows (non-ethereal): wear to inventory, retrieve `remove`.
+    if !ethereal && is_worn_gear(&item.noun) {
         return (format!("wear #{}", item.id), Retrieve::Remove(item.id.clone()));
     }
+    // Bandolier weapon: stow normally, but retrieve with `rub #bag`.
+    let retrieve_override = if ethereal {
+        Some(Retrieve::RubTattoo(item.noun.clone()))
+    } else {
+        bandolier.map(|bag| Retrieve::RubBandolier {
+            bag_id: bag.trim_start_matches('#').to_string(),
+        })
+    };
 
     let rs = ctx.ready_stow;
+    // The stow command follows the cascade; the retrieve is the ethereal/
+    // bandolier override if any, else a plain `get`.
+    let stow_command = stow_destination(item, is_weapon, ctx, rs);
+    let retrieve = retrieve_override.unwrap_or_else(|| Retrieve::Get(item.id.clone()));
+    (stow_command, retrieve)
+}
+
+/// Pick the stow command per Lich's per-hand cascade (stash.rb:171-257).
+fn stow_destination(
+    item: &GameItem,
+    is_weapon: bool,
+    ctx: StashContext,
+    rs: &ReadyStow,
+) -> String {
     // 1. This item has a ready store-rule → sheath / 2nd sheath / default.
     if let Some(mode) = rs.store_mode_for(item) {
         let bag = match mode {
@@ -305,38 +357,35 @@ fn plan_stow(
             _ => rs.default_stow(),
         };
         if let Some(bag) = bag {
-            return drag_to(item, &bag.id);
+            return drag_cmd(item, &bag.id);
         }
     }
     // 2. Weapon + a secondary sheath is set.
     if is_weapon {
         if let Some(sheath) = rs.second_sheath() {
-            return drag_to(item, &sheath.id);
+            return drag_cmd(item, &sheath.id);
         }
         // 3. Weapon + a configured weaponsack.
         if let Some(sack) = ctx.weaponsack {
-            return drag_to(item, sack);
+            return drag_cmd(item, sack);
         }
     }
     // 4. A configured lootsack.
     if let Some(sack) = ctx.lootsack {
-        return drag_to(item, sack);
+        return drag_cmd(item, sack);
     }
     // 5. Any other inventory container.
     if let Some(bag) = ctx.other_containers.first() {
-        return drag_to(item, bag);
+        return drag_cmd(item, bag);
     }
     // Nothing configured: fall back to a bare `stow`, which uses the game's
-    // own default stow container. Retrieved with `get`.
-    (format!("stow #{}", item.id), Retrieve::Get(item.id.clone()))
+    // own default stow container.
+    format!("stow #{}", item.id)
 }
 
-/// `_drag #item #bag` — Lich's `add_to_bag` command. Retrieved with `get`.
-fn drag_to(item: &GameItem, bag_id: &str) -> (String, Retrieve) {
-    (
-        format!("_drag #{} #{}", item.id, bag_id.trim_start_matches('#')),
-        Retrieve::Get(item.id.clone()),
-    )
+/// `_drag #item #bag` — Lich's `add_to_bag` command.
+fn drag_cmd(item: &GameItem, bag_id: &str) -> String {
+    format!("_drag #{} #{}", item.id, bag_id.trim_start_matches('#'))
 }
 
 fn other(hand: Hand) -> Hand {
@@ -366,6 +415,12 @@ impl StashContext<'_> {
             Hand::Right => self.right_is_weapon,
         }
     }
+    fn bandolier(&self, hand: Hand) -> Option<&str> {
+        match hand {
+            Hand::Left => self.left_bandolier,
+            Hand::Right => self.right_bandolier,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -387,6 +442,8 @@ mod tests {
             weaponsack,
             lootsack,
             other_containers: others,
+            left_bandolier: None,
+            right_bandolier: None,
             left_is_weapon: false,
             right_is_weapon: false,
             now_ms,
@@ -453,6 +510,50 @@ mod tests {
         let mut empty = StashTask::empty();
         let e = empty.tick(ctx(&objs, None, None, &others, 0));
         assert_eq!(e, vec![StashEvent::Send("stow #7".into())]);
+    }
+
+    #[test]
+    fn ethereal_item_retrieves_with_rub_tattoo() {
+        let mut objs = GameObjects::default();
+        // Ethereal items are named "ethereal <noun>".
+        objs.set_hand(
+            Hand::Left,
+            Some(GameItem::new("3", "shield", "ethereal shield")),
+        );
+        let others: Vec<String> = vec![];
+        let mut empty = StashTask::empty();
+        // Stow is still a normal cascade command (lootsack here)...
+        let e = empty.tick(ctx(&objs, None, Some("99"), &others, 0));
+        assert_eq!(e, vec![StashEvent::Send("_drag #3 #99".into())]);
+        objs.set_hand(Hand::Left, None);
+        empty.tick(ctx(&objs, None, Some("99"), &others, 100));
+        // ...but retrieval rubs the tattoo by noun, not `get`.
+        let stack = empty.take_stack();
+        let mut fill = StashTask::fill(stack);
+        let e = fill.tick(ctx(&objs, None, Some("99"), &others, 200));
+        assert_eq!(e, vec![StashEvent::Send("rub shield tattoo".into())]);
+    }
+
+    #[test]
+    fn bandolier_weapon_retrieves_with_rub_bag() {
+        let mut objs = GameObjects::default();
+        objs.set_hand(Hand::Right, Some(GameItem::new("7", "sword", "a war sword")));
+        let others: Vec<String> = vec![];
+        // Caller resolved a bandolier bag (#500) for the right hand.
+        let mut c = ctx(&objs, None, Some("99"), &others, 0);
+        c.right_bandolier = Some("500");
+        let mut empty = StashTask::empty();
+        let e = empty.tick(c);
+        assert_eq!(e, vec![StashEvent::Send("_drag #7 #99".into())]);
+        objs.set_hand(Hand::Right, None);
+        let mut c = ctx(&objs, None, Some("99"), &others, 100);
+        c.right_bandolier = Some("500");
+        empty.tick(c);
+        // Retrieval rubs the bandolier bag.
+        let stack = empty.take_stack();
+        let mut fill = StashTask::fill(stack);
+        let e = fill.tick(ctx(&objs, None, Some("99"), &others, 200));
+        assert_eq!(e, vec![StashEvent::Send("rub #500".into())]);
     }
 
     #[test]

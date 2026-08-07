@@ -57,6 +57,8 @@ pub struct StashInputs<'a> {
     pub weaponsack: Option<&'a str>,
     pub lootsack: Option<&'a str>,
     pub other_containers: &'a [String],
+    pub left_bandolier: Option<&'a str>,
+    pub right_bandolier: Option<&'a str>,
     pub left_is_weapon: bool,
     pub right_is_weapon: bool,
 }
@@ -70,6 +72,8 @@ impl<'a> StashInputs<'a> {
             weaponsack: self.weaponsack,
             lootsack: self.lootsack,
             other_containers: self.other_containers,
+            left_bandolier: self.left_bandolier,
+            right_bandolier: self.right_bandolier,
             left_is_weapon: self.left_is_weapon,
             right_is_weapon: self.right_is_weapon,
             now_ms,
@@ -1313,6 +1317,8 @@ mod tests {
                 weaponsack: None,
                 lootsack: Some("99"),
                 other_containers: others,
+                left_bandolier: None,
+                right_bandolier: None,
                 left_is_weapon: false,
                 right_is_weapon: false,
             };
