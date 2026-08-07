@@ -13,6 +13,13 @@ pub enum WalkAction {
     /// Send a movement command and expect the room to change (the executor
     /// starts arrival-watching after the script finishes).
     Move(String),
+    /// Send a movement command mid-script and WAIT for the room to change
+    /// before continuing to the next action — a paced walk step (unlike `Move`,
+    /// which is the terminal room-changer sent as the script ends). Used by
+    /// multi-room crossings like the day-pass buy walk, where each step must
+    /// land before the next command (you can't `withdraw` before reaching the
+    /// bank). The room it lands in is not verified against a specific id.
+    StepMove(String),
     /// Send a command with no room-change expectation ("push wall").
     Put(String),
     /// Wait out roundtime (`waitrt?`).

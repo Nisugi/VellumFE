@@ -226,28 +226,18 @@ enum Step {
         /// on arrival we can record `learned[from][dir] = arrived`.
         pending: Option<ConfluencePending>,
     },
-    /// Crossing a Chronomage day-pass edge — a self-contained per-town script
-    /// (open sack → use/buy a pass → raise it to travel → put it back). See
-    /// travel::day_pass and core::day_pass. `queue` is the remaining literal
-    /// commands to send (built up-front from the edge's departure metadata +
-    /// the live pass/sack ids); `sent_ms` paces them; `expected` is the
-    /// destination room.
-    DayPass {
-        queue: std::collections::VecDeque<DayPassCmd>,
-        sent_ms: u64,
+    /// A scripted-edge `StepMove` is in flight: a paced walk command was sent
+    /// mid-script and we're waiting for the room to change before resuming the
+    /// script at `pc`. `sent_from` is the room it was sent in (any other room
+    /// means it landed). Used by the day-pass buy walk.
+    ScriptWalk {
+        actions: Vec<crate::core::pathing::edge::WalkAction>,
+        pc: usize,
         expected: u32,
         from: u32,
+        sent_from: u32,
+        sent_ms: u64,
     },
-}
-
-/// One step of a day-pass crossing script: a command to send, and how long to
-/// wait before the next. Movement/raise steps get the slow window; quick sack
-/// pokes get a short gap.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DayPassCmd {
-    send: String,
-    /// Extra pace (ms) after this command before the next (beyond RT).
-    gap_ms: u64,
 }
 
 /// A Confluence move in flight: where it was sent from and which direction, so
@@ -314,9 +304,6 @@ const MAX_RESTARTS: u32 = 10;
 const MAZE_ASK_TIMEOUT_MS: u64 = 12_000;
 /// Gap between maze route commands beyond waiting out RT.
 const MAZE_STEP_GAP_MS: u64 = 1_400;
-/// Gap between day-pass script commands beyond RT (the proc's dothistimeout
-/// waits are ~10s, but our commands are simple; a modest beat avoids flooding).
-const DAY_PASS_STEP_GAP_MS: u64 = 900;
 /// Settle time after the last route command (or a `search`) before the
 /// landing room is judged.
 const MAZE_SETTLE_MS: u64 = 2_500;
@@ -507,14 +494,6 @@ impl TravelTask {
             Step::Confluence { pending } => {
                 self.tick_confluence(pending, current, ctx, &mut events);
             }
-            Step::DayPass {
-                queue,
-                sent_ms,
-                expected,
-                from,
-            } => {
-                self.tick_day_pass(queue, sent_ms, expected, from, current, ctx, &mut events);
-            }
             Step::AwaitStand { sent_ms, attempts } => {
                 if ctx.standing {
                     self.step = Step::Prepare;
@@ -538,6 +517,32 @@ impl TravelTask {
             }
             Step::Funding(phase) => {
                 self.tick_funding(phase, current, ctx, &mut events);
+            }
+            Step::ScriptWalk {
+                actions,
+                pc,
+                expected,
+                from,
+                sent_from,
+                sent_ms,
+            } => {
+                // Paced walk step in flight. When the room changes off
+                // `sent_from`, resume the script at `pc`. A generous timeout
+                // re-sends by resuming (the next StepMove/Move handles it).
+                if current != sent_from
+                    || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
+                {
+                    self.tick_script(actions, pc, None, expected, from, ctx, &mut events);
+                } else {
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc,
+                        expected,
+                        from,
+                        sent_from,
+                        sent_ms,
+                    };
+                }
             }
             Step::RunScript {
                 actions,
@@ -1145,6 +1150,24 @@ impl TravelTask {
                     sent_anything = true;
                     pc += 1;
                 }
+                WalkAction::StepMove(cmd) => {
+                    // Paced walk step: send it, then suspend until the room
+                    // changes before running the next action (so a multi-room
+                    // crossing doesn't flood commands ahead of arrival).
+                    if ctx.rt_remaining > 0.0 {
+                        break; // wait out RT; resume this same StepMove next tick
+                    }
+                    events.push(TravelEvent::Send(cmd));
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc: pc + 1,
+                        expected,
+                        from,
+                        sent_from: ctx.current_room.unwrap_or(from),
+                        sent_ms: ctx.now_ms,
+                    };
+                    return;
+                }
                 WalkAction::WaitRt => {
                     if ctx.rt_remaining > 0.0 {
                         break;
@@ -1249,6 +1272,7 @@ impl TravelTask {
         events: &mut Vec<TravelEvent>,
     ) {
         use crate::core::day_pass;
+        use crate::core::pathing::edge::WalkAction as W;
         let Some((dep, dest)) = day_pass::edge(from, next) else {
             self.repath(ctx.db, from, events);
             return;
@@ -1263,52 +1287,50 @@ impl TravelTask {
             .map(|i| i.get_silvers && crate::core::day_pass::buy_permits(i.buy_day_pass, a, b))
             .unwrap_or(false);
 
-        // Quick sack pokes get a short gap; moves/asks/raise get a longer beat.
-        let quick = |s: String| DayPassCmd { send: s, gap_ms: 400 };
-        let beat = |s: String| DayPassCmd { send: s, gap_ms: 1_200 };
-        let mut q: std::collections::VecDeque<DayPassCmd> = std::collections::VecDeque::new();
-
-        // Open the sack (if we know it). `look in` is harmless if already open.
+        // Build the crossing as a WalkAction script and run it through the
+        // normal scripted-edge machinery (tick_script) — so it reuses the
+        // EmptyHands/FillHands stash primitives, RT waits, and arrival watching
+        // instead of hand-rolled command strings. `Put` = send, no room change;
+        // `Move` = send + expect the room to change (the pass `raise` is the
+        // mover). Pass/sack ids are substituted here from live state.
+        let mut script: Vec<W> = Vec::new();
         if let Some(sack) = sack {
-            q.push_back(quick(format!("open #{sack}")));
+            script.push(W::Put(format!("open #{sack}"))); // harmless if already open
         }
-        q.push_back(quick("empty hands".into()));
-
-        let raise_and_stow = |q: &mut std::collections::VecDeque<DayPassCmd>, pass: &str| {
-            q.push_back(beat(format!("raise #{pass}")));
-            if let Some(sack) = sack {
-                q.push_back(quick(format!("_drag #{pass} #{sack}")));
-            }
-        };
+        // Free a hand for the pass (the clerk won't hand it over otherwise) —
+        // our real stash primitive, not a raw `empty hands` string.
+        script.push(W::EmptyHands);
 
         if let Some(pass) = held {
-            // USE: get the held pass, raise it (travels), put it back.
-            q.push_back(quick(format!("get #{pass}")));
-            raise_and_stow(&mut q, pass);
-        } else if buy {
-            // BUY: walk to the NPC, ask, (fund at the bank if short), then the
-            // pass is in hand — look at it (registers expiry) and raise it. The
-            // raise/put-back use the just-bought pass, whose id we don't know
-            // ahead of time, so raise the generic `pass` noun (Lich resolves it
-            // from the hand after the buy).
-            q.push_back(beat(dep.enter_move.to_string()));
-            q.push_back(beat(format!("ask {} for {}", dep.npc, dest.ask_word)));
-            q.push_back(beat(format!("ask {} for {}", dep.npc, dest.ask_word)));
-            // Funding leg (only fires if short; sending it unconditionally is
-            // Lich's behavior gated on get_silvers — the caller only enables
-            // `buy` when get_silvers is on).
-            for dir in dep.to_bank {
-                q.push_back(beat((*dir).to_string()));
-            }
-            q.push_back(beat("withdraw 5000".into()));
-            for dir in dep.from_bank {
-                q.push_back(beat((*dir).to_string()));
-            }
-            q.push_back(beat(format!("ask {} for {}", dep.npc, dest.ask_word)));
-            q.push_back(quick("look pass".into()));
-            q.push_back(beat("raise pass".into()));
+            // USE: get the held pass, raise it (this travels), put it back.
+            script.push(W::Put(format!("get #{pass}")));
+            script.push(W::Move(format!("raise #{pass}")));
             if let Some(sack) = sack {
-                q.push_back(quick(format!("_drag #pass #{sack}")));
+                script.push(W::Put(format!("_drag #{pass} #{sack}")));
+            }
+        } else if buy {
+            // BUY: step to the NPC, ask (twice — the confirm), fund at this
+            // town's bank if short, re-ask, then the pass is in hand; look at
+            // it and raise it (travels). Ids unknown pre-buy, so use the `pass`
+            // noun (Lich resolves it from the hand). Every walk is a StepMove
+            // (waits to arrive before the next command) so we don't `withdraw`
+            // before reaching the bank; only the final `raise` is the terminal
+            // Move that lands us at the destination.
+            script.push(W::StepMove(dep.enter_move.to_string()));
+            script.push(W::Put(format!("ask {} for {}", dep.npc, dest.ask_word)));
+            script.push(W::Put(format!("ask {} for {}", dep.npc, dest.ask_word)));
+            for dir in dep.to_bank {
+                script.push(W::StepMove((*dir).to_string()));
+            }
+            script.push(W::Put("withdraw 5000".into()));
+            for dir in dep.from_bank {
+                script.push(W::StepMove((*dir).to_string()));
+            }
+            script.push(W::Put(format!("ask {} for {}", dep.npc, dest.ask_word)));
+            script.push(W::Put("look pass".into()));
+            script.push(W::Move("raise pass".into()));
+            if let Some(sack) = sack {
+                script.push(W::Put(format!("_drag #pass #{sack}")));
             }
         } else {
             // No pass and no buy permission — can't cross. Ban + re-path.
@@ -1320,9 +1342,10 @@ impl TravelTask {
             return;
         }
 
-        q.push_back(quick("get pass".into())); // fill_hand: recover the pass
-        if sack.is_some() {
-            q.push_back(quick("close pass_sack".into()));
+        // Recover the original held items (LIFO, from the EmptyHands above).
+        script.push(W::FillHands);
+        if let Some(sack) = sack {
+            script.push(W::Put(format!("close #{sack}")));
         }
 
         events.push(TravelEvent::Status(format!(
@@ -1330,76 +1353,7 @@ impl TravelTask {
             dest.ask_word,
             if held.is_some() { "using held pass" } else { "buying" }
         )));
-        // Kick the first command out this tick, then hold the rest in the step.
-        self.tick_day_pass(q, 0, next, from, from, ctx, events);
-    }
-
-    /// Pace the day-pass command queue: send the front command when RT is clear
-    /// and the previous command's gap has elapsed. The `raise` lands us at the
-    /// destination (arrival ends the trip via the top-of-tick check once the
-    /// queue drains). Off-route mid-script (the buy bank-walk) is expected, so
-    /// we don't re-path on room changes — only the final destination matters.
-    #[allow(clippy::too_many_arguments)]
-    fn tick_day_pass(
-        &mut self,
-        mut queue: std::collections::VecDeque<DayPassCmd>,
-        sent_ms: u64,
-        expected: u32,
-        from: u32,
-        current: u32,
-        ctx: TravelContext,
-        events: &mut Vec<TravelEvent>,
-    ) {
-        if current == expected {
-            // The raise dropped us at the destination. Finish any trailing
-            // put-back/close, then arrive.
-            for cmd in queue.drain(..) {
-                if cmd.send.contains("_drag")
-                    || cmd.send.starts_with("get ")
-                    || cmd.send.starts_with("close")
-                {
-                    events.push(TravelEvent::Send(cmd.send));
-                }
-            }
-            self.arrive();
-            return;
-        }
-        if ctx.muckled {
-            if !self.muckle_announced {
-                events.push(TravelEvent::Status(
-                    "stunned/webbed - waiting until you can move".into(),
-                ));
-                self.muckle_announced = true;
-            }
-            self.step = Step::DayPass { queue, sent_ms, expected, from };
-            return;
-        }
-        self.muckle_announced = false;
-        // Pace: wait out RT and the previous command's gap.
-        let waited = ctx.now_ms.saturating_sub(sent_ms);
-        if ctx.rt_remaining > 0.0 || (sent_ms != 0 && waited < DAY_PASS_STEP_GAP_MS) {
-            self.step = Step::DayPass { queue, sent_ms, expected, from };
-            return;
-        }
-        match queue.pop_front() {
-            Some(cmd) => {
-                events.push(TravelEvent::Send(cmd.send));
-                self.step = Step::DayPass {
-                    queue,
-                    sent_ms: ctx.now_ms.max(1),
-                    expected,
-                    from,
-                };
-            }
-            None => {
-                // Queue drained but not at the destination — the raise didn't
-                // land (expired pass, wrong dest). Re-path from where we are.
-                events.push(TravelEvent::Status(
-                    "day pass didn't complete - re-pathing".into(),
-                ));
-                self.repath(ctx.db, current, events);
-            }
-        }
+        self.tick_script(script, 0, None, next, from, ctx, events);
     }
 
     /// Collapse a `;e true` pass-through edge (`from` -> `virtual`) with the
@@ -3253,30 +3207,30 @@ mod tests {
             }};
         }
 
-        // Tick 1: begin the crossing — opens the sack (first queued command).
+        // The crossing runs as a WalkAction script through tick_script: open
+        // sack, EmptyHands (our stash primitive — bare `stow both` here since
+        // the test wires no hands), get the held pass, raise it, put it back,
+        // FillHands (`get both`), close.
         let ev = task.tick(dpctx!(0, 8635));
-        assert_eq!(sent(&ev), ["open #99"], "opens the day-pass sack: {ev:?}");
-        // Drive the paced queue until the raise is sent.
-        let mut all: Vec<String> = sent(&ev).iter().map(|s| s.to_string()).collect();
-        let mut now = 0u64;
-        for _ in 0..12 {
-            now += 2_000;
-            let ev = task.tick(dpctx!(now, 8635));
-            all.extend(sent(&ev).iter().map(|s| s.to_string()));
-            if all.iter().any(|c| c.starts_with("raise #77")) {
-                break;
-            }
-        }
-        // The USE script: get the held pass then raise it (no ask/withdraw).
-        assert!(all.contains(&"get #77".to_string()), "gets the held pass: {all:?}");
-        assert!(all.contains(&"raise #77".to_string()), "raises it to travel: {all:?}");
-        assert!(
-            !all.iter().any(|c| c.contains("ask ") || c.contains("withdraw")),
-            "USE path never asks/withdraws: {all:?}"
+        let all: Vec<String> = sent(&ev).iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            all,
+            vec![
+                "open #99",
+                "stow both", // EmptyHands primitive (no hands wired → fallback)
+                "get #77",
+                "raise #77",
+                "_drag #77 #99",
+                "get both", // FillHands primitive
+                "close #99",
+            ],
+            "USE crossing uses the stash primitives + raises the held pass: {ev:?}"
         );
+        // Crucially: NOT a raw `empty hands` string, and no ask/withdraw.
+        assert!(!all.iter().any(|c| c == "empty hands"), "no invalid `empty hands` cmd");
+        assert!(!all.iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
         // The raise lands us at 8916 → arrival finishes the trip.
-        now += 2_000;
-        let ev = task.tick(dpctx!(now, 8916));
+        let ev = task.tick(dpctx!(2_000, 8916));
         assert!(
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
             "arrives at the destination: {ev:?}"
@@ -3319,23 +3273,55 @@ mod tests {
             }};
         }
 
-        task.tick(buyctx!(0, 8635));
+        // The BUY crossing paces each walk move (StepMove) — it sends the move
+        // then WAITS for the room to change before the next command, so it never
+        // floods (no `withdraw` before reaching the bank). Tick 1: open sack,
+        // EmptyHands primitive, then the enter step-move to the clerk, and STOP.
+        let ev = task.tick(buyctx!(0, 8635));
+        assert_eq!(
+            sent(&ev),
+            ["open #99", "stow both", "south"],
+            "opens sack, stows, steps to the clerk — then waits to arrive: {ev:?}"
+        );
+        assert!(!sent(&ev).iter().any(|c| *c == "empty hands"), "uses the stash primitive");
+        // Still in 8635 (the step hasn't landed): nothing more is sent.
+        assert!(sent(&task.tick(buyctx!(1_000, 8635))).is_empty(), "waits for the room change");
+        // Arrive at the clerk room (any new room) → the two asks fire, then it
+        // steps toward the bank and waits again.
+        let ev = task.tick(buyctx!(2_000, 900));
+        let s: Vec<&str> = sent(&ev);
+        assert_eq!(
+            s,
+            ["ask clerk for icemule", "ask clerk for icemule", "up"],
+            "asks the clerk (twice), then steps toward the bank: {ev:?}"
+        );
+        // Walk the bank path: each StepMove waits to arrive before the next.
+        // Drive ticks, giving a fresh room each time the previous step landed,
+        // and record when `withdraw 5000` appears relative to the moves.
         let mut all: Vec<String> = Vec::new();
-        let mut now = 0u64;
-        for _ in 0..40 {
-            now += 2_000;
-            let ev = task.tick(buyctx!(now, 8635));
-            all.extend(sent(&ev).iter().map(|s| s.to_string()));
+        let mut room = 902u32;
+        let mut moves_before_withdraw = 0usize;
+        let mut withdrawn = false;
+        for i in 0..30 {
+            // Advance to a new room each tick so a pending StepMove resolves.
+            room += 1;
+            let ev = task.tick(buyctx!(3_000 + i * 1_000, room));
+            for c in sent(&ev) {
+                if c == "withdraw 5000" {
+                    withdrawn = true;
+                } else if !withdrawn && (c.len() <= 4 || c.starts_with("go ") || c == "out") {
+                    moves_before_withdraw += 1;
+                }
+                all.push(c.to_string());
+            }
             if all.iter().any(|c| c == "raise pass") {
                 break;
             }
         }
-        // The BUY script: Wehnimer's clerk, ask for icemule, fund at the bank,
-        // then raise the just-bought pass.
-        assert!(all.iter().any(|c| c == "ask clerk for icemule"), "asks the clerk: {all:?}");
-        assert!(all.iter().any(|c| c == "withdraw 5000"), "funds at the bank: {all:?}");
-        assert!(all.iter().any(|c| c == "go bank"), "walks the town's bank path: {all:?}");
-        assert!(all.iter().any(|c| c == "raise pass"), "raises the bought pass: {all:?}");
+        assert!(withdrawn, "withdraws at the bank during the buy walk: {all:?}");
+        // The withdraw came AFTER walking (there were bank-walk moves first).
+        assert!(moves_before_withdraw >= 1, "walks toward the bank before withdrawing: {all:?}");
+        assert!(all.iter().any(|c| c == "raise pass"), "eventually raises the bought pass: {all:?}");
     }
 
     // ---- Pass-through (`;e true`) edges: virtual urchin hideouts ------------
