@@ -117,6 +117,23 @@ re!(
     FPUT_MOVE_DQ,
     r#"^;e\s+fput\s*\(?"([^"]+)"\)?;?\s*move\s*\(?"([^"]+)"\)?;?$"#
 );
+// Passive "wait for the room to change" edge: ";e wait_until{Map.current.id
+// != 30812}". No command to send — a prior move's momentum (a jump landing
+// across several rooms) carries you. Chained on routes like Widowmaker's
+// Road. Transpiles to no actions: the executor simply awaits arrival at the
+// expected room, which IS "wait until the room changes".
+re!(
+    WAIT_UNTIL_ROOM_CHANGE,
+    r"^;e\s+wait_until\s*\{\s*Map\.current\.id\s*!=\s*\d+\s*\}\s*;?$"
+);
+// Stand-guard then move, with an optional $go2_restart:
+// ";e fput 'stand' unless standing?;move('jump'); $go2_restart=true".
+// The stand only fires when not standing; the move always runs; the restart
+// (when present) forces a re-plan (the jump lands somewhere unpredictable).
+re!(
+    STAND_GUARD_MOVE,
+    r"^;e\s+fput\s*\(?'stand'\)?\s+unless\s+standing\?;?\s*move\s*\(?'([^']+)'\)?;?\s*(\$go2_restart\s*=\s*true;?)?$"
+);
 
 /// Transpile a StringProc wayto command. `None` = unsupported (edge stays
 /// out of the graph).
@@ -224,6 +241,21 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
         // A lone fput that changes the room (pull lever, jump). No arrival
         // command follows; the room change is the fput's own effect.
         return Some(vec![WalkAction::Put(c[1].to_string())]);
+    }
+    if WAIT_UNTIL_ROOM_CHANGE.is_match(src) {
+        // Passive wait edge: send nothing, just await the room change. Empty
+        // actions → the executor goes straight to AwaitArrival for this edge.
+        return Some(Vec::new());
+    }
+    if let Some(c) = STAND_GUARD_MOVE.captures(src) {
+        // The `fput 'stand' unless standing?` guard is redundant with the
+        // executor's own pre-move stand logic (it stands before any move when
+        // not upright), so we drop it and keep just the move. The trailing
+        // `$go2_restart` (the jump lands unpredictably) needs no action: if we
+        // arrive somewhere other than `expected`, the executor's off-route
+        // handling already re-paths from the landing room — running Replan
+        // inline here would re-path *before* the move lands.
+        return Some(vec![WalkAction::Move(c[1].to_string())]);
     }
     None
 }
@@ -400,6 +432,12 @@ mod tests {
             transpile(";e empty_hands; move 'climb footpath'; fill_hands"),
             Some(vec![EmptyHands, Move("climb footpath".into()), FillHands])
         );
+        // Live case (Widowmaker's Road 30811->30812): fput then a
+        // parenthesized move, no space after the semicolon.
+        assert_eq!(
+            transpile(";e fput 'stance def';move('jump')"),
+            Some(vec![Put("stance def".into()), Move("jump".into())])
+        );
         // waitrt? variant, fill_hands implied.
         assert_eq!(
             transpile(";e empty_hands; move 'climb mountainside'; waitrt?"),
@@ -441,6 +479,23 @@ mod tests {
         );
         // bare fput (a lever/button).
         assert_eq!(transpile(";e fput 'jump'"), Some(vec![Put("jump".into())]));
+        // Live Widowmaker case: fput a stance then a parenthesized jump.
+        assert_eq!(
+            transpile(";e fput 'stance def';move('jump')"),
+            Some(vec![Put("stance def".into()), Move("jump".into())])
+        );
+        // Passive wait-for-room-change edge → no actions (executor awaits).
+        assert_eq!(
+            transpile(";e wait_until{Map.current.id != 30812}"),
+            Some(vec![])
+        );
+        // Stand-guard + move + restart (Widowmaker 30815->30816): the stand
+        // guard is dropped (executor stands anyway), the move runs, and the
+        // restart is handled by off-route re-pathing after landing.
+        assert_eq!(
+            transpile(";e fput 'stand' unless standing?;move('jump'); $go2_restart=true"),
+            Some(vec![Move("jump".into())])
+        );
     }
 
     #[test]

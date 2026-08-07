@@ -53,11 +53,51 @@ pub struct MapDb {
 }
 
 impl MapDb {
-    /// Parse a full mapdb JSON array (Lich's `data/<GAME>/map-<ts>.json`).
+    /// Parse a full mapdb JSON array. Supports both formats:
+    /// - inline `;e <ruby>` StringProc edges (Lich's `map-<ts>.json`), and
+    /// - Cartographer `evaluate_script('wayto/room-N-to-M.rb')` refs, whose
+    ///   bodies live in a `stringprocs/` sidecar. When such a sidecar is found
+    ///   next to `path`, refs are resolved to inline `;e <body>` at load, so
+    ///   everything downstream (dijkstra, transpiler, portal, executor) sees
+    ///   one uniform inline format.
     pub fn load(path: &std::path::Path) -> std::io::Result<MapDb> {
         let json = std::fs::read_to_string(path)?;
-        Self::from_json(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        let mut db = Self::from_json(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        if let Some(sp_dir) = stringprocs_dir_for(path) {
+            db.inline_cartographer_scripts(&sp_dir);
+        }
+        Ok(db)
+    }
+
+    /// Rewrite every `Cartographer.evaluate_script('<rel>')` wayto command to
+    /// the inline `;e <body>` form by reading `<sp_dir>/<rel>`. A missing or
+    /// unreadable body is left as-is (it'll be treated as an uncrossable proc,
+    /// same as before). `sp_dir` is the directory that directly contains
+    /// `wayto/` and `timeto/`.
+    fn inline_cartographer_scripts(&mut self, sp_dir: &std::path::Path) {
+        let inline = |cmd: &mut String| {
+            if let Some(rel) = parse_evaluate_script(cmd) {
+                // Guard against path traversal in the ref.
+                if rel.contains("..") {
+                    return;
+                }
+                let file = sp_dir.join(&rel);
+                if let Ok(body) = std::fs::read_to_string(&file) {
+                    *cmd = format!(";e {}", body.trim());
+                }
+            }
+        };
+        let all = self
+            .locations
+            .values_mut()
+            .flat_map(|rooms| rooms.iter_mut())
+            .chain(self.unplaced.iter_mut());
+        for room in all {
+            for cmd in room.wayto.values_mut() {
+                inline(cmd);
+            }
+        }
     }
 
     pub fn from_json(json: &str) -> serde_json::Result<MapDb> {
@@ -203,6 +243,68 @@ impl MapDb {
 
 /// Newest `map-<timestamp>.json` in Lich's per-game data directory
 /// (`<lich>/data/GSIV` for prime, `GST` for test).
+/// Extract the relative script path from a Cartographer wayto command:
+/// `;e Cartographer.evaluate_script('wayto/room-N-to-M.rb')` → `wayto/room-N-to-M.rb`.
+/// Returns None for anything else (plain edges, inline `;e` procs).
+pub fn parse_evaluate_script(command: &str) -> Option<String> {
+    let s = command.trim();
+    let after = s.strip_prefix(";e ")?.trim_start();
+    let inner = after
+        .strip_prefix("Cartographer.evaluate_script(")?
+        .trim_start();
+    // The arg is a single- or double-quoted relative path.
+    let (quote, rest) = match inner.chars().next()? {
+        '\'' => ('\'', &inner[1..]),
+        '"' => ('"', &inner[1..]),
+        _ => return None,
+    };
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_string())
+}
+
+/// Locate the extracted StringProc sidecar for a mapdb file, if present. Tries
+/// (1) `stringprocs-<tag>/` beside a `mapdb-<tag>.json` (our downloader's
+/// layout), then (2) a plain `stringprocs/` sibling, then (3) a Lich
+/// `_cartographer/<ver>/stringprocs/` tree beside a `mapdb.json`. Returns the
+/// directory that directly contains `wayto/` and `timeto/`.
+pub fn stringprocs_dir_for(mapdb_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = mapdb_path.parent()?;
+    let name = mapdb_path.file_name()?.to_str()?;
+    // (1) stringprocs-<tag>/ beside mapdb-<tag>.json
+    if let Some(tag) = name
+        .strip_prefix("mapdb-")
+        .and_then(|r| r.strip_suffix(".json"))
+    {
+        let d = dir.join(format!("stringprocs-{tag}"));
+        if d.join("wayto").is_dir() {
+            return Some(d);
+        }
+    }
+    // (2) a plain stringprocs/ sibling
+    let plain = dir.join("stringprocs");
+    if plain.join("wayto").is_dir() {
+        return Some(plain);
+    }
+    // (3) a Lich _cartographer/<ver>/stringprocs/ tree (newest version)
+    let cartographer = dir.join("_cartographer");
+    if let Ok(versions) = std::fs::read_dir(&cartographer) {
+        let mut best: Option<std::path::PathBuf> = None;
+        for v in versions.flatten() {
+            let sp = v.path().join("stringprocs");
+            if sp.join("wayto").is_dir() {
+                // Lexically-largest version dir wins (e.g. 0.4.0 > 0.3.0).
+                if best.as_ref().is_none_or(|b| v.path() > *b) {
+                    best = Some(sp);
+                }
+            }
+        }
+        if best.is_some() {
+            return best;
+        }
+    }
+    None
+}
+
 pub fn find_latest_mapdb(game_data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let mut best: Option<(u64, std::path::PathBuf)> = None;
     for entry in std::fs::read_dir(game_data_dir).ok()? {
@@ -233,6 +335,57 @@ pub fn find_latest_mapdb(game_data_dir: &std::path::Path) -> Option<std::path::P
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_cartographer_evaluate_script_refs() {
+        assert_eq!(
+            parse_evaluate_script(";e Cartographer.evaluate_script('wayto/room-5063-to-9033.rb')"),
+            Some("wayto/room-5063-to-9033.rb".to_string())
+        );
+        // double quotes too
+        assert_eq!(
+            parse_evaluate_script(r#";e Cartographer.evaluate_script("wayto/room-1-to-2.rb")"#),
+            Some("wayto/room-1-to-2.rb".to_string())
+        );
+        // plain edges and inline procs are not refs
+        assert_eq!(parse_evaluate_script("north"), None);
+        assert_eq!(parse_evaluate_script(";e move 'go door'"), None);
+    }
+
+    #[test]
+    fn inlines_cartographer_refs_from_a_sidecar_at_load() {
+        // Build a temp mapdb-<tag>.json with an evaluate_script ref, and a
+        // matching stringprocs-<tag>/wayto/*.rb sidecar; loading should inline
+        // the ref to `;e <body>`.
+        let tmp = std::env::temp_dir().join(format!(
+            "vellum_carto_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("stringprocs-v9.9.9/wayto")).unwrap();
+        std::fs::write(
+            tmp.join("stringprocs-v9.9.9/wayto/room-1-to-2.rb"),
+            "empty_hands; move 'climb footpath'; fill_hands\n",
+        )
+        .unwrap();
+        let mapdb = tmp.join("mapdb-v9.9.9.json");
+        std::fs::write(
+            &mapdb,
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": ";e Cartographer.evaluate_script('wayto/room-1-to-2.rb')"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "back"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+
+        let db = MapDb::load(&mapdb).unwrap();
+        let edge = db.room(1).unwrap().wayto.get(&2).unwrap();
+        assert_eq!(edge, ";e empty_hands; move 'climb footpath'; fill_hands");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     const SAMPLE: &str = r#"[
         {"id": 369, "uid": [731009], "location": "Mist Harbor",

@@ -37,7 +37,9 @@ pub fn resolve(
         return Resolved::NotFound("usage: .go2 <room id | uid | tag | name | text>".into());
     }
 
-    if input.eq_ignore_ascii_case("back") {
+    // `back` (ours) and `goback` (Lich's spelling) both return to the room the
+    // last trip started from.
+    if input.eq_ignore_ascii_case("back") || input.eq_ignore_ascii_case("goback") {
         return match last_start {
             Some(id) => Resolved::Room(id),
             None => Resolved::NotFound("no trip to go back from yet".into()),
@@ -152,6 +154,7 @@ mod tests {
         let saved: BTreeMap<String, u32> = [("home".to_string(), 3u32)].into();
 
         assert_eq!(resolve(&db, Some(1), &saved, Some(7), "back"), Resolved::Room(7));
+        assert_eq!(resolve(&db, Some(1), &saved, Some(7), "goback"), Resolved::Room(7));
         assert_eq!(resolve(&db, Some(1), &saved, None, "2"), Resolved::Room(2));
         assert_eq!(resolve(&db, Some(1), &saved, None, "u9000002"), Resolved::Room(2));
         assert_eq!(resolve(&db, Some(1), &saved, None, "HOME"), Resolved::Room(3));
