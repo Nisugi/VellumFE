@@ -988,20 +988,42 @@ impl TravelTask {
         events: &mut Vec<TravelEvent>,
     ) {
         use crate::core::pathing::edge::WalkAction;
+        // Did this run emit any command? A script that finishes without sending
+        // anything (a pure `;e true` pass-through, e.g. the virtual urchin
+        // hideout entry) causes no room change — so we must NOT arrival-watch
+        // for `expected` (that would time out and ban the edge). Instead we
+        // advance the route and let the NEXT edge's command (the `urchin guide
+        // <dest>` that actually moves us) do the work. Mirrors go2.lic, which
+        // records `moves_sent = $room_count` after a `.call` and moves on
+        // without verifying it reached `next_id` (map_gs.rb ~2398).
+        let mut sent_anything = false;
         loop {
             let Some(action) = actions.get(pc).cloned() else {
-                // Script done: the room change is now the edge's job.
-                self.step = Step::AwaitArrival {
-                    expected,
-                    from,
-                    sent_ms: ctx.now_ms,
-                };
+                if sent_anything {
+                    // Something was sent → a room change is expected.
+                    self.step = Step::AwaitArrival {
+                        expected,
+                        from,
+                        sent_ms: ctx.now_ms,
+                    };
+                } else {
+                    // Pure pass-through (`;e true`): the edge target is a
+                    // VIRTUAL room you never physically occupy — a `hideout`
+                    // whose only purpose is to host the real crossing command
+                    // on ITS wayto. `expected` (the hideout) will never be the
+                    // game's current room, so we must collapse: send the
+                    // hideout's command for the route's NEXT room and watch for
+                    // arrival there. This is the urchin `;e true` -> `urchin
+                    // guide <dest>` pair, and confluence's nominal entry.
+                    self.pass_through(expected, from, ctx, events);
+                }
                 return;
             };
             match action {
                 WalkAction::Noop => pc += 1,
                 WalkAction::Move(cmd) | WalkAction::Put(cmd) => {
                     events.push(TravelEvent::Send(cmd));
+                    sent_anything = true;
                     pc += 1;
                 }
                 WalkAction::WaitRt => {
@@ -1092,6 +1114,67 @@ impl TravelTask {
             sleep_until,
             expected,
             from,
+        };
+    }
+
+    /// Collapse a `;e true` pass-through edge (`from` -> `virtual`) with the
+    /// real crossing command that lives on the virtual room's wayto. Sends the
+    /// virtual room's command for the route's next room and arrival-watches for
+    /// it, staying anchored at the physical `from` (we never occupy `virtual`).
+    fn pass_through(
+        &mut self,
+        virtual_room: u32,
+        from: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        // Advance past the virtual room in the route.
+        self.idx += 1;
+        self.edge_retries = 0;
+        let Some(&next) = self.path.get(self.idx) else {
+            // The virtual room WAS the destination (shouldn't happen for a
+            // hideout, but be safe): nothing more to do; re-path to confirm.
+            self.repath(ctx.db, from, events);
+            return;
+        };
+        // The crossing command is on the virtual room's wayto for `next`.
+        let Some(command) = ctx
+            .db
+            .room(virtual_room)
+            .and_then(|room| room.wayto.get(&next).cloned())
+        else {
+            // No command bridges the virtual room to the next hop — re-path
+            // around it from where we physically are.
+            self.repath(ctx.db, from, events);
+            return;
+        };
+        if ctx.rt_remaining > 0.0 {
+            // Wait out RT; re-enter this edge next tick (idx already advanced,
+            // so re-derive by stepping back to the virtual entry is unneeded —
+            // we simply hold in a fresh Prepare that will re-collapse).
+            self.idx -= 1;
+            self.step = Step::Prepare;
+            return;
+        }
+        // A proc command on the virtual->next edge (e.g. the urchin guide is a
+        // plain string, but confluence/other hideouts could be scripted).
+        if crate::core::mapdb::is_proc_command(&command) {
+            match crate::core::pathing::transpile::transpile_edge(ctx.db, &command) {
+                Some(actions) => {
+                    self.tick_script(actions, 0, None, next, from, ctx, events);
+                    return;
+                }
+                None => {
+                    self.handle_uncrossable_edge(from, next, ctx, events);
+                    return;
+                }
+            }
+        }
+        events.push(TravelEvent::Send(command));
+        self.step = Step::AwaitArrival {
+            expected: next,
+            from,
+            sent_ms: ctx.now_ms,
         };
     }
 
@@ -2367,6 +2450,43 @@ mod tests {
             e,
             TravelEvent::Failed(s) if s.contains("no pathcode heard")
         )));
+    }
+
+    // ---- Pass-through (`;e true`) edges: virtual urchin hideouts ------------
+
+    #[test]
+    fn true_passthrough_edge_advances_without_arrival_watch() {
+        // The urchin geography: a bank (1) enters a VIRTUAL hideout (2) via a
+        // `;e true` no-op, then `urchin guide town` (on 2→3) jumps to the real
+        // destination (3). The hideout is never physically occupied, so the
+        // no-op entry must NOT arrival-watch for room 2 (that would time out
+        // and ban the edge — the live "move 3637 -> 30718 keeps failing" bug).
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Bank]"],
+                 "wayto": {"2": ";e true"}, "timeto": {"2": 0.1}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Hideout]"],
+                 "wayto": {"3": "urchin guide town"}, "timeto": {"3": 0.1}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[Town]"],
+                 "wayto": {}, "timeto": {}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 3, 0).unwrap();
+        let mut sim = Sim::new(1);
+        // Tick 1: at room 1, the `;e true` entry collapses -> sends the
+        // hideout's `urchin guide town` while still standing at room 1.
+        let ev1 = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev1), ["urchin guide town"], "collapses to the guide: {ev1:?}");
+        // The guide jumps us straight to the real destination (room 3),
+        // skipping the virtual hideout (room 2) entirely.
+        sim.current = 3;
+        sim.now += 100;
+        let ev2 = task.tick(sim.ctx(&db));
+        assert!(
+            matches!(ev2.last(), Some(TravelEvent::Arrived { destination: 3, .. })),
+            "arrives at the real destination: {ev2:?}"
+        );
     }
 
     // ---- Confluence explorer ------------------------------------------------
