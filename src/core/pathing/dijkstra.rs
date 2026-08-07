@@ -9,11 +9,14 @@
 //!   (go2 handles "already there" before pathing).
 //! - `estimate_time` defaults missing timeto entries to 0.2s (the dijkstra
 //!   itself does NOT — an edge without a cost is unroutable).
+//! - Routing weights edges by `timeto` ALONE, exactly like Lich. A proc
+//!   `wayto` with a numeric `timeto` IS routable; interpreting the proc is
+//!   the walk executor's job at the edge, not the router's.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-use crate::core::mapdb::{is_proc_command, MapDb, Room, TimeTo};
+use crate::core::mapdb::{MapDb, Room, TimeTo};
 
 /// What the search is looking for.
 #[derive(Debug, Clone, Copy)]
@@ -35,11 +38,17 @@ pub struct Dijkstra {
 /// The cost of stepping from `room` to its wayto neighbor `dest`.
 /// `None` = edge not routable (see module docs for the rules).
 ///
-/// Scripted commands are admitted when the transpiler understands them;
-/// scripted costs resolve through `transpile::resolve_timeto` (delegation
-/// follows, settings gates default off, negative costs — which would
-/// corrupt the search — are rejected).
-fn edge_cost(db: &MapDb, room: &Room, dest: u32, command: &str) -> Option<f64> {
+/// Routing depends ONLY on `timeto`, never on whether we can interpret the
+/// `wayto` command — a faithful match for Lich's `Room#dijkstra`, which
+/// weights edges by `timeto[adj]` and evaluates proc costs lazily, never
+/// consulting `wayto`. Whether a proc edge can actually be *walked* is an
+/// execution concern: the walk executor transpiles the command when it
+/// reaches the edge, and only there does an un-interpretable proc fail
+/// (falling back to Lich `;go2` if enabled, else banning the edge and
+/// re-pathing). Scripted costs resolve through `transpile::resolve_timeto`
+/// (delegation follows, settings gates default off, negative costs — which
+/// would corrupt the search — are rejected).
+fn edge_cost(db: &MapDb, room: &Room, dest: u32, _command: &str) -> Option<f64> {
     if room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout() {
         return None;
     }
@@ -49,9 +58,6 @@ fn edge_cost(db: &MapDb, room: &Room, dest: u32, command: &str) -> Option<f64> {
             .cost
             .or_else(|| super::transpile::resolve_timeto(db, room, dest))
             .or(Some(0.2));
-    }
-    if is_proc_command(command) && !super::transpile::transpilable(command) {
-        return None;
     }
     super::transpile::resolve_timeto(db, room, dest)
 }
@@ -266,19 +272,32 @@ mod tests {
     }
 
     #[test]
-    fn edges_without_timeto_or_with_procs_are_unroutable() {
+    fn routing_depends_on_timeto_not_wayto_interpretability() {
+        // Lich parity: an edge routes when its `timeto` resolves to a number,
+        // regardless of whether we can yet transpile the `wayto` command.
+        // Interpreting the proc is the executor's job at the edge.
         let db = graph(
             &[
-                (1, 2, "east", None),                 // wayto but no timeto: Lich skips it
-                (1, 3, ";e fput 'go boat'", Some(0.2)), // proc command: v1 can't walk it
+                (1, 2, "east", None), // wayto but no timeto: Lich skips it
+                // proc wayto with a NUMERIC timeto: routable (executor
+                // transpiles/handles it, or falls back, at the edge).
+                (1, 3, ";e fput 'go boat'; move 'go boat'", Some(0.2)),
             ],
             r#"{"id": 4, "uid": [9000004], "location": "Test", "title": ["[Room 4]"],
                 "wayto": {"1": "west"}, "timeto": {"1": ";e Settings[:foo] ? 0.2 : nil"},
                 "paths": ""}"#,
         );
-        assert_eq!(path_to(&db, 1, 2), None, "missing timeto");
-        assert_eq!(path_to(&db, 1, 3), None, "proc wayto");
-        assert_eq!(path_to(&db, 4, 1), None, "proc timeto gate");
+        assert_eq!(path_to(&db, 1, 2), None, "missing timeto is unroutable");
+        assert_eq!(
+            path_to(&db, 1, 3),
+            Some(vec![3]),
+            "proc wayto with numeric timeto IS routable (Lich weights on timeto only)"
+        );
+        assert_eq!(
+            path_to(&db, 4, 1),
+            None,
+            "proc timeto that resolves to nil (settings gate off) is unroutable"
+        );
     }
 
     #[test]

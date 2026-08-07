@@ -737,19 +737,19 @@ impl TravelTask {
             return;
         }
         if crate::core::mapdb::is_proc_command(&command) {
-            // Scripted edge: run its transpiled actions. The pathfinder only
-            // admits transpilable procs, so a miss here means the graph and
-            // transpiler disagree — treat it like a broken edge.
+            // Scripted edge. The router weights on `timeto` alone (Lich
+            // parity), so it may plan a route through a proc we can't yet
+            // transpile — interpreting the proc is our job here, at the edge.
             match crate::core::pathing::transpile::transpile(&command) {
                 Some(actions) => {
                     self.tick_script(actions, 0, None, next, current, ctx, events);
                 }
                 None => {
-                    events.push(TravelEvent::Status(format!(
-                        "edge {current} -> {next} uses an unsupported script - disabling it and re-pathing"
-                    )));
-                    self.banned.insert((current, next));
-                    self.repath(ctx.db, current, events);
+                    // Can't interpret this proc natively. This is where the
+                    // optional Lich `;go2` fallback fires (P6); until then, and
+                    // whenever it's off/unavailable, disable the edge for the
+                    // session and re-path around it.
+                    self.handle_uncrossable_edge(current, next, ctx, events);
                 }
             }
             return;
@@ -760,6 +760,24 @@ impl TravelTask {
             from: current,
             sent_ms: ctx.now_ms,
         };
+    }
+
+    /// An edge the router planned (it has a `timeto`) but we can't cross
+    /// natively (its `wayto` proc doesn't transpile). Disable it for the
+    /// session and re-path around it. The Lich `;go2` fallback (P6) hooks in
+    /// ahead of the ban when enabled and the connection is via Lich.
+    fn handle_uncrossable_edge(
+        &mut self,
+        current: u32,
+        next: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        events.push(TravelEvent::Status(format!(
+            "edge {current} -> {next} uses a script the native walker can't cross yet - disabling it and re-pathing"
+        )));
+        self.banned.insert((current, next));
+        self.repath(ctx.db, current, events);
     }
 
     fn repath(&mut self, db: &MapDb, current: u32, events: &mut Vec<TravelEvent>) {
