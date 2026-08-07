@@ -2757,7 +2757,7 @@ impl VellumGuiApp {
                                 );
                             }
                             if let Some(value) =
-                                Self::dialog_panel_combo(ui, rect, dialog_id, d)
+                                Self::dialog_panel_combo(ui, rect, dialog_id, d, skin_art)
                             {
                                 // Send the dropdown's command with the NEW
                                 // value substituted (game echoes back state).
@@ -2789,6 +2789,18 @@ impl VellumGuiApp {
                         }
                     }
                     PositionedControlKind::Link(i) => {
+                        // Bottom-floor links (combat's `skin` at top=260) render
+                        // in the footer row below, not here — skip them so they
+                        // don't draw twice / crowd the footer.
+                        let bottom_floor = dialog
+                            .links
+                            .get(i)
+                            .and_then(|l| l.layout.as_ref())
+                            .and_then(|layout| layout.top)
+                            .is_some_and(|top| top as f32 >= content_h - 40.0);
+                        if bottom_floor {
+                            continue;
+                        }
                         if let Some(link) = dialog.links.get(i) {
                             // A skin may give link "buttons" their own art; when
                             // it does, paint the state-keyed nine-slice behind the
@@ -2845,8 +2857,59 @@ impl VellumGuiApp {
                             }
                         }
                     }
-                    // Anchor-only images (ubbars, wound points) are never drawn.
-                    PositionedControlKind::Image(_) => {}
+                    PositionedControlKind::Image(i) => {
+                        // Icon buttons (Wrayth SwordBtn/ShieldBtn/...) are the
+                        // ONLY images drawn as controls: they carry a command AND
+                        // a real on-screen size. Everything else in the image list
+                        // is an ANCHOR POINT — zero-size wound points and the
+                        // invisible PanelBackground the vitals bars hang from —
+                        // and must never draw (else it bleeds behind neighbors).
+                        let drawable = rect.width() >= 1.0 && rect.height() >= 1.0;
+                        if let (true, Some(img)) = (drawable, dialog.images.get(i)) {
+                            let has_cmd = !img.command.trim().is_empty();
+                            let sprite =
+                                skin_art.and_then(|art| art.icon(&img.name.to_ascii_lowercase()));
+                            if let Some(icon) = sprite {
+                                let resp = ui.interact(
+                                    rect,
+                                    ui.id().with(("panel_img", dialog_id, i)),
+                                    if has_cmd {
+                                        egui::Sense::click()
+                                    } else {
+                                        egui::Sense::hover()
+                                    },
+                                );
+                                let tint = if has_cmd && resp.hovered() {
+                                    Self::lighten(egui::Color32::WHITE, 0.0)
+                                } else {
+                                    egui::Color32::WHITE
+                                };
+                                let dest =
+                                    crate::frontend::gui::skin::icon_dest(&icon, rect);
+                                crate::frontend::gui::skin::paint_icon(
+                                    ui.painter(),
+                                    dest,
+                                    &icon,
+                                    tint,
+                                );
+                                if has_cmd {
+                                    let resp = img
+                                        .tooltip
+                                        .as_deref()
+                                        .map(|t| resp.clone().on_hover_text(t))
+                                        .unwrap_or(resp);
+                                    if resp.clicked() {
+                                        queue(dialog.command_with_placeholders(&img.command));
+                                    }
+                                }
+                            }
+                            // No sprite for a positioned image: draw nothing (as
+                            // before). It stays reachable through the footer's
+                            // labeled-button fallback, which handles the same
+                            // commanded images without stacking a stray button
+                            // behind neighboring controls.
+                        }
+                    }
                 }
             }
         }
@@ -2864,11 +2927,15 @@ impl VellumGuiApp {
 
         // Links and remaining images: combat's icon/link footer. Images with a
         // command render as buttons; the doll's wound images are excluded above.
+        // Images that carry layout data are already drawn as positioned icon
+        // buttons in the canvas loop above — only the layout-less ones belong
+        // in this fallback footer (otherwise they'd render twice).
         let footer_images: Vec<_> = dialog
             .images
             .iter()
             .filter(|image| !image.command.trim().is_empty())
             .filter(|image| !doll_owned.contains(image.id.as_str()))
+            .filter(|image| image.layout.is_none())
             .collect();
         if !footer_images.is_empty() {
             let has_btn_art = skin_art
@@ -2904,10 +2971,25 @@ impl VellumGuiApp {
                 }
             });
         }
-        // Footer row: only links WITHOUT layout data (combat's
-        // configure/skin/search line); positioned links rendered above.
-        let footer_links: Vec<_> =
-            dialog.links.iter().filter(|l| l.layout.is_none()).collect();
+        // Footer row: links WITHOUT layout data (combat's search/grip/multistrike
+        // line) plus bottom-anchored positioned links. Wrayth positions a couple
+        // of links near the panel floor (combat's `skin` at top=260); at
+        // VellumFE's content height they land right on top of this row, so links
+        // positioned in the bottom ~40px of the canvas are treated as footer
+        // links here instead of drawn in the canvas — keeping the footer a single
+        // clean row. The `has_positions` canvas still owns everything above.
+        let floor = content_h - 40.0;
+        let footer_links: Vec<_> = dialog
+            .links
+            .iter()
+            .filter(|l| {
+                l.layout.is_none()
+                    || l.layout
+                        .as_ref()
+                        .and_then(|layout| layout.top)
+                        .is_some_and(|top| top as f32 >= floor)
+            })
+            .collect();
         if !footer_links.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 for link in footer_links {
@@ -3089,6 +3171,7 @@ impl VellumGuiApp {
         rect: egui::Rect,
         dialog_id: &str,
         dropdown: &crate::data::DialogDropDown,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<String> {
         let selected_text = dropdown
             .options
@@ -3097,7 +3180,26 @@ impl VellumGuiApp {
             .map(|(text, _)| text.clone())
             .unwrap_or_else(|| dropdown.value.clone());
         let mut picked = None;
+        // A skinned dropdown themes its OPEN popup too: egui paints the popup
+        // frame from window_fill/stroke, so match them to the skin's dropdown
+        // border (its tex_size carries no color, so we key on presence and use
+        // a dark fill + accent-tinted stroke that reads with the mesh grounds).
+        let skin_popup = skin_art
+            .and_then(|art| art.control_border("dropdown", "normal"))
+            .is_some();
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            if skin_popup {
+                let v = ui.visuals_mut();
+                let fill = egui::Color32::from_rgb(0x12, 0x14, 0x18);
+                let stroke = egui::Color32::from_rgb(0x8a, 0x5a, 0x30);
+                v.window_fill = fill;
+                v.panel_fill = fill;
+                v.window_stroke = egui::Stroke::new(1.0, stroke);
+                v.widgets.inactive.weak_bg_fill = fill;
+                v.widgets.hovered.weak_bg_fill =
+                    egui::Color32::from_rgb(0x24, 0x1c, 0x12);
+                v.selection.bg_fill = egui::Color32::from_rgb(0x3a, 0x28, 0x14);
+            }
             egui::ComboBox::from_id_salt(("dialog_panel", dialog_id, &dropdown.id))
                 .width(rect.width())
                 .selected_text(selected_text)
