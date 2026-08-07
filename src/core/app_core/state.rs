@@ -1007,6 +1007,57 @@ impl AppCore {
                     .collect()
             })
             .unwrap_or_default();
+
+        // Assemble the hands stow inputs into OWNED locals, so `ctx` doesn't
+        // hold a borrow of self.game_state across the &mut self.travel tick.
+        // Resolve the configured weaponsack/lootsack names to container
+        // command-ids, gather the other tracked containers as last-resort
+        // stow targets, and classify each hand's item as a weapon.
+        use crate::core::game_objects::Hand;
+        // gameobj_data() takes &mut self (lazy load), so resolve it before we
+        // hold the immutable objects borrow.
+        let gameobj_data = self.gameobj_data();
+        let objects = &self.game_state.objects;
+        let resolve_bag = |name: &str| -> Option<String> {
+            if name.trim().is_empty() {
+                return None;
+            }
+            objects.find_container(name).map(|c| c.command_target())
+        };
+        let weaponsack = resolve_bag(&self.config.go2.weaponsack);
+        let lootsack = resolve_bag(&self.config.go2.lootsack);
+        let reserved: std::collections::HashSet<&str> = weaponsack
+            .as_deref()
+            .into_iter()
+            .chain(lootsack.as_deref())
+            .collect();
+        let other_containers: Vec<String> = objects
+            .containers()
+            .map(|c| c.command_target())
+            .filter(|id| !reserved.contains(id.as_str()))
+            .collect();
+        let is_weapon = |item: Option<&crate::core::game_objects::GameItem>| -> bool {
+            match item {
+                Some(i) => gameobj_data.is_type(&i.name, &i.noun, "weapon"),
+                None => false,
+            }
+        };
+        let left_hand = objects.hand(Hand::Left).cloned();
+        let right_hand = objects.hand(Hand::Right).cloned();
+        let left_is_weapon = is_weapon(left_hand.as_ref());
+        let right_is_weapon = is_weapon(right_hand.as_ref());
+        let ready_stow = objects.ready_stow().clone();
+        let hands = crate::core::travel::executor::StashInputs {
+            left_hand: left_hand.as_ref(),
+            right_hand: right_hand.as_ref(),
+            ready_stow: &ready_stow,
+            weaponsack: weaponsack.as_deref(),
+            lootsack: lootsack.as_deref(),
+            other_containers: &other_containers,
+            left_is_weapon,
+            right_is_weapon,
+        };
+
         let ctx = crate::core::travel::TravelContext {
             db: &db,
             current_room: self.map.current_room_id,
@@ -1019,6 +1070,7 @@ impl AppCore {
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.travel.now_ms(),
             pathcodes: &self.config.go2.pathcodes,
+            hands: Some(hands),
         };
         let events = self.travel.tick(ctx);
         for event in events {

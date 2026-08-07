@@ -730,6 +730,10 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
         // ---- Travel --------------------------------------------------
         bool_entry!("go2.native_map_clicks", "Native Map Clicks", "Travel",
             "Map clicks travel natively instead of sending ;go2", go2.native_map_clicks),
+        text_entry!("go2.weaponsack", "Weapon Sack", "Travel",
+            "Container the hands-stow uses for a weapon when your ready sheath doesn't cover it (name)", go2.weaponsack),
+        text_entry!("go2.lootsack", "Loot Sack", "Travel",
+            "Fallback container the hands-stow uses for anything not routed by ready/sheath/weapon sack (name)", go2.lootsack),
     ];
     defs.sort_by_key(|def| def.key);
     defs

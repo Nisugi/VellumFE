@@ -41,6 +41,40 @@ pub struct TravelContext<'a> {
     /// Personal maze routes by maze name (config.go2.pathcodes) — the maze
     /// strategy reads these; capture writes them outside the executor.
     pub pathcodes: &'a std::collections::BTreeMap<String, Vec<String>>,
+    /// Inputs for the hands stow/retrieve cascade (EmptyHands/FillHands
+    /// actions). `None` when the caller doesn't supply them (tests that don't
+    /// exercise hands) — the actions then fall back to a bare stow/get.
+    pub hands: Option<StashInputs<'a>>,
+}
+
+/// The world snapshot the hands stow cascade needs, threaded through
+/// `TravelContext`. Assembled by the caller from `GameState` each tick.
+#[derive(Clone, Copy)]
+pub struct StashInputs<'a> {
+    pub left_hand: Option<&'a crate::core::game_objects::GameItem>,
+    pub right_hand: Option<&'a crate::core::game_objects::GameItem>,
+    pub ready_stow: &'a crate::core::game_objects::ReadyStow,
+    pub weaponsack: Option<&'a str>,
+    pub lootsack: Option<&'a str>,
+    pub other_containers: &'a [String],
+    pub left_is_weapon: bool,
+    pub right_is_weapon: bool,
+}
+
+impl<'a> StashInputs<'a> {
+    fn to_stash_context(self, now_ms: u64) -> super::stash::StashContext<'a> {
+        super::stash::StashContext {
+            left_hand: self.left_hand,
+            right_hand: self.right_hand,
+            ready_stow: self.ready_stow,
+            weaponsack: self.weaponsack,
+            lootsack: self.lootsack,
+            other_containers: self.other_containers,
+            left_is_weapon: self.left_is_weapon,
+            right_is_weapon: self.right_is_weapon,
+            now_ms,
+        }
+    }
 }
 
 impl TravelContext<'_> {
@@ -83,6 +117,12 @@ enum Step {
         expected: u32,
         from: u32,
     },
+    /// The hands stow/retrieve cascade (an EmptyHands/FillHands action) is
+    /// running via the StashService (held on the task). When it finishes we
+    /// return to `resume` — the script step that requested it — and continue
+    /// the edge. This is the §11 suspend/resume seam, same shape as
+    /// AwaitStand suspending for a `stand`.
+    Stashing { resume: Box<Step> },
     /// A move was sent; waiting to arrive in `expected`.
     AwaitArrival {
         expected: u32,
@@ -168,6 +208,12 @@ pub struct TravelTask {
     /// Set once while waiting out a muckled state so the status line doesn't
     /// repeat every tick.
     muckle_announced: bool,
+    /// The running hands stow/retrieve task (Step::Stashing). Held here rather
+    /// than in the Step enum so Step stays Clone+PartialEq.
+    stash: Option<super::stash::StashTask>,
+    /// The LIFO stow stack carried from an EmptyHands to its later FillHands
+    /// on the same edge (Lich's $fill_hands_actions).
+    stash_stack: Vec<super::stash::Stowed>,
 }
 
 impl TravelTask {
@@ -194,6 +240,8 @@ impl TravelTask {
             restarts: 0,
             started_ms: now_ms,
             muckle_announced: false,
+            stash: None,
+            stash_stack: Vec::new(),
         })
     }
 
@@ -299,6 +347,9 @@ impl TravelTask {
                         };
                     }
                 }
+            }
+            Step::Stashing { resume } => {
+                self.tick_stashing(resume, current, ctx, &mut events);
             }
             Step::RunScript {
                 actions,
@@ -672,15 +723,58 @@ impl TravelTask {
                     actions.splice(pc..=pc, branch);
                 }
                 WalkAction::EmptyHands | WalkAction::FillHands => {
-                    // P3 placeholder: emit a bare stow/get so the footpath
-                    // family still walks. P2c replaces this with the real
-                    // StashService (ready/stow cascade + LIFO retrieval).
-                    let cmd = match action {
-                        WalkAction::EmptyHands => "stow both",
-                        _ => "get both",
+                    let is_empty = matches!(action, WalkAction::EmptyHands);
+                    // No hands inputs (a headless caller / test that doesn't
+                    // wire GameState): fall back to a bare stow/get so the
+                    // edge still walks.
+                    let Some(inputs) = ctx.hands else {
+                        events.push(TravelEvent::Send(
+                            if is_empty { "stow both" } else { "get both" }.to_string(),
+                        ));
+                        pc += 1;
+                        continue;
                     };
-                    events.push(TravelEvent::Send(cmd.to_string()));
-                    pc += 1;
+                    // Suspend the script and run the StashService. `resume` is
+                    // the RunScript step that continues this edge once hands
+                    // are done — advanced past this action.
+                    let mut task = if is_empty {
+                        super::stash::StashTask::empty()
+                    } else {
+                        super::stash::StashTask::fill(std::mem::take(&mut self.stash_stack))
+                    };
+                    // Drive the first tick now so a command goes out this frame.
+                    let sctx = inputs.to_stash_context(ctx.now_ms);
+                    let mut done_immediately = false;
+                    for ev in task.tick(sctx) {
+                        match ev {
+                            super::stash::StashEvent::Send(cmd) => {
+                                events.push(TravelEvent::Send(cmd))
+                            }
+                            super::stash::StashEvent::Done => done_immediately = true,
+                            super::stash::StashEvent::Failed(why) => {
+                                events.push(TravelEvent::Status(format!("hands: {why}")));
+                                done_immediately = true;
+                            }
+                        }
+                    }
+                    let resume = Box::new(Step::RunScript {
+                        actions: actions.clone(),
+                        pc: pc + 1,
+                        sleep_until,
+                        expected,
+                        from,
+                    });
+                    if done_immediately {
+                        // Empty stack (nothing to stow) — carry on inline.
+                        if is_empty {
+                            self.stash_stack = task.take_stack();
+                        }
+                        pc += 1;
+                        continue;
+                    }
+                    self.stash = Some(task);
+                    self.step = Step::Stashing { resume };
+                    return;
                 }
                 WalkAction::Replan => {
                     // The edge asked to re-plan from here ($go2_restart).
@@ -696,6 +790,59 @@ impl TravelTask {
             expected,
             from,
         };
+    }
+
+    /// Drive the running StashService one tick. On completion, resume the
+    /// script step that requested the hands cycle.
+    fn tick_stashing(
+        &mut self,
+        resume: Box<Step>,
+        _current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        let Some(inputs) = ctx.hands else {
+            // Hands inputs vanished mid-cycle (shouldn't happen): resume.
+            self.step = *resume;
+            return;
+        };
+        let Some(task) = self.stash.as_mut() else {
+            self.step = *resume;
+            return;
+        };
+        let sctx = inputs.to_stash_context(ctx.now_ms);
+        let mut finished = false;
+        for ev in task.tick(sctx) {
+            match ev {
+                super::stash::StashEvent::Send(cmd) => events.push(TravelEvent::Send(cmd)),
+                super::stash::StashEvent::Done => finished = true,
+                super::stash::StashEvent::Failed(why) => {
+                    events.push(TravelEvent::Status(format!("hands: {why}")));
+                    finished = true;
+                }
+            }
+        }
+        if finished {
+            // An EmptyHands hands its stow stack to the later FillHands.
+            if matches!(task.op(), super::stash::StashOp::Empty) {
+                self.stash_stack = task.take_stack();
+            }
+            self.stash = None;
+            // Resume the suspended script step immediately this tick, so the
+            // next action (the climb, or the fill) doesn't wait a tick.
+            if let Step::RunScript {
+                actions,
+                pc,
+                sleep_until,
+                expected,
+                from,
+            } = *resume
+            {
+                self.tick_script(actions, pc, sleep_until, expected, from, ctx, events);
+            } else {
+                self.step = *resume;
+            }
+        }
     }
 
     fn tick_prepare(&mut self, current: u32, ctx: TravelContext, events: &mut Vec<TravelEvent>) {
@@ -904,6 +1051,7 @@ mod tests {
                 rt_remaining: self.rt,
                 now_ms: self.now,
                 pathcodes: &self.pathcodes,
+                hands: None,
             }
         }
     }
@@ -1125,6 +1273,89 @@ mod tests {
         sim.spells = vec![103];
         let events = task.tick(sim.ctx(&db));
         assert_eq!(sent(&events), ["go mist"]);
+    }
+
+    #[test]
+    fn footpath_edge_drives_the_stash_service_end_to_end() {
+        use crate::core::game_objects::{GameItem, GameObjects, Hand};
+        // Room 1 -> 2 is the footpath: empty_hands; move 'climb footpath';
+        // fill_hands, with a numeric timeto so it routes.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[West Road]"],
+                 "wayto": {"2": ";e empty_hands; move 'climb footpath'; fill_hands"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Footpath Top]"],
+                 "wayto": {"1": "climb down"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        assert_eq!(task.rooms_total(), 1, "footpath edge is routable");
+
+        // A player holding a torch, with a lootsack container.
+        let mut objs = GameObjects::default();
+        objs.set_hand(Hand::Left, Some(GameItem::new("10", "torch", "a torch")));
+        let others: Vec<String> = vec![];
+        let pathcodes: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+
+        fn ctx<'a>(
+            objs: &'a GameObjects,
+            others: &'a [String],
+            pathcodes: &'a std::collections::BTreeMap<String, Vec<String>>,
+            now: u64,
+            db: &'a MapDb,
+        ) -> TravelContext<'a> {
+            let hands = StashInputs {
+                left_hand: objs.hand(Hand::Left),
+                right_hand: objs.hand(Hand::Right),
+                ready_stow: objs.ready_stow(),
+                weaponsack: None,
+                lootsack: Some("99"),
+                other_containers: others,
+                left_is_weapon: false,
+                right_is_weapon: false,
+            };
+            TravelContext {
+                db,
+                current_room: Some(1),
+                dead: false,
+                muckled: false,
+                standing: true,
+                sitting: false,
+                kneeling: false,
+                active_spells: &[],
+                rt_remaining: 0.0,
+                now_ms: now,
+                pathcodes,
+                hands: Some(hands),
+            }
+        }
+
+        // Tick 1: EmptyHands runs — stows the torch into the lootsack.
+        let events = task.tick(ctx(&objs, &others, &pathcodes, 0, &db));
+        assert_eq!(
+            sent(&events),
+            ["_drag #10 #99"],
+            "empty_hands stows the held torch"
+        );
+        // The stow confirms (hand clears).
+        objs.set_hand(Hand::Left, None);
+
+        // Tick 2: hands empty -> the climb fires, then the script's FillHands
+        // runs (hands already empty of the climb's making) and retrieves the
+        // torch. Both commands queue to the game in order — the same sequence
+        // ;go2 sends: empty_hands, climb, fill_hands.
+        let events = task.tick(ctx(&objs, &others, &pathcodes, 100, &db));
+        assert_eq!(
+            sent(&events),
+            ["climb footpath", "get #10"],
+            "the climb, then fill_hands retrieves the torch"
+        );
+        objs.set_hand(Hand::Left, Some(GameItem::new("10", "torch", "a torch")));
+
+        // Arrival at room 2 finishes the edge.
+        // (Script is complete; the executor is now awaiting the room change.)
     }
 
     #[test]
