@@ -69,6 +69,12 @@ pub struct SkinManifest {
     /// Sprite paperdoll replacing the vector injury doll.
     #[serde(default)]
     pub injury_doll: InjuryDollSkin,
+    /// Nine-slice sprites for interactive dialog-panel controls (Wrayth
+    /// `Button`, `DropDownBox`, ...). Keyed by `"<control>"` or
+    /// `"<control>.<state>"` where state is one of normal/hover/pressed
+    /// (normal is the bare key). Missing entries fall back to the theme.
+    #[serde(default)]
+    pub controls: HashMap<String, BorderSpec>,
 }
 
 /// One hotbar icon sprite sheet: an image path (relative to the skin dir)

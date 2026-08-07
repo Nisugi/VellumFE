@@ -82,6 +82,10 @@ pub struct SkinWidgetArt {
     pub doll_dots: ResolvedDotStyle,
     /// Hotbar icon sprite sheets keyed by lowercased sheet name.
     sheets: HashMap<String, SheetArt>,
+    /// Nine-slice art for interactive dialog-panel controls, keyed by
+    /// lowercase `"<control>"` or `"<control>.<state>"` (e.g. "button",
+    /// "button.hover", "dropdown").
+    controls: HashMap<String, ResolvedBorder>,
 }
 
 /// One loaded hotbar sprite sheet: the texture, its lazy-built grayscale
@@ -207,6 +211,17 @@ impl SkinWidgetArt {
 
     pub fn compass_dir(&self, direction: &str) -> Option<SkinTexture> {
         self.compass_dirs.get(direction).copied()
+    }
+
+    /// Nine-slice art for a dialog-panel control in the given state, falling
+    /// back to the control's normal art when the state isn't authored
+    /// (e.g. `control_border("button", "hover")` → "button.hover", else
+    /// "button"). None when the skin provides no art for this control.
+    pub fn control_border(&self, control: &str, state: &str) -> Option<&ResolvedBorder> {
+        let control = control.to_ascii_lowercase();
+        self.controls
+            .get(&format!("{control}.{state}"))
+            .or_else(|| self.controls.get(&control))
     }
 
     pub fn doll_overlay(&self, part: &str, level: u8) -> Option<SkinTexture> {
@@ -712,6 +727,13 @@ impl SkinState {
                     .insert(direction.to_ascii_lowercase(), texture);
             }
         }
+        // Interactive dialog-panel control art (button/dropdown/... states),
+        // each a nine-slice that stretches to the control's rect.
+        for (key, spec) in &self.manifest.controls {
+            if let Some(border) = self.resolve_border(spec) {
+                art.controls.insert(key.to_ascii_lowercase(), border);
+            }
+        }
         // A compass pool set with a rose replaces the skin's compass
         // wholesale (rose + direction overlays are same-canvas art; mixing
         // sources would misalign them). The "none" sentinel (picker "None")
@@ -877,6 +899,7 @@ impl SkinState {
             })
             .collect();
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
+        images.extend(self.manifest.controls.values().map(|ctrl| ctrl.image.clone()));
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.needed_pool_backgrounds.iter().cloned());
         images.extend(self.needed_pool_icons.iter().cloned());
