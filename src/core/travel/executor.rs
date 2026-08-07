@@ -1575,6 +1575,22 @@ impl TravelTask {
                 let need = self.silver_need;
                 match self.nearest_affordable_bank(current, silver, ctx.db) {
                     Some(bank) => {
+                        // Already standing in the nearest bank (e.g. logged in
+                        // at the teller): don't try to walk to it — path_to to
+                        // the same room is empty and would look like "lost the
+                        // route". Hand straight to the withdraw phase here.
+                        if bank == current {
+                            self.funding_bank = Some(bank);
+                            self.step =
+                                Step::Funding(FundingPhase::RoutingToBank { real_dest, need });
+                            self.tick_funding(
+                                FundingPhase::RoutingToBank { real_dest, need },
+                                current,
+                                ctx,
+                                events,
+                            );
+                            return;
+                        }
                         // Redirect the WALK to the bank (path only — the real
                         // destination stays put; funding_bank marks the detour).
                         let Some(bank_path) = pathing::path_to(ctx.db, current, bank) else {
@@ -2984,6 +3000,33 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("continuing"))),
             "funded → continues to the real destination: {events:?}"
+        );
+    }
+
+    #[test]
+    fn broke_while_standing_in_the_bank_withdraws_here() {
+        // Nisugi's live bug: logged in AT the bank teller (room 3), broke, then
+        // a paid trip. Funding must withdraw right here, not "lose the route to
+        // the bank" because path_to(bank, bank) is empty.
+        let db = funding_db(); // room 3 is bank-tagged; 1 pays 25000 -> 2
+        // Plan a paid trip starting FROM the bank room (3). Route 3 -> 2 goes
+        // 3 -> 1 (east) -> 2 (board, the paid edge).
+        let mut task = TravelTask::start(&db, 3, 2, 0).unwrap();
+        let mut sim = Sim::new(3);
+        sim.funding = Some(fund(None, false));
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
+        sim.now += 100;
+        sim.funding = Some(fund(Some(0), true)); // broke, get_silvers on
+        // Must NOT abort — the nearest bank IS the current room, so it
+        // withdraws in place this same tick (no walk needed).
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Failed(s) if s.contains("lost the route"))),
+            "does not abort when already at the bank: {ev:?}"
+        );
+        assert!(
+            sent(&ev).iter().any(|c| c.starts_with("withdraw")),
+            "withdraws in place right here: {ev:?}"
         );
     }
 

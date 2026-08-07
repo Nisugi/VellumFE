@@ -391,8 +391,15 @@ pub fn urchins_valid() -> bool {
 // the live day-pass cache + config (0.8 = a valid pass is held, 7.4 = no pass
 // but buying is enabled for this pair). Anything not in the map is nil.
 re!(
+    // The real form is `h[:towns].include?("Wehnimer's Landing") and
+    // h[:towns].include?('Icemule Trace')` — note `[:towns].include`, and each
+    // town double- OR single-quoted (single for a town with no apostrophe).
+    // Anchor on `.include?(` (ignoring the `h[:towns]` prefix) and accept
+    // either quote per side. Rust regex has no backreferences, so each side is
+    // a double|single alternation — keeping the apostrophe inside the double-
+    // quoted `"Wehnimer's Landing"`.
     DAY_PASS_PAIR,
-    r#"towns\.include\?\("(?P<a>[^"]+)"\) and .*?towns\.include\?\("(?P<b>[^"]+)"\)"#
+    r#"\.include\?\((?:"(?P<a>[^"]+)"|'(?P<a2>[^']+)')\) and .*?\.include\?\((?:"(?P<b>[^"]+)"|'(?P<b2>[^']+)')\)"#
 );
 
 /// Routable day-pass town pairs → edge cost, keyed by a normalized
@@ -482,7 +489,11 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
             // the live day-pass cache + config (0.8 = valid pass held, 7.4 =
             // buyable). A pair not in the map is nil (not routable).
             if let Some(c) = DAY_PASS_PAIR.captures(src) {
-                return day_pass_cost(&c["a"], &c["b"]);
+                let a = c.name("a").or_else(|| c.name("a2")).map(|m| m.as_str());
+                let b = c.name("b").or_else(|| c.name("b2")).map(|m| m.as_str());
+                if let (Some(a), Some(b)) = (a, b) {
+                    return day_pass_cost(a, b);
+                }
             }
             // Other event vars ($mapdb_instability_timeto) and everything
             // else: off.
@@ -806,7 +817,7 @@ mod tests {
             r#"[
                 {"id": 1, "uid": [9000001], "location": "T", "title": ["[Departures]"],
                  "wayto": {"2": "raise pass"},
-                 "timeto": {"2": ";e if $x.any? { |i| i.towns.include?(\"Solhaven\") and i.towns.include?(\"Wehnimer's Landing\") }; 0.8; end"},
+                 "timeto": {"2": ";e if $x.any? { |id,h| h[:towns].include?(\"Wehnimer's Landing\") and h[:towns].include?('Icemule Trace') }; 0.8; end"},
                  "paths": ""},
                 {"id": 2, "uid": [9000002], "location": "T", "title": ["[Dest]"],
                  "wayto": {"1": "raise pass"}, "timeto": {"1": 0.2}, "paths": ""}
@@ -815,15 +826,18 @@ mod tests {
         .unwrap();
         let r1 = db.room(1).unwrap();
         let _g = GATE_LOCK.lock().unwrap();
+        // The edge names Wehnimer's Landing (double-quoted, apostrophe inside)
+        // and Icemule Trace (single-quoted) — the exact mixed-quote live form.
         // Nothing routable → nil.
         set_day_pass_routable(&[]);
         assert_eq!(resolve_timeto(&db, r1, 2), None, "off by default");
-        // The exact pair routable at 0.8 (a held pass).
-        set_day_pass_routable(&[(("Solhaven".into(), "Wehnimer's Landing".into()), 0.8)]);
+        // The exact pair routable at 0.8 (a held pass). Proves the mixed-quote
+        // parse (the live bug: single-quoted Icemule wasn't matching).
+        set_day_pass_routable(&[(("Wehnimer's Landing".into(), "Icemule Trace".into()), 0.8)]);
         assert_eq!(resolve_timeto(&db, r1, 2), Some(0.8), "routes the held pair");
         // Reverse order still matches (order-independent key).
-        set_day_pass_routable(&[(("Wehnimer's Landing".into(), "Solhaven".into()), 7.4)]);
-        assert_eq!(resolve_timeto(&db, r1, 2), Some(7.4), "reverse pair + buy cost");
+        set_day_pass_routable(&[(("Icemule Trace".into(), "Wehnimer's Landing".into()), 4.4)]);
+        assert_eq!(resolve_timeto(&db, r1, 2), Some(4.4), "reverse pair + buy cost");
         // A different pair → nil.
         set_day_pass_routable(&[(("Solhaven".into(), "Icemule Trace".into()), 0.8)]);
         assert_eq!(resolve_timeto(&db, r1, 2), None, "other pairs stay off");
