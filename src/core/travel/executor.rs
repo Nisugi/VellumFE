@@ -422,8 +422,13 @@ impl TravelTask {
         };
         // Arrival at the real destination ends the trip — UNLESS we're on a
         // funding detour (the destination stays the real one; the bank is a
-        // separate waypoint handled by the funding phase).
-        if current == self.destination && self.funding_bank.is_none() {
+        // separate waypoint), OR a hands stow/retrieve cycle is still running.
+        // The final edge often IS `empty_hands; move; fill_hands`: the move
+        // lands us at the destination while fill_hands is mid-retrieval, so
+        // ending the trip here would abandon the refill and leave items in the
+        // pack (the live footpath bug — fill_hands got only 1 of 2 items).
+        // Let the Stashing step finish; it resumes and re-checks arrival.
+        if current == self.destination && self.funding_bank.is_none() && self.stash.is_none() {
             events.push(TravelEvent::Arrived {
                 destination: self.destination,
                 seconds: (ctx.now_ms.saturating_sub(self.started_ms)) as f64 / 1000.0,
@@ -2256,6 +2261,105 @@ mod tests {
 
         // Arrival at room 2 finishes the edge.
         // (Script is complete; the executor is now awaiting the room change.)
+    }
+
+    #[test]
+    fn arrival_at_destination_waits_for_fill_hands_to_finish() {
+        use crate::core::game_objects::{GameItem, GameObjects, Hand};
+        // The live footpath bug: the final edge is empty_hands; climb; fill_hands
+        // and the climb LANDS at the destination while fill_hands is still
+        // retrieving the SECOND of two stowed items. The trip must NOT end until
+        // the refill completes — otherwise an item is stranded in the pack.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[West Road]"],
+                 "wayto": {"2": ";e empty_hands; move 'climb footpath'; fill_hands"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Footpath Top]"],
+                 "wayto": {"1": "climb down"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+
+        // Two held items: a wand (left) and a pick (right).
+        let mut objs = GameObjects::default();
+        objs.set_hand(Hand::Left, Some(GameItem::new("18", "wand", "a wand")));
+        objs.set_hand(Hand::Right, Some(GameItem::new("4", "pick", "a pick")));
+        let others: Vec<String> = vec![];
+        let pathcodes: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+
+        // Build the TravelContext inline per tick (assembling StashInputs in a
+        // closure tangles borrow lifetimes, so do it in the macro directly).
+        macro_rules! ctx {
+            ($objs:expr, $now:expr, $cur:expr) => {{
+                let hands = StashInputs {
+                    left_hand: $objs.hand(Hand::Left),
+                    right_hand: $objs.hand(Hand::Right),
+                    ready_stow: $objs.ready_stow(),
+                    weaponsack: None,
+                    lootsack: Some("99"),
+                    other_containers: &others,
+                    left_bandolier: None,
+                    right_bandolier: None,
+                    left_is_weapon: false,
+                    right_is_weapon: false,
+                };
+                TravelContext {
+                    db: &db,
+                    current_room: Some($cur),
+                    dead: false,
+                    muckled: false,
+                    standing: true,
+                    sitting: false,
+                    kneeling: false,
+                    active_spells: &[],
+                    rt_remaining: 0.0,
+                    now_ms: $now,
+                    pathcodes: &pathcodes,
+                    hands: Some(hands),
+                    feedback: &[],
+                    lich_fallback: false,
+                    funding: None,
+                    at_pinefar_depository: false,
+                    compass_dirs: &[],
+                    loot_nouns: &[],
+                }
+            }};
+        }
+
+        // Tick 1: empty_hands stows the first hand (left wand).
+        assert_eq!(sent(&task.tick(ctx!(&objs, 0, 1))), ["_drag #18 #99"]);
+        objs.set_hand(Hand::Left, None);
+        // Tick 2: stows the second hand (right pick).
+        assert_eq!(sent(&task.tick(ctx!(&objs, 100, 1))), ["_drag #4 #99"]);
+        objs.set_hand(Hand::Right, None);
+        // Tick 3: hands empty -> climb, then fill_hands sends the FIRST retrieve
+        // (LIFO: the pick, stowed last, comes back first).
+        let ev = task.tick(ctx!(&objs, 200, 1));
+        assert_eq!(sent(&ev), ["climb footpath", "get #4"], "climb + first retrieve: {ev:?}");
+        // The climb LANDS us at the destination (room 2) NOW, while the pick
+        // retrieval is still in flight and the wand hasn't been retrieved yet.
+        // The pick comes back to the right hand.
+        objs.set_hand(Hand::Right, Some(GameItem::new("4", "pick", "a pick")));
+        let ev = task.tick(ctx!(&objs, 300, 2));
+        // The trip must NOT be Arrived yet — fill_hands still owes the wand.
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Arrived { .. })),
+            "trip does not end mid-refill: {ev:?}"
+        );
+        assert_eq!(sent(&ev), ["get #18"], "retrieves the SECOND item (the wand): {ev:?}");
+        // The wand comes back; the refill completes (stash cycle ends) and the
+        // suspended script resumes — no more actions left.
+        objs.set_hand(Hand::Left, Some(GameItem::new("18", "wand", "a wand")));
+        let _ = task.tick(ctx!(&objs, 400, 2));
+        // With the stash done, the next tick's arrival check fires and the trip
+        // finishes — both items back in hand.
+        let ev = task.tick(ctx!(&objs, 500, 2));
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 2, .. })),
+            "now the trip finishes, both items back in hand: {ev:?}"
+        );
     }
 
     #[test]
