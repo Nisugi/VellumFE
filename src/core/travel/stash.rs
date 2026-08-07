@@ -140,6 +140,9 @@ enum Phase {
         /// The item id we expect to leave (Empty) or return (Fill).
         item_id: String,
         sent_ms: u64,
+        /// (Empty only) we already fell back to a bare `stow` after the primary
+        /// container command timed out — the next timeout is a real failure.
+        fallback_tried: bool,
     },
 }
 
@@ -204,21 +207,36 @@ impl StashTask {
             hand,
             item_id,
             sent_ms,
+            fallback_tried,
         } = &self.phase
         {
             let hand = *hand;
-            let still_held = ctx
-                .hand(hand)
-                .map(|i| &i.id == item_id)
-                .unwrap_or(false);
+            let item_id = item_id.clone();
+            let fallback_tried = *fallback_tried;
+            let still_held = ctx.hand(hand).map(|i| i.id == item_id).unwrap_or(false);
             if !still_held {
                 // Hand cleared — the stow landed. Move on.
                 self.phase = Phase::Idle;
             } else if ctx.now_ms.saturating_sub(*sent_ms) > CONFIRM_TIMEOUT_MS {
-                events.push(StashEvent::Failed(format!(
-                    "couldn't stow the item in your {} hand",
-                    hand_name(hand)
-                )));
+                if fallback_tried {
+                    // The bare-`stow` fallback also failed — give up on this
+                    // hand (the item stays held; the caller decides what next).
+                    events.push(StashEvent::Failed(format!(
+                        "couldn't stow the item in your {} hand",
+                        hand_name(hand)
+                    )));
+                    return;
+                }
+                // The primary container command failed (e.g. a bad `_direct_`
+                // bag id, or a container that isn't reachable). Fall back to a
+                // bare `stow`, which uses the game's own default container.
+                events.push(StashEvent::Send(format!("stow #{item_id}")));
+                self.phase = Phase::Await {
+                    hand,
+                    item_id,
+                    sent_ms: ctx.now_ms,
+                    fallback_tried: true,
+                };
                 return;
             } else {
                 return; // still waiting
@@ -240,6 +258,7 @@ impl StashTask {
                     hand,
                     item_id: item.id.clone(),
                     sent_ms: ctx.now_ms,
+                    fallback_tried: false,
                 };
                 return;
             }
@@ -253,6 +272,7 @@ impl StashTask {
             hand,
             item_id,
             sent_ms,
+            ..
         } = &self.phase
         {
             let hand = *hand;
@@ -299,6 +319,7 @@ impl StashTask {
                 hand: stowed.hand,
                 item_id: stowed.item.id.clone(),
                 sent_ms: ctx.now_ms,
+                fallback_tried: false,
             };
             return;
         }
@@ -383,9 +404,17 @@ fn stow_destination(
     format!("stow #{}", item.id)
 }
 
-/// `_drag #item #bag` — Lich's `add_to_bag` command.
+/// `_drag #item #bag` — Lich's `add_to_bag` command. When the bag id isn't a
+/// usable game id (empty, or the parser's `_direct_` marker for a container
+/// reached by a direct command rather than an object id), a `_drag #… #_direct_`
+/// just errors — so fall back to a bare `stow`, which uses the game's own
+/// default stow container.
 fn drag_cmd(item: &GameItem, bag_id: &str) -> String {
-    format!("_drag #{} #{}", item.id, bag_id.trim_start_matches('#'))
+    let bag = bag_id.trim_start_matches('#').trim();
+    if bag.is_empty() || bag == "_direct_" {
+        return format!("stow #{}", item.id);
+    }
+    format!("_drag #{} #{}", item.id, bag)
 }
 
 fn other(hand: Hand) -> Hand {
@@ -557,14 +586,52 @@ mod tests {
     }
 
     #[test]
-    fn stow_timeout_fails_cleanly() {
+    fn stow_timeout_falls_back_to_bare_stow_then_fails() {
         let mut objs = GameObjects::default();
         objs.set_hand(Hand::Left, Some(GameItem::new("1", "torch", "a torch")));
         let others: Vec<String> = vec![];
         let mut empty = StashTask::empty();
-        empty.tick(ctx(&objs, None, Some("99"), &others, 0));
-        // Hand never clears; past the timeout → Failed.
+        // Tick 1: the primary stow (into the lootsack).
+        let e = empty.tick(ctx(&objs, None, Some("99"), &others, 0));
+        assert_eq!(e, vec![StashEvent::Send("_drag #1 #99".into())]);
+        // Hand never clears; past the timeout → fall back to a bare `stow`
+        // rather than giving up (the item might still land in the default bag).
         let e = empty.tick(ctx(&objs, None, Some("99"), &others, CONFIRM_TIMEOUT_MS + 1));
-        assert!(matches!(e.as_slice(), [StashEvent::Failed(_)]));
+        assert_eq!(e, vec![StashEvent::Send("stow #1".into())], "falls back to bare stow");
+        // The fallback ALSO times out → now it's a real failure.
+        let e = empty.tick(ctx(&objs, None, Some("99"), &others, 2 * CONFIRM_TIMEOUT_MS + 2));
+        assert!(matches!(e.as_slice(), [StashEvent::Failed(_)]), "gives up after the fallback: {e:?}");
+    }
+
+    #[test]
+    fn bad_direct_bag_id_uses_bare_stow() {
+        use crate::core::game_objects::{Container, GameObjects};
+        // A container whose command target is the parser's `_direct_` marker
+        // (a container reached by a direct command, not a real object id). A
+        // `_drag #item #_direct_` errors, so the plan must use a bare `stow`.
+        let mut objs = GameObjects::default();
+        objs.set_hand(Hand::Left, Some(GameItem::new("1", "torch", "a torch")));
+        // A registered container whose target is `_direct_`.
+        objs.register_container(
+            "direct".to_string(),
+            "a dwarf skin backpack".to_string(),
+            Some("_direct_".to_string()),
+        );
+        let target = objs
+            .find_container("dwarf skin backpack")
+            .map(Container::command_target);
+        // command_target must NOT hand back `_direct_`.
+        assert_ne!(target.as_deref(), Some("_direct_"));
+
+        // And a stow planned into a `_direct_` bag id becomes a bare stow.
+        let others: Vec<String> = vec![];
+        let mut empty = StashTask::empty();
+        // Force the lootsack to the bad id: the plan should reject it.
+        let e = empty.tick(ctx(&objs, None, Some("_direct_"), &others, 0));
+        assert_eq!(
+            e,
+            vec![StashEvent::Send("stow #1".into())],
+            "a `_direct_` bag id falls back to a bare stow, not `_drag #1 #_direct_`: {e:?}"
+        );
     }
 }

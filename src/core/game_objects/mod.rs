@@ -152,11 +152,17 @@ pub struct Container {
 impl Container {
     /// The id to use in game commands (`put X in #<here>`): the `target`
     /// object id when known, else `#<id>` for normal numeric containers.
-    /// Strips a leading `#` since callers add their own.
+    /// Strips a leading `#` since callers add their own. A `_direct_` target
+    /// (the parser's marker for a container reached by a "direct" command, not
+    /// a real object id) is not a usable game id, so fall back to the stream
+    /// id — a stow into `#_direct_` just errors ("I could not find what you
+    /// were referring to").
     pub fn command_target(&self) -> String {
         match &self.target {
-            Some(t) => t.trim_start_matches('#').to_string(),
-            None => self.id.clone(),
+            Some(t) if t.trim_start_matches('#') != "_direct_" && !t.trim().is_empty() => {
+                t.trim_start_matches('#').to_string()
+            }
+            _ => self.id.clone(),
         }
     }
 }
