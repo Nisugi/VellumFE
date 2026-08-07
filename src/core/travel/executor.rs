@@ -1640,6 +1640,39 @@ impl TravelTask {
             ));
             return;
         }
+        // On a funding detour, a re-path heads for the BANK, not the real
+        // destination — otherwise any off-route hop abandons the withdraw and
+        // walks toward the (unaffordable) paid destination, which re-triggers
+        // funding and loops. If we're already AT the bank, don't re-path: hand
+        // straight back to the funding phase to withdraw.
+        if let Some(bank) = self.funding_bank {
+            if current == bank {
+                self.step = Step::Funding(FundingPhase::RoutingToBank {
+                    real_dest: self.destination,
+                    need: self.silver_need,
+                });
+                return;
+            }
+            let banned = self.banned.clone();
+            match pathing::path_to_filtered(db, current, bank, &|a, b| {
+                !banned.contains(&(a, b))
+            }) {
+                Some(path) => {
+                    self.path = path;
+                    self.idx = 0;
+                    self.step = Step::Funding(FundingPhase::RoutingToBank {
+                        real_dest: self.destination,
+                        need: self.silver_need,
+                    });
+                }
+                None => {
+                    events.push(TravelEvent::Failed(format!(
+                        "no remaining route from room {current} to the bank (room {bank}) - travel aborted"
+                    )));
+                }
+            }
+            return;
+        }
         let banned = self.banned.clone();
         match pathing::path_to_filtered(db, current, self.destination, &|a, b| {
             !banned.contains(&(a, b))
@@ -2291,6 +2324,92 @@ mod tests {
             "warns about being short"
         );
         assert_eq!(sent(&events), ["board"], "proceeds anyway");
+    }
+
+    #[test]
+    fn funding_detour_to_a_bank_reached_by_urchin_guide() {
+        // Reproduces Nisugi's live bug: the paid trip is short, the nearest
+        // bank is reached via an urchin guide (hideout `;e true` + `urchin
+        // guide bank`), and the withdraw must fire on arrival — NOT get
+        // hijacked into walking toward the real (paid) destination.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Pier]"],
+                 "tags": ["silver-cost:2:25000"],
+                 "wayto": {"2": "ask portmaster about travel 1", "30716": ";e true"},
+                 "timeto": {"2": 1.0, "30716": 0.1}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Far Port]"],
+                 "wayto": {"1": "board"}, "timeto": {"1": 1.0}, "paths": ""},
+                {"id": 30716, "uid": [9030716], "location": "KF", "title": ["[Hideout]"],
+                 "wayto": {"1": "urchin guide pier", "3": "urchin guide bank"},
+                 "timeto": {"1": 0.1, "3": 0.1}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[Bank, Teller]"],
+                 "tags": ["bank"], "wayto": {"30716": ";e true"},
+                 "timeto": {"30716": 0.1}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.funding = Some(fund(None, false));
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
+        sim.now += 100;
+        sim.funding = Some(fund(Some(0), true)); // broke, but get_silvers on
+        // Should collapse the `;e true` hideout and send `urchin guide bank`,
+        // NOT `urchin guide pier` or the portmaster ask.
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            ["urchin guide bank"],
+            "funding routes to the bank via the urchin guide: {ev:?}"
+        );
+        // The guide lands us at the bank (room 3).
+        sim.current = 3;
+        sim.now += 100;
+        task.tick(sim.ctx(&db)); // arrival → hand back to funding
+        sim.now += 100;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            ["withdraw 25000 silvers"],
+            "withdraws at the bank instead of walking off to the paid dest: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn off_route_during_funding_detour_repaths_to_the_bank_not_the_dest() {
+        // Nisugi's freeze bug: an off-route hop while walking the funding
+        // detour must re-target the BANK, never the (unaffordable) paid
+        // destination — else it walks back toward the portmaster, re-triggers
+        // funding, and loops (client froze on the wealth check).
+        let db = funding_db(); // 1=dock(pays 25000 ->2), 3=bank, free walk 1->3
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.funding = Some(fund(None, false));
+        task.tick(sim.ctx(&db)); // wealth quiet
+        sim.now += 100;
+        sim.funding = Some(fund(Some(0), true)); // broke, get_silvers on
+        // Redirect to the bank (room 3): sends the walk toward it.
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(sent(&ev), ["west"], "routes toward the bank: {ev:?}");
+        assert_eq!(task.funding_bank, Some(3));
+        // Force an off-route re-path directly (the executor path that Nisugi's
+        // live off-route hop hit). It must re-target the BANK, not the paid
+        // destination (2): funding_bank stays set and the new path ends at the
+        // bank, never routing toward the portmaster edge.
+        let mut ev = Vec::new();
+        task.repath(&db, 1, &mut ev);
+        assert_eq!(task.funding_bank, Some(3), "still targeting the bank");
+        assert_eq!(
+            task.path.last(),
+            Some(&3),
+            "re-path aims at the bank (room 3), not the paid dest: path={:?}",
+            task.path
+        );
+        assert!(
+            matches!(task.step, Step::Funding(FundingPhase::RoutingToBank { .. })),
+            "stays in the funding detour, not a normal walk to the dest"
+        );
     }
 
     #[test]
