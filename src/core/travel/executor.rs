@@ -510,8 +510,20 @@ impl TravelTask {
                     return events;
                 }
                 if current != from {
-                    // Somewhere unexpected but mapped (fled, teleported,
-                    // moved by hand mid-trip): re-path from here.
+                    // A slow escort crossing (portmaster ship, urchin guide)
+                    // moves you THROUGH intermediate rooms before depositing you
+                    // at `expected` — the game does the walking. Landing in an
+                    // unplanned room mid-escort is normal, not off-route: keep
+                    // waiting for the escort to finish (or the slow timeout to
+                    // fire) rather than re-pathing from a ship in open ocean
+                    // (which has no route and aborts the trip). A non-slow move
+                    // ending up elsewhere IS off-route (fled, hand-moved).
+                    if slow {
+                        // Anchor the wait to the new room so a genuine failure
+                        // still times out, but don't treat the transit room as
+                        // a destination or a re-path trigger.
+                        return events;
+                    }
                     events.push(TravelEvent::Status(format!(
                         "off the planned route (room {current}) - re-pathing"
                     )));
@@ -1420,23 +1432,35 @@ impl TravelTask {
     /// Nearest bank reachable within `silver` (its walk cost affordable), the
     /// go2 affordability check. None if every bank costs more to reach than we
     /// have.
+    ///
+    /// Performance: ONE Dijkstra with a multi-target (`AnyOf`) early-exit, not
+    /// one per bank. The old version ran `path_to` (a full-graph Dijkstra) up
+    /// to 72 times — 36 banks × sort-key + 36 × affordability — which, on the
+    /// fully-inlined 36k-room Cartographer graph, froze the UI thread for
+    /// 10-20s. We rank the banks the single search actually reached by
+    /// distance, then only reconstruct/affordability-check paths in that order
+    /// (each reconstruction is a cheap previous-pointer walk, not a search).
     fn nearest_affordable_bank(&self, from: u32, silver: u64, db: &MapDb) -> Option<u32> {
-        let mut banks: Vec<u32> = db.room_ids_with_tag("bank").to_vec();
-        // Nearest first by travel time.
-        banks.sort_by_key(|&b| {
-            pathing::path_to(db, from, b)
-                .map(|p| {
-                    let full: Vec<u32> = std::iter::once(from).chain(p).collect();
-                    (pathing::estimate_time(db, &full) * 1000.0) as u64
-                })
-                .unwrap_or(u64::MAX)
-        });
-        banks.into_iter().find(|&b| {
-            pathing::path_to(db, from, b).is_some_and(|p| {
-                let full: Vec<u32> = std::iter::once(from).chain(p).collect();
-                pathing::silver_cost(db, &full) <= silver
-            })
-        })
+        let banks: Vec<u32> = db.room_ids_with_tag("bank").to_vec();
+        // Single search toward whichever bank is nearest; `distance` is then
+        // populated for every bank the frontier reached.
+        let search = pathing::dijkstra(db, from, Some(pathing::PathTarget::AnyOf(&banks)));
+        let mut reached: Vec<(u32, f64)> = banks
+            .iter()
+            .filter_map(|&b| search.distance.get(&b).map(|&d| (b, d)))
+            .collect();
+        reached.sort_by(|a, b| a.1.total_cmp(&b.1));
+        // Nearest affordable first. Path reconstruction here is a cheap walk
+        // back through `previous`, and silver_cost is O(path length).
+        for (bank, _) in reached {
+            if let Some(path) = search.reconstruct(from, bank) {
+                let full: Vec<u32> = std::iter::once(from).chain(path).collect();
+                if pathing::silver_cost(db, &full) <= silver {
+                    return Some(bank);
+                }
+            }
+        }
+        None
     }
 
     fn tick_prepare(&mut self, current: u32, ctx: TravelContext, events: &mut Vec<TravelEvent>) {

@@ -35,6 +35,29 @@ pub struct Dijkstra {
     pub distance: HashMap<u32, f64>,
 }
 
+impl Dijkstra {
+    /// Reconstruct the path from `source` to `destination` using this search's
+    /// `previous` pointers (a cheap walk, no new search). Excludes `source`,
+    /// includes `destination` — the same shape as [`path_to`]. `None` if the
+    /// search never reached `destination`.
+    pub fn reconstruct(&self, source: u32, destination: u32) -> Option<Vec<u32>> {
+        if destination == source {
+            return Some(Vec::new());
+        }
+        self.previous.get(&destination)?;
+        let mut path = vec![destination];
+        loop {
+            let &prev = self.previous.get(path.last().expect("non-empty"))?;
+            if prev == source {
+                break;
+            }
+            path.push(prev);
+        }
+        path.reverse();
+        Some(path)
+    }
+}
+
 /// The cost of stepping from `room` to its wayto neighbor `dest`.
 /// `None` = edge not routable (see module docs for the rules).
 ///
@@ -419,5 +442,34 @@ mod tests {
         // Only the 1→2 tag counts; the 1→9 tag is a different destination.
         assert_eq!(silver_cost(&db, &[2, 3]), 0);
         assert_eq!(silver_cost(&db, &[1]), 0);
+    }
+
+    #[test]
+    fn reconstruct_matches_path_to_from_one_search() {
+        // A single AnyOf search's `reconstruct` must yield the same path as a
+        // dedicated path_to — the basis of the one-Dijkstra bank search that
+        // replaced 72 separate path_to calls (the UI-freeze fix).
+        let db = graph(
+            &[
+                (1, 2, "n", Some(0.2)),
+                (2, 3, "n", Some(0.2)),
+                (3, 4, "n", Some(0.2)),
+                (1, 5, "e", Some(5.0)),
+                (5, 4, "n", Some(5.0)),
+            ],
+            "",
+        );
+        let targets = [4u32];
+        let search = dijkstra(&db, 1, Some(PathTarget::AnyOf(&targets)));
+        assert_eq!(
+            search.reconstruct(1, 4),
+            path_to(&db, 1, 4),
+            "reconstruct equals path_to"
+        );
+        // Source-to-source is the empty path.
+        assert_eq!(search.reconstruct(1, 1), Some(Vec::new()));
+        // An unreached room reconstructs to None.
+        let none_search = dijkstra(&db, 1, Some(PathTarget::Room(2)));
+        assert_eq!(none_search.reconstruct(1, 999), None);
     }
 }
