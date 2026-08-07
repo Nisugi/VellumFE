@@ -671,6 +671,22 @@ impl TravelTask {
                     let branch = if ctx.eval(cond) { then } else { els };
                     actions.splice(pc..=pc, branch);
                 }
+                WalkAction::EmptyHands | WalkAction::FillHands => {
+                    // P3 placeholder: emit a bare stow/get so the footpath
+                    // family still walks. P2c replaces this with the real
+                    // StashService (ready/stow cascade + LIFO retrieval).
+                    let cmd = match action {
+                        WalkAction::EmptyHands => "stow both",
+                        _ => "get both",
+                    };
+                    events.push(TravelEvent::Send(cmd.to_string()));
+                    pc += 1;
+                }
+                WalkAction::Replan => {
+                    // The edge asked to re-plan from here ($go2_restart).
+                    self.repath(ctx.db, from, events);
+                    return;
+                }
             }
         }
         self.step = Step::RunScript {
@@ -740,7 +756,7 @@ impl TravelTask {
             // Scripted edge. The router weights on `timeto` alone (Lich
             // parity), so it may plan a route through a proc we can't yet
             // transpile — interpreting the proc is our job here, at the edge.
-            match crate::core::pathing::transpile::transpile(&command) {
+            match crate::core::pathing::transpile::transpile_edge(ctx.db, &command) {
                 Some(actions) => {
                     self.tick_script(actions, 0, None, next, current, ctx, events);
                 }

@@ -85,6 +85,39 @@ re!(
     r#"^;e\s+direction="(\w+)";start=Room\.current\.id;\s*dothistimeout "pedal \#\{direction\}",\s*\d+,\s*/pedal/ while Room\.current\.id == start$"#
 );
 
+// --- cheap-win idioms (go2 plan P3) ---
+
+// 69× ";e empty_hands; move 'climb footpath'; fill_hands"  (Niffy's footpath)
+// also the waitrt? variants: ";e empty_hands; move 'X'; waitrt?" (fill implied
+// by move's own recovery) and ";e empty_hands move 'X' waitrt? fill_hands".
+// empty_hands stows held items, the move climbs, fill_hands puts them back.
+re!(
+    EMPTY_HANDS_MOVE,
+    r"^;e\s+empty_hands[;\s]+move\s*\(?'([^']+)'\)?[;\s]*(waitrt\?)?[;\s]*(fill_hands;?)?$"
+);
+// 31× ";e Map[3600].wayto['3600'].call;" — delegation: run another edge's
+// wayto script. We resolve it to that edge's transpiled actions.
+re!(WAYTO_DELEGATE, r"^;e\s+Map\[(\d+)\]\.wayto\['(\d+)'\]\.call;?$");
+// 29× ";e move 'go curtain'; $go2_restart = true" — move then force a replan.
+re!(
+    MOVE_RESTART,
+    r"^;e\s+move\s*\(?'([^']+)'\)?;?\s*\$go2_restart\s*=\s*true;?$"
+);
+// 40× double/multi fput then move: ";e fput 'unlock door'; fput 'open door'; move 'go door'"
+re!(
+    FPUTS_MOVE,
+    r"^;e\s+((?:fput\s*\(?'[^']+'\)?;\s*)+)move\s*\(?'([^']+)'\)?;?$"
+);
+// Single-quote inside the fput list, extracted per-command.
+re!(FPUT_ONE, r"fput\s*\(?'([^']+)'\)?");
+// 29× bare fput, no move (a lever/button that changes the room): ";e fput 'jump'"
+re!(BARE_FPUT, r"^;e\s+fput\s*\(?'([^']+)'\)?;?$");
+// dquote fput+move: ";e fput \"search\"; move \"go trapdoor\""
+re!(
+    FPUT_MOVE_DQ,
+    r#"^;e\s+fput\s*\(?"([^"]+)"\)?;?\s*move\s*\(?"([^"]+)"\)?;?$"#
+);
+
 /// Transpile a StringProc wayto command. `None` = unsupported (edge stays
 /// out of the graph).
 pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
@@ -158,6 +191,40 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
     if let Some(c) = PEDAL.captures(src) {
         return Some(vec![WalkAction::Move(format!("pedal {}", &c[1]))]);
     }
+    // --- cheap-win idioms (P3) ---
+    if let Some(c) = EMPTY_HANDS_MOVE.captures(src) {
+        let mut actions = vec![WalkAction::EmptyHands, WalkAction::Move(c[1].to_string())];
+        if c.get(2).is_some() {
+            actions.push(WalkAction::WaitRt);
+        }
+        // fill_hands runs whether or not it was written literally: an
+        // empty_hands with no matching fill would strand the items, and
+        // Lich's `move` refills on success anyway.
+        actions.push(WalkAction::FillHands);
+        return Some(actions);
+    }
+    if let Some(c) = MOVE_RESTART.captures(src) {
+        return Some(vec![WalkAction::Move(c[1].to_string()), WalkAction::Replan]);
+    }
+    if let Some(c) = FPUTS_MOVE.captures(src) {
+        let mut actions: Vec<WalkAction> = FPUT_ONE
+            .captures_iter(&c[1])
+            .map(|m| WalkAction::Put(m[1].to_string()))
+            .collect();
+        actions.push(WalkAction::Move(c[2].to_string()));
+        return Some(actions);
+    }
+    if let Some(c) = FPUT_MOVE_DQ.captures(src) {
+        return Some(vec![
+            WalkAction::Put(c[1].to_string()),
+            WalkAction::Move(c[2].to_string()),
+        ]);
+    }
+    if let Some(c) = BARE_FPUT.captures(src) {
+        // A lone fput that changes the room (pull lever, jump). No arrival
+        // command follows; the room change is the fput's own effect.
+        return Some(vec![WalkAction::Put(c[1].to_string())]);
+    }
     None
 }
 
@@ -165,6 +232,28 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
 /// walked? (Same patterns as `transpile`, minus the allocation.)
 pub fn transpilable(source: &str) -> bool {
     transpile(source).is_some()
+}
+
+/// db-aware transpile: like `transpile`, but resolves a
+/// `Map[N].wayto['M'].call` delegation by looking up that edge's wayto
+/// command and transpiling it. Falls back to plain `transpile` for
+/// everything else. Depth-limited so a delegation cycle can't loop.
+pub fn transpile_edge(db: &MapDb, source: &str) -> Option<Vec<WalkAction>> {
+    transpile_edge_depth(db, source, 0)
+}
+
+fn transpile_edge_depth(db: &MapDb, source: &str, depth: u8) -> Option<Vec<WalkAction>> {
+    if depth >= 3 {
+        return None;
+    }
+    let src = source.trim();
+    if let Some(c) = WAYTO_DELEGATE.captures(src) {
+        let room_id: u32 = c[1].parse().ok()?;
+        let dest: u32 = c[2].parse().ok()?;
+        let target = db.room(room_id)?.wayto.get(&dest)?;
+        return transpile_edge_depth(db, target, depth + 1);
+    }
+    transpile(src)
 }
 
 // --- timeto cost procs ---
@@ -301,6 +390,84 @@ mod tests {
             None
         );
         assert_eq!(transpile(";e target_room_id = 5; maze_rooms = [1, 2]"), None);
+    }
+
+    #[test]
+    fn cheap_win_idioms_transpile() {
+        use WalkAction::*;
+        // The footpath family (Niffy's bug): empty_hands -> move -> fill_hands.
+        assert_eq!(
+            transpile(";e empty_hands; move 'climb footpath'; fill_hands"),
+            Some(vec![EmptyHands, Move("climb footpath".into()), FillHands])
+        );
+        // waitrt? variant, fill_hands implied.
+        assert_eq!(
+            transpile(";e empty_hands; move 'climb mountainside'; waitrt?"),
+            Some(vec![
+                EmptyHands,
+                Move("climb mountainside".into()),
+                WaitRt,
+                FillHands
+            ])
+        );
+        // no-semicolon spacing variant.
+        assert_eq!(
+            transpile(";e empty_hands move 'go boat' waitrt? fill_hands"),
+            Some(vec![
+                EmptyHands,
+                Move("go boat".into()),
+                WaitRt,
+                FillHands
+            ])
+        );
+        // move then $go2_restart.
+        assert_eq!(
+            transpile(";e move 'go curtain'; $go2_restart = true"),
+            Some(vec![Move("go curtain".into()), Replan])
+        );
+        // multi-fput then move.
+        assert_eq!(
+            transpile(";e fput 'unlock ironwood door'; fput 'open ironwood door'; move 'go ironwood door'"),
+            Some(vec![
+                Put("unlock ironwood door".into()),
+                Put("open ironwood door".into()),
+                Move("go ironwood door".into())
+            ])
+        );
+        // dquote fput+move.
+        assert_eq!(
+            transpile(r#";e fput "search"; move "go wooden trapdoor""#),
+            Some(vec![Put("search".into()), Move("go wooden trapdoor".into())])
+        );
+        // bare fput (a lever/button).
+        assert_eq!(transpile(";e fput 'jump'"), Some(vec![Put("jump".into())]));
+    }
+
+    #[test]
+    fn wayto_delegation_resolves_through_the_db() {
+        use WalkAction::*;
+        // Room 1's edge delegates to room 2's wayto, which is a plain move.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[R1]"],
+                 "wayto": {"3": ";e Map[2].wayto['3'].call;"},
+                 "timeto": {"3": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[R2]"],
+                 "wayto": {"3": ";e move 'go gate'; waitrt?"},
+                 "timeto": {"3": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let edge = db.room(1).unwrap().wayto.get(&3).unwrap();
+        assert_eq!(
+            transpile_edge(&db, edge),
+            Some(vec![Move("go gate".into()), WaitRt])
+        );
+        // Plain edges pass straight through transpile_edge.
+        assert_eq!(
+            transpile_edge(&db, ";e move 'north'"),
+            Some(vec![Move("north".into())])
+        );
     }
 
     #[test]

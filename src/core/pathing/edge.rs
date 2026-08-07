@@ -26,6 +26,20 @@ pub enum WalkAction {
         then: Vec<WalkAction>,
         els: Vec<WalkAction>,
     },
+    /// Stow both held items so a climb/swim can proceed (Lich's
+    /// `empty_hands` → `Lich::Stash.stash_hands(both: true)`). The executor
+    /// drives the StashService and remembers what it stowed so `FillHands`
+    /// can put it back (LIFO). A no-op when both hands are already empty.
+    EmptyHands,
+    /// Retrieve whatever the matching `EmptyHands` stowed (Lich's
+    /// `fill_hands` → `equip_hands(both: true)`), replaying the stashed
+    /// retrieval plan.
+    FillHands,
+    /// Re-plan the route from the current room to the same destination
+    /// (Lich's `$go2_restart = true`). A transpiled edge sets this when its
+    /// script signals that the map may have changed under it; the executor
+    /// wires it straight into `repath`.
+    Replan,
 }
 
 /// Conditions the executor can answer from game state.
