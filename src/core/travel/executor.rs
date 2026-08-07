@@ -176,6 +176,11 @@ enum Step {
         /// move hasn't landed; anywhere else is off-route.
         from: u32,
         sent_ms: u64,
+        /// A "slow" crossing — an urchin guide, portmaster escort, or other
+        /// pass-through whose confirmation can take many seconds (especially in
+        /// a busy room). It gets a longer arrival window so a slow-but-fine
+        /// crossing isn't re-sent (the live "urchin guide bank" double-send).
+        slow: bool,
     },
     /// Walking a curated maze by personal pathcode (movement inside is
     /// scrambled; edges are never stepped normally). See travel::mazes.
@@ -251,6 +256,10 @@ enum MazePhase {
 /// How long a move may take before it counts as failed. Generous: RT from
 /// the move itself plus lag both land inside this window.
 const STEP_TIMEOUT_MS: u64 = 8_000;
+/// Slow crossings (urchin guide, portmaster escort, pass-through) can take many
+/// seconds to confirm in a busy room; they get a longer arrival window so a
+/// slow-but-fine crossing isn't re-sent.
+const SLOW_ARRIVAL_TIMEOUT_MS: u64 = 30_000;
 /// `stand` gets a shorter window (go2 uses dothistimeout 2s).
 const STAND_TIMEOUT_MS: u64 = 2_500;
 const MAX_STAND_ATTEMPTS: u32 = 5;
@@ -301,6 +310,12 @@ pub struct TravelTask {
     /// Step enum so Step stays Clone+PartialEq, same as `stash`. `Some` only
     /// while inside the Plane.
     confluence: Option<super::confluence::ConfluenceState>,
+    /// The silver reading at the moment a bank withdrawal was sent. The
+    /// withdraw confirmation isn't a wealth line, so we re-probe `wealth quiet`
+    /// and wait for `game_state.silver` to change from this value (proving the
+    /// fresh reading landed) before judging whether the withdrawal covered the
+    /// trip.
+    silver_at_withdraw: Option<u64>,
 }
 
 impl TravelTask {
@@ -341,6 +356,7 @@ impl TravelTask {
             silver_need,
             funding_bank: None,
             confluence: None,
+            silver_at_withdraw: None,
         })
     }
 
@@ -485,6 +501,7 @@ impl TravelTask {
                 expected,
                 from,
                 sent_ms,
+                slow,
             } => {
                 if current == expected {
                     // Arrived on schedule; next step (or the destination
@@ -518,7 +535,8 @@ impl TravelTask {
                     self.arrive();
                     return events;
                 }
-                if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
+                let timeout = if slow { SLOW_ARRIVAL_TIMEOUT_MS } else { STEP_TIMEOUT_MS };
+                if ctx.now_ms.saturating_sub(sent_ms) > timeout {
                     if self.edge_retries >= MAX_EDGE_RETRIES {
                         // go2: "changing Room[..].timeto[..] to nil" + restart.
                         events.push(TravelEvent::Status(format!(
@@ -1000,11 +1018,14 @@ impl TravelTask {
         loop {
             let Some(action) = actions.get(pc).cloned() else {
                 if sent_anything {
-                    // Something was sent → a room change is expected.
+                    // Something was sent → a room change is expected. Scripted
+                    // edges (portmaster escorts, timed jumps) can be slow, so
+                    // give them the longer arrival window.
                     self.step = Step::AwaitArrival {
                         expected,
                         from,
                         sent_ms: ctx.now_ms,
+                        slow: true,
                     };
                 } else {
                     // Pure pass-through (`;e true`): the edge target is a
@@ -1171,10 +1192,12 @@ impl TravelTask {
             }
         }
         events.push(TravelEvent::Send(command));
+        // Urchin guides / other pass-through crossings are slow to confirm.
         self.step = Step::AwaitArrival {
             expected: next,
             from,
             sent_ms: ctx.now_ms,
+            slow: true,
         };
     }
 
@@ -1329,7 +1352,14 @@ impl TravelTask {
                         format!("withdraw {amount} silvers")
                     };
                     events.push(TravelEvent::Send(cmd));
+                    // Re-check wealth after withdrawing: the withdraw
+                    // confirmation ("hands you N silvers") isn't a wealth line,
+                    // so game_state.silver won't update on its own. Lich does
+                    // the same — it calls go2_check_silver() (wealth quiet)
+                    // again right after the withdraw (go2.lic:2278-2280).
+                    events.push(TravelEvent::Send("wealth quiet".into()));
                     self.funding_bank = None;
+                    self.silver_at_withdraw = funding.and_then(|f| f.silver);
                     self.step = Step::Funding(FundingPhase::AwaitWithdraw {
                         real_dest,
                         need,
@@ -1346,20 +1376,37 @@ impl TravelTask {
                 need,
                 sent_ms,
             } => {
-                let have = funding.and_then(|f| f.silver).unwrap_or(0);
-                if have >= need {
+                let reading = funding.and_then(|f| f.silver);
+                // The post-withdraw `wealth quiet` hasn't reflected yet if the
+                // reading still equals what we had when we sent the withdraw
+                // (and we DID have a pre-withdraw reading). Wait for it to move.
+                let refreshed = reading != self.silver_at_withdraw
+                    || (self.silver_at_withdraw.is_none() && reading.is_some());
+                let have = reading.unwrap_or(0);
+                if refreshed && have >= need {
                     // Funded — re-plan to the real destination and walk.
                     events.push(TravelEvent::Status(format!(
                         "withdrew to {have} silver - continuing to room {real_dest}"
                     )));
                     self.destination = real_dest;
                     self.repath(ctx.db, current, events);
+                } else if refreshed && have < need {
+                    // The fresh reading came back and it's still short — the
+                    // bank couldn't cover it (Lich's "too poor" bail).
+                    events.push(TravelEvent::Failed(format!(
+                        "withdrew what the bank had ({have} silver) but the trip needs {need} - aborted"
+                    )));
                 } else if ctx.now_ms.saturating_sub(sent_ms) > STEP_TIMEOUT_MS {
-                    events.push(TravelEvent::Failed(
-                        "couldn't withdraw enough silver for the trip - aborted".into(),
-                    ));
+                    // No fresh wealth reading at all — re-probe once more rather
+                    // than abort on a dropped line.
+                    events.push(TravelEvent::Send("wealth quiet".into()));
+                    self.step = Step::Funding(FundingPhase::AwaitWithdraw {
+                        real_dest,
+                        need,
+                        sent_ms: ctx.now_ms,
+                    });
                 }
-                // else keep waiting for the silver to reflect the withdrawal.
+                // else keep waiting for the fresh wealth reading.
             }
         }
     }
@@ -1479,6 +1526,7 @@ impl TravelTask {
             expected: next,
             from: current,
             sent_ms: ctx.now_ms,
+            slow: false,
         };
     }
 
@@ -1549,6 +1597,7 @@ impl TravelTask {
                         expected,
                         from,
                         sent_ms: ctx.now_ms,
+                        slow: false,
                     }),
                 };
             } else {
@@ -1599,6 +1648,7 @@ impl TravelTask {
             expected,
             from,
             sent_ms: now_ms,
+            slow: false,
         };
     }
 
@@ -2369,10 +2419,20 @@ mod tests {
         task.tick(sim.ctx(&db)); // arrival → hand back to funding
         sim.now += 100;
         let ev = task.tick(sim.ctx(&db));
+        // Withdraw the shortfall, then re-probe wealth (the withdraw
+        // confirmation isn't a wealth line).
         assert_eq!(
             sent(&ev),
-            ["withdraw 25000 silvers"],
-            "withdraws at the bank instead of walking off to the paid dest: {ev:?}"
+            ["withdraw 25000 silvers", "wealth quiet"],
+            "withdraws + re-checks wealth, not walking off to the paid dest: {ev:?}"
+        );
+        // The fresh wealth reading reflects the withdrawal → continue.
+        sim.now += 100;
+        sim.funding = Some(fund(Some(25000), true));
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Status(s) if s.contains("continuing"))),
+            "funded → continues to the real destination: {ev:?}"
         );
     }
 
@@ -2434,8 +2494,8 @@ mod tests {
         let events = task.tick(sim.ctx(&db));
         assert_eq!(
             sent(&events),
-            ["withdraw 24900 silvers"],
-            "withdraws the shortfall (25000 - 100)"
+            ["withdraw 24900 silvers", "wealth quiet"],
+            "withdraws the shortfall (25000 - 100) then re-checks wealth"
         );
         // The withdrawal reflects: now 25000 silver → re-plan to the real dest.
         sim.now += 100;
