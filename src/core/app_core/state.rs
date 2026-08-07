@@ -1084,6 +1084,10 @@ impl AppCore {
             pathcodes: &self.config.go2.pathcodes,
             hands: Some(hands),
             feedback: &feedback,
+            // The fallback is a Lich-only bandaid: gated on the setting AND a
+            // non-direct connection (a direct connection has no Lich to hand
+            // off to). webui_available() is our "connected via Lich" proxy.
+            lich_fallback: self.config.go2.lich_fallback && self.webui_available(),
         };
         let events = self.travel.tick(ctx);
         for event in events {
@@ -1102,6 +1106,16 @@ impl AppCore {
                 }
                 crate::core::travel::TravelEvent::Failed(reason) => {
                     self.add_system_message(&format!("[go2] {reason}"));
+                }
+                crate::core::travel::TravelEvent::LichFallback { destination } => {
+                    // Native travel can't cross this edge; hand off to Lich.
+                    // Stop the native task and send `;go2 <dest>` — Lich walks
+                    // the rest. (The event only fires on a Lich connection.)
+                    self.travel.stop();
+                    self.queue_timed_command(
+                        std::time::Duration::ZERO,
+                        format!(";go2 {destination}"),
+                    );
                 }
                 crate::core::travel::TravelEvent::Send(_) => unreachable!("queued by the service"),
             }

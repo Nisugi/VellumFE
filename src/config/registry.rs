@@ -734,6 +734,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Container the hands-stow uses for a weapon when your ready sheath doesn't cover it (name)", go2.weaponsack),
         text_entry!("go2.lootsack", "Loot Sack", "Travel",
             "Fallback container the hands-stow uses for anything not routed by ready/sheath/weapon sack (name)", go2.lootsack),
+        bool_entry!("go2.lich_fallback", "Lich ;go2 Fallback", "Travel",
+            "When native .go2 can't cross an edge, hand off to Lich's ;go2 (Lich connections only)", go2.lich_fallback),
     ];
     defs.sort_by_key(|def| def.key);
     defs

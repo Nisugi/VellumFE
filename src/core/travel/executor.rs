@@ -48,6 +48,10 @@ pub struct TravelContext<'a> {
     /// Move-feedback events since the last tick (drained from GameState) —
     /// nav arrivals + recovery signals. Empty when idle (§09/§12).
     pub feedback: &'a [crate::core::move_feedback::MoveFeedback],
+    /// When native travel reaches an edge it can't cross, hand off to Lich's
+    /// `;go2 <dest>` instead of banning + re-pathing. Only true on a Lich
+    /// connection with the setting enabled (the caller gates on direct-mode).
+    pub lich_fallback: bool,
 }
 
 /// The world snapshot the hands stow cascade needs, threaded through
@@ -110,6 +114,10 @@ pub enum TravelEvent {
     Arrived { destination: u32, seconds: f64 },
     /// Trip abandoned.
     Failed(String),
+    /// Native travel can't cross an edge; hand the whole trip to Lich's
+    /// `;go2 <destination>` (the P6 fallback bandaid). The owner sends it and
+    /// drops the native task.
+    LichFallback { destination: u32 },
 }
 
 /// Waiting-for-what within the current step.
@@ -1072,6 +1080,18 @@ impl TravelTask {
         ctx: TravelContext,
         events: &mut Vec<TravelEvent>,
     ) {
+        // With the Lich fallback enabled (Lich connection only), hand the
+        // whole trip to `;go2 <dest>` rather than banning the edge.
+        if ctx.lich_fallback {
+            events.push(TravelEvent::Status(format!(
+                "edge {current} -> {next} needs Lich - handing off to ;go2 {}",
+                self.destination
+            )));
+            events.push(TravelEvent::LichFallback {
+                destination: self.destination,
+            });
+            return;
+        }
         events.push(TravelEvent::Status(format!(
             "edge {current} -> {next} uses a script the native walker can't cross yet - disabling it and re-pathing"
         )));
@@ -1110,7 +1130,14 @@ impl TravelTask {
     pub fn is_finished(events: &[TravelEvent]) -> bool {
         events
             .iter()
-            .any(|e| matches!(e, TravelEvent::Arrived { .. } | TravelEvent::Failed(_)))
+            .any(|e| {
+                matches!(
+                    e,
+                    TravelEvent::Arrived { .. }
+                        | TravelEvent::Failed(_)
+                        | TravelEvent::LichFallback { .. }
+                )
+            })
     }
 }
 
@@ -1157,6 +1184,7 @@ mod tests {
         now: u64,
         pathcodes: std::collections::BTreeMap<String, Vec<String>>,
         feedback: Vec<crate::core::move_feedback::MoveFeedback>,
+        lich_fallback: bool,
     }
 
     impl Sim {
@@ -1173,6 +1201,7 @@ mod tests {
                 now: 0,
                 pathcodes: Default::default(),
                 feedback: Vec::new(),
+                lich_fallback: false,
             }
         }
 
@@ -1191,6 +1220,7 @@ mod tests {
                 pathcodes: &self.pathcodes,
                 hands: None,
                 feedback: &self.feedback,
+                lich_fallback: self.lich_fallback,
             }
         }
     }
@@ -1471,6 +1501,7 @@ mod tests {
                 pathcodes,
                 hands: Some(hands),
                 feedback: &[],
+                lich_fallback: false,
             }
         }
 
@@ -1592,6 +1623,61 @@ mod tests {
             events.is_empty() || !events.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
             "a nav into an unresolved room advances rather than failing"
         );
+    }
+
+    #[test]
+    fn uncrossable_edge_hands_off_to_lich_when_fallback_on() {
+        // A proc edge we can't transpile, but with a numeric timeto so it
+        // routes (post-P1). Only a route through it exists.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": ";e some_confluence_thing_we_cannot_parse"},
+                 "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "back"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.lich_fallback = true;
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, TravelEvent::LichFallback { destination: 2 })),
+            "hands off to ;go2 2: {events:?}"
+        );
+        assert!(TravelTask::is_finished(&events), "the fallback ends the task");
+    }
+
+    #[test]
+    fn uncrossable_edge_bans_and_repaths_when_fallback_off() {
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": ";e cannot_parse", "3": "east"},
+                 "timeto": {"2": 0.2, "3": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "back"}, "timeto": {"1": 0.2}, "paths": ""},
+                {"id": 3, "uid": [9000003], "location": "T", "title": ["[C]"],
+                 "wayto": {"2": "north"}, "timeto": {"2": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1); // fallback off
+        let events = task.tick(sim.ctx(&db));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, TravelEvent::LichFallback { .. })),
+            "no fallback when off"
+        );
+        // It re-paths around via room 3.
+        sim.now += 100;
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["east"], "re-routes natively");
     }
 
     #[test]

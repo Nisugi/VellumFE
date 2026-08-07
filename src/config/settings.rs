@@ -897,6 +897,11 @@ pub struct Go2Config {
     /// name. Empty = unset (falls through to any inventory container).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub lootsack: String,
+    /// When native `.go2` reaches an edge it can't cross yet, fall back to
+    /// Lich's `;go2 <dest>` (a regression bandaid, off by default). Only fires
+    /// on a Lich connection — a direct connection has no Lich to hand off to.
+    #[serde(default)]
+    pub lich_fallback: bool,
 }
 
 impl Default for Go2Config {
@@ -907,6 +912,7 @@ impl Default for Go2Config {
             pathcodes: Default::default(),
             weaponsack: String::new(),
             lootsack: String::new(),
+            lich_fallback: false,
         }
     }
 }
