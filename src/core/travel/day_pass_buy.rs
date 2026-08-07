@@ -25,9 +25,11 @@ const RESP_TIMEOUT_MS: u64 = 12_000;
 pub enum BuyEvent {
     /// Send this command to the game.
     Send(String),
-    /// The raise teleported us — the trip's day-pass leg is done. The executor
-    /// puts the pass away, fills hands, closes the sack, and arrives.
-    Traveled,
+    /// The raise teleported us — the trip's day-pass leg is done. Carries the
+    /// bought pass's exist-id so the executor can `_drag #id` it back into the
+    /// sack (the `pass` noun doesn't work for `_drag`). `None` if we never
+    /// captured an id (shouldn't happen once in-hand).
+    Traveled { pass_id: Option<String> },
     /// Give up (too poor with no funding, or a timeout). Carries a reason.
     Failed(String),
 }
@@ -55,13 +57,18 @@ enum Phase {
 }
 
 /// Inputs the machine reads each tick: the feedback events seen, the current
-/// room, whether funding (Get Silvers) is allowed, and the clock.
+/// room, whether funding (Get Silvers) is allowed, the clock, and the ids of
+/// items in each hand (to capture the bought pass's exist-id — `_drag`/`raise`
+/// need the id, not the `pass` noun).
 pub struct BuyTick<'a> {
     pub feedback: &'a [F],
     pub current_room: Option<u32>,
     pub get_silvers: bool,
     pub now_ms: u64,
     pub rt_remaining: f64,
+    /// (id, noun) of the left/right hand items, if any.
+    pub left_hand: Option<(&'a str, &'a str)>,
+    pub right_hand: Option<(&'a str, &'a str)>,
 }
 
 /// The day-pass buy conversation, carried on the travel step.
@@ -75,6 +82,9 @@ pub struct BuyState {
     to_bank: &'static [&'static str],
     from_bank: &'static [&'static str],
     phase: Phase,
+    /// The bought pass's exist-id, captured from the hand once it's handed over
+    /// (`_drag`/`raise` need the id, not the `pass` noun).
+    pass_id: Option<String>,
 }
 
 impl BuyState {
@@ -88,6 +98,17 @@ impl BuyState {
             to_bank: dep.to_bank,
             from_bank: dep.from_bank,
             phase: Phase::ToClerk { sent: false },
+            pass_id: None,
+        }
+    }
+
+    /// Capture the pass exist-id from whichever hand holds the `pass` noun.
+    fn capture_pass(&mut self, ctx: &BuyTick) {
+        for hand in [ctx.left_hand, ctx.right_hand].into_iter().flatten() {
+            if hand.1 == "pass" {
+                self.pass_id = Some(hand.0.to_string());
+                return;
+            }
         }
     }
 
@@ -132,6 +153,7 @@ impl BuyState {
             }
             Phase::AwaitPass { sent_ms } => {
                 if saw(&F::DayPassInHand) {
+                    self.capture_pass(&ctx);
                     self.phase = Phase::ToWaitingRoom { sent: false, sent_from: None };
                     // fall through to send the look/step below next tick
                     self.tick_to_waiting_room(&ctx, &mut out);
@@ -172,7 +194,7 @@ impl BuyState {
             }
             Phase::AwaitRaise { sent_ms } => {
                 if saw(&F::RaiseTraveled) || matches!(ctx.current_room, Some(_) if saw(&F::NavArrived)) {
-                    out.push(BuyEvent::Traveled);
+                    out.push(BuyEvent::Traveled { pass_id: self.pass_id.clone() });
                 } else if saw(&F::RaiseWrongRoom) {
                     out.push(BuyEvent::Failed(
                         "couldn't raise the pass here (not the Chronomage waiting room)".into(),
@@ -246,15 +268,25 @@ impl BuyState {
             if ctx.rt_remaining > 0.0 {
                 return;
             }
-            out.push(BuyEvent::Send("look pass".into()));
+            // Look at the pass (registers expiry) by id if we have it.
+            let look = match &self.pass_id {
+                Some(id) => format!("look #{id}"),
+                None => "look pass".to_string(),
+            };
+            out.push(BuyEvent::Send(look));
             out.push(BuyEvent::Send(self.exit_move.to_string()));
             *sent = true;
             *sent_from = ctx.current_room;
             return;
         }
-        // Arrived back at the waiting room → raise the pass to travel.
+        // Arrived back at the waiting room → raise the pass to travel. Use the
+        // captured id (the `pass` noun works for `raise` but the id is safer).
         if ctx.current_room != *sent_from {
-            out.push(BuyEvent::Send("raise pass".to_string()));
+            let raise = match &self.pass_id {
+                Some(id) => format!("raise #{id}"),
+                None => "raise pass".to_string(),
+            };
+            out.push(BuyEvent::Send(raise));
             self.phase = Phase::AwaitRaise { sent_ms: ctx.now_ms };
         }
     }

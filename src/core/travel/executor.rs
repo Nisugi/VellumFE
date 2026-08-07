@@ -362,6 +362,8 @@ pub struct TravelTask {
     /// The day-pass sack id (for putting the bought pass back), carried across
     /// the response-driven buy conversation (Step::DayPassBuy).
     day_pass_buy_sack: Option<String>,
+    /// The day-pass edge's source room (to ban the edge after crossing).
+    day_pass_buy_from: u32,
     /// The day-pass edge's destination room, for the raise-arrival check.
     day_pass_buy_dest: u32,
 }
@@ -407,6 +409,7 @@ impl TravelTask {
             silver_at_withdraw: None,
             in_transport: false,
             day_pass_buy_sack: None,
+            day_pass_buy_from: 0,
             day_pass_buy_dest: 0,
         })
     }
@@ -1355,6 +1358,7 @@ impl TravelTask {
         // in Step::DayPassBuy; the raise + put-back happen once it signals
         // ReadyToRaise. Stash the params the raise/cleanup will need.
         self.day_pass_buy_sack = sack.map(str::to_string);
+        self.day_pass_buy_from = from;
         self.day_pass_buy_dest = next;
         events.push(TravelEvent::Status(format!(
             "day pass to {} - buying",
@@ -1530,21 +1534,31 @@ impl TravelTask {
         events: &mut Vec<TravelEvent>,
     ) {
         use super::day_pass_buy::BuyEvent;
+        fn hand_ref(
+            i: Option<&crate::core::game_objects::GameItem>,
+        ) -> Option<(&str, &str)> {
+            i.map(|it| (it.id.as_str(), it.noun.as_str()))
+        }
         let tick = super::day_pass_buy::BuyTick {
             feedback: ctx.feedback,
             current_room: ctx.current_room,
             get_silvers: ctx.day_pass.map(|i| i.get_silvers).unwrap_or(false),
             now_ms: ctx.now_ms,
             rt_remaining: ctx.rt_remaining,
+            left_hand: ctx.hands.and_then(|h| hand_ref(h.left_hand)),
+            right_hand: ctx.hands.and_then(|h| hand_ref(h.right_hand)),
         };
         for ev in state.tick(tick) {
             match ev {
                 BuyEvent::Send(cmd) => events.push(TravelEvent::Send(cmd)),
-                BuyEvent::Traveled => {
-                    // The raise teleported us. Put the pass back, recover the
-                    // original items, close the sack — then arrive.
-                    if let Some(sack) = self.day_pass_buy_sack.clone() {
-                        events.push(TravelEvent::Send(format!("_drag #pass #{sack}")));
+                BuyEvent::Traveled { pass_id } => {
+                    // The raise teleported us. Put the pass back (by exist-id —
+                    // `_drag #pass` doesn't work), recover the original items,
+                    // close the sack — then arrive.
+                    if let (Some(sack), Some(id)) =
+                        (self.day_pass_buy_sack.clone(), pass_id.as_ref())
+                    {
+                        events.push(TravelEvent::Send(format!("_drag #{id} #{sack}")));
                     }
                     // FillHands via the stash primitive (recovers what
                     // EmptyHands stowed at the start of the buy).
@@ -1568,12 +1582,23 @@ impl TravelTask {
                     if let Some(sack) = self.day_pass_buy_sack.take() {
                         events.push(TravelEvent::Send(format!("close #{sack}")));
                     }
-                    self.arrive();
+                    // The raise teleported us to the day-pass edge's dest. Ban
+                    // this edge for the rest of the trip (we won't buy a second
+                    // pass to move locally) and re-path to the real destination
+                    // from where the pass dropped us — don't blindly arrive(),
+                    // which raced a stale room and re-entered a second buy.
+                    let dest = self.day_pass_buy_dest;
+                    self.banned.insert((self.day_pass_buy_from, dest));
+                    if current == self.destination {
+                        self.arrive();
+                    } else {
+                        self.repath(ctx.db, dest, events);
+                    }
                     return;
                 }
                 BuyEvent::Failed(why) => {
                     events.push(TravelEvent::Status(format!("day pass: {why} - re-pathing")));
-                    self.banned.insert((current, self.day_pass_buy_dest));
+                    self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
                     self.repath(ctx.db, current, events);
                     return;
                 }
