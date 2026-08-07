@@ -1269,6 +1269,11 @@ impl AppCore {
                 );
             }
             "stop" => self.stop_travel(),
+            "reload" => {
+                // Force a fresh mapdb load (Lich's `;go2 reload`).
+                self.map.reload();
+                self.add_system_message("[go2] reloading the map database...");
+            }
             "status" => {
                 let status = match (self.travel.task(), self.map.mapdb(), self.map.current_room_id)
                 {
@@ -2923,6 +2928,23 @@ mod portal_tests {
     fn no_candidates_reports_and_returns_none() {
         let mut core = AppCore::new_for_test();
         assert_eq!(core.handle_portal_command(&[]), None);
+    }
+
+    #[test]
+    fn go2_reload_drops_and_rekicks_the_mapdb() {
+        let mut core = AppCore::new_for_test();
+        core.map.set_mapdb_for_test(
+            crate::core::mapdb::MapDb::from_json(
+                r#"[{"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                     "wayto": {}, "timeto": {}, "paths": ""}]"#,
+            )
+            .unwrap(),
+        );
+        assert!(core.map.mapdb().is_some());
+        core.handle_go2(&["reload".to_string()]);
+        // With no configured source, reload drops the (test-injected) db and
+        // finds nothing to load — proving it re-kicked rather than no-oped.
+        assert!(core.map.mapdb().is_none(), "reload dropped the db");
     }
 
     #[test]
