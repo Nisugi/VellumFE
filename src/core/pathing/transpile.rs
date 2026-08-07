@@ -297,6 +297,36 @@ re!(
     TIMETO_TERNARY,
     r"^;e\s+checksitting && Room\.current\.climate == '[^']*' \? ([\d.]+) : ([\d.]+)$"
 );
+// Voln Symbol of Seeking edges: ";e if Society.status == 'Order of Voln' and
+// Society.rank == 26 and $go2_use_seeking; 2.8; else; nil; end". Routable only
+// when the character is a Voln Master AND seeking is enabled — Lich reads the
+// $go2_use_seeking global directly, so we mirror it with an atomic set only
+// when can_seek() holds (see set_use_seeking). Captures the enabled cost.
+re!(
+    TIMETO_SEEKING,
+    r"^;e\s+if Society\.status == 'Order of Voln' and Society\.rank == 26 and \$go2_use_seeking;\s*([\d.]+);\s*else;\s*nil;\s*end$"
+);
+
+/// Whether Voln seeking edges are routable this session — the Rust analog of
+/// Lich's `$go2_use_seeking` global (the seeking timeto procs read it
+/// directly). Only settable true when the character can actually seek (a Voln
+/// Master), via [`set_use_seeking`], so a true value at query time means the
+/// edge is legitimately available.
+static USE_SEEKING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enable/disable Voln seeking routing. `enabling && !can_seek` is rejected
+/// (returns false) — you can't turn seeking on without being a Voln Master.
+/// Returns the resulting state.
+pub fn set_use_seeking(enable: bool, can_seek: bool) -> bool {
+    let value = enable && can_seek;
+    USE_SEEKING.store(value, std::sync::atomic::Ordering::Relaxed);
+    value
+}
+
+/// Whether seeking is currently enabled.
+pub fn use_seeking() -> bool {
+    USE_SEEKING.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Resolve a timeto entry to seconds, following one level of delegation.
 /// `None` = edge disabled (settings-gated costs default off in v1).
@@ -325,7 +355,12 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
                 // Pessimistic constant: same walkability, honest ETA.
                 return Some(a.max(b));
             }
-            // Settings gates (portmasters, seeking), event vars
+            if let Some(c) = TIMETO_SEEKING.captures(src) {
+                // Routable only when seeking is enabled (which is only
+                // possible for a Voln Master — set_use_seeking gates it).
+                return use_seeking().then(|| c[1].parse().ok()).flatten();
+            }
+            // Other settings gates (portmasters, day passes), event vars
             // ($mapdb_instability_timeto), and everything else: off.
             None
         }
@@ -547,6 +582,37 @@ mod tests {
         assert_eq!(resolve_timeto(&db, r2, 3), Some(30.0), "ternary takes the max");
         assert_eq!(resolve_timeto(&db, r2, 4), None, "portmasters default off");
         assert_eq!(resolve_timeto(&db, r2, 1), Some(40.5));
+    }
+
+    #[test]
+    fn seeking_edges_route_only_when_enabled() {
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": ";e move 'go sigil'"},
+                 "timeto": {"2": ";e if Society.status == 'Order of Voln' and Society.rank == 26 and $go2_use_seeking; 2.8; else; nil; end"},
+                 "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "back"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let r1 = db.room(1).unwrap();
+
+        // Default off → the seeking edge is unroutable.
+        set_use_seeking(false, true);
+        assert_eq!(resolve_timeto(&db, r1, 2), None, "off by default");
+
+        // A non-Voln can't enable it (the gate returns false).
+        assert!(!set_use_seeking(true, false), "non-seeker can't enable");
+        assert_eq!(resolve_timeto(&db, r1, 2), None, "still off for non-seeker");
+
+        // A Voln Master enabling it → the edge costs 2.8 (routable).
+        assert!(set_use_seeking(true, true), "Voln Master enables seeking");
+        assert_eq!(resolve_timeto(&db, r1, 2), Some(2.8), "seeking routes");
+
+        // Reset so the global doesn't leak into other tests.
+        set_use_seeking(false, true);
     }
 
     #[test]

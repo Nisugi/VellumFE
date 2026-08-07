@@ -902,6 +902,11 @@ pub struct Go2Config {
     /// on a Lich connection — a direct connection has no Lich to hand off to.
     #[serde(default)]
     pub lich_fallback: bool,
+    /// Route through Voln Symbol of Seeking edges (Lich's `$go2_use_seeking`).
+    /// Only takes effect for a Voln Master (rank 26) — enabling it as a
+    /// non-seeker is a no-op at routing time. Off by default.
+    #[serde(default)]
+    pub use_seeking: bool,
 }
 
 impl Default for Go2Config {
@@ -913,6 +918,7 @@ impl Default for Go2Config {
             weaponsack: String::new(),
             lootsack: String::new(),
             lich_fallback: false,
+            use_seeking: false,
         }
     }
 }

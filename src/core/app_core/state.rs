@@ -1190,6 +1190,13 @@ impl AppCore {
             ));
             return;
         }
+        // Sync the Voln-seeking routing flag before planning (Lich's
+        // $go2_use_seeking). It only takes effect for a Voln Master, so
+        // set_use_seeking gates the config toggle on can_seek().
+        crate::core::pathing::transpile::set_use_seeking(
+            self.config.go2.use_seeking,
+            self.game_state.character.can_seek(),
+        );
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",
