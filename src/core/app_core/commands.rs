@@ -1385,6 +1385,7 @@ impl AppCore {
                     self.map.current_room_id,
                     &self.config.go2.saved,
                     self.travel.last_start_room,
+                    Some(&self.game_state.character),
                     &input,
                 );
                 match resolved {
