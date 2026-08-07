@@ -77,6 +77,15 @@ re!(
     r"^You currently have .*? citizenship in (?P<town>.*)\.$"
 );
 re!(NO_CITIZENSHIP, r"^You don't seem to have citizenship\.");
+
+// --- urchin access (`urchin status` command) ---
+// "You will have access to the urchin guides until 8/28/2026 14:30:00 ET."
+re!(
+    URCHIN_EXPIRES,
+    r"^You will have access to the urchin guides until (?P<m>\d+)/(?P<d>\d+)/(?P<y>\d+) (?P<h>\d+):(?P<min>\d+):(?P<s>\d+)"
+);
+re!(URCHIN_PERMANENT, r"permanent access to the urchin guides");
+re!(URCHIN_NONE, r"You currently have no access to the urchin guides");
 // The PROFILE block states citizenship differently:
 // "Full citizen of Kraken's Fall" / "Partial citizen of X" / "No citizenship".
 re!(
@@ -109,6 +118,11 @@ pub struct CharacterState {
     /// Home-town citizenship (Lich `citizenship`), or "None".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citizenship: Option<String>,
+    /// Urchin-guide access expiry as a Unix epoch (Lich
+    /// `UserVars.mapdb_urchins_expire`). `0` = no/unknown access; a far-future
+    /// value = permanent. Parsed from `urchin status`. Gates urchin travel.
+    #[serde(default)]
+    pub urchins_expire: i64,
     /// True while inside a PROFILE block (between PERSONAL INFORMATION and the
     /// house line) — the house line is only trusted then, matching Lich's
     /// State::Profile gate. Runtime-only.
@@ -178,6 +192,17 @@ impl CharacterState {
             self.set_citizenship(Some(c["town"].to_string()));
         } else if PROFILE_NO_CITIZENSHIP.is_match(line) {
             self.set_citizenship(Some("None".into()));
+        } else if let Some(c) = URCHIN_EXPIRES.captures(line) {
+            // Parse the M/D/Y H:M:S into a Unix epoch (the game prints local
+            // ET; we parse the wall-clock naively — good enough for the
+            // "expired?" comparison, which only needs day-ish granularity).
+            if let Some(epoch) = urchin_epoch(&c) {
+                self.set_urchins_expire(epoch);
+            }
+        } else if URCHIN_PERMANENT.is_match(line) {
+            self.set_urchins_expire(permanent_epoch());
+        } else if URCHIN_NONE.is_match(line) {
+            self.set_urchins_expire(0);
         }
 
         self.generation != before
@@ -200,6 +225,13 @@ impl CharacterState {
         } else {
             format!("{prof} {suffix}")
         })
+    }
+
+    /// Whether urchin travel is currently valid: access hasn't expired at
+    /// `now_epoch` and the character isn't hidden/invisible (Lich's urchin
+    /// timeto gate, minus the `use_urchins` toggle which the caller applies).
+    pub fn urchins_valid(&self, now_epoch: i64, hidden: bool, invisible: bool) -> bool {
+        self.urchins_expire != 0 && now_epoch < self.urchins_expire && !hidden && !invisible
     }
 
     /// The locker tags for `.go2 locker` (Lich builds from CHE membership).
@@ -243,6 +275,42 @@ impl CharacterState {
             self.generation += 1;
         }
     }
+    fn set_urchins_expire(&mut self, epoch: i64) {
+        if self.urchins_expire != epoch {
+            self.urchins_expire = epoch;
+            self.generation += 1;
+        }
+    }
+}
+
+/// Parse the `urchin status` M/D/Y H:M:S capture into a Unix epoch. The game
+/// prints local wall-clock (ET); we parse it naively as UTC — the "expired?"
+/// check only needs coarse accuracy, and a few hours of TZ skew never matters
+/// for a multi-day/week guide window.
+fn urchin_epoch(c: &regex::Captures) -> Option<i64> {
+    use chrono::{NaiveDate, NaiveTime};
+    let g = |name: &str| c.name(name)?.as_str().parse::<u32>().ok();
+    let (m, d, y, h, min, s) = (
+        g("m")?,
+        g("d")?,
+        g("y")?,
+        g("h")?,
+        g("min")?,
+        g("s")?,
+    );
+    let date = NaiveDate::from_ymd_opt(y as i32, m, d)?;
+    let time = NaiveTime::from_hms_opt(h, min, s)?;
+    Some(date.and_time(time).and_utc().timestamp())
+}
+
+/// A far-future sentinel epoch for permanent urchin access (Lich uses Jan 1 of
+/// next year; we use a fixed far-future date so it needs no clock).
+fn permanent_epoch() -> i64 {
+    use chrono::NaiveDate;
+    NaiveDate::from_ymd_opt(9999, 1, 1)
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| dt.and_utc().timestamp())
+        .unwrap_or(i64::MAX)
 }
 
 /// Lich's `Util.normalize_name`: lowercase, spaces/hyphens → underscores.
@@ -281,6 +349,7 @@ pub fn line_is_character_state(line: &str) -> bool {
         || t.starts_with("Full citizen of ")
         || t.starts_with("Partial citizen of ")
         || t == "No citizenship"
+        || t.contains("access to the urchin guides")
         || t.starts_with("The Grandmaster says")
         || t.starts_with("The Poohbah")
         || t.starts_with("[You have resigned")
@@ -375,6 +444,29 @@ mod tests {
         s.parse_line("PERSONAL INFORMATION");
         s.parse_line("No House affiliation");
         assert_eq!(s.che.as_deref(), Some("none"));
+    }
+
+    #[test]
+    fn parses_urchin_expiry() {
+        let mut s = CharacterState::default();
+        // Timed access → an epoch; valid before it, expired after.
+        s.parse_line("You will have access to the urchin guides until 8/28/2026 14:30:00 ET.");
+        assert!(s.urchins_expire > 0);
+        let expire = s.urchins_expire;
+        assert!(s.urchins_valid(expire - 1, false, false), "valid before expiry");
+        assert!(!s.urchins_valid(expire + 1, false, false), "invalid after expiry");
+        // Hidden/invisible blocks urchins even when not expired.
+        assert!(!s.urchins_valid(expire - 1, true, false), "hidden blocks");
+        assert!(!s.urchins_valid(expire - 1, false, true), "invisible blocks");
+
+        // Permanent → far future.
+        s.parse_line("You have permanent access to the urchin guides.");
+        assert!(s.urchins_valid(4_000_000_000, false, false), "permanent");
+
+        // No access → expired (0).
+        s.parse_line("You currently have no access to the urchin guides.");
+        assert_eq!(s.urchins_expire, 0);
+        assert!(!s.urchins_valid(0, false, false), "no access");
     }
 
     #[test]

@@ -49,7 +49,13 @@ pub struct Dijkstra {
 /// (delegation follows, settings gates default off, negative costs — which
 /// would corrupt the search — are rejected).
 fn edge_cost(db: &MapDb, room: &Room, dest: u32, _command: &str) -> Option<f64> {
-    if room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout() {
+    // Urchin-hideout hubs are excluded by default (they'd shortcut every
+    // route), but when urchin travel is valid this session we let them route —
+    // the per-edge timeto proc gates the actual cost (transpile::urchins_valid
+    // and TIMETO_URCHIN).
+    if !super::transpile::urchins_valid()
+        && (room.is_urchin_hideout() || db.room(dest)?.is_urchin_hideout())
+    {
         return None;
     }
     // Curated overrides make an edge walkable regardless of its script.
@@ -327,6 +333,10 @@ mod tests {
 
     #[test]
     fn urchin_hideouts_never_shortcut_a_route() {
+        // Share the pathing gate lock: urchin exclusion depends on the global
+        // urchins_valid() flag, which the transpile tests also toggle.
+        let _g = super::super::transpile::GATE_LOCK.lock().unwrap();
+        super::super::transpile::set_urchins_valid(false);
         // Long honest road 1→2→3 (0.4) vs a hideout teleport 1→99→3 (0.2).
         let db = graph(
             &[

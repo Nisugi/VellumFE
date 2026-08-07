@@ -1215,6 +1215,18 @@ impl AppCore {
             self.game_state.character.can_seek(),
         );
         crate::core::pathing::transpile::set_use_portmasters(self.config.go2.use_portmasters);
+        // Urchins: valid only when enabled AND access hasn't expired AND not
+        // hidden/invisible (Lich's combined urchin timeto gate). Also lets
+        // dijkstra route through the urchin-hideout hubs this trip.
+        let now_epoch = chrono::Utc::now().timestamp();
+        crate::core::pathing::transpile::set_urchins_valid(
+            self.config.go2.use_urchins
+                && self.game_state.character.urchins_valid(
+                    now_epoch,
+                    self.game_state.status.hidden,
+                    self.game_state.status.invisible,
+                ),
+        );
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",

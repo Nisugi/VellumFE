@@ -922,6 +922,11 @@ pub struct Go2Config {
     /// `get return trip silvers`). Off by default.
     #[serde(default)]
     pub get_return_trip_silvers: bool,
+    /// Route through urchin-guide edges (Lich's `UserVars.mapdb_use_urchins`).
+    /// Requires active (non-expired) urchin access — run `urchin status` to
+    /// refresh it. Auto-disabled while mounted. Off by default.
+    #[serde(default)]
+    pub use_urchins: bool,
 }
 
 impl Default for Go2Config {
@@ -937,6 +942,7 @@ impl Default for Go2Config {
             use_portmasters: false,
             get_silvers: false,
             get_return_trip_silvers: false,
+            use_urchins: false,
         }
     }
 }

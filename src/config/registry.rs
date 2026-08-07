@@ -744,6 +744,8 @@ static REGISTRY: LazyLock<Vec<SettingDef>> = LazyLock::new(|| {
             "Let go2 withdraw from the bank to fund paid travel when you're short", go2.get_silvers),
         bool_entry!("go2.get_return_trip_silvers", "Get Return Trip Silvers", "Travel",
             "Also withdraw enough to fund the return trip", go2.get_return_trip_silvers),
+        bool_entry!("go2.use_urchins", "Use Urchin Guides", "Travel",
+            "Route through urchin guides (needs active access - run 'urchin status'; off while mounted)", go2.use_urchins),
     ];
     defs.sort_by_key(|def| def.key);
     defs

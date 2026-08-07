@@ -350,6 +350,45 @@ pub fn use_portmasters() -> bool {
     USE_PORTMASTERS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// Urchin hub-entry edges: the full gate proc. Routable (0.1) only when urchin
+// travel is currently valid — the caller folds use_urchins + not-expired +
+// not-hidden/invisible into one flag (set_urchins_valid), matching Lich's
+// combined condition. Also matches the hub-delegate form
+// (";e Map[N].timeto['M'].call") indirectly via the delegate handler, and the
+// "a travel script is running" hub-exit form (always true mid-trip for us).
+re!(
+    TIMETO_URCHIN,
+    r"^;e\s+UserVars\.mapdb_use_urchins == true and .*mapdb_urchins_expire.* \? ([\d.]+) : nil;?$"
+);
+// The hub-exit gate: ";e !(Script.list... & %w{go2 route2}).empty? ? 0.1 :
+// nil" — routable while a travel script runs. For us that's "always during a
+// trip", so it rides the same URCHINS_VALID flag (only set while traveling).
+re!(
+    TIMETO_URCHIN_RUNNING,
+    r"^;e\s+!\(Script\.list.*route2.*\)\.empty\? \? ([\d.]+) : nil;?$"
+);
+
+/// Whether urchin-guide travel is routable right now — the caller sets this
+/// from `use_urchins && character.urchins_valid(...)` at trip start. Also lets
+/// dijkstra lift its urchin-hideout exclusion (see edge_cost).
+static URCHINS_VALID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enable/disable urchin routing for this session.
+pub fn set_urchins_valid(valid: bool) {
+    URCHINS_VALID.store(valid, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether urchin routing is currently valid.
+pub fn urchins_valid() -> bool {
+    URCHINS_VALID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Serializes tests across the pathing module that touch the process-global
+/// travel gates (seeking/portmaster/urchins), since cargo runs tests in
+/// parallel and they share those atomics.
+#[cfg(test)]
+pub(crate) static GATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Resolve a timeto entry to seconds, following one level of delegation.
 /// `None` = edge disabled (settings-gated costs default off in v1).
 pub fn resolve_timeto(db: &MapDb, room: &Room, dest: u32) -> Option<f64> {
@@ -387,6 +426,11 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
                 // the silver cost the funding routine covers.
                 return use_portmasters().then(|| c[1].parse().ok()).flatten();
             }
+            if let Some(c) = TIMETO_URCHIN.captures(src).or_else(|| TIMETO_URCHIN_RUNNING.captures(src)) {
+                // Routable only when urchin travel is currently valid (enabled,
+                // access not expired, not hidden/invisible).
+                return urchins_valid().then(|| c[1].parse().ok()).flatten();
+            }
             // Other settings gates (portmasters, day passes), event vars
             // ($mapdb_instability_timeto), and everything else: off.
             None
@@ -398,9 +442,7 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
 mod tests {
     use super::*;
 
-    /// Serializes tests that touch the process-global seeking/portmaster
-    /// gates, since cargo runs tests in parallel and they share those atomics.
-    static GATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(crate) use super::GATE_LOCK;
 
     #[test]
     fn corpus_idioms_transpile() {
@@ -680,6 +722,28 @@ mod tests {
         set_use_portmasters(true);
         assert_eq!(resolve_timeto(&db, r1, 2), Some(1200.0), "routes when enabled");
         set_use_portmasters(false);
+    }
+
+    #[test]
+    fn urchin_edges_route_only_when_valid() {
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Street]"],
+                 "wayto": {"2": "urchin guide bank"},
+                 "timeto": {"2": ";e UserVars.mapdb_use_urchins == true and !UserVars.mapdb_urchins_expire.nil? and Time.now.to_i < UserVars.mapdb_urchins_expire and !hidden? and !invisible? ? 0.1 : nil;"},
+                 "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Bank]"],
+                 "wayto": {"1": "out"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let r1 = db.room(1).unwrap();
+        let _g = GATE_LOCK.lock().unwrap();
+        set_urchins_valid(false);
+        assert_eq!(resolve_timeto(&db, r1, 2), None, "off/expired by default");
+        set_urchins_valid(true);
+        assert_eq!(resolve_timeto(&db, r1, 2), Some(0.1), "routes when valid");
+        set_urchins_valid(false);
     }
 
     #[test]

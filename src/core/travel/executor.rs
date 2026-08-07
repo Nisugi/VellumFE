@@ -1215,6 +1215,18 @@ impl TravelTask {
             .and_then(|r| r.wayto.get(&expected).cloned())
             .unwrap_or_default();
 
+        // Mounted → urchin travel is incompatible. Drop urchins for the rest
+        // of the trip and re-path on foot (Lich go2:2336-2346). Only acts when
+        // urchins were actually in play.
+        if ctx.saw(&F::Mounted) && crate::core::pathing::transpile::urchins_valid() {
+            crate::core::pathing::transpile::set_urchins_valid(false);
+            events.push(TravelEvent::Status(
+                "you're mounted - urchin guides don't work mounted; re-routing on foot".into(),
+            ));
+            self.repath(ctx.db, from, events);
+            return true;
+        }
+
         // Hard failure → the edge is bad; ban it and re-path (Lich `false`).
         if ctx.saw(&F::MoveFailedRemovable) {
             events.push(TravelEvent::Status(format!(

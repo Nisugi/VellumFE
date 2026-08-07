@@ -42,6 +42,9 @@ pub enum MoveFeedback {
     MoveFailedKeep,
     /// An item at your feet you don't want to leave — `stow feet`, retry.
     ItemAtFeet,
+    /// "You cannot do that while mounted." — urchin travel is incompatible
+    /// with being mounted; drop it and re-path (Lich go2:2336-2346).
+    Mounted,
 }
 
 macro_rules! patterns {
@@ -93,6 +96,9 @@ patterns! {
     ItemAtFeet => [
         "at your feet, and do not wish to leave it behind",
         "As you prepare to move away, you remember",
+    ],
+    Mounted => [
+        "You cannot do that while mounted",
     ],
     MoveFailedRemovable => [
         "You can't go there",
