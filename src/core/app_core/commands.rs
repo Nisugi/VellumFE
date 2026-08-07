@@ -10,6 +10,18 @@ const COMPASS_WORDS: [&str; 22] = [
     "down", "out", "n", "ne", "e", "se", "s", "sw", "w", "nw", "u", "d", "o",
 ];
 
+/// The GS "interesting" mapdb tags `.go2 targets` enumerates as a shop/guild
+/// directory (Lich's `gs_interesting_tags`, go2.lic:1009). Resolution accepts
+/// any mapdb tag; this is just the advertised directory vocabulary.
+const INTERESTING_TAGS: [&str; 40] = [
+    "alchemist", "armorshop", "bakery", "bank", "bardguild", "boutique", "chronomage",
+    "clericguild", "clericshop", "cobbling", "collectibles", "consignment", "empathguild",
+    "exchange", "fletcher", "forge", "furrier", "gemshop", "general store", "grocer",
+    "herbalist", "inn", "locksmith", "mail", "npccleric", "npchealer", "pawnshop",
+    "portmaster", "postoffice", "rangerguild", "smokeshop", "sorcererguild", "sunfist",
+    "treasuremaster", "town", "voln", "warriorguild", "weaponshop", "wizardguild", "moneychanger",
+];
+
 /// Room-object nouns that look like walkable portals, for the fallback
 /// when the mapdb doesn't know the current room.
 const PORTAL_NOUNS: [&str; 18] = [
@@ -527,6 +539,35 @@ impl AppCore {
             }
         }
         out
+    }
+
+    /// Reachable interesting-tag destinations from the current room, as
+    /// `(tag, room id, eta seconds)`, nearest first (Lich's `;go2 targets`
+    /// directory). Empty when no mapdb / current room / reachable tags.
+    pub fn go2_target_directory(&self) -> Vec<(String, u32, f64)> {
+        let (Some(db), Some(from)) = (self.map.mapdb(), self.map.current_room_id) else {
+            return Vec::new();
+        };
+        let mut found: Vec<(String, u32, f64)> = Vec::new();
+        for &tag in INTERESTING_TAGS.iter() {
+            if db.room_ids_with_tag(tag).is_empty() {
+                continue;
+            }
+            if let Some(dest) = crate::core::pathing::find_nearest_by_tag(db, from, tag) {
+                let eta = match crate::core::pathing::path_to(db, from, dest) {
+                    Some(route) => {
+                        let mut rooms = vec![from];
+                        rooms.extend(&route);
+                        crate::core::pathing::estimate_time(db, &rooms)
+                    }
+                    None if from == dest => 0.0,
+                    None => continue,
+                };
+                found.push((tag.to_string(), dest, eta));
+            }
+        }
+        found.sort_by(|a, b| a.2.total_cmp(&b.2));
+        found
     }
 
     /// The current room's portal commands — back-compat flat command list for
@@ -1224,7 +1265,7 @@ impl AppCore {
         match first {
             "" => {
                 self.add_system_message(
-                    "usage: .go2 <room id | uid | tag | saved name | text> - also: .go2 stop / status / save <name> [id] / targets / back",
+                    "usage: .go2 <room id | uid | tag | saved name | text> - also: .go2 stop / status / save <name> [id] / targets / saved / back",
                 );
             }
             "stop" => self.stop_travel(),
@@ -1281,7 +1322,8 @@ impl AppCore {
                     Err(e) => self.add_system_message(&format!("[go2] save failed: {e}")),
                 }
             }
-            "targets" => {
+            "saved" => {
+                // The saved-target list (formerly what `.go2 targets` showed).
                 if self.config.go2.saved.is_empty() {
                     self.add_system_message("[go2] no saved targets (.go2 save <name>)");
                 } else {
@@ -1293,6 +1335,36 @@ impl AppCore {
                         .map(|(name, id)| format!("{name} -> {id}"))
                         .collect();
                     self.add_system_message(&format!("[go2] saved targets: {}", list.join(", ")));
+                }
+            }
+            "targets" => {
+                // A directory of reachable shop/guild destinations from here,
+                // built from the mapdb's tags (Lich's `;go2 targets`).
+                if self.map.mapdb().is_none() {
+                    self.add_system_message(
+                        "[go2] map database not loaded - configure it in Settings > Map",
+                    );
+                    return;
+                }
+                if self.map.current_room_id.is_none() {
+                    self.add_system_message(
+                        "[go2] current room unknown - can't list reachable targets (see .room)",
+                    );
+                    return;
+                }
+                let found = self.go2_target_directory();
+                if found.is_empty() {
+                    self.add_system_message(
+                        "[go2] no tagged destinations reachable from here (try .go2 saved)",
+                    );
+                    return;
+                }
+                self.add_system_message("[go2] reachable targets (nearest first):");
+                for (tag, dest, eta) in found {
+                    self.add_system_message(&format!(
+                        "  .go2 {tag}  -> room {dest} ({})",
+                        crate::core::travel::format_eta(eta)
+                    ));
                 }
             }
             _ => {
@@ -2851,6 +2923,38 @@ mod portal_tests {
     fn no_candidates_reports_and_returns_none() {
         let mut core = AppCore::new_for_test();
         assert_eq!(core.handle_portal_command(&[]), None);
+    }
+
+    #[test]
+    fn go2_targets_lists_reachable_tagged_destinations_nearest_first() {
+        let mut core = AppCore::new_for_test();
+        // From room 1: a near bank (0.2) and a far pawnshop (5.0).
+        core.map.set_mapdb_for_test(
+            crate::core::mapdb::MapDb::from_json(
+                r#"[
+                    {"id": 1, "uid": [9000001], "location": "Town", "title": ["[Square]"],
+                     "wayto": {"2": "east", "3": "west"}, "timeto": {"2": 0.2, "3": 5.0},
+                     "paths": ""},
+                    {"id": 2, "uid": [9000002], "location": "Town", "title": ["[Bank]"],
+                     "tags": ["bank"], "wayto": {"1": "west"}, "timeto": {"1": 0.2}, "paths": ""},
+                    {"id": 3, "uid": [9000003], "location": "Town", "title": ["[Pawnshop]"],
+                     "tags": ["pawnshop"], "wayto": {"1": "east"}, "timeto": {"1": 5.0},
+                     "paths": ""}
+                ]"#,
+            )
+            .unwrap(),
+        );
+        core.map.current_room_id = Some(1);
+
+        let dir = core.go2_target_directory();
+        let tags: Vec<&str> = dir.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert!(tags.contains(&"bank"), "lists the bank: {tags:?}");
+        assert!(tags.contains(&"pawnshop"), "lists the pawnshop: {tags:?}");
+        // Bank (0.2) is nearer than pawnshop (5.0), so it lists first.
+        let bank_i = tags.iter().position(|t| *t == "bank").unwrap();
+        let pawn_i = tags.iter().position(|t| *t == "pawnshop").unwrap();
+        assert!(bank_i < pawn_i, "nearest first: {tags:?}");
+        assert_eq!(dir[bank_i].1, 2, "bank resolves to room 2");
     }
 
     #[test]

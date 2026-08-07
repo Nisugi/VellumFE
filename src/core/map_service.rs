@@ -292,6 +292,12 @@ impl MapService {
         self.mapdb.as_ref()
     }
 
+    /// Inject a mapdb directly (tests only — the live path loads from disk).
+    #[cfg(test)]
+    pub fn set_mapdb_for_test(&mut self, db: MapDb) {
+        self.mapdb = Some(Arc::new(db));
+    }
+
     /// Kick off (or re-kick after a source change) the mapdb load. Cheap to
     /// call repeatedly; only acts on a state change.
     pub fn ensure_db(&mut self, source: MapDbSource) {
