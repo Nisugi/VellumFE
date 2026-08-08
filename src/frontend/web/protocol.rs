@@ -120,6 +120,11 @@ struct SnapshotPayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     spellbook: Vec<crate::data::widget::StyledLine>,
     injuries: std::collections::HashMap<String, u8>,
+    /// Active doll variant + suppressed parts (host-resolved skin rules).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    doll_variant: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    doll_hidden: Vec<String>,
     targets: Vec<RemoteTarget>,
     entities: RemoteRoomEntities,
     portals: Vec<String>,
@@ -182,6 +187,8 @@ pub fn snapshot(
         effects: state.effects.clone(),
         spellbook: state.spellbook.clone(),
         injuries: state.injuries.clone(),
+        doll_variant: state.doll_variant.clone(),
+        doll_hidden: state.doll_hidden.clone(),
         targets: state.targets.clone(),
         entities: state.entities.clone(),
         portals: state.portals.clone(),
@@ -273,6 +280,11 @@ pub fn delta(delta: &RemoteDelta, last_seq: u64) -> String {
         RemoteDelta::Spells(lines) => encode("spells", last_seq, lines),
         RemoteDelta::Session(info) => encode("session", last_seq, info),
         RemoteDelta::Injuries(injuries) => encode("injuries", last_seq, injuries),
+        RemoteDelta::Doll { variant, hidden } => encode(
+            "doll",
+            last_seq,
+            serde_json::json!({ "variant": variant, "hidden": hidden }),
+        ),
         RemoteDelta::Targets(targets) => encode("targets", last_seq, targets),
         RemoteDelta::Entities(entities) => encode("entities", last_seq, entities),
         RemoteDelta::Portals(portals) => encode("portals", last_seq, portals),

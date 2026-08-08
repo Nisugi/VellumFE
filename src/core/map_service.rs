@@ -292,6 +292,23 @@ impl MapService {
         self.mapdb.as_ref()
     }
 
+    /// Inject a mapdb directly (tests only — the live path loads from disk).
+    #[cfg(test)]
+    pub fn set_mapdb_for_test(&mut self, db: MapDb) {
+        self.mapdb = Some(Arc::new(db));
+    }
+
+    /// Force a fresh mapdb reload from the current source (`.go2 reload`,
+    /// Lich's `Map.reload`). Drops the loaded db and re-kicks the load.
+    pub fn reload(&mut self) {
+        let source = self.source.clone();
+        self.mapdb = None;
+        self.db_state = DbState::NotLoaded;
+        self.db_error = None;
+        self.source = MapDbSource::Unconfigured; // force ensure_db past its guard
+        self.ensure_db(source);
+    }
+
     /// Kick off (or re-kick after a source change) the mapdb load. Cheap to
     /// call repeatedly; only acts on a state change.
     pub fn ensure_db(&mut self, source: MapDbSource) {

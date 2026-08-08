@@ -147,6 +147,26 @@ pub struct GameState {
     /// see `core::game_objects`.
     pub objects: crate::core::game_objects::GameObjects,
 
+    /// Edge-triggered move-feedback events (nav arrivals, hands-full, closed
+    /// door, …) awaiting the walk executor. The parser pushes on each matching
+    /// game line; `tick_travel` drains this once per tick so each event fires
+    /// exactly once. See `core::move_feedback` and §09/§12 of the go2 plan.
+    pub move_feedback: std::collections::VecDeque<crate::core::move_feedback::MoveFeedback>,
+
+    /// Character state parsed from the feed (society status/rank, profession,
+    /// CHE/House, citizenship) — gates seeking, guild, and locker travel.
+    /// Populated by SOCIETY/INFO/PROFILE/CITIZENSHIP output. See
+    /// `core::character_state`.
+    pub character: crate::core::character_state::CharacterState,
+
+    /// Silver on hand, parsed from `wealth`/`wealth quiet` output. `None`
+    /// until first seen. Drives go2's silver-funding for paid travel.
+    pub silver: Option<u64>,
+
+    /// Chronomage day-pass expiry cache, learned by `look`ing at passes (Lich's
+    /// `$mapdb_day_passes` + `mapdb_day_pass_monitor`). Gates day-pass travel.
+    pub day_passes: crate::core::day_pass::DayPassCache,
+
     /// DragonRealms experience/skill component state
     pub dr_experience: DRExperienceState,
 
@@ -945,6 +965,10 @@ impl GameState {
             spellbook_generation: 0,
             room_meta: RoomMetaState::default(),
             objects: crate::core::game_objects::GameObjects::default(),
+            move_feedback: std::collections::VecDeque::new(),
+            character: crate::core::character_state::CharacterState::default(),
+            silver: None,
+            day_passes: crate::core::day_pass::DayPassCache::default(),
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),

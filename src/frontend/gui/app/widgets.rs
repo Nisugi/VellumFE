@@ -1430,6 +1430,29 @@ impl VellumGuiApp {
         }
     }
 
+    /// The CHARACTER'S OWN doll render state this frame: the active
+    /// variant (first whose condition matches, in declaration order) and
+    /// the active set's suppressed parts (each `hidden_when` evaluated).
+    /// Another player's doll must pass `None` and an empty set to
+    /// `render_injury_doll` instead — these conditions read self state,
+    /// so your prone flag must never swap or hide someone else's doll.
+    pub(super) fn resolve_doll_render(
+        app_core: &AppCore,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) -> (Option<usize>, std::collections::HashSet<String>) {
+        let Some(art) = skin_art else {
+            return (None, Default::default());
+        };
+        let now_server =
+            chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
+        let gameobj = app_core.gameobj_data_cached();
+        let variant = art.resolve_doll_variant(&app_core.game_state, now_server, gameobj);
+        let hidden = art
+            .doll_set(variant)
+            .hidden_parts(&app_core.game_state, now_server, gameobj);
+        (variant, hidden)
+    }
+
     /// Wrayth-style paperdoll drawn with painter geometry: each body part is
     /// a shape filled by its injury color, with a hover tooltip naming the
     /// part and severity. Back and nervous system have no spot on a front
@@ -1439,19 +1462,23 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         injuries: &HashMap<String, u8>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        doll_variant: Option<usize>,
+        doll_hidden: &std::collections::HashSet<String>,
         grayscale: bool,
         palette: &[Color32; 7],
     ) {
-        // Sprite mode: skin-supplied base body, then per part either a
-        // hand-drawn severity overlay (authored on the base's canvas so it
-        // stacks in place) or a generated dot at the part's calibrated
-        // anchor point.
-        if let Some(base) = skin_art.and_then(|art| art.doll_base) {
-            let art = skin_art.unwrap();
+        // Sprite mode: the active doll set's base body (default
+        // `[injury_doll]`, or a condition-matched variant's set), then per
+        // part either a hand-drawn state overlay (authored on the base's
+        // canvas so it stacks in place) or a generated dot at the part's
+        // calibrated anchor point.
+        let set = skin_art.map(|art| art.doll_set(doll_variant));
+        if let Some(set) = set.filter(|set| set.base.is_some()) {
+            let base = set.base.unwrap();
             // Grayscale twins exist only while the checkbox demands them;
             // the generated dots keep their colors regardless.
             let base = if grayscale {
-                art.doll_base_gray.unwrap_or(base)
+                set.base_gray.unwrap_or(base)
             } else {
                 base
             };
@@ -1463,43 +1490,60 @@ impl VellumGuiApp {
             let painter = ui.painter().with_clip_rect(outer);
             let dest = crate::frontend::gui::skin::sprite_dest(&base, outer);
             crate::frontend::gui::skin::paint_sprite(&painter, dest, &base, Color32::WHITE);
-            let dot_radius =
-                (art.doll_dots.diameter * dest.height() / 2.0).max(4.0);
+            let dot_radius = (set.dots.diameter * dest.height() / 2.0).max(4.0);
             let mut wounds: Vec<String> = Vec::new();
-            for (part, level) in injuries {
-                if *level == 0 {
-                    continue;
-                }
-                let overlay = if grayscale {
-                    art.doll_overlay_gray(part, *level)
-                        .or_else(|| art.doll_overlay(part, *level))
-                } else {
-                    art.doll_overlay(part, *level)
-                };
-                if let Some(overlay) = overlay {
-                    crate::frontend::gui::skin::paint_sprite(
-                        &painter,
-                        dest,
-                        &overlay,
-                        Color32::WHITE,
-                    );
-                } else {
-                    let anchor = art.doll_anchor(part);
+            // Walk the canonical part list, not the injuries map: fully
+            // healthy parts are absent from the map entirely, and a part
+            // with overlay art needs its level-0 (healthy) layer drawn.
+            for (part, _, _) in crate::config::skins::DOLL_PARTS {
+                let level = injuries.get(*part).copied().unwrap_or(0);
+                // A suppressed part (hidden_when holds — e.g. a hand under
+                // a severed arm) draws nothing at all; the wound still
+                // lists in the tooltip below so the information survives.
+                let suppressed = doll_hidden.contains(&part.to_ascii_lowercase());
+                if suppressed {
+                    // fall through to the tooltip push only
+                } else if set.has_overlays(part) {
+                    // Fully hand-drawn part: draw the current state's art
+                    // if it exists; a state with no art lets the base show
+                    // through — never a generated dot stamped on top of
+                    // hand-drawn art. (Inverted skins author the base as
+                    // the worst case, so "no overlay" is a deliberate
+                    // reveal, e.g. a severed limb's hole.)
+                    let overlay = if grayscale {
+                        set.overlay_gray(part, level)
+                            .or_else(|| set.overlay(part, level))
+                    } else {
+                        set.overlay(part, level)
+                    };
+                    if let Some(overlay) = overlay {
+                        crate::frontend::gui::skin::paint_sprite(
+                            &painter,
+                            dest,
+                            &overlay,
+                            Color32::WHITE,
+                        );
+                    }
+                } else if level > 0 {
+                    // Artless part: the generated severity dot, as always.
+                    let anchor = set.anchor(part);
                     let center = dest.min
                         + Vec2::new(anchor.x * dest.width(), anchor.y * dest.height());
                     crate::frontend::gui::skin::paint_severity_dot(
                         &painter,
                         center,
                         dot_radius,
-                        *level,
-                        &art.doll_dots,
+                        level,
+                        &set.dots,
                     );
                 }
-                wounds.push(format!(
-                    "{}: {}",
-                    Self::doll_part_display_name(part),
-                    Self::injury_severity_text(*level)
-                ));
+                if level > 0 {
+                    wounds.push(format!(
+                        "{}: {}",
+                        Self::doll_part_display_name(part),
+                        Self::injury_severity_text(level)
+                    ));
+                }
             }
             // No "uninjured" tooltip on an unwounded doll (it read as a stray
             // badge over the UberBar paperdoll); only surface actual wounds.
@@ -1615,11 +1659,15 @@ impl VellumGuiApp {
             .show(ctx, |ui| {
                 ui.allocate_ui(Vec2::new(170.0, 225.0), |ui| {
                     // Another player's injuries: no per-widget config, so the
-                    // shared default palette.
+                    // shared default palette. Variants and hidden parts stay
+                    // off — their conditions read SELF state, and your prone
+                    // flag must not swap or hide someone else's doll.
                     Self::render_injury_doll(
                         ui,
                         &popup.injuries,
                         self.skin_state.widget_art().as_deref(),
+                        None,
+                        &Default::default(),
                         self.ui_settings.doll_grayscale,
                         &Self::default_injury_palette(),
                     );
@@ -2785,7 +2833,19 @@ impl VellumGuiApp {
                         // Backdrop art (skins are first in the list, so they
                         // paint behind the controls anchored to them).
                         if let Some(skin) = dialog.skins.get(i) {
-                            Self::paint_dialog_skin(ui, rect, skin, dialog, skin_art);
+                            // The InjuriesPanel doll is the character's own,
+                            // so variants and hidden parts apply here too.
+                            let (doll_variant, doll_hidden) =
+                                Self::resolve_doll_render(app_core, skin_art);
+                            Self::paint_dialog_skin(
+                                ui,
+                                rect,
+                                skin,
+                                dialog,
+                                skin_art,
+                                doll_variant,
+                                &doll_hidden,
+                            );
                         }
                     }
                     PositionedControlKind::Link(i) => {
@@ -3129,6 +3189,8 @@ impl VellumGuiApp {
         skin: &crate::data::DialogSkin,
         dialog: &crate::data::ui_state::DialogState,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+        doll_variant: Option<usize>,
+        doll_hidden: &std::collections::HashSet<String>,
     ) {
         if !skin.name.eq_ignore_ascii_case("InjuriesPanel") {
             return;
@@ -3158,6 +3220,8 @@ impl VellumGuiApp {
                 ui,
                 &injuries,
                 skin_art,
+                doll_variant,
+                doll_hidden,
                 false,
                 &Self::default_injury_palette(),
             );
@@ -4944,9 +5008,11 @@ impl VellumGuiApp {
                     (CommandEditOp::Paste, &stash.paste),
                 ] {
                     for (key, mods) in combos {
-                        if input.consume_key(*mods, *key) {
-                            ops.push((op, false));
-                        }
+                        // Shifted variant FIRST: consume_key matches
+                        // modifiers logically (extra Shift is ignored), so
+                        // checking the plain combo first would eat
+                        // shift+Home as a plain Home and the selection
+                        // extend would never fire.
                         if !mods.shift {
                             let extended = egui::Modifiers {
                                 shift: true,
@@ -4955,6 +5021,9 @@ impl VellumGuiApp {
                             if input.consume_key(extended, *key) {
                                 ops.push((op, true));
                             }
+                        }
+                        if input.consume_key(*mods, *key) {
+                            ops.push((op, false));
                         }
                     }
                 }
@@ -6035,10 +6104,14 @@ impl VellumGuiApp {
                         _ => None,
                     })
                     .unwrap_or_else(Self::default_injury_palette);
+                let (doll_variant, doll_hidden) =
+                    Self::resolve_doll_render(app_core, settings.skin_art.as_deref());
                 Self::render_injury_doll(
                     ui,
                     &doll.injuries,
                     settings.skin_art.as_deref(),
+                    doll_variant,
+                    &doll_hidden,
                     settings.doll_grayscale,
                     &palette,
                 );

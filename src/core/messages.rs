@@ -100,6 +100,23 @@ pub struct MessageProcessor {
     /// caller in `process_element`. (container_id, items)
     pending_container_ingest:
         Option<(String, Vec<crate::core::game_objects::GameItem>)>,
+    /// READY/STOW list rows captured during flush (no `game_state` there);
+    /// drained into `game_state.objects` at the prompt. (line_text, item).
+    pending_ready_stow: Vec<(String, Option<crate::core::game_objects::GameItem>)>,
+    /// Move-feedback events classified during flush (no `game_state` there);
+    /// drained into `game_state.move_feedback` at the prompt so the walk
+    /// executor sees each one exactly once.
+    pending_move_feedback: Vec<crate::core::move_feedback::MoveFeedback>,
+    /// Character-state lines captured during flush (no `game_state` there);
+    /// fed into `game_state.character` at the prompt. Society/profession/CHE/
+    /// citizenship output from SOCIETY/INFO/PROFILE/CITIZENSHIP.
+    pending_character_lines: Vec<String>,
+    /// Day-pass description/expiry lines + the line's pass-link id, applied to
+    /// `game_state.day_passes` at the prompt IN ORDER (expiry follows desc).
+    pending_day_pass_lines: Vec<(String, Option<String>)>,
+    /// Silver on hand parsed from a `wealth` line during flush; applied to
+    /// `game_state.silver` at the prompt.
+    pending_silver: Option<u64>,
 
     /// Track if chunk (since last prompt) has main stream text
     chunk_has_main_text: bool,
@@ -300,6 +317,11 @@ impl MessageProcessor {
             sorter_gameobj: None,
             inv_scan: Default::default(),
             pending_container_ingest: None,
+            pending_ready_stow: Vec::new(),
+            pending_move_feedback: Vec::new(),
+            pending_character_lines: Vec::new(),
+            pending_day_pass_lines: Vec::new(),
+            pending_silver: None,
             remote: None,
             pending_client_commands: Vec::new(),
             chunk_has_main_text: false,
@@ -546,6 +568,13 @@ impl MessageProcessor {
             ParsedElement::RoomId { id } => {
                 *nav_room_id = Some(id.clone());
                 *room_window_dirty = true;
+                // A <nav> tag is the universal "you moved" signal (Lich's
+                // room_count increment). Push it for the walk executor even
+                // if the room can't be resolved to a mapdb id — arrival
+                // detection then never hangs on an unmapped room (§12).
+                game_state
+                    .move_feedback
+                    .push_back(crate::core::move_feedback::MoveFeedback::NavArrived);
                 tracing::debug!("Room ID updated: {}", id);
             }
             ParsedElement::RoomMeta { attrs } => {
@@ -750,6 +779,34 @@ impl MessageProcessor {
                     for (id, status) in self.inv_scan.finish() {
                         game_state.objects.set_status(id, status);
                     }
+                }
+
+                // READY/STOW list rows captured during flush feed the
+                // ready/stow state now that game_state is in hand.
+                for (text, link) in self.pending_ready_stow.drain(..) {
+                    game_state.objects.parse_ready_stow_line(&text, link);
+                }
+
+                // Move-feedback events captured during flush queue for the
+                // walk executor (drained by tick_travel).
+                game_state
+                    .move_feedback
+                    .extend(self.pending_move_feedback.drain(..));
+
+                // Character-state lines feed the parser in order (the PROFILE
+                // house parse is stateful).
+                for line in self.pending_character_lines.drain(..) {
+                    game_state.character.parse_line(&line);
+                }
+                // Day-pass lines feed the cache in order (expiry follows the
+                // description, keyed by the same pass id).
+                for (line, pass_id) in self.pending_day_pass_lines.drain(..) {
+                    game_state
+                        .day_passes
+                        .observe(&line, pass_id.as_deref());
+                }
+                if let Some(silver) = self.pending_silver.take() {
+                    game_state.silver = Some(silver);
                 }
 
                 // Container contents extracted from a main-stream look line
@@ -3010,6 +3067,62 @@ impl MessageProcessor {
         if is_blank_line && !self.chunk_has_main_text {
             self.current_segments.clear();
             return;
+        }
+
+        // Move feedback: classify the line into a typed recovery event (hands
+        // full, closed door, fell, hard/soft move failure, …) for the walk
+        // executor. Buffered here (no game_state); drained at the prompt into
+        // game_state.move_feedback so each event fires exactly once. The
+        // aho-corasick matcher is cheap on non-matching lines.
+        if let Some(fb) = crate::core::move_feedback::classify_line(&full_text) {
+            self.pending_move_feedback.push(fb);
+        }
+
+        // Character state (society/profession/CHE/citizenship). Buffer the line
+        // for the prompt handler to feed into game_state.character IN ORDER —
+        // the PROFILE house parse is stateful across lines. Cheap prefix gate.
+        if crate::core::character_state::line_is_character_state(&full_text) {
+            self.pending_character_lines.push(full_text.clone());
+        }
+
+        // Silver on hand (from `wealth`/`wealth quiet`) — drives go2 funding.
+        if full_text.starts_with("You have ") && full_text.contains("silver with you") {
+            if let Some(silver) = crate::core::character_state::parse_wealth_line(&full_text) {
+                self.pending_silver = Some(silver);
+            }
+        }
+
+        // READY/STOW list rows: observe (don't squelch — the player asked for
+        // the list). Buffer the flat text + the first item link; the prompt
+        // handler feeds them into game_state.objects' ready/stow state, which
+        // drives the hands stow cascade (P2). Cheap: a couple of prefix checks
+        // gate the work, so ordinary lines pay almost nothing.
+        if crate::core::game_objects::ready_stow::line_is_ready_stow(&full_text) {
+            let link = self.current_segments.iter().find_map(|seg| {
+                seg.link_data.as_ref().map(|l| {
+                    crate::core::game_objects::GameItem::new(
+                        l.exist_id.clone(),
+                        l.noun.clone(),
+                        l.text.clone(),
+                    )
+                })
+            });
+            self.pending_ready_stow.push((full_text.clone(), link));
+        }
+
+        // Chronomage day-pass description / expiry lines (from `look`ing at a
+        // pass) — feed the day-pass cache that gates day-pass travel. The
+        // description/EXPIRED lines carry a `noun="pass"` link whose exist-id
+        // keys the pass; the expiry line has no link. Buffer with the pass id
+        // for the prompt handler to apply IN ORDER (expiry follows description).
+        if crate::core::day_pass::line_is_day_pass(&full_text) {
+            let pass_id = self.current_segments.iter().find_map(|seg| {
+                seg.link_data
+                    .as_ref()
+                    .filter(|l| l.noun == "pass")
+                    .map(|l| l.exist_id.clone())
+            });
+            self.pending_day_pass_lines.push((full_text.clone(), pass_id));
         }
 
         // Active INVENTORY FULL scan: capture status lines into the scan

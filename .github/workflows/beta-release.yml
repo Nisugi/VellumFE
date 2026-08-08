@@ -114,6 +114,44 @@ jobs:
           rm -f "$BIN_BASENAME" README-Linux.txt
           popd >/dev/null
 
+      # --- Windows code signing (Azure Artifact / Trusted Signing) ---------
+      # Signs the raw .exe BEFORE it is zipped, so the signature travels
+      # inside the archive. Secret-gated exactly like the macOS job: if the
+      # Azure signing secrets are absent (forks, or before setup is done),
+      # the build ships UNSIGNED with a warning rather than failing.
+      # Removes the Defender "Trojan:Win32/Cloxer" heuristic false positive
+      # that unsigned, low-prevalence Rust binaries trigger. The action
+      # authenticates directly via the azure-* inputs (no azure/login step).
+      - name: Decide whether Windows signing secrets exist
+        if: runner.os == 'Windows'
+        id: winsign
+        shell: pwsh
+        run: |
+          if ($env:AZURE_CLIENT_ID) {
+            "enabled=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "enabled=false" >> $env:GITHUB_OUTPUT
+            Write-Output "::warning::AZURE_CLIENT_ID not set - shipping UNSIGNED Windows exe"
+          }
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+
+      - name: Sign Windows exe (Azure Artifact Signing)
+        if: runner.os == 'Windows' && steps.winsign.outputs.enabled == 'true'
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+          files-folder: target/release
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
       - name: Package artifact (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

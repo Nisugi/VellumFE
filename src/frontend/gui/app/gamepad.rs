@@ -140,6 +140,10 @@ impl VellumGuiApp {
         let any_connected = gilrs.gamepads().next().is_some();
         for (id, connected) in connections {
             let name = gilrs.gamepad(id).name().to_string();
+            // A (re)connect starts from unproven axes: no aim-stick scroll
+            // until the stick is seen centered once (phantom stale-axis
+            // readings arrive deflected from the very first frame).
+            self.gp_aim_seen_center = false;
             self.app_core.add_system_message(&if connected {
                 format!("Controller connected: {}", name)
             } else {
@@ -311,8 +315,13 @@ impl VellumGuiApp {
         // wheel so aiming never also scrolls or cycles.
         // A wheel that just closed leaves the stick deflected; hold the
         // aim stick's normal function until it returns to center once.
-        if self.gp_aim_recenter_needed && aim_stick_centered(aim_x, aim_y) {
-            self.gp_aim_recenter_needed = false;
+        if aim_stick_centered(aim_x, aim_y) {
+            // A real center reading proves the axis is live, not a stale
+            // phantom value cached from connect/wake.
+            self.gp_aim_seen_center = true;
+            if self.gp_aim_recenter_needed {
+                self.gp_aim_recenter_needed = false;
+            }
         }
         let aim_owned_by_wheel =
             self.gp_wheel.is_some() || self.gp_wheel_fired || self.gp_aim_recenter_needed;
@@ -332,8 +341,26 @@ impl VellumGuiApp {
                 }
                 self.gp_right_dir = dir;
             }
-        } else if aim_y.abs() > 0.25 && self.app_core.ui_state.input_mode != InputMode::Menu {
-            if aim_stale {
+        } else if aim_y.abs() > 0.25
+            && self.gp_aim_seen_center
+            && self.app_core.ui_state.input_mode != InputMode::Menu
+        {
+            // Mouse wins over the pad: while a mouse button is down (a
+            // scrollbar drag) or the wheel turned this frame, the aim stick
+            // must not fight the user's hand — the per-frame scroll request
+            // rebuilt the hold faster than the mouse could clear it (the
+            // live "slider moves but the text doesn't" report).
+            let mouse_busy = ctx.input(|i| {
+                i.pointer.any_down()
+                    || i.raw
+                        .events
+                        .iter()
+                        .any(|e| matches!(e, egui::Event::MouseWheel { .. }))
+            });
+            if mouse_busy {
+                // Skip this frame's scroll; the stick resumes when the mouse
+                // rests.
+            } else if aim_stale {
                 if !self.gp_aim_stale_logged {
                     self.gp_aim_stale_logged = true;
                     tracing::warn!(

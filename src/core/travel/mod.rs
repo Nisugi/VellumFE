@@ -9,8 +9,11 @@
 //! commands; frontends drain the queue through their normal typed-command
 //! path (so travel moves echo like anything the user types).
 
+pub mod confluence;
+pub mod day_pass_buy;
 pub mod executor;
 pub mod mazes;
+pub mod stash;
 pub mod target;
 
 use std::collections::VecDeque;
@@ -87,6 +90,12 @@ impl TravelService {
     /// Drain the commands frontends should send to the game.
     pub fn take_outbound(&mut self) -> Vec<String> {
         self.outbound.drain(..).collect()
+    }
+
+    /// Queue a raw command to be sent to the game through the normal outbound
+    /// path (used by go2 pre-flight probes like `urchin status`).
+    pub fn queue_command(&mut self, command: String) {
+        self.outbound.push_back(command);
     }
 }
 

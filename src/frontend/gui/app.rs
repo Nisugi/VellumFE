@@ -393,6 +393,12 @@ pub struct VellumGuiApp {
     /// scroll or cycle from the leftover deflection.
     #[cfg(feature = "gamepad")]
     gp_aim_recenter_needed: bool,
+    /// The aim stick has been seen CENTERED at least once since the pad
+    /// connected. A stick that reports deflected from the very first frame
+    /// is a phantom axis (stale gilrs value after connect/wake) — the live
+    /// "aim_y=0.983 forever" stream that pinned the story window at the top
+    /// and out-fought the mouse. No scroll until a real center is observed.
+    gp_aim_seen_center: bool,
     /// Stale-axis guard for the level-triggered story scroll: the aim
     /// value last seen and when it last changed. A live stick jitters
     /// every few frames; a bit-identical deflected value for seconds is a
@@ -522,6 +528,16 @@ pub struct VellumGuiApp {
     /// press origin, so re-testing the origin against the current rect
     /// every frame would re-pin the size mid-drag and stall the resize.
     zone_engaged_tab: Option<TabKey>,
+    /// True once the CURRENT press has travelled past the click threshold —
+    /// sticky for the rest of the press (a drag that pauses, or circles back
+    /// near its origin, stays a drag). Cleared on release. Gates the
+    /// engagement latch's press_became_drag short-circuit: latch ownership
+    /// alone is claimed on a mere press, and treating that as "dragging"
+    /// relaxed the size pin on a stationary click — egui re-clamped
+    /// content-driven windows (room/targets/spells) to their remembered
+    /// desired_size, the rect diverged, and the snap hook popped the grid
+    /// on a plain click.
+    zone_press_drag_seen: bool,
     /// Pointer-true rect of the zone window being dragged/resized, so
     /// snapping stays escapable (see `snap.rs`); None outside a drag.
     zone_snap_drag: Option<snap::ZoneSnapDrag>,
@@ -869,6 +885,7 @@ impl VellumGuiApp {
             gp_wheel_last_fire: None,
             #[cfg(feature = "gamepad")]
             gp_aim_recenter_needed: false,
+            gp_aim_seen_center: false,
             #[cfg(feature = "gamepad")]
             gp_aim_prev: (0.0, 0.0),
             #[cfg(feature = "gamepad")]
@@ -933,6 +950,7 @@ impl VellumGuiApp {
             window_context_menu_just_opened: false,
             zone_drag_state: None,
             zone_engaged_tab: None,
+            zone_press_drag_seen: false,
             zone_snap_drag: None,
             zone_snap_guides: Vec::new(),
             snap_debug: false,

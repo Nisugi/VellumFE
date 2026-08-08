@@ -125,6 +125,21 @@ pub struct AppCore {
     jinx_nudge_pending: bool,
     /// Native go2: the walk executor and its outbound command queue.
     pub travel: crate::core::travel::TravelService,
+    /// A `.go2` waiting on a `urchin status` refresh: (destination, deadline).
+    /// When urchin travel is enabled but the cached access is stale, go2 sends
+    /// `urchin status` and defers planning until the reply parses (Lich's
+    /// `update_urchin_expire`), or the deadline passes. Drained per tick.
+    pending_urchin_refresh: Option<(u32, std::time::Instant)>,
+    /// A `.go2` waiting on the Chronomage day-pass sack scan: (destination,
+    /// deadline, pass ids being `look`ed at). Lich's `mapdb_find_day_pass`
+    /// sweep — the cache must learn what's held BEFORE routing so a held pair
+    /// routes at 0.8. Empty ids = the one-time contents probe (open + look in).
+    /// The bool records whether the sack was ALREADY open ("That is already
+    /// open" seen) — then the scan doesn't close it (the user keeps it open).
+    pending_day_pass_scan: Option<(u32, std::time::Instant, Vec<String>, bool)>,
+    /// The day-pass sack contents probe has run this session (the container
+    /// stream keeps contents fresh after the first open).
+    day_pass_sack_probed: bool,
     /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
     /// their pause, drained by take_outbound once due (insertion order
     /// preserved among same-tick due commands).
@@ -151,6 +166,11 @@ pub struct AppCore {
 
     /// Lich room ID extracted from room display
     pub lich_room_id: Option<String>,
+
+    /// Throttled doll variant/hidden rules from the active skin, resolved
+    /// per remote flush so phone clients get the active variant name and
+    /// suppressed parts pushed instead of evaluating conditions in JS.
+    pub doll_rules: crate::core::doll_rules::DollRulesCache,
 
     /// Room subtitle (e.g., " - Emberthorn Refuge, Bowery")
     pub room_subtitle: Option<String>,
@@ -251,6 +271,10 @@ pub struct AppCore {
     pub window_registry: crate::config::WindowRegistry,
     /// Unflushed registry changes; written by `tick_layout_autosave`.
     window_registry_dirty: bool,
+    /// Character state changed since the last persist; flushed to the session
+    /// cache by `tick_layout_autosave` (rare, so no debounce — same as the
+    /// registry). The generation last written, to detect real changes.
+    character_state_saved_gen: u64,
 
     // === Lich WebUI bridge (owned in core so BOTH the GUI and the phone
     // render the same trees; see core::app_core::webui) ===
@@ -366,6 +390,9 @@ impl AppCore {
             jinx_catalog: None,
             jinx_nudge_pending: true,
             travel: Default::default(),
+            pending_urchin_refresh: None,
+            pending_day_pass_scan: None,
+            day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -395,6 +422,7 @@ impl AppCore {
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
+            doll_rules: Default::default(),
             room_subtitle: None,
             room_components: HashMap::new(),
             current_room_component: None,
@@ -419,6 +447,7 @@ impl AppCore {
             saved_dialog_positions,
             window_registry: Default::default(),
             window_registry_dirty: false,
+            character_state_saved_gen: 0,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -533,6 +562,9 @@ impl AppCore {
             jinx_catalog: None,
             jinx_nudge_pending: true,
             travel: Default::default(),
+            pending_urchin_refresh: None,
+            pending_day_pass_scan: None,
+            day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -562,6 +594,7 @@ impl AppCore {
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
+            doll_rules: Default::default(),
             room_subtitle: None,
             room_components: HashMap::new(),
             current_room_component: None,
@@ -586,6 +619,7 @@ impl AppCore {
             saved_dialog_positions,
             window_registry,
             window_registry_dirty,
+            character_state_saved_gen: 0,
             webui_bridge: None,
             webui_rx: None,
             webui_event_tx: None,
@@ -803,6 +837,8 @@ impl AppCore {
             };
             self.add_system_message(&format!("[map] {text}"));
         }
+        self.tick_urchin_refresh();
+        self.tick_day_pass_scan();
         self.tick_travel();
         self.tick_foreach();
         self.poll_jinx();
@@ -987,13 +1023,135 @@ impl AppCore {
     /// after every processed network line and once per frontend frame (the
     /// frame tick covers time-based waits like roundtime when the game is
     /// quiet).
+    /// Resolve a deferred `.go2` waiting on `urchin status` (see start_travel).
+    /// Once the reply has parsed (access now valid) or the deadline passes, the
+    /// trip is re-planned. Mirrors Lich's `update_urchin_expire` pre-flight.
+    fn tick_urchin_refresh(&mut self) {
+        let Some((destination, deadline)) = self.pending_urchin_refresh else {
+            return;
+        };
+        let now_epoch = chrono::Utc::now().timestamp();
+        let now_valid = self.game_state.character.urchins_valid(
+            now_epoch,
+            self.game_state.status.hidden,
+            self.game_state.status.invisible,
+        );
+        let expired = std::time::Instant::now() >= deadline;
+        if now_valid || expired {
+            // Clear the pending marker FIRST so the re-invoked start_travel
+            // sees `is_none()` and proceeds to planning instead of re-deferring.
+            self.pending_urchin_refresh = None;
+            if !now_valid {
+                self.add_system_message(
+                    "[go2] no active urchin access - routing without urchin guides",
+                );
+            }
+            self.start_travel(destination);
+        }
+    }
+
+    /// Lich's bounty guard on the day-pass sweep: skip the scan while a
+    /// child-contact bounty is live, or a protective-escort bounty that isn't
+    /// in its WAIT stage — stray commands there can break the task.
+    /// (`bounty? !~ /^You have made contact with the child/ and
+    /// (bounty? !~ /provide a protective escort/ or bounty? =~ /WAIT/)`.)
+    fn day_pass_scan_blocked_by_bounty(&self) -> bool {
+        let b = &self.game_state.bounty.raw_text;
+        b.starts_with("You have made contact with the child")
+            || (b.contains("provide a protective escort") && !b.contains("WAIT"))
+    }
+
+    /// The day-pass sack's command-target, the ids of Chronomage day passes in
+    /// it the cache hasn't learned, and whether ANY pass is visible in it.
+    /// (None target = no sack configured/resolved.)
+    fn day_pass_scan_targets(&self) -> (Option<String>, Vec<String>, bool) {
+        let name = self.config.go2.day_pass_sack.trim();
+        if name.is_empty() {
+            return (None, Vec::new(), false);
+        }
+        let Some(sack) = self.game_state.objects.find_container(name) else {
+            return (None, Vec::new(), false);
+        };
+        let target = sack.command_target();
+        let mut unknown = Vec::new();
+        let mut any_pass = false;
+        for item in self.game_state.objects.items_in(&sack.id) {
+            if item.name.contains("Chronomage day pass") {
+                any_pass = true;
+                if !self.game_state.day_passes.contains(&item.id) {
+                    unknown.push(item.id.clone());
+                }
+            }
+        }
+        (Some(target), unknown, any_pass)
+    }
+
+    /// Resolve a deferred `.go2` waiting on the day-pass sack scan (see
+    /// start_travel). Done when every looked-at pass has parsed into the cache
+    /// (or, for the contents probe, a pass is now visible in the sack), or the
+    /// deadline passes — then the trip is re-planned. Lich's
+    /// `mapdb_find_day_pass` sweep, deferred-trip style like tick_urchin_refresh.
+    fn tick_day_pass_scan(&mut self) {
+        if self.pending_day_pass_scan.is_none() {
+            return;
+        }
+        // "That is already open" landed since the scan's `open` — the sack was
+        // open before we touched it; don't close it at completion. Peeked (not
+        // drained) here: tick_travel drains the queue right after us.
+        if self
+            .game_state
+            .move_feedback
+            .iter()
+            .any(|f| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
+        {
+            if let Some(pending) = self.pending_day_pass_scan.as_mut() {
+                pending.3 = true;
+            }
+        }
+        let Some((destination, deadline, ids, was_open)) = self.pending_day_pass_scan.clone()
+        else {
+            return;
+        };
+        let learned = !ids.is_empty()
+            && ids.iter().all(|id| self.game_state.day_passes.contains(id));
+        // Probe round (no ids): done as soon as the contents line shows ANY
+        // pass — unknown ones get their look round on the re-plan; already-
+        // known ones proceed straight to planning (don't sit out the
+        // deadline). An empty sack still waits the deadline (we can't tell
+        // "no passes" from "contents not seen yet").
+        let (target, _, probe_any) = self.day_pass_scan_targets();
+        let probe_done = ids.is_empty() && probe_any;
+        let expired = std::time::Instant::now() >= deadline;
+        if learned || probe_done || expired {
+            // Clear FIRST so the re-invoked start_travel plans (or queues the
+            // next scan round) instead of re-deferring.
+            self.pending_day_pass_scan = None;
+            // Restore the sack to how we found it: close only if OUR open
+            // actually opened it. (On a probe→look transition this closes and
+            // the look round re-opens — once per session, and each round
+            // re-decides its own close, so the user's state is preserved.)
+            if !was_open {
+                if let Some(target) = target {
+                    self.travel.queue_command(format!("close #{target}"));
+                }
+            }
+            self.start_travel(destination);
+        }
+    }
+
     pub fn tick_travel(&mut self) {
         if !self.travel.is_traveling() {
+            // Not walking: don't let feedback accumulate unboundedly.
+            self.game_state.move_feedback.clear();
             return;
         }
         let Some(db) = self.map.mapdb().cloned() else {
             return;
         };
+        // Drain the move-feedback queue for this tick (edge-triggered events,
+        // each consumed exactly once — §09).
+        let feedback: Vec<crate::core::move_feedback::MoveFeedback> =
+            self.game_state.move_feedback.drain(..).collect();
         // Active spell numbers for scripted-edge checkspell branches.
         let active_spells: Vec<u16> = self
             .game_state
@@ -1007,6 +1165,76 @@ impl AppCore {
                     .collect()
             })
             .unwrap_or_default();
+
+        // Assemble the hands stow inputs into OWNED locals, so `ctx` doesn't
+        // hold a borrow of self.game_state across the &mut self.travel tick.
+        // Resolve the configured weaponsack/lootsack names to container
+        // command-ids, gather the other tracked containers as last-resort
+        // stow targets, and classify each hand's item as a weapon.
+        use crate::core::game_objects::Hand;
+        // gameobj_data() takes &mut self (lazy load), so resolve it before we
+        // hold the immutable objects borrow.
+        let gameobj_data = self.gameobj_data();
+        let objects = &self.game_state.objects;
+        let resolve_bag = |name: &str| -> Option<String> {
+            if name.trim().is_empty() {
+                return None;
+            }
+            objects.find_container(name).map(|c| c.command_target())
+        };
+        let weaponsack = resolve_bag(&self.config.go2.weaponsack);
+        let lootsack = resolve_bag(&self.config.go2.lootsack);
+        let day_pass_sack = resolve_bag(&self.config.go2.day_pass_sack);
+        let reserved: std::collections::HashSet<&str> = weaponsack
+            .as_deref()
+            .into_iter()
+            .chain(lootsack.as_deref())
+            .collect();
+        let other_containers: Vec<String> = objects
+            .containers()
+            .map(|c| c.command_target())
+            .filter(|id| !reserved.contains(id.as_str()))
+            .collect();
+        let is_weapon = |item: Option<&crate::core::game_objects::GameItem>| -> bool {
+            match item {
+                Some(i) => gameobj_data.is_type(&i.name, &i.noun, "weapon"),
+                None => false,
+            }
+        };
+        // Confluence landmark scan reads ground loot + linked room scenery
+        // (Lich's `GameObj.loot`): the tranquility point and pit appear as
+        // room objects. Collect their nouns/names while we hold `objects`.
+        let loot_nouns: Vec<String> = objects
+            .ground()
+            .iter()
+            .chain(objects.room_desc().iter())
+            .map(|item| item.name.clone())
+            .collect();
+        let left_hand = objects.hand(Hand::Left).cloned();
+        let right_hand = objects.hand(Hand::Right).cloned();
+        let left_is_weapon = is_weapon(left_hand.as_ref());
+        let right_is_weapon = is_weapon(right_hand.as_ref());
+        let ready_stow = objects.ready_stow().clone();
+        let hands = crate::core::travel::executor::StashInputs {
+            left_hand: left_hand.as_ref(),
+            right_hand: right_hand.as_ref(),
+            ready_stow: &ready_stow,
+            weaponsack: weaponsack.as_deref(),
+            lootsack: lootsack.as_deref(),
+            other_containers: &other_containers,
+            // Bandolier-bag resolution (Lich's find_bandolier_bag) is a
+            // multi-container "swirling mist" look-scan we don't run yet; the
+            // retrieval command is ported (rub #bag), but live bag lookup is a
+            // follow-up. Ethereal items need no resolution (retrieved by noun).
+            left_bandolier: None,
+            right_bandolier: None,
+            left_is_weapon,
+            right_is_weapon,
+        };
+
+        // Live compass exits (XMLData.room_exits) for the Confluence explorer.
+        let compass_dirs: Vec<String> = self.game_state.compass_dirs.clone();
+
         let ctx = crate::core::travel::TravelContext {
             db: &db,
             current_room: self.map.current_room_id,
@@ -1019,6 +1247,38 @@ impl AppCore {
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.travel.now_ms(),
             pathcodes: &self.config.go2.pathcodes,
+            hands: Some(hands),
+            feedback: &feedback,
+            // The fallback is a Lich-only bandaid: gated on the setting AND a
+            // non-direct connection (a direct connection has no Lich to hand
+            // off to). webui_available() is our "connected via Lich" proxy.
+            lich_fallback: self.config.go2.lich_fallback && self.webui_available(),
+            funding: Some(crate::core::travel::executor::FundingInputs {
+                silver: self.game_state.silver,
+                get_silvers: self.config.go2.get_silvers,
+                get_return_trip: self.config.go2.get_return_trip_silvers,
+            }),
+            at_pinefar_depository: self
+                .game_state
+                .room_name
+                .as_deref()
+                .is_some_and(|t| t.contains("Pinefar, Depository")),
+            // Confluence explorer's live view of the shifting maze: the
+            // current room's compass exits and ground-loot nouns (the
+            // tranquility point / pit landmarks live in ground + room_desc).
+            compass_dirs: &compass_dirs,
+            loot_nouns: &loot_nouns,
+            // Day-pass crossing inputs: the resolved sack container, buy config,
+            // and the live pass cache (begin_day_pass computes the per-edge
+            // held-pass / buy-permission from the town pair).
+            day_pass: Some(crate::core::travel::executor::DayPassInputs {
+                sack_id: day_pass_sack.as_deref(),
+                buy_day_pass: &self.config.go2.buy_day_pass,
+                get_silvers: self.config.go2.get_silvers,
+                cache: &self.game_state.day_passes,
+                now_epoch: chrono::Utc::now().timestamp(),
+                hidden: self.game_state.status.hidden || self.game_state.status.invisible,
+            }),
         };
         let events = self.travel.tick(ctx);
         for event in events {
@@ -1037,6 +1297,16 @@ impl AppCore {
                 }
                 crate::core::travel::TravelEvent::Failed(reason) => {
                     self.add_system_message(&format!("[go2] {reason}"));
+                }
+                crate::core::travel::TravelEvent::LichFallback { destination } => {
+                    // Native travel can't cross this edge; hand off to Lich.
+                    // Stop the native task and send `;go2 <dest>` — Lich walks
+                    // the rest. (The event only fires on a Lich connection.)
+                    self.travel.stop();
+                    self.queue_timed_command(
+                        std::time::Duration::ZERO,
+                        format!(";go2 {destination}"),
+                    );
                 }
                 crate::core::travel::TravelEvent::Send(_) => unreachable!("queued by the service"),
             }
@@ -1110,6 +1380,129 @@ impl AppCore {
                 owner.desc
             ));
             return;
+        }
+        // Sync the gated-travel routing flags before planning (Lich's
+        // $go2_use_seeking / UserVars.mapdb_use_portmasters globals).
+        // Seeking only takes effect for a Voln Master, so its toggle is gated
+        // on can_seek(); portmasters are open to anyone with the silver.
+        crate::core::pathing::transpile::set_use_seeking(
+            self.config.go2.use_seeking,
+            self.game_state.character.can_seek(),
+        );
+        crate::core::pathing::transpile::set_use_portmasters(self.config.go2.use_portmasters);
+        // Urchin access refresh (Lich's update_urchin_expire): if urchin travel
+        // is enabled but the cached access is missing/expired, ask the game
+        // (`urchin status`) and defer this trip until the reply parses. Without
+        // this, a route would silently skip urchin edges whenever the client
+        // hasn't yet seen an `urchin status` line this session.
+        let now_epoch = chrono::Utc::now().timestamp();
+        if self.config.go2.use_urchins
+            && self.pending_urchin_refresh.is_none()
+            && !self.game_state.character.urchins_valid(
+                now_epoch,
+                self.game_state.status.hidden,
+                self.game_state.status.invisible,
+            )
+            && !self.game_state.status.hidden
+            && !self.game_state.status.invisible
+        {
+            // Stale/unknown access (not merely hidden) — refresh before routing.
+            self.add_system_message("[go2] checking urchin access...");
+            self.travel.queue_command("urchin status".to_string());
+            self.pending_urchin_refresh = Some((
+                destination,
+                std::time::Instant::now() + std::time::Duration::from_secs(4),
+            ));
+            return;
+        }
+        // Day-pass sack scan (Lich's `mapdb_find_day_pass` sweep): learn the
+        // passes actually held BEFORE routing, so a held pair routes at 0.8
+        // instead of the buy cost (or not at all). If the sack holds passes
+        // the cache hasn't seen, `look` at each (the look output feeds the
+        // cache via the day-pass feed) and defer planning until they parse.
+        // If the sack's contents are still unknown this session, probe once
+        // with open + look in — the container stream keeps them fresh after.
+        if self.config.go2.use_day_pass
+            && self.pending_day_pass_scan.is_none()
+            && !self.day_pass_scan_blocked_by_bounty()
+        {
+            let (target, unknown, any_pass) = self.day_pass_scan_targets();
+            if let Some(target) = target {
+                if !unknown.is_empty() {
+                    self.add_system_message("[go2] checking your Chronomage day passes...");
+                    self.travel.queue_command(format!("open #{target}"));
+                    for id in &unknown {
+                        self.travel.queue_command(format!("look #{id}"));
+                    }
+                    // The close (if the sack wasn't already open) is queued at
+                    // scan completion by tick_day_pass_scan.
+                    self.pending_day_pass_scan = Some((
+                        destination,
+                        std::time::Instant::now() + std::time::Duration::from_secs(5),
+                        unknown,
+                        false,
+                    ));
+                    return;
+                }
+                if !any_pass && !self.day_pass_sack_probed {
+                    // Contents never seen this session: open + look in, then
+                    // re-plan (a discovered pass triggers the look round).
+                    self.day_pass_sack_probed = true;
+                    self.add_system_message("[go2] checking the day-pass sack...");
+                    self.travel.queue_command(format!("open #{target}"));
+                    self.travel.queue_command(format!("look in #{target}"));
+                    self.pending_day_pass_scan = Some((
+                        destination,
+                        std::time::Instant::now() + std::time::Duration::from_secs(4),
+                        Vec::new(),
+                        false,
+                    ));
+                    return;
+                }
+            }
+        }
+        // Urchins: valid only when enabled AND access hasn't expired AND not
+        // hidden/invisible (Lich's combined urchin timeto gate). Also lets
+        // dijkstra route through the urchin-hideout hubs this trip.
+        crate::core::pathing::transpile::set_urchins_valid(
+            self.config.go2.use_urchins
+                && self.game_state.character.urchins_valid(
+                    now_epoch,
+                    self.game_state.status.hidden,
+                    self.game_state.status.invisible,
+                ),
+        );
+        // Day-pass: for each of the three town pairs, decide the routable cost.
+        // A held valid pass → 0.8 (use it); no pass but the buy config permits
+        // the pair (with Get Silvers to cover a shortfall) → 7.4 (buy it); else
+        // not routable. Off entirely unless use_day_pass is set.
+        {
+            use crate::core::day_pass;
+            let mut routable: Vec<((String, String), f64)> = Vec::new();
+            if self.config.go2.use_day_pass {
+                // Each departure's destinations carry the pair + per-source buy
+                // cost. A held valid pass → 0.8; else buyable (config + Get
+                // Silvers) → that edge's buy cost; else not routable.
+                for dep in day_pass::DEPARTURES {
+                    for dest in dep.destinations {
+                        let (a, b) = dest.pair;
+                        // Buy routing needs only the config (Lich parity):
+                        // silver on hand can cover the purchase; Get Silvers
+                        // gates just the in-conversation bank detour.
+                        let cost = if self.game_state.day_passes.has_valid_pass(a, b, now_epoch) {
+                            Some(0.8)
+                        } else if day_pass::buy_permits(&self.config.go2.buy_day_pass, a, b) {
+                            Some(dest.buy_cost)
+                        } else {
+                            None
+                        };
+                        if let Some(cost) = cost {
+                            routable.push(((a.to_string(), b.to_string()), cost));
+                        }
+                    }
+                }
+            }
+            crate::core::pathing::transpile::set_day_pass_routable(&routable);
         }
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
@@ -1334,6 +1727,14 @@ impl AppCore {
         let Some(cache) = crate::session_cache::load(self.config.character.as_deref()) else {
             return;
         };
+
+        // Warm-start the character state (society/house/profession/citizenship)
+        // so the travel gates work immediately on connect. The live feed stays
+        // authoritative — any SOCIETY/INFO/PROFILE output or a resign/join/step
+        // event overwrites this via the parser.
+        if let Some(character) = cache.character.clone() {
+            self.game_state.character = character;
+        }
 
         if !cache.quickbars.is_empty() {
             let allowed_ids = self.allowed_quickbar_ids();
@@ -1797,16 +2198,19 @@ impl AppCore {
                 return None; // flat wheel: portals have no folders
             }
             let slices: Vec<crate::config::WheelSlice> = self
-                .portal_commands()
+                .portal_candidate_list()
                 .into_iter()
-                .map(|command| crate::config::WheelSlice {
-                    // "go gate" reads as "gate" on the wedge; the full
-                    // command still shows in the hub.
-                    label: command
+                .map(|c| crate::config::WheelSlice {
+                    // The wedge shows the movement label (verb-stripped for a
+                    // plain "go gate" -> "gate"); a StringProc edge's label is
+                    // already the movement (e.g. "climb footpath"). The pick
+                    // runs c.command (a .go2 <id> for proc edges).
+                    label: c
+                        .label
                         .split_once(' ')
                         .map(|(_, rest)| rest.to_string())
-                        .unwrap_or_else(|| command.clone()),
-                    command,
+                        .unwrap_or_else(|| c.label.clone()),
+                    command: c.command,
                     // Dynamic slices carry no span/inner/color: the portals
                     // ring stays evenly spaced with the global dead zone.
                     ..Default::default()
@@ -1941,6 +2345,22 @@ impl AppCore {
         }
         // Portal resolution needs the map service, which lives here.
         snap.portals = self.portal_commands();
+        // The character's active doll variant + suppressed parts: resolved
+        // host-side (one condition evaluator, in Rust) so phone clients
+        // just switch sets by name instead of re-implementing eval in JS.
+        // Disjoint field borrows on purpose — gameobj_data_cached() would
+        // hold all of &self against &mut self.doll_rules.
+        let now_server =
+            chrono::Utc::now().timestamp() + self.message_processor.server_time_offset;
+        let (doll_variant, doll_hidden) = self.doll_rules.resolve(
+            self.config.active_skin.as_deref(),
+            self.config.doll_image.as_deref(),
+            &self.game_state,
+            now_server,
+            self.gameobj_data.as_deref(),
+        );
+        snap.doll_variant = doll_variant;
+        snap.doll_hidden = doll_hidden;
         // Real sessions rarely set game_state.room_name/exits; fall back
         // the same way the room widget does (see gui sync_room_windows):
         // subtitle from <streamWindow> for the name, compass for exits.
@@ -6048,6 +6468,12 @@ impl AppCore {
                 tracing::warn!("could not write window_registry.toml: {e:#}");
             }
         }
+        // Persist character state when it actually changed (rare — the parser
+        // only bumps the generation on a real value change). No debounce: the
+        // write is tiny and infrequent, same as the registry above.
+        if self.game_state.character.generation != self.character_state_saved_gen {
+            self.persist_character_state();
+        }
         if let Some(changed_at) = self.layout_autosave_pending {
             if changed_at.elapsed() >= Self::LAYOUT_AUTOSAVE_DEBOUNCE {
                 self.autosave_layout();
@@ -6193,13 +6619,30 @@ impl AppCore {
             .as_ref()
             .and_then(|id| if allowed_ids.contains(id) { Some(id.clone()) } else { None });
 
+        let character = (self.game_state.character != Default::default())
+            .then(|| self.game_state.character.clone());
         let cache = crate::session_cache::SessionCache {
             quickbars,
             quickbar_order,
             active_quickbar_id,
+            character,
         };
         if let Err(err) = crate::session_cache::save(self.config.character.as_deref(), &cache) {
             tracing::warn!("Failed to save session cache: {}", err);
+        }
+    }
+
+    /// Persist just the character state into the session cache, preserving the
+    /// rest (quickbars). Called by the autosave tick when the state changed.
+    fn persist_character_state(&mut self) {
+        let character = self.config.character.as_deref();
+        // Merge into the existing cache so we don't clobber quickbars.
+        let mut cache = crate::session_cache::load(character).unwrap_or_default();
+        cache.character = (self.game_state.character != Default::default())
+            .then(|| self.game_state.character.clone());
+        match crate::session_cache::save(character, &cache) {
+            Ok(()) => self.character_state_saved_gen = self.game_state.character.generation,
+            Err(e) => tracing::warn!("could not persist character state: {e:#}"),
         }
     }
 

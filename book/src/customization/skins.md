@@ -225,11 +225,17 @@ diameter = 0.07     # fraction of the drawn doll height
 
 ### Hand-drawn overlays (optional)
 
-A part can instead ship full-canvas overlays per severity, authored on the
+A part can instead ship full-canvas overlays per state, authored on the
 same canvas as the base so they stack in place — useful for effects a dot
 can't express, like nervous-system damage drawn across the whole body.
-Overlays take precedence over the generated dot for that part and
-severity; every other part keeps its dot.
+The state keys are `healthy` (uninjured), `injury1`–`injury3` (wounds),
+and `scar1`–`scar3` (scars). The renderer draws the base, then exactly
+one overlay per part — the one matching that part's current state.
+
+A part with **any** overlay art is treated as fully hand-drawn: at a
+state with no art, nothing is drawn over the base — never a generated
+dot. Parts with no overlay art keep their dots, so one doll can mix
+hand-drawn limbs with dot-only `back` / `nsys` / eyes.
 
 ```toml
 [injury_doll.nsys]
@@ -237,6 +243,96 @@ injury1 = "doll/nerves_i1.png"
 injury2 = "doll/nerves_i2.png"
 injury3 = "doll/nerves_i3.png"
 ```
+
+Because a missing state deliberately reveals the base, two authoring
+schemes both work:
+
+- **Worst-case base**: the base is the fully-wounded body, with
+  transparent holes where limbs can be severed. Each part's overlays
+  paint it back toward health (`healthy`, `injury1`, `injury2`, scars);
+  the severe state ships no overlay so the base shows through. Omitting
+  a state reveals the hole — a severed limb.
+- **Empty base**: the base is empty (or just a backdrop) and every state,
+  including the severe one, is its own transparent overlay.
+
+```toml
+[injury_doll.leftArm]
+healthy = "doll/arm_ok.png"
+injury1 = "doll/arm_i1.png"
+injury2 = "doll/arm_i2.png"
+# injury3 omitted -> the base shows at rank 3 (e.g. a severed arm)
+scar1 = "doll/arm_s1.png"
+scar2 = "doll/arm_s2.png"
+scar3 = "doll/arm_s3.png"
+```
+
+### Suppressing a part conditionally
+
+A part can be skipped entirely — no overlay, no dot, at any severity —
+while a condition holds, using the same condition vocabulary as
+variants. This encodes anatomical dependencies in the skin: a severed
+arm's base hole would otherwise leave a healthy hand floating next to
+the stump.
+
+```toml
+[injury_doll.leftHand]
+hidden_when = { type = "injury", area = "leftArm", cmp = ">=", level = 3 }
+healthy = "doll/leftHand_ok.png"
+injury1 = "doll/leftHand_i1.png"
+```
+
+While `leftArm` is at rank 3, `leftHand` draws nothing; its wound (if
+any) still lists in the hover tooltip. Each doll set — the default and
+every variant — carries its own `hidden_when` rules.
+
+### Doll variants (optional)
+
+Named alternate dolls selected by game state — for example a body on the
+ground when the character is prone or has lost both legs. Each variant
+is a **complete replacement doll**: its own base, anchors, dot styling,
+and overlays. That's deliberate — a prone body repositions every limb,
+so inheriting standing anchors would misplace every wound.
+
+Variants are checked in the order they appear; the first whose `when`
+condition matches wins, and none matching falls back to the default
+`[injury_doll]` set. Conditions use the same vocabulary as hotbar
+button states: `indicator` (prone, kneeling, sitting, dead, …),
+`injury` (`area` / `cmp` / `level`), and `all` / `any` nesting.
+
+```toml
+[injury_doll]
+base = "doll/standing.png"        # default when no variant matches
+
+[[injury_doll.variants]]
+name = "downed"
+[injury_doll.variants.when]
+type = "any"
+conditions = [
+  { type = "indicator", id = "prone", active = true },
+  { type = "all", conditions = [
+      { type = "injury", area = "leftLeg",  cmp = ">=", level = 3 },
+      { type = "injury", area = "rightLeg", cmp = ">=", level = 3 } ] },
+]
+[injury_doll.variants.skin]
+base = "doll/downed.png"
+[injury_doll.variants.skin.anchors]
+head = [0.2, 0.7]
+[injury_doll.variants.skin.leftArm]
+healthy = "doll/downed_arm_ok.png"
+```
+
+Variants apply to your own doll only — another player's injuries popup
+always shows the default set, since the conditions read your character's
+state. Doll images picked from the pool (right-click → Appearance →
+*Doll image*) carry no overlays or variants; these features live in a
+skin's `[injury_doll]` section.
+
+Each variant calibrates separately: the calibrator's **Doll set** picker
+switches between the default doll and each variant (a prone body puts
+every anchor somewhere new), and Save writes into that variant's own
+tables inside `[[injury_doll.variants]]`. The phone client follows along
+automatically — the host resolves which variant and which suppressed
+parts are active and pushes them to the phone, which just switches art.
 
 ## Notes
 
