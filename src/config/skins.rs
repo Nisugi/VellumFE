@@ -47,6 +47,15 @@ pub struct SkinManifest {
     /// applies to windows without their own entry.
     #[serde(default, rename = "window")]
     pub windows: HashMap<String, WindowSkin>,
+    /// Decorative edge overlays keyed by edge name ("top"/"right"/"bottom"/
+    /// "left"), painted along a window's edge ON TOP of the nine-slice border.
+    /// Each edge may carry a tiling strip (runs the length of the edge) and/or
+    /// a corner ornament (anchored to one end) — e.g. StormFront's flourished
+    /// right border: a `vertical` strip down the edge with a `panelFrameUnder`
+    /// flourish at the top. Applies to every window; the nine-slice border
+    /// remains the body frame.
+    #[serde(default)]
+    pub edges: HashMap<String, EdgeSpec>,
     /// Status icon sprites keyed by indicator id ("kneeling", "STUNNED",
     /// ...; case-insensitive). Replace the built-in vector pictograms in
     /// the dashboard and indicator widgets.
@@ -355,6 +364,39 @@ pub struct WindowSkin {
     pub background: Option<BackgroundSpec>,
     #[serde(default)]
     pub border: Option<BorderSpec>,
+}
+
+/// A decorative overlay painted along ONE window edge, over the nine-slice
+/// border. It has two independent, optional layers:
+///   - `strip`: a sprite tiled (or stretched) along the full length of the
+///     edge — e.g. a thin vertical border texture.
+///   - `ornament`: a fixed sprite anchored to one END of the edge — e.g. a
+///     corner flourish. `anchor` picks the end ("start" = top/left,
+///     "end" = bottom/right); the ornament keeps its native size.
+/// `thickness` is how far (in source px × scale) the overlay reaches inward
+/// from the edge; `scale` maps source px to on-screen points.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EdgeSpec {
+    /// Tiling/stretched strip run along the edge.
+    #[serde(default)]
+    pub strip: Option<String>,
+    /// `true` tiles the strip along the edge; `false` (default) stretches it.
+    #[serde(default)]
+    pub tile: bool,
+    /// Corner ornament anchored to one end of the edge.
+    #[serde(default)]
+    pub ornament: Option<String>,
+    /// Which end the ornament anchors to: "start" (top/left) or "end"
+    /// (bottom/right). Defaults to "start".
+    #[serde(default)]
+    pub anchor: Option<String>,
+    /// Inward reach of the overlay from the edge, in source px (× `scale`).
+    /// When absent the strip's own cross-axis size is used.
+    #[serde(default)]
+    pub thickness: Option<f32>,
+    /// Source-px → on-screen-point multiplier.
+    #[serde(default = "default_border_scale")]
+    pub scale: f32,
 }
 
 /// Nine-slice border image: the `slice` insets (source pixels, top/right/

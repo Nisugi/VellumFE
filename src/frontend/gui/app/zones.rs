@@ -1923,9 +1923,24 @@ impl VellumGuiApp {
                 } else {
                     skin_sides
                 };
-                // Border first (top suppressed when titled), then the title bar
-                // ON TOP so its cutout and edge line are never overdrawn.
+                // Border first (top suppressed when titled), then decorative
+                // edge overlays over it, then the title bar ON TOP so its
+                // cutout and edge line are never overdrawn.
                 self.paint_skin_border(ctx, &tab.id.key, border_sides, &inner.response);
+                // Edge overlays start below the title bar (so a corner flourish
+                // lines up with the body top, not the bar). No title bar -> the
+                // flourish ornament is suppressed, only the strip runs.
+                let edge_top_inset = skin_titlebar
+                    .as_ref()
+                    .map(|bar| self.skin_titlebar_height(&tab.id.key, bar))
+                    .unwrap_or(0.0);
+                let edge_show_ornament = skin_titlebar.is_some();
+                self.paint_skin_edges(
+                    ctx,
+                    &inner.response,
+                    edge_top_inset,
+                    edge_show_ornament,
+                );
                 if let Some(titlebar) = &skin_titlebar {
                     self.paint_skin_titlebar(
                         ctx,

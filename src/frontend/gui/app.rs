@@ -2798,6 +2798,40 @@ impl VellumGuiApp {
         }
     }
 
+    /// Paint the active skin's decorative edge overlays (strip + corner
+    /// ornament per edge) over the window's border, on the window's layer.
+    fn paint_skin_edges(
+        &self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+        top_inset: f32,
+        show_ornament: bool,
+    ) {
+        let Some(art) = self.skin_state.widget_art() else {
+            return;
+        };
+        if !art.has_edges() {
+            return;
+        }
+        let painter = ctx.layer_painter(response.layer_id);
+        for edge_name in ["top", "right", "bottom", "left"] {
+            if let Some(edge) = art.edge(edge_name) {
+                // Suppress the corner ornament when there's no title bar — its
+                // whole point is to bridge the title bar into the body, and with
+                // no bar it just floats at the top corner over content.
+                let edge = if show_ornament {
+                    *edge
+                } else {
+                    skin::ResolvedEdge {
+                        ornament: None,
+                        ..*edge
+                    }
+                };
+                skin::paint_edge_overlay(&painter, response.rect, edge_name, &edge, top_inset);
+            }
+        }
+    }
+
     /// Per-window position/size lock: locked windows ignore drag and
     /// resize gestures in every zone; the deliberate Arrange ▸ Move Window
     /// menu action still works. THE flag is the shared layout's

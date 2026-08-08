@@ -101,6 +101,24 @@ pub struct SkinWidgetArt {
     /// the skin has no art to derive from and no `[ui]` — the editors keep
     /// the plain theme visuals.
     pub ui_palette: Option<ResolvedUiPalette>,
+    /// Decorative edge overlays keyed by edge ("top"/"right"/"bottom"/"left"),
+    /// painted over the nine-slice border along that window edge.
+    edges: HashMap<String, ResolvedEdge>,
+}
+
+/// A loaded edge overlay: an optional tiling/stretched strip along the edge
+/// plus an optional corner ornament, both as textures with their scale.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedEdge {
+    pub strip: Option<SkinTexture>,
+    pub tile: bool,
+    pub ornament: Option<SkinTexture>,
+    /// true = anchor ornament to the END (bottom/right); false = START.
+    pub anchor_end: bool,
+    /// Inward reach from the edge in on-screen points (already scaled), or
+    /// None to use the strip's cross-axis size.
+    pub thickness: Option<f32>,
+    pub scale: f32,
 }
 
 /// Resolved editor/menu colors, ready to overlay onto egui `Visuals`. Every
@@ -342,6 +360,17 @@ impl SkinWidgetArt {
         self.controls
             .get(&format!("{control}.{state}"))
             .or_else(|| self.controls.get(&control))
+    }
+
+    /// Decorative edge overlay for one window edge ("top"/"right"/"bottom"/
+    /// "left"), or None when the skin authored none for it.
+    pub fn edge(&self, edge: &str) -> Option<&ResolvedEdge> {
+        self.edges.get(&edge.to_ascii_lowercase())
+    }
+
+    /// Whether any edge overlay exists (cheap gate for the paint pass).
+    pub fn has_edges(&self) -> bool {
+        !self.edges.is_empty()
     }
 
     pub fn doll_overlay(&self, part: &str, level: u8) -> Option<SkinTexture> {
@@ -908,6 +937,38 @@ impl SkinState {
                 art.controls.insert(key.to_ascii_lowercase(), border);
             }
         }
+        // Decorative edge overlays (strip + corner ornament per edge).
+        let edge_tex = |path: &Option<String>| -> Option<SkinTexture> {
+            path.as_ref()
+                .and_then(|p| self.textures.get(p))
+                .and_then(|t| t.as_ref())
+                .map(|t| SkinTexture {
+                    texture: t.id(),
+                    size: t.size_vec2(),
+                })
+        };
+        for (key, spec) in &self.manifest.edges {
+            let strip = edge_tex(&spec.strip);
+            let ornament = edge_tex(&spec.ornament);
+            if strip.is_none() && ornament.is_none() {
+                continue;
+            }
+            art.edges.insert(
+                key.to_ascii_lowercase(),
+                ResolvedEdge {
+                    strip,
+                    ornament,
+                    tile: spec.tile,
+                    anchor_end: spec
+                        .anchor
+                        .as_deref()
+                        .map(|a| a.eq_ignore_ascii_case("end"))
+                        .unwrap_or(false),
+                    thickness: spec.thickness.map(|t| t * spec.scale.max(0.05)),
+                    scale: spec.scale.max(0.05),
+                },
+            );
+        }
         // A compass pool set with a rose replaces the skin's compass
         // wholesale (rose + direction overlays are same-canvas art; mixing
         // sources would misalign them). The "none" sentinel (picker "None")
@@ -1226,6 +1287,11 @@ impl SkinState {
             .collect();
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
         images.extend(self.manifest.controls.values().map(|ctrl| ctrl.image.clone()));
+        // Edge-overlay strip + ornament images.
+        for edge in self.manifest.edges.values() {
+            images.extend(edge.strip.clone());
+            images.extend(edge.ornament.clone());
+        }
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.needed_pool_backgrounds.iter().cloned());
         images.extend(self.needed_pool_icons.iter().cloned());
@@ -2165,6 +2231,171 @@ fn register_sheet_impl(
     Ok(())
 }
 
+/// Paint an edge overlay (strip + optional corner ornament) along one window
+/// edge, over the nine-slice border. The strip runs the edge's full length
+/// (tiled or stretched, `thickness` deep); the ornament is drawn at native
+/// size anchored to one end. No-op when the edge carries neither.
+pub fn paint_edge_overlay(
+    painter: &egui::Painter,
+    window: egui::Rect,
+    edge_name: &str,
+    edge: &ResolvedEdge,
+    top_inset: f32,
+) {
+    let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let vertical = matches!(edge_name, "left" | "right");
+    // Strip thickness: explicit override, else the strip's cross-axis native
+    // size (× scale) — width for a vertical edge, height for a horizontal one.
+    let thickness = edge.thickness.unwrap_or_else(|| {
+        edge.strip
+            .map(|s| {
+                let cross = if vertical { s.size.x } else { s.size.y };
+                cross * edge.scale
+            })
+            .unwrap_or(0.0)
+    });
+    let ornament_size = edge
+        .ornament
+        .map(|o| o.size * edge.scale)
+        .unwrap_or(egui::Vec2::ZERO);
+    let layout = edge_overlay_layout(
+        window,
+        edge_name,
+        thickness,
+        ornament_size,
+        edge.anchor_end,
+        top_inset,
+    );
+
+    if let Some(strip) = edge.strip {
+        if edge.tile {
+            // Tile along the edge's long axis at the sprite's native length.
+            let painter = painter.with_clip_rect(layout.strip);
+            let step = if vertical {
+                (strip.size.y * edge.scale).max(1.0)
+            } else {
+                (strip.size.x * edge.scale).max(1.0)
+            };
+            let (start, end) = if vertical {
+                (layout.strip.top(), layout.strip.bottom())
+            } else {
+                (layout.strip.left(), layout.strip.right())
+            };
+            let mut p = start;
+            while p < end {
+                let cell = if vertical {
+                    egui::Rect::from_min_size(
+                        egui::pos2(layout.strip.left(), p),
+                        egui::vec2(layout.strip.width(), step),
+                    )
+                } else {
+                    egui::Rect::from_min_size(
+                        egui::pos2(p, layout.strip.top()),
+                        egui::vec2(step, layout.strip.height()),
+                    )
+                };
+                painter.image(strip.texture, cell, full_uv, egui::Color32::WHITE);
+                p += step;
+            }
+        } else {
+            painter.image(strip.texture, layout.strip, full_uv, egui::Color32::WHITE);
+        }
+    }
+    if let Some(ornament) = edge.ornament {
+        painter.image(ornament.texture, layout.ornament, full_uv, egui::Color32::WHITE);
+    }
+}
+
+/// Geometry for an edge overlay along one side of `window`. Returns the
+/// `strip` rect (runs the length of the edge, `thickness` deep, flush INSIDE
+/// the edge) and the `ornament` rect (native `ornament_size`, kept INSIDE the
+/// window and flush to the edge). Pure so the layout is unit-tested apart from
+/// the paint path.
+///
+/// `edge` is "top" | "right" | "bottom" | "left". `thickness` is the inward
+/// reach (points). `anchor_end` puts the ornament at the far end. `top_inset`
+/// (vertical edges only) starts the strip AND ornament below the title bar so a
+/// corner flourish lines up with the body top instead of overlapping the bar.
+///
+/// The ornament is pinned so it never spills OUTSIDE the window: on the right
+/// edge its right side aligns to the window's right (extending inward); on the
+/// left edge its left side aligns to the window's left; likewise top/bottom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeOverlayLayout {
+    pub strip: egui::Rect,
+    pub ornament: egui::Rect,
+}
+
+pub fn edge_overlay_layout(
+    window: egui::Rect,
+    edge: &str,
+    thickness: f32,
+    ornament_size: egui::Vec2,
+    anchor_end: bool,
+    top_inset: f32,
+) -> EdgeOverlayLayout {
+    let t = thickness.max(0.0);
+    let inset = top_inset.max(0.0);
+    let (strip, ornament) = match edge {
+        "left" | "right" => {
+            // Strip flush to the edge, inside the window; starts below the
+            // title bar (top_inset).
+            let x0 = if edge == "left" {
+                window.left()
+            } else {
+                window.right() - t
+            };
+            let strip = egui::Rect::from_min_max(
+                egui::pos2(x0, window.top() + inset),
+                egui::pos2(x0 + t, window.bottom()),
+            );
+            // Ornament stays INSIDE: on the right edge its RIGHT side hugs the
+            // window's right (grows leftward); on the left edge its LEFT side
+            // hugs the window's left. Vertically it sits at the body top
+            // (top_inset) or the bottom end.
+            let ox = if edge == "right" {
+                window.right() - ornament_size.x
+            } else {
+                window.left()
+            };
+            let oy = if anchor_end {
+                window.bottom() - ornament_size.y
+            } else {
+                window.top() + inset
+            };
+            let ornament = egui::Rect::from_min_size(egui::pos2(ox, oy), ornament_size);
+            (strip, ornament)
+        }
+        _ => {
+            // "top" | "bottom" (default): horizontal strip.
+            let y0 = if edge == "bottom" {
+                window.bottom() - t
+            } else {
+                window.top()
+            };
+            let strip = egui::Rect::from_min_max(
+                egui::pos2(window.left(), y0),
+                egui::pos2(window.right(), y0 + t),
+            );
+            // Keep the ornament inside: bottom edge hugs the window bottom for
+            // the bottom edge; top edge hugs the window top otherwise.
+            let oy = if edge == "bottom" {
+                window.bottom() - ornament_size.y
+            } else {
+                window.top()
+            };
+            let ox = if anchor_end {
+                window.right() - ornament_size.x
+            } else {
+                window.left()
+            };
+            let ornament = egui::Rect::from_min_size(egui::pos2(ox, oy), ornament_size);
+            (strip, ornament)
+        }
+    };
+    EdgeOverlayLayout { strip, ornament }
+}
+
 /// Paint a nine-slice border into `rect`: corners at fixed size, edges
 /// stretched along their axis, center left empty so the window fill or
 /// background image shows through. `sides` is [top, right, bottom, left]
@@ -2312,6 +2543,50 @@ fn readable_on(bg: egui::Color32) -> egui::Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edge_overlay_layout_positions_strip_and_ornament() {
+        // 200 wide x 100 tall window at (10, 20).
+        let win = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let orn = egui::vec2(20.0, 34.0);
+
+        // RIGHT edge, thickness 3, ornament START (top), no title inset.
+        let r = edge_overlay_layout(win, "right", 3.0, orn, false, 0.0);
+        // Strip: 3px wide, flush to the right edge, full height.
+        assert_eq!(r.strip.right(), win.right());
+        assert_eq!(r.strip.left(), win.right() - 3.0);
+        assert_eq!(r.strip.top(), win.top());
+        assert_eq!(r.strip.bottom(), win.bottom());
+        // Ornament stays INSIDE: right side hugs the window's right edge (grows
+        // leftward), never spilling out; top-anchored.
+        assert_eq!(r.ornament.right(), win.right());
+        assert_eq!(r.ornament.top(), win.top());
+        assert_eq!(r.ornament.size(), orn);
+        assert!(r.ornament.left() >= win.left());
+
+        // top_inset pushes strip + ornament below the title bar.
+        let r_inset = edge_overlay_layout(win, "right", 3.0, orn, false, 28.0);
+        assert_eq!(r_inset.strip.top(), win.top() + 28.0);
+        assert_eq!(r_inset.ornament.top(), win.top() + 28.0);
+
+        // RIGHT edge, ornament anchored to END (bottom).
+        let r_end = edge_overlay_layout(win, "right", 3.0, orn, true, 0.0);
+        assert_eq!(r_end.ornament.bottom(), win.bottom());
+
+        // TOP edge, thickness 5: horizontal strip flush to the top.
+        let t = edge_overlay_layout(win, "top", 5.0, orn, false, 0.0);
+        assert_eq!(t.strip.top(), win.top());
+        assert_eq!(t.strip.bottom(), win.top() + 5.0);
+        assert_eq!(t.strip.left(), win.left());
+        assert_eq!(t.strip.right(), win.right());
+        assert_eq!(t.ornament.min, egui::pos2(win.left(), win.top()));
+
+        // LEFT edge strip is flush to the left; ornament left side hugs it.
+        let l = edge_overlay_layout(win, "left", 4.0, orn, false, 0.0);
+        assert_eq!(l.strip.left(), win.left());
+        assert_eq!(l.strip.right(), win.left() + 4.0);
+        assert_eq!(l.ornament.left(), win.left());
+    }
 
     /// Art with one 4x2-cell sheet (256x128 @ 64px cells) named "rogue".
     fn art_with_sheet() -> SkinWidgetArt {

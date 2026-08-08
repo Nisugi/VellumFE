@@ -3266,18 +3266,31 @@ impl VellumGuiApp {
         let skin_popup = skin_art
             .and_then(|art| art.control_border("dropdown", "normal"))
             .is_some();
+        // The skinned dropdown popup's fill/stroke follow the active skin's
+        // [ui] palette (menu_bg, border, button_hover, accent) — not a hardcoded
+        // orange, which looked wrong on any non-orange skin (StormFront's
+        // steel-blue dropdown came out orange). Falls back to the previous
+        // fixed colors only when a dropdown is skinned but the palette is
+        // somehow absent.
+        let popup_palette = skin_art.and_then(|art| art.ui_palette.as_ref());
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             if skin_popup {
                 let v = ui.visuals_mut();
-                let fill = egui::Color32::from_rgb(0x12, 0x14, 0x18);
-                let stroke = egui::Color32::from_rgb(0x8a, 0x5a, 0x30);
+                let (fill, stroke, hover, sel) = match popup_palette {
+                    Some(p) => (p.menu_bg, p.border, p.button_hover, p.accent),
+                    None => (
+                        egui::Color32::from_rgb(0x12, 0x14, 0x18),
+                        egui::Color32::from_rgb(0x8a, 0x5a, 0x30),
+                        egui::Color32::from_rgb(0x24, 0x1c, 0x12),
+                        egui::Color32::from_rgb(0x3a, 0x28, 0x14),
+                    ),
+                };
                 v.window_fill = fill;
                 v.panel_fill = fill;
                 v.window_stroke = egui::Stroke::new(1.0, stroke);
                 v.widgets.inactive.weak_bg_fill = fill;
-                v.widgets.hovered.weak_bg_fill =
-                    egui::Color32::from_rgb(0x24, 0x1c, 0x12);
-                v.selection.bg_fill = egui::Color32::from_rgb(0x3a, 0x28, 0x14);
+                v.widgets.hovered.weak_bg_fill = hover;
+                v.selection.bg_fill = sel;
             }
             egui::ComboBox::from_id_salt(("dialog_panel", dialog_id, &dropdown.id))
                 .width(rect.width())
