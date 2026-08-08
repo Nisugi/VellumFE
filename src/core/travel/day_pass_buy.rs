@@ -19,6 +19,8 @@ use crate::core::move_feedback::MoveFeedback as F;
 /// How long to wait for a response before giving up on a phase (Lich's
 /// dothistimeout is ~10s).
 const RESP_TIMEOUT_MS: u64 = 12_000;
+/// The expired-pass drop wait (Lich uses dothistimeout 2s here).
+const DROP_TIMEOUT_MS: u64 = 2_500;
 
 /// What the buy machine wants the executor to do this tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,9 +78,170 @@ pub struct BuyTick<'a> {
     pub hidden: bool,
 }
 
+/// The shared open-sack → drop-expired-passes preamble both crossings run
+/// first. One response-gated command at a time — the game's type-ahead buffer
+/// only holds a few commands, so we never send the next until the previous
+/// answered (or timed out; Lich's dothistimeout proceeds on timeout too).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Preamble {
+    sack: Option<String>,
+    expired: Vec<String>,
+    stage: PreStage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PreStage {
+    Open { sent_ms: Option<u64> },
+    Drop { i: usize, sent_ms: Option<u64> },
+    Done,
+}
+
+impl Preamble {
+    fn new(sack: Option<&str>, expired: Vec<String>) -> Self {
+        Preamble {
+            sack: sack.map(str::to_string),
+            expired,
+            stage: PreStage::Open { sent_ms: None },
+        }
+    }
+
+    /// Advance one tick; true once the whole preamble has run.
+    fn tick(&mut self, ctx: &BuyTick, out: &mut Vec<BuyEvent>) -> bool {
+        loop {
+            match &mut self.stage {
+                PreStage::Open { sent_ms } => {
+                    let Some(sack) = &self.sack else {
+                        self.stage = PreStage::Drop { i: 0, sent_ms: None };
+                        continue;
+                    };
+                    match *sent_ms {
+                        None => {
+                            if ctx.rt_remaining > 0.0 {
+                                return false;
+                            }
+                            out.push(BuyEvent::Send(format!("open #{sack}")));
+                            *sent_ms = Some(ctx.now_ms);
+                            return false;
+                        }
+                        Some(sent) => {
+                            let answered = ctx.feedback.contains(&F::ContainerOpened)
+                                || ctx.feedback.contains(&F::ContainerAlreadyOpen);
+                            if answered || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
+                                self.stage = PreStage::Drop { i: 0, sent_ms: None };
+                                continue;
+                            }
+                            return false;
+                        }
+                    }
+                }
+                PreStage::Drop { i, sent_ms } => {
+                    if *i >= self.expired.len() {
+                        self.stage = PreStage::Done;
+                        continue;
+                    }
+                    match *sent_ms {
+                        None => {
+                            if ctx.rt_remaining > 0.0 {
+                                return false;
+                            }
+                            out.push(BuyEvent::Send(format!("_drag #{} drop", self.expired[*i])));
+                            *sent_ms = Some(ctx.now_ms);
+                            return false;
+                        }
+                        Some(sent) => {
+                            if ctx.feedback.contains(&F::ItemDropped)
+                                || ctx.now_ms.saturating_sub(sent) > DROP_TIMEOUT_MS
+                            {
+                                *i += 1;
+                                *sent_ms = None;
+                                continue;
+                            }
+                            return false;
+                        }
+                    }
+                }
+                PreStage::Done => return true,
+            }
+        }
+    }
+}
+
+/// The response-driven USE machine (raise a pass already HELD in the cache):
+/// preamble (open sack, drop expired) → get the pass → raise it. One command
+/// per game response — never a flood into the type-ahead buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UseState {
+    pre: Preamble,
+    pass_id: String,
+    phase: UsePhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UsePhase {
+    /// Sent (or about to send) `get #pass`; waiting for the get to land.
+    GetPass { sent_ms: Option<u64> },
+    /// Sent `raise #pass`; waiting for the whirlwind or a failure.
+    AwaitRaise { sent_ms: u64 },
+}
+
+impl UseState {
+    pub fn new(sack: Option<&str>, pass_id: &str, expired: Vec<String>) -> Self {
+        UseState {
+            pre: Preamble::new(sack, expired),
+            pass_id: pass_id.to_string(),
+            phase: UsePhase::GetPass { sent_ms: None },
+        }
+    }
+
+    pub fn tick(&mut self, ctx: BuyTick) -> Vec<BuyEvent> {
+        let mut out = Vec::new();
+        if !self.pre.tick(&ctx, &mut out) {
+            return out;
+        }
+        let saw = |e: &F| ctx.feedback.contains(e);
+        match &mut self.phase {
+            UsePhase::GetPass { sent_ms } => match *sent_ms {
+                None => {
+                    if ctx.rt_remaining <= 0.0 {
+                        out.push(BuyEvent::Send(format!("get #{}", self.pass_id)));
+                        *sent_ms = Some(ctx.now_ms);
+                    }
+                }
+                Some(sent) => {
+                    // On response — or timeout, like dothistimeout — raise.
+                    // A truly failed get makes the raise answer "Raise what",
+                    // which fails the crossing cleanly (RaiseWrongRoom).
+                    if saw(&F::ItemGot) || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
+                        out.push(BuyEvent::Send(format!("raise #{}", self.pass_id)));
+                        self.phase = UsePhase::AwaitRaise { sent_ms: ctx.now_ms };
+                    }
+                }
+            },
+            UsePhase::AwaitRaise { sent_ms } => {
+                if saw(&F::RaiseTraveled)
+                    || matches!(ctx.current_room, Some(_) if saw(&F::NavArrived))
+                {
+                    out.push(BuyEvent::Traveled {
+                        pass_id: Some(self.pass_id.clone()),
+                    });
+                } else if saw(&F::RaiseWrongRoom) {
+                    out.push(BuyEvent::Failed(
+                        "the pass raise was refused (wrong room or bad pass)".into(),
+                    ));
+                } else if ctx.now_ms.saturating_sub(*sent_ms) > RESP_TIMEOUT_MS {
+                    out.push(BuyEvent::Failed("the pass raise didn't complete".into()));
+                }
+            }
+        }
+        out
+    }
+}
+
 /// The day-pass buy conversation, carried on the travel step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuyState {
+    /// Open-sack/drop-expired preamble, run before the conversation.
+    pre: Preamble,
     dep_room: u32,
     npc: &'static str,
     ask_word: &'static str,
@@ -97,8 +260,14 @@ pub struct BuyState {
 }
 
 impl BuyState {
-    pub fn new(dep: &DayPassDeparture, dest: &DayPassDestination) -> Self {
+    pub fn new(
+        dep: &DayPassDeparture,
+        dest: &DayPassDestination,
+        sack: Option<&str>,
+        expired: Vec<String>,
+    ) -> Self {
         BuyState {
+            pre: Preamble::new(sack, expired),
             dep_room: dep.room,
             npc: dep.npc,
             ask_word: dest.ask_word,
@@ -129,6 +298,11 @@ impl BuyState {
     /// Advance one tick. Returns the commands/outcome for the executor.
     pub fn tick(&mut self, ctx: BuyTick) -> Vec<BuyEvent> {
         let mut out = Vec::new();
+        // The open/drop preamble runs first, one response-gated command at a
+        // time; the conversation starts once it's through.
+        if !self.pre.tick(&ctx, &mut out) {
+            return out;
+        }
         // RT gate: don't send while in roundtime (except pure waits).
         let rt_clear = ctx.rt_remaining <= 0.0;
         let saw = |e: &F| ctx.feedback.contains(e);

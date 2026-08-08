@@ -1043,6 +1043,17 @@ impl AppCore {
         }
     }
 
+    /// Lich's bounty guard on the day-pass sweep: skip the scan while a
+    /// child-contact bounty is live, or a protective-escort bounty that isn't
+    /// in its WAIT stage — stray commands there can break the task.
+    /// (`bounty? !~ /^You have made contact with the child/ and
+    /// (bounty? !~ /provide a protective escort/ or bounty? =~ /WAIT/)`.)
+    fn day_pass_scan_blocked_by_bounty(&self) -> bool {
+        let b = &self.game_state.bounty.raw_text;
+        b.starts_with("You have made contact with the child")
+            || (b.contains("provide a protective escort") && !b.contains("WAIT"))
+    }
+
     /// The day-pass sack's command-target, the ids of Chronomage day passes in
     /// it the cache hasn't learned, and whether ANY pass is visible in it.
     /// (None target = no sack configured/resolved.)
@@ -1405,7 +1416,10 @@ impl AppCore {
         // cache via the day-pass feed) and defer planning until they parse.
         // If the sack's contents are still unknown this session, probe once
         // with open + look in — the container stream keeps them fresh after.
-        if self.config.go2.use_day_pass && self.pending_day_pass_scan.is_none() {
+        if self.config.go2.use_day_pass
+            && self.pending_day_pass_scan.is_none()
+            && !self.day_pass_scan_blocked_by_bounty()
+        {
             let (target, unknown, any_pass) = self.day_pass_scan_targets();
             if let Some(target) = target {
                 if !unknown.is_empty() {

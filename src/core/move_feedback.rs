@@ -63,6 +63,15 @@ pub enum MoveFeedback {
     /// open.") — the day-pass sack was open before we touched it, so skip the
     /// close at the end (Lich's `close_sack = true` only when IT opened it).
     ContainerAlreadyOpen,
+    /// `open <container>` succeeded ("You open ..."). With AlreadyOpen, the
+    /// response the day-pass preamble waits on (Lich's open_regex).
+    ContainerOpened,
+    /// A `get`/`take` landed (or was moot) — the get_regex shapes Lich waits
+    /// on before raising the pass.
+    ItemGot,
+    /// A drop landed ("As you let go..." / "You drop") — Lich's expired-pass
+    /// `_drag #id drop` wait.
+    ItemDropped,
     /// `raise` failed because we're not in the Chronomage waiting room
     /// ("not a Chronomage teleportation waiting room" / "not valid for
     /// departures" / "As you go to raise your pass, you realize").
@@ -142,6 +151,20 @@ patterns! {
     ],
     ContainerAlreadyOpen => [
         "That is already open",
+    ],
+    ContainerOpened => [
+        "You open",
+    ],
+    ItemGot => [
+        "You remove",
+        "You retrieve",
+        "You grab",
+        "You already have that",
+        "You need a free hand",
+    ],
+    ItemDropped => [
+        "As you let go",
+        "You drop",
     ],
     RaiseWrongRoom => [
         "not a Chronomage teleportation waiting room",
