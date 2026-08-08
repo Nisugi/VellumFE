@@ -4618,9 +4618,11 @@ impl VellumGuiApp {
                     (CommandEditOp::Paste, &stash.paste),
                 ] {
                     for (key, mods) in combos {
-                        if input.consume_key(*mods, *key) {
-                            ops.push((op, false));
-                        }
+                        // Shifted variant FIRST: consume_key matches
+                        // modifiers logically (extra Shift is ignored), so
+                        // checking the plain combo first would eat
+                        // shift+Home as a plain Home and the selection
+                        // extend would never fire.
                         if !mods.shift {
                             let extended = egui::Modifiers {
                                 shift: true,
@@ -4629,6 +4631,9 @@ impl VellumGuiApp {
                             if input.consume_key(extended, *key) {
                                 ops.push((op, true));
                             }
+                        }
+                        if input.consume_key(*mods, *key) {
+                            ops.push((op, false));
                         }
                     }
                 }
