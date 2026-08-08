@@ -638,7 +638,8 @@ async fn doll_json(
 }
 
 /// Serve a doll image from the active skin: `?kind=base` or
-/// `?kind=overlay&part=<protocol name>&level=<1-6>`. Paths come from the
+/// `?kind=overlay&part=<protocol name>&level=<0-6>` (0 = the healthy
+/// overlay). Paths come from the
 /// server operator's own skin.toml (absolute paths are a manifest
 /// feature), so the only gate needed is the pairing token.
 async fn doll_image(
@@ -655,7 +656,8 @@ async fn doll_image(
     let kind = params.get("kind").map(String::as_str).unwrap_or("base");
     let part = params.get("part").map(String::as_str);
     let level = params.get("level").and_then(|l| l.parse::<u8>().ok());
-    let Some(path) = super::doll::image_path(kind, part, level) else {
+    let variant = params.get("variant").map(String::as_str);
+    let Some(path) = super::doll::image_path(kind, part, level, variant) else {
         return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
     };
     let content_type = match path

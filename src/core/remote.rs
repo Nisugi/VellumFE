@@ -410,6 +410,14 @@ pub enum RemoteDelta {
     /// Body-part injuries changed: id -> level (1-3 wounds, 4-6 scars);
     /// cleared parts are absent.
     Injuries(std::collections::HashMap<String, u8>),
+    /// The character's doll state changed: which skin doll variant is
+    /// active (None = default set) and which parts its `hidden_when`
+    /// conditions currently suppress. Host-resolved so clients never
+    /// evaluate conditions.
+    Doll {
+        variant: Option<String>,
+        hidden: Vec<String>,
+    },
     /// The targetable-creature list changed.
     Targets(Vec<RemoteTarget>),
     /// The room entity lists (interact mode) changed.
@@ -800,6 +808,13 @@ pub struct RemoteStateSnapshot {
     pub map_scene: RemoteMapSceneRef,
     /// Per-step map position/ghost state, paired with `map_scene`.
     pub map_state: RemoteMapState,
+    /// Active doll variant name from the skin's `[[injury_doll.variants]]`
+    /// (host-resolved; None = the default set). Overlaid by
+    /// AppCore::flush_remote_state.
+    pub doll_variant: Option<String>,
+    /// Canonical part keys the active set's `hidden_when` conditions
+    /// suppress right now (host-resolved, sorted).
+    pub doll_hidden: Vec<String>,
 }
 
 /// Room entity lists for the phone's interact mode — the same three
@@ -1117,6 +1132,10 @@ impl RemoteStateSnapshot {
             portals: Vec::new(),
             map_scene: RemoteMapSceneRef::default(),
             map_state: RemoteMapState::default(),
+            // Overlaid by AppCore::flush_remote_state (skin rules live on
+            // AppCore's doll_rules cache, not GameState).
+            doll_variant: None,
+            doll_hidden: Vec::new(),
         }
     }
 }
@@ -1579,6 +1598,14 @@ impl RemoteSink {
             let _ = self
                 .delta_tx
                 .send(RemoteDelta::Injuries(snap.injuries.clone()));
+        }
+        if snap.doll_variant != self.last.doll_variant
+            || snap.doll_hidden != self.last.doll_hidden
+        {
+            let _ = self.delta_tx.send(RemoteDelta::Doll {
+                variant: snap.doll_variant.clone(),
+                hidden: snap.doll_hidden.clone(),
+            });
         }
         if snap.targets != self.last.targets {
             let _ = self
