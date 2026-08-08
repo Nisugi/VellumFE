@@ -2562,6 +2562,18 @@ impl VellumGuiApp {
         Some(border)
     }
 
+    /// The skin's title-bar nine-slice for a window, if it authored one
+    /// (`[controls.titlebar]`). When present the window takes over its own
+    /// title bar: egui's is hidden and we paint the sprite band + caption +
+    /// close button ourselves.
+    pub(super) fn skin_titlebar_for_tab(&self, key: &TabKey) -> Option<skin::ResolvedBorder> {
+        // Only game windows with a caption get a skinned title bar.
+        self.available_tabs.get(key)?;
+        self.skin_state
+            .widget_art()
+            .and_then(|art| art.control_border("titlebar", "normal").cloned())
+    }
+
     fn apply_skin_border_to_frame(
         &self,
         key: &TabKey,
@@ -2591,6 +2603,108 @@ impl VellumGuiApp {
         }
         if sides[3] {
             margin.left = margin.left.max(side(border.slice[3]));
+        }
+    }
+
+    /// Height of a window's skinned title band: the title-bar art's own
+    /// height (scaled) so the sprite renders at its authored thickness, unless
+    /// the user set an explicit per-window title_bar_height override. Shared
+    /// by the content-inset reservation and the paint so they can't drift.
+    pub(super) fn skin_titlebar_height(
+        &self,
+        key: &TabKey,
+        titlebar: &skin::ResolvedBorder,
+    ) -> f32 {
+        let art_height = (titlebar.tex_size.y * titlebar.scale).max(12.0);
+        self.tab_settings
+            .get(key)
+            .and_then(|s| s.title_bar_height)
+            .filter(|h| *h > 0.0)
+            .unwrap_or(art_height)
+            .clamp(14.0, 48.0)
+    }
+
+    /// Paint a skin's title bar over the top of a rendered window: the
+    /// nine-slice band, the caption, and a close button (from the skin's
+    /// `titlebar_close` icon). Runs on the window's own layer so it moves and
+    /// stacks with the window; the close button hides the window.
+    fn paint_skin_titlebar(
+        &mut self,
+        ctx: &egui::Context,
+        key: &TabKey,
+        window_name: &str,
+        titlebar: &skin::ResolvedBorder,
+        response: &egui::Response,
+    ) {
+        let height = self.skin_titlebar_height(key, titlebar);
+        // Frame side thicknesses so the bar sits inside the frame art.
+        let (fl, fr, ft) = self
+            .skin_border_for_tab(key)
+            .map(|b| {
+                (
+                    b.slice[3] * b.scale,
+                    b.slice[1] * b.scale,
+                    b.slice[0] * b.scale,
+                )
+            })
+            .unwrap_or((0.0, 0.0, 0.0));
+        let close_art = self
+            .skin_state
+            .widget_art()
+            .and_then(|art| art.icon("titlebar_close"));
+        let close_size = height * 0.7;
+        let layout = zones::titlebar_layout(response.rect, height, fl, fr, ft, close_size);
+        let painter = ctx.layer_painter(response.layer_id);
+
+        // Band (nine-slice across the top strip).
+        skin::paint_nine_slice(&painter, layout.bar, titlebar, [true; 4]);
+
+        // Caption, left-aligned within its area, vertically centered.
+        let caption = match self.available_tabs.get(key).cloned() {
+            Some(tab) => self.window_display_title(&tab),
+            None => window_name.to_string(),
+        };
+        let visuals = ctx.global_style().visuals.clone();
+        if !caption.is_empty() {
+            painter.text(
+                egui::pos2(layout.caption.left() + 4.0, layout.caption.center().y),
+                egui::Align2::LEFT_CENTER,
+                caption,
+                egui::FontId::proportional((height * 0.6).clamp(9.0, 16.0)),
+                visuals.text_color(),
+            );
+        }
+
+        // Close button. This egui fork's Context has no post-show `interact`,
+        // so hit-test the pointer against the close rect directly: hover for
+        // the tint, a completed click over it hides the window.
+        let (hovered, clicked) = ctx.input(|i| {
+            let over = i.pointer.hover_pos().is_some_and(|p| layout.close.contains(p));
+            (over, over && i.pointer.primary_clicked())
+        });
+        if let Some(icon) = close_art {
+            let dest = skin::icon_dest(&icon, layout.close);
+            let tint = if hovered {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_rgb(0xc8, 0xc8, 0xc8)
+            };
+            skin::paint_icon(&painter, dest, &icon, tint);
+        } else {
+            painter.text(
+                layout.close.center(),
+                egui::Align2::CENTER_CENTER,
+                "✕",
+                egui::FontId::proportional(close_size.clamp(9.0, 16.0)),
+                if hovered {
+                    egui::Color32::WHITE
+                } else {
+                    visuals.weak_text_color()
+                },
+            );
+        }
+        if clicked {
+            self.core_hide_tab(key);
         }
     }
 

@@ -152,6 +152,51 @@ fn press_became_drag(
 /// Radius (points) of the resize-grab ring extending outside a window's frame.
 const RESIZE_GRAB: f32 = 6.0;
 
+/// Geometry of a skinned title bar within a window's rect: the full bar band
+/// (a `height`-tall strip across the top, inset by the frame's side
+/// thickness), the close-button square at the right end, and the caption
+/// area between the left edge and the close button. Pure so it's unit-tested
+/// independently of the render/paint path.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct TitleBarLayout {
+    pub bar: egui::Rect,
+    pub close: egui::Rect,
+    pub caption: egui::Rect,
+}
+
+pub(super) fn titlebar_layout(
+    window_rect: egui::Rect,
+    height: f32,
+    _frame_left: f32,
+    _frame_right: f32,
+    _frame_top: f32,
+    close_size: f32,
+) -> TitleBarLayout {
+    // The band spans the FULL window width, flush to the top and both side
+    // edges, so it reads as part of the window chrome (no gap where the
+    // window background would show through). The frame's nine-slice paints
+    // over the corners afterward, edging it. (frame_* args kept for callers /
+    // future per-edge tuning but no longer inset the band.)
+    let bar = egui::Rect::from_min_max(
+        window_rect.min,
+        egui::pos2(window_rect.right(), window_rect.top() + height.max(1.0)),
+    );
+    // Close button: a square at the right end, vertically centered, with a
+    // small inset. Clamped so it never exceeds the bar.
+    let pad = 2.0;
+    let sz = close_size.min(bar.height() - pad * 2.0).max(0.0);
+    let close = egui::Rect::from_min_size(
+        egui::pos2(bar.right() - sz - pad, bar.center().y - sz / 2.0),
+        egui::vec2(sz, sz),
+    );
+    // Caption fills the space left of the close button.
+    let caption = egui::Rect::from_min_max(
+        egui::pos2(bar.left() + pad, bar.top()),
+        egui::pos2((close.left() - pad).max(bar.left()), bar.bottom()),
+    );
+    TitleBarLayout { bar, close, caption }
+}
+
 /// Whether a press at `press_origin` engages `initial_rect`: inside the
 /// window's 12px interaction ring. Pure half of the render loop's
 /// `engaging_press` — the pre-show latch fallback for a first-frame press.
@@ -1561,7 +1606,14 @@ impl VellumGuiApp {
                 120.0_f32.min(window_bounds.width().max(1.0)),
                 min_window_height.min(window_bounds.height().max(1.0)),
             );
-            let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
+            let user_title_hidden = self.title_bar_hidden(&tab.id.key);
+            // A skin title bar takes over egui's: hide egui's bar and paint
+            // our own sprite band + caption + close post-show. Only when the
+            // user hasn't already hidden the title bar entirely.
+            let skin_titlebar = (!user_title_hidden)
+                .then(|| self.skin_titlebar_for_tab(&tab.id.key))
+                .flatten();
+            let title_bar_hidden = user_title_hidden || skin_titlebar.is_some();
             let window_locked = self.window_locked(&tab.id.key);
             let grouped = group_shape.is_some_and(|(count, _)| count > 1);
             // Docked text-like windows fill their zone's full height — no
@@ -1647,6 +1699,15 @@ impl VellumGuiApp {
             self.apply_border_plan_to_frame(&border_plan, &mut docked_window_frame);
             let skin_sides = self.skin_border_sides_for_tab(&tab.id.key);
             self.apply_skin_border_to_frame(&tab.id.key, skin_sides, &mut docked_window_frame);
+            // A skinned title bar replaces egui's, which reclaims the top space
+            // for content. Reserve the band's height as top inset so content
+            // starts BELOW the painted title bar instead of under it.
+            if let Some(bar) = &skin_titlebar {
+                let band = self.skin_titlebar_height(&tab.id.key, bar);
+                let inset = band.ceil().clamp(0.0, 127.0) as i8;
+                docked_window_frame.inner_margin.top =
+                    docked_window_frame.inner_margin.top.max(inset);
+            }
             // `default_size` (like `fixed_size`) is the whole window rect in
             // this egui fork, so every zone passes the outer size directly.
             // Declared before the builder so the close-button borrow
@@ -1800,6 +1861,17 @@ impl VellumGuiApp {
                 .perf_stats
                 .record_window_render(&tab.window_name, window_render_start.elapsed());
             if let Some(inner) = window_shown {
+                // Skinned title bar (under the frame so the frame edges it):
+                // sprite band + caption + close button, on the window layer.
+                if let Some(titlebar) = &skin_titlebar {
+                    self.paint_skin_titlebar(
+                        ctx,
+                        &tab.id.key,
+                        &tab.window_name,
+                        titlebar,
+                        &inner.response,
+                    );
+                }
                 self.paint_skin_border(ctx, &tab.id.key, skin_sides, &inner.response);
                 self.paint_border_plan(ctx, &border_plan, &inner.response);
                 // Claim the engagement latch here, where the real rendered rect
@@ -2392,5 +2464,32 @@ mod tests {
         assert!(!super::should_claim_latch(
             true, false, false, Some(egui::pos2(400.0, 400.0)), r, false, true, false, false,
         ));
+    }
+
+    #[test]
+    fn titlebar_layout_places_bar_close_and_caption() {
+        let win = rect(100.0, 100.0, 300.0, 200.0);
+        let l = super::titlebar_layout(win, 20.0, 4.0, 4.0, 4.0, 14.0);
+        // Bar spans the FULL window width, flush to top + side edges.
+        assert_eq!(l.bar.left(), 100.0);
+        assert_eq!(l.bar.right(), 400.0);
+        assert_eq!(l.bar.top(), 100.0);
+        assert_eq!(l.bar.height(), 20.0);
+        // Close is a square at the right end, within the bar.
+        assert!(l.bar.contains_rect(l.close));
+        assert!((l.close.right() - (l.bar.right() - 2.0)).abs() < 0.01);
+        assert!(l.close.width() > 0.0 && (l.close.width() - l.close.height()).abs() < 0.01);
+        // Caption fills the space to the left of the close button.
+        assert!(l.caption.right() <= l.close.left());
+        assert!(l.caption.left() >= l.bar.left());
+    }
+
+    #[test]
+    fn titlebar_layout_frameless_is_flush() {
+        let win = rect(0.0, 0.0, 200.0, 120.0);
+        let l = super::titlebar_layout(win, 18.0, 0.0, 0.0, 0.0, 12.0);
+        assert_eq!(l.bar.left(), 0.0);
+        assert_eq!(l.bar.top(), 0.0);
+        assert_eq!(l.bar.right(), 200.0);
     }
 }
