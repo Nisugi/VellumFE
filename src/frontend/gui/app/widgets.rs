@@ -6643,13 +6643,21 @@ mod tests {
         ctx.begin_pass(eframe::egui::RawInput::default());
         let built =
             VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
-        let _ = ctx.end_pass();
+        {
+            // egui 0.36 debug-asserts the TexturesDelta is applied before drop.
+            let mut output = ctx.end_pass();
+            output.textures_delta.clear();
+        }
 
         // A paintable custom emoji occupies a space-run placeholder (not the
         // wide `:name:` text), and the run is recorded over exactly it.
         ctx.begin_pass(eframe::egui::RawInput::default());
         let placeholder = VellumGuiApp::emoji_placeholder(&ctx, &font_id);
-        let _ = ctx.end_pass();
+        {
+            // egui 0.36 debug-asserts the TexturesDelta is applied before drop.
+            let mut output = ctx.end_pass();
+            output.textures_delta.clear();
+        }
         let ph = placeholder.chars().count();
         assert!(ph >= 1, "placeholder is at least one space");
         let expected = format!("yep {placeholder}");

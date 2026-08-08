@@ -241,7 +241,7 @@ mod tests {
         // Run one headless egui frame and paint each icon; catches geometry
         // panics (bad polygons, zero-size strokes) without a GPU.
         let ctx = egui::Context::default();
-        let _ = ctx.run_ui(Default::default(), |ui| {
+        let mut output = ctx.run_ui(Default::default(), |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
                 let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(24.0));
                 for id in SUPPORTED {
@@ -259,5 +259,7 @@ mod tests {
                 ));
             });
         });
+        // egui 0.36 debug-asserts the TexturesDelta is applied before drop.
+        output.textures_delta.clear();
     }
 }

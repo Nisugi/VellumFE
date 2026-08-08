@@ -363,7 +363,10 @@ mod tests {
                 .get(&cache_key('\u{1F601}', None))
                 .is_some_and(|t| t.is_some());
             drop(cache);
-            let _ = ctx.end_pass();
+            // egui 0.36 debug-asserts the TexturesDelta is applied before drop;
+            // this headless test discards output, so clear the delta.
+            let mut output = ctx.end_pass();
+            output.textures_delta.clear();
         }
         assert!(painted, "grin texture should be cached after painting");
     }

@@ -1188,7 +1188,11 @@ mod tests {
                     )),
                 );
                 super::VellumGuiApp::render_webui_content(&mut root, &content);
-                let _ = ctx.end_pass();
+                // egui 0.36 debug-asserts a TexturesDelta is applied before it
+                // drops. This headless smoke test discards the render output
+                // (no GPU to apply against), so clear the delta to satisfy it.
+                let mut output = ctx.end_pass();
+                output.textures_delta.clear();
             }
             let _ = done_tx.send(());
         });
