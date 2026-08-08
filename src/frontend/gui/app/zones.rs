@@ -149,6 +149,76 @@ fn press_became_drag(
     }
 }
 
+/// Radius (points) of the resize-grab ring extending outside a window's frame.
+const RESIZE_GRAB: f32 = 6.0;
+
+/// Whether a press at `press_origin` engages `initial_rect`: inside the
+/// window's 12px interaction ring. Pure half of the render loop's
+/// `engaging_press` — the pre-show latch fallback for a first-frame press.
+fn press_engages_window(press_origin: Option<egui::Pos2>, initial_rect: egui::Rect) -> bool {
+    press_origin.is_some_and(|pos| initial_rect.expand(12.0).contains(pos))
+}
+
+/// Whether the user is actively engaging this window (drives position feed,
+/// rect tracking, and — combined with an observed drag — the size-pin relax).
+/// A locked window never engages; otherwise engagement holds while the latch
+/// is ours, or on the very press frame when no window has latched yet.
+fn window_is_engaged(
+    window_locked: bool,
+    pointer_interacting: bool,
+    already_latched: bool,
+    any_window_latched: bool,
+    engaging_press: bool,
+    just_pressed: bool,
+) -> bool {
+    !window_locked
+        && pointer_interacting
+        && (already_latched || (!any_window_latched && engaging_press && just_pressed))
+}
+
+/// Whether to relax the size pin: only once engagement has become a REAL drag
+/// (a stationary title-bar click keeps the pin so egui can't snap the window
+/// back to its remembered desired_size).
+fn should_relax_size_pin(
+    window_is_engaged: bool,
+    press_origin: Option<egui::Pos2>,
+    pointer_pos: Option<egui::Pos2>,
+    latched_and_drag_seen: bool,
+) -> bool {
+    window_is_engaged
+        && press_became_drag(press_origin, pointer_pos, latched_and_drag_seen)
+}
+
+/// Whether this window should claim the engagement latch on a fresh press
+/// (post-show, real rendered `rect` known). True when the press is inside the
+/// window's resize ring AND this window is topmost there — or the point is
+/// over uncontested bare background (the outer half of the resize band, where
+/// `layer_id_at` reports the panel). A press over another window's area yields
+/// to that window's own claim.
+#[allow(clippy::too_many_arguments)]
+fn should_claim_latch(
+    just_pressed: bool,
+    window_locked: bool,
+    any_window_latched: bool,
+    press_origin: Option<egui::Pos2>,
+    rect: egui::Rect,
+    top_is_self: bool,
+    top_is_none: bool,
+    top_is_background: bool,
+    contested: bool,
+) -> bool {
+    if !just_pressed || window_locked || any_window_latched {
+        return false;
+    }
+    let Some(pos) = press_origin else {
+        return false;
+    };
+    let in_window = rect.expand(RESIZE_GRAB).contains(pos);
+    let topmost =
+        top_is_self || (!contested && (top_is_none || top_is_background));
+    in_window && topmost
+}
+
 pub(super) fn effective_sidebar_gaps(zone_height: f32, items: &[(f32, f32)]) -> Vec<f32> {
     let occupied: f32 = items.iter().map(|(_, height)| height.max(0.0)).sum();
     let mut free = (zone_height - occupied).max(0.0);
@@ -1644,8 +1714,7 @@ impl VellumGuiApp {
             // to catch a press on a non-overlapping window on its first frame
             // (the common case, where topmost is unambiguous anyway). The
             // post-show claim corrects any ambiguous edge-band press.
-            let engaging_press = press_origin
-                .is_some_and(|pos| initial_rect.expand(12.0).contains(pos));
+            let engaging_press = press_engages_window(press_origin, initial_rect);
             let already_latched = self.zone_engaged_tab.as_ref() == Some(&tab.id.key);
             // The pre-latch `engaging_press` fallback counts ONLY on the
             // press frame (the latch doesn't exist yet within it); from the
@@ -1658,10 +1727,14 @@ impl VellumGuiApp {
             // the phantom fed-vs-rendered divergence ran the snap hook,
             // whose release pass then promoted/cleared anchors for a
             // gesture that never happened.
-            let user_engaging_window = !window_locked
-                && pointer_interacting
-                && (already_latched
-                    || (self.zone_engaged_tab.is_none() && engaging_press && just_pressed));
+            let user_engaging_window = window_is_engaged(
+                window_locked,
+                pointer_interacting,
+                already_latched,
+                self.zone_engaged_tab.is_some(),
+                engaging_press,
+                just_pressed,
+            );
             // The size pin only relaxes once the press becomes a real drag —
             // a stationary title-bar click keeps the pin, so egui can't snap
             // the window (grouped windows especially, whose max height is the
@@ -1674,12 +1747,12 @@ impl VellumGuiApp {
             // content-driven window (room/targets/spells) relaxes the pin,
             // egui re-clamps to its remembered desired_size, and the rect
             // divergence pops the snap grid on a plain click.
-            let relax_size_pin = user_engaging_window
-                && press_became_drag(
-                    press_origin,
-                    pointer_pos,
-                    already_latched && self.zone_press_drag_seen,
-                );
+            let relax_size_pin = should_relax_size_pin(
+                user_engaging_window,
+                press_origin,
+                pointer_pos,
+                already_latched && self.zone_press_drag_seen,
+            );
             if !being_moved && !relax_size_pin {
                 // Pin every window to its display size when the user isn't
                 // engaging it: egui's Resize state re-clamps its remembered
@@ -1737,40 +1810,27 @@ impl VellumGuiApp {
                 // the wrong window latch, re-pin the resized one, and stall it
                 // after ~12px. Topmost-at-press is exactly egui's own choice,
                 // so the latch and egui's resize target always agree.
-                if just_pressed && !window_locked && self.zone_engaged_tab.is_none() {
-                    const RESIZE_GRAB: f32 = 6.0;
-                    let rect = inner.response.rect;
-                    if let Some(pos) = press_origin {
-                        // The press hits this window's body or its resize ring
-                        // (the edge band extends a few px outside the frame).
-                        let in_window = rect.expand(RESIZE_GRAB).contains(pos);
-                        // Topmost at the press point — OR the point sits over
-                        // bare background. The OUTER half of the resize band
-                        // is outside the window's area, so layer_id_at
-                        // reports the panel there and the claim used to fail:
-                        // the size pin stayed on and egui's resize was forced
-                        // back every frame. That was the "cursor shows but
-                        // can't grab until the pointer is half inside the
-                        // border" dead zone. A press over ANOTHER window's
-                        // area still yields to that window's own claim.
-                        let top_layer = ctx.layer_id_at(pos);
-                        // Over background, claim only when UNCONTESTED: if a
-                        // neighbor's ring also covers the point (windows a
-                        // few px apart), stay conservative and let the
-                        // inside-half claims disambiguate as before.
-                        let contested = snap_siblings.iter().any(|(other, _, sibling)| {
-                            *other != tab.id.key
-                                && sibling.expand(RESIZE_GRAB).contains(pos)
-                        });
-                        let topmost = top_layer == Some(inner.response.layer_id)
-                            || (!contested
-                                && top_layer.is_none_or(|layer| {
-                                    layer.order == egui::Order::Background
-                                }));
-                        if in_window && topmost {
-                            self.zone_engaged_tab = Some(tab.id.key.clone());
-                            ctx.request_repaint();
-                        }
+                if let Some(pos) = press_origin {
+                    let top_layer = ctx.layer_id_at(pos);
+                    // A neighbor's resize ring also covering the point (windows
+                    // a few px apart) makes a background claim contested.
+                    let contested = snap_siblings.iter().any(|(other, _, sibling)| {
+                        *other != tab.id.key && sibling.expand(RESIZE_GRAB).contains(pos)
+                    });
+                    let claim = should_claim_latch(
+                        just_pressed,
+                        window_locked,
+                        self.zone_engaged_tab.is_some(),
+                        press_origin,
+                        inner.response.rect,
+                        top_layer == Some(inner.response.layer_id),
+                        top_layer.is_none(),
+                        top_layer.is_some_and(|layer| layer.order == egui::Order::Background),
+                        contested,
+                    );
+                    if claim {
+                        self.zone_engaged_tab = Some(tab.id.key.clone());
+                        ctx.request_repaint();
                     }
                 }
                 // Ground-truth fallback: if egui is actually DRAGGING this
@@ -2237,5 +2297,100 @@ mod tests {
         // layout bakes to a flush-bottom set of rects.
         let gaps = super::effective_sidebar_gaps(400.0, &[(96.0, 204.0), (0.0, 100.0)]);
         assert_eq!(gaps, vec![96.0, 0.0]);
+    }
+
+    // --- Window engagement / latch / size-pin decisions (characterization).
+    // These pin the render loop's inline drag logic so the title-bar takeover
+    // (and any future edit) can't silently change move/resize/snap behavior.
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+    }
+
+    #[test]
+    fn press_engages_window_uses_12px_ring() {
+        let r = rect(100.0, 100.0, 200.0, 150.0);
+        // Just outside the frame but inside the 12px ring: engaged.
+        assert!(super::press_engages_window(Some(egui::pos2(94.0, 175.0)), r));
+        // Well outside the ring: not engaged.
+        assert!(!super::press_engages_window(Some(egui::pos2(80.0, 175.0)), r));
+        // No press at all: not engaged.
+        assert!(!super::press_engages_window(None, r));
+    }
+
+    #[test]
+    fn window_is_engaged_needs_pointer_and_unlocked() {
+        let r = |locked, interacting, latched, any, ep, jp| {
+            super::window_is_engaged(locked, interacting, latched, any, ep, jp)
+        };
+        // Already latched + interacting + unlocked -> engaged.
+        assert!(r(false, true, true, true, false, false));
+        // Locked never engages, even when latched.
+        assert!(!r(true, true, true, true, false, false));
+        // Not interacting never engages.
+        assert!(!r(false, false, true, true, false, false));
+        // First-press claim path: no window latched yet, engaging press, just
+        // pressed -> engaged.
+        assert!(r(false, true, false, false, true, true));
+        // But if another window already latched, the press path is blocked.
+        assert!(!r(false, true, false, true, true, true));
+    }
+
+    #[test]
+    fn size_pin_relaxes_only_on_real_drag_while_engaged() {
+        let origin = egui::pos2(50.0, 50.0);
+        // Engaged + genuine drag -> relax.
+        assert!(super::should_relax_size_pin(
+            true,
+            Some(origin),
+            Some(egui::pos2(90.0, 90.0)),
+            false
+        ));
+        // Engaged but stationary -> keep the pin.
+        assert!(!super::should_relax_size_pin(true, Some(origin), Some(origin), false));
+        // Not engaged -> never relax, even mid-drag.
+        assert!(!super::should_relax_size_pin(
+            false,
+            Some(origin),
+            Some(egui::pos2(90.0, 90.0)),
+            false
+        ));
+        // Latched-and-drag-seen forces the drag verdict even without motion.
+        assert!(super::should_relax_size_pin(true, Some(origin), Some(origin), true));
+    }
+
+    #[test]
+    fn latch_claim_requires_fresh_uncontested_topmost_press() {
+        let r = rect(100.0, 100.0, 200.0, 150.0);
+        let inside = Some(egui::pos2(150.0, 150.0));
+        // Topmost-self press inside the window on a fresh press -> claim.
+        assert!(super::should_claim_latch(
+            true, false, false, inside, r, true, false, false, false,
+        ));
+        // Not a fresh press -> no claim.
+        assert!(!super::should_claim_latch(
+            false, false, false, inside, r, true, false, false, false,
+        ));
+        // Locked -> no claim.
+        assert!(!super::should_claim_latch(
+            true, true, false, inside, r, true, false, false, false,
+        ));
+        // Another window already latched -> no claim.
+        assert!(!super::should_claim_latch(
+            true, false, true, inside, r, true, false, false, false,
+        ));
+        // Over uncontested background (outer resize ring) -> claim.
+        let ring = Some(egui::pos2(97.0, 150.0));
+        assert!(super::should_claim_latch(
+            true, false, false, ring, r, false, false, true, false,
+        ));
+        // Over CONTESTED background (a neighbor's ring covers it) -> no claim.
+        assert!(!super::should_claim_latch(
+            true, false, false, ring, r, false, false, true, true,
+        ));
+        // Press outside the window entirely -> no claim.
+        assert!(!super::should_claim_latch(
+            true, false, false, Some(egui::pos2(400.0, 400.0)), r, false, true, false, false,
+        ));
     }
 }

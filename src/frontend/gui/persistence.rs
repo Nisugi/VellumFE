@@ -92,6 +92,13 @@ pub struct TabSettings {
     #[serde(default)]
     pub skin_frame: Option<String>,
 
+    /// Per-window multiplier on the skin frame's authored scale, adjustable
+    /// live from the window editor. None = use the frame's own scale as-is
+    /// (1.0x). The content inset (inner_margin) is derived from the same
+    /// scaled slice, so the frame never covers window content.
+    #[serde(default)]
+    pub frame_scale: Option<f32>,
+
     /// Background override: None follows the skin's per-window mapping,
     /// "none" disables the background, anything else is a pool-relative
     /// image path ("backgrounds/parchment.png").
@@ -134,6 +141,7 @@ impl Default for TabSettings {
             accent_color: None,
             corner_radius: None,
             skin_frame: None,
+            frame_scale: None,
             background_image: None,
             title_bar_height: None,
             title_bar_align: None,
@@ -1391,6 +1399,7 @@ mod tests {
             accent_color: None,
             corner_radius: None,
             skin_frame: None,
+            frame_scale: None,
             background_image: None,
             title_bar_height: None,
             title_bar_align: None,
@@ -1615,6 +1624,7 @@ mod tests {
                 accent_color: Some("#4784d9".to_string()),
                 corner_radius: None,
                 skin_frame: None,
+                frame_scale: None,
                 background_image: None,
                 title_bar_height: None,
                 title_bar_align: None,

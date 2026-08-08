@@ -2546,8 +2546,20 @@ impl VellumGuiApp {
             .get(key)
             .and_then(|settings| settings.skin_frame.as_deref())
             .or(self.ui_settings.default_frame.as_deref());
-        self.skin_state
-            .border_for_with_override(&tab.window_name, frame_override)
+        let mut border = self
+            .skin_state
+            .border_for_with_override(&tab.window_name, frame_override)?;
+        // Per-window live scale multiplier (window editor slider). Both the
+        // painted thickness and the content inset derive from border.scale,
+        // so scaling it here keeps the frame and its padding in lockstep.
+        if let Some(mult) = self
+            .tab_settings
+            .get(key)
+            .and_then(|settings| settings.frame_scale)
+        {
+            border.scale = (border.scale * mult.max(0.05)).clamp(0.05, 8.0);
+        }
+        Some(border)
     }
 
     fn apply_skin_border_to_frame(
@@ -2633,13 +2645,29 @@ impl VellumGuiApp {
     /// Effective title bar height for a game window: per-window override,
     /// else the global setting. 0 means "auto" in both layers; None =
     /// derive from the title font (egui's default behavior).
+    ///
+    /// A skin frame paints its top slice over the window top, which includes
+    /// the title band — so when a frame is active the title bar is grown to
+    /// at least that top thickness, keeping the caption clear of the art
+    /// instead of tucked underneath it.
     pub(super) fn title_bar_height_for_tab(&self, key: &TabKey) -> Option<f32> {
-        let height = self
+        let configured = self
             .tab_settings
             .get(key)
             .and_then(|settings| settings.title_bar_height)
             .unwrap_or(self.ui_settings.title_bar_height);
-        (height > 0.0).then(|| height.clamp(12.0, 32.0))
+        let frame_top = self
+            .skin_border_for_tab(key)
+            .map(|border| border.slice[0] * border.scale)
+            .unwrap_or(0.0);
+        // Auto (0) with a frame present: derive from the frame top. Explicit
+        // height: never let it fall below the frame's top thickness.
+        let height = if configured > 0.0 {
+            configured.max(frame_top)
+        } else {
+            frame_top
+        };
+        (height > 0.0).then(|| height.clamp(12.0, 48.0))
     }
 
     /// Effective title text alignment for a game window.

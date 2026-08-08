@@ -68,6 +68,8 @@ pub(super) enum GuiWindowMenuCommand {
     /// Per-window skin frame: a named `[frames.*]` entry, "none" for no
     /// frame, or None to revert to the skin's own per-window mapping.
     SetSkinFrame(Option<String>),
+    /// Per-window frame scale multiplier (live slider); None resets to 1.0x.
+    SetFrameScale(Option<f32>),
     /// Global injury doll image override (pool-relative path); None reverts
     /// to the active skin's doll.
     SetDollImage(Option<String>),
@@ -212,6 +214,9 @@ pub(super) struct WindowAppearanceView {
     skin_frames: Vec<String>,
     /// Per-window skin frame override; None follows the skin's mapping.
     skin_frame_override: Option<String>,
+    /// Per-window frame scale multiplier (live slider); None = 1.0x (the
+    /// frame's authored scale). Shown only when a frame is resolved.
+    frame_scale_override: Option<f32>,
     /// Whether the skin resolves a border for this window by default (so
     /// "None" is worth offering even without named frames).
     has_skin_border: bool,
@@ -502,6 +507,7 @@ impl VellumGuiApp {
             | GuiWindowMenuCommand::SetAccent(_)
             | GuiWindowMenuCommand::SetCornerRadius(_)
             | GuiWindowMenuCommand::SetSkinFrame(_)
+            | GuiWindowMenuCommand::SetFrameScale(_)
             | GuiWindowMenuCommand::SetDollImage(_)
             | GuiWindowMenuCommand::CalibrateDoll
             | GuiWindowMenuCommand::SetDollGrayscale(_)
@@ -677,6 +683,13 @@ impl VellumGuiApp {
                     .entry(tab_key.clone())
                     .or_default()
                     .skin_frame = frame;
+                self.layout_dirty = true;
+            }
+            GuiWindowMenuCommand::SetFrameScale(scale) => {
+                self.tab_settings
+                    .entry(tab_key.clone())
+                    .or_default()
+                    .frame_scale = scale;
                 self.layout_dirty = true;
             }
             GuiWindowMenuCommand::SetDollImage(image) => {
@@ -872,6 +885,10 @@ impl VellumGuiApp {
                 .tab_settings
                 .get(tab_key)
                 .and_then(|settings| settings.skin_frame.clone()),
+            frame_scale_override: self
+                .tab_settings
+                .get(tab_key)
+                .and_then(|settings| settings.frame_scale),
             has_skin_border: self
                 .available_tabs
                 .get(tab_key)
@@ -1020,6 +1037,7 @@ impl VellumGuiApp {
                     | GuiWindowMenuCommand::SetMemberWeight { .. }
                     | GuiWindowMenuCommand::SetCornerRadius(_)
                     | GuiWindowMenuCommand::SetSkinFrame(_)
+                    | GuiWindowMenuCommand::SetFrameScale(_)
                     | GuiWindowMenuCommand::SetDollImage(_)
                     | GuiWindowMenuCommand::SetDollGrayscale(_)
                     | GuiWindowMenuCommand::SetCompassSet(_)
@@ -2241,6 +2259,34 @@ impl VellumGuiApp {
                             }
                         });
                 });
+                // Live frame-size slider: multiplies the frame's authored
+                // scale (and its content inset, in lockstep). Only meaningful
+                // when a frame actually draws.
+                let frame_off = view
+                    .skin_frame_override
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(NO_FRAME));
+                if view.has_skin_border && !frame_off {
+                    ui.horizontal(|ui| {
+                        ui.label("Frame size");
+                        let mut scale = view.frame_scale_override.unwrap_or(1.0);
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut scale, 0.25..=4.0)
+                                    .fixed_decimals(2)
+                                    .suffix("x"),
+                            )
+                            .changed()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetFrameScale(Some(scale)));
+                        }
+                        if view.frame_scale_override.is_some()
+                            && ui.small_button("✕").on_hover_text("Reset to 1.0x").clicked()
+                        {
+                            command = Some(GuiWindowMenuCommand::SetFrameScale(None));
+                        }
+                    });
+                }
             }
             if !view.background_images.is_empty() || view.has_skin_background {
                 ui.horizontal(|ui| {
