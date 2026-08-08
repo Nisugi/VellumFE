@@ -152,6 +152,30 @@ fn press_became_drag(
 /// Radius (points) of the resize-grab ring extending outside a window's frame.
 const RESIZE_GRAB: f32 = 6.0;
 
+/// Whether a press landed in the window's resize ring — the band within
+/// `RESIZE_GRAB` of the frame boundary (both just outside and just inside),
+/// which is where egui puts its edge/corner resize handles. A press here means
+/// the user grabbed to RESIZE, not to move; the interior is the move zone.
+///
+/// This is a PRE-show signal (it needs only the press point and the fed rect),
+/// so it can relax the size pin on the very first resize frame — before egui
+/// has rendered any size change to observe. Without it the pin holds the size
+/// fixed, egui reports the pinned size every frame, no size change is ever
+/// seen, and a shrink deadlocks (grow-only). Combined with the post-show
+/// `zone_resize_active` latch so the relaxation persists for the whole drag.
+fn press_in_resize_ring(press_origin: Option<egui::Pos2>, rect: egui::Rect) -> bool {
+    let Some(pos) = press_origin else {
+        return false;
+    };
+    let outer = rect.expand(RESIZE_GRAB);
+    if !outer.contains(pos) {
+        return false;
+    }
+    // Inside the outer ring but NOT in the deep interior => on an edge/corner.
+    let interior = rect.shrink(RESIZE_GRAB);
+    !interior.contains(pos)
+}
+
 /// Geometry of a skinned title bar within a window's rect: the full bar band
 /// (a `height`-tall strip across the top, inset by the frame's side
 /// thickness), the close-button square at the right end, and the caption
@@ -1430,6 +1454,7 @@ impl VellumGuiApp {
         if !pointer_down {
             self.zone_engaged_tab = None;
             self.zone_press_drag_seen = false;
+            self.zone_resize_active = false;
             // The snap drag must survive the RELEASE frame: the hook's
             // final pass writes the snapped rect as the drop position and
             // drops the state itself. This is only the backstop for a
@@ -1808,11 +1833,21 @@ impl VellumGuiApp {
             // content-driven window (room/targets/spells) relaxes the pin,
             // egui re-clamps to its remembered desired_size, and the rect
             // divergence pops the snap grid on a plain click.
+            // A resize-edge drag can't be seen through pointer travel: egui
+            // captures the pointer while resizing, so `pointer_pos` freezes at
+            // the grab point and `zone_press_drag_seen` never trips. Post-show
+            // (below) we set `zone_resize_active` once the rendered size
+            // actually diverges under a live press; relax the pin for EITHER
+            // signal so a resize can pull the window SMALLER, not only bigger.
+            let latched_and_dragging = already_latched
+                && (self.zone_press_drag_seen
+                    || self.zone_resize_active
+                    || press_in_resize_ring(press_origin, initial_rect));
             let relax_size_pin = should_relax_size_pin(
                 user_engaging_window,
                 press_origin,
                 pointer_pos,
-                already_latched && self.zone_press_drag_seen,
+                latched_and_dragging,
             );
             if !being_moved && !relax_size_pin {
                 // Pin every window to its display size when the user isn't
@@ -1905,7 +1940,7 @@ impl VellumGuiApp {
                         ctx.request_repaint();
                     }
                 }
-                // Ground-truth fallback: if egui is actually DRAGGING this
+                // Ground-truth fallback: if the primary press is down ON this
                 // window, latch it no matter what `layer_id_at` said — a
                 // Foreground gutter/drawer-handle/backdrop can be topmost
                 // at the press point while egui still routes the body-drag
@@ -1914,6 +1949,7 @@ impl VellumGuiApp {
                 // skin frame painted from response.rect) walks off with
                 // the pointer — the reported "frame drags away, window
                 // stays, snaps back on release".
+                //
                 if pointer_down
                     && !window_locked
                     && self.zone_engaged_tab.is_none()
@@ -1950,6 +1986,20 @@ impl VellumGuiApp {
                 }
                 let rect_changed = (inner.response.rect.min - initial_rect.min).length_sq() > 0.25
                     || (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25;
+                // Resize evidence: egui rendered this window at a different SIZE
+                // than the pin fed it, while it holds the engagement latch and
+                // the pointer is still down. A resize-edge drag freezes
+                // `pointer_pos` (egui captures the pointer), so this is the only
+                // signal that a shrink/grow is in progress — latch it sticky so
+                // NEXT frame's pin relaxes and the resize isn't clamped back.
+                // Position-only divergence (a move) is excluded: moves relax via
+                // `zone_press_drag_seen` and must not set this flag, or a mere
+                // displaced rect on click-anywhere would defeat the pin.
+                let size_changed =
+                    (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25;
+                if size_changed && already_latched && pointer_down {
+                    self.zone_resize_active = true;
+                }
                 // Only geometry the user changed by grabbing THIS window may
                 // become canonical. Rendered rects also diverge when a shell
                 // zone displaces the window, when clamping squeezes it into a
@@ -2429,6 +2479,24 @@ mod tests {
         ));
         // Latched-and-drag-seen forces the drag verdict even without motion.
         assert!(super::should_relax_size_pin(true, Some(origin), Some(origin), true));
+    }
+
+    #[test]
+    fn resize_ring_press_covers_edges_not_interior() {
+        // 200x150 window at (100,100). RESIZE_GRAB is 6px.
+        let r = rect(100.0, 100.0, 200.0, 150.0);
+        // Deep interior press -> move zone, NOT a resize.
+        assert!(!super::press_in_resize_ring(Some(egui::pos2(200.0, 175.0)), r));
+        // On the left edge (just inside) -> resize.
+        assert!(super::press_in_resize_ring(Some(egui::pos2(102.0, 175.0)), r));
+        // Just OUTSIDE the right edge, still in the grab ring -> resize.
+        assert!(super::press_in_resize_ring(Some(egui::pos2(303.0, 175.0)), r));
+        // A corner -> resize.
+        assert!(super::press_in_resize_ring(Some(egui::pos2(101.0, 101.0)), r));
+        // Far outside the ring -> not a resize.
+        assert!(!super::press_in_resize_ring(Some(egui::pos2(400.0, 175.0)), r));
+        // No press point -> not a resize.
+        assert!(!super::press_in_resize_ring(None, r));
     }
 
     #[test]
