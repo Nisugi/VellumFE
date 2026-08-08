@@ -538,6 +538,14 @@ pub struct VellumGuiApp {
     /// desired_size, the rect diverged, and the snap hook popped the grid
     /// on a plain click.
     zone_press_drag_seen: bool,
+    /// Sticky per press: set once egui is observed resizing a window this
+    /// press (its rendered size diverged from the pinned size), cleared on
+    /// release. A resize-edge drag can't be seen through pointer travel —
+    /// egui captures the pointer while resizing, so `pointer_pos` freezes and
+    /// `zone_press_drag_seen` never trips. This lets the size pin relax for a
+    /// resize the way `zone_press_drag_seen` does for a move, so windows can be
+    /// dragged SMALLER, not only larger.
+    zone_resize_active: bool,
     /// Pointer-true rect of the zone window being dragged/resized, so
     /// snapping stays escapable (see `snap.rs`); None outside a drag.
     zone_snap_drag: Option<snap::ZoneSnapDrag>,
@@ -951,6 +959,7 @@ impl VellumGuiApp {
             zone_drag_state: None,
             zone_engaged_tab: None,
             zone_press_drag_seen: false,
+            zone_resize_active: false,
             zone_snap_drag: None,
             zone_snap_guides: Vec::new(),
             snap_debug: false,
