@@ -366,9 +366,6 @@ pub struct TravelTask {
     /// caravan). We wait silently aboard and re-plan the route the moment the
     /// ride drops us in a normal room.
     in_transport: bool,
-    /// The day-pass sack id (for putting the bought pass back), carried across
-    /// the response-driven buy conversation (Step::DayPassBuy).
-    day_pass_buy_sack: Option<String>,
     /// Set when a day-pass crossing sends `open #sack` and still OWES a close.
     /// Cleared WITHOUT closing if the game answers "That is already open" (the
     /// user keeps the sack open — don't force it shut); taken when the close
@@ -420,7 +417,6 @@ impl TravelTask {
             confluence: None,
             silver_at_withdraw: None,
             in_transport: false,
-            day_pass_buy_sack: None,
             day_pass_close_sack: None,
             day_pass_buy_from: 0,
             day_pass_buy_dest: 0,
@@ -1368,7 +1364,6 @@ impl TravelTask {
         // Params the post-raise cleanup needs, and the close debt: the machine
         // sends `open #sack`; if the game answers "That is already open" the
         // debt clears (top of tick) and the sack is left the way we found it.
-        self.day_pass_buy_sack = sack.map(str::to_string);
         self.day_pass_close_sack = sack.map(str::to_string);
         self.day_pass_buy_from = from;
         self.day_pass_buy_dest = next;
@@ -1615,12 +1610,9 @@ impl TravelTask {
         match outcome {
             BuyEvent::Send(_) => unreachable!("Send is relayed by the tick fns"),
             BuyEvent::Traveled { pass_id } => {
-                // take(): a second (spurious) conclusion can never re-drag.
-                if let (Some(sack), Some(id)) =
-                    (self.day_pass_buy_sack.take(), pass_id.as_ref())
-                {
-                    events.push(TravelEvent::Send(format!("_drag #{id} #{sack}")));
-                }
+                // The machine already put the pass back (response-gated
+                // PutBack phase) before signalling Traveled.
+                let _ = pass_id;
                 // FillHands via the stash primitive (recovers what EmptyHands
                 // stowed at the start of the crossing).
                 if let Some(inputs) = ctx.hands {
@@ -3456,15 +3448,16 @@ mod tests {
         // Tick 3: the get landed → raise it.
         let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
         assert_eq!(sent(&ev), ["raise #77"], "get answered -> raise: {ev:?}");
-        // Tick 4: the whirlwind fired and we're at 8916 → cleanup: put the
-        // pass back by id and settle the owed close (we opened the sack).
+        // Tick 4: the whirlwind fired and we're at 8916 → the put-back is
+        // response-gated too: ONLY the _drag goes out (no close flood).
         let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
-        let all: Vec<&str> = sent(&ev);
-        assert!(all.contains(&"_drag #77 #99"), "puts the pass back by id: {ev:?}");
-        assert!(all.contains(&"close #99"), "closes the sack we opened: {ev:?}");
-        assert!(!all.iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
-        // Tick 5: trip complete.
-        let ev = task.tick(dpctx!(4_000, 8916));
+        assert_eq!(sent(&ev), ["_drag #77 #99"], "drag alone, gated: {ev:?}");
+        // Tick 5: the stow confirmed → the owed close settles and we conclude.
+        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
+        assert!(sent(&ev).contains(&"close #99"), "closes the sack we opened: {ev:?}");
+        assert!(!sent(&ev).iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
+        // Tick 6: trip complete.
+        let ev = task.tick(dpctx!(5_000, 8916));
         assert!(
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
             "arrives at the destination: {ev:?}"
@@ -3480,12 +3473,13 @@ mod tests {
         let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
         assert_eq!(sent(&ev), ["raise #77"]);
         let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
+        assert_eq!(sent(&ev), ["_drag #77 #99"], "still puts the pass back");
+        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
         assert!(
             !sent(&ev).contains(&"close #99"),
             "already-open sack is left open: {ev:?}"
         );
-        assert!(sent(&ev).contains(&"_drag #77 #99"), "still puts the pass back");
-        let ev = task.tick(dpctx!(4_000, 8916));
+        let ev = task.tick(dpctx!(5_000, 8916));
         assert!(
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
             "still arrives: {ev:?}"
@@ -3544,14 +3538,18 @@ mod tests {
         // conclude (no cleanup sends, no phantom crossing).
         let ev = task.tick(dpctx!(3_000, 8635, &[F::NavArrived]));
         assert!(ev.is_empty(), "stale-room nav must not conclude the raise: {ev:?}");
-        // The whirlwind line arrives while the room is STILL stale: cleanup
-        // runs, but the trip must arrival-watch the KNOWN landing room —
-        // never re-plan from the stale departure room (no ask/open phantom).
+        // The whirlwind line arrives while the room is STILL stale: the
+        // response-gated put-back runs — and nothing re-plans from the stale
+        // departure room (no ask/open phantom).
         let ev = task.tick(dpctx!(4_000, 8635, &[F::RaiseTraveled]));
-        let cmds: Vec<&str> = sent(&ev);
-        assert!(cmds.contains(&"_drag #77 #99"), "cleanup runs: {ev:?}");
+        assert_eq!(sent(&ev), ["_drag #77 #99"], "gated cleanup runs: {ev:?}");
+        // Stow confirms (room STILL stale) → conclude must arrival-watch the
+        // KNOWN landing room instead of re-planning.
+        let ev = task.tick(dpctx!(5_000, 8635, &[F::ItemStowed]));
         assert!(
-            !cmds.iter().any(|c| c.starts_with("ask ") || c.starts_with("open ")),
+            !sent(&ev)
+                .iter()
+                .any(|c| c.starts_with("ask ") || c.starts_with("open ")),
             "no phantom second crossing from the stale room: {ev:?}"
         );
         assert!(
@@ -3560,8 +3558,8 @@ mod tests {
             task.step
         );
         // The room resolves at the landing → the trip completes normally.
-        let _ = task.tick(dpctx!(5_000, 8916, &[]));
-        let ev = task.tick(dpctx!(6_000, 8916, &[]));
+        let _ = task.tick(dpctx!(6_000, 8916, &[]));
+        let ev = task.tick(dpctx!(7_000, 8916, &[]));
         assert!(
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
             "arrives once resolved: {ev:?}"

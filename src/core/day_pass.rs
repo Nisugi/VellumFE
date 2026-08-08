@@ -356,11 +356,19 @@ impl DayPassCache {
     }
 
     /// Ids of passes that are expired as of `now` (Lich drops these before
-    /// buying: `_drag #id drop`).
+    /// buying: `_drag #id drop`). A pass whose expiry never parsed
+    /// (`expires == 0`, description seen but the expiry line was missed) is
+    /// NOT dropped — dropping it would throw away a possibly-valid pass.
     pub fn expired_ids(&self, now_epoch: i64) -> Vec<String> {
         self.passes
             .iter()
-            .filter(|(_, p)| p.expires < now_epoch - 10)
+            .filter(|(_, p)| {
+                // A real expiry in the past, or the EXPIRED stamp (towns
+                // cleared, expires 0). Towns known but expiry unparsed
+                // (expires 0) is NOT dropped — it may still be valid.
+                (p.expires != 0 && p.expires < now_epoch - 10)
+                    || (p.expires == 0 && p.towns.is_empty())
+            })
             .map(|(id, _)| id.clone())
             .collect()
     }

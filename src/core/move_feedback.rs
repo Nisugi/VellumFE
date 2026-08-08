@@ -72,6 +72,9 @@ pub enum MoveFeedback {
     /// A drop landed ("As you let go..." / "You drop") — Lich's expired-pass
     /// `_drag #id drop` wait.
     ItemDropped,
+    /// A put/stow landed ("You put/slip/tuck ...") — the put_regex shapes Lich
+    /// waits on after `_drag #pass #sack`.
+    ItemStowed,
     /// `raise` failed because we're not in the Chronomage waiting room
     /// ("not a Chronomage teleportation waiting room" / "not valid for
     /// departures" / "As you go to raise your pass, you realize").
@@ -165,6 +168,11 @@ patterns! {
     ItemDropped => [
         "As you let go",
         "You drop",
+    ],
+    // Just "You put": "You slip"/"You tuck" collide with fall messages
+    // ("You slip on a patch of ice..."). The timeout covers exotic stows.
+    ItemStowed => [
+        "You put",
     ],
     RaiseWrongRoom => [
         "not a Chronomage teleportation waiting room",

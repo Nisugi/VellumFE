@@ -1107,14 +1107,13 @@ impl AppCore {
         };
         let learned = !ids.is_empty()
             && ids.iter().all(|id| self.game_state.day_passes.contains(id));
-        // Probe round (no ids): the contents line arrived and shows a pass —
-        // the re-invoked start_travel queues the look round for it.
-        let (target, probe_unknown, probe_any) = if ids.is_empty() {
-            self.day_pass_scan_targets()
-        } else {
-            (self.day_pass_scan_targets().0, Vec::new(), false)
-        };
-        let probe_done = ids.is_empty() && probe_any && !probe_unknown.is_empty();
+        // Probe round (no ids): done as soon as the contents line shows ANY
+        // pass — unknown ones get their look round on the re-plan; already-
+        // known ones proceed straight to planning (don't sit out the
+        // deadline). An empty sack still waits the deadline (we can't tell
+        // "no passes" from "contents not seen yet").
+        let (target, _, probe_any) = self.day_pass_scan_targets();
+        let probe_done = ids.is_empty() && probe_any;
         let expired = std::time::Instant::now() >= deadline;
         if learned || probe_done || expired {
             // Clear FIRST so the re-invoked start_travel plans (or queues the

@@ -58,6 +58,9 @@ enum Phase {
     /// Sent `raise pass`; waiting for the whirlwind (travelled) or a
     /// wrong-room/expired failure.
     AwaitRaise { sent_ms: u64 },
+    /// Teleported; putting the bought pass back (response-gated) before
+    /// concluding.
+    PutBack(PutBack),
 }
 
 /// Inputs the machine reads each tick: the feedback events seen, the current
@@ -166,6 +169,46 @@ impl Preamble {
     }
 }
 
+/// The response-gated post-teleport put-back: `_drag #pass #sack`, wait for
+/// the stow to land. Shared by both machines so the cleanup is one command
+/// per game response (not flat-fired ahead of the stow confirmation). The
+/// sack CLOSE stays with the executor (its already-open bookkeeping lives
+/// there); this only covers the response-gated drag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PutBack {
+    pass_id: String,
+    sack: Option<String>,
+    sent_ms: Option<u64>,
+}
+
+impl PutBack {
+    fn new(pass_id: String, sack: Option<String>) -> Self {
+        PutBack { pass_id, sack, sent_ms: None }
+    }
+
+    /// Advance; true once the pass is back in the sack (or there's no sack to
+    /// put it in — nothing to wait on).
+    fn tick(&mut self, ctx: &BuyTick, out: &mut Vec<BuyEvent>) -> bool {
+        let Some(sack) = self.sack.clone() else {
+            return true;
+        };
+        match self.sent_ms {
+            None => {
+                if ctx.rt_remaining > 0.0 {
+                    return false;
+                }
+                out.push(BuyEvent::Send(format!("_drag #{} #{sack}", self.pass_id)));
+                self.sent_ms = Some(ctx.now_ms);
+                false
+            }
+            Some(sent) => {
+                ctx.feedback.contains(&F::ItemStowed)
+                    || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS
+            }
+        }
+    }
+}
+
 /// The response-driven USE machine (raise a pass already HELD in the cache):
 /// preamble (open sack, drop expired) → get the pass → raise it. One command
 /// per game response — never a flood into the type-ahead buffer.
@@ -173,6 +216,7 @@ impl Preamble {
 pub struct UseState {
     pre: Preamble,
     pass_id: String,
+    sack: Option<String>,
     phase: UsePhase,
     /// The RESOLVED room the raise was sent from. The teleport is confirmed
     /// only by the whirlwind line or the resolved room CHANGING off this —
@@ -188,6 +232,8 @@ enum UsePhase {
     GetPass { sent_ms: Option<u64> },
     /// Sent `raise #pass`; waiting for the whirlwind or a failure.
     AwaitRaise { sent_ms: u64 },
+    /// Teleported; putting the pass back (response-gated) before concluding.
+    PutBack(PutBack),
 }
 
 impl UseState {
@@ -195,6 +241,7 @@ impl UseState {
         UseState {
             pre: Preamble::new(sack, expired),
             pass_id: pass_id.to_string(),
+            sack: sack.map(str::to_string),
             phase: UsePhase::GetPass { sent_ms: None },
             raised_from: None,
         }
@@ -232,15 +279,29 @@ impl UseState {
                 // room caused the live phantom second-buy.
                 let moved = ctx.current_room.is_some() && ctx.current_room != self.raised_from;
                 if saw(&F::RaiseTraveled) || moved {
-                    out.push(BuyEvent::Traveled {
-                        pass_id: Some(self.pass_id.clone()),
-                    });
+                    // Teleported: put the pass back, response-gated, BEFORE
+                    // signalling Traveled (no cleanup flood).
+                    let mut put = PutBack::new(self.pass_id.clone(), self.sack.clone());
+                    if put.tick(&ctx, &mut out) {
+                        out.push(BuyEvent::Traveled {
+                            pass_id: Some(self.pass_id.clone()),
+                        });
+                    } else {
+                        self.phase = UsePhase::PutBack(put);
+                    }
                 } else if saw(&F::RaiseWrongRoom) {
                     out.push(BuyEvent::Failed(
                         "the pass raise was refused (wrong room or bad pass)".into(),
                     ));
                 } else if ctx.now_ms.saturating_sub(*sent_ms) > RESP_TIMEOUT_MS {
                     out.push(BuyEvent::Failed("the pass raise didn't complete".into()));
+                }
+            }
+            UsePhase::PutBack(put) => {
+                if put.tick(&ctx, &mut out) {
+                    out.push(BuyEvent::Traveled {
+                        pass_id: Some(self.pass_id.clone()),
+                    });
                 }
             }
         }
@@ -410,13 +471,38 @@ impl BuyState {
                 let moved =
                     ctx.current_room.is_some() && ctx.current_room != self.raised_from;
                 if saw(&F::RaiseTraveled) || moved {
-                    out.push(BuyEvent::Traveled { pass_id: self.pass_id.clone() });
+                    // Put the bought pass back (response-gated) before
+                    // Traveled — but only when we captured its id; without an
+                    // id there's nothing to drag by.
+                    match &self.pass_id {
+                        Some(id) => {
+                            let mut put =
+                                PutBack::new(id.clone(), self.pre.sack.clone());
+                            if put.tick(&ctx, &mut out) {
+                                out.push(BuyEvent::Traveled {
+                                    pass_id: self.pass_id.clone(),
+                                });
+                            } else {
+                                self.phase = Phase::PutBack(put);
+                            }
+                        }
+                        None => {
+                            out.push(BuyEvent::Traveled { pass_id: None });
+                        }
+                    }
                 } else if saw(&F::RaiseWrongRoom) {
                     out.push(BuyEvent::Failed(
                         "couldn't raise the pass here (not the Chronomage waiting room)".into(),
                     ));
                 } else if timed_out(*sent_ms) {
                     out.push(BuyEvent::Failed("the pass raise didn't complete".into()));
+                }
+                out
+            }
+            Phase::PutBack(put) => {
+                if put.tick(&ctx, &mut out) {
+                    let pass_id = self.pass_id.clone();
+                    out.push(BuyEvent::Traveled { pass_id });
                 }
                 out
             }
