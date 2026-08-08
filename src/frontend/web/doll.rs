@@ -29,6 +29,12 @@ pub struct DollSkinPayload {
     /// Protocol part key -> severity levels (1-6) with overlay art on
     /// disk; those levels render the overlay instead of a dot.
     pub overlays: BTreeMap<String, Vec<u8>>,
+    /// Protocol part keys with a `healthy` (level 0) overlay on disk,
+    /// drawn while the part is uninjured. Kept separate from `overlays`
+    /// so severity-dot logic never sees a level 0. A part listed in
+    /// EITHER field is fully hand-drawn: a level with no art lets the
+    /// base show through instead of falling back to a dot.
+    pub healthy: Vec<String>,
 }
 
 /// Generated-dot styling, mirroring `[injury_doll.dots]`.
@@ -82,6 +88,7 @@ pub fn payload_from_doll(doll: &InjuryDollSkin, root: Option<&Path>) -> DollSkin
     }
 
     let mut overlays: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let mut healthy: Vec<String> = Vec::new();
     for (part, levels) in &doll.parts {
         // Unknown part names can't be placed client-side; skip them the
         // same way the GUI's canonical part loop never asks for them.
@@ -102,10 +109,17 @@ pub fn payload_from_doll(doll: &InjuryDollSkin, root: Option<&Path>) -> DollSkin
             })
             .collect();
         present.sort_unstable();
+        // Level 0 (the `healthy` overlay) rides its own field so the
+        // severity-dot path never sees it.
+        if present.first() == Some(&0) {
+            present.remove(0);
+            healthy.push((*canonical).to_string());
+        }
         if !present.is_empty() {
             overlays.insert((*canonical).to_string(), present);
         }
     }
+    healthy.sort_unstable();
 
     DollSkinPayload {
         base: true,
@@ -117,6 +131,7 @@ pub fn payload_from_doll(doll: &InjuryDollSkin, root: Option<&Path>) -> DollSkin
             diameter: doll.dots.diameter.clamp(0.01, 0.5),
         },
         overlays,
+        healthy,
     }
 }
 
@@ -162,6 +177,8 @@ fn active_doll() -> Option<(InjuryDollSkin, PathBuf)> {
             base: Some(image),
             anchors: sidecar.anchors,
             dots: sidecar.dots,
+            // Pool dolls carry no overlay art and no variants.
+            variants: Default::default(),
             parts: Default::default(),
         };
         return Some((doll, root));
@@ -187,6 +204,60 @@ mod tests {
         assert!(!payload.base);
         assert!(payload.anchors.is_empty());
         assert!(payload.overlays.is_empty());
+        assert!(payload.healthy.is_empty());
+    }
+
+    #[test]
+    fn healthy_levels_ride_their_own_field() {
+        let payload = payload_from_doll(
+            &doll(
+                r#"
+                [injury_doll]
+                base = "doll/base.png"
+
+                [injury_doll.leftArm]
+                healthy = "doll/arm_ok.png"
+                injury2 = "doll/arm_i2.png"
+
+                [injury_doll.leftLeg]
+                healthy = "doll/leg_ok.png"
+
+                [injury_doll.head]
+                injury1 = "doll/head_i1.png"
+                "#,
+            ),
+            None,
+        );
+        // Level 0 never appears in overlays; it lists under `healthy`.
+        assert_eq!(payload.healthy, vec!["leftArm", "leftLeg"]);
+        assert_eq!(payload.overlays["leftArm"], vec![2]);
+        // A healthy-only part contributes no overlays entry at all.
+        assert!(!payload.overlays.contains_key("leftLeg"));
+        // A part with no healthy art is untouched by the new field.
+        assert_eq!(payload.overlays["head"], vec![1]);
+    }
+
+    #[test]
+    fn payload_without_healthy_art_matches_previous_shape() {
+        // Characterization: a skin authored before the healthy slot
+        // existed produces the same overlays map and an empty healthy
+        // list — the feature is invisible unless opted into.
+        let payload = payload_from_doll(
+            &doll(
+                r#"
+                [injury_doll]
+                base = "doll/base.png"
+
+                [injury_doll.head]
+                injury1 = "doll/head_i1.png"
+                scar3 = "doll/head_s3.png"
+                "#,
+            ),
+            None,
+        );
+        assert!(payload.healthy.is_empty());
+        assert_eq!(payload.overlays["head"], vec![1, 6]);
+        assert_eq!(payload.overlays.len(), 1);
     }
 
     #[test]
@@ -253,6 +324,7 @@ mod tests {
                 base = "base.png"
 
                 [injury_doll.head]
+                healthy = "missing_ok.png"
                 injury1 = "real.png"
                 injury2 = "missing.png"
                 "#,
@@ -260,6 +332,8 @@ mod tests {
             Some(dir.path()),
         );
         assert_eq!(payload.overlays["head"], vec![1]);
+        // A healthy image missing from disk drops out the same way.
+        assert!(payload.healthy.is_empty());
     }
 
     #[test]

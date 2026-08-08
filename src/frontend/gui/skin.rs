@@ -80,8 +80,80 @@ pub struct SkinWidgetArt {
     doll_anchors: HashMap<String, egui::Vec2>,
     /// Generated-dot styling resolved from the manifest.
     pub doll_dots: ResolvedDotStyle,
+    /// Conditional doll variants in declaration order; when one's
+    /// condition matches, its set replaces the default doll_* fields
+    /// wholesale (full replace). Empty when a doll override is active
+    /// (pool dolls carry no variants).
+    doll_variants: Vec<LoadedDollVariant>,
     /// Hotbar icon sprite sheets keyed by lowercased sheet name.
     sheets: HashMap<String, SheetArt>,
+}
+
+/// One loaded conditional doll variant: the activation condition plus a
+/// complete doll set (textures resolved at skin load, so activation is
+/// just a lookup swap at render time).
+#[derive(Debug)]
+struct LoadedDollVariant {
+    name: String,
+    when: crate::config::Condition,
+    base: Option<SkinTexture>,
+    base_gray: Option<SkinTexture>,
+    parts: HashMap<String, HashMap<u8, SkinTexture>>,
+    parts_gray: HashMap<String, HashMap<u8, SkinTexture>>,
+    anchors: HashMap<String, egui::Vec2>,
+    dots: ResolvedDotStyle,
+}
+
+/// Borrowed view of one doll set — the default `[injury_doll]` art or an
+/// active variant's — so the renderer draws either through one interface.
+#[derive(Clone, Copy)]
+pub struct DollSetView<'a> {
+    pub base: Option<SkinTexture>,
+    pub base_gray: Option<SkinTexture>,
+    parts: &'a HashMap<String, HashMap<u8, SkinTexture>>,
+    parts_gray: &'a HashMap<String, HashMap<u8, SkinTexture>>,
+    anchors: &'a HashMap<String, egui::Vec2>,
+    pub dots: ResolvedDotStyle,
+}
+
+impl DollSetView<'_> {
+    /// Hand-drawn overlay for a part at a severity level (0 = healthy).
+    pub fn overlay(&self, part: &str, level: u8) -> Option<SkinTexture> {
+        self.parts
+            .get(&part.to_ascii_lowercase())
+            .and_then(|levels| levels.get(&level))
+            .copied()
+    }
+
+    /// Grayscale overlay twin; None unless "grayscale doll" is on.
+    pub fn overlay_gray(&self, part: &str, level: u8) -> Option<SkinTexture> {
+        self.parts_gray
+            .get(&part.to_ascii_lowercase())
+            .and_then(|levels| levels.get(&level))
+            .copied()
+    }
+
+    /// True when the part ships any overlay art (healthy or severity).
+    /// Such a part is fully hand-drawn: levels without art let the base
+    /// show through instead of falling back to a generated dot.
+    pub fn has_overlays(&self, part: &str) -> bool {
+        self.parts
+            .get(&part.to_ascii_lowercase())
+            .is_some_and(|levels| !levels.is_empty())
+    }
+
+    /// Dot anchor for a body part: this set's calibrated point, else the
+    /// built-in default, else dead center (unknown part).
+    pub fn anchor(&self, part: &str) -> egui::Vec2 {
+        let key = part.to_ascii_lowercase();
+        self.anchors
+            .get(&key)
+            .copied()
+            .or_else(|| {
+                skins::default_doll_anchor(&key).map(|[x, y]| egui::vec2(x, y))
+            })
+            .unwrap_or_else(|| egui::vec2(0.5, 0.5))
+    }
 }
 
 /// One loaded hotbar sprite sheet: the texture, its lazy-built grayscale
@@ -260,12 +332,64 @@ impl SkinWidgetArt {
             .unwrap_or(egui::vec2(0.5, 0.5))
     }
 
+    /// View of one doll set: `Some(index)` = that variant's set (index
+    /// from `resolve_doll_variant`), `None` or out-of-range = the default
+    /// `[injury_doll]` set. Callers that must never variant-swap (another
+    /// player's doll) simply pass `None`.
+    pub fn doll_set(&self, variant: Option<usize>) -> DollSetView<'_> {
+        match variant.and_then(|index| self.doll_variants.get(index)) {
+            Some(v) => DollSetView {
+                base: v.base,
+                base_gray: v.base_gray,
+                parts: &v.parts,
+                parts_gray: &v.parts_gray,
+                anchors: &v.anchors,
+                dots: v.dots,
+            },
+            None => DollSetView {
+                base: self.doll_base,
+                base_gray: self.doll_base_gray,
+                parts: &self.doll_parts,
+                parts_gray: &self.doll_parts_gray,
+                anchors: &self.doll_anchors,
+                dots: self.doll_dots,
+            },
+        }
+    }
+
+    /// Evaluate variant conditions against the character's state, in
+    /// declaration order; first match wins, None = use the default set.
+    /// Conditions read SELF state, so this is only meaningful for the
+    /// character's own doll — never resolve for another player's.
+    pub fn resolve_doll_variant(
+        &self,
+        gs: &crate::core::state::GameState,
+        now_server: i64,
+        gameobj: Option<&crate::core::gameobj_data::GameObjData>,
+    ) -> Option<usize> {
+        self.doll_variants
+            .iter()
+            .position(|variant| {
+                crate::core::conditions::eval_condition(&variant.when, gs, now_server, gameobj)
+            })
+    }
+
+    /// Names of the loaded doll variants, in declaration order (for
+    /// editors and diagnostics).
+    pub fn doll_variant_names(&self) -> Vec<&str> {
+        self.doll_variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect()
+    }
+
     fn is_empty(&self) -> bool {
         self.icons.is_empty()
             && self.compass_rose.is_none()
             && self.compass_dirs.is_empty()
             && self.doll_base.is_none()
             && self.doll_parts.is_empty()
+            && self.doll_variants.is_empty()
             && self.sheets.is_empty()
             && self.pool_icons.is_empty()
     }
@@ -747,7 +871,7 @@ impl SkinState {
             for (key, path) in levels {
                 let Some(level) = skins::severity_level_from_key(key) else {
                     tracing::warn!(
-                        "Skin injury_doll.{}: unknown severity key '{}' (expected injury1-3/scar1-3)",
+                        "Skin injury_doll.{}: unknown severity key '{}' (expected healthy/injury1-3/scar1-3)",
                         part,
                         key
                     );
@@ -855,6 +979,69 @@ impl SkinState {
             }
         }
 
+        // Conditional doll variants: each is a complete replacement set,
+        // loaded up front so activation at render time is just a lookup
+        // swap. A doll override (pool picker) replaces the skin's doll
+        // wholesale and pool dolls carry no variants, so overrides leave
+        // this empty.
+        if self.doll_override.is_none() {
+            for variant in &self.manifest.injury_doll.variants {
+                let mut loaded = LoadedDollVariant {
+                    name: variant.name.clone(),
+                    when: variant.when.clone(),
+                    base: variant.skin.base.as_ref().and_then(tex),
+                    base_gray: None,
+                    parts: HashMap::new(),
+                    parts_gray: HashMap::new(),
+                    anchors: HashMap::new(),
+                    dots: ResolvedDotStyle::from_spec(&variant.skin.dots),
+                };
+                for (part, anchor) in &variant.skin.anchors {
+                    loaded.anchors.insert(
+                        part.to_ascii_lowercase(),
+                        egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
+                    );
+                }
+                for (part, levels) in &variant.skin.parts {
+                    for (key, path) in levels {
+                        let Some(level) = skins::severity_level_from_key(key) else {
+                            tracing::warn!(
+                                "Skin injury_doll variant '{}', part {}: unknown severity key '{}' (expected healthy/injury1-3/scar1-3)",
+                                variant.name,
+                                part,
+                                key
+                            );
+                            continue;
+                        };
+                        if let Some(texture) = tex(path) {
+                            loaded
+                                .parts
+                                .entry(part.to_ascii_lowercase())
+                                .or_default()
+                                .insert(level, texture);
+                        }
+                        if self.gray_doll {
+                            if let Some(texture) = tex(&format!("{path}#gray")) {
+                                loaded
+                                    .parts_gray
+                                    .entry(part.to_ascii_lowercase())
+                                    .or_default()
+                                    .insert(level, texture);
+                            }
+                        }
+                    }
+                }
+                if self.gray_doll {
+                    loaded.base_gray = variant
+                        .skin
+                        .base
+                        .as_ref()
+                        .and_then(|p| tex(&format!("{p}#gray")));
+                }
+                art.doll_variants.push(loaded);
+            }
+        }
+
         if art.is_empty() {
             None
         } else {
@@ -903,6 +1090,16 @@ impl SkinState {
                 .values()
                 .flat_map(|levels| levels.values().cloned()),
         );
+        for variant in &self.manifest.injury_doll.variants {
+            images.extend(variant.skin.base.iter().cloned());
+            images.extend(
+                variant
+                    .skin
+                    .parts
+                    .values()
+                    .flat_map(|levels| levels.values().cloned()),
+            );
+        }
         for image in images {
             if self.textures.contains_key(&image) {
                 continue;
@@ -954,6 +1151,16 @@ impl SkinState {
                             .values()
                             .flat_map(|levels| levels.values().cloned()),
                     );
+                    for variant in &self.manifest.injury_doll.variants {
+                        gray_paths.extend(variant.skin.base.iter().cloned());
+                        gray_paths.extend(
+                            variant
+                                .skin
+                                .parts
+                                .values()
+                                .flat_map(|levels| levels.values().cloned()),
+                        );
+                    }
                 }
             }
         }
@@ -2087,6 +2294,82 @@ cell = 32
         assert_eq!(manifest.injury_doll.anchors["chest"], [0.5, 0.3]);
         // No spurious [injury_doll] header for the implicit parent table.
         assert!(!updated.contains("[injury_doll]\n"));
+    }
+
+    #[test]
+    fn doll_variant_resolution_is_first_match_and_full_replace() {
+        let texture = SkinTexture {
+            texture: egui::TextureId::default(),
+            size: egui::vec2(8.0, 8.0),
+        };
+        let injury = |area: &str, level: u8| crate::config::Condition::Injury {
+            area: area.to_string(),
+            cmp: crate::config::Cmp::Ge,
+            level,
+        };
+        let empty_variant = |name: &str, when: crate::config::Condition| LoadedDollVariant {
+            name: name.to_string(),
+            when,
+            base: Some(texture),
+            base_gray: None,
+            parts: HashMap::new(),
+            parts_gray: HashMap::new(),
+            anchors: HashMap::new(),
+            dots: ResolvedDotStyle::default(),
+        };
+
+        let mut art = SkinWidgetArt::default();
+        art.doll_base = Some(texture);
+        // The default set hand-draws leftArm (a healthy layer).
+        art.doll_parts
+            .entry("leftarm".to_string())
+            .or_default()
+            .insert(0, texture);
+        art.doll_variants.push(empty_variant(
+            "downed",
+            crate::config::Condition::All {
+                conditions: vec![injury("leftLeg", 3), injury("rightLeg", 3)],
+            },
+        ));
+        art.doll_variants
+            .push(empty_variant("hurt", injury("leftLeg", 1)));
+
+        let mut gs = crate::core::state::GameState::new();
+        // Healthy: no variant matches -> default set.
+        assert_eq!(art.resolve_doll_variant(&gs, 0, None), None);
+        // One severed leg: only the broader "hurt" variant matches.
+        gs.injuries.insert("leftLeg".to_string(), 3);
+        assert_eq!(art.resolve_doll_variant(&gs, 0, None), Some(1));
+        // Both legs severed: both match; first declared wins.
+        gs.injuries.insert("rightLeg".to_string(), 3);
+        assert_eq!(art.resolve_doll_variant(&gs, 0, None), Some(0));
+
+        // Full replace: the variant view exposes only its own art — the
+        // default set's hand-drawn leftArm does not leak through.
+        let default_view = art.doll_set(None);
+        assert!(default_view.has_overlays("leftArm"));
+        assert!(default_view.overlay("LEFTARM", 0).is_some());
+        let variant_view = art.doll_set(Some(0));
+        assert!(!variant_view.has_overlays("leftArm"));
+        assert!(variant_view.overlay("leftArm", 0).is_none());
+        // Out-of-range index falls back to the default set.
+        assert!(art.doll_set(Some(9)).has_overlays("leftArm"));
+        // Variant art alone keeps the whole widget-art bundle alive.
+        assert!(!art.is_empty());
+    }
+
+    #[test]
+    fn doll_set_view_anchor_falls_back_like_the_default() {
+        let mut art = SkinWidgetArt::default();
+        art.doll_anchors
+            .insert("head".to_string(), egui::vec2(0.4, 0.2));
+        let view = art.doll_set(None);
+        // Calibrated part, case-insensitive.
+        assert_eq!(view.anchor("Head"), egui::vec2(0.4, 0.2));
+        // Uncalibrated known part -> built-in default; unknown -> center.
+        let [dx, dy] = skins::default_doll_anchor("leftarm").unwrap();
+        assert_eq!(view.anchor("leftArm"), egui::vec2(dx, dy));
+        assert_eq!(view.anchor("tail"), egui::vec2(0.5, 0.5));
     }
 
     #[test]

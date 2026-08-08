@@ -638,7 +638,8 @@ async fn doll_json(
 }
 
 /// Serve a doll image from the active skin: `?kind=base` or
-/// `?kind=overlay&part=<protocol name>&level=<1-6>`. Paths come from the
+/// `?kind=overlay&part=<protocol name>&level=<0-6>` (0 = the healthy
+/// overlay). Paths come from the
 /// server operator's own skin.toml (absolute paths are a manifest
 /// feature), so the only gate needed is the pairing token.
 async fn doll_image(

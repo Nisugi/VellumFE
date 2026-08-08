@@ -103,7 +103,13 @@ pub struct CompassSkin {
 /// full-canvas overlay per severity or a calibrated anchor point where the
 /// frontend draws a generated wound/scar dot. Overlay tables are keyed by
 /// body part (protocol names: head, neck, chest, ..., leftArm, nsys) with
-/// entries injury1-3 and scar1-3.
+/// entries healthy (level 0) and injury1-3 / scar1-3 (levels 1-6).
+///
+/// A part with ANY overlay art is fully hand-drawn: at a level with no
+/// art the base shows through (never a generated dot). A part with no
+/// overlay art keeps dot behavior. This supports both authoring schemes —
+/// a worst-case base with alpha holes that overlays paint back toward
+/// health, or an empty base where every state is its own overlay.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct InjuryDollSkin {
     #[serde(default)]
@@ -116,7 +122,46 @@ pub struct InjuryDollSkin {
     /// Styling for the generated dots.
     #[serde(default)]
     pub dots: DollDotSpec,
-    /// part -> { injury1 = "...", scar2 = "...", ... }
+    /// Named alternate dolls selected by game-state condition, evaluated
+    /// in declaration order, first match wins; none matching -> this
+    /// default set. A matched variant's set replaces this one wholesale
+    /// (full replace — a prone body repositions every part, so its
+    /// anchors and overlays must be authored for that layout).
+    ///
+    /// Declared as a named field (not part of the flattened part tables)
+    /// so `[[injury_doll.variants]]` never parses as a body part.
+    #[serde(default)]
+    pub variants: Vec<DollVariant>,
+    /// part -> { healthy = "...", injury1 = "...", scar2 = "...", ... }
+    #[serde(flatten)]
+    pub parts: HashMap<String, HashMap<String, String>>,
+}
+
+/// One conditional doll variant: a complete replacement doll set plus the
+/// condition that activates it. Uses the shared `Condition` vocabulary
+/// (hotbar button states, hand icon states), so `indicator` (prone,
+/// kneeling, dead, ...), `injury` (area/cmp/level), and `all`/`any`
+/// nesting all work here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DollVariant {
+    pub name: String,
+    pub when: super::conditions::Condition,
+    pub skin: DollSet,
+}
+
+/// A complete doll set as carried by a variant: same shape as the default
+/// `[injury_doll]` section minus `variants` — variants do not nest. (A
+/// `variants` key inside a variant's skin fails parse loudly rather than
+/// being silently ignored: the flatten expects part tables of strings.)
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DollSet {
+    #[serde(default)]
+    pub base: Option<String>,
+    #[serde(default)]
+    pub anchors: HashMap<String, [f32; 2]>,
+    #[serde(default)]
+    pub dots: DollDotSpec,
+    /// part -> { healthy = "...", injury1 = "...", ... }
     #[serde(flatten)]
     pub parts: HashMap<String, HashMap<String, String>>,
 }
@@ -197,10 +242,11 @@ pub fn default_doll_anchor(part: &str) -> Option<[f32; 2]> {
         .map(|(_, _, anchor)| *anchor)
 }
 
-/// Severity level for an injury-doll overlay key: injury1-3 -> 1-3,
-/// scar1-3 -> 4-6.
+/// Severity level for an injury-doll overlay key: healthy -> 0,
+/// injury1-3 -> 1-3, scar1-3 -> 4-6.
 pub fn severity_level_from_key(key: &str) -> Option<u8> {
     match key {
+        "healthy" => Some(0),
         "injury1" => Some(1),
         "injury2" => Some(2),
         "injury3" => Some(3),
@@ -211,9 +257,10 @@ pub fn severity_level_from_key(key: &str) -> Option<u8> {
     }
 }
 
-/// Inverse of `severity_level_from_key`: 1-6 -> the manifest overlay key.
+/// Inverse of `severity_level_from_key`: 0-6 -> the manifest overlay key.
 pub fn severity_key_from_level(level: u8) -> Option<&'static str> {
     match level {
+        0 => Some("healthy"),
         1 => Some("injury1"),
         2 => Some("injury2"),
         3 => Some("injury3"),
@@ -468,13 +515,41 @@ description = ""
 # opacity = 0.9
 # diameter = 0.07     # fraction of the drawn doll height
 #
-# A part can instead ship hand-drawn full-canvas overlays per severity
-# (injury1-3, scar1-3); overlays take precedence over the generated dot.
+# A part can instead ship hand-drawn full-canvas overlays per state
+# (healthy = uninjured, injury1-3 = wounds, scar1-3 = scars). A part with
+# ANY overlay art never draws a generated dot: at a state with no art the
+# base shows through. Two authoring schemes both work — a worst-case base
+# with transparent holes that overlays paint back toward health (omit a
+# state to reveal the hole = severed), or an empty base where every state
+# is its own transparent overlay. Parts you leave artless keep their dots.
 # [injury_doll.head]
+# healthy = "doll/head_ok.png"
 # injury1 = "doll/head_i1.png"
 # injury2 = "doll/head_i2.png"
 # injury3 = "doll/head_i3.png"
 # scar1 = "doll/head_s1.png"
+#
+# Named doll variants swap the ENTIRE doll (base, anchors, dots, overlays)
+# when a condition matches — evaluated in order, first match wins, none
+# matching -> the default [injury_doll] set above. Conditions use the same
+# vocabulary as hotbar button states: indicator (prone, kneeling, dead,
+# ...), injury (area/cmp/level), and all/any nesting.
+# [[injury_doll.variants]]
+# name = "downed"
+# [injury_doll.variants.when]
+# type = "any"
+# conditions = [
+#   { type = "indicator", id = "prone", active = true },
+#   { type = "all", conditions = [
+#       { type = "injury", area = "leftLeg",  cmp = ">=", level = 3 },
+#       { type = "injury", area = "rightLeg", cmp = ">=", level = 3 } ] },
+# ]
+# [injury_doll.variants.skin]
+# base = "doll/downed.png"
+# [injury_doll.variants.skin.anchors]
+# head = [0.2, 0.7]
+# [injury_doll.variants.skin.leftArm]
+# healthy = "doll/downed_arm_ok.png"
 "##;
 
 /// Create `skins/<name>/` with the commented starter skin.toml. Refuses to
@@ -923,12 +998,116 @@ mod tests {
 
     #[test]
     fn severity_levels_map_injuries_then_scars() {
+        assert_eq!(severity_level_from_key("healthy"), Some(0));
         assert_eq!(severity_level_from_key("injury1"), Some(1));
         assert_eq!(severity_level_from_key("injury3"), Some(3));
         assert_eq!(severity_level_from_key("scar1"), Some(4));
         assert_eq!(severity_level_from_key("scar3"), Some(6));
         assert_eq!(severity_level_from_key("injury4"), None);
         assert_eq!(severity_level_from_key("base"), None);
+        // Round-trip: every level 0-6 maps to a key and back.
+        for level in 0..=6u8 {
+            let key = severity_key_from_level(level).unwrap();
+            assert_eq!(severity_level_from_key(key), Some(level));
+        }
+        assert_eq!(severity_key_from_level(7), None);
+    }
+
+    #[test]
+    fn healthy_overlay_key_parses_as_level_zero_art() {
+        let manifest = manifest(
+            r#"
+            [injury_doll]
+            base = "doll/base.png"
+
+            [injury_doll.leftArm]
+            healthy = "doll/arm_ok.png"
+            injury2 = "doll/arm_i2.png"
+            "#,
+        );
+        assert_eq!(
+            manifest.injury_doll.parts["leftArm"]["healthy"],
+            "doll/arm_ok.png"
+        );
+        assert_eq!(
+            manifest.injury_doll.parts["leftArm"]["injury2"],
+            "doll/arm_i2.png"
+        );
+    }
+
+    #[test]
+    fn variants_parse_as_variants_not_as_a_body_part() {
+        // The exact requested shape: any-of prone / both legs severed.
+        let manifest = manifest(
+            r#"
+            [injury_doll]
+            base = "doll/standing.png"
+
+            [injury_doll.head]
+            injury1 = "doll/head_i1.png"
+
+            [[injury_doll.variants]]
+            name = "downed"
+            [injury_doll.variants.when]
+            type = "any"
+            conditions = [
+              { type = "indicator", id = "prone", active = true },
+              { type = "all", conditions = [
+                  { type = "injury", area = "leftLeg",  cmp = ">=", level = 3 },
+                  { type = "injury", area = "rightLeg", cmp = ">=", level = 3 } ] },
+            ]
+            [injury_doll.variants.skin]
+            base = "doll/downed.png"
+            [injury_doll.variants.skin.anchors]
+            head = [0.2, 0.7]
+            [injury_doll.variants.skin.leftArm]
+            healthy = "doll/downed_arm_ok.png"
+            "#,
+        );
+        let doll = &manifest.injury_doll;
+        // The named field claimed the key: no body part called "variants".
+        assert!(!doll.parts.contains_key("variants"));
+        assert_eq!(doll.parts["head"]["injury1"], "doll/head_i1.png");
+        assert_eq!(doll.variants.len(), 1);
+        let variant = &doll.variants[0];
+        assert_eq!(variant.name, "downed");
+        assert!(matches!(
+            variant.when,
+            super::super::conditions::Condition::Any { .. }
+        ));
+        // Full replace: the variant carries its own complete set.
+        assert_eq!(variant.skin.base.as_deref(), Some("doll/downed.png"));
+        assert_eq!(variant.skin.anchors["head"], [0.2, 0.7]);
+        assert_eq!(
+            variant.skin.parts["leftArm"]["healthy"],
+            "doll/downed_arm_ok.png"
+        );
+        assert!(!variant.skin.parts.contains_key("anchors"));
+    }
+
+    #[test]
+    fn variants_do_not_nest() {
+        // A variants array inside a variant's skin must fail parse loudly
+        // (the skin's flatten expects part tables of strings), not be
+        // silently ignored.
+        let result: Result<SkinManifest, _> = toml::from_str(
+            r#"
+            [injury_doll]
+            base = "doll/base.png"
+
+            [[injury_doll.variants]]
+            name = "downed"
+            when = { type = "indicator", id = "prone", active = true }
+            [injury_doll.variants.skin]
+            base = "doll/downed.png"
+            [[injury_doll.variants.skin.variants]]
+            name = "nested"
+            when = { type = "indicator", id = "dead", active = true }
+            [injury_doll.variants.skin.variants.skin]
+            base = "doll/dead.png"
+            "#,
+        );
+        assert!(result.is_err(), "nested variants should be a parse error");
     }
 
     #[test]

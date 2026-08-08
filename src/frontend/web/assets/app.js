@@ -5198,9 +5198,12 @@ function dotNumeralColor(hex) {
   return 0.299 * r + 0.587 * g + 0.114 * b > 140 ? "#000000" : "#ffffff";
 }
 
-// SVG for the skinned doll: base image, then per injured part either the
-// skin's overlay art (stacked full-canvas, like the GUI) or a generated
-// dot at the anchor — solid circle + numeral for wounds, ring for scars.
+// SVG for the skinned doll: base image, then per part either the skin's
+// overlay art for its current state (stacked full-canvas, like the GUI)
+// or a generated dot at the anchor — solid circle + numeral for wounds,
+// ring for scars. A part with ANY overlay art (healthy or severity) is
+// fully hand-drawn: a state with no art lets the base show through, never
+// a dot. Parts without art keep the dot behavior. Mirrors the GUI rule.
 function skinDollSvg() {
   const { w, h } = dollNatural;
   const dots = dollSkin.dots || {};
@@ -5210,14 +5213,29 @@ function skinDollSvg() {
   const r = Math.max(((dots.diameter || 0.07) * h) / 2, 3);
   const fontSize = Math.max(r * 1.3, 8);
   const parts = [`<image href="${dollImageUrl("base")}" width="${w}" height="${h}"/>`];
-  for (const [id, level] of Object.entries(injuries).sort()) {
-    if (!level || level > 6) continue;
-    if (((dollSkin.overlays || {})[id] || []).includes(level)) {
-      parts.push(
-        `<image href="${dollImageUrl("overlay", id, level)}" width="${w}" height="${h}"/>`
-      );
+  const overlays = dollSkin.overlays || {};
+  const healthySet = new Set(dollSkin.healthy || []);
+  // Walk the canonical anchor keys, not the injuries map: fully healthy
+  // parts are absent from the map, and a hand-drawn part needs its
+  // level-0 (healthy) layer drawn too.
+  for (const id of Object.keys(dollSkin.anchors || {}).sort()) {
+    const level = Number(injuries[id]) || 0;
+    if (level > 6) continue;
+    const handDrawn = healthySet.has(id) || (overlays[id] || []).length > 0;
+    if (handDrawn) {
+      if (level === 0 && healthySet.has(id)) {
+        parts.push(
+          `<image href="${dollImageUrl("overlay", id, 0)}" width="${w}" height="${h}"/>`
+        );
+      } else if (level >= 1 && (overlays[id] || []).includes(level)) {
+        parts.push(
+          `<image href="${dollImageUrl("overlay", id, level)}" width="${w}" height="${h}"/>`
+        );
+      }
+      // A state with no art: the base shows through, deliberately.
       continue;
     }
+    if (!level) continue;
     const anchor = (dollSkin.anchors || {})[id];
     if (!anchor) continue; // unknown part: the injured list below still names it
     const cx = anchor[0] * w;
