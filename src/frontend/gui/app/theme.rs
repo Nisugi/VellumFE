@@ -64,6 +64,55 @@ pub(super) fn visuals_from_theme(theme: &AppTheme) -> egui::Visuals {
     visuals
 }
 
+/// Overlay a skin's resolved UI palette onto egui `Visuals`. Because every
+/// native egui widget (editor windows, menus, dropdowns, checkboxes, radios,
+/// combos) reads its colors from this one struct, a single overlay themes the
+/// entire config/menu layer at once.
+pub(super) fn apply_ui_palette(
+    visuals: &mut egui::Visuals,
+    palette: &crate::frontend::gui::skin::ResolvedUiPalette,
+) {
+    let stroke = |c: egui::Color32| egui::Stroke::new(1.0, c);
+
+    visuals.window_fill = palette.window_bg;
+    visuals.panel_fill = palette.window_bg;
+    visuals.extreme_bg_color = palette.panel_bg;
+    visuals.faint_bg_color = palette.panel_bg;
+    visuals.window_stroke = stroke(palette.border);
+    visuals.override_text_color = Some(palette.text);
+    visuals.selection.bg_fill = palette.accent;
+    // NOTE: do NOT override selection.stroke.color — the snap alignment
+    // guides (snap.rs) draw their lines with it, so hijacking it for the
+    // palette washes those guides out. Leave it at the theme's accent.
+
+    // Buttons / interactive controls: fill + hover + border, all from the skin.
+    let w = &mut visuals.widgets;
+    w.noninteractive.bg_fill = palette.window_bg;
+    w.noninteractive.weak_bg_fill = palette.window_bg;
+    w.noninteractive.bg_stroke = stroke(palette.border);
+    w.noninteractive.fg_stroke.color = palette.text;
+
+    w.inactive.bg_fill = palette.button_bg;
+    w.inactive.weak_bg_fill = palette.button_bg;
+    w.inactive.bg_stroke = stroke(palette.border);
+    w.inactive.fg_stroke.color = palette.text;
+
+    w.hovered.bg_fill = palette.button_hover;
+    w.hovered.weak_bg_fill = palette.button_hover;
+    w.hovered.bg_stroke = stroke(palette.accent);
+    w.hovered.fg_stroke.color = palette.text;
+
+    w.active.bg_fill = palette.accent;
+    w.active.weak_bg_fill = palette.accent;
+    w.active.bg_stroke = stroke(palette.accent);
+    w.active.fg_stroke.color = palette.text;
+
+    // Open combos / menus.
+    w.open.bg_fill = palette.menu_bg;
+    w.open.weak_bg_fill = palette.menu_bg;
+    w.open.bg_stroke = stroke(palette.border);
+}
+
 /// Lazily-loaded system font database, shared by name resolution and the
 /// per-window font picker. Scanning system font dirs is done once.
 fn system_font_db() -> &'static fontdb::Database {
@@ -256,7 +305,14 @@ impl VellumGuiApp {
     /// Re-apply visuals when `config.active_theme` changes (startup, .settheme,
     /// layout-driven theme switches).
     pub(super) fn apply_theme_if_changed(&mut self, ctx: &egui::Context) {
-        if self.applied_theme_id.as_deref() == Some(self.app_core.config.active_theme.as_str()) {
+        // Re-apply when the theme OR the active skin changes: the skin's UI
+        // palette is overlaid on top of the theme visuals, so a skin switch
+        // (same theme) must rebuild the visuals too.
+        let active_skin = self.ui_settings.active_skin.clone();
+        let theme_unchanged =
+            self.applied_theme_id.as_deref() == Some(self.app_core.config.active_theme.as_str());
+        let skin_unchanged = self.applied_skin_ui_id == active_skin;
+        if theme_unchanged && skin_unchanged {
             return;
         }
         let active = self.app_core.config.active_theme.clone();
@@ -265,7 +321,18 @@ impl VellumGuiApp {
             self.app_core.config.character.as_deref(),
         );
         if let Some(theme) = presets.get(&active) {
-            ctx.set_visuals(visuals_from_theme(theme));
+            let mut visuals = visuals_from_theme(theme);
+            // Overlay the active skin's UI palette (derived from art + [ui]
+            // overrides) so config editors, menus, and native controls take
+            // on the skin. No skin / no palette -> plain theme visuals.
+            if let Some(palette) = self
+                .skin_state
+                .widget_art()
+                .and_then(|art| art.ui_palette)
+            {
+                apply_ui_palette(&mut visuals, &palette);
+            }
+            ctx.set_visuals(visuals);
             // set_visuals rebuilds Visuals wholesale; force the ui_settings
             // window radius to re-apply over it next frame.
             self.applied_window_corner_radius = None;
@@ -274,6 +341,7 @@ impl VellumGuiApp {
             tracing::warn!("Unknown theme '{}', keeping current visuals", active);
         }
         self.applied_theme_id = Some(active);
+        self.applied_skin_ui_id = active_skin;
     }
 
     /// Handle `action:settheme:<name>` from dot-commands or menus.

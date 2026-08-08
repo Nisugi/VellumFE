@@ -69,6 +69,12 @@ pub struct SkinManifest {
     /// Sprite paperdoll replacing the vector injury doll.
     #[serde(default)]
     pub injury_doll: InjuryDollSkin,
+    /// Editor/menu color palette. Every field is optional: unset colors are
+    /// auto-derived from the skin's art at load, and any `[ui]` entry
+    /// overrides its derived default. This is what makes config editors,
+    /// menus, and native egui controls take on the skin.
+    #[serde(default)]
+    pub ui: UiPalette,
     /// Nine-slice sprites for interactive dialog-panel controls (Wrayth
     /// `Button`, `DropDownBox`, ...). Keyed by `"<control>"` or
     /// `"<control>.<state>"` where state is one of normal/hover/pressed
@@ -304,6 +310,38 @@ pub struct SkinMeta {
     pub name: String,
     #[serde(default)]
     pub description: String,
+}
+
+/// Editor/menu color palette (skin.toml `[ui]`). Every field is an optional
+/// "#rrggbb" string: `None` means "auto-derive from the skin's art at load".
+/// Applied globally to egui's `Visuals`, so it colors config editors, menus,
+/// dropdowns, checkboxes/radios, and every other native control at once.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UiPalette {
+    /// Editor/window body background.
+    #[serde(default)]
+    pub window_bg: Option<String>,
+    /// Inset/panel background (list rows, sunken areas).
+    #[serde(default)]
+    pub panel_bg: Option<String>,
+    /// Button / interactive-control fill.
+    #[serde(default)]
+    pub button_bg: Option<String>,
+    /// Button fill while hovered.
+    #[serde(default)]
+    pub button_hover: Option<String>,
+    /// Body text.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Accent — selection fill, active highlights.
+    #[serde(default)]
+    pub accent: Option<String>,
+    /// Window / control border stroke.
+    #[serde(default)]
+    pub border: Option<String>,
+    /// Menu / popup background.
+    #[serde(default)]
+    pub menu_bg: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

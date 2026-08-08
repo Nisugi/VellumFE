@@ -96,6 +96,25 @@ pub struct SkinWidgetArt {
     /// lowercase `"<control>"` or `"<control>.<state>"` (e.g. "button",
     /// "button.hover", "dropdown").
     controls: HashMap<String, ResolvedBorder>,
+    /// Editor/menu color palette: derived from the skin's art at load, with
+    /// any `[ui]` manifest entry overriding its derived default. `None` when
+    /// the skin has no art to derive from and no `[ui]` — the editors keep
+    /// the plain theme visuals.
+    pub ui_palette: Option<ResolvedUiPalette>,
+}
+
+/// Resolved editor/menu colors, ready to overlay onto egui `Visuals`. Every
+/// field is a concrete color (derived-from-art default or `[ui]` override).
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedUiPalette {
+    pub window_bg: egui::Color32,
+    pub panel_bg: egui::Color32,
+    pub button_bg: egui::Color32,
+    pub button_hover: egui::Color32,
+    pub text: egui::Color32,
+    pub accent: egui::Color32,
+    pub border: egui::Color32,
+    pub menu_bg: egui::Color32,
 }
 
 /// One loaded conditional doll variant: the activation condition plus a
@@ -1104,11 +1123,85 @@ impl SkinState {
             }
         }
 
+        art.ui_palette = self.build_ui_palette();
+
         if art.is_empty() {
             None
         } else {
             Some(std::sync::Arc::new(art))
         }
+    }
+
+    /// Derive the editor/menu color palette from the skin's art, then apply
+    /// any `[ui]` manifest overrides. Returns None only when there's nothing
+    /// to derive from AND no `[ui]` entries (editors keep theme visuals).
+    fn build_ui_palette(&self) -> Option<ResolvedUiPalette> {
+        let ui = &self.manifest.ui;
+        let has_overrides = ui.window_bg.is_some()
+            || ui.panel_bg.is_some()
+            || ui.button_bg.is_some()
+            || ui.button_hover.is_some()
+            || ui.text.is_some()
+            || ui.accent.is_some()
+            || ui.border.is_some()
+            || ui.menu_bg.is_some();
+
+        // Sample key assets for derived defaults.
+        let sample = |path: &str| sample_image_colors(&self.root, path);
+        let bg_sample = skins::window_background(&self.manifest, "default")
+            .map(|b| b.image.as_str())
+            .and_then(sample);
+        let button_sample = self
+            .manifest
+            .controls
+            .get("button")
+            .map(|b| b.image.as_str())
+            .and_then(sample);
+        let accent_sample = self.manifest.compass.rose.as_deref().and_then(sample);
+
+        // Nothing to work with: no art samples and no [ui] -> keep theme.
+        let any_sample = bg_sample.is_some_and(|s| s.has_content)
+            || button_sample.is_some_and(|s| s.has_content)
+            || accent_sample.is_some_and(|s| s.has_content);
+        if !has_overrides && !any_sample {
+            return None;
+        }
+
+        // Derived defaults (fall back to tasteful dark values when a sample
+        // is missing so the palette is always complete).
+        let dark = egui::Color32::from_rgb(0x14, 0x16, 0x1b);
+        let win = bg_sample.filter(|s| s.has_content).map(|s| s.dominant).unwrap_or(dark);
+        let panel = darken(win, 0.15);
+        let btn = button_sample
+            .filter(|s| s.has_content)
+            .map(|s| s.dominant)
+            .unwrap_or_else(|| lighten_c(win, 0.10));
+        let btn_hover = lighten_c(btn, 0.18);
+        let border = button_sample
+            .filter(|s| s.has_content)
+            .map(|s| s.edge)
+            .or_else(|| bg_sample.filter(|s| s.has_content).map(|s| s.edge))
+            .unwrap_or_else(|| lighten_c(win, 0.25));
+        let accent = accent_sample
+            .filter(|s| s.has_content)
+            .map(|s| s.dominant)
+            .unwrap_or_else(|| egui::Color32::from_rgb(0xe8, 0x93, 0x3a));
+        let text = readable_on(win);
+
+        // Apply [ui] overrides where present.
+        let ov = |field: &Option<String>, default: egui::Color32| {
+            field.as_deref().and_then(parse_hex_rgb).unwrap_or(default)
+        };
+        Some(ResolvedUiPalette {
+            window_bg: ov(&ui.window_bg, win),
+            panel_bg: ov(&ui.panel_bg, panel),
+            button_bg: ov(&ui.button_bg, btn),
+            button_hover: ov(&ui.button_hover, btn_hover),
+            text: ov(&ui.text, text),
+            accent: ov(&ui.accent, accent),
+            border: ov(&ui.border, border),
+            menu_bg: ov(&ui.menu_bg, panel),
+        })
     }
 
     fn load_textures(&mut self, ctx: &egui::Context, skin_name: &str) {
@@ -1510,6 +1603,97 @@ fn load_thumbnail_impl(
         color_image,
         egui::TextureOptions::LINEAR,
     ))
+}
+
+/// Colors sampled from one skin image for palette derivation: the dominant
+/// opaque color (coarse histogram peak — good for fills) and the average of
+/// the edge ring (good for a nine-slice frame's border color).
+#[derive(Debug, Clone, Copy)]
+pub struct SampledColors {
+    pub dominant: egui::Color32,
+    pub edge: egui::Color32,
+    /// True if the image had meaningful opaque content to sample.
+    pub has_content: bool,
+}
+
+/// Decode a skin image (skin dir, then pool) and sample its dominant + edge
+/// colors. Bounded work: decodes once at skin load, thumbnails big images.
+fn sample_image_colors(root: &Path, image_path: &str) -> Option<SampledColors> {
+    let path = skins::resolve_image_path(root, image_path);
+    let bytes = std::fs::read(&path).ok()?;
+    let decoded = image::load_from_memory(&bytes).ok()?;
+    // Cap sampling cost on large atlases.
+    let small = decoded.thumbnail(96, 96);
+    let rgba = small.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    // Dominant: coarse 4-bit-per-channel histogram over opaque pixels.
+    let mut hist: std::collections::HashMap<u16, (u32, u64, u64, u64)> =
+        std::collections::HashMap::new();
+    let mut opaque = 0u32;
+    for px in rgba.pixels() {
+        let [r, g, b, a] = px.0;
+        if a < 32 {
+            continue;
+        }
+        opaque += 1;
+        let key = ((r as u16 >> 4) << 8) | ((g as u16 >> 4) << 4) | (b as u16 >> 4);
+        let e = hist.entry(key).or_insert((0, 0, 0, 0));
+        e.0 += 1;
+        e.1 += r as u64;
+        e.2 += g as u64;
+        e.3 += b as u64;
+    }
+    if opaque == 0 {
+        return Some(SampledColors {
+            dominant: egui::Color32::TRANSPARENT,
+            edge: egui::Color32::TRANSPARENT,
+            has_content: false,
+        });
+    }
+    let dominant = hist
+        .values()
+        .max_by_key(|(count, ..)| *count)
+        .map(|(count, r, g, b)| {
+            let c = *count as u64;
+            egui::Color32::from_rgb(
+                (r / c) as u8,
+                (g / c) as u8,
+                (b / c) as u8,
+            )
+        })
+        .unwrap_or(egui::Color32::DARK_GRAY);
+    // Edge ring average (border color for nine-slice frames): the outermost
+    // 2px, opaque pixels only.
+    let (mut er, mut eg, mut eb, mut en) = (0u64, 0u64, 0u64, 0u64);
+    for y in 0..h {
+        for x in 0..w {
+            let on_edge = x < 2 || y < 2 || x >= w - 2 || y >= h - 2;
+            if !on_edge {
+                continue;
+            }
+            let [r, g, b, a] = rgba.get_pixel(x, y).0;
+            if a < 32 {
+                continue;
+            }
+            er += r as u64;
+            eg += g as u64;
+            eb += b as u64;
+            en += 1;
+        }
+    }
+    let edge = if en > 0 {
+        egui::Color32::from_rgb((er / en) as u8, (eg / en) as u8, (eb / en) as u8)
+    } else {
+        dominant
+    };
+    Some(SampledColors {
+        dominant,
+        edge,
+        has_content: true,
+    })
 }
 
 fn load_texture_impl(
@@ -2093,6 +2277,30 @@ pub fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(egui::Color32::from_rgb(r, g, b))
+}
+
+/// Blend a color toward black by `t` (0..=1).
+fn darken(c: egui::Color32, t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |v: u8| (v as f32 * (1.0 - t)).round() as u8;
+    egui::Color32::from_rgb(ch(c.r()), ch(c.g()), ch(c.b()))
+}
+
+/// Blend a color toward white by `t` (0..=1).
+fn lighten_c(c: egui::Color32, t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |v: u8| v.saturating_add(((255 - v) as f32 * t).round() as u8);
+    egui::Color32::from_rgb(ch(c.r()), ch(c.g()), ch(c.b()))
+}
+
+/// Near-white or near-black text, whichever reads better on `bg`.
+fn readable_on(bg: egui::Color32) -> egui::Color32 {
+    let luma = 0.299 * bg.r() as f32 + 0.587 * bg.g() as f32 + 0.114 * bg.b() as f32;
+    if luma > 140.0 {
+        egui::Color32::from_rgb(0x1a, 0x1a, 0x1a)
+    } else {
+        egui::Color32::from_rgb(0xe0, 0xdc, 0xd2)
+    }
 }
 
 #[cfg(test)]

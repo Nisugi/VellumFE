@@ -345,6 +345,10 @@ pub struct VellumGuiApp {
     layout_dirty: bool,
     layout_dirty_since: Option<Instant>,
     applied_theme_id: Option<String>,
+    /// Active skin id whose UI palette was last overlaid onto the visuals.
+    /// Paired with `applied_theme_id` so a skin switch re-applies the palette
+    /// even when the theme name is unchanged.
+    applied_skin_ui_id: Option<String>,
     current_theme: crate::theme::AppTheme,
     /// Active skin graphics (ui_settings.active_skin); reloaded when it changes.
     skin_state: skin::SkinState,
@@ -862,6 +866,7 @@ impl VellumGuiApp {
             layout_dirty: migrated_gui || seeded_active_skin,
             layout_dirty_since: None,
             applied_theme_id: None,
+            applied_skin_ui_id: None,
             current_theme: crate::theme::AppTheme::default(),
             skin_state: skin::SkinState::default(),
             ui_font,
