@@ -3434,11 +3434,22 @@ impl VellumGuiApp {
         // A skin skins tabs with `[controls.tab]` (+ optional `tab.active`);
         // without it, tabs fall back to egui selectable_labels.
         let tab_art = skin_art.and_then(|art| art.control_border("tab", "normal"));
+        // Tab label color follows the skin [ui] palette so buttons match the
+        // window text scheme (orange on stealth). Active tab uses the brighter
+        // accent; inactive tabs use the (usually same) text color. Skins with
+        // no palette fall back to egui's default label color (None).
+        let (tab_text, tab_active_text) = skin_art
+            .and_then(|art| art.ui_palette.as_ref())
+            .map(|pal| (Some(pal.text), Some(pal.accent)))
+            .unwrap_or((None, None));
         let mut clicked = None;
         ui.horizontal_wrapped(|ui| {
             for (index, tab_state) in tabbed.tabs.iter().enumerate() {
                 let is_active = index == tabbed.active_tab_index;
                 let mut label = RichText::new(&tab_state.definition.name);
+                if let Some(color) = if is_active { tab_active_text } else { tab_text } {
+                    label = label.color(color);
+                }
                 if tab_state.has_unread && !is_active {
                     label = label.strong();
                 }
@@ -3488,7 +3499,10 @@ impl VellumGuiApp {
                 }
             }
         });
-        ui.separator();
+        // No divider line under the tab strip — the window mesh flows
+        // uninterrupted into the text area (skin look). egui's separator draws
+        // the theme's noninteractive stroke, which reads as a hard cyan line
+        // over a dark skin.
         clicked
     }
 

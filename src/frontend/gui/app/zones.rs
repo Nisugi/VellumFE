@@ -1896,8 +1896,21 @@ impl VellumGuiApp {
                 .perf_stats
                 .record_window_render(&tab.window_name, window_render_start.elapsed());
             if let Some(inner) = window_shown {
-                // Skinned title bar (under the frame so the frame edges it):
-                // sprite band + caption + close button, on the window layer.
+                // When a window owns a skinned title bar, the TITLE BAR owns the
+                // top edge: its sprite carries the top border line AND a
+                // transparent cutout notch that the window mesh (painted behind)
+                // must show through. So the window frame must NOT paint its own
+                // top edge here — an opaque frame-top would fill the notch and
+                // hide the mesh (the reported "missing cutout"). Suppress the
+                // top side of the frame border; the title bar draws it instead.
+                let border_sides = if skin_titlebar.is_some() {
+                    [false, skin_sides[1], skin_sides[2], skin_sides[3]]
+                } else {
+                    skin_sides
+                };
+                // Border first (top suppressed when titled), then the title bar
+                // ON TOP so its cutout and edge line are never overdrawn.
+                self.paint_skin_border(ctx, &tab.id.key, border_sides, &inner.response);
                 if let Some(titlebar) = &skin_titlebar {
                     self.paint_skin_titlebar(
                         ctx,
@@ -1907,7 +1920,6 @@ impl VellumGuiApp {
                         &inner.response,
                     );
                 }
-                self.paint_skin_border(ctx, &tab.id.key, skin_sides, &inner.response);
                 self.paint_border_plan(ctx, &border_plan, &inner.response);
                 // Claim the engagement latch here, where the real rendered rect
                 // and layer id are known, gated on this window being TOPMOST at

@@ -126,6 +126,13 @@ pub struct TabSettings {
     /// Mini map zoom (pixels per grid cell); None uses the widget default
     #[serde(default)]
     pub map_zoom: Option<f32>,
+
+    /// Custom title shown in the window's title bar. None/empty follows the
+    /// automatic title (the stream title, or the "A + B + C" member join for
+    /// grouped windows) — the escape hatch for groups whose auto-title runs
+    /// long.
+    #[serde(default)]
+    pub custom_title: Option<String>,
 }
 
 fn default_wrap_text() -> bool {
@@ -148,6 +155,7 @@ impl Default for TabSettings {
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
             map_zoom: None,
+            custom_title: None,
         }
     }
 }
@@ -1406,6 +1414,7 @@ mod tests {
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
             map_zoom: None,
+            custom_title: None,
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -1631,6 +1640,7 @@ mod tests {
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
                 map_zoom: None,
+                custom_title: None,
             },
         );
         layout.set_tab_settings(

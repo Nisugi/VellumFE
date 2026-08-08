@@ -349,6 +349,13 @@ pub struct VellumGuiApp {
     /// Paired with `applied_theme_id` so a skin switch re-applies the palette
     /// even when the theme name is unchanged.
     applied_skin_ui_id: Option<String>,
+    /// Whether the last theme apply actually overlaid a skin UI palette. Skin
+    /// art loads asynchronously, so the first apply after selecting a skin can
+    /// run before `widget_art()` is ready — it would then stamp
+    /// `applied_skin_ui_id` and the same-skin guard would never re-apply once
+    /// the art (and its palette) finished loading, leaving menus on the plain
+    /// theme colors. Re-apply while this is false but a palette is now available.
+    applied_skin_had_palette: bool,
     current_theme: crate::theme::AppTheme,
     /// Active skin graphics (ui_settings.active_skin); reloaded when it changes.
     skin_state: skin::SkinState,
@@ -875,6 +882,7 @@ impl VellumGuiApp {
             layout_dirty_since: None,
             applied_theme_id: None,
             applied_skin_ui_id: None,
+            applied_skin_had_palette: false,
             current_theme: crate::theme::AppTheme::default(),
             skin_state: skin::SkinState::default(),
             ui_font,
@@ -1806,6 +1814,18 @@ impl VellumGuiApp {
     /// Display title for a docked window: grouped leaders show all member
     /// titles joined; everything else shows its own title.
     fn window_display_title(&self, tab: &GuiTab) -> String {
+        // A per-window custom title (Edit Window dialog) wins over both the
+        // stream title and the grouped-member join — the escape hatch for
+        // groups whose auto-title runs long. Empty/whitespace falls through.
+        if let Some(custom) = self
+            .tab_settings
+            .get(&tab.id.key)
+            .and_then(|settings| settings.custom_title.as_deref())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            return custom.to_string();
+        }
         match self.group_for_tab(&tab.id.key) {
             Some(group) if group.members.first() == Some(&tab.id.key) => group
                 .members
@@ -1825,6 +1845,15 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         tab: &GuiTab,
     ) -> Option<GuiLinkClick> {
+        // Game content is NOT UI chrome: a skin's [ui] palette colors menus and
+        // editors (its `text` can be an accent like stealth's orange), but story
+        // / spells / room / inventory text must stay in the theme's own text
+        // color, never the chrome accent. Pin the game text color here so every
+        // window's content is immune to the global chrome `override_text_color`;
+        // explicit per-span colors (highlights, links, stream colors) still win.
+        let game_text = theme::color32(self.current_theme.text_primary);
+        ui.visuals_mut().override_text_color = Some(game_text);
+        ui.visuals_mut().widgets.noninteractive.fg_stroke.color = game_text;
         let members: Vec<GuiTab> = match self.group_for_tab(&tab.id.key) {
             Some(group) => group
                 .members
@@ -2676,15 +2705,28 @@ impl VellumGuiApp {
                 )
             })
             .unwrap_or((0.0, 0.0, 0.0));
-        let close_art = self
-            .skin_state
-            .widget_art()
-            .and_then(|art| art.icon("titlebar_close"));
-        let close_size = height * 0.7;
-        let layout = zones::titlebar_layout(response.rect, height, fl, fr, ft, close_size);
+        // No skinned close button: the title bar shows caption + cutout only,
+        // and windows hide via the Windows menu / right-click (like the layout
+        // widgets). Passing close_size 0 lets the caption reclaim the full bar.
+        let layout = zones::titlebar_layout(response.rect, height, fl, fr, ft, 0.0);
         let painter = ctx.layer_painter(response.layer_id);
 
-        // Band (nine-slice across the top strip).
+        // Fill the band region with the window's own mesh BEFORE the sprite, so
+        // the sprite's transparent cutout notch reveals mesh (not bare panel
+        // fill) — the Wrayth look. The content mesh only reaches the content
+        // rect (below the reserved title inset), so without this the band area
+        // above it has no mesh to show through. Painted at the sprite's own UV
+        // scale via background_shapes, clipped to the band.
+        if let Some(background) = self.widget_render_settings(key).background {
+            let scrim = ctx.global_style().visuals.window_fill();
+            let shapes = skin::background_shapes(layout.bar, &background, scrim);
+            painter
+                .with_clip_rect(layout.bar)
+                .add(egui::Shape::Vec(shapes));
+        }
+
+        // Band sprite over the mesh: its transparent notch lets the mesh show
+        // through, and its opaque edge carries the grey line under the bar.
         skin::paint_nine_slice(&painter, layout.bar, titlebar, [true; 4]);
 
         // Caption, left-aligned within its area, vertically centered.
@@ -2693,47 +2735,25 @@ impl VellumGuiApp {
             None => window_name.to_string(),
         };
         let visuals = ctx.global_style().visuals.clone();
+        // Caption color follows the skin's [ui] palette accent so titles match
+        // the skin scheme — orange on stealth — instead of the theme's white.
+        // Accent (not text) so it stays a title highlight without repainting
+        // all body UI text; falls back to the theme text color when no palette.
+        let caption_color = self
+            .skin_state
+            .widget_art()
+            .and_then(|art| art.ui_palette.as_ref().map(|pal| pal.accent))
+            .unwrap_or_else(|| visuals.text_color());
         if !caption.is_empty() {
             painter.text(
                 egui::pos2(layout.caption.left() + 4.0, layout.caption.center().y),
                 egui::Align2::LEFT_CENTER,
                 caption,
                 egui::FontId::proportional((height * 0.6).clamp(9.0, 16.0)),
-                visuals.text_color(),
+                caption_color,
             );
         }
 
-        // Close button. This egui fork's Context has no post-show `interact`,
-        // so hit-test the pointer against the close rect directly: hover for
-        // the tint, a completed click over it hides the window.
-        let (hovered, clicked) = ctx.input(|i| {
-            let over = i.pointer.hover_pos().is_some_and(|p| layout.close.contains(p));
-            (over, over && i.pointer.primary_clicked())
-        });
-        if let Some(icon) = close_art {
-            let dest = skin::icon_dest(&icon, layout.close);
-            let tint = if hovered {
-                egui::Color32::WHITE
-            } else {
-                egui::Color32::from_rgb(0xc8, 0xc8, 0xc8)
-            };
-            skin::paint_icon(&painter, dest, &icon, tint);
-        } else {
-            painter.text(
-                layout.close.center(),
-                egui::Align2::CENTER_CENTER,
-                "✕",
-                egui::FontId::proportional(close_size.clamp(9.0, 16.0)),
-                if hovered {
-                    egui::Color32::WHITE
-                } else {
-                    visuals.weak_text_color()
-                },
-            );
-        }
-        if clicked {
-            self.core_hide_tab(key);
-        }
     }
 
     /// Paint the skin's nine-slice border over a rendered window, on the
@@ -6860,6 +6880,10 @@ impl eframe::App for VellumGuiApp {
         egui::Panel::top("gui_shell_toolbar")
             .resizable(false)
             .exact_size(30.0)
+            // No divider under the header bar — the theme's separator stroke
+            // reads as a hard cyan line above the central zone over a dark
+            // skin. Let the mesh meet the toolbar directly.
+            .show_separator_line(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Flat toolbar: no resting chip background on the zone

@@ -312,7 +312,20 @@ impl VellumGuiApp {
         let theme_unchanged =
             self.applied_theme_id.as_deref() == Some(self.app_core.config.active_theme.as_str());
         let skin_unchanged = self.applied_skin_ui_id == active_skin;
-        if theme_unchanged && skin_unchanged {
+        // Skin (un)load is async — `skin_state.apply_if_changed` runs LATER in
+        // the frame than this, so on the switch frame `widget_art()` still holds
+        // the OLD state: on skin-on it's not yet loaded (palette absent), on
+        // `.setskin none` it's not yet cleared (palette still present). Either
+        // way the same-skin guard would then freeze the wrong palette in — menus
+        // stuck plain on skin-on, or titles stuck orange after skin-off. Re-apply
+        // whenever the palette's PRESENCE differs from what we last applied, in
+        // BOTH directions, so the next frame corrects it once art settles.
+        let palette_now_available = self
+            .skin_state
+            .widget_art()
+            .is_some_and(|art| art.ui_palette.is_some());
+        let palette_presence_changed = palette_now_available != self.applied_skin_had_palette;
+        if theme_unchanged && skin_unchanged && !palette_presence_changed {
             return;
         }
         let active = self.app_core.config.active_theme.clone();
@@ -325,13 +338,17 @@ impl VellumGuiApp {
             // Overlay the active skin's UI palette (derived from art + [ui]
             // overrides) so config editors, menus, and native controls take
             // on the skin. No skin / no palette -> plain theme visuals.
-            if let Some(palette) = self
+            let applied_palette = if let Some(palette) = self
                 .skin_state
                 .widget_art()
                 .and_then(|art| art.ui_palette)
             {
                 apply_ui_palette(&mut visuals, &palette);
-            }
+                true
+            } else {
+                false
+            };
+            self.applied_skin_had_palette = applied_palette;
             ctx.set_visuals(visuals);
             // set_visuals rebuilds Visuals wholesale; force the ui_settings
             // window radius to re-apply over it next frame.
