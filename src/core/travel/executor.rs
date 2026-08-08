@@ -1615,8 +1615,9 @@ impl TravelTask {
         match outcome {
             BuyEvent::Send(_) => unreachable!("Send is relayed by the tick fns"),
             BuyEvent::Traveled { pass_id } => {
+                // take(): a second (spurious) conclusion can never re-drag.
                 if let (Some(sack), Some(id)) =
-                    (self.day_pass_buy_sack.clone(), pass_id.as_ref())
+                    (self.day_pass_buy_sack.take(), pass_id.as_ref())
                 {
                     events.push(TravelEvent::Send(format!("_drag #{id} #{sack}")));
                 }
@@ -1641,19 +1642,27 @@ impl TravelTask {
                 }
                 // Close the sack only if we opened it (skipped when the game
                 // said "That is already open").
-                self.day_pass_buy_sack = None;
                 self.flush_day_pass_close(events);
-                // The raise teleported us to the day-pass edge's dest. Ban
-                // this edge for the rest of the trip (we won't buy a second
-                // pass to move locally) and re-path to the real destination
-                // from where the pass dropped us — don't blindly arrive(),
-                // which raced a stale room and re-entered a second buy.
+                // The raise teleported us to the day-pass edge's dest. Ban the
+                // edge for the rest of the trip (no second pass to move
+                // locally). CRITICAL: the landing may not have RESOLVED yet —
+                // never re-plan against a possibly-stale room (the live
+                // phantom second-buy: repathing from the stale departure room
+                // routed into ANOTHER day-pass edge and ran its clerk
+                // conversation in the wrong room). If the room has resolved,
+                // advance normally; otherwise arrival-watch the KNOWN landing
+                // room and let the normal machinery take it from there.
                 let dest = self.day_pass_buy_dest;
                 self.banned.insert((self.day_pass_buy_from, dest));
-                if current == self.destination {
+                if current == dest || current == self.destination {
                     self.arrive();
                 } else {
-                    self.repath(ctx.db, dest, events);
+                    self.step = Step::AwaitArrival {
+                        expected: dest,
+                        from: self.day_pass_buy_from,
+                        sent_ms: ctx.now_ms,
+                        slow: true,
+                    };
                 }
                 // If the FillHands retrieval is still running, suspend into
                 // Stashing over whatever step arrive/repath chose — otherwise
@@ -3480,6 +3489,82 @@ mod tests {
         assert!(
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
             "still arrives: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn day_pass_raise_conclusion_waits_for_the_resolved_room() {
+        // The live phantom-second-buy: the raise's nav landed while the
+        // resolver still read the DEPARTURE room; concluding then re-planned
+        // from the stale room, banned the used edge, and routed into ANOTHER
+        // day-pass edge ("day pass to solhaven - buying" in the wrong room).
+        use crate::core::day_pass::DayPassCache;
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 8635, "uid": [98635], "location": "T", "title": ["[Wehnimer's Shop]"],
+                 "wayto": {"8916": ";e day_pass_proc"}, "timeto": {"8916": 0.8}, "paths": ""},
+                {"id": 8916, "uid": [98916], "location": "T", "title": ["[Icemule Loci]"],
+                 "wayto": {"8635": ";e day_pass_proc"}, "timeto": {"8635": 0.8}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let mut cache = DayPassCache::default();
+        cache.parse_line(r#"This <a exist="77" noun="pass">pass</a> entitles the original purchaser to one (1) day of unlimited travel between the towns of Icemule Trace and Wehnimer's Landing, commencing now."#);
+        cache.parse_line("[Your pass will expire on Fri Aug 22 14:30:00 ET 2038.");
+
+        macro_rules! dpctx {
+            ($now:expr, $cur:expr, $fb:expr) => {{
+                let dp = DayPassInputs {
+                    sack_id: Some("99"),
+                    buy_day_pass: "",
+                    get_silvers: false,
+                    cache: &cache,
+                    now_epoch: 0,
+                    hidden: false,
+                };
+                TravelContext {
+                    db: &db, current_room: Some($cur), dead: false, muckled: false,
+                    standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
+                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    day_pass: Some(dp),
+                }
+            }};
+        }
+
+        // Walk the machine to the raise.
+        task.tick(dpctx!(0, 8635, &[]));
+        task.tick(dpctx!(1_000, 8635, &[F::ContainerAlreadyOpen]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        assert_eq!(sent(&ev), ["raise #77"]);
+        // A stray nav with the room STILL the departure room: must NOT
+        // conclude (no cleanup sends, no phantom crossing).
+        let ev = task.tick(dpctx!(3_000, 8635, &[F::NavArrived]));
+        assert!(ev.is_empty(), "stale-room nav must not conclude the raise: {ev:?}");
+        // The whirlwind line arrives while the room is STILL stale: cleanup
+        // runs, but the trip must arrival-watch the KNOWN landing room —
+        // never re-plan from the stale departure room (no ask/open phantom).
+        let ev = task.tick(dpctx!(4_000, 8635, &[F::RaiseTraveled]));
+        let cmds: Vec<&str> = sent(&ev);
+        assert!(cmds.contains(&"_drag #77 #99"), "cleanup runs: {ev:?}");
+        assert!(
+            !cmds.iter().any(|c| c.starts_with("ask ") || c.starts_with("open ")),
+            "no phantom second crossing from the stale room: {ev:?}"
+        );
+        assert!(
+            matches!(task.step, Step::AwaitArrival { expected: 8916, .. }),
+            "arrival-watches the known landing room: {:?}",
+            task.step
+        );
+        // The room resolves at the landing → the trip completes normally.
+        let _ = task.tick(dpctx!(5_000, 8916, &[]));
+        let ev = task.tick(dpctx!(6_000, 8916, &[]));
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            "arrives once resolved: {ev:?}"
         );
     }
 

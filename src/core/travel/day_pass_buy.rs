@@ -174,6 +174,12 @@ pub struct UseState {
     pre: Preamble,
     pass_id: String,
     phase: UsePhase,
+    /// The RESOLVED room the raise was sent from. The teleport is confirmed
+    /// only by the whirlwind line or the resolved room CHANGING off this —
+    /// never by a bare nav against a stale room (the live phantom second-buy:
+    /// concluding early re-planned from the departure room and routed into
+    /// ANOTHER day-pass edge).
+    raised_from: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -190,6 +196,7 @@ impl UseState {
             pre: Preamble::new(sack, expired),
             pass_id: pass_id.to_string(),
             phase: UsePhase::GetPass { sent_ms: None },
+            raised_from: None,
         }
     }
 
@@ -213,14 +220,18 @@ impl UseState {
                     // which fails the crossing cleanly (RaiseWrongRoom).
                     if saw(&F::ItemGot) || ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
                         out.push(BuyEvent::Send(format!("raise #{}", self.pass_id)));
+                        self.raised_from = ctx.current_room;
                         self.phase = UsePhase::AwaitRaise { sent_ms: ctx.now_ms };
                     }
                 }
             },
             UsePhase::AwaitRaise { sent_ms } => {
-                if saw(&F::RaiseTraveled)
-                    || matches!(ctx.current_room, Some(_) if saw(&F::NavArrived))
-                {
+                // The teleport is proven by the whirlwind line, or by the
+                // RESOLVED room changing off the raise room. A bare nav (or an
+                // unresolved room) is NOT enough — concluding against a stale
+                // room caused the live phantom second-buy.
+                let moved = ctx.current_room.is_some() && ctx.current_room != self.raised_from;
+                if saw(&F::RaiseTraveled) || moved {
                     out.push(BuyEvent::Traveled {
                         pass_id: Some(self.pass_id.clone()),
                     });
@@ -257,6 +268,8 @@ pub struct BuyState {
     /// funding fails instead of looping bank trips forever (Lich gives up and
     /// turns buy_day_pass off after one funded re-ask).
     funded: bool,
+    /// The RESOLVED room the raise was sent from (see UseState::raised_from).
+    raised_from: Option<u32>,
 }
 
 impl BuyState {
@@ -278,6 +291,7 @@ impl BuyState {
             phase: Phase::ToClerk { sent_ms: None },
             pass_id: None,
             funded: false,
+            raised_from: None,
         }
     }
 
@@ -390,7 +404,12 @@ impl BuyState {
                 out
             }
             Phase::AwaitRaise { sent_ms } => {
-                if saw(&F::RaiseTraveled) || matches!(ctx.current_room, Some(_) if saw(&F::NavArrived)) {
+                // Teleport proven by the whirlwind line or the RESOLVED room
+                // changing off the raise room — never a bare nav vs a stale
+                // room (see UseState::AwaitRaise).
+                let moved =
+                    ctx.current_room.is_some() && ctx.current_room != self.raised_from;
+                if saw(&F::RaiseTraveled) || moved {
                     out.push(BuyEvent::Traveled { pass_id: self.pass_id.clone() });
                 } else if saw(&F::RaiseWrongRoom) {
                     out.push(BuyEvent::Failed(
@@ -491,6 +510,7 @@ impl BuyState {
                 None => "raise pass".to_string(),
             };
             out.push(BuyEvent::Send(raise));
+            self.raised_from = ctx.current_room;
             self.phase = Phase::AwaitRaise { sent_ms: ctx.now_ms };
         } else if ctx.now_ms.saturating_sub(sent) > RESP_TIMEOUT_MS {
             out.push(BuyEvent::Failed(
