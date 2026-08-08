@@ -59,6 +59,10 @@ pub enum MoveFeedback {
     WithdrawOk,
     /// `raise`ing the pass teleported us: "whirlwind of color subsides".
     RaiseTraveled,
+    /// `open <container>` reported it was ALREADY open ("That is already
+    /// open.") — the day-pass sack was open before we touched it, so skip the
+    /// close at the end (Lich's `close_sack = true` only when IT opened it).
+    ContainerAlreadyOpen,
     /// `raise` failed because we're not in the Chronomage waiting room
     /// ("not a Chronomage teleportation waiting room" / "not valid for
     /// departures" / "As you go to raise your pass, you realize").
@@ -135,6 +139,9 @@ patterns! {
     ],
     RaiseTraveled => [
         "whirlwind of color subsides",
+    ],
+    ContainerAlreadyOpen => [
+        "That is already open",
     ],
     RaiseWrongRoom => [
         "not a Chronomage teleportation waiting room",

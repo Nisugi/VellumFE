@@ -365,6 +365,11 @@ pub struct TravelTask {
     /// The day-pass sack id (for putting the bought pass back), carried across
     /// the response-driven buy conversation (Step::DayPassBuy).
     day_pass_buy_sack: Option<String>,
+    /// Set when a day-pass crossing sends `open #sack` and still OWES a close.
+    /// Cleared WITHOUT closing if the game answers "That is already open" (the
+    /// user keeps the sack open — don't force it shut); taken when the close
+    /// is emitted at crossing end. Lich's `close_sack` flag.
+    day_pass_close_sack: Option<String>,
     /// The day-pass edge's source room (to ban the edge after crossing).
     day_pass_buy_from: u32,
     /// The day-pass edge's destination room, for the raise-arrival check.
@@ -412,6 +417,7 @@ impl TravelTask {
             silver_at_withdraw: None,
             in_transport: false,
             day_pass_buy_sack: None,
+            day_pass_close_sack: None,
             day_pass_buy_from: 0,
             day_pass_buy_dest: 0,
         })
@@ -468,6 +474,13 @@ impl TravelTask {
             events.push(TravelEvent::Failed("you're dead - travel aborted".into()));
             return events;
         }
+        // The day-pass sack was already open when our `open` landed: we don't
+        // owe a close (don't force the user's normally-open sack shut).
+        if self.day_pass_close_sack.is_some()
+            && ctx.saw(&crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen)
+        {
+            self.day_pass_close_sack = None;
+        }
         let Some(current) = ctx.current_room else {
             // Unresolved (unmapped room / db still loading): hold.
             return events;
@@ -481,6 +494,8 @@ impl TravelTask {
         // pack (the live footpath bug — fill_hands got only 1 of 2 items).
         // Let the Stashing step finish; it resumes and re-checks arrival.
         if current == self.destination && self.funding_bank.is_none() && self.stash.is_none() {
+            // A day-pass crossing that landed here may still owe the sack close.
+            self.flush_day_pass_close(&mut events);
             events.push(TravelEvent::Arrived {
                 destination: self.destination,
                 seconds: (ctx.now_ms.saturating_sub(self.started_ms)) as f64 / 1000.0,
@@ -576,6 +591,7 @@ impl TravelTask {
                 // A scripted edge can land the room change before its
                 // actions finish (multi-command edges): arrival wins.
                 if current == expected {
+                    self.flush_day_pass_close(&mut events);
                     self.arrive();
                     return events;
                 }
@@ -596,8 +612,10 @@ impl TravelTask {
             } => {
                 if current == expected {
                     // Arrived on schedule; next step (or the destination
-                    // check next tick).
+                    // check next tick). A day-pass USE crossing settles its
+                    // owed sack close here.
                     self.in_transport = false;
+                    self.flush_day_pass_close(&mut events);
                     self.arrive();
                     return events;
                 }
@@ -680,6 +698,14 @@ impl TravelTask {
             }
         }
         events
+    }
+
+    /// Emit the owed `close #sack` from a day-pass crossing, if any (skipped
+    /// when the sack was already open — see day_pass_close_sack).
+    fn flush_day_pass_close(&mut self, events: &mut Vec<TravelEvent>) {
+        if let Some(sack) = self.day_pass_close_sack.take() {
+            events.push(TravelEvent::Send(format!("close #{sack}")));
+        }
     }
 
     /// The expected room arrived: advance the route.
@@ -1326,7 +1352,11 @@ impl TravelTask {
         // mover). Pass/sack ids are substituted here from live state.
         let mut script: Vec<W> = Vec::new();
         if let Some(sack) = sack {
-            script.push(W::Put(format!("open #{sack}"))); // harmless if already open
+            // Open the sack and note we owe a close — unless the game answers
+            // "That is already open" (the feedback clears the debt at the top
+            // of tick(), so a normally-open sack is never forced shut).
+            script.push(W::Put(format!("open #{sack}")));
+            self.day_pass_close_sack = Some(sack.to_string());
         }
         for id in &expired {
             script.push(W::Put(format!("_drag #{id} drop")));
@@ -1346,9 +1376,8 @@ impl TravelTask {
                 script.push(W::Put(format!("_drag #{pass} #{sack}")));
             }
             script.push(W::FillHands);
-            if let Some(sack) = sack {
-                script.push(W::Put(format!("close #{sack}")));
-            }
+            // No close here: the owed close (if the sack wasn't already open)
+            // is flushed on arrival via day_pass_close_sack.
             events.push(TravelEvent::Status(format!(
                 "day pass to {} - using held pass",
                 dest.ask_word
@@ -1598,9 +1627,10 @@ impl TravelTask {
                             self.stash = Some(task);
                         }
                     }
-                    if let Some(sack) = self.day_pass_buy_sack.take() {
-                        events.push(TravelEvent::Send(format!("close #{sack}")));
-                    }
+                    // Close the sack only if we opened it (skipped when the
+                    // game said "That is already open").
+                    self.day_pass_buy_sack = None;
+                    self.flush_day_pass_close(events);
                     // The raise teleported us to the day-pass edge's dest. Ban
                     // this edge for the rest of the trip (we won't buy a second
                     // pass to move locally) and re-path to the real destination
@@ -1628,6 +1658,8 @@ impl TravelTask {
                 }
                 BuyEvent::Failed(why) => {
                     events.push(TravelEvent::Status(format!("day pass: {why} - re-pathing")));
+                    // Leave the sack the way we found it before re-pathing.
+                    self.flush_day_pass_close(events);
                     self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
                     self.repath(ctx.db, current, events);
                     return;
@@ -2137,6 +2169,8 @@ impl TravelTask {
     }
 
     fn repath(&mut self, db: &MapDb, current: u32, events: &mut Vec<TravelEvent>) {
+        // A day-pass crossing abandoned mid-way still owes its sack close.
+        self.flush_day_pass_close(events);
         self.restarts += 1;
         if self.restarts > MAX_RESTARTS {
             events.push(TravelEvent::Failed(
@@ -3353,7 +3387,10 @@ mod tests {
         cache.parse_line("[Your pass will expire on Fri Aug 22 14:30:00 ET 2038.");
 
         macro_rules! dpctx {
-            ($now:expr, $cur:expr) => {{
+            ($now:expr, $cur:expr) => {
+                dpctx!($now, $cur, &[])
+            };
+            ($now:expr, $cur:expr, $fb:expr) => {{
                 let dp = DayPassInputs {
                     sack_id: Some("99"),
                     buy_day_pass: "",
@@ -3366,7 +3403,7 @@ mod tests {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
-                    hands: None, feedback: &[], lich_fallback: false, funding: None,
+                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
                     day_pass: Some(dp),
                 }
@@ -3376,7 +3413,8 @@ mod tests {
         // The crossing runs as a WalkAction script through tick_script: open
         // sack, EmptyHands (our stash primitive — bare `stow both` here since
         // the test wires no hands), get the held pass, raise it, put it back,
-        // FillHands (`get both`), close.
+        // FillHands (`get both`). The close is DEFERRED to arrival (and
+        // skipped entirely if the sack was already open).
         let ev = task.tick(dpctx!(0, 8635));
         let all: Vec<String> = sent(&ev).iter().map(|s| s.to_string()).collect();
         assert_eq!(
@@ -3388,18 +3426,41 @@ mod tests {
                 "raise #77",
                 "_drag #77 #99",
                 "get both", // FillHands primitive
-                "close #99",
             ],
             "USE crossing uses the stash primitives + raises the held pass: {ev:?}"
         );
         // Crucially: NOT a raw `empty hands` string, and no ask/withdraw.
         assert!(!all.iter().any(|c| c == "empty hands"), "no invalid `empty hands` cmd");
         assert!(!all.iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
-        // The raise lands us at 8916 → arrival finishes the trip.
+        // The raise lands us at 8916 → the owed close is settled on arrival.
         let ev = task.tick(dpctx!(2_000, 8916));
+        assert!(
+            sent(&ev).contains(&"close #99"),
+            "closes the sack we opened, at arrival: {ev:?}"
+        );
         assert!(
             matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
             "arrives at the destination: {ev:?}"
+        );
+
+        // --- Same crossing, but the sack was ALREADY open: the game answers
+        // "That is already open" and the close must be skipped.
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let ev = task.tick(dpctx!(0, 8635));
+        assert!(sent(&ev).contains(&"open #99"));
+        // The already-open reply lands while the raise is still in flight.
+        use crate::core::move_feedback::MoveFeedback as F;
+        let ev = task.tick(dpctx!(500, 8635, &[F::ContainerAlreadyOpen]));
+        assert!(sent(&ev).is_empty(), "nothing re-sent while waiting: {ev:?}");
+        // Arrival: NO close (the user keeps their sack open).
+        let ev = task.tick(dpctx!(2_000, 8916));
+        assert!(
+            !sent(&ev).contains(&"close #99"),
+            "already-open sack is left open: {ev:?}"
+        );
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            "still arrives: {ev:?}"
         );
     }
 
