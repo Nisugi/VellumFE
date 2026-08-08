@@ -1314,6 +1314,7 @@ impl VellumGuiApp {
         let just_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
         if !pointer_down {
             self.zone_engaged_tab = None;
+            self.zone_press_drag_seen = false;
             // The snap drag must survive the RELEASE frame: the hook's
             // final pass writes the snapped rect as the drop position and
             // drops the state itself. This is only the backstop for a
@@ -1321,6 +1322,10 @@ impl VellumGuiApp {
             if !ctx.input(|i| i.pointer.any_released()) {
                 self.zone_snap_drag = None;
             }
+        } else if press_became_drag(press_origin, pointer_pos, false) {
+            // Sticky for the rest of the press: a drag that pauses or loops
+            // back near its origin is still a drag.
+            self.zone_press_drag_seen = true;
         }
 
         // Center windows render at *display* rects computed per frame from
@@ -1663,8 +1668,18 @@ impl VellumGuiApp {
             // whole zone) to its remembered desired_size. `user_engaging_window`
             // still gates position feed and rect tracking below; this narrower
             // gate governs the SIZE pin alone.
+            // Latch ownership alone is NOT a drag — it's claimed on a mere
+            // press (topmost-at-press). The short-circuit needs "a drag was
+            // actually observed this press" too, or a stationary click on a
+            // content-driven window (room/targets/spells) relaxes the pin,
+            // egui re-clamps to its remembered desired_size, and the rect
+            // divergence pops the snap grid on a plain click.
             let relax_size_pin = user_engaging_window
-                && press_became_drag(press_origin, pointer_pos, already_latched);
+                && press_became_drag(
+                    press_origin,
+                    pointer_pos,
+                    already_latched && self.zone_press_drag_seen,
+                );
             if !being_moved && !relax_size_pin {
                 // Pin every window to its display size when the user isn't
                 // engaging it: egui's Resize state re-clamps its remembered
