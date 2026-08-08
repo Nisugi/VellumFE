@@ -2304,6 +2304,20 @@ impl VellumGuiApp {
         )
     }
 
+    /// Blend `a` toward `b` by `t` (0 = a, 1 = b), per channel. Used to dim an
+    /// inactive tab's text toward the window background so only the active /
+    /// unread tabs stand out.
+    fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+        Color32::from_rgba_unmultiplied(
+            mix(a.r(), b.r()),
+            mix(a.g(), b.g()),
+            mix(a.b(), b.b()),
+            a.a(),
+        )
+    }
+
     pub(super) fn render_hand_content(
         ui: &mut egui::Ui,
         hand_prefix: &str,
@@ -3462,25 +3476,53 @@ impl VellumGuiApp {
         // A skin skins tabs with `[controls.tab]` (+ optional `tab.active`);
         // without it, tabs fall back to egui selectable_labels.
         let tab_art = skin_art.and_then(|art| art.control_border("tab", "normal"));
-        // Tab label color follows the skin [ui] palette. Inactive tabs use the
-        // chrome text color. The ACTIVE tab's selectable_label fills with the
-        // accent (visuals.selection.bg_fill), so its text must CONTRAST with the
-        // accent — using the accent for both (the old bug) made the selected tab
-        // invisible (accent text on accent fill). Use window_bg, the palette's
-        // designed on-accent color, so the active label stays readable.
-        let (tab_text, tab_active_text) = skin_art
+        // Active-tab text must contrast with whatever fills behind it, and that
+        // differs by render path:
+        //   - Skinned path (tab_art present): the active tab is backed by dark
+        //     `[controls.tab.active]` ART, so the label needs a LIGHT color
+        //     (the accent) — dark-on-dark art was invisible (the "Story" tab).
+        //   - Fallback path (selectable_label): the active tab fills with the
+        //     ACCENT (selection bg), so the label needs a DARK color (window_bg)
+        //     to read on it.
+        // Inactive tabs use the chrome text color in both paths.
+        let (tab_text, tab_active_text, tab_unread_text) = skin_art
             .and_then(|art| art.ui_palette.as_ref())
-            .map(|pal| (Some(pal.text), Some(pal.window_bg)))
-            .unwrap_or((None, None));
+            .map(|pal| {
+                // Active tab contrasts with its fill (see path note above).
+                let active = if tab_art.is_some() {
+                    pal.accent // light-on-dark-art
+                } else {
+                    pal.window_bg // dark-on-accent-fill
+                };
+                // Inactive tabs read as MUTED, so only the active tab stands out
+                // — not the full chrome text color (which is the accent on some
+                // skins, making every tab glow). Dim the palette text toward the
+                // window background.
+                let idle = Self::lerp_color(pal.text, pal.window_bg, 0.45);
+                // Unread (non-quiet) inactive tab: the accent, so new activity
+                // pops in the skin's highlight color (GUI's answer to the TUI *).
+                let unread = pal.accent;
+                (Some(idle), Some(active), Some(unread))
+            })
+            .unwrap_or((None, None, None));
         let mut clicked = None;
         ui.horizontal_wrapped(|ui| {
             for (index, tab_state) in tabbed.tabs.iter().enumerate() {
                 let is_active = index == tabbed.active_tab_index;
+                let unread = tab_state.has_unread && !is_active;
                 let mut label = RichText::new(&tab_state.definition.name);
-                if let Some(color) = if is_active { tab_active_text } else { tab_text } {
+                // Color precedence: active > unread (accent) > idle (muted).
+                let color = if is_active {
+                    tab_active_text
+                } else if unread {
+                    tab_unread_text
+                } else {
+                    tab_text
+                };
+                if let Some(color) = color {
                     label = label.color(color);
                 }
-                if tab_state.has_unread && !is_active {
+                if unread {
                     label = label.strong();
                 }
                 let hit = if tab_art.is_some() {
