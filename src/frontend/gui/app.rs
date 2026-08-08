@@ -1859,6 +1859,22 @@ impl VellumGuiApp {
             }
         }
 
+        // One shared background across the whole group rect (the leader's
+        // resolved background), painted once BEFORE members render — members
+        // suppress their own in render_group_stack, so a grouped mesh reads as
+        // a single surface instead of one strip per member.
+        if let Some(background) = self.widget_render_settings(&tab.id.key).background {
+            let rect = ui.available_rect_before_wrap();
+            let shapes = crate::frontend::gui::skin::background_shapes(
+                rect,
+                &background,
+                ui.visuals().window_fill(),
+            );
+            ui.painter()
+                .with_clip_rect(rect)
+                .add(egui::Shape::Vec(shapes));
+        }
+
         let mut clicked = None;
         // Each member's screen rect, recorded so window-level drag-and-drop
         // can resolve drops to the member under the pointer instead of the
@@ -2152,12 +2168,15 @@ impl VellumGuiApp {
                 ui.allocate_ui(Vec2::new(width, each_height), |ui| {
                     ui.set_min_size(Vec2::new(width, each_height));
                     ui.set_max_height(each_height);
-                    if let Some(click) = Self::render_window_content(
-                        &self.app_core,
-                        ui,
-                        member,
-                        self.widget_render_settings(&member.id.key),
-                    ) {
+                    // Members in a group don't paint their own background —
+                    // the group leader paints ONE shared background across the
+                    // whole group rect (see render_window_or_group_content), so
+                    // the mesh reads as one surface instead of per-member strips.
+                    let mut settings = self.widget_render_settings(&member.id.key);
+                    settings.background = None;
+                    if let Some(click) =
+                        Self::render_window_content(&self.app_core, ui, member, settings)
+                    {
                         *clicked = Some(click);
                     }
                 })
