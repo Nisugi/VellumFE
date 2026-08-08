@@ -167,6 +167,11 @@ pub struct AppCore {
     /// Lich room ID extracted from room display
     pub lich_room_id: Option<String>,
 
+    /// Throttled doll variant/hidden rules from the active skin, resolved
+    /// per remote flush so phone clients get the active variant name and
+    /// suppressed parts pushed instead of evaluating conditions in JS.
+    pub doll_rules: crate::core::doll_rules::DollRulesCache,
+
     /// Room subtitle (e.g., " - Emberthorn Refuge, Bowery")
     pub room_subtitle: Option<String>,
 
@@ -417,6 +422,7 @@ impl AppCore {
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
+            doll_rules: Default::default(),
             room_subtitle: None,
             room_components: HashMap::new(),
             current_room_component: None,
@@ -588,6 +594,7 @@ impl AppCore {
             evidence: crate::core::evidence::EvidenceStore::default(),
             nav_room_id: None,
             lich_room_id: None,
+            doll_rules: Default::default(),
             room_subtitle: None,
             room_components: HashMap::new(),
             current_room_component: None,
@@ -2338,6 +2345,22 @@ impl AppCore {
         }
         // Portal resolution needs the map service, which lives here.
         snap.portals = self.portal_commands();
+        // The character's active doll variant + suppressed parts: resolved
+        // host-side (one condition evaluator, in Rust) so phone clients
+        // just switch sets by name instead of re-implementing eval in JS.
+        // Disjoint field borrows on purpose — gameobj_data_cached() would
+        // hold all of &self against &mut self.doll_rules.
+        let now_server =
+            chrono::Utc::now().timestamp() + self.message_processor.server_time_offset;
+        let (doll_variant, doll_hidden) = self.doll_rules.resolve(
+            self.config.active_skin.as_deref(),
+            self.config.doll_image.as_deref(),
+            &self.game_state,
+            now_server,
+            self.gameobj_data.as_deref(),
+        );
+        snap.doll_variant = doll_variant;
+        snap.doll_hidden = doll_hidden;
         // Real sessions rarely set game_state.room_name/exits; fall back
         // the same way the room widget does (see gui sync_room_windows):
         // subtitle from <streamWindow> for the name, compass for exits.

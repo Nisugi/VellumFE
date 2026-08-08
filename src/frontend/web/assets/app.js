@@ -789,6 +789,7 @@ function handleSnapshot(d) {
   setEffects(d.effects || []);
   setSpells(d.spellbook || []);
   setInjuries(d.injuries || {});
+  setDollState({ variant: d.doll_variant, hidden: d.doll_hidden });
   setTargets(d.targets || []);
   setRoomEntities(d.entities || {});
   setPortals(d.portals || []);
@@ -858,6 +859,7 @@ function handleMessage(msg) {
     case "webui_notice": handleWebUiNotice(msg.d); break;
     case "webui_connected": webuiState.connected = !!msg.d.connected; renderWebUiIfOpen(); break;
     case "injuries": setInjuries(msg.d); break;
+    case "doll": setDollState(msg.d); break;
     case "targets": setTargets(msg.d); break;
     case "entities": setRoomEntities(msg.d); break;
     case "portals": setPortals(msg.d); break;
@@ -5154,12 +5156,56 @@ function injuryText(level) {
 // scales freely — same coordinates as the desktop, any display size.
 
 let dollSkin = null;      // /doll.json payload when base art is active
-let dollNatural = null;   // { w, h } of the base image, measured client-side
+// Natural {w,h} of each set's base image, keyed "" (default) or the
+// variant name — variant bases can be different sizes, so each measures
+// on first use.
+let dollNaturals = {};
+// Host-pushed doll state ("doll" message): the active variant name (null
+// = default set) and the parts the active set's hidden_when conditions
+// suppress. The host evaluates all conditions; the client only switches.
+let dollVariantName = null;
+let dollHidden = new Set();
 
-function dollImageUrl(kind, part, level) {
+function dollImageUrl(kind, part, level, variant) {
   let url = `/doll/image?kind=${kind}&token=${encodeURIComponent(pairingToken)}`;
   if (part) url += `&part=${encodeURIComponent(part)}&level=${level}`;
+  if (variant) url += `&variant=${encodeURIComponent(variant)}`;
   return url;
+}
+
+// The set the doll should draw right now: the host-pushed variant when
+// the payload actually carries it, else the default (top-level) set.
+function activeDollSet() {
+  if (
+    dollVariantName &&
+    dollSkin &&
+    dollSkin.variants &&
+    dollSkin.variants[dollVariantName]
+  ) {
+    return { key: dollVariantName, set: dollSkin.variants[dollVariantName] };
+  }
+  return { key: "", set: dollSkin };
+}
+
+// Measure one set's base image (anchors are fractions of it, so the SVG
+// viewBox needs the natural size). Re-renders the drawer when it lands.
+function measureDollBase(key) {
+  if (!dollSkin || dollNaturals[key]) return;
+  const img = new Image();
+  img.onload = () => {
+    dollNaturals[key] = { w: img.naturalWidth, h: img.naturalHeight };
+    if (drawerRight.classList.contains("open")) renderStatusDrawer();
+  };
+  // Default base failing means no skinned doll at all; a variant base
+  // failing just leaves that variant unmeasured (vector doll shows).
+  img.onerror = () => { if (key === "") dollSkin = null; };
+  img.src = dollImageUrl("base", null, 0, key || null);
+}
+
+function setDollState(d) {
+  dollVariantName = (d && d.variant) || null;
+  dollHidden = new Set((d && d.hidden) || []);
+  if (drawerRight.classList.contains("open")) renderStatusDrawer();
 }
 
 function fetchDollSkin() {
@@ -5167,21 +5213,12 @@ function fetchDollSkin() {
     .then((r) => (r.ok ? r.json() : null))
     .then((d) => {
       dollSkin = d && d.base ? d : null;
-      dollNatural = null;
+      dollNaturals = {};
       if (!dollSkin) {
         if (drawerRight.classList.contains("open")) renderStatusDrawer();
         return;
       }
-      // The anchors are fractions of the image, so the client needs its
-      // natural size to build the SVG viewBox; measure it here rather
-      // than shipping image-decoding on the server.
-      const img = new Image();
-      img.onload = () => {
-        dollNatural = { w: img.naturalWidth, h: img.naturalHeight };
-        if (drawerRight.classList.contains("open")) renderStatusDrawer();
-      };
-      img.onerror = () => { dollSkin = null; };
-      img.src = dollImageUrl("base");
+      measureDollBase("");
     })
     .catch(() => { dollSkin = null; });
 }
@@ -5205,38 +5242,43 @@ function dotNumeralColor(hex) {
 // fully hand-drawn: a state with no art lets the base show through, never
 // a dot. Parts without art keep the dot behavior. Mirrors the GUI rule.
 function skinDollSvg() {
-  const { w, h } = dollNatural;
-  const dots = dollSkin.dots || {};
+  const { key: setKey, set } = activeDollSet();
+  const variant = setKey || null;
+  const { w, h } = dollNaturals[setKey];
+  const dots = set.dots || {};
   const woundColor = safeColor(dots.wound_color, "#e02020");
   const scarColor = safeColor(dots.scar_color, "#b8b8b8");
   const opacity = typeof dots.opacity === "number" ? Math.min(Math.max(dots.opacity, 0), 1) : 0.9;
   const r = Math.max(((dots.diameter || 0.07) * h) / 2, 3);
   const fontSize = Math.max(r * 1.3, 8);
-  const parts = [`<image href="${dollImageUrl("base")}" width="${w}" height="${h}"/>`];
-  const overlays = dollSkin.overlays || {};
-  const healthySet = new Set(dollSkin.healthy || []);
+  const parts = [`<image href="${dollImageUrl("base", null, 0, variant)}" width="${w}" height="${h}"/>`];
+  const overlays = set.overlays || {};
+  const healthySet = new Set(set.healthy || []);
   // Walk the canonical anchor keys, not the injuries map: fully healthy
   // parts are absent from the map, and a hand-drawn part needs its
   // level-0 (healthy) layer drawn too.
-  for (const id of Object.keys(dollSkin.anchors || {}).sort()) {
+  for (const id of Object.keys(set.anchors || {}).sort()) {
     const level = Number(injuries[id]) || 0;
     if (level > 6) continue;
+    // Host-suppressed part (hidden_when holds, e.g. a hand under a
+    // severed arm): draw nothing at all — no overlay, no dot.
+    if (dollHidden.has(id)) continue;
     const handDrawn = healthySet.has(id) || (overlays[id] || []).length > 0;
     if (handDrawn) {
       if (level === 0 && healthySet.has(id)) {
         parts.push(
-          `<image href="${dollImageUrl("overlay", id, 0)}" width="${w}" height="${h}"/>`
+          `<image href="${dollImageUrl("overlay", id, 0, variant)}" width="${w}" height="${h}"/>`
         );
       } else if (level >= 1 && (overlays[id] || []).includes(level)) {
         parts.push(
-          `<image href="${dollImageUrl("overlay", id, level)}" width="${w}" height="${h}"/>`
+          `<image href="${dollImageUrl("overlay", id, level, variant)}" width="${w}" height="${h}"/>`
         );
       }
       // A state with no art: the base shows through, deliberately.
       continue;
     }
     if (!level) continue;
-    const anchor = (dollSkin.anchors || {})[id];
+    const anchor = (set.anchors || {})[id];
     if (!anchor) continue; // unknown part: the injured list below still names it
     const cx = anchor[0] * w;
     const cy = anchor[1] * h;
@@ -5339,8 +5381,12 @@ function renderStatusDrawer() {
   }
 
   // Doll: skinned (base art + dots at calibrated anchors) when the active
-  // skin ships doll art, the built-in vector figure otherwise.
-  const skinned = !!(dollSkin && dollNatural);
+  // skin ships doll art, the built-in vector figure otherwise. The active
+  // set's base measures lazily on first use (variant bases can differ in
+  // size); the vector doll covers the gap until the measure lands.
+  const activeKey = dollSkin ? activeDollSet().key : "";
+  if (dollSkin && !dollNaturals[activeKey]) measureDollBase(activeKey);
+  const skinned = !!(dollSkin && dollNaturals[activeKey]);
   const doll = document.createElement("div");
   doll.id = "status-doll";
   if (skinned) {

@@ -132,9 +132,30 @@ pub struct InjuryDollSkin {
     /// so `[[injury_doll.variants]]` never parses as a body part.
     #[serde(default)]
     pub variants: Vec<DollVariant>,
-    /// part -> { healthy = "...", injury1 = "...", scar2 = "...", ... }
+    /// part -> its overlay art and options.
     #[serde(flatten)]
-    pub parts: HashMap<String, HashMap<String, String>>,
+    pub parts: HashMap<String, DollPartSpec>,
+}
+
+/// One body part's manifest entry: overlay art per state, plus options.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DollPartSpec {
+    /// Skip this part entirely (no overlay, no dot, at any severity)
+    /// while the condition holds. Lets the skin encode anatomical
+    /// dependencies without the client hardcoding an anatomy tree — e.g.
+    /// hide a healthy hand while its arm is severed, so the hand doesn't
+    /// float next to the stump:
+    ///
+    /// ```toml
+    /// [injury_doll.leftHand]
+    /// hidden_when = { type = "injury", area = "leftArm", cmp = ">=", level = 3 }
+    /// healthy = "doll/leftHand_ok.png"
+    /// ```
+    #[serde(default)]
+    pub hidden_when: Option<super::conditions::Condition>,
+    /// State key (healthy / injury1-3 / scar1-3) -> image path.
+    #[serde(flatten)]
+    pub overlays: HashMap<String, String>,
 }
 
 /// One conditional doll variant: a complete replacement doll set plus the
@@ -152,7 +173,7 @@ pub struct DollVariant {
 /// A complete doll set as carried by a variant: same shape as the default
 /// `[injury_doll]` section minus `variants` — variants do not nest. (A
 /// `variants` key inside a variant's skin fails parse loudly rather than
-/// being silently ignored: the flatten expects part tables of strings.)
+/// being silently ignored: the flatten expects part tables.)
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DollSet {
     #[serde(default)]
@@ -161,9 +182,9 @@ pub struct DollSet {
     pub anchors: HashMap<String, [f32; 2]>,
     #[serde(default)]
     pub dots: DollDotSpec,
-    /// part -> { healthy = "...", injury1 = "...", ... }
+    /// part -> its overlay art and options.
     #[serde(flatten)]
-    pub parts: HashMap<String, HashMap<String, String>>,
+    pub parts: HashMap<String, DollPartSpec>,
 }
 
 /// Manifest styling for generated injury dots: a solid circle (wounds) or
@@ -528,6 +549,13 @@ description = ""
 # injury2 = "doll/head_i2.png"
 # injury3 = "doll/head_i3.png"
 # scar1 = "doll/head_s1.png"
+#
+# A part can be suppressed entirely (no overlay, no dot) while a condition
+# holds — e.g. hide a healthy hand while its arm is severed so it doesn't
+# float next to the stump:
+# [injury_doll.leftHand]
+# hidden_when = { type = "injury", area = "leftArm", cmp = ">=", level = 3 }
+# healthy = "doll/leftHand_ok.png"
 #
 # Named doll variants swap the ENTIRE doll (base, anchors, dots, overlays)
 # when a condition matches — evaluated in order, first match wins, none
@@ -940,8 +968,8 @@ mod tests {
         assert_eq!(manifest.compass.directions["n"], "compass/n.png");
         assert_eq!(manifest.compass.directions["up"], "compass/up.png");
         assert_eq!(manifest.injury_doll.base.as_deref(), Some("doll/base.png"));
-        assert_eq!(manifest.injury_doll.parts["head"]["injury1"], "doll/head_i1.png");
-        assert_eq!(manifest.injury_doll.parts["head"]["scar3"], "doll/head_s3.png");
+        assert_eq!(manifest.injury_doll.parts["head"].overlays["injury1"], "doll/head_i1.png");
+        assert_eq!(manifest.injury_doll.parts["head"].overlays["scar3"], "doll/head_s3.png");
     }
 
     #[test]
@@ -973,7 +1001,7 @@ mod tests {
         // The flattened overlay tables still parse alongside the named
         // anchors/dots tables.
         assert_eq!(
-            manifest.injury_doll.parts["nsys"]["injury1"],
+            manifest.injury_doll.parts["nsys"].overlays["injury1"],
             "doll/nerves_i1.png"
         );
         assert!(!manifest.injury_doll.parts.contains_key("anchors"));
@@ -1026,11 +1054,11 @@ mod tests {
             "#,
         );
         assert_eq!(
-            manifest.injury_doll.parts["leftArm"]["healthy"],
+            manifest.injury_doll.parts["leftArm"].overlays["healthy"],
             "doll/arm_ok.png"
         );
         assert_eq!(
-            manifest.injury_doll.parts["leftArm"]["injury2"],
+            manifest.injury_doll.parts["leftArm"].overlays["injury2"],
             "doll/arm_i2.png"
         );
     }
@@ -1067,7 +1095,7 @@ mod tests {
         let doll = &manifest.injury_doll;
         // The named field claimed the key: no body part called "variants".
         assert!(!doll.parts.contains_key("variants"));
-        assert_eq!(doll.parts["head"]["injury1"], "doll/head_i1.png");
+        assert_eq!(doll.parts["head"].overlays["injury1"], "doll/head_i1.png");
         assert_eq!(doll.variants.len(), 1);
         let variant = &doll.variants[0];
         assert_eq!(variant.name, "downed");
@@ -1079,10 +1107,41 @@ mod tests {
         assert_eq!(variant.skin.base.as_deref(), Some("doll/downed.png"));
         assert_eq!(variant.skin.anchors["head"], [0.2, 0.7]);
         assert_eq!(
-            variant.skin.parts["leftArm"]["healthy"],
+            variant.skin.parts["leftArm"].overlays["healthy"],
             "doll/downed_arm_ok.png"
         );
         assert!(!variant.skin.parts.contains_key("anchors"));
+    }
+
+    #[test]
+    fn hidden_when_parses_inside_a_part_table() {
+        // The anatomical-dependency suppression: a hand hidden while its
+        // arm is severed. hidden_when is a typed field on the part spec,
+        // so it never collides with the flattened overlay keys.
+        let manifest = manifest(
+            r#"
+            [injury_doll]
+            base = "doll/base.png"
+
+            [injury_doll.leftHand]
+            hidden_when = { type = "injury", area = "leftArm", cmp = ">=", level = 3 }
+            healthy = "doll/leftHand_ok.png"
+            injury1 = "doll/leftHand_i1.png"
+            "#,
+        );
+        let part = &manifest.injury_doll.parts["leftHand"];
+        assert!(matches!(
+            part.hidden_when,
+            Some(super::super::conditions::Condition::Injury { .. })
+        ));
+        assert_eq!(part.overlays["healthy"], "doll/leftHand_ok.png");
+        assert_eq!(part.overlays["injury1"], "doll/leftHand_i1.png");
+        // hidden_when is claimed by the typed field, not treated as an
+        // overlay state key.
+        assert!(!part.overlays.contains_key("hidden_when"));
+        // A part without the field parses as before.
+        let plain = &manifest.injury_doll.parts.get("head");
+        assert!(plain.is_none() || plain.unwrap().hidden_when.is_none());
     }
 
     #[test]

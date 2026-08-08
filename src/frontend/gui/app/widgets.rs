@@ -1412,23 +1412,27 @@ impl VellumGuiApp {
         }
     }
 
-    /// Active doll variant index for the CHARACTER'S OWN doll this frame:
-    /// the first variant whose condition matches the live game state, in
-    /// declaration order. Another player's doll must pass `None` to
-    /// `render_injury_doll` instead — variant conditions read self state,
-    /// so your prone flag must never swap someone else's doll.
-    pub(super) fn resolve_doll_variant(
+    /// The CHARACTER'S OWN doll render state this frame: the active
+    /// variant (first whose condition matches, in declaration order) and
+    /// the active set's suppressed parts (each `hidden_when` evaluated).
+    /// Another player's doll must pass `None` and an empty set to
+    /// `render_injury_doll` instead — these conditions read self state,
+    /// so your prone flag must never swap or hide someone else's doll.
+    pub(super) fn resolve_doll_render(
         app_core: &AppCore,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
-    ) -> Option<usize> {
-        let art = skin_art?;
+    ) -> (Option<usize>, std::collections::HashSet<String>) {
+        let Some(art) = skin_art else {
+            return (None, Default::default());
+        };
         let now_server =
             chrono::Utc::now().timestamp() + app_core.message_processor.server_time_offset;
-        art.resolve_doll_variant(
-            &app_core.game_state,
-            now_server,
-            app_core.gameobj_data_cached(),
-        )
+        let gameobj = app_core.gameobj_data_cached();
+        let variant = art.resolve_doll_variant(&app_core.game_state, now_server, gameobj);
+        let hidden = art
+            .doll_set(variant)
+            .hidden_parts(&app_core.game_state, now_server, gameobj);
+        (variant, hidden)
     }
 
     /// Wrayth-style paperdoll drawn with painter geometry: each body part is
@@ -1441,6 +1445,7 @@ impl VellumGuiApp {
         injuries: &HashMap<String, u8>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
         doll_variant: Option<usize>,
+        doll_hidden: &std::collections::HashSet<String>,
         grayscale: bool,
         palette: &[Color32; 7],
     ) {
@@ -1474,7 +1479,13 @@ impl VellumGuiApp {
             // with overlay art needs its level-0 (healthy) layer drawn.
             for (part, _, _) in crate::config::skins::DOLL_PARTS {
                 let level = injuries.get(*part).copied().unwrap_or(0);
-                if set.has_overlays(part) {
+                // A suppressed part (hidden_when holds — e.g. a hand under
+                // a severed arm) draws nothing at all; the wound still
+                // lists in the tooltip below so the information survives.
+                let suppressed = doll_hidden.contains(&part.to_ascii_lowercase());
+                if suppressed {
+                    // fall through to the tooltip push only
+                } else if set.has_overlays(part) {
                     // Fully hand-drawn part: draw the current state's art
                     // if it exists; a state with no art lets the base show
                     // through — never a generated dot stamped on top of
@@ -1630,14 +1641,15 @@ impl VellumGuiApp {
             .show(ctx, |ui| {
                 ui.allocate_ui(Vec2::new(170.0, 225.0), |ui| {
                     // Another player's injuries: no per-widget config, so the
-                    // shared default palette. Variants stay off (None) —
-                    // their conditions read SELF state, and your prone flag
-                    // must not swap someone else's doll.
+                    // shared default palette. Variants and hidden parts stay
+                    // off — their conditions read SELF state, and your prone
+                    // flag must not swap or hide someone else's doll.
                     Self::render_injury_doll(
                         ui,
                         &popup.injuries,
                         self.skin_state.widget_art().as_deref(),
                         None,
+                        &Default::default(),
                         self.ui_settings.doll_grayscale,
                         &Self::default_injury_palette(),
                     );
@@ -2734,9 +2746,18 @@ impl VellumGuiApp {
                         // paint behind the controls anchored to them).
                         if let Some(skin) = dialog.skins.get(i) {
                             // The InjuriesPanel doll is the character's own,
-                            // so condition-driven variants apply here too.
-                            let doll_variant = Self::resolve_doll_variant(app_core, skin_art);
-                            Self::paint_dialog_skin(ui, rect, skin, dialog, skin_art, doll_variant);
+                            // so variants and hidden parts apply here too.
+                            let (doll_variant, doll_hidden) =
+                                Self::resolve_doll_render(app_core, skin_art);
+                            Self::paint_dialog_skin(
+                                ui,
+                                rect,
+                                skin,
+                                dialog,
+                                skin_art,
+                                doll_variant,
+                                &doll_hidden,
+                            );
                         }
                     }
                     PositionedControlKind::Link(i) => {
@@ -2900,6 +2921,7 @@ impl VellumGuiApp {
         dialog: &crate::data::ui_state::DialogState,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
         doll_variant: Option<usize>,
+        doll_hidden: &std::collections::HashSet<String>,
     ) {
         if !skin.name.eq_ignore_ascii_case("InjuriesPanel") {
             return;
@@ -2930,6 +2952,7 @@ impl VellumGuiApp {
                 &injuries,
                 skin_art,
                 doll_variant,
+                doll_hidden,
                 false,
                 &Self::default_injury_palette(),
             );
@@ -5751,11 +5774,14 @@ impl VellumGuiApp {
                         _ => None,
                     })
                     .unwrap_or_else(Self::default_injury_palette);
+                let (doll_variant, doll_hidden) =
+                    Self::resolve_doll_render(app_core, settings.skin_art.as_deref());
                 Self::render_injury_doll(
                     ui,
                     &doll.injuries,
                     settings.skin_art.as_deref(),
-                    Self::resolve_doll_variant(app_core, settings.skin_art.as_deref()),
+                    doll_variant,
+                    &doll_hidden,
                     settings.doll_grayscale,
                     &palette,
                 );

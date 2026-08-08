@@ -266,6 +266,25 @@ scar2 = "doll/arm_s2.png"
 scar3 = "doll/arm_s3.png"
 ```
 
+### Suppressing a part conditionally
+
+A part can be skipped entirely — no overlay, no dot, at any severity —
+while a condition holds, using the same condition vocabulary as
+variants. This encodes anatomical dependencies in the skin: a severed
+arm's base hole would otherwise leave a healthy hand floating next to
+the stump.
+
+```toml
+[injury_doll.leftHand]
+hidden_when = { type = "injury", area = "leftArm", cmp = ">=", level = 3 }
+healthy = "doll/leftHand_ok.png"
+injury1 = "doll/leftHand_i1.png"
+```
+
+While `leftArm` is at rank 3, `leftHand` draws nothing; its wound (if
+any) still lists in the hover tooltip. Each doll set — the default and
+every variant — carries its own `hidden_when` rules.
+
 ### Doll variants (optional)
 
 Named alternate dolls selected by game state — for example a body on the
@@ -307,6 +326,13 @@ always shows the default set, since the conditions read your character's
 state. Doll images picked from the pool (right-click → Appearance →
 *Doll image*) carry no overlays or variants; these features live in a
 skin's `[injury_doll]` section.
+
+Each variant calibrates separately: the calibrator's **Doll set** picker
+switches between the default doll and each variant (a prone body puts
+every anchor somewhere new), and Save writes into that variant's own
+tables inside `[[injury_doll.variants]]`. The phone client follows along
+automatically — the host resolves which variant and which suppressed
+parts are active and pushes them to the phone, which just switches art.
 
 ## Notes
 

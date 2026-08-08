@@ -80,6 +80,11 @@ pub struct SkinWidgetArt {
     doll_anchors: HashMap<String, egui::Vec2>,
     /// Generated-dot styling resolved from the manifest.
     pub doll_dots: ResolvedDotStyle,
+    /// Per-part suppression conditions (lowercase part -> condition):
+    /// while one holds, that part draws nothing at all — no overlay, no
+    /// dot. Encodes anatomical dependencies (hand under a severed arm)
+    /// in the skin instead of a client-side anatomy tree.
+    doll_hidden_when: HashMap<String, crate::config::Condition>,
     /// Conditional doll variants in declaration order; when one's
     /// condition matches, its set replaces the default doll_* fields
     /// wholesale (full replace). Empty when a doll override is active
@@ -101,6 +106,7 @@ struct LoadedDollVariant {
     parts: HashMap<String, HashMap<u8, SkinTexture>>,
     parts_gray: HashMap<String, HashMap<u8, SkinTexture>>,
     anchors: HashMap<String, egui::Vec2>,
+    hidden_when: HashMap<String, crate::config::Condition>,
     dots: ResolvedDotStyle,
 }
 
@@ -113,6 +119,7 @@ pub struct DollSetView<'a> {
     parts: &'a HashMap<String, HashMap<u8, SkinTexture>>,
     parts_gray: &'a HashMap<String, HashMap<u8, SkinTexture>>,
     anchors: &'a HashMap<String, egui::Vec2>,
+    hidden_when: &'a HashMap<String, crate::config::Condition>,
     pub dots: ResolvedDotStyle,
 }
 
@@ -153,6 +160,25 @@ impl DollSetView<'_> {
                 skins::default_doll_anchor(&key).map(|[x, y]| egui::vec2(x, y))
             })
             .unwrap_or_else(|| egui::vec2(0.5, 0.5))
+    }
+
+    /// Parts this set suppresses right now: each `hidden_when` condition
+    /// evaluated against the character's state. A hidden part draws
+    /// nothing — no overlay, no dot — at any severity. Lowercase part
+    /// keys, matching the set's internal maps.
+    pub fn hidden_parts(
+        &self,
+        gs: &crate::core::state::GameState,
+        now_server: i64,
+        gameobj: Option<&crate::core::gameobj_data::GameObjData>,
+    ) -> std::collections::HashSet<String> {
+        self.hidden_when
+            .iter()
+            .filter(|(_, condition)| {
+                crate::core::conditions::eval_condition(condition, gs, now_server, gameobj)
+            })
+            .map(|(part, _)| part.clone())
+            .collect()
     }
 }
 
@@ -344,6 +370,7 @@ impl SkinWidgetArt {
                 parts: &v.parts,
                 parts_gray: &v.parts_gray,
                 anchors: &v.anchors,
+                hidden_when: &v.hidden_when,
                 dots: v.dots,
             },
             None => DollSetView {
@@ -352,6 +379,7 @@ impl SkinWidgetArt {
                 parts: &self.doll_parts,
                 parts_gray: &self.doll_parts_gray,
                 anchors: &self.doll_anchors,
+                hidden_when: &self.doll_hidden_when,
                 dots: self.doll_dots,
             },
         }
@@ -867,8 +895,12 @@ impl SkinState {
                 egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
             );
         }
-        for (part, levels) in &self.manifest.injury_doll.parts {
-            for (key, path) in levels {
+        for (part, spec) in &self.manifest.injury_doll.parts {
+            if let Some(condition) = &spec.hidden_when {
+                art.doll_hidden_when
+                    .insert(part.to_ascii_lowercase(), condition.clone());
+            }
+            for (key, path) in &spec.overlays {
                 let Some(level) = skins::severity_level_from_key(key) else {
                     tracing::warn!(
                         "Skin injury_doll.{}: unknown severity key '{}' (expected healthy/injury1-3/scar1-3)",
@@ -896,10 +928,12 @@ impl SkinState {
                 art.doll_base = None;
                 art.doll_parts.clear();
                 art.doll_anchors.clear();
+                art.doll_hidden_when.clear();
             } else if let Some(texture) = tex(path) {
                 art.doll_base = Some(texture);
                 art.doll_parts.clear();
                 art.doll_anchors.clear();
+                art.doll_hidden_when.clear();
                 let abs = skins::resolve_image_path(&self.root, path);
                 match crate::config::pool::read_sidecar::<crate::config::pool::DollSidecar>(&abs)
                 {
@@ -963,8 +997,8 @@ impl SkinState {
                 .or_else(|| self.manifest.injury_doll.base.clone());
             art.doll_base_gray = base_path.and_then(|p| tex(&format!("{p}#gray")));
             if self.doll_override.is_none() {
-                for (part, levels) in &self.manifest.injury_doll.parts {
-                    for (key, path) in levels {
+                for (part, spec) in &self.manifest.injury_doll.parts {
+                    for (key, path) in &spec.overlays {
                         let Some(level) = skins::severity_level_from_key(key) else {
                             continue;
                         };
@@ -994,6 +1028,7 @@ impl SkinState {
                     parts: HashMap::new(),
                     parts_gray: HashMap::new(),
                     anchors: HashMap::new(),
+                    hidden_when: HashMap::new(),
                     dots: ResolvedDotStyle::from_spec(&variant.skin.dots),
                 };
                 for (part, anchor) in &variant.skin.anchors {
@@ -1002,8 +1037,13 @@ impl SkinState {
                         egui::vec2(anchor[0].clamp(0.0, 1.0), anchor[1].clamp(0.0, 1.0)),
                     );
                 }
-                for (part, levels) in &variant.skin.parts {
-                    for (key, path) in levels {
+                for (part, spec) in &variant.skin.parts {
+                    if let Some(condition) = &spec.hidden_when {
+                        loaded
+                            .hidden_when
+                            .insert(part.to_ascii_lowercase(), condition.clone());
+                    }
+                    for (key, path) in &spec.overlays {
                         let Some(level) = skins::severity_level_from_key(key) else {
                             tracing::warn!(
                                 "Skin injury_doll variant '{}', part {}: unknown severity key '{}' (expected healthy/injury1-3/scar1-3)",
@@ -1088,7 +1128,7 @@ impl SkinState {
                 .injury_doll
                 .parts
                 .values()
-                .flat_map(|levels| levels.values().cloned()),
+                .flat_map(|spec| spec.overlays.values().cloned()),
         );
         for variant in &self.manifest.injury_doll.variants {
             images.extend(variant.skin.base.iter().cloned());
@@ -1097,7 +1137,7 @@ impl SkinState {
                     .skin
                     .parts
                     .values()
-                    .flat_map(|levels| levels.values().cloned()),
+                    .flat_map(|spec| spec.overlays.values().cloned()),
             );
         }
         for image in images {
@@ -1149,7 +1189,7 @@ impl SkinState {
                             .injury_doll
                             .parts
                             .values()
-                            .flat_map(|levels| levels.values().cloned()),
+                            .flat_map(|spec| spec.overlays.values().cloned()),
                     );
                     for variant in &self.manifest.injury_doll.variants {
                         gray_paths.extend(variant.skin.base.iter().cloned());
@@ -1158,7 +1198,7 @@ impl SkinState {
                                 .skin
                                 .parts
                                 .values()
-                                .flat_map(|levels| levels.values().cloned()),
+                                .flat_map(|spec| spec.overlays.values().cloned()),
                         );
                     }
                 }
@@ -1656,6 +1696,20 @@ pub fn calibration_toml(
     anchors: &HashMap<String, [f32; 2]>,
     dots: &DollDotSpec,
 ) -> anyhow::Result<String> {
+    calibration_toml_for(contents, None, anchors, dots)
+}
+
+/// Like `calibration_toml`, but `variant: Some(name)` writes the anchors
+/// and dots into that `[[injury_doll.variants]]` element's `skin` table
+/// instead of the default set — each variant is a complete doll with its
+/// own calibration. The variant must already exist in the manifest (the
+/// calibrator only offers loaded variants).
+pub fn calibration_toml_for(
+    contents: &str,
+    variant: Option<&str>,
+    anchors: &HashMap<String, [f32; 2]>,
+    dots: &DollDotSpec,
+) -> anyhow::Result<String> {
     use toml_edit::{value, Array, DocumentMut, Item, Table};
 
     let mut doc: DocumentMut = contents
@@ -1675,6 +1729,38 @@ pub fn calibration_toml(
         doll.set_implicit(true);
     }
 
+    // Resolve the table the calibration lands in: the default set, or a
+    // named variant's `skin` table inside the variants array.
+    let target = match variant {
+        None => doll,
+        Some(name) => {
+            let variants = doll
+                .get_mut("variants")
+                .and_then(|item| item.as_array_of_tables_mut())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("skin.toml has no [[injury_doll.variants]] array")
+                })?;
+            let entry = variants
+                .iter_mut()
+                .find(|entry| {
+                    entry
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .is_some_and(|n| n == name)
+                })
+                .ok_or_else(|| {
+                    anyhow::anyhow!("skin.toml has no doll variant named '{}'", name)
+                })?;
+            entry
+                .entry("skin")
+                .or_insert(Item::Table(Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("variant '{}' skin is not a table", name)
+                })?
+        }
+    };
+
     // Round in f64: the f32 -> f64 cast would otherwise smear 0.09 into
     // 0.09000000357... in the written file. Four decimals is sub-pixel on
     // any realistic doll image and keeps the file readable.
@@ -1690,14 +1776,14 @@ pub fn calibration_toml(
         pair.push(rounded(y, 10_000.0));
         anchors_table.insert(key, value(pair));
     }
-    doll.insert("anchors", Item::Table(anchors_table));
+    target.insert("anchors", Item::Table(anchors_table));
 
     let mut dots_table = Table::new();
     dots_table.insert("wound_color", value(dots.wound_color.as_str()));
     dots_table.insert("scar_color", value(dots.scar_color.as_str()));
     dots_table.insert("opacity", value(rounded(dots.opacity, 100.0)));
     dots_table.insert("diameter", value(rounded(dots.diameter, 1_000.0)));
-    doll.insert("dots", Item::Table(dots_table));
+    target.insert("dots", Item::Table(dots_table));
 
     Ok(doc.to_string())
 }
@@ -1706,6 +1792,7 @@ pub fn calibration_toml(
 /// The skin hot-reload poll picks the change up within a second.
 pub fn save_calibration(
     name: &str,
+    variant: Option<&str>,
     anchors: &HashMap<String, [f32; 2]>,
     dots: &DollDotSpec,
 ) -> anyhow::Result<()> {
@@ -1713,7 +1800,7 @@ pub fn save_calibration(
     let manifest_path = root.join("skin.toml");
     let contents = std::fs::read_to_string(&manifest_path)
         .map_err(|err| anyhow::anyhow!("cannot read {}: {}", manifest_path.display(), err))?;
-    let updated = calibration_toml(&contents, anchors, dots)?;
+    let updated = calibration_toml_for(&contents, variant, anchors, dots)?;
     crate::config::write_atomic(&manifest_path, updated)
         .map_err(|err| anyhow::anyhow!("cannot write {}: {}", manifest_path.display(), err))?;
     Ok(())
@@ -2189,7 +2276,60 @@ injury1 = "doll/nerves.png"
         assert_eq!(manifest.injury_doll.anchors["head"], [0.5, 0.09]);
         assert_eq!(manifest.injury_doll.anchors["neck"], [0.5, 0.2]);
         assert_eq!(manifest.injury_doll.dots.wound_color, "#aa0000");
-        assert_eq!(manifest.injury_doll.parts["nsys"]["injury1"], "doll/nerves.png");
+        assert_eq!(
+            manifest.injury_doll.parts["nsys"].overlays["injury1"],
+            "doll/nerves.png"
+        );
+    }
+
+    #[test]
+    fn calibration_toml_for_variant_targets_the_named_element() {
+        let original = r##"# Hand-written skin.
+[injury_doll]
+base = "doll/standing.png"
+
+[injury_doll.anchors]
+head = [0.5, 0.09]
+
+[[injury_doll.variants]]
+name = "downed"
+when = { type = "indicator", id = "prone", active = true }
+[injury_doll.variants.skin]
+base = "doll/downed.png"
+
+[[injury_doll.variants]]
+name = "dead"
+when = { type = "indicator", id = "dead", active = true }
+[injury_doll.variants.skin]
+base = "doll/dead.png"
+"##;
+        let mut anchors = HashMap::new();
+        anchors.insert("head".to_string(), [0.2, 0.7]);
+        let updated =
+            calibration_toml_for(original, Some("downed"), &anchors, &DollDotSpec::default())
+                .unwrap();
+
+        let manifest: SkinManifest = toml::from_str(&updated).unwrap();
+        // The default set's calibration is untouched.
+        assert_eq!(manifest.injury_doll.anchors["head"], [0.5, 0.09]);
+        // Only the named variant gained the anchors; its sibling didn't.
+        let downed = &manifest.injury_doll.variants[0];
+        assert_eq!(downed.name, "downed");
+        assert_eq!(downed.skin.anchors["head"], [0.2, 0.7]);
+        assert_eq!(downed.skin.base.as_deref(), Some("doll/downed.png"));
+        let dead = &manifest.injury_doll.variants[1];
+        assert!(dead.skin.anchors.is_empty());
+        // Hand-written content survives.
+        assert!(updated.contains("# Hand-written skin."));
+
+        // Unknown variant name errors instead of writing somewhere else.
+        assert!(calibration_toml_for(
+            original,
+            Some("missing"),
+            &anchors,
+            &DollDotSpec::default()
+        )
+        .is_err());
     }
 
     #[test]
@@ -2315,6 +2455,7 @@ cell = 32
             parts: HashMap::new(),
             parts_gray: HashMap::new(),
             anchors: HashMap::new(),
+            hidden_when: HashMap::new(),
             dots: ResolvedDotStyle::default(),
         };
 

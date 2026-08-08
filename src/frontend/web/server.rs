@@ -656,7 +656,8 @@ async fn doll_image(
     let kind = params.get("kind").map(String::as_str).unwrap_or("base");
     let part = params.get("part").map(String::as_str);
     let level = params.get("level").and_then(|l| l.parse::<u8>().ok());
-    let Some(path) = super::doll::image_path(kind, part, level) else {
+    let variant = params.get("variant").map(String::as_str);
+    let Some(path) = super::doll::image_path(kind, part, level, variant) else {
         return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
     };
     let content_type = match path

@@ -9,6 +9,7 @@ pub mod bounty_parser;
 pub mod character_state;
 pub mod day_pass;
 pub mod conditions;
+pub mod doll_rules;
 pub mod custom_emoji;
 pub mod data_pack;
 pub mod emoji;
