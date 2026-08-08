@@ -115,6 +115,9 @@ pub struct ResolvedUiPalette {
     pub accent: egui::Color32,
     pub border: egui::Color32,
     pub menu_bg: egui::Color32,
+    /// Title-bar caption color (defaults to `accent` when the skin doesn't set
+    /// `titlebar_text`).
+    pub titlebar_text: egui::Color32,
 }
 
 /// One loaded conditional doll variant: the activation condition plus a
@@ -1192,15 +1195,18 @@ impl SkinState {
         let ov = |field: &Option<String>, default: egui::Color32| {
             field.as_deref().and_then(parse_hex_rgb).unwrap_or(default)
         };
+        let accent_c = ov(&ui.accent, accent);
         Some(ResolvedUiPalette {
             window_bg: ov(&ui.window_bg, win),
             panel_bg: ov(&ui.panel_bg, panel),
             button_bg: ov(&ui.button_bg, btn),
             button_hover: ov(&ui.button_hover, btn_hover),
             text: ov(&ui.text, text),
-            accent: ov(&ui.accent, accent),
+            accent: accent_c,
             border: ov(&ui.border, border),
             menu_bg: ov(&ui.menu_bg, panel),
+            // Title-bar caption defaults to the accent unless the skin pins it.
+            titlebar_text: ov(&ui.titlebar_text, accent_c),
         })
     }
 

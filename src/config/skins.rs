@@ -336,6 +336,11 @@ pub struct UiPalette {
     /// Accent — selection fill, active highlights.
     #[serde(default)]
     pub accent: Option<String>,
+    /// Window title-bar caption text color. Defaults to `accent` when unset;
+    /// some skins need it distinct (StormFront's silver bars want dark text,
+    /// not the steel-blue accent, so the caption stays readable).
+    #[serde(default)]
+    pub titlebar_text: Option<String>,
     /// Window / control border stroke.
     #[serde(default)]
     pub border: Option<String>,

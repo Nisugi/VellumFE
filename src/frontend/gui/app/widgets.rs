@@ -3434,13 +3434,15 @@ impl VellumGuiApp {
         // A skin skins tabs with `[controls.tab]` (+ optional `tab.active`);
         // without it, tabs fall back to egui selectable_labels.
         let tab_art = skin_art.and_then(|art| art.control_border("tab", "normal"));
-        // Tab label color follows the skin [ui] palette so buttons match the
-        // window text scheme (orange on stealth). Active tab uses the brighter
-        // accent; inactive tabs use the (usually same) text color. Skins with
-        // no palette fall back to egui's default label color (None).
+        // Tab label color follows the skin [ui] palette. Inactive tabs use the
+        // chrome text color. The ACTIVE tab's selectable_label fills with the
+        // accent (visuals.selection.bg_fill), so its text must CONTRAST with the
+        // accent — using the accent for both (the old bug) made the selected tab
+        // invisible (accent text on accent fill). Use window_bg, the palette's
+        // designed on-accent color, so the active label stays readable.
         let (tab_text, tab_active_text) = skin_art
             .and_then(|art| art.ui_palette.as_ref())
-            .map(|pal| (Some(pal.text), Some(pal.accent)))
+            .map(|pal| (Some(pal.text), Some(pal.window_bg)))
             .unwrap_or((None, None));
         let mut clicked = None;
         ui.horizontal_wrapped(|ui| {

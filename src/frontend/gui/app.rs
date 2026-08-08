@@ -2735,21 +2735,29 @@ impl VellumGuiApp {
             None => window_name.to_string(),
         };
         let visuals = ctx.global_style().visuals.clone();
-        // Caption color follows the skin's [ui] palette accent so titles match
-        // the skin scheme — orange on stealth — instead of the theme's white.
-        // Accent (not text) so it stays a title highlight without repainting
-        // all body UI text; falls back to the theme text color when no palette.
+        // Caption color = the skin's titlebar_text (defaults to accent). A skin
+        // whose title-bar art needs a specific text color (StormFront's silver
+        // bar wants dark text, not the steel-blue accent) pins it via
+        // [ui].titlebar_text; falls back to the theme text color when no palette.
         let caption_color = self
             .skin_state
             .widget_art()
-            .and_then(|art| art.ui_palette.as_ref().map(|pal| pal.accent))
+            .and_then(|art| art.ui_palette.as_ref().map(|pal| pal.titlebar_text))
             .unwrap_or_else(|| visuals.text_color());
         if !caption.is_empty() {
+            // Sit the caption in the SOLID top band of the title-bar art, not
+            // the full-bar center — these sprites carry a mesh-notch in their
+            // lower half (StormFront's silver bar, stealth's cutout), so a
+            // vertically-centered caption lands over the notch where dark text
+            // blends into the mesh. Anchor near the top and use a smaller font
+            // so it fits the thin solid strip.
+            let font_size = (height * 0.42).clamp(8.0, 13.0);
+            let baseline_y = layout.caption.top() + font_size * 0.5 + 2.0;
             painter.text(
-                egui::pos2(layout.caption.left() + 4.0, layout.caption.center().y),
+                egui::pos2(layout.caption.left() + 4.0, baseline_y),
                 egui::Align2::LEFT_CENTER,
                 caption,
-                egui::FontId::proportional((height * 0.6).clamp(9.0, 16.0)),
+                egui::FontId::proportional(font_size),
                 caption_color,
             );
         }
