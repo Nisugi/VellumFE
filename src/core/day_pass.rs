@@ -365,6 +365,12 @@ impl DayPassCache {
             .collect()
     }
 
+    /// Has this pass id been learned (valid OR expired)? The sack scan uses
+    /// this to decide which passes still need a `look`.
+    pub fn contains(&self, id: &str) -> bool {
+        self.passes.contains_key(id)
+    }
+
     pub fn forget(&mut self, id: &str) {
         self.passes.remove(id);
     }
