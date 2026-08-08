@@ -1703,6 +1703,21 @@ impl VellumGuiApp {
                 let capped = initial_rect.height().min(max_window_size.y);
                 initial_rect.set_height(capped);
             }
+            // The compass reads as SQUARE — the visible ring+arrows fill a
+            // square, even though the rose SPRITE's bounds are wider (storm's
+            // 103x62 includes side sweep-arrows). A free-width compass window
+            // left mesh-filled dead space beside the square content — and,
+            // worse, snapping used that wider rect, so guides landed at the
+            // empty edge instead of the compass frame. Constrain the window to a
+            // square (width == height) so it hugs the visible compass: no
+            // trailing mesh, snap edges hit the frame. Computed as a plain bool
+            // (no lingering `self` borrow) and reused by `normalize_height`
+            // below so the release doesn't re-widen the stored rect. Ungrouped.
+            let compass_derived =
+                matches!(window.widget_type, WidgetType::Compass) && !grouped;
+            if compass_derived {
+                initial_rect.set_width(initial_rect.height());
+            }
 
             let mut clicked_link = None;
             // WebUI windows get a title-bar close button: unlike layout
@@ -2042,9 +2057,18 @@ impl VellumGuiApp {
                 // height. Nothing downstream can resurrect a stale height
                 // (e.g. a layout saved under a larger icon-size setting).
                 let compact_derived = is_compact_widget && !grouped;
+                // The compass window hugs its rose aspect (see the fed-rect
+                // constraint above): normalize the STORED rect too — reusing the
+                // pre-computed compass_derived/compass_aspect — or a wide
+                // rendered/snapped rect on release would be tracked as canonical
+                // and "spit back out" wide next frame despite the fed-rect
+                // squaring.
                 let normalize_height = |mut rect: Rect| -> Rect {
                     if compact_derived {
                         rect.set_height(rect.height().min(max_window_size.y));
+                    }
+                    if compass_derived {
+                        rect.set_width(rect.height());
                     }
                     rect
                 };

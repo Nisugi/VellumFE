@@ -1495,7 +1495,22 @@ impl VellumGuiApp {
             // Walk the canonical part list, not the injuries map: fully
             // healthy parts are absent from the map entirely, and a part
             // with overlay art needs its level-0 (healthy) layer drawn.
-            for (part, _, _) in crate::config::skins::DOLL_PARTS {
+            //
+            // Z-ORDER: draw the nervous-system overlay FIRST (right above the
+            // base), so any per-part wound/scar overlays and dots layer OVER
+            // it — the nerves are a full-body underlay, not a badge that should
+            // cover a limb wound. `DOLL_PARTS` lists nsys last (topmost), so
+            // draw nsys, then everything else. (Tooltips are sorted later, so
+            // this reordering doesn't affect them.)
+            let ordered_parts = crate::config::skins::DOLL_PARTS
+                .iter()
+                .filter(|(part, _, _)| *part == "nsys")
+                .chain(
+                    crate::config::skins::DOLL_PARTS
+                        .iter()
+                        .filter(|(part, _, _)| *part != "nsys"),
+                );
+            for (part, _, _) in ordered_parts {
                 let level = injuries.get(*part).copied().unwrap_or(0);
                 // A suppressed part (hidden_when holds — e.g. a hand under
                 // a severed arm) draws nothing at all; the wound still

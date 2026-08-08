@@ -349,13 +349,14 @@ pub struct VellumGuiApp {
     /// Paired with `applied_theme_id` so a skin switch re-applies the palette
     /// even when the theme name is unchanged.
     applied_skin_ui_id: Option<String>,
-    /// Whether the last theme apply actually overlaid a skin UI palette. Skin
-    /// art loads asynchronously, so the first apply after selecting a skin can
-    /// run before `widget_art()` is ready — it would then stamp
-    /// `applied_skin_ui_id` and the same-skin guard would never re-apply once
-    /// the art (and its palette) finished loading, leaving menus on the plain
-    /// theme colors. Re-apply while this is false but a palette is now available.
-    applied_skin_had_palette: bool,
+    /// Whether the last theme apply read art belonging to the TARGET skin
+    /// (`skin_state.loaded_skin() == active_skin`). Skin art loads
+    /// asynchronously — a switch frame reads the previous skin's art — so a
+    /// guard keyed only on the target skin id would freeze the wrong palette in
+    /// (e.g. stealth's orange menus persisting after switching to storm). This
+    /// stays false until the loaded art matches the target, forcing a re-apply
+    /// next frame. Covers none→skin, skin→none, and skin→skin.
+    applied_skin_art_settled: bool,
     current_theme: crate::theme::AppTheme,
     /// Active skin graphics (ui_settings.active_skin); reloaded when it changes.
     skin_state: skin::SkinState,
@@ -882,7 +883,7 @@ impl VellumGuiApp {
             layout_dirty_since: None,
             applied_theme_id: None,
             applied_skin_ui_id: None,
-            applied_skin_had_palette: false,
+            applied_skin_art_settled: false,
             current_theme: crate::theme::AppTheme::default(),
             skin_state: skin::SkinState::default(),
             ui_font,
@@ -1902,7 +1903,18 @@ impl VellumGuiApp {
         // suppress their own in render_group_stack, so a grouped mesh reads as
         // a single surface instead of one strip per member.
         if let Some(background) = self.widget_render_settings(&tab.id.key).background {
-            let rect = ui.available_rect_before_wrap();
+            // Confine the mesh to the window's REAL content bounds. For a
+            // compact/small window (e.g. the compass, whose content has a min
+            // size) `available_rect_before_wrap` extends to the whole layout
+            // region and even `max_rect` can exceed a window shrunk below the
+            // content minimum — so the mesh tiled/clipped past the frame and
+            // spilled onto the neighbor. Take the TIGHTEST of the three rects
+            // (available, the ui's assigned max_rect, and egui's paint clip) so
+            // the mesh never exceeds the smallest, i.e. the actual window.
+            let rect = ui
+                .available_rect_before_wrap()
+                .intersect(ui.max_rect())
+                .intersect(ui.clip_rect());
             let shapes = crate::frontend::gui::skin::background_shapes(
                 rect,
                 &background,

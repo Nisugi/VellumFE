@@ -314,18 +314,18 @@ impl VellumGuiApp {
         let skin_unchanged = self.applied_skin_ui_id == active_skin;
         // Skin (un)load is async — `skin_state.apply_if_changed` runs LATER in
         // the frame than this, so on the switch frame `widget_art()` still holds
-        // the OLD state: on skin-on it's not yet loaded (palette absent), on
-        // `.setskin none` it's not yet cleared (palette still present). Either
-        // way the same-skin guard would then freeze the wrong palette in — menus
-        // stuck plain on skin-on, or titles stuck orange after skin-off. Re-apply
-        // whenever the palette's PRESENCE differs from what we last applied, in
-        // BOTH directions, so the next frame corrects it once art settles.
-        let palette_now_available = self
-            .skin_state
-            .widget_art()
-            .is_some_and(|art| art.ui_palette.is_some());
-        let palette_presence_changed = palette_now_available != self.applied_skin_had_palette;
-        if theme_unchanged && skin_unchanged && !palette_presence_changed {
+        // the OLD skin's art. The target `active_skin` changes immediately, so a
+        // guard keyed on it stamps "done" while the applied palette is still the
+        // previous skin's — freezing the wrong colors in (stealth's orange menus
+        // persisting after switching to storm; plain menus after skin-on; stale
+        // titles after skin-off). The authority on WHAT palette is loaded is
+        // `skin_state.loaded_skin()`: re-apply until the loaded skin actually
+        // matches the target AND we've recorded applying from it. This covers
+        // every case — none→skin, skin→none, and skin→skin — in one condition.
+        let loaded_matches_target =
+            self.skin_state.loaded_skin() == active_skin.as_deref();
+        let art_settled = loaded_matches_target && self.applied_skin_art_settled;
+        if theme_unchanged && skin_unchanged && art_settled {
             return;
         }
         let active = self.app_core.config.active_theme.clone();
@@ -338,17 +338,18 @@ impl VellumGuiApp {
             // Overlay the active skin's UI palette (derived from art + [ui]
             // overrides) so config editors, menus, and native controls take
             // on the skin. No skin / no palette -> plain theme visuals.
-            let applied_palette = if let Some(palette) = self
+            if let Some(palette) = self
                 .skin_state
                 .widget_art()
                 .and_then(|art| art.ui_palette)
             {
                 apply_ui_palette(&mut visuals, &palette);
-                true
-            } else {
-                false
-            };
-            self.applied_skin_had_palette = applied_palette;
+            }
+            // "Settled" = the art we just read belongs to the target skin. When
+            // the loaded skin still lags the target (async switch frame), this
+            // stays false so the next frame re-applies from the correct art.
+            self.applied_skin_art_settled =
+                self.skin_state.loaded_skin() == active_skin.as_deref();
             ctx.set_visuals(visuals);
             // set_visuals rebuilds Visuals wholesale; force the ui_settings
             // window radius to re-apply over it next frame.
