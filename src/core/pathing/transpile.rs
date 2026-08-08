@@ -383,9 +383,63 @@ pub fn urchins_valid() -> bool {
     URCHINS_VALID.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+// Day-pass gate. The inlined proc ends with a decision block whose "own a
+// valid pass" arm checks the town pair by full name, e.g.
+// `…towns.include?("Solhaven") and towns.include?("Wehnimer's Landing")…`. We
+// pull the pair out of the (large, inlined) body and look it up in a
+// process-global map of routable pairs → cost, populated at trip start from
+// the live day-pass cache + config (0.8 = a valid pass is held, 7.4 = no pass
+// but buying is enabled for this pair). Anything not in the map is nil.
+re!(
+    // The real form is `h[:towns].include?("Wehnimer's Landing") and
+    // h[:towns].include?('Icemule Trace')` — note `[:towns].include`, and each
+    // town double- OR single-quoted (single for a town with no apostrophe).
+    // Anchor the FIRST side on `towns].include?(` so the body's other
+    // `.include?` calls (e.g. `DownstreamHook.list.include?('mapdb_day_pass_
+    // monitor')` near the top) can never bind as town A, even if the inlined
+    // src arrives newline-joined. Accept either quote per side: Rust regex has
+    // no backreferences, so each side is a double|single alternation — keeping
+    // the apostrophe inside the double-quoted `"Wehnimer's Landing"`.
+    DAY_PASS_PAIR,
+    r#"towns\]\.include\?\((?:"(?P<a>[^"]+)"|'(?P<a2>[^']+)')\) and .*?\.include\?\((?:"(?P<b>[^"]+)"|'(?P<b2>[^']+)')\)"#
+);
+
+/// Routable day-pass town pairs → edge cost, keyed by a normalized
+/// `"a\u{1}b"` pair (order-independent). Empty unless day-pass travel is on.
+static DAY_PASS_ROUTABLE: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, f64>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Order-independent key for a town pair.
+fn day_pass_key(a: &str, b: &str) -> String {
+    if a <= b {
+        format!("{a}\u{1}{b}")
+    } else {
+        format!("{b}\u{1}{a}")
+    }
+}
+
+/// Replace the routable day-pass pairs for this trip (called from
+/// start_travel). `pairs` maps a `(town_a, town_b)` to the edge cost to use.
+pub fn set_day_pass_routable(pairs: &[((String, String), f64)]) {
+    let mut map = DAY_PASS_ROUTABLE.lock().expect("day-pass lock");
+    map.clear();
+    for ((a, b), cost) in pairs {
+        map.insert(day_pass_key(a, b), *cost);
+    }
+}
+
+fn day_pass_cost(a: &str, b: &str) -> Option<f64> {
+    DAY_PASS_ROUTABLE
+        .lock()
+        .expect("day-pass lock")
+        .get(&day_pass_key(a, b))
+        .copied()
+}
+
 /// Serializes tests across the pathing module that touch the process-global
-/// travel gates (seeking/portmaster/urchins), since cargo runs tests in
-/// parallel and they share those atomics.
+/// travel gates (seeking/portmaster/urchins/day-pass), since cargo runs tests
+/// in parallel and they share those atomics.
 #[cfg(test)]
 pub(crate) static GATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -431,8 +485,20 @@ fn resolve_timeto_depth(db: &MapDb, timeto: &TimeTo, depth: u8) -> Option<f64> {
                 // access not expired, not hidden/invisible).
                 return urchins_valid().then(|| c[1].parse().ok()).flatten();
             }
-            // Other settings gates (portmasters, day passes), event vars
-            // ($mapdb_instability_timeto), and everything else: off.
+            // Day-pass edge: pull the town pair out of the (large, inlined)
+            // decision block and look up its routable cost for this trip. The
+            // caller (start_travel) precomputes which pairs are routable from
+            // the live day-pass cache + config (0.8 = valid pass held, 7.4 =
+            // buyable). A pair not in the map is nil (not routable).
+            if let Some(c) = DAY_PASS_PAIR.captures(src) {
+                let a = c.name("a").or_else(|| c.name("a2")).map(|m| m.as_str());
+                let b = c.name("b").or_else(|| c.name("b2")).map(|m| m.as_str());
+                if let (Some(a), Some(b)) = (a, b) {
+                    return day_pass_cost(a, b);
+                }
+            }
+            // Other event vars ($mapdb_instability_timeto) and everything
+            // else: off.
             None
         }
     }
@@ -744,6 +810,40 @@ mod tests {
         set_urchins_valid(true);
         assert_eq!(resolve_timeto(&db, r1, 2), Some(0.1), "routes when valid");
         set_urchins_valid(false);
+    }
+
+    #[test]
+    fn day_pass_edges_route_only_for_routable_pairs() {
+        // The day-pass timeto body names the town pair via `towns.include?`.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[Departures]"],
+                 "wayto": {"2": "raise pass"},
+                 "timeto": {"2": ";e if $x.any? { |id,h| h[:towns].include?(\"Wehnimer's Landing\") and h[:towns].include?('Icemule Trace') }; 0.8; end"},
+                 "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[Dest]"],
+                 "wayto": {"1": "raise pass"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let r1 = db.room(1).unwrap();
+        let _g = GATE_LOCK.lock().unwrap();
+        // The edge names Wehnimer's Landing (double-quoted, apostrophe inside)
+        // and Icemule Trace (single-quoted) — the exact mixed-quote live form.
+        // Nothing routable → nil.
+        set_day_pass_routable(&[]);
+        assert_eq!(resolve_timeto(&db, r1, 2), None, "off by default");
+        // The exact pair routable at 0.8 (a held pass). Proves the mixed-quote
+        // parse (the live bug: single-quoted Icemule wasn't matching).
+        set_day_pass_routable(&[(("Wehnimer's Landing".into(), "Icemule Trace".into()), 0.8)]);
+        assert_eq!(resolve_timeto(&db, r1, 2), Some(0.8), "routes the held pair");
+        // Reverse order still matches (order-independent key).
+        set_day_pass_routable(&[(("Icemule Trace".into(), "Wehnimer's Landing".into()), 4.4)]);
+        assert_eq!(resolve_timeto(&db, r1, 2), Some(4.4), "reverse pair + buy cost");
+        // A different pair → nil.
+        set_day_pass_routable(&[(("Solhaven".into(), "Icemule Trace".into()), 0.8)]);
+        assert_eq!(resolve_timeto(&db, r1, 2), None, "other pairs stay off");
+        set_day_pass_routable(&[]);
     }
 
     #[test]

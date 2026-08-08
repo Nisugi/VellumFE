@@ -45,6 +45,40 @@ pub enum MoveFeedback {
     /// "You cannot do that while mounted." — urchin travel is incompatible
     /// with being mounted; drop it and re-path (Lich go2:2336-2346).
     Mounted,
+    // --- Chronomage day-pass buy responses (Lich's dothistimeout waits) ---
+    /// The clerk/agent responded to `ask ... for <town>` — the offer/confirm
+    /// prompt ("...says to you, ...will be free of charge / cost N silvers.
+    /// ASK me again..."). Lich's first-ask wait `/says to you/`.
+    DayPassOffered,
+    /// The pass was handed over: "quickly hands you a Chronomage day pass".
+    DayPassInHand,
+    /// Can't afford it: "...don't have enough...". Triggers the bank trip.
+    DayPassTooPoor,
+    /// A bank withdrawal completed ("the teller carefully records" / "flips
+    /// through the books"). Ends the day-pass funding wait.
+    WithdrawOk,
+    /// `raise`ing the pass teleported us: "whirlwind of color subsides".
+    RaiseTraveled,
+    /// `open <container>` reported it was ALREADY open ("That is already
+    /// open.") — the day-pass sack was open before we touched it, so skip the
+    /// close at the end (Lich's `close_sack = true` only when IT opened it).
+    ContainerAlreadyOpen,
+    /// `open <container>` succeeded ("You open ..."). With AlreadyOpen, the
+    /// response the day-pass preamble waits on (Lich's open_regex).
+    ContainerOpened,
+    /// A `get`/`take` landed (or was moot) — the get_regex shapes Lich waits
+    /// on before raising the pass.
+    ItemGot,
+    /// A drop landed ("As you let go..." / "You drop") — Lich's expired-pass
+    /// `_drag #id drop` wait.
+    ItemDropped,
+    /// A put/stow landed ("You put/slip/tuck ...") — the put_regex shapes Lich
+    /// waits on after `_drag #pass #sack`.
+    ItemStowed,
+    /// `raise` failed because we're not in the Chronomage waiting room
+    /// ("not a Chronomage teleportation waiting room" / "not valid for
+    /// departures" / "As you go to raise your pass, you realize").
+    RaiseWrongRoom,
 }
 
 macro_rules! patterns {
@@ -99,6 +133,54 @@ patterns! {
     ],
     Mounted => [
         "You cannot do that while mounted",
+    ],
+    DayPassInHand => [
+        "quickly hands you a Chronomage day pass",
+    ],
+    DayPassTooPoor => [
+        "don't have enough",
+    ],
+    DayPassOffered => [
+        // The clerk/agent's offer or confirm prompt.
+        "ASK me again",
+        "day pass to",
+    ],
+    WithdrawOk => [
+        "carefully records the transaction",
+        "flips through the books",
+    ],
+    RaiseTraveled => [
+        "whirlwind of color subsides",
+    ],
+    ContainerAlreadyOpen => [
+        "That is already open",
+    ],
+    ContainerOpened => [
+        "You open",
+    ],
+    ItemGot => [
+        "You remove",
+        "You retrieve",
+        "You grab",
+        "You already have that",
+        "You need a free hand",
+    ],
+    ItemDropped => [
+        "As you let go",
+        "You drop",
+    ],
+    // Just "You put": "You slip"/"You tuck" collide with fall messages
+    // ("You slip on a patch of ice..."). The timeout covers exotic stows.
+    ItemStowed => [
+        "You put",
+    ],
+    RaiseWrongRoom => [
+        "not a Chronomage teleportation waiting room",
+        "not valid for departures",
+        "As you go to raise your pass, you realize",
+        // Lich's raise wait also matches these failure shapes.
+        "pass is expired",
+        "Raise what",
     ],
     MoveFailedRemovable => [
         "You can't go there",

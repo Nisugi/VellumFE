@@ -64,6 +64,30 @@ pub struct TravelContext<'a> {
     /// Ground-loot nouns in the current room — the Confluence explorer scans
     /// these for the tranquility point / pit landmarks (`GameObj.loot`).
     pub loot_nouns: &'a [String],
+    /// Chronomage day-pass crossing inputs, when the planned edge is a day-pass
+    /// edge and the caller supplies them (`None` otherwise).
+    pub day_pass: Option<DayPassInputs<'a>>,
+}
+
+/// What the day-pass crossing needs from live state. The specific pass id and
+/// buy-permission are computed per-edge in `begin_day_pass` from the pair, so
+/// this stays edge-agnostic: the sack id, the buy config + funding flag, the
+/// live cache, and `now` for expiry checks.
+#[derive(Clone, Copy)]
+pub struct DayPassInputs<'a> {
+    /// The resolved `day_pass_sack` container command-id, if found.
+    pub sack_id: Option<&'a str>,
+    /// The `buy_day_pass` config value (on/off/pair-list).
+    pub buy_day_pass: &'a str,
+    /// Whether Get Silvers is on (required to fund a buy shortfall).
+    pub get_silvers: bool,
+    /// The live day-pass cache (for the held-pass lookup by pair).
+    pub cache: &'a crate::core::day_pass::DayPassCache,
+    /// Current Unix time for expiry checks.
+    pub now_epoch: i64,
+    /// Hidden or invisible — the buy conversation must `unhide` before asking
+    /// the clerk (they won't respond otherwise).
+    pub hidden: bool,
 }
 
 /// Inputs for the silver-funding pre-flight, from GameState + config.
@@ -205,6 +229,28 @@ enum Step {
         /// on arrival we can record `learned[from][dir] = arrived`.
         pending: Option<ConfluencePending>,
     },
+    /// A scripted-edge `StepMove` is in flight: a paced walk command was sent
+    /// mid-script and we're waiting for the room to change before resuming the
+    /// script at `pc`. `sent_from` is the room it was sent in (any other room
+    /// means it landed). Used by the day-pass buy walk.
+    ScriptWalk {
+        actions: Vec<crate::core::pathing::edge::WalkAction>,
+        pc: usize,
+        expected: u32,
+        from: u32,
+        sent_from: u32,
+        sent_ms: u64,
+    },
+    /// The response-driven Chronomage day-pass BUY (Lich's dothistimeout flow).
+    /// Each phase sends a command and waits for its game-response event before
+    /// advancing — ask → offer → confirm → (bank trip if too poor) → pass in
+    /// hand → walk back to the waiting room → raise → travel. See
+    /// travel::day_pass_buy.
+    DayPassBuy(super::day_pass_buy::BuyState),
+    /// The response-driven Chronomage day-pass USE (raise a held pass): open
+    /// sack → drop expired → get → raise, one command per game response —
+    /// never a flood into the type-ahead buffer. See day_pass_buy::UseState.
+    DayPassUse(super::day_pass_buy::UseState),
 }
 
 /// A Confluence move in flight: where it was sent from and which direction, so
@@ -320,6 +366,15 @@ pub struct TravelTask {
     /// caravan). We wait silently aboard and re-plan the route the moment the
     /// ride drops us in a normal room.
     in_transport: bool,
+    /// Set when a day-pass crossing sends `open #sack` and still OWES a close.
+    /// Cleared WITHOUT closing if the game answers "That is already open" (the
+    /// user keeps the sack open — don't force it shut); taken when the close
+    /// is emitted at crossing end. Lich's `close_sack` flag.
+    day_pass_close_sack: Option<String>,
+    /// The day-pass edge's source room (to ban the edge after crossing).
+    day_pass_buy_from: u32,
+    /// The day-pass edge's destination room, for the raise-arrival check.
+    day_pass_buy_dest: u32,
 }
 
 impl TravelTask {
@@ -362,6 +417,9 @@ impl TravelTask {
             confluence: None,
             silver_at_withdraw: None,
             in_transport: false,
+            day_pass_close_sack: None,
+            day_pass_buy_from: 0,
+            day_pass_buy_dest: 0,
         })
     }
 
@@ -416,6 +474,13 @@ impl TravelTask {
             events.push(TravelEvent::Failed("you're dead - travel aborted".into()));
             return events;
         }
+        // The day-pass sack was already open when our `open` landed: we don't
+        // owe a close (don't force the user's normally-open sack shut).
+        if self.day_pass_close_sack.is_some()
+            && ctx.saw(&crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen)
+        {
+            self.day_pass_close_sack = None;
+        }
         let Some(current) = ctx.current_room else {
             // Unresolved (unmapped room / db still loading): hold.
             return events;
@@ -428,7 +493,17 @@ impl TravelTask {
         // ending the trip here would abandon the refill and leave items in the
         // pack (the live footpath bug — fill_hands got only 1 of 2 items).
         // Let the Stashing step finish; it resumes and re-checks arrival.
-        if current == self.destination && self.funding_bank.is_none() && self.stash.is_none() {
+        // NOT while a day-pass machine is mid-crossing: the raise teleports us
+        // to the destination BEFORE the machine's cleanup (put the pass back,
+        // refill hands, close) — the machine's Traveled path concludes the
+        // trip itself.
+        if current == self.destination
+            && self.funding_bank.is_none()
+            && self.stash.is_none()
+            && !matches!(self.step, Step::DayPassBuy(_) | Step::DayPassUse(_))
+        {
+            // A day-pass crossing that landed here may still owe the sack close.
+            self.flush_day_pass_close(&mut events);
             events.push(TravelEvent::Arrived {
                 destination: self.destination,
                 seconds: (ctx.now_ms.saturating_sub(self.started_ms)) as f64 / 1000.0,
@@ -485,6 +560,38 @@ impl TravelTask {
             Step::Funding(phase) => {
                 self.tick_funding(phase, current, ctx, &mut events);
             }
+            Step::DayPassBuy(state) => {
+                self.tick_day_pass_buy(state, current, ctx, &mut events);
+            }
+            Step::DayPassUse(state) => {
+                self.tick_day_pass_use(state, current, ctx, &mut events);
+            }
+            Step::ScriptWalk {
+                actions,
+                pc,
+                expected,
+                from,
+                sent_from,
+                sent_ms,
+            } => {
+                // Paced walk step in flight. When the room changes off
+                // `sent_from`, resume the script at `pc`. A generous timeout
+                // re-sends by resuming (the next StepMove/Move handles it).
+                if current != sent_from
+                    || ctx.now_ms.saturating_sub(sent_ms) > SLOW_ARRIVAL_TIMEOUT_MS
+                {
+                    self.tick_script(actions, pc, None, expected, from, ctx, &mut events);
+                } else {
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc,
+                        expected,
+                        from,
+                        sent_from,
+                        sent_ms,
+                    };
+                }
+            }
             Step::RunScript {
                 actions,
                 pc,
@@ -495,6 +602,7 @@ impl TravelTask {
                 // A scripted edge can land the room change before its
                 // actions finish (multi-command edges): arrival wins.
                 if current == expected {
+                    self.flush_day_pass_close(&mut events);
                     self.arrive();
                     return events;
                 }
@@ -515,8 +623,10 @@ impl TravelTask {
             } => {
                 if current == expected {
                     // Arrived on schedule; next step (or the destination
-                    // check next tick).
+                    // check next tick). A day-pass USE crossing settles its
+                    // owed sack close here.
                     self.in_transport = false;
+                    self.flush_day_pass_close(&mut events);
                     self.arrive();
                     return events;
                 }
@@ -599,6 +709,14 @@ impl TravelTask {
             }
         }
         events
+    }
+
+    /// Emit the owed `close #sack` from a day-pass crossing, if any (skipped
+    /// when the sack was already open — see day_pass_close_sack).
+    fn flush_day_pass_close(&mut self, events: &mut Vec<TravelEvent>) {
+        if let Some(sack) = self.day_pass_close_sack.take() {
+            events.push(TravelEvent::Send(format!("close #{sack}")));
+        }
     }
 
     /// The expected room arrived: advance the route.
@@ -1091,6 +1209,24 @@ impl TravelTask {
                     sent_anything = true;
                     pc += 1;
                 }
+                WalkAction::StepMove(cmd) => {
+                    // Paced walk step: send it, then suspend until the room
+                    // changes before running the next action (so a multi-room
+                    // crossing doesn't flood commands ahead of arrival).
+                    if ctx.rt_remaining > 0.0 {
+                        break; // wait out RT; resume this same StepMove next tick
+                    }
+                    events.push(TravelEvent::Send(cmd));
+                    self.step = Step::ScriptWalk {
+                        actions,
+                        pc: pc + 1,
+                        expected,
+                        from,
+                        sent_from: ctx.current_room.unwrap_or(from),
+                        sent_ms: ctx.now_ms,
+                    };
+                    return;
+                }
                 WalkAction::WaitRt => {
                     if ctx.rt_remaining > 0.0 {
                         break;
@@ -1180,6 +1316,121 @@ impl TravelTask {
             expected,
             from,
         };
+    }
+
+    /// Start the day-pass crossing. Both paths are RESPONSE-DRIVEN state
+    /// machines (one command per game response — the game's type-ahead buffer
+    /// only holds a few commands, so a flat-fired script is primed to drop
+    /// commands): first a hand is freed via the stash primitive, then the
+    /// machine runs its open-sack/drop-expired preamble and either the USE
+    /// (get → raise) or BUY (the clerk conversation) flow. When no pass is
+    /// held and buying isn't set up, we bail to a normal re-path.
+    fn begin_day_pass(
+        &mut self,
+        from: u32,
+        next: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        use crate::core::day_pass;
+        let Some((dep, dest)) = day_pass::edge(from, next) else {
+            self.repath(ctx.db, from, events);
+            return;
+        };
+        let inputs = ctx.day_pass;
+        let sack = inputs.and_then(|i| i.sack_id);
+        let (a, b) = dest.pair;
+        let held = inputs.and_then(|i| i.cache.valid_pass_id(a, b, i.now_epoch));
+        // Buy permission is the config alone (Lich parity): silver on hand can
+        // cover the purchase without any bank involvement. Get Silvers only
+        // gates the BANK DETOUR inside the conversation (BuyTick.get_silvers).
+        let buy = inputs
+            .map(|i| crate::core::day_pass::buy_permits(i.buy_day_pass, a, b))
+            .unwrap_or(false);
+        if held.is_none() && !buy {
+            // No pass and no buy permission — can't cross. Ban + re-path.
+            events.push(TravelEvent::Status(
+                "no valid day pass held and buying is off - re-pathing".into(),
+            ));
+            self.banned.insert((from, next));
+            self.repath(ctx.db, from, events);
+            return;
+        }
+        // Expired passes get dropped by the machine's preamble (Lich's
+        // `_drag ##{id} drop` sweep), response-gated like everything else.
+        let expired: Vec<String> = inputs
+            .map(|i| i.cache.expired_ids(i.now_epoch))
+            .unwrap_or_default();
+        // Params the post-raise cleanup needs, and the close debt: the machine
+        // sends `open #sack`; if the game answers "That is already open" the
+        // debt clears (top of tick) and the sack is left the way we found it.
+        self.day_pass_close_sack = sack.map(str::to_string);
+        self.day_pass_buy_from = from;
+        self.day_pass_buy_dest = next;
+
+        let held = held.map(str::to_string);
+        let resume: Box<Step> = match &held {
+            Some(pass) => {
+                events.push(TravelEvent::Status(format!(
+                    "day pass to {} - using held pass",
+                    dest.ask_word
+                )));
+                Box::new(Step::DayPassUse(super::day_pass_buy::UseState::new(
+                    sack,
+                    pass,
+                    expired,
+                )))
+            }
+            None => {
+                events.push(TravelEvent::Status(format!(
+                    "day pass to {} - buying",
+                    dest.ask_word
+                )));
+                Box::new(Step::DayPassBuy(super::day_pass_buy::BuyState::new(
+                    dep, dest, sack, expired,
+                )))
+            }
+        };
+        // Free a hand via the stash primitive first, then run the machine. If
+        // the stash finished inline, drive the machine's first tick now so the
+        // `open` goes out this frame.
+        self.begin_stash_then(resume, ctx, events);
+        match self.step.clone() {
+            Step::DayPassUse(state) => self.tick_day_pass_use(state, from, ctx, events),
+            Step::DayPassBuy(state) => self.tick_day_pass_buy(state, from, ctx, events),
+            _ => {}
+        }
+    }
+
+    /// Run an EmptyHands stash cycle, then continue at `resume`. Used to free a
+    /// hand before a response-driven crossing (day-pass buy). If there's
+    /// nothing to stow it continues immediately.
+    fn begin_stash_then(
+        &mut self,
+        resume: Box<Step>,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        let Some(inputs) = ctx.hands else {
+            self.step = *resume;
+            return;
+        };
+        let mut task = super::stash::StashTask::empty();
+        let mut done = false;
+        for ev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
+            match ev {
+                super::stash::StashEvent::Send(cmd) => events.push(TravelEvent::Send(cmd)),
+                super::stash::StashEvent::Done => done = true,
+                super::stash::StashEvent::Failed(_) => done = true,
+            }
+        }
+        if done {
+            self.stash_stack = task.take_stack();
+            self.step = *resume;
+        } else {
+            self.stash = Some(task);
+            self.step = Step::Stashing { resume };
+        }
     }
 
     /// Collapse a `;e true` pass-through edge (`from` -> `virtual`) with the
@@ -1298,6 +1549,134 @@ impl TravelTask {
         }
     }
 
+    /// Drive the response-driven day-pass BUY conversation one tick. Relays the
+    /// machine's Send commands; Traveled/Failed conclude via
+    /// conclude_day_pass.
+    fn tick_day_pass_buy(
+        &mut self,
+        mut state: super::day_pass_buy::BuyState,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        use super::day_pass_buy::BuyEvent;
+        for ev in state.tick(day_pass_tick_inputs(&ctx)) {
+            match ev {
+                BuyEvent::Send(cmd) => events.push(TravelEvent::Send(cmd)),
+                outcome => {
+                    self.conclude_day_pass(outcome, current, ctx, events);
+                    return;
+                }
+            }
+        }
+        self.step = Step::DayPassBuy(state);
+    }
+
+    /// Drive the response-driven day-pass USE machine one tick (same shape as
+    /// the buy conversation: get the held pass, raise it — one command per
+    /// game response).
+    fn tick_day_pass_use(
+        &mut self,
+        mut state: super::day_pass_buy::UseState,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        use super::day_pass_buy::BuyEvent;
+        for ev in state.tick(day_pass_tick_inputs(&ctx)) {
+            match ev {
+                BuyEvent::Send(cmd) => events.push(TravelEvent::Send(cmd)),
+                outcome => {
+                    self.conclude_day_pass(outcome, current, ctx, events);
+                    return;
+                }
+            }
+        }
+        self.step = Step::DayPassUse(state);
+    }
+
+    /// Shared ending for both day-pass machines. On Traveled: put the pass
+    /// back (by exist-id — `_drag #pass` doesn't work), recover the original
+    /// items, settle the owed sack close, ban the used edge and continue the
+    /// trip. On Failed: restore the sack and re-path around the edge.
+    fn conclude_day_pass(
+        &mut self,
+        outcome: super::day_pass_buy::BuyEvent,
+        current: u32,
+        ctx: TravelContext,
+        events: &mut Vec<TravelEvent>,
+    ) {
+        use super::day_pass_buy::BuyEvent;
+        match outcome {
+            BuyEvent::Send(_) => unreachable!("Send is relayed by the tick fns"),
+            BuyEvent::Traveled { pass_id } => {
+                // The machine already put the pass back (response-gated
+                // PutBack phase) before signalling Traveled.
+                let _ = pass_id;
+                // FillHands via the stash primitive (recovers what EmptyHands
+                // stowed at the start of the crossing).
+                if let Some(inputs) = ctx.hands {
+                    let mut task =
+                        super::stash::StashTask::fill(std::mem::take(&mut self.stash_stack));
+                    let mut done = false;
+                    for sev in task.tick(inputs.to_stash_context(ctx.now_ms)) {
+                        match sev {
+                            super::stash::StashEvent::Send(c) => {
+                                events.push(TravelEvent::Send(c))
+                            }
+                            super::stash::StashEvent::Done
+                            | super::stash::StashEvent::Failed(_) => done = true,
+                        }
+                    }
+                    if !done {
+                        self.stash = Some(task);
+                    }
+                }
+                // Close the sack only if we opened it (skipped when the game
+                // said "That is already open").
+                self.flush_day_pass_close(events);
+                // The raise teleported us to the day-pass edge's dest. Ban the
+                // edge for the rest of the trip (no second pass to move
+                // locally). CRITICAL: the landing may not have RESOLVED yet —
+                // never re-plan against a possibly-stale room (the live
+                // phantom second-buy: repathing from the stale departure room
+                // routed into ANOTHER day-pass edge and ran its clerk
+                // conversation in the wrong room). If the room has resolved,
+                // advance normally; otherwise arrival-watch the KNOWN landing
+                // room and let the normal machinery take it from there.
+                let dest = self.day_pass_buy_dest;
+                self.banned.insert((self.day_pass_buy_from, dest));
+                if current == dest || current == self.destination {
+                    self.arrive();
+                } else {
+                    self.step = Step::AwaitArrival {
+                        expected: dest,
+                        from: self.day_pass_buy_from,
+                        sent_ms: ctx.now_ms,
+                        slow: true,
+                    };
+                }
+                // If the FillHands retrieval is still running, suspend into
+                // Stashing over whatever step arrive/repath chose — otherwise
+                // nothing ever ticks the stash task again, and the
+                // `stash.is_none()` arrival guard blocks the trip's completion
+                // forever (repath-to-self → "too many restarts").
+                if self.stash.is_some() {
+                    self.step = Step::Stashing {
+                        resume: Box::new(self.step.clone()),
+                    };
+                }
+            }
+            BuyEvent::Failed(why) => {
+                events.push(TravelEvent::Status(format!("day pass: {why} - re-pathing")));
+                // Leave the sack the way we found it before re-pathing.
+                self.flush_day_pass_close(events);
+                self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
+                self.repath(ctx.db, current, events);
+            }
+        }
+    }
+
     /// The silver-funding pre-flight (Step::Funding). Ported from go2.lic's
     /// bank-withdraw routine.
     fn tick_funding(
@@ -1355,6 +1734,22 @@ impl TravelTask {
                 let need = self.silver_need;
                 match self.nearest_affordable_bank(current, silver, ctx.db) {
                     Some(bank) => {
+                        // Already standing in the nearest bank (e.g. logged in
+                        // at the teller): don't try to walk to it — path_to to
+                        // the same room is empty and would look like "lost the
+                        // route". Hand straight to the withdraw phase here.
+                        if bank == current {
+                            self.funding_bank = Some(bank);
+                            self.step =
+                                Step::Funding(FundingPhase::RoutingToBank { real_dest, need });
+                            self.tick_funding(
+                                FundingPhase::RoutingToBank { real_dest, need },
+                                current,
+                                ctx,
+                                events,
+                            );
+                            return;
+                        }
                         // Redirect the WALK to the bank (path only — the real
                         // destination stays put; funding_bank marks the detour).
                         let Some(bank_path) = pathing::path_to(ctx.db, current, bank) else {
@@ -1557,6 +1952,14 @@ impl TravelTask {
         // Curated override beats whatever the mapdb says about this edge.
         if let Some(ov) = crate::core::pathing::overrides::edge_override(current, next) {
             self.tick_script(ov.actions.clone(), 0, None, next, current, ctx, events);
+            return;
+        }
+        // Chronomage day-pass edge: a self-contained per-town script (open sack
+        // → use/buy a pass → raise it → put it back). Its proc is far too large
+        // to transpile; instead we build the literal command queue from the
+        // edge's departure metadata + the live pass/sack ids and pace it.
+        if crate::core::day_pass::edge(current, next).is_some() {
+            self.begin_day_pass(current, next, ctx, events);
             return;
         }
         if crate::core::mapdb::is_proc_command(&command) {
@@ -1774,6 +2177,8 @@ impl TravelTask {
     }
 
     fn repath(&mut self, db: &MapDb, current: u32, events: &mut Vec<TravelEvent>) {
+        // A day-pass crossing abandoned mid-way still owes its sack close.
+        self.flush_day_pass_close(events);
         self.restarts += 1;
         if self.restarts > MAX_RESTARTS {
             events.push(TravelEvent::Failed(
@@ -1845,6 +2250,24 @@ impl TravelTask {
                         | TravelEvent::LichFallback { .. }
                 )
             })
+    }
+}
+
+/// Assemble the per-tick inputs both day-pass machines read from the world
+/// snapshot (feedback, room, clock, hands, hidden/funding flags).
+fn day_pass_tick_inputs<'a>(ctx: &TravelContext<'a>) -> super::day_pass_buy::BuyTick<'a> {
+    fn hand_ref(i: Option<&crate::core::game_objects::GameItem>) -> Option<(&str, &str)> {
+        i.map(|it| (it.id.as_str(), it.noun.as_str()))
+    }
+    super::day_pass_buy::BuyTick {
+        feedback: ctx.feedback,
+        current_room: ctx.current_room,
+        get_silvers: ctx.day_pass.map(|i| i.get_silvers).unwrap_or(false),
+        now_ms: ctx.now_ms,
+        rt_remaining: ctx.rt_remaining,
+        left_hand: ctx.hands.and_then(|h| hand_ref(h.left_hand)),
+        right_hand: ctx.hands.and_then(|h| hand_ref(h.right_hand)),
+        hidden: ctx.day_pass.map(|i| i.hidden).unwrap_or(false),
     }
 }
 
@@ -1949,6 +2372,7 @@ mod tests {
                 at_pinefar_depository: self.pinefar,
                 compass_dirs: &self.compass_dirs,
                 loot_nouns: &self.loot_nouns,
+                day_pass: None,
             }
         }
     }
@@ -2234,6 +2658,7 @@ mod tests {
                 at_pinefar_depository: false,
                 compass_dirs: &[],
                 loot_nouns: &[],
+                day_pass: None,
             }
         }
 
@@ -2324,6 +2749,7 @@ mod tests {
                     at_pinefar_depository: false,
                     compass_dirs: &[],
                     loot_nouns: &[],
+                    day_pass: None,
                 }
             }};
         }
@@ -2757,6 +3183,33 @@ mod tests {
     }
 
     #[test]
+    fn broke_while_standing_in_the_bank_withdraws_here() {
+        // Nisugi's live bug: logged in AT the bank teller (room 3), broke, then
+        // a paid trip. Funding must withdraw right here, not "lose the route to
+        // the bank" because path_to(bank, bank) is empty.
+        let db = funding_db(); // room 3 is bank-tagged; 1 pays 25000 -> 2
+        // Plan a paid trip starting FROM the bank room (3). Route 3 -> 2 goes
+        // 3 -> 1 (east) -> 2 (board, the paid edge).
+        let mut task = TravelTask::start(&db, 3, 2, 0).unwrap();
+        let mut sim = Sim::new(3);
+        sim.funding = Some(fund(None, false));
+        assert_eq!(sent(&task.tick(sim.ctx(&db))), ["wealth quiet"]);
+        sim.now += 100;
+        sim.funding = Some(fund(Some(0), true)); // broke, get_silvers on
+        // Must NOT abort — the nearest bank IS the current room, so it
+        // withdraws in place this same tick (no walk needed).
+        let ev = task.tick(sim.ctx(&db));
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Failed(s) if s.contains("lost the route"))),
+            "does not abort when already at the bank: {ev:?}"
+        );
+        assert!(
+            sent(&ev).iter().any(|c| c.starts_with("withdraw")),
+            "withdraws in place right here: {ev:?}"
+        );
+    }
+
+    #[test]
     fn scripted_sleep_actually_waits() {
         let db = scripted_db();
         let mut task = TravelTask::start(&db, 3, 4, 0).unwrap();
@@ -2936,6 +3389,293 @@ mod tests {
             matches!(log.last(), Some(TravelEvent::Arrived { destination: 4, .. })),
             "reaches the real destination: {log:?}"
         );
+    }
+
+    // ---- Chronomage day-pass crossing --------------------------------------
+
+    #[test]
+    fn day_pass_use_crossing_raises_a_held_pass() {
+        use crate::core::day_pass::DayPassCache;
+        // Edge 8635 (Wehnimer's departure) -> 8916 (Icemule), a real day-pass
+        // edge. A valid Icemule/Wehnimer's pass (#77) is held in sack #99.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 8635, "uid": [98635], "location": "T", "title": ["[Wehnimer's Shop]"],
+                 "wayto": {"8916": ";e day_pass_proc"}, "timeto": {"8916": 0.8}, "paths": ""},
+                {"id": 8916, "uid": [98916], "location": "T", "title": ["[Icemule Loci]"],
+                 "wayto": {"8635": ";e day_pass_proc"}, "timeto": {"8635": 0.8}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let mut cache = DayPassCache::default();
+        cache.parse_line(r#"This <a exist="77" noun="pass">pass</a> entitles the original purchaser to one (1) day of unlimited travel between the towns of Icemule Trace and Wehnimer's Landing, commencing now."#);
+        cache.parse_line("[Your pass will expire on Fri Aug 22 14:30:00 ET 2038.");
+
+        macro_rules! dpctx {
+            ($now:expr, $cur:expr) => {
+                dpctx!($now, $cur, &[])
+            };
+            ($now:expr, $cur:expr, $fb:expr) => {{
+                let dp = DayPassInputs {
+                    sack_id: Some("99"),
+                    buy_day_pass: "",
+                    get_silvers: false,
+                    cache: &cache,
+                    now_epoch: 0,
+                    hidden: false,
+                };
+                TravelContext {
+                    db: &db, current_room: Some($cur), dead: false, muckled: false,
+                    standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
+                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    day_pass: Some(dp),
+                }
+            }};
+        }
+
+        // The crossing is RESPONSE-DRIVEN (type-ahead safe): each tick sends
+        // exactly one command and waits for its game response before the next.
+        use crate::core::move_feedback::MoveFeedback as F;
+        // Tick 1: open the sack — and nothing else yet.
+        let ev = task.tick(dpctx!(0, 8635));
+        assert_eq!(sent(&ev), ["open #99"], "opens the sack, ONE command: {ev:?}");
+        // Tick 2: the open confirmed → get the held pass. Still one command.
+        let ev = task.tick(dpctx!(1_000, 8635, &[F::ContainerOpened]));
+        assert_eq!(sent(&ev), ["get #77"], "open answered -> get: {ev:?}");
+        // Tick 3: the get landed → raise it.
+        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        assert_eq!(sent(&ev), ["raise #77"], "get answered -> raise: {ev:?}");
+        // Tick 4: the whirlwind fired and we're at 8916 → the put-back is
+        // response-gated too: ONLY the _drag goes out (no close flood).
+        let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
+        assert_eq!(sent(&ev), ["_drag #77 #99"], "drag alone, gated: {ev:?}");
+        // Tick 5: the stow confirmed → the owed close settles and we conclude.
+        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
+        assert!(sent(&ev).contains(&"close #99"), "closes the sack we opened: {ev:?}");
+        assert!(!sent(&ev).iter().any(|c| c.contains("ask ") || c.contains("withdraw")));
+        // Tick 6: trip complete.
+        let ev = task.tick(dpctx!(5_000, 8916));
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            "arrives at the destination: {ev:?}"
+        );
+
+        // --- Same crossing, but the sack was ALREADY open: the close must be
+        // skipped (the user keeps their sack open).
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let ev = task.tick(dpctx!(0, 8635));
+        assert_eq!(sent(&ev), ["open #99"]);
+        let ev = task.tick(dpctx!(1_000, 8635, &[F::ContainerAlreadyOpen]));
+        assert_eq!(sent(&ev), ["get #77"], "already-open also advances: {ev:?}");
+        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        assert_eq!(sent(&ev), ["raise #77"]);
+        let ev = task.tick(dpctx!(3_000, 8916, &[F::RaiseTraveled]));
+        assert_eq!(sent(&ev), ["_drag #77 #99"], "still puts the pass back");
+        let ev = task.tick(dpctx!(4_000, 8916, &[F::ItemStowed]));
+        assert!(
+            !sent(&ev).contains(&"close #99"),
+            "already-open sack is left open: {ev:?}"
+        );
+        let ev = task.tick(dpctx!(5_000, 8916));
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            "still arrives: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn day_pass_raise_conclusion_waits_for_the_resolved_room() {
+        // The live phantom-second-buy: the raise's nav landed while the
+        // resolver still read the DEPARTURE room; concluding then re-planned
+        // from the stale room, banned the used edge, and routed into ANOTHER
+        // day-pass edge ("day pass to solhaven - buying" in the wrong room).
+        use crate::core::day_pass::DayPassCache;
+        use crate::core::move_feedback::MoveFeedback as F;
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 8635, "uid": [98635], "location": "T", "title": ["[Wehnimer's Shop]"],
+                 "wayto": {"8916": ";e day_pass_proc"}, "timeto": {"8916": 0.8}, "paths": ""},
+                {"id": 8916, "uid": [98916], "location": "T", "title": ["[Icemule Loci]"],
+                 "wayto": {"8635": ";e day_pass_proc"}, "timeto": {"8635": 0.8}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let mut cache = DayPassCache::default();
+        cache.parse_line(r#"This <a exist="77" noun="pass">pass</a> entitles the original purchaser to one (1) day of unlimited travel between the towns of Icemule Trace and Wehnimer's Landing, commencing now."#);
+        cache.parse_line("[Your pass will expire on Fri Aug 22 14:30:00 ET 2038.");
+
+        macro_rules! dpctx {
+            ($now:expr, $cur:expr, $fb:expr) => {{
+                let dp = DayPassInputs {
+                    sack_id: Some("99"),
+                    buy_day_pass: "",
+                    get_silvers: false,
+                    cache: &cache,
+                    now_epoch: 0,
+                    hidden: false,
+                };
+                TravelContext {
+                    db: &db, current_room: Some($cur), dead: false, muckled: false,
+                    standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
+                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    day_pass: Some(dp),
+                }
+            }};
+        }
+
+        // Walk the machine to the raise.
+        task.tick(dpctx!(0, 8635, &[]));
+        task.tick(dpctx!(1_000, 8635, &[F::ContainerAlreadyOpen]));
+        let ev = task.tick(dpctx!(2_000, 8635, &[F::ItemGot]));
+        assert_eq!(sent(&ev), ["raise #77"]);
+        // A stray nav with the room STILL the departure room: must NOT
+        // conclude (no cleanup sends, no phantom crossing).
+        let ev = task.tick(dpctx!(3_000, 8635, &[F::NavArrived]));
+        assert!(ev.is_empty(), "stale-room nav must not conclude the raise: {ev:?}");
+        // The whirlwind line arrives while the room is STILL stale: the
+        // response-gated put-back runs — and nothing re-plans from the stale
+        // departure room (no ask/open phantom).
+        let ev = task.tick(dpctx!(4_000, 8635, &[F::RaiseTraveled]));
+        assert_eq!(sent(&ev), ["_drag #77 #99"], "gated cleanup runs: {ev:?}");
+        // Stow confirms (room STILL stale) → conclude must arrival-watch the
+        // KNOWN landing room instead of re-planning.
+        let ev = task.tick(dpctx!(5_000, 8635, &[F::ItemStowed]));
+        assert!(
+            !sent(&ev)
+                .iter()
+                .any(|c| c.starts_with("ask ") || c.starts_with("open ")),
+            "no phantom second crossing from the stale room: {ev:?}"
+        );
+        assert!(
+            matches!(task.step, Step::AwaitArrival { expected: 8916, .. }),
+            "arrival-watches the known landing room: {:?}",
+            task.step
+        );
+        // The room resolves at the landing → the trip completes normally.
+        let _ = task.tick(dpctx!(6_000, 8916, &[]));
+        let ev = task.tick(dpctx!(7_000, 8916, &[]));
+        assert!(
+            matches!(ev.last(), Some(TravelEvent::Arrived { destination: 8916, .. })),
+            "arrives once resolved: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn day_pass_buy_crossing_asks_clerk_and_funds() {
+        use crate::core::day_pass::DayPassCache;
+        // Same edge but NO held pass; buying enabled for wl,imt + get_silvers.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 8635, "uid": [98635], "location": "T", "title": ["[Wehnimer's Shop]"],
+                 "wayto": {"8916": ";e day_pass_proc"}, "timeto": {"8916": 4.4}, "paths": ""},
+                {"id": 8916, "uid": [98916], "location": "T", "title": ["[Icemule Loci]"],
+                 "wayto": {"8635": ";e day_pass_proc"}, "timeto": {"8635": 4.4}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 8635, 8916, 0).unwrap();
+        let cache = DayPassCache::default(); // no passes held
+
+        use crate::core::move_feedback::MoveFeedback as F;
+        // ctx with a room, clock, AND feedback events (the buy machine waits on
+        // the clerk's responses, not just room changes).
+        macro_rules! buyctx {
+            ($now:expr, $cur:expr, $fb:expr) => {{
+                let dp = DayPassInputs {
+                    sack_id: Some("99"),
+                    buy_day_pass: "wl,imt",
+                    get_silvers: true,
+                    cache: &cache,
+                    now_epoch: 0,
+                    hidden: false,
+                };
+                TravelContext {
+                    db: &db, current_room: Some($cur), dead: false, muckled: false,
+                    standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
+                    hands: None, feedback: $fb, lich_fallback: false, funding: None,
+                    at_pinefar_depository: false, compass_dirs: &[], loot_nouns: &[],
+                    day_pass: Some(dp),
+                }
+            }};
+        }
+
+        let mut all: Vec<String> = Vec::new();
+
+        // Tick 1: open the sack. (Hands aren't wired in this test, so the
+        // EmptyHands primitive is a no-op — no `stow both` — and never a raw
+        // `empty hands` string.) The enter step follows on the next tick.
+        let ev = task.tick(buyctx!(0, 8635, &[]));
+        let first: Vec<String> = sent(&ev).iter().map(|c| c.to_string()).collect();
+        all.extend(first.clone());
+        assert_eq!(first, ["open #99"], "opens the day-pass sack");
+        assert!(!first.iter().any(|c| c == "empty hands"), "never a raw `empty hands` string");
+
+        // Now drive the response-driven conversation. Each tick we advance the
+        // room and, based on the LAST command the machine sent, feed the game
+        // response it's waiting on. This exercises the real ask→offer→confirm→
+        // too-poor→bank→withdraw→re-ask→in-hand→walk-back→raise flow.
+        let mut room = 900u32;
+        let mut asks = 0;
+        let mut withdrew = false;
+        let mut withdrew_before_bank_walk = false;
+        let mut raised = false;
+        let mut bank_walk_steps = 0;
+        let mut now = 1_000u64;
+        for _ in 0..60 {
+            let last = all.last().cloned().unwrap_or_default();
+            let fb: Vec<F> = if last.starts_with("ask ") {
+                asks += 1;
+                // 1st ask after (re)arriving at clerk → offer; the confirm ask
+                // → too-poor the first round, in-hand after funding.
+                if asks % 2 == 1 {
+                    vec![F::DayPassOffered]
+                } else if !withdrew {
+                    vec![F::DayPassTooPoor]
+                } else {
+                    vec![F::DayPassInHand]
+                }
+            } else if last == "withdraw 5000" {
+                vec![F::WithdrawOk]
+            } else if last == "raise pass" {
+                vec![F::RaiseTraveled]
+            } else if last.starts_with("open #") {
+                // The preamble waits for the open's response before moving on.
+                vec![F::ContainerOpened]
+            } else {
+                vec![]
+            };
+            room += 1;
+            let cur = if last == "raise pass" { 8916 } else { room };
+            let ev = task.tick(buyctx!(now, cur, &fb));
+            now += 1_000;
+            for c in sent(&ev) {
+                if c == "withdraw 5000" {
+                    withdrew = true;
+                    if bank_walk_steps == 0 {
+                        withdrew_before_bank_walk = true;
+                    }
+                } else if c == "raise pass" {
+                    raised = true;
+                } else if !withdrew && (c.len() <= 5 || c.starts_with("go ") || c == "out") && !c.starts_with("ask") {
+                    bank_walk_steps += 1;
+                }
+                all.push(c.to_string());
+            }
+            if raised {
+                break;
+            }
+        }
+        assert!(all.iter().any(|c| c == "ask clerk for icemule"), "asks the clerk: {all:?}");
+        assert!(withdrew, "funds at the bank when too poor: {all:?}");
+        assert!(!withdrew_before_bank_walk, "walks to the bank before withdrawing: {all:?}");
+        assert!(raised, "raises the bought pass (in the waiting room) to travel: {all:?}");
     }
 
     // ---- Pass-through (`;e true`) edges: virtual urchin hideouts ------------

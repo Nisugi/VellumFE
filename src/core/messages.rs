@@ -111,6 +111,9 @@ pub struct MessageProcessor {
     /// fed into `game_state.character` at the prompt. Society/profession/CHE/
     /// citizenship output from SOCIETY/INFO/PROFILE/CITIZENSHIP.
     pending_character_lines: Vec<String>,
+    /// Day-pass description/expiry lines + the line's pass-link id, applied to
+    /// `game_state.day_passes` at the prompt IN ORDER (expiry follows desc).
+    pending_day_pass_lines: Vec<(String, Option<String>)>,
     /// Silver on hand parsed from a `wealth` line during flush; applied to
     /// `game_state.silver` at the prompt.
     pending_silver: Option<u64>,
@@ -317,6 +320,7 @@ impl MessageProcessor {
             pending_ready_stow: Vec::new(),
             pending_move_feedback: Vec::new(),
             pending_character_lines: Vec::new(),
+            pending_day_pass_lines: Vec::new(),
             pending_silver: None,
             remote: None,
             pending_client_commands: Vec::new(),
@@ -793,6 +797,13 @@ impl MessageProcessor {
                 // house parse is stateful).
                 for line in self.pending_character_lines.drain(..) {
                     game_state.character.parse_line(&line);
+                }
+                // Day-pass lines feed the cache in order (expiry follows the
+                // description, keyed by the same pass id).
+                for (line, pass_id) in self.pending_day_pass_lines.drain(..) {
+                    game_state
+                        .day_passes
+                        .observe(&line, pass_id.as_deref());
                 }
                 if let Some(silver) = self.pending_silver.take() {
                     game_state.silver = Some(silver);
@@ -3097,6 +3108,21 @@ impl MessageProcessor {
                 })
             });
             self.pending_ready_stow.push((full_text.clone(), link));
+        }
+
+        // Chronomage day-pass description / expiry lines (from `look`ing at a
+        // pass) — feed the day-pass cache that gates day-pass travel. The
+        // description/EXPIRED lines carry a `noun="pass"` link whose exist-id
+        // keys the pass; the expiry line has no link. Buffer with the pass id
+        // for the prompt handler to apply IN ORDER (expiry follows description).
+        if crate::core::day_pass::line_is_day_pass(&full_text) {
+            let pass_id = self.current_segments.iter().find_map(|seg| {
+                seg.link_data
+                    .as_ref()
+                    .filter(|l| l.noun == "pass")
+                    .map(|l| l.exist_id.clone())
+            });
+            self.pending_day_pass_lines.push((full_text.clone(), pass_id));
         }
 
         // Active INVENTORY FULL scan: capture status lines into the scan

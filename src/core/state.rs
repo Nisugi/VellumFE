@@ -163,6 +163,10 @@ pub struct GameState {
     /// until first seen. Drives go2's silver-funding for paid travel.
     pub silver: Option<u64>,
 
+    /// Chronomage day-pass expiry cache, learned by `look`ing at passes (Lich's
+    /// `$mapdb_day_passes` + `mapdb_day_pass_monitor`). Gates day-pass travel.
+    pub day_passes: crate::core::day_pass::DayPassCache,
+
     /// DragonRealms experience/skill component state
     pub dr_experience: DRExperienceState,
 
@@ -964,6 +968,7 @@ impl GameState {
             move_feedback: std::collections::VecDeque::new(),
             character: crate::core::character_state::CharacterState::default(),
             silver: None,
+            day_passes: crate::core::day_pass::DayPassCache::default(),
             dr_experience: DRExperienceState::default(),
             gs4_experience: GS4ExperienceState::default(),
             encumbrance: EncumbranceState::default(),

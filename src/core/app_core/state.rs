@@ -130,6 +130,16 @@ pub struct AppCore {
     /// `urchin status` and defers planning until the reply parses (Lich's
     /// `update_urchin_expire`), or the deadline passes. Drained per tick.
     pending_urchin_refresh: Option<(u32, std::time::Instant)>,
+    /// A `.go2` waiting on the Chronomage day-pass sack scan: (destination,
+    /// deadline, pass ids being `look`ed at). Lich's `mapdb_find_day_pass`
+    /// sweep — the cache must learn what's held BEFORE routing so a held pair
+    /// routes at 0.8. Empty ids = the one-time contents probe (open + look in).
+    /// The bool records whether the sack was ALREADY open ("That is already
+    /// open" seen) — then the scan doesn't close it (the user keeps it open).
+    pending_day_pass_scan: Option<(u32, std::time::Instant, Vec<String>, bool)>,
+    /// The day-pass sack contents probe has run this session (the container
+    /// stream keeps contents fresh after the first open).
+    day_pass_sack_probed: bool,
     /// Macro sleep segments (`look\rs2\rhide`): commands waiting out
     /// their pause, drained by take_outbound once due (insertion order
     /// preserved among same-tick due commands).
@@ -376,6 +386,8 @@ impl AppCore {
             jinx_nudge_pending: true,
             travel: Default::default(),
             pending_urchin_refresh: None,
+            pending_day_pass_scan: None,
+            day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -545,6 +557,8 @@ impl AppCore {
             jinx_nudge_pending: true,
             travel: Default::default(),
             pending_urchin_refresh: None,
+            pending_day_pass_scan: None,
+            day_pass_sack_probed: false,
             timed_commands: Vec::new(),
             remote_map_cache: None,
             last_remote_map_revision: 0,
@@ -817,6 +831,7 @@ impl AppCore {
             self.add_system_message(&format!("[map] {text}"));
         }
         self.tick_urchin_refresh();
+        self.tick_day_pass_scan();
         self.tick_travel();
         self.tick_foreach();
         self.poll_jinx();
@@ -1028,6 +1043,95 @@ impl AppCore {
         }
     }
 
+    /// Lich's bounty guard on the day-pass sweep: skip the scan while a
+    /// child-contact bounty is live, or a protective-escort bounty that isn't
+    /// in its WAIT stage — stray commands there can break the task.
+    /// (`bounty? !~ /^You have made contact with the child/ and
+    /// (bounty? !~ /provide a protective escort/ or bounty? =~ /WAIT/)`.)
+    fn day_pass_scan_blocked_by_bounty(&self) -> bool {
+        let b = &self.game_state.bounty.raw_text;
+        b.starts_with("You have made contact with the child")
+            || (b.contains("provide a protective escort") && !b.contains("WAIT"))
+    }
+
+    /// The day-pass sack's command-target, the ids of Chronomage day passes in
+    /// it the cache hasn't learned, and whether ANY pass is visible in it.
+    /// (None target = no sack configured/resolved.)
+    fn day_pass_scan_targets(&self) -> (Option<String>, Vec<String>, bool) {
+        let name = self.config.go2.day_pass_sack.trim();
+        if name.is_empty() {
+            return (None, Vec::new(), false);
+        }
+        let Some(sack) = self.game_state.objects.find_container(name) else {
+            return (None, Vec::new(), false);
+        };
+        let target = sack.command_target();
+        let mut unknown = Vec::new();
+        let mut any_pass = false;
+        for item in self.game_state.objects.items_in(&sack.id) {
+            if item.name.contains("Chronomage day pass") {
+                any_pass = true;
+                if !self.game_state.day_passes.contains(&item.id) {
+                    unknown.push(item.id.clone());
+                }
+            }
+        }
+        (Some(target), unknown, any_pass)
+    }
+
+    /// Resolve a deferred `.go2` waiting on the day-pass sack scan (see
+    /// start_travel). Done when every looked-at pass has parsed into the cache
+    /// (or, for the contents probe, a pass is now visible in the sack), or the
+    /// deadline passes — then the trip is re-planned. Lich's
+    /// `mapdb_find_day_pass` sweep, deferred-trip style like tick_urchin_refresh.
+    fn tick_day_pass_scan(&mut self) {
+        if self.pending_day_pass_scan.is_none() {
+            return;
+        }
+        // "That is already open" landed since the scan's `open` — the sack was
+        // open before we touched it; don't close it at completion. Peeked (not
+        // drained) here: tick_travel drains the queue right after us.
+        if self
+            .game_state
+            .move_feedback
+            .iter()
+            .any(|f| matches!(f, crate::core::move_feedback::MoveFeedback::ContainerAlreadyOpen))
+        {
+            if let Some(pending) = self.pending_day_pass_scan.as_mut() {
+                pending.3 = true;
+            }
+        }
+        let Some((destination, deadline, ids, was_open)) = self.pending_day_pass_scan.clone()
+        else {
+            return;
+        };
+        let learned = !ids.is_empty()
+            && ids.iter().all(|id| self.game_state.day_passes.contains(id));
+        // Probe round (no ids): done as soon as the contents line shows ANY
+        // pass — unknown ones get their look round on the re-plan; already-
+        // known ones proceed straight to planning (don't sit out the
+        // deadline). An empty sack still waits the deadline (we can't tell
+        // "no passes" from "contents not seen yet").
+        let (target, _, probe_any) = self.day_pass_scan_targets();
+        let probe_done = ids.is_empty() && probe_any;
+        let expired = std::time::Instant::now() >= deadline;
+        if learned || probe_done || expired {
+            // Clear FIRST so the re-invoked start_travel plans (or queues the
+            // next scan round) instead of re-deferring.
+            self.pending_day_pass_scan = None;
+            // Restore the sack to how we found it: close only if OUR open
+            // actually opened it. (On a probe→look transition this closes and
+            // the look round re-opens — once per session, and each round
+            // re-decides its own close, so the user's state is preserved.)
+            if !was_open {
+                if let Some(target) = target {
+                    self.travel.queue_command(format!("close #{target}"));
+                }
+            }
+            self.start_travel(destination);
+        }
+    }
+
     pub fn tick_travel(&mut self) {
         if !self.travel.is_traveling() {
             // Not walking: don't let feedback accumulate unboundedly.
@@ -1073,6 +1177,7 @@ impl AppCore {
         };
         let weaponsack = resolve_bag(&self.config.go2.weaponsack);
         let lootsack = resolve_bag(&self.config.go2.lootsack);
+        let day_pass_sack = resolve_bag(&self.config.go2.day_pass_sack);
         let reserved: std::collections::HashSet<&str> = weaponsack
             .as_deref()
             .into_iter()
@@ -1156,6 +1261,17 @@ impl AppCore {
             // tranquility point / pit landmarks live in ground + room_desc).
             compass_dirs: &compass_dirs,
             loot_nouns: &loot_nouns,
+            // Day-pass crossing inputs: the resolved sack container, buy config,
+            // and the live pass cache (begin_day_pass computes the per-edge
+            // held-pass / buy-permission from the town pair).
+            day_pass: Some(crate::core::travel::executor::DayPassInputs {
+                sack_id: day_pass_sack.as_deref(),
+                buy_day_pass: &self.config.go2.buy_day_pass,
+                get_silvers: self.config.go2.get_silvers,
+                cache: &self.game_state.day_passes,
+                now_epoch: chrono::Utc::now().timestamp(),
+                hidden: self.game_state.status.hidden || self.game_state.status.invisible,
+            }),
         };
         let events = self.travel.tick(ctx);
         for event in events {
@@ -1292,6 +1408,52 @@ impl AppCore {
             ));
             return;
         }
+        // Day-pass sack scan (Lich's `mapdb_find_day_pass` sweep): learn the
+        // passes actually held BEFORE routing, so a held pair routes at 0.8
+        // instead of the buy cost (or not at all). If the sack holds passes
+        // the cache hasn't seen, `look` at each (the look output feeds the
+        // cache via the day-pass feed) and defer planning until they parse.
+        // If the sack's contents are still unknown this session, probe once
+        // with open + look in — the container stream keeps them fresh after.
+        if self.config.go2.use_day_pass
+            && self.pending_day_pass_scan.is_none()
+            && !self.day_pass_scan_blocked_by_bounty()
+        {
+            let (target, unknown, any_pass) = self.day_pass_scan_targets();
+            if let Some(target) = target {
+                if !unknown.is_empty() {
+                    self.add_system_message("[go2] checking your Chronomage day passes...");
+                    self.travel.queue_command(format!("open #{target}"));
+                    for id in &unknown {
+                        self.travel.queue_command(format!("look #{id}"));
+                    }
+                    // The close (if the sack wasn't already open) is queued at
+                    // scan completion by tick_day_pass_scan.
+                    self.pending_day_pass_scan = Some((
+                        destination,
+                        std::time::Instant::now() + std::time::Duration::from_secs(5),
+                        unknown,
+                        false,
+                    ));
+                    return;
+                }
+                if !any_pass && !self.day_pass_sack_probed {
+                    // Contents never seen this session: open + look in, then
+                    // re-plan (a discovered pass triggers the look round).
+                    self.day_pass_sack_probed = true;
+                    self.add_system_message("[go2] checking the day-pass sack...");
+                    self.travel.queue_command(format!("open #{target}"));
+                    self.travel.queue_command(format!("look in #{target}"));
+                    self.pending_day_pass_scan = Some((
+                        destination,
+                        std::time::Instant::now() + std::time::Duration::from_secs(4),
+                        Vec::new(),
+                        false,
+                    ));
+                    return;
+                }
+            }
+        }
         // Urchins: valid only when enabled AND access hasn't expired AND not
         // hidden/invisible (Lich's combined urchin timeto gate). Also lets
         // dijkstra route through the urchin-hideout hubs this trip.
@@ -1303,6 +1465,38 @@ impl AppCore {
                     self.game_state.status.invisible,
                 ),
         );
+        // Day-pass: for each of the three town pairs, decide the routable cost.
+        // A held valid pass → 0.8 (use it); no pass but the buy config permits
+        // the pair (with Get Silvers to cover a shortfall) → 7.4 (buy it); else
+        // not routable. Off entirely unless use_day_pass is set.
+        {
+            use crate::core::day_pass;
+            let mut routable: Vec<((String, String), f64)> = Vec::new();
+            if self.config.go2.use_day_pass {
+                // Each departure's destinations carry the pair + per-source buy
+                // cost. A held valid pass → 0.8; else buyable (config + Get
+                // Silvers) → that edge's buy cost; else not routable.
+                for dep in day_pass::DEPARTURES {
+                    for dest in dep.destinations {
+                        let (a, b) = dest.pair;
+                        // Buy routing needs only the config (Lich parity):
+                        // silver on hand can cover the purchase; Get Silvers
+                        // gates just the in-conversation bank detour.
+                        let cost = if self.game_state.day_passes.has_valid_pass(a, b, now_epoch) {
+                            Some(0.8)
+                        } else if day_pass::buy_permits(&self.config.go2.buy_day_pass, a, b) {
+                            Some(dest.buy_cost)
+                        } else {
+                            None
+                        };
+                        if let Some(cost) = cost {
+                            routable.push(((a.to_string(), b.to_string()), cost));
+                        }
+                    }
+                }
+            }
+            crate::core::pathing::transpile::set_day_pass_routable(&routable);
+        }
         let Some(db) = self.map.mapdb().cloned() else {
             self.add_system_message(
                 "[go2] map database not loaded - configure it in Settings > Map",
