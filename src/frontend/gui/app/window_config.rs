@@ -254,10 +254,16 @@ impl VellumGuiApp {
 
         if let Some(text) = text_content_of(&window.content) {
             view.title = text.title.clone();
-            view.streams = text.streams.join(", ");
-            view.max_lines = text.max_lines;
-            view.supports_streams = true;
-            view.seen_streams = self.app_core.message_processor.seen_streams();
+            // Spells windows carry TextContent live, but WindowDef::Spells
+            // has no stream/buffer fields to persist and the stream router
+            // never subscribes Spells content — offering the fields would
+            // show edits that neither apply nor survive a restart.
+            if !matches!(window.content, WindowContent::Spells(_)) {
+                view.streams = text.streams.join(", ");
+                view.max_lines = text.max_lines;
+                view.supports_streams = true;
+                view.seen_streams = self.app_core.message_processor.seen_streams();
+            }
             if matches!(window.content, WindowContent::Text(_)) {
                 view.supports_compact = true;
                 view.compact = text.compact;
