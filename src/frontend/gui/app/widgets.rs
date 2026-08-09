@@ -1995,9 +1995,13 @@ impl VellumGuiApp {
             .collect();
 
         // A skinned compass integrates up/down into the rose sprite the way
-        // Wrayth authored them, so it fills the whole widget with no separate
-        // arrow column. Vector mode keeps the rose square plus an up/down
-        // triangle column to its right.
+        // Wrayth authored them, so there is no separate arrow column. Vector
+        // mode keeps the rose square plus an up/down triangle column to its
+        // right. Either way the art occupies a CENTERED square of
+        // min(width, height): the window itself is free-form (grow one axis
+        // and the art holds its size, grow both and it scales), so extra
+        // space pads evenly around the rose instead of trailing off one
+        // side.
         let has_skin_rose = skin_art.and_then(|art| art.compass_rose).is_some();
 
         if has_skin_rose {
@@ -2005,7 +2009,9 @@ impl VellumGuiApp {
                 .available_height()
                 .min(ui.available_width())
                 .max(40.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+            let (outer, _) =
+                ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+            let rect = Rect::from_center_size(outer.center(), Vec2::splat(side));
             if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
                 clicked_link = Some(click);
             }
@@ -2018,6 +2024,12 @@ impl VellumGuiApp {
                     .available_height()
                     .min(ui.available_width() - arrow_side - 8.0)
                     .max(40.0);
+                // Center the rose + arrow column pair in the leftover width.
+                let content_width = side + arrow_side + 8.0;
+                let lead = ((ui.available_width() - content_width) * 0.5).max(0.0);
+                if lead > 0.0 {
+                    ui.add_space(lead);
+                }
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
                 if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
                     clicked_link = Some(click);

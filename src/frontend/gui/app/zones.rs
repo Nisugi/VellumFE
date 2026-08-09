@@ -1698,25 +1698,13 @@ impl VellumGuiApp {
                 let capped = initial_rect.height().min(max_window_size.y);
                 initial_rect.set_height(capped);
             }
-            // The compass reads as SQUARE — the visible ring+arrows fill a
-            // square, even though the rose SPRITE's bounds are wider (storm's
-            // 103x62 includes side sweep-arrows). A free-width compass window
-            // left mesh-filled dead space beside the square content — and,
-            // worse, snapping used that wider rect, so guides landed at the
-            // empty edge instead of the compass frame. Constrain the window to a
-            // square (width == height) so it hugs the visible compass: no
-            // trailing mesh, snap edges hit the frame. Computed as a plain bool
-            // (no lingering `self` borrow) and reused by `normalize_height`
-            // below so the release doesn't re-widen the stored rect. Ungrouped.
-            let compass_derived =
-                matches!(window.widget_type, WidgetType::Compass) && !grouped;
-            if compass_derived {
-                // Side length bounded by the zone's width, or a tall compass
-                // in a narrow sidebar would square itself wider than the zone.
-                let side = initial_rect.height().min(window_bounds.width().max(1.0));
-                initial_rect.set_height(side);
-                initial_rect.set_width(side);
-            }
+            // The compass window is deliberately FREE-FORM (owner decision,
+            // 2026-08-09, replacing the earlier forced-square constraint
+            // that made snap releases jump): the rose art renders as a
+            // centered square of min(width, height) inside whatever rect
+            // the user sets, so widening or heightening one axis grows the
+            // window without scaling the art, growing both scales it, and
+            // the window edges are the honest snap edges.
 
             let mut clicked_link = None;
             // WebUI windows get a title-bar close button: unlike layout
@@ -1874,16 +1862,7 @@ impl VellumGuiApp {
                 pointer_pos,
                 latched_and_dragging,
             );
-            // A relaxed pin lets egui re-clamp to its remembered desired_size
-            // — a size the compass squaring below never taught it (the pin
-            // always overrode it), so a mere MOVE drag popped the compass back
-            // to its old pre-square width for the whole gesture: the mesh
-            // filled the wide rect and snapping ran against the phantom right
-            // edge. A move never changes size, so the squared window keeps its
-            // pin unless a real resize-handle drag is in progress.
-            let resize_in_progress =
-                self.zone_resize_active || resize_handle_dragged(ctx, window_layer);
-            if !being_moved && (!relax_size_pin || (compass_derived && !resize_in_progress)) {
+            if !being_moved && !relax_size_pin {
                 // Pin every window to its display size when the user isn't
                 // engaging it: egui's Resize state re-clamps its remembered
                 // desired_size each frame, so without this a release-snap's new
@@ -2100,27 +2079,9 @@ impl VellumGuiApp {
                 // height. Nothing downstream can resurrect a stale height
                 // (e.g. a layout saved under a larger icon-size setting).
                 let compact_derived = is_compact_widget && !grouped;
-                // The compass window is squared (see the fed-rect constraint
-                // above): normalize the STORED rect the same way — reusing the
-                // pre-computed `compass_derived` — or a wide rendered/snapped
-                // rect on release would be tracked as canonical and "spit back
-                // out" wide next frame despite the fed-rect squaring.
                 let normalize_height = |mut rect: Rect| -> Rect {
                     if compact_derived {
                         rect.set_height(rect.height().min(max_window_size.y));
-                    }
-                    if compass_derived {
-                        // Square from whichever dimension the gesture changed:
-                        // height-only squaring silently discarded width drags,
-                        // so the compass could never be widened from its side
-                        // handles. With no size change both deltas are zero
-                        // and the height branch preserves the stored square.
-                        let dw = (rect.width() - initial_rect.width()).abs();
-                        let dh = (rect.height() - initial_rect.height()).abs();
-                        let side = if dw > dh { rect.width() } else { rect.height() }
-                            .min(window_bounds.width().max(1.0));
-                        rect.set_height(side);
-                        rect.set_width(side);
                     }
                     rect
                 };
