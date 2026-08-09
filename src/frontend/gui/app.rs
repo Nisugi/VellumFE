@@ -57,6 +57,11 @@ const MAX_RENDERED_LINES: usize = 10_000;
 const MIN_VIEWPORT_WIDTH: f32 = 180.0;
 const MIN_VIEWPORT_HEIGHT: f32 = 120.0;
 const MIN_DOCKED_WINDOW_HEIGHT: f32 = 24.0;
+/// Title-bar band height bounds, shared by the egui bar override and the
+/// skinned sprite band — two different clamps here once let the caption sit
+/// on art it shouldn't.
+const TITLE_BAR_MIN_HEIGHT: f32 = 12.0;
+const TITLE_BAR_MAX_HEIGHT: f32 = 48.0;
 /// Idle delay before a dirty layout is flushed to disk. Saves are blocking
 /// on the UI thread, so writes must not happen per interaction.
 const LAYOUT_SAVE_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -345,6 +350,18 @@ pub struct VellumGuiApp {
     layout_dirty: bool,
     layout_dirty_since: Option<Instant>,
     applied_theme_id: Option<String>,
+    /// Active skin id whose UI palette was last overlaid onto the visuals.
+    /// Paired with `applied_theme_id` so a skin switch re-applies the palette
+    /// even when the theme name is unchanged.
+    applied_skin_ui_id: Option<String>,
+    /// Whether the last theme apply read art belonging to the TARGET skin
+    /// (`skin_state.loaded_skin() == active_skin`). Skin art loads
+    /// asynchronously — a switch frame reads the previous skin's art — so a
+    /// guard keyed only on the target skin id would freeze the wrong palette in
+    /// (e.g. stealth's orange menus persisting after switching to storm). This
+    /// stays false until the loaded art matches the target, forcing a re-apply
+    /// next frame. Covers none→skin, skin→none, and skin→skin.
+    applied_skin_art_settled: bool,
     current_theme: crate::theme::AppTheme,
     /// Active skin graphics (ui_settings.active_skin); reloaded when it changes.
     skin_state: skin::SkinState,
@@ -541,10 +558,10 @@ pub struct VellumGuiApp {
     /// Sticky per press: set once egui is observed resizing a window this
     /// press (its rendered size diverged from the pinned size), cleared on
     /// release. A resize-edge drag can't be seen through pointer travel —
-    /// egui captures the pointer while resizing, so `pointer_pos` freezes and
-    /// `zone_press_drag_seen` never trips. This lets the size pin relax for a
-    /// resize the way `zone_press_drag_seen` does for a move, so windows can be
-    /// dragged SMALLER, not only larger.
+    /// egui captures/locks the pointer while resizing, so `interact_pos`
+    /// freezes and `zone_press_drag_seen` never trips. This flag lets the
+    /// size pin relax for a resize the same way `zone_press_drag_seen` does
+    /// for a move, so windows can be dragged SMALLER, not only larger.
     zone_resize_active: bool,
     /// Pointer-true rect of the zone window being dragged/resized, so
     /// snapping stays escapable (see `snap.rs`); None outside a drag.
@@ -870,6 +887,8 @@ impl VellumGuiApp {
             layout_dirty: migrated_gui || seeded_active_skin,
             layout_dirty_since: None,
             applied_theme_id: None,
+            applied_skin_ui_id: None,
+            applied_skin_art_settled: false,
             current_theme: crate::theme::AppTheme::default(),
             skin_state: skin::SkinState::default(),
             ui_font,
@@ -1801,6 +1820,18 @@ impl VellumGuiApp {
     /// Display title for a docked window: grouped leaders show all member
     /// titles joined; everything else shows its own title.
     fn window_display_title(&self, tab: &GuiTab) -> String {
+        // A per-window custom title (Edit Window dialog) wins over both the
+        // stream title and the grouped-member join — the escape hatch for
+        // groups whose auto-title runs long. Empty/whitespace falls through.
+        if let Some(custom) = self
+            .tab_settings
+            .get(&tab.id.key)
+            .and_then(|settings| settings.custom_title.as_deref())
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        {
+            return custom.to_string();
+        }
         match self.group_for_tab(&tab.id.key) {
             Some(group) if group.members.first() == Some(&tab.id.key) => group
                 .members
@@ -1820,6 +1851,15 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         tab: &GuiTab,
     ) -> Option<GuiLinkClick> {
+        // Game content is NOT UI chrome: a skin's [ui] palette colors menus and
+        // editors (its `text` can be an accent like stealth's orange), but story
+        // / spells / room / inventory text must stay in the theme's own text
+        // color, never the chrome accent. Pin the game text color here so every
+        // window's content is immune to the global chrome `override_text_color`;
+        // explicit per-span colors (highlights, links, stream colors) still win.
+        let game_text = theme::color32(self.current_theme.text_primary);
+        ui.visuals_mut().override_text_color = Some(game_text);
+        ui.visuals_mut().widgets.noninteractive.fg_stroke.color = game_text;
         let members: Vec<GuiTab> = match self.group_for_tab(&tab.id.key) {
             Some(group) => group
                 .members
@@ -1861,6 +1901,33 @@ impl VellumGuiApp {
             } else {
                 slots.push(vec![member]);
             }
+        }
+
+        // One shared background across the whole group rect (the leader's
+        // resolved background), painted once BEFORE members render — members
+        // suppress their own in render_group_stack, so a grouped mesh reads as
+        // a single surface instead of one strip per member.
+        if let Some(background) = self.widget_render_settings(&tab.id.key).background {
+            // Confine the mesh to the window's REAL content bounds. For a
+            // compact/small window (e.g. the compass, whose content has a min
+            // size) `available_rect_before_wrap` extends to the whole layout
+            // region and even `max_rect` can exceed a window shrunk below the
+            // content minimum — so the mesh tiled/clipped past the frame and
+            // spilled onto the neighbor. Take the TIGHTEST of the three rects
+            // (available, the ui's assigned max_rect, and egui's paint clip) so
+            // the mesh never exceeds the smallest, i.e. the actual window.
+            let rect = ui
+                .available_rect_before_wrap()
+                .intersect(ui.max_rect())
+                .intersect(ui.clip_rect());
+            let shapes = crate::frontend::gui::skin::background_shapes(
+                rect,
+                &background,
+                ui.visuals().window_fill(),
+            );
+            ui.painter()
+                .with_clip_rect(rect)
+                .add(egui::Shape::Vec(shapes));
         }
 
         let mut clicked = None;
@@ -2156,12 +2223,15 @@ impl VellumGuiApp {
                 ui.allocate_ui(Vec2::new(width, each_height), |ui| {
                     ui.set_min_size(Vec2::new(width, each_height));
                     ui.set_max_height(each_height);
-                    if let Some(click) = Self::render_window_content(
-                        &self.app_core,
-                        ui,
-                        member,
-                        self.widget_render_settings(&member.id.key),
-                    ) {
+                    // Members in a group don't paint their own background —
+                    // the group leader paints ONE shared background across the
+                    // whole group rect (see render_window_or_group_content), so
+                    // the mesh reads as one surface instead of per-member strips.
+                    let mut settings = self.widget_render_settings(&member.id.key);
+                    settings.background = None;
+                    if let Some(click) =
+                        Self::render_window_content(&self.app_core, ui, member, settings)
+                    {
                         *clicked = Some(click);
                     }
                 })
@@ -2550,8 +2620,32 @@ impl VellumGuiApp {
             .get(key)
             .and_then(|settings| settings.skin_frame.as_deref())
             .or(self.ui_settings.default_frame.as_deref());
+        let mut border = self
+            .skin_state
+            .border_for_with_override(&tab.window_name, frame_override)?;
+        // Per-window live scale multiplier (window editor slider). Both the
+        // painted thickness and the content inset derive from border.scale,
+        // so scaling it here keeps the frame and its padding in lockstep.
+        if let Some(mult) = self
+            .tab_settings
+            .get(key)
+            .and_then(|settings| settings.frame_scale)
+        {
+            border.scale = (border.scale * mult.max(0.05)).clamp(0.05, 8.0);
+        }
+        Some(border)
+    }
+
+    /// The skin's title-bar nine-slice for a window, if it authored one
+    /// (`[controls.titlebar]`). When present the window takes over its own
+    /// title bar: egui's is hidden and we paint the sprite band + caption +
+    /// close button ourselves.
+    pub(super) fn skin_titlebar_for_tab(&self, key: &TabKey) -> Option<skin::ResolvedBorder> {
+        // Only game windows with a caption get a skinned title bar.
+        self.available_tabs.get(key)?;
         self.skin_state
-            .border_for_with_override(&tab.window_name, frame_override)
+            .widget_art()
+            .and_then(|art| art.control_border("titlebar", "normal").cloned())
     }
 
     fn apply_skin_border_to_frame(
@@ -2586,6 +2680,92 @@ impl VellumGuiApp {
         }
     }
 
+    /// Height of a window's skinned title band: the title-bar art's own
+    /// height (scaled) so the sprite renders at its authored thickness, unless
+    /// the user set an explicit per-window title_bar_height override. Shared
+    /// by the content-inset reservation and the paint so they can't drift.
+    pub(super) fn skin_titlebar_height(
+        &self,
+        key: &TabKey,
+        titlebar: &skin::ResolvedBorder,
+    ) -> f32 {
+        let art_height = (titlebar.tex_size.y * titlebar.scale).max(TITLE_BAR_MIN_HEIGHT);
+        self.tab_settings
+            .get(key)
+            .and_then(|s| s.title_bar_height)
+            .filter(|h| *h > 0.0)
+            .unwrap_or(art_height)
+            .clamp(TITLE_BAR_MIN_HEIGHT, TITLE_BAR_MAX_HEIGHT)
+    }
+
+    /// Paint a skin's title bar over the top of a rendered window: the
+    /// nine-slice band and the caption. There is no skinned close button —
+    /// windows hide via the Windows menu / right-click, like the layout
+    /// widgets. Runs on the window's own layer so it moves and stacks with
+    /// the window.
+    fn paint_skin_titlebar(
+        &self,
+        ctx: &egui::Context,
+        key: &TabKey,
+        window_name: &str,
+        titlebar: &skin::ResolvedBorder,
+        response: &egui::Response,
+    ) {
+        let height = self.skin_titlebar_height(key, titlebar);
+        let layout = zones::titlebar_layout(response.rect, height);
+        let painter = ctx.layer_painter(response.layer_id);
+
+        // Fill the band region with the window's own mesh BEFORE the sprite, so
+        // the sprite's transparent cutout notch reveals mesh (not bare panel
+        // fill) — the Wrayth look. The content mesh only reaches the content
+        // rect (below the reserved title inset), so without this the band area
+        // above it has no mesh to show through. Painted at the sprite's own UV
+        // scale via background_shapes, clipped to the band.
+        if let Some(background) = self.widget_render_settings(key).background {
+            let scrim = ctx.global_style().visuals.window_fill();
+            let shapes = skin::background_shapes(layout.bar, &background, scrim);
+            painter
+                .with_clip_rect(layout.bar)
+                .add(egui::Shape::Vec(shapes));
+        }
+
+        // Band sprite over the mesh: its transparent notch lets the mesh show
+        // through, and its opaque edge carries the grey line under the bar.
+        skin::paint_nine_slice(&painter, layout.bar, titlebar, [true; 4]);
+
+        // Caption, left-aligned within its area, vertically centered.
+        let caption = match self.available_tabs.get(key).cloned() {
+            Some(tab) => self.window_display_title(&tab),
+            None => window_name.to_string(),
+        };
+        let visuals = ctx.global_style().visuals.clone();
+        // Caption color = the skin's titlebar_text (defaults to accent). A skin
+        // whose title-bar art needs a specific text color (StormFront's silver
+        // bar wants dark text, not the steel-blue accent) pins it via
+        // [ui].titlebar_text; falls back to the theme text color when no palette.
+        let caption_color = self
+            .skin_state
+            .widget_art()
+            .and_then(|art| art.ui_palette.as_ref().map(|pal| pal.titlebar_text))
+            .unwrap_or_else(|| visuals.text_color());
+        if !caption.is_empty() {
+            // Sit the caption in the SOLID top band of the title-bar art, not
+            // the full-bar center — these sprites carry a mesh-notch / stretch
+            // region in their lower half, so a vertically-centered caption lands
+            // over it. Anchor near the top; a smaller font fits the solid strip.
+            let font_size = (height * 0.42).clamp(8.0, 13.0);
+            let baseline_y = layout.caption.top() + font_size * 0.5 + 2.0;
+            painter.text(
+                egui::pos2(layout.caption.left() + 4.0, baseline_y),
+                egui::Align2::LEFT_CENTER,
+                caption,
+                egui::FontId::proportional(font_size),
+                caption_color,
+            );
+        }
+
+    }
+
     /// Paint the skin's nine-slice border over a rendered window, on the
     /// window's own layer so it moves and stacks with the window.
     fn paint_skin_border(
@@ -2605,6 +2785,40 @@ impl VellumGuiApp {
                 &border,
                 sides,
             );
+        }
+    }
+
+    /// Paint the active skin's decorative edge overlays (strip + corner
+    /// ornament per edge) over the window's border, on the window's layer.
+    fn paint_skin_edges(
+        &self,
+        ctx: &egui::Context,
+        response: &egui::Response,
+        top_inset: f32,
+        show_ornament: bool,
+    ) {
+        let Some(art) = self.skin_state.widget_art() else {
+            return;
+        };
+        if !art.has_edges() {
+            return;
+        }
+        let painter = ctx.layer_painter(response.layer_id);
+        for edge_name in ["top", "right", "bottom", "left"] {
+            if let Some(edge) = art.edge(edge_name) {
+                // Suppress the corner ornament when there's no title bar — its
+                // whole point is to bridge the title bar into the body, and with
+                // no bar it just floats at the top corner over content.
+                let edge = if show_ornament {
+                    *edge
+                } else {
+                    skin::ResolvedEdge {
+                        ornament: None,
+                        ..*edge
+                    }
+                };
+                skin::paint_edge_overlay(&painter, response.rect, edge_name, &edge, top_inset);
+            }
         }
     }
 
@@ -2637,13 +2851,29 @@ impl VellumGuiApp {
     /// Effective title bar height for a game window: per-window override,
     /// else the global setting. 0 means "auto" in both layers; None =
     /// derive from the title font (egui's default behavior).
+    ///
+    /// A skin frame paints its top slice over the window top, which includes
+    /// the title band — so when a frame is active the title bar is grown to
+    /// at least that top thickness, keeping the caption clear of the art
+    /// instead of tucked underneath it.
     pub(super) fn title_bar_height_for_tab(&self, key: &TabKey) -> Option<f32> {
-        let height = self
+        let configured = self
             .tab_settings
             .get(key)
             .and_then(|settings| settings.title_bar_height)
             .unwrap_or(self.ui_settings.title_bar_height);
-        (height > 0.0).then(|| height.clamp(12.0, 32.0))
+        let frame_top = self
+            .skin_border_for_tab(key)
+            .map(|border| border.slice[0] * border.scale)
+            .unwrap_or(0.0);
+        // Auto (0) with a frame present: derive from the frame top. Explicit
+        // height: never let it fall below the frame's top thickness.
+        let height = if configured > 0.0 {
+            configured.max(frame_top)
+        } else {
+            frame_top
+        };
+        (height > 0.0).then(|| height.clamp(TITLE_BAR_MIN_HEIGHT, TITLE_BAR_MAX_HEIGHT))
     }
 
     /// Effective title text alignment for a game window.
@@ -6685,7 +6915,6 @@ impl eframe::App for VellumGuiApp {
         }
 
         let detached_before_frame = self.detached_tab_keys();
-        let mut open_windows_manager = false;
         let mut reconnect_clicked = false;
         let mut zone_actions = GuiWindowActions::default();
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
@@ -6694,6 +6923,10 @@ impl eframe::App for VellumGuiApp {
         egui::Panel::top("gui_shell_toolbar")
             .resizable(false)
             .exact_size(30.0)
+            // No divider under the header bar — the theme's separator stroke
+            // reads as a hard cyan line above the central zone over a dark
+            // skin. Let the mesh meet the toolbar directly.
+            .show_separator_line(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Flat toolbar: no resting chip background on the zone
@@ -6820,11 +7053,107 @@ impl eframe::App for VellumGuiApp {
                         );
                     });
 
-                    // U6: the "Windows" button opens the single Windows
-                    // manager (show/hide + zone + add-window, grouped by
-                    // category) instead of an inline menu.
-                    if ui.button("Windows").clicked() {
-                        open_windows_manager = true;
+                    // "Windows" is the same catalog the floating manager
+                    // shows (show/hide + zone + add-window, grouped by
+                    // category), inline as a stay-open menu like Zones:
+                    // nothing inside closes it, only clicking outside.
+                    egui::containers::menu::MenuButton::new("Windows")
+                        .config(
+                            egui::containers::menu::MenuConfig::new()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(380.0);
+                            ui.set_max_height(520.0);
+                            self.known_windows_body(ui);
+                        });
+
+                    // "Settings" is the hub for the knobs in config.toml
+                    // (the registry-driven Settings window): one row per
+                    // section, and clicking a row opens the Settings
+                    // window with that section expanded and scrolled into
+                    // view. Stay-open like Zones/Windows.
+                    egui::containers::menu::MenuButton::new("Settings")
+                        .config(
+                            egui::containers::menu::MenuConfig::new()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(160.0);
+                            if ui.button("All Settings…").clicked() {
+                                self.open_settings_editor();
+                            }
+                            ui.separator();
+                            for section in editors::settings_sections() {
+                                if ui.button(section).clicked() {
+                                    self.open_settings_editor_at(section);
+                                }
+                            }
+                        });
+
+                    // "Editors" is the hub for authored content — the
+                    // standalone editors that manage their own files
+                    // (highlights, keybinds, hotbars, …) rather than
+                    // config.toml knobs. Same stay-open behavior.
+                    egui::containers::menu::MenuButton::new("Editors")
+                        .config(
+                            egui::containers::menu::MenuConfig::new()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(180.0);
+                            if ui.button("Themes").clicked() {
+                                self.open_theme_browser();
+                            }
+                            if ui.button("Colors").clicked() {
+                                self.open_colors_editor();
+                            }
+                            if ui.button("Highlights").clicked() {
+                                self.open_highlight_editor(None);
+                            }
+                            ui.separator();
+                            if ui.button("Keybinds").clicked() {
+                                self.open_keybind_editor();
+                            }
+                            if ui.button("Menu Keybinds").clicked() {
+                                self.open_menu_keybind_editor();
+                            }
+                            #[cfg(feature = "gamepad")]
+                            if ui.button("Controller").clicked() {
+                                self.open_controller_editor();
+                            }
+                            if ui.button("Touch Wheel").clicked() {
+                                self.open_touch_wheel_editor();
+                            }
+                            if ui.button("Hotbars").clicked() {
+                                self.open_hotbar_editor();
+                            }
+                            ui.separator();
+                            if ui.button("Indicators").clicked() {
+                                self.open_indicator_templates_editor();
+                            }
+                            if ui.button("Streams & Custom Windows").clicked() {
+                                self.open_custom_windows_editor();
+                            }
+                            if ui.button("Sorter").clicked() {
+                                self.open_sorter_editor();
+                            }
+                            ui.separator();
+                            if ui.button("UI Packs").clicked() {
+                                self.open_pack_editor();
+                            }
+                            if ui.button("Asset Manager (Jinx)").clicked() {
+                                self.open_jinx_panel();
+                            }
+                            if ui.button("Launcher").clicked() {
+                                self.open_launcher_editor();
+                            }
+                        });
+
+                    // "Explorer" is a one-shot: open (or surface) the Map
+                    // Explorer's native window.
+                    if ui.button("Explorer").clicked() {
+                        self.map_explorer.open = true;
                     }
                 });
             });
@@ -7354,9 +7683,6 @@ impl eframe::App for VellumGuiApp {
             self.refresh_zorder_cache(&ctx);
         }
 
-        if open_windows_manager {
-            self.open_known_windows_editor();
-        }
         if reconnect_clicked {
             self.reconnect();
         }

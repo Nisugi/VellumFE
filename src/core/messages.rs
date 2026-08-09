@@ -25,6 +25,34 @@ pub enum RouteDecision {
     Deliver { candidates: Vec<String> },
 }
 
+/// Map an injury `<image>`'s `name` to a doll severity level for body part
+/// `id`. `Injury1-3` and the nervous system's own `Nsys1-3` prefix are wounds
+/// (levels 1-3); `Scar1-3` are scars (4-6); `name == id` (or anything else)
+/// means cleared (0). The `Nsys` prefix is the subtle one — the game reports
+/// nerve wounds under it, not `Injury`, so omitting it silently dropped every
+/// nsys wound to 0 and the doll never showed convulsions.
+pub fn injury_name_to_level(id: &str, name: &str) -> u8 {
+    if name == id {
+        0
+    } else if name.starts_with("Injury") || name.starts_with("Nsys") {
+        match name.chars().last() {
+            Some('1') => 1,
+            Some('2') => 2,
+            Some('3') => 3,
+            _ => 0,
+        }
+    } else if name.starts_with("Scar") {
+        match name.chars().last() {
+            Some('1') => 4,
+            Some('2') => 5,
+            Some('3') => 6,
+            _ => 0,
+        }
+    } else {
+        0
+    }
+}
+
 /// Routing precedence for a stream: subscribed window > `routes` entry >
 /// `fallback`. Route lookup is case-insensitive (matching the legacy
 /// drop-list comparison). A `window:<name>` route lists its window first,
@@ -1211,27 +1239,7 @@ impl MessageProcessor {
             ParsedElement::InjuryImage { id, name } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
 
-                // Convert injury name to level: Injury1-3 = 1-3, Scar1-3 = 4-6
-                // When name equals body part ID, it means cleared (level 0)
-                let level = if name == id {
-                    0 // Cleared - name equals body part ID
-                } else if name.starts_with("Injury") {
-                    match name.chars().last() {
-                        Some('1') => 1,
-                        Some('2') => 2,
-                        Some('3') => 3,
-                        _ => 0,
-                    }
-                } else if name.starts_with("Scar") {
-                    match name.chars().last() {
-                        Some('1') => 4,
-                        Some('2') => 5,
-                        Some('3') => 6,
-                        _ => 0,
-                    }
-                } else {
-                    0 // Unknown injury type - treat as cleared
-                };
+                let level = injury_name_to_level(id, name);
 
                 // Game state owns injuries (remote clients and windows added
                 // mid-session read from here); widget copy below.
@@ -4865,6 +4873,25 @@ impl MessageProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn injury_name_to_level_maps_wounds_scars_and_nsys() {
+        // Standard wounds.
+        assert_eq!(injury_name_to_level("rightLeg", "Injury1"), 1);
+        assert_eq!(injury_name_to_level("chest", "Injury3"), 3);
+        // Scars are levels 4-6.
+        assert_eq!(injury_name_to_level("leftArm", "Scar1"), 4);
+        assert_eq!(injury_name_to_level("leftArm", "Scar3"), 6);
+        // Nervous system reports under its OWN prefix — the regression: these
+        // must map like Injury, not fall through to 0.
+        assert_eq!(injury_name_to_level("nsys", "Nsys1"), 1);
+        assert_eq!(injury_name_to_level("nsys", "Nsys2"), 2);
+        assert_eq!(injury_name_to_level("nsys", "Nsys3"), 3);
+        // Cleared: name equals the body-part id, or an unknown name.
+        assert_eq!(injury_name_to_level("nsys", "nsys"), 0);
+        assert_eq!(injury_name_to_level("rightLeg", "rightLeg"), 0);
+        assert_eq!(injury_name_to_level("blood", "Transparent"), 0);
+    }
 
     // ===========================================
     // Stream routing precedence (route_for)

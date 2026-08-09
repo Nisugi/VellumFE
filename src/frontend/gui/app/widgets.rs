@@ -8,6 +8,12 @@ use super::*;
 /// Seconds for a value-driven bar to glide to a new target value.
 const BAR_ANIMATION_SECONDS: f32 = 0.2;
 
+/// Height (points) of the band at the bottom of a positioned dialog canvas
+/// whose links render in the footer row instead of the canvas. The canvas
+/// skip test and the footer's membership test MUST use the same value, or a
+/// bottom-anchored link draws twice — or not at all.
+const PANEL_FOOTER_BAND: f32 = 40.0;
+
 /// Editing operations the command input applies for BOUND key combos (see
 /// `render_command_input_widget`) — the GUI mirror of the TUI's
 /// `apply_command_input_action`. Bound combos are consumed before the
@@ -927,6 +933,20 @@ impl VellumGuiApp {
     /// text. Centered text sits over the fill once the bar is half full and
     /// over the trough below that, so contrast is checked against whichever
     /// is behind it.
+    /// Paint the skin's `[controls.progressbar]` nine-slice over a bar that was
+    /// just added, so its frame edges the fill. No-op without progress-bar art
+    /// or without a response rect. Call right after `ui.add_sized(...)` for a
+    /// styled_progress_bar.
+    fn overlay_progress_frame(
+        ui: &egui::Ui,
+        rect: egui::Rect,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) {
+        if let Some(border) = skin_art.and_then(|art| art.control_border("progressbar", "normal")) {
+            crate::frontend::gui::skin::paint_nine_slice(ui.painter(), rect, border, [true; 4]);
+        }
+    }
+
     fn styled_progress_bar(
         ui: &egui::Ui,
         settings: &WidgetRenderSettings,
@@ -1080,7 +1100,8 @@ impl VellumGuiApp {
         let bar_height = ui.spacing().interact_size.y.max(16.0);
         let fraction = Self::animated_fraction(ui, &data.progress_id, fraction);
         let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
-        ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+        let resp = ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+        Self::overlay_progress_frame(ui, resp.rect, settings.skin_art.as_deref());
     }
 
     pub(super) fn render_vitals_content(
@@ -1252,7 +1273,9 @@ impl VellumGuiApp {
                         }
                         let fraction = Self::animated_fraction(column, id, fraction);
                         let bar = Self::styled_progress_bar(column, settings, fraction, fill, text);
-                        column.add_sized([column.available_width().max(40.0), bar_height], bar);
+                        let resp = column
+                            .add_sized([column.available_width().max(40.0), bar_height], bar);
+                        Self::overlay_progress_frame(column, resp.rect, settings.skin_art.as_deref());
                     }
                 });
             }
@@ -1263,7 +1286,8 @@ impl VellumGuiApp {
                 for (id, fraction, text, fill) in bars {
                     let fraction = Self::animated_fraction(ui, id, fraction);
                     let bar = Self::styled_progress_bar(ui, settings, fraction, fill, text);
-                    ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+                    let resp = ui.add_sized([ui.available_width().max(40.0), bar_height], bar);
+                    Self::overlay_progress_frame(ui, resp.rect, settings.skin_art.as_deref());
                 }
             }
         }
@@ -1477,7 +1501,22 @@ impl VellumGuiApp {
             // Walk the canonical part list, not the injuries map: fully
             // healthy parts are absent from the map entirely, and a part
             // with overlay art needs its level-0 (healthy) layer drawn.
-            for (part, _, _) in crate::config::skins::DOLL_PARTS {
+            //
+            // Z-ORDER: draw the nervous-system overlay FIRST (right above the
+            // base), so any per-part wound/scar overlays and dots layer OVER
+            // it — the nerves are a full-body underlay, not a badge that should
+            // cover a limb wound. `DOLL_PARTS` lists nsys last (topmost), so
+            // draw nsys, then everything else. (Tooltips are sorted later, so
+            // this reordering doesn't affect them.)
+            let ordered_parts = crate::config::skins::DOLL_PARTS
+                .iter()
+                .filter(|(part, _, _)| *part == "nsys")
+                .chain(
+                    crate::config::skins::DOLL_PARTS
+                        .iter()
+                        .filter(|(part, _, _)| *part != "nsys"),
+                );
+            for (part, _, _) in ordered_parts {
                 let level = injuries.get(*part).copied().unwrap_or(0);
                 // A suppressed part (hidden_when holds — e.g. a hand under
                 // a severed arm) draws nothing at all; the wound still
@@ -1955,31 +1994,48 @@ impl VellumGuiApp {
             .map(|direction| direction.to_ascii_lowercase())
             .collect();
 
-        ui.horizontal_centered(|ui| {
-            // Rose square: whatever height we have, leaving room for the
-            // up/down arrow column to the right. Out is the rose's hub.
-            let arrow_side = (ui.available_height() * 0.28).clamp(14.0, 30.0);
+        // A skinned compass integrates up/down into the rose sprite the way
+        // Wrayth authored them, so it fills the whole widget with no separate
+        // arrow column. Vector mode keeps the rose square plus an up/down
+        // triangle column to its right.
+        let has_skin_rose = skin_art.and_then(|art| art.compass_rose).is_some();
+
+        if has_skin_rose {
             let side = ui
                 .available_height()
-                .min(ui.available_width() - arrow_side - 8.0)
+                .min(ui.available_width())
                 .max(40.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
             if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
                 clicked_link = Some(click);
             }
+        } else {
+            ui.horizontal_centered(|ui| {
+                // Rose square: whatever height we have, leaving room for the
+                // up/down arrow column to the right. Out is the rose's hub.
+                let arrow_side = (ui.available_height() * 0.28).clamp(14.0, 30.0);
+                let side = ui
+                    .available_height()
+                    .min(ui.available_width() - arrow_side - 8.0)
+                    .max(40.0);
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
+                if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
+                    clicked_link = Some(click);
+                }
 
-            ui.vertical(|ui| {
-                for (direction, points_up) in [("up", true), ("down", false)] {
-                    if let Some(click) =
-                        Self::paint_vertical_arrow(ui, arrow_side, direction, points_up, &available)
-                    {
-                        if clicked_link.is_none() {
-                            clicked_link = Some(click);
+                ui.vertical(|ui| {
+                    for (direction, points_up) in [("up", true), ("down", false)] {
+                        if let Some(click) = Self::paint_vertical_arrow(
+                            ui, arrow_side, direction, points_up, &available,
+                        ) {
+                            if clicked_link.is_none() {
+                                clicked_link = Some(click);
+                            }
                         }
                     }
-                }
+                });
             });
-        });
+        }
 
         clicked_link
     }
@@ -2164,12 +2220,19 @@ impl VellumGuiApp {
             }
         }
 
-        // Hub over the arrow bases doubles as the OUT exit: lit and
-        // clickable when the room has one, a plain hub otherwise.
+        // Hub doubles as the OUT exit: lit and clickable when the room has
+        // one. Vector mode puts it over the arrow bases (rose center); the
+        // integrated sprite compass draws OUT in the middle of the up/down
+        // bar, so the hit region moves there to match the art.
         let out_available = available.contains("out");
         let hub_radius = radius * 0.18;
+        let hub_center = if rose_sprite.is_some() {
+            center + Vec2::new(radius * 0.72, 0.0)
+        } else {
+            center
+        };
         let hub_response = ui.interact(
-            Rect::from_center_size(center, Vec2::splat(hub_radius * 2.0)),
+            Rect::from_center_size(hub_center, Vec2::splat(hub_radius * 2.0)),
             ui.id().with(("compass_rose", "out")),
             if out_available {
                 egui::Sense::click()
@@ -2200,6 +2263,38 @@ impl VellumGuiApp {
             }
         }
 
+        // Sprite compasses integrate up/down into the rose art (Wrayth-style),
+        // so their overlays are already painted above with the eight compass
+        // directions. Add the matching clickable hit regions here — the
+        // right-side spikes of the rose, where Wrayth draws the up/down arrows.
+        // (Vector mode has its own separate up/down triangle column.)
+        if rose_sprite.is_some() {
+            for (direction, points_up) in [("up", true), ("down", false)] {
+                if !available.contains(direction) {
+                    continue;
+                }
+                let hit_center = center
+                    + Vec2::new(radius * 0.72, if points_up { -radius * 0.5 } else { radius * 0.5 });
+                let hit_rect =
+                    Rect::from_center_size(hit_center, Vec2::splat((radius * 0.4).max(12.0)));
+                let response = ui.interact(
+                    hit_rect,
+                    ui.id().with(("compass_rose", direction)),
+                    egui::Sense::click(),
+                );
+                let response = response
+                    .on_hover_text(direction)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                if response.clicked() && clicked_link.is_none() {
+                    clicked_link = Some(Self::gui_link_click_from_response(
+                        &response,
+                        ui,
+                        Self::direct_command_link(direction.to_string()),
+                    ));
+                }
+            }
+        }
+
         clicked_link
     }
 
@@ -2212,6 +2307,20 @@ impl VellumGuiApp {
             channel(color.g()),
             channel(color.b()),
             color.a(),
+        )
+    }
+
+    /// Blend `a` toward `b` by `t` (0 = a, 1 = b), per channel. Used to dim an
+    /// inactive tab's text toward the window background so only the active /
+    /// unread tabs stand out.
+    fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
+        let t = t.clamp(0.0, 1.0);
+        let mix = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+        Color32::from_rgba_unmultiplied(
+            mix(a.r(), b.r()),
+            mix(a.g(), b.g()),
+            mix(a.b(), b.b()),
+            a.a(),
         )
     }
 
@@ -2688,6 +2797,12 @@ impl VellumGuiApp {
             ui.allocate_exact_size(egui::vec2(content_w, content_h), egui::Sense::hover());
         let origin = canvas_rect.min;
 
+        // Positioned commanded images the canvas loop actually painted (skin
+        // sprite found). Any commanded image NOT in here must still surface in
+        // the footer fallback below, or the command is unreachable — the
+        // default skin-less install has no sprites at all.
+        let mut drawn_images: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
         if let Some((controls, _)) = &positioned {
             use crate::data::ui_state::PositionedControlKind;
             for control in controls {
@@ -2697,11 +2812,13 @@ impl VellumGuiApp {
                 match control.kind {
                     PositionedControlKind::Button(i) => {
                         if let Some(b) = dialog.buttons.get(i) {
-                            let resp = ui.put(rect, egui::Button::new(&b.label).small());
-                            let resp = match &b.command {
-                                c if c.trim().is_empty() => resp,
-                                _ => resp,
-                            };
+                            let resp = Self::skinned_panel_button(
+                                ui,
+                                rect,
+                                &b.label,
+                                ("panel_btn", dialog_id, i),
+                                skin_art,
+                            );
                             if resp.clicked() {
                                 if b.is_close {
                                     // Wrayth's closeButton dismisses the
@@ -2716,8 +2833,19 @@ impl VellumGuiApp {
                     }
                     PositionedControlKind::DropDown(i) => {
                         if let Some(d) = dialog.dropdowns.get(i) {
+                            // Skinned dropdown frame behind the combo box (falls
+                            // back to the dropdown's own theme frame when absent).
+                            if let Some(border) =
+                                skin_art.and_then(|art| art.control_border("dropdown", "normal"))
+                            {
+                                crate::frontend::gui::skin::paint_nine_slice_filled(
+                                    ui.painter(),
+                                    rect,
+                                    border,
+                                );
+                            }
                             if let Some(value) =
-                                Self::dialog_panel_combo(ui, rect, dialog_id, d)
+                                Self::dialog_panel_combo(ui, rect, dialog_id, d, skin_art)
                             {
                                 // Send the dropdown's command with the NEW
                                 // value substituted (game echoes back state).
@@ -2733,7 +2861,7 @@ impl VellumGuiApp {
                     }
                     PositionedControlKind::ProgressBar(i) => {
                         if let Some(bar) = dialog.progress_bars.get(i) {
-                            Self::paint_panel_progress_bar(ui, rect, bar);
+                            Self::paint_panel_progress_bar(ui, rect, bar, skin_art);
                         }
                     }
                     PositionedControlKind::Label(i) => {
@@ -2761,7 +2889,47 @@ impl VellumGuiApp {
                         }
                     }
                     PositionedControlKind::Link(i) => {
+                        // Bottom-floor links (combat's `skin` at top=260) render
+                        // in the footer row below, not here — skip them so they
+                        // don't draw twice / crowd the footer.
+                        let bottom_floor = dialog
+                            .links
+                            .get(i)
+                            .and_then(|l| l.layout.as_ref())
+                            .and_then(|layout| layout.top)
+                            .is_some_and(|top| top as f32 >= content_h - PANEL_FOOTER_BAND);
+                        if bottom_floor {
+                            continue;
+                        }
                         if let Some(link) = dialog.links.get(i) {
+                            // A skin may give link "buttons" their own art; when
+                            // it does, paint the state-keyed nine-slice behind the
+                            // label. Otherwise it stays plain hyperlink text.
+                            let link_art =
+                                skin_art.and_then(|art| art.control_border("link", "normal"));
+                            if link_art.is_some() {
+                                let sense = ui.interact(
+                                    rect,
+                                    ui.id().with(("panel_link", dialog_id, i)),
+                                    egui::Sense::click(),
+                                );
+                                let state = if sense.is_pointer_button_down_on() {
+                                    "pressed"
+                                } else if sense.hovered() {
+                                    "hover"
+                                } else {
+                                    "normal"
+                                };
+                                if let Some(border) =
+                                    skin_art.and_then(|art| art.control_border("link", state))
+                                {
+                                    crate::frontend::gui::skin::paint_nine_slice_filled(
+                                        ui.painter(),
+                                        rect,
+                                        border,
+                                    );
+                                }
+                            }
                             let text = egui::RichText::new(&link.label)
                                 .color(ui.visuals().hyperlink_color);
                             if ui
@@ -2788,8 +2956,65 @@ impl VellumGuiApp {
                             }
                         }
                     }
-                    // Anchor-only images (ubbars, wound points) are never drawn.
-                    PositionedControlKind::Image(_) => {}
+                    PositionedControlKind::Image(i) => {
+                        // Icon buttons (Wrayth SwordBtn/ShieldBtn/...) are the
+                        // ONLY images drawn as controls: they carry a command AND
+                        // a real on-screen size. Everything else in the image list
+                        // is an ANCHOR POINT — zero-size wound points and the
+                        // invisible PanelBackground the vitals bars hang from —
+                        // and must never draw (else it bleeds behind neighbors).
+                        let drawable = rect.width() >= 1.0 && rect.height() >= 1.0;
+                        if let (true, Some(img)) = (drawable, dialog.images.get(i)) {
+                            let has_cmd = !img.command.trim().is_empty();
+                            let sprite =
+                                skin_art.and_then(|art| art.icon(&img.name.to_ascii_lowercase()));
+                            if let Some(icon) = sprite {
+                                drawn_images.insert(i);
+                                let resp = ui.interact(
+                                    rect,
+                                    ui.id().with(("panel_img", dialog_id, i)),
+                                    if has_cmd {
+                                        egui::Sense::click()
+                                    } else {
+                                        egui::Sense::hover()
+                                    },
+                                );
+                                let dest =
+                                    crate::frontend::gui::skin::icon_dest(&icon, rect);
+                                crate::frontend::gui::skin::paint_icon(
+                                    ui.painter(),
+                                    dest,
+                                    &icon,
+                                    egui::Color32::WHITE,
+                                );
+                                // A multiply tint can't brighten past the
+                                // sprite's own colors, so hover feedback is a
+                                // translucent wash over the icon instead.
+                                if has_cmd && resp.hovered() {
+                                    ui.painter().rect_filled(
+                                        dest,
+                                        3.0,
+                                        egui::Color32::from_white_alpha(24),
+                                    );
+                                }
+                                if has_cmd {
+                                    let resp = img
+                                        .tooltip
+                                        .as_deref()
+                                        .map(|t| resp.clone().on_hover_text(t))
+                                        .unwrap_or(resp);
+                                    if resp.clicked() {
+                                        queue(dialog.command_with_placeholders(&img.command));
+                                    }
+                                }
+                            }
+                            // No sprite for a positioned image: draw nothing
+                            // here (a stray button behind neighboring controls
+                            // is worse) — it's not in `drawn_images`, so the
+                            // footer's labeled-button fallback picks it up and
+                            // the command stays reachable even skin-less.
+                        }
+                    }
                 }
             }
         }
@@ -2807,26 +3032,74 @@ impl VellumGuiApp {
 
         // Links and remaining images: combat's icon/link footer. Images with a
         // command render as buttons; the doll's wound images are excluded above.
+        // Images the canvas loop drew as positioned icon buttons are excluded
+        // (they'd render twice); everything else commanded lands here. Keying
+        // on `drawn_images` — NOT `layout.is_some()` — matters: a positioned
+        // image with no matching skin sprite (skin-less runs, or a skin
+        // missing that icon) draws nothing above, and this footer is the only
+        // way its command stays clickable.
         let footer_images: Vec<_> = dialog
             .images
             .iter()
-            .filter(|image| !image.command.trim().is_empty())
-            .filter(|image| !doll_owned.contains(image.id.as_str()))
+            .enumerate()
+            .filter(|(_, image)| !image.command.trim().is_empty())
+            .filter(|(_, image)| !doll_owned.contains(image.id.as_str()))
+            .filter(|(idx, _)| !drawn_images.contains(idx))
+            .map(|(_, image)| image)
             .collect();
         if !footer_images.is_empty() {
+            let has_btn_art = skin_art
+                .and_then(|art| art.control_border("button", "normal"))
+                .is_some();
             ui.horizontal_wrapped(|ui| {
-                for image in footer_images {
+                for (i, image) in footer_images.iter().enumerate() {
                     let label = image.tooltip.as_deref().unwrap_or(&image.name);
-                    if ui.small_button(label).clicked() {
+                    let clicked = if has_btn_art {
+                        // Allocate a content-sized rect so the skinned button
+                        // background stretches to the label, then paint it.
+                        let galley = ui.painter().layout_no_wrap(
+                            label.to_string(),
+                            egui::FontId::proportional(13.0),
+                            ui.visuals().text_color(),
+                        );
+                        let size = galley.size() + egui::vec2(14.0, 6.0);
+                        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                        Self::skinned_panel_button(
+                            ui,
+                            rect,
+                            label,
+                            ("panel_footer_btn", dialog_id, i),
+                            skin_art,
+                        )
+                        .clicked()
+                    } else {
+                        ui.small_button(label).clicked()
+                    };
+                    if clicked {
                         queue(dialog.command_with_placeholders(&image.command));
                     }
                 }
             });
         }
-        // Footer row: only links WITHOUT layout data (combat's
-        // configure/skin/search line); positioned links rendered above.
-        let footer_links: Vec<_> =
-            dialog.links.iter().filter(|l| l.layout.is_none()).collect();
+        // Footer row: links WITHOUT layout data (combat's search/grip/multistrike
+        // line) plus bottom-anchored positioned links. Wrayth positions a couple
+        // of links near the panel floor (combat's `skin` at top=260); at
+        // VellumFE's content height they land right on top of this row, so links
+        // positioned in the bottom ~40px of the canvas are treated as footer
+        // links here instead of drawn in the canvas — keeping the footer a single
+        // clean row. The `has_positions` canvas still owns everything above.
+        let floor = content_h - PANEL_FOOTER_BAND;
+        let footer_links: Vec<_> = dialog
+            .links
+            .iter()
+            .filter(|l| {
+                l.layout.is_none()
+                    || l.layout
+                        .as_ref()
+                        .and_then(|layout| layout.top)
+                        .is_some_and(|top| top as f32 >= floor)
+            })
+            .collect();
         if !footer_links.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 for link in footer_links {
@@ -2842,22 +3115,81 @@ impl VellumGuiApp {
     /// layout), instead of ui.put'ing an egui ProgressBar that centers itself
     /// at its own min-size and overflows the 15px rows UberBar uses. Trough +
     /// fill (fraction of width) + centered customText.
+    /// A dialog-panel button that honors the skin's `[controls.button]`
+    /// nine-slice (state-keyed) when present, falling back to a plain egui
+    /// button. Returns the response so callers handle clicks uniformly.
+    fn skinned_panel_button(
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        label: &str,
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
+    ) -> egui::Response {
+        if skin_art
+            .and_then(|art| art.control_border("button", "normal"))
+            .is_some()
+        {
+            let resp = ui.interact(rect, ui.id().with(id_salt), egui::Sense::click());
+            let state = if resp.is_pointer_button_down_on() {
+                "pressed"
+            } else if resp.hovered() {
+                "hover"
+            } else {
+                "normal"
+            };
+            if let Some(border) = skin_art.and_then(|art| art.control_border("button", state)) {
+                // Filled: a button FACE paints its center from the sprite —
+                // the hollow window-frame variant let the dark window mesh
+                // show through the middle of every button.
+                crate::frontend::gui::skin::paint_nine_slice_filled(ui.painter(), rect, border);
+            }
+            // PAINT the label directly over the nine-slice art — do NOT place an
+            // egui Button, which draws its own dark widget background (button_bg
+            // / hover fill) even frameless+transparent, leaving a black box on
+            // top of the silver button sprite. Color follows button_text
+            // (defaults to body text); the skin pins it dark so it reads on a
+            // light button.
+            let color = skin_art
+                .and_then(|art| art.ui_palette.as_ref())
+                .map(|pal| pal.button_text)
+                .unwrap_or_else(|| ui.visuals().text_color());
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::proportional((rect.height() * 0.6).clamp(9.0, 14.0)),
+                color,
+            );
+            resp
+        } else {
+            ui.put(rect, egui::Button::new(label).small())
+        }
+    }
+
     fn paint_panel_progress_bar(
         ui: &egui::Ui,
         rect: egui::Rect,
         bar: &crate::data::DialogProgressBar,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) {
         let painter = ui.painter();
         let visuals = ui.visuals();
         let radius = 2.0;
-        // Trough.
-        painter.rect_filled(rect, radius, visuals.extreme_bg_color);
-        // Fill.
+        let frame = skin_art.and_then(|art| art.control_border("progressbar", "normal"));
+        // Trough: the skin's nine-slice frame if present, else a filled rect.
+        if frame.is_none() {
+            painter.rect_filled(rect, radius, visuals.extreme_bg_color);
+        }
+        // Fill (color from the game feed; the skin frames it, doesn't recolor).
         let frac = (bar.value.min(100) as f32 / 100.0).clamp(0.0, 1.0);
         if frac > f32::EPSILON {
             let mut fill_rect = rect;
             fill_rect.set_width(rect.width() * frac);
             painter.rect_filled(fill_rect, radius, visuals.selection.bg_fill);
+        }
+        // Skin frame paints on top so its border edges the fill.
+        if let Some(border) = frame {
+            crate::frontend::gui::skin::paint_nine_slice(painter, rect, border, [true; 4]);
         }
         // Centered text (auto-contrast against the ground it sits on).
         if !bar.text.is_empty() {
@@ -2966,6 +3298,7 @@ impl VellumGuiApp {
         rect: egui::Rect,
         dialog_id: &str,
         dropdown: &crate::data::DialogDropDown,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<String> {
         let selected_text = dropdown
             .options
@@ -2974,7 +3307,39 @@ impl VellumGuiApp {
             .map(|(text, _)| text.clone())
             .unwrap_or_else(|| dropdown.value.clone());
         let mut picked = None;
+        // A skinned dropdown themes its OPEN popup too: egui paints the popup
+        // frame from window_fill/stroke, so match them to the skin's dropdown
+        // border (its tex_size carries no color, so we key on presence and use
+        // a dark fill + accent-tinted stroke that reads with the mesh grounds).
+        let skin_popup = skin_art
+            .and_then(|art| art.control_border("dropdown", "normal"))
+            .is_some();
+        // The skinned dropdown popup's fill/stroke follow the active skin's
+        // [ui] palette (menu_bg, border, button_hover, accent) — not a hardcoded
+        // orange, which looked wrong on any non-orange skin (StormFront's
+        // steel-blue dropdown came out orange). Falls back to the previous
+        // fixed colors only when a dropdown is skinned but the palette is
+        // somehow absent.
+        let popup_palette = skin_art.and_then(|art| art.ui_palette.as_ref());
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            if skin_popup {
+                let v = ui.visuals_mut();
+                let (fill, stroke, hover, sel) = match popup_palette {
+                    Some(p) => (p.menu_bg, p.border, p.button_hover, p.accent),
+                    None => (
+                        egui::Color32::from_rgb(0x12, 0x14, 0x18),
+                        egui::Color32::from_rgb(0x8a, 0x5a, 0x30),
+                        egui::Color32::from_rgb(0x24, 0x1c, 0x12),
+                        egui::Color32::from_rgb(0x3a, 0x28, 0x14),
+                    ),
+                };
+                v.window_fill = fill;
+                v.panel_fill = fill;
+                v.window_stroke = egui::Stroke::new(1.0, stroke);
+                v.widgets.inactive.weak_bg_fill = fill;
+                v.widgets.hovered.weak_bg_fill = hover;
+                v.selection.bg_fill = sel;
+            }
             egui::ComboBox::from_id_salt(("dialog_panel", dialog_id, &dropdown.id))
                 .width(rect.width())
                 .selected_text(selected_text)
@@ -3137,19 +3502,100 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         window_name: &str,
         tabbed: &TabbedTextContent,
+        skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> Option<GuiLinkClick> {
         if tabbed.tabs.len() < 2 {
             return None;
         }
+        // A skin skins tabs with `[controls.tab]` (+ optional `tab.active`);
+        // without it, tabs fall back to egui selectable_labels.
+        let tab_art = skin_art.and_then(|art| art.control_border("tab", "normal"));
+        // Active-tab text must contrast with whatever fills behind it, and that
+        // differs by render path:
+        //   - Skinned path (tab_art present): the active tab is backed by dark
+        //     `[controls.tab.active]` ART, so the label needs a LIGHT color
+        //     (the accent) — dark-on-dark art was invisible (the "Story" tab).
+        //   - Fallback path (selectable_label): the active tab fills with the
+        //     ACCENT (selection bg), so the label needs a DARK color (window_bg)
+        //     to read on it.
+        // Inactive tabs use the chrome text color in both paths.
+        let (tab_text, tab_active_text, tab_unread_text) = skin_art
+            .and_then(|art| art.ui_palette.as_ref())
+            .map(|pal| {
+                // Active tab contrasts with its fill (see path note above).
+                let active = if tab_art.is_some() {
+                    pal.accent // light-on-dark-art
+                } else {
+                    pal.window_bg // dark-on-accent-fill
+                };
+                // Inactive tabs read as MUTED, so only the active tab stands out
+                // — not the full chrome text color (which is the accent on some
+                // skins, making every tab glow). Dim the palette text toward the
+                // window background.
+                let idle = Self::lerp_color(pal.text, pal.window_bg, 0.45);
+                // Unread (non-quiet) inactive tab: the accent, so new activity
+                // pops in the skin's highlight color (GUI's answer to the TUI *).
+                let unread = pal.accent;
+                (Some(idle), Some(active), Some(unread))
+            })
+            .unwrap_or((None, None, None));
         let mut clicked = None;
         ui.horizontal_wrapped(|ui| {
             for (index, tab_state) in tabbed.tabs.iter().enumerate() {
                 let is_active = index == tabbed.active_tab_index;
+                let unread = tab_state.has_unread && !is_active;
                 let mut label = RichText::new(&tab_state.definition.name);
-                if tab_state.has_unread && !is_active {
+                // Color precedence: active > unread (accent) > idle (muted).
+                let color = if is_active {
+                    tab_active_text
+                } else if unread {
+                    tab_unread_text
+                } else {
+                    tab_text
+                };
+                if let Some(color) = color {
+                    label = label.color(color);
+                }
+                if unread {
                     label = label.strong();
                 }
-                if ui.selectable_label(is_active, label).clicked() && !is_active {
+                let hit = if tab_art.is_some() {
+                    // Skinned tab: content-sized rect, nine-slice behind a
+                    // frameless label, active/normal state-keyed.
+                    // Measure with the SAME text style the label renders in —
+                    // a hardcoded size clipped tab names for users running a
+                    // larger UI font (accessibility sizes must always fit).
+                    let font = egui::TextStyle::Body.resolve(ui.style());
+                    let galley = ui.painter().layout_no_wrap(
+                        tab_state.definition.name.clone(),
+                        font,
+                        ui.visuals().text_color(),
+                    );
+                    let size = galley.size() + egui::vec2(16.0, 6.0);
+                    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+                    let state = if is_active {
+                        "active"
+                    } else if resp.hovered() {
+                        "hover"
+                    } else {
+                        "normal"
+                    };
+                    if let Some(border) = skin_art.and_then(|art| art.control_border("tab", state)) {
+                        crate::frontend::gui::skin::paint_nine_slice_filled(
+                            ui.painter(),
+                            rect,
+                            border,
+                        );
+                    }
+                    ui.put(
+                        rect,
+                        egui::Label::new(label).selectable(false),
+                    );
+                    resp.clicked()
+                } else {
+                    ui.selectable_label(is_active, label).clicked()
+                };
+                if hit && !is_active {
                     clicked = Some(GuiLinkClick {
                         link_data: LinkData {
                             exist_id: Self::TABBED_SWITCH_SENTINEL.to_string(),
@@ -3162,7 +3608,10 @@ impl VellumGuiApp {
                 }
             }
         });
-        ui.separator();
+        // No divider line under the tab strip — the window mesh flows
+        // uninterrupted into the text area (skin look). egui's separator draws
+        // the theme's noninteractive stroke, which reads as a hard cyan line
+        // over a dark skin.
         clicked
     }
 
@@ -5642,8 +6091,12 @@ impl VellumGuiApp {
                 )
             }
             WindowContent::TabbedText(tabbed) => {
-                let mut clicked_link =
-                    Self::render_tabbed_text_tab_strip(ui, &tab.window_name, tabbed);
+                let mut clicked_link = Self::render_tabbed_text_tab_strip(
+                    ui,
+                    &tab.window_name,
+                    tabbed,
+                    settings.skin_art.as_deref(),
+                );
                 if let Some(active) = tabbed.tabs.get(tabbed.active_tab_index) {
                     let query = Self::active_search_query(app_core);
                     // Per-tab scroll id: each tab keeps its own scroll
@@ -6313,13 +6766,21 @@ mod tests {
         ctx.begin_pass(eframe::egui::RawInput::default());
         let built =
             VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
-        let _ = ctx.end_pass();
+        {
+            // egui 0.36 debug-asserts the TexturesDelta is applied before drop.
+            let mut output = ctx.end_pass();
+            output.textures_delta.clear();
+        }
 
         // A paintable custom emoji occupies a space-run placeholder (not the
         // wide `:name:` text), and the run is recorded over exactly it.
         ctx.begin_pass(eframe::egui::RawInput::default());
         let placeholder = VellumGuiApp::emoji_placeholder(&ctx, &font_id);
-        let _ = ctx.end_pass();
+        {
+            // egui 0.36 debug-asserts the TexturesDelta is applied before drop.
+            let mut output = ctx.end_pass();
+            output.textures_delta.clear();
+        }
         let ph = placeholder.chars().count();
         assert!(ph >= 1, "placeholder is at least one space");
         let expected = format!("yep {placeholder}");

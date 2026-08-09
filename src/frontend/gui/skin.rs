@@ -92,6 +92,52 @@ pub struct SkinWidgetArt {
     doll_variants: Vec<LoadedDollVariant>,
     /// Hotbar icon sprite sheets keyed by lowercased sheet name.
     sheets: HashMap<String, SheetArt>,
+    /// Nine-slice art for interactive dialog-panel controls, keyed by
+    /// lowercase `"<control>"` or `"<control>.<state>"` (e.g. "button",
+    /// "button.hover", "dropdown").
+    controls: HashMap<String, ResolvedBorder>,
+    /// Editor/menu color palette: derived from the skin's art at load, with
+    /// any `[ui]` manifest entry overriding its derived default. `None` when
+    /// the skin has no art to derive from and no `[ui]` — the editors keep
+    /// the plain theme visuals.
+    pub ui_palette: Option<ResolvedUiPalette>,
+    /// Decorative edge overlays keyed by edge ("top"/"right"/"bottom"/"left"),
+    /// painted over the nine-slice border along that window edge.
+    edges: HashMap<String, ResolvedEdge>,
+}
+
+/// A loaded edge overlay: an optional tiling/stretched strip along the edge
+/// plus an optional corner ornament, both as textures with their scale.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedEdge {
+    pub strip: Option<SkinTexture>,
+    pub tile: bool,
+    pub ornament: Option<SkinTexture>,
+    /// true = anchor ornament to the END (bottom/right); false = START.
+    pub anchor_end: bool,
+    /// Inward reach from the edge in on-screen points (already scaled), or
+    /// None to use the strip's cross-axis size.
+    pub thickness: Option<f32>,
+    pub scale: f32,
+}
+
+/// Resolved editor/menu colors, ready to overlay onto egui `Visuals`. Every
+/// field is a concrete color (derived-from-art default or `[ui]` override).
+#[derive(Debug, Clone, Copy)]
+pub struct ResolvedUiPalette {
+    pub window_bg: egui::Color32,
+    pub panel_bg: egui::Color32,
+    pub button_bg: egui::Color32,
+    pub button_hover: egui::Color32,
+    pub text: egui::Color32,
+    pub accent: egui::Color32,
+    pub border: egui::Color32,
+    pub menu_bg: egui::Color32,
+    /// Title-bar caption color (defaults to `accent` when the skin doesn't set
+    /// `titlebar_text`).
+    pub titlebar_text: egui::Color32,
+    /// Label color for skinned buttons (defaults to `text`).
+    pub button_text: egui::Color32,
 }
 
 /// One loaded conditional doll variant: the activation condition plus a
@@ -305,6 +351,28 @@ impl SkinWidgetArt {
 
     pub fn compass_dir(&self, direction: &str) -> Option<SkinTexture> {
         self.compass_dirs.get(direction).copied()
+    }
+
+    /// Nine-slice art for a dialog-panel control in the given state, falling
+    /// back to the control's normal art when the state isn't authored
+    /// (e.g. `control_border("button", "hover")` → "button.hover", else
+    /// "button"). None when the skin provides no art for this control.
+    pub fn control_border(&self, control: &str, state: &str) -> Option<&ResolvedBorder> {
+        let control = control.to_ascii_lowercase();
+        self.controls
+            .get(&format!("{control}.{state}"))
+            .or_else(|| self.controls.get(&control))
+    }
+
+    /// Decorative edge overlay for one window edge ("top"/"right"/"bottom"/
+    /// "left"), or None when the skin authored none for it.
+    pub fn edge(&self, edge: &str) -> Option<&ResolvedEdge> {
+        self.edges.get(&edge.to_ascii_lowercase())
+    }
+
+    /// Whether any edge overlay exists (cheap gate for the paint pass).
+    pub fn has_edges(&self) -> bool {
+        !self.edges.is_empty()
     }
 
     pub fn doll_overlay(&self, part: &str, level: u8) -> Option<SkinTexture> {
@@ -864,6 +932,57 @@ impl SkinState {
                     .insert(direction.to_ascii_lowercase(), texture);
             }
         }
+        // Interactive dialog-panel control art (button/dropdown/... states),
+        // each a nine-slice that stretches to the control's rect.
+        for (key, spec) in &self.manifest.controls {
+            if let Some(border) = self.resolve_border(spec) {
+                art.controls.insert(key.to_ascii_lowercase(), border);
+            }
+        }
+        // Decorative edge overlays (strip + corner ornament per edge).
+        let edge_tex = |path: &Option<String>| -> Option<SkinTexture> {
+            path.as_ref()
+                .and_then(|p| self.textures.get(p))
+                .and_then(|t| t.as_ref())
+                .map(|t| SkinTexture {
+                    texture: t.id(),
+                    size: t.size_vec2(),
+                })
+        };
+        for (key, spec) in &self.manifest.edges {
+            // The paint pass only ever asks for these four names; anything
+            // else ([edges.rigth]) would load its textures and then silently
+            // never paint — warn so the skin author finds the typo.
+            if !matches!(
+                key.to_ascii_lowercase().as_str(),
+                "top" | "right" | "bottom" | "left"
+            ) {
+                tracing::warn!(
+                    "skin edge '[edges.{key}]' is not one of top/right/bottom/left and will never paint"
+                );
+                continue;
+            }
+            let strip = edge_tex(&spec.strip);
+            let ornament = edge_tex(&spec.ornament);
+            if strip.is_none() && ornament.is_none() {
+                continue;
+            }
+            art.edges.insert(
+                key.to_ascii_lowercase(),
+                ResolvedEdge {
+                    strip,
+                    ornament,
+                    tile: spec.tile,
+                    anchor_end: spec
+                        .anchor
+                        .as_deref()
+                        .map(|a| a.eq_ignore_ascii_case("end"))
+                        .unwrap_or(false),
+                    thickness: spec.thickness.map(|t| t * spec.scale.max(0.05)),
+                    scale: spec.scale.max(0.05),
+                },
+            );
+        }
         // A compass pool set with a rose replaces the skin's compass
         // wholesale (rose + direction overlays are same-canvas art; mixing
         // sources would misalign them). The "none" sentinel (picker "None")
@@ -1082,11 +1201,86 @@ impl SkinState {
             }
         }
 
+        art.ui_palette = self.build_ui_palette();
+
         if art.is_empty() {
             None
         } else {
             Some(std::sync::Arc::new(art))
         }
+    }
+
+    /// Derive the editor/menu color palette from the skin's art, then apply
+    /// any `[ui]` manifest overrides. Returns None only when there's nothing
+    /// to derive from AND no `[ui]` entries (editors keep theme visuals).
+    fn build_ui_palette(&self) -> Option<ResolvedUiPalette> {
+        let ui = &self.manifest.ui;
+        // Exhaustive-by-construction (destructures the struct) so a future
+        // [ui] field can't be silently ignored here.
+        let has_overrides = ui.any_set();
+
+        // Sample key assets for derived defaults.
+        let sample = |path: &str| sample_image_colors(&self.root, path);
+        let bg_sample = skins::window_background(&self.manifest, "default")
+            .map(|b| b.image.as_str())
+            .and_then(sample);
+        let button_sample = self
+            .manifest
+            .controls
+            .get("button")
+            .map(|b| b.image.as_str())
+            .and_then(sample);
+        let accent_sample = self.manifest.compass.rose.as_deref().and_then(sample);
+
+        // Nothing to work with: no art samples and no [ui] -> keep theme.
+        let any_sample = bg_sample.is_some_and(|s| s.has_content)
+            || button_sample.is_some_and(|s| s.has_content)
+            || accent_sample.is_some_and(|s| s.has_content);
+        if !has_overrides && !any_sample {
+            return None;
+        }
+
+        // Derived defaults (fall back to tasteful dark values when a sample
+        // is missing so the palette is always complete).
+        let dark = egui::Color32::from_rgb(0x14, 0x16, 0x1b);
+        let win = bg_sample.filter(|s| s.has_content).map(|s| s.dominant).unwrap_or(dark);
+        let panel = darken(win, 0.15);
+        let btn = button_sample
+            .filter(|s| s.has_content)
+            .map(|s| s.dominant)
+            .unwrap_or_else(|| lighten_c(win, 0.10));
+        let btn_hover = lighten_c(btn, 0.18);
+        let border = button_sample
+            .filter(|s| s.has_content)
+            .map(|s| s.edge)
+            .or_else(|| bg_sample.filter(|s| s.has_content).map(|s| s.edge))
+            .unwrap_or_else(|| lighten_c(win, 0.25));
+        let accent = accent_sample
+            .filter(|s| s.has_content)
+            .map(|s| s.dominant)
+            .unwrap_or_else(|| egui::Color32::from_rgb(0xe8, 0x93, 0x3a));
+        let text = readable_on(win);
+
+        // Apply [ui] overrides where present.
+        let ov = |field: &Option<String>, default: egui::Color32| {
+            field.as_deref().and_then(parse_hex_rgb).unwrap_or(default)
+        };
+        let accent_c = ov(&ui.accent, accent);
+        let text_c = ov(&ui.text, text);
+        Some(ResolvedUiPalette {
+            window_bg: ov(&ui.window_bg, win),
+            panel_bg: ov(&ui.panel_bg, panel),
+            button_bg: ov(&ui.button_bg, btn),
+            button_hover: ov(&ui.button_hover, btn_hover),
+            text: text_c,
+            accent: accent_c,
+            border: ov(&ui.border, border),
+            menu_bg: ov(&ui.menu_bg, panel),
+            // Title-bar caption defaults to the accent unless the skin pins it.
+            titlebar_text: ov(&ui.titlebar_text, accent_c),
+            // Button label defaults to the body text unless pinned.
+            button_text: ov(&ui.button_text, text_c),
+        })
     }
 
     fn load_textures(&mut self, ctx: &egui::Context, skin_name: &str) {
@@ -1104,6 +1298,12 @@ impl SkinState {
             })
             .collect();
         images.extend(self.manifest.frames.values().map(|frame| frame.image.clone()));
+        images.extend(self.manifest.controls.values().map(|ctrl| ctrl.image.clone()));
+        // Edge-overlay strip + ornament images.
+        for edge in self.manifest.edges.values() {
+            images.extend(edge.strip.clone());
+            images.extend(edge.ornament.clone());
+        }
         images.extend(self.pool_frames.values().map(|frame| frame.image.clone()));
         images.extend(self.needed_pool_backgrounds.iter().cloned());
         images.extend(self.needed_pool_icons.iter().cloned());
@@ -1487,6 +1687,97 @@ fn load_thumbnail_impl(
         color_image,
         egui::TextureOptions::LINEAR,
     ))
+}
+
+/// Colors sampled from one skin image for palette derivation: the dominant
+/// opaque color (coarse histogram peak — good for fills) and the average of
+/// the edge ring (good for a nine-slice frame's border color).
+#[derive(Debug, Clone, Copy)]
+pub struct SampledColors {
+    pub dominant: egui::Color32,
+    pub edge: egui::Color32,
+    /// True if the image had meaningful opaque content to sample.
+    pub has_content: bool,
+}
+
+/// Decode a skin image (skin dir, then pool) and sample its dominant + edge
+/// colors. Bounded work: decodes once at skin load, thumbnails big images.
+fn sample_image_colors(root: &Path, image_path: &str) -> Option<SampledColors> {
+    let path = skins::resolve_image_path(root, image_path);
+    let bytes = std::fs::read(&path).ok()?;
+    let decoded = image::load_from_memory(&bytes).ok()?;
+    // Cap sampling cost on large atlases.
+    let small = decoded.thumbnail(96, 96);
+    let rgba = small.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    if w == 0 || h == 0 {
+        return None;
+    }
+    // Dominant: coarse 4-bit-per-channel histogram over opaque pixels.
+    let mut hist: std::collections::HashMap<u16, (u32, u64, u64, u64)> =
+        std::collections::HashMap::new();
+    let mut opaque = 0u32;
+    for px in rgba.pixels() {
+        let [r, g, b, a] = px.0;
+        if a < 32 {
+            continue;
+        }
+        opaque += 1;
+        let key = ((r as u16 >> 4) << 8) | ((g as u16 >> 4) << 4) | (b as u16 >> 4);
+        let e = hist.entry(key).or_insert((0, 0, 0, 0));
+        e.0 += 1;
+        e.1 += r as u64;
+        e.2 += g as u64;
+        e.3 += b as u64;
+    }
+    if opaque == 0 {
+        return Some(SampledColors {
+            dominant: egui::Color32::TRANSPARENT,
+            edge: egui::Color32::TRANSPARENT,
+            has_content: false,
+        });
+    }
+    let dominant = hist
+        .values()
+        .max_by_key(|(count, ..)| *count)
+        .map(|(count, r, g, b)| {
+            let c = *count as u64;
+            egui::Color32::from_rgb(
+                (r / c) as u8,
+                (g / c) as u8,
+                (b / c) as u8,
+            )
+        })
+        .unwrap_or(egui::Color32::DARK_GRAY);
+    // Edge ring average (border color for nine-slice frames): the outermost
+    // 2px, opaque pixels only.
+    let (mut er, mut eg, mut eb, mut en) = (0u64, 0u64, 0u64, 0u64);
+    for y in 0..h {
+        for x in 0..w {
+            let on_edge = x < 2 || y < 2 || x >= w - 2 || y >= h - 2;
+            if !on_edge {
+                continue;
+            }
+            let [r, g, b, a] = rgba.get_pixel(x, y).0;
+            if a < 32 {
+                continue;
+            }
+            er += r as u64;
+            eg += g as u64;
+            eb += b as u64;
+            en += 1;
+        }
+    }
+    let edge = if en > 0 {
+        egui::Color32::from_rgb((er / en) as u8, (eg / en) as u8, (eb / en) as u8)
+    } else {
+        dominant
+    };
+    Some(SampledColors {
+        dominant,
+        edge,
+        has_content: true,
+    })
 }
 
 fn load_texture_impl(
@@ -1952,6 +2243,179 @@ fn register_sheet_impl(
     Ok(())
 }
 
+/// Paint an edge overlay (strip + optional corner ornament) along one window
+/// edge, over the nine-slice border. The strip runs the edge's full length
+/// (tiled or stretched, `thickness` deep); the ornament is drawn at native
+/// size anchored to one end. No-op when the edge carries neither.
+pub fn paint_edge_overlay(
+    painter: &egui::Painter,
+    window: egui::Rect,
+    edge_name: &str,
+    edge: &ResolvedEdge,
+    top_inset: f32,
+) {
+    let full_uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    let vertical = matches!(edge_name, "left" | "right");
+    // Strip thickness: explicit override, else the strip's cross-axis native
+    // size (× scale) — width for a vertical edge, height for a horizontal one.
+    let thickness = edge.thickness.unwrap_or_else(|| {
+        edge.strip
+            .map(|s| {
+                let cross = if vertical { s.size.x } else { s.size.y };
+                cross * edge.scale
+            })
+            .unwrap_or(0.0)
+    });
+    let ornament_size = edge
+        .ornament
+        .map(|o| o.size * edge.scale)
+        .unwrap_or(egui::Vec2::ZERO);
+    let layout = edge_overlay_layout(
+        window,
+        edge_name,
+        thickness,
+        ornament_size,
+        edge.anchor_end,
+        top_inset,
+    );
+
+    if let Some(strip) = edge.strip {
+        if edge.tile {
+            // Tile along the edge's long axis at the sprite's native length.
+            let painter = painter.with_clip_rect(layout.strip);
+            let step = if vertical {
+                (strip.size.y * edge.scale).max(1.0)
+            } else {
+                (strip.size.x * edge.scale).max(1.0)
+            };
+            let (start, end) = if vertical {
+                (layout.strip.top(), layout.strip.bottom())
+            } else {
+                (layout.strip.left(), layout.strip.right())
+            };
+            let mut p = start;
+            while p < end {
+                let cell = if vertical {
+                    egui::Rect::from_min_size(
+                        egui::pos2(layout.strip.left(), p),
+                        egui::vec2(layout.strip.width(), step),
+                    )
+                } else {
+                    egui::Rect::from_min_size(
+                        egui::pos2(p, layout.strip.top()),
+                        egui::vec2(step, layout.strip.height()),
+                    )
+                };
+                painter.image(strip.texture, cell, full_uv, egui::Color32::WHITE);
+                p += step;
+            }
+        } else {
+            painter.image(strip.texture, layout.strip, full_uv, egui::Color32::WHITE);
+        }
+    }
+    if let Some(ornament) = edge.ornament {
+        painter.image(ornament.texture, layout.ornament, full_uv, egui::Color32::WHITE);
+    }
+}
+
+/// Geometry for an edge overlay along one side of `window`. Returns the
+/// `strip` rect (runs the length of the edge, `thickness` deep, flush INSIDE
+/// the edge) and the `ornament` rect (native `ornament_size`, kept INSIDE the
+/// window and flush to the edge). Pure so the layout is unit-tested apart from
+/// the paint path.
+///
+/// `edge` is "top" | "right" | "bottom" | "left". `thickness` is the inward
+/// reach (points). `anchor_end` puts the ornament at the far end. `top_inset`
+/// (vertical edges only) starts the strip AND ornament below the title bar so a
+/// corner flourish lines up with the body top instead of overlapping the bar.
+///
+/// The ornament is pinned so it never spills OUTSIDE the window: on the right
+/// edge its right side aligns to the window's right (extending inward); on the
+/// left edge its left side aligns to the window's left; likewise top/bottom.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeOverlayLayout {
+    pub strip: egui::Rect,
+    pub ornament: egui::Rect,
+}
+
+pub fn edge_overlay_layout(
+    window: egui::Rect,
+    edge: &str,
+    thickness: f32,
+    ornament_size: egui::Vec2,
+    anchor_end: bool,
+    top_inset: f32,
+) -> EdgeOverlayLayout {
+    debug_assert!(
+        matches!(edge, "top" | "right" | "bottom" | "left"),
+        "edge_overlay_layout: unknown edge '{edge}' (falls back to top)"
+    );
+    let t = thickness.max(0.0);
+    let inset = top_inset.max(0.0);
+    // A window smaller than the ornament must not have the ornament spill
+    // past its far side onto neighbors — shrink it to fit (keeps the
+    // flush-to-edge anchoring below valid on tiny windows).
+    let ornament_size = ornament_size.min(window.size());
+    let (strip, ornament) = match edge {
+        "left" | "right" => {
+            // Strip flush to the edge, inside the window; starts below the
+            // title bar (top_inset).
+            let x0 = if edge == "left" {
+                window.left()
+            } else {
+                window.right() - t
+            };
+            let strip = egui::Rect::from_min_max(
+                egui::pos2(x0, window.top() + inset),
+                egui::pos2(x0 + t, window.bottom()),
+            );
+            // Ornament stays INSIDE: on the right edge its RIGHT side hugs the
+            // window's right (grows leftward); on the left edge its LEFT side
+            // hugs the window's left. Vertically it sits at the body top
+            // (top_inset) or the bottom end.
+            let ox = if edge == "right" {
+                window.right() - ornament_size.x
+            } else {
+                window.left()
+            };
+            let oy = if anchor_end {
+                window.bottom() - ornament_size.y
+            } else {
+                window.top() + inset
+            };
+            let ornament = egui::Rect::from_min_size(egui::pos2(ox, oy), ornament_size);
+            (strip, ornament)
+        }
+        _ => {
+            // "top" | "bottom" (default): horizontal strip.
+            let y0 = if edge == "bottom" {
+                window.bottom() - t
+            } else {
+                window.top()
+            };
+            let strip = egui::Rect::from_min_max(
+                egui::pos2(window.left(), y0),
+                egui::pos2(window.right(), y0 + t),
+            );
+            // Keep the ornament inside: bottom edge hugs the window bottom for
+            // the bottom edge; top edge hugs the window top otherwise.
+            let oy = if edge == "bottom" {
+                window.bottom() - ornament_size.y
+            } else {
+                window.top()
+            };
+            let ox = if anchor_end {
+                window.right() - ornament_size.x
+            } else {
+                window.left()
+            };
+            let ornament = egui::Rect::from_min_size(egui::pos2(ox, oy), ornament_size);
+            (strip, ornament)
+        }
+    };
+    EdgeOverlayLayout { strip, ornament }
+}
+
 /// Paint a nine-slice border into `rect`: corners at fixed size, edges
 /// stretched along their axis, center left empty so the window fill or
 /// background image shows through. `sides` is [top, right, bottom, left]
@@ -1971,6 +2435,26 @@ pub fn paint_nine_slice(
     }
 }
 
+/// Nine-slice for a control FACE (button, tab, dropdown): like
+/// `paint_nine_slice` but the center patch is painted too, stretched from
+/// the sprite's own center region. A window frame wants the hollow center
+/// (content shows through); a button face painted hollow shows the window
+/// mesh through its middle — the reported dark box behind every combat
+/// button label.
+pub fn paint_nine_slice_filled(painter: &egui::Painter, rect: egui::Rect, border: &ResolvedBorder) {
+    let full_alpha = egui::Color32::WHITE;
+    for (dest, uv) in nine_slice_patches_impl(
+        border.tex_size,
+        border.slice,
+        border.scale,
+        rect,
+        [true; 4],
+        true,
+    ) {
+        painter.image(border.texture, dest, uv, full_alpha);
+    }
+}
+
 /// The eight border patches as (destination rect, UV rect) pairs. Slice
 /// insets larger than the destination shrink proportionally so opposite
 /// borders never overlap. Degenerate patches (zero-size) are skipped —
@@ -1984,6 +2468,17 @@ fn nine_slice_patches(
     scale: f32,
     rect: egui::Rect,
     sides: [bool; 4],
+) -> Vec<(egui::Rect, egui::Rect)> {
+    nine_slice_patches_impl(tex, slice, scale, rect, sides, false)
+}
+
+fn nine_slice_patches_impl(
+    tex: egui::Vec2,
+    slice: [f32; 4],
+    scale: f32,
+    rect: egui::Rect,
+    sides: [bool; 4],
+    include_center: bool,
 ) -> Vec<(egui::Rect, egui::Rect)> {
     if tex.x <= 0.0 || tex.y <= 0.0 || !rect.is_positive() {
         return Vec::new();
@@ -2012,11 +2507,11 @@ fn nine_slice_patches(
     let ux = [0.0, (left / tex.x).min(1.0), 1.0 - (right / tex.x).min(1.0), 1.0];
     let uy = [0.0, (top / tex.y).min(1.0), 1.0 - (bottom / tex.y).min(1.0), 1.0];
 
-    let mut patches = Vec::with_capacity(8);
+    let mut patches = Vec::with_capacity(9);
     for row in 0..3 {
         for col in 0..3 {
-            if row == 1 && col == 1 {
-                continue; // center stays empty
+            if row == 1 && col == 1 && !include_center {
+                continue; // window frames: center stays empty
             }
             let dest = egui::Rect::from_min_max(
                 egui::pos2(dx[col], dy[row]),
@@ -2072,9 +2567,77 @@ pub fn parse_hex_rgb(input: &str) -> Option<egui::Color32> {
     Some(egui::Color32::from_rgb(r, g, b))
 }
 
+/// Blend a color toward black by `t` (0..=1).
+fn darken(c: egui::Color32, t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |v: u8| (v as f32 * (1.0 - t)).round() as u8;
+    egui::Color32::from_rgb(ch(c.r()), ch(c.g()), ch(c.b()))
+}
+
+/// Blend a color toward white by `t` (0..=1).
+fn lighten_c(c: egui::Color32, t: f32) -> egui::Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let ch = |v: u8| v.saturating_add(((255 - v) as f32 * t).round() as u8);
+    egui::Color32::from_rgb(ch(c.r()), ch(c.g()), ch(c.b()))
+}
+
+/// Near-white or near-black text, whichever reads better on `bg`.
+fn readable_on(bg: egui::Color32) -> egui::Color32 {
+    let luma = 0.299 * bg.r() as f32 + 0.587 * bg.g() as f32 + 0.114 * bg.b() as f32;
+    if luma > 140.0 {
+        egui::Color32::from_rgb(0x1a, 0x1a, 0x1a)
+    } else {
+        egui::Color32::from_rgb(0xe0, 0xdc, 0xd2)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edge_overlay_layout_positions_strip_and_ornament() {
+        // 200 wide x 100 tall window at (10, 20).
+        let win = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let orn = egui::vec2(20.0, 34.0);
+
+        // RIGHT edge, thickness 3, ornament START (top), no title inset.
+        let r = edge_overlay_layout(win, "right", 3.0, orn, false, 0.0);
+        // Strip: 3px wide, flush to the right edge, full height.
+        assert_eq!(r.strip.right(), win.right());
+        assert_eq!(r.strip.left(), win.right() - 3.0);
+        assert_eq!(r.strip.top(), win.top());
+        assert_eq!(r.strip.bottom(), win.bottom());
+        // Ornament stays INSIDE: right side hugs the window's right edge (grows
+        // leftward), never spilling out; top-anchored.
+        assert_eq!(r.ornament.right(), win.right());
+        assert_eq!(r.ornament.top(), win.top());
+        assert_eq!(r.ornament.size(), orn);
+        assert!(r.ornament.left() >= win.left());
+
+        // top_inset pushes strip + ornament below the title bar.
+        let r_inset = edge_overlay_layout(win, "right", 3.0, orn, false, 28.0);
+        assert_eq!(r_inset.strip.top(), win.top() + 28.0);
+        assert_eq!(r_inset.ornament.top(), win.top() + 28.0);
+
+        // RIGHT edge, ornament anchored to END (bottom).
+        let r_end = edge_overlay_layout(win, "right", 3.0, orn, true, 0.0);
+        assert_eq!(r_end.ornament.bottom(), win.bottom());
+
+        // TOP edge, thickness 5: horizontal strip flush to the top.
+        let t = edge_overlay_layout(win, "top", 5.0, orn, false, 0.0);
+        assert_eq!(t.strip.top(), win.top());
+        assert_eq!(t.strip.bottom(), win.top() + 5.0);
+        assert_eq!(t.strip.left(), win.left());
+        assert_eq!(t.strip.right(), win.right());
+        assert_eq!(t.ornament.min, egui::pos2(win.left(), win.top()));
+
+        // LEFT edge strip is flush to the left; ornament left side hugs it.
+        let l = edge_overlay_layout(win, "left", 4.0, orn, false, 0.0);
+        assert_eq!(l.strip.left(), win.left());
+        assert_eq!(l.strip.right(), win.left() + 4.0);
+        assert_eq!(l.ornament.left(), win.left());
+    }
 
     /// Art with one 4x2-cell sheet (256x128 @ 64px cells) named "rogue".
     fn art_with_sheet() -> SkinWidgetArt {
@@ -2166,6 +2729,32 @@ mod tests {
         // No patch covers the center point.
         let center = rect.center();
         assert!(patches.iter().all(|(dest, _)| !dest.contains(center)));
+    }
+
+    #[test]
+    fn nine_slice_patches_filled_covers_the_center() {
+        // Control faces (buttons/tabs/dropdowns) paint their center from the
+        // sprite; the hollow variant let the window mesh show through as a
+        // dark box behind every button label.
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
+        let patches = nine_slice_patches_impl(
+            egui::vec2(32.0, 32.0),
+            [8.0, 8.0, 8.0, 8.0],
+            1.0,
+            rect,
+            [true; 4],
+            true,
+        );
+        assert_eq!(patches.len(), 9);
+        let center = rect.center();
+        let (dest, uv) = patches
+            .iter()
+            .find(|(dest, _)| dest.contains(center))
+            .expect("center patch present");
+        // Center dest spans between the border insets; UV is the sprite's
+        // own middle region.
+        assert_eq!(*dest, egui::Rect::from_min_max(egui::pos2(8.0, 8.0), egui::pos2(92.0, 72.0)));
+        assert_eq!(*uv, egui::Rect::from_min_max(egui::pos2(0.25, 0.25), egui::pos2(0.75, 0.75)));
     }
 
     #[test]

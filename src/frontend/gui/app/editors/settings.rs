@@ -162,6 +162,37 @@ fn ordered_categories() -> Vec<&'static str> {
     categories
 }
 
+/// Every section the Settings window shows, in render order: the
+/// registry-driven categories plus the two action-only sections appended
+/// after the loop. Drives the top-bar Settings menu.
+pub(in super::super) fn settings_sections() -> Vec<&'static str> {
+    let mut sections = ordered_categories();
+    sections.push("Data");
+    sections.push("Assets (Jinx)");
+    sections
+}
+
+/// `ui.collapsing`, plus one-shot focus: when `focus` names this section
+/// it is forced open and scrolled into view, then the request is consumed
+/// so the header behaves normally afterwards.
+fn focus_collapsing(
+    ui: &mut egui::Ui,
+    focus: &mut Option<String>,
+    title: &str,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    let focused = focus.as_deref() == Some(title);
+    let response = egui::CollapsingHeader::new(title)
+        .open(focused.then_some(true))
+        .show(ui, add);
+    if focused {
+        response
+            .header_response
+            .scroll_to_me(Some(egui::Align::Min));
+        *focus = None;
+    }
+}
+
 /// Buffered edit state, initialized from Config when the editor opens and
 /// applied back per changed key on Save.
 pub(in super::super) struct SettingsEditorState {
@@ -193,6 +224,10 @@ pub(in super::super) struct SettingsEditorState {
     /// GUI sizing settings; persisted in the per-character GUI layout file,
     /// not config.toml.
     gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
+    /// One-shot "jump to this section" request (top-bar Settings menu):
+    /// the named section is forced open and scrolled into view on the
+    /// next frame, then the request is consumed.
+    focus_section: Option<String>,
 }
 
 impl SettingsEditorState {
@@ -225,6 +260,7 @@ impl SettingsEditorState {
                 .map(|sub| (sub.pattern.clone(), sub.replacement.clone()))
                 .collect(),
             gui_settings,
+            focus_section: None,
         }
     }
 
@@ -756,6 +792,15 @@ impl VellumGuiApp {
         ));
     }
 
+    /// Open (or raise) the Settings window with one section expanded and
+    /// scrolled into view. Used by the top-bar Settings menu.
+    pub(in super::super) fn open_settings_editor_at(&mut self, section: &str) {
+        self.open_settings_editor();
+        if let Some(state) = self.settings_editor.as_mut() {
+            state.focus_section = Some(section.to_string());
+        }
+    }
+
     pub(in super::super) fn render_settings_editor(&mut self, ctx: &egui::Context) {
         let Some(mut state) = self.settings_editor.take() else {
             return;
@@ -764,6 +809,9 @@ impl VellumGuiApp {
         let mut open = true;
         let mut saved = false;
         let mut cancelled = false;
+        // Section-jump request, taken out of the state so the render
+        // closures below can borrow both it and `state` disjointly.
+        let mut focus_section = state.focus_section.take();
         // Map download actions fire immediately (they're actions, not
         // settings); the repo text itself still applies on Save.
         let mut map_download_repo: Option<String> = None;
@@ -808,7 +856,7 @@ impl VellumGuiApp {
                         for category in ordered_categories() {
                             match category {
                                 "Connection" => {
-                                    ui.collapsing("Connection", |ui| {
+                                    focus_collapsing(ui, &mut focus_section, "Connection", |ui| {
                                         ui.label(
                                             "Connection settings are always character-specific.",
                                         );
@@ -816,7 +864,7 @@ impl VellumGuiApp {
                                     });
                                 }
                                 "Appearance" => {
-                                    ui.collapsing("Appearance", |ui| {
+                                    focus_collapsing(ui, &mut focus_section, "Appearance", |ui| {
                                         ui.label(
                                             "Skins add graphics (backgrounds, borders, widget \
                                              art) on top of the theme.",
@@ -942,7 +990,7 @@ impl VellumGuiApp {
                                     // The GUI sizing/vitals section lives in
                                     // the per-character GUI layout file, not
                                     // config.toml; keep it next to Appearance.
-                                    ui.collapsing("GUI", |ui| {
+                                    focus_collapsing(ui, &mut focus_section, "GUI", |ui| {
                                         render_gui_section(
                                             ui,
                                             &mut state.gui_settings,
@@ -952,7 +1000,7 @@ impl VellumGuiApp {
                                     });
                                 }
                                 "Speech" => {
-                                    ui.collapsing("Speech", |ui| {
+                                    focus_collapsing(ui, &mut focus_section, "Speech", |ui| {
                                         ui.label(
                                             "Text-to-speech reads incoming lines aloud. Pick \
                                              which windows speak with the checkbox in each \
@@ -1036,7 +1084,7 @@ impl VellumGuiApp {
                                     });
                                 }
                                 "Map" => {
-                                    ui.collapsing("Map", |ui| {
+                                    focus_collapsing(ui, &mut focus_section, "Map", |ui| {
                                         ui.label(
                                             "Map data comes from a downloaded release or your \
                                              Lich install (data/<game>/map-<timestamp>.json); \
@@ -1122,7 +1170,7 @@ impl VellumGuiApp {
                                     });
                                 }
                                 "Travel" => {
-                                    ui.collapsing("Travel", |ui| {
+                                    focus_collapsing(ui, &mut focus_section, "Travel", |ui| {
                                         ui.label(
                                             "Native .go2 walks the map without Lich — travel \
                                              with .go2 <room|tag|name>, stop with .go2 stop.",
@@ -1138,7 +1186,7 @@ impl VellumGuiApp {
                                     });
                                 }
                                 other => {
-                                    ui.collapsing(other, |ui| {
+                                    focus_collapsing(ui, &mut focus_section, other, |ui| {
                                         if let Some(intro) = category_intro(other) {
                                             ui.label(intro);
                                         }
@@ -1152,7 +1200,7 @@ impl VellumGuiApp {
                         // .foreach and .sorter. Action-only (no editable
                         // settings), so it lives outside the registry-driven
                         // category loop.
-                        ui.collapsing("Data", |ui| {
+                        focus_collapsing(ui, &mut focus_section, "Data", |ui| {
                             ui.label(
                                 "Item database for .foreach and .sorter \
                                  (gameobj-data.xml). Resolved from your Lich \
@@ -1183,7 +1231,7 @@ impl VellumGuiApp {
                             });
                         });
 
-                        ui.collapsing("Assets (Jinx)", |ui| {
+                        focus_collapsing(ui, &mut focus_section, "Assets (Jinx)", |ui| {
                             ui.label(
                                 "Install and update game data, skins, layouts, \
                                  icons, sounds and other assets from repositories \

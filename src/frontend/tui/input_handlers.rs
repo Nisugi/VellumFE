@@ -578,10 +578,11 @@ impl super::TuiFrontend {
                 }
                 crate::core::menu_actions::MenuAction::Delete => {
                     if let Some(name) = browser.get_selected() {
-                        let is_global = browser.get_selected_is_global().unwrap_or(true);
-                        if let Err(e) = crate::config::Config::delete_single_highlight(
+                        // Both scopes: a character override can shadow a
+                        // same-named global entry, and deleting only one
+                        // copy uncovers the other on reload.
+                        if let Err(e) = crate::config::Config::delete_highlight_everywhere(
                             &name,
-                            is_global,
                             app_core.config.character.as_deref(),
                         ) {
                             app_core.add_system_message(&format!(
@@ -589,9 +590,8 @@ impl super::TuiFrontend {
                                 e
                             ));
                         } else {
-                            let scope = if is_global { "global" } else { "character" };
                             app_core
-                                .add_system_message(&format!("Highlight deleted from {} config", scope));
+                                .add_system_message(&format!("Highlight '{}' deleted.", name));
                             app_core.config.highlights.remove(&name);
                             crate::config::Config::compile_highlight_patterns(
                                 &mut app_core.config.highlights,
@@ -605,7 +605,7 @@ impl super::TuiFrontend {
                             .unwrap_or_default();
                             browser.update_items_with_source(&global, &character);
                         }
-                        tracing::info!("Deleted highlight: {} (global={})", name, is_global);
+                        tracing::info!("Deleted highlight '{}' from both scopes", name);
                     }
                 }
                 crate::core::menu_actions::MenuAction::Cancel => {
@@ -1378,11 +1378,11 @@ impl super::TuiFrontend {
                                     InputMode::Normal
                                 };
                             }
-                            crate::frontend::tui::highlight_form::FormResult::Delete { name, is_global } => {
-                                // Delete from appropriate file based on scope
-                                if let Err(e) = crate::config::Config::delete_single_highlight(
+                            crate::frontend::tui::highlight_form::FormResult::Delete { name, .. } => {
+                                // Both scopes: deleting only one copy of a
+                                // shadowed name uncovers the other on reload.
+                                if let Err(e) = crate::config::Config::delete_highlight_everywhere(
                                     &name,
-                                    is_global,
                                     app_core.config.character.as_deref(),
                                 ) {
                                     app_core.add_system_message(&format!(
@@ -1390,8 +1390,7 @@ impl super::TuiFrontend {
                                         e
                                     ));
                                 } else {
-                                    let scope = if is_global { "global" } else { "character" };
-                                    app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
+                                    app_core.add_system_message(&format!("Highlight '{}' deleted.", name));
                                     // Update in-memory config
                                     app_core.config.highlights.remove(&name);
                                     crate::config::Config::compile_highlight_patterns(
@@ -1409,7 +1408,7 @@ impl super::TuiFrontend {
                                         browser.update_items_with_source(&global, &character);
                                     }
                                 }
-                                tracing::info!("Deleted highlight: {} (global={})", name, is_global);
+                                tracing::info!("Deleted highlight '{}' from both scopes", name);
                                 self.highlight_form = None;
                                 app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
                                     InputMode::HighlightBrowser
@@ -1487,11 +1486,11 @@ impl super::TuiFrontend {
                                             InputMode::Normal
                                         };
                                     }
-                                    crate::frontend::tui::highlight_form::FormResult::Delete { name, is_global } => {
-                                        // Delete from appropriate file based on scope
-                                        if let Err(e) = crate::config::Config::delete_single_highlight(
+                                    crate::frontend::tui::highlight_form::FormResult::Delete { name, .. } => {
+                                        // Both scopes: deleting only one copy of a
+                                        // shadowed name uncovers the other on reload.
+                                        if let Err(e) = crate::config::Config::delete_highlight_everywhere(
                                             &name,
-                                            is_global,
                                             app_core.config.character.as_deref(),
                                         ) {
                                             app_core.add_system_message(&format!(
@@ -1499,8 +1498,7 @@ impl super::TuiFrontend {
                                                 e
                                             ));
                                         } else {
-                                            let scope = if is_global { "global" } else { "character" };
-                                            app_core.add_system_message(&format!("Highlight deleted from {} config", scope));
+                                            app_core.add_system_message(&format!("Highlight '{}' deleted.", name));
                                             // Update in-memory config
                                             app_core.config.highlights.remove(&name);
                                             crate::config::Config::compile_highlight_patterns(
@@ -1518,7 +1516,7 @@ impl super::TuiFrontend {
                                                 browser.update_items_with_source(&global, &character);
                                             }
                                         }
-                                        tracing::info!("Deleted highlight: {} (global={})", name, is_global);
+                                        tracing::info!("Deleted highlight '{}' from both scopes", name);
                                         self.highlight_form = None;
                                         app_core.ui_state.input_mode = if self.highlight_browser.is_some() {
                                             InputMode::HighlightBrowser

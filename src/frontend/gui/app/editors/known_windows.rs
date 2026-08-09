@@ -1,5 +1,6 @@
-//! The **Windows** window — the single manager for every window the client
-//! can have. Opened from the top-bar "Windows" button.
+//! The **Windows** catalog — the single manager for every window the client
+//! can have. Rendered inline by the top-bar "Windows" menu, and as a
+//! floating window when opened via dot-commands (`.windows`).
 //!
 //! Catalog model: the list is the FULL universe (every template for this
 //! game + layout windows + session containers/dialogs), grouped into
@@ -58,7 +59,21 @@ impl VellumGuiApp {
             return;
         }
         let mut open = true;
+        egui::Window::new("Windows")
+            .id(egui::Id::new("gui_known_windows"))
+            .order(egui::Order::Foreground)
+            .open(&mut open)
+            .default_width(380.0)
+            .default_height(480.0)
+            .show(ctx, |ui| self.known_windows_body(ui));
+        if !open {
+            self.known_windows_editor = None;
+        }
+    }
 
+    /// The Windows catalog: rendered both inside the floating editor window
+    /// (dot-command path) and inline in the top-bar "Windows" menu.
+    pub(in super::super) fn known_windows_body(&mut self, ui: &mut egui::Ui) {
         // Resolve rows: the full catalog + live zone / pending pref.
         let mut rows: Vec<Row> = self
             .app_core
@@ -126,13 +141,10 @@ impl VellumGuiApp {
         // (internal name, display title).
         let deleted_windows = self.app_core.deleted_windows_for_restore();
 
-        egui::Window::new("Windows")
-            .id(egui::Id::new("gui_known_windows"))
-            .order(egui::Order::Foreground)
-            .open(&mut open)
-            .default_width(380.0)
-            .default_height(480.0)
-            .show(ctx, |ui| {
+        // Block kept from the old egui::Window closure so the body diff
+        // stays reviewable; `ui` is now the caller's (window or menu).
+        {
+            {
                 ui.label(
                     "Every window the client can have. Tick to show, untick \
                      to hide — hidden windows stay hidden even when the game \
@@ -257,7 +269,8 @@ impl VellumGuiApp {
                             });
                     }
                 });
-            });
+            }
+        }
 
         // Apply deferred actions.
         let (w, h) = self.core_layout_size;
@@ -283,9 +296,6 @@ impl VellumGuiApp {
         if let Some(leader) = ungroup {
             self.dissolve_group_of(&leader);
         }
-        if !open {
-            self.known_windows_editor = None;
-        }
     }
 
     /// One catalog row: show/hide checkbox + zone dropdown.
@@ -306,13 +316,14 @@ impl VellumGuiApp {
                 *toggle = Some((row.name.clone(), checked));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::ComboBox::from_id_salt((
-                    "known_windows_zone",
-                    &row.name,
-                    row_index,
-                ))
-                    .selected_text(row.zone_display.label())
-                    .show_ui(ui, |ui| {
+                // A submenu, not a ComboBox: a combo opens its own popup
+                // layer, which the stay-open toolbar menu counts as a
+                // click OUTSIDE itself — the whole menu closed before a
+                // zone could be picked. Submenus are part of the menu
+                // tree, so they nest fine in both the menu and the
+                // floating window.
+                ui.push_id(("known_windows_zone", &row.name, row_index), |ui| {
+                    ui.menu_button(row.zone_display.label(), |ui| {
                         for target in GuiShellZone::all() {
                             if ui
                                 .selectable_label(target == row.zone_display, target.label())
@@ -323,6 +334,7 @@ impl VellumGuiApp {
                             }
                         }
                     });
+                });
             });
         });
     }

@@ -149,27 +149,133 @@ fn press_became_drag(
     }
 }
 
-/// Whether a press landed in the window's resize ring — the 6px band around
-/// the frame boundary (both just outside and just inside), where egui puts
-/// its edge/corner resize handles. A press here is a RESIZE grab, not a move;
-/// the interior is the move zone.
+/// Radius (points) of the resize-grab ring extending outside a window's frame.
+const RESIZE_GRAB: f32 = 6.0;
+
+/// Whether egui is dragging one of this window's edge/corner resize handles
+/// right now. The handles are real widgets — egui's window.rs registers them
+/// as `Id::new(layer_id).with("edge_drag").with(<side>)` — so
+/// `Context::dragged_id` names the grabbed one exactly. This replaced a
+/// press-proximity ring test (press within 6px of the frame counts as a
+/// resize), which also fired on a stationary CONTENT click near an edge and
+/// relaxed the size pin on a press that never touched a handle.
 ///
-/// This is a PRE-show signal (only the press point and the fed rect), so it
-/// can relax the size pin on the first resize frame — before egui has rendered
-/// any size change to observe. Without it the pin holds the size fixed, egui
-/// reports the pinned size every frame, no size change is ever seen, and a
-/// shrink deadlocks (grow-only), since a resize-edge drag freezes `pointer_pos`
-/// (egui captures the pointer) so `zone_press_drag_seen` never trips.
-fn press_in_resize_ring(press_origin: Option<egui::Pos2>, rect: egui::Rect) -> bool {
-    const RESIZE_GRAB: f32 = 6.0;
+/// The pin can't rely on observed size divergence for this: while pinned,
+/// egui reports the pinned size every frame, no change is ever seen, and a
+/// shrink deadlocks (grow-only). The handle widgets exist regardless of the
+/// pin, so this signal fires even while the size is held fixed.
+fn resize_handle_dragged(ctx: &egui::Context, layer_id: egui::LayerId) -> bool {
+    let Some(dragged) = ctx.dragged_id() else {
+        return false;
+    };
+    let base = egui::Id::new(layer_id).with("edge_drag");
+    [
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "left_bottom",
+        "right_bottom",
+        "left_top",
+        "right_top",
+    ]
+    .into_iter()
+    .any(|side| dragged == base.with(side))
+}
+
+/// Geometry of a skinned title bar within a window's rect: the full bar band
+/// (a `height`-tall strip across the top) and the caption area within it.
+/// There is no skinned close button — windows hide via the Windows menu /
+/// right-click, like the layout widgets. Pure so it's unit-tested
+/// independently of the render/paint path.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct TitleBarLayout {
+    pub bar: egui::Rect,
+    pub caption: egui::Rect,
+}
+
+pub(super) fn titlebar_layout(window_rect: egui::Rect, height: f32) -> TitleBarLayout {
+    // The band spans the FULL window width, flush to the top and both side
+    // edges, so it reads as part of the window chrome (no gap where the
+    // window background would show through). The frame's nine-slice paints
+    // over the corners afterward, edging it.
+    let bar = egui::Rect::from_min_max(
+        window_rect.min,
+        egui::pos2(window_rect.right(), window_rect.top() + height.max(1.0)),
+    );
+    let pad = 2.0;
+    let caption = egui::Rect::from_min_max(
+        egui::pos2(bar.left() + pad, bar.top()),
+        egui::pos2(bar.right() - pad, bar.bottom()),
+    );
+    TitleBarLayout { bar, caption }
+}
+
+/// Whether a press at `press_origin` engages `initial_rect`: inside the
+/// window's 12px interaction ring. Pure half of the render loop's
+/// `engaging_press` — the pre-show latch fallback for a first-frame press.
+fn press_engages_window(press_origin: Option<egui::Pos2>, initial_rect: egui::Rect) -> bool {
+    press_origin.is_some_and(|pos| initial_rect.expand(12.0).contains(pos))
+}
+
+/// Whether the user is actively engaging this window (drives position feed,
+/// rect tracking, and — combined with an observed drag — the size-pin relax).
+/// A locked window never engages; otherwise engagement holds while the latch
+/// is ours, or on the very press frame when no window has latched yet.
+fn window_is_engaged(
+    window_locked: bool,
+    pointer_interacting: bool,
+    already_latched: bool,
+    any_window_latched: bool,
+    engaging_press: bool,
+    just_pressed: bool,
+) -> bool {
+    !window_locked
+        && pointer_interacting
+        && (already_latched || (!any_window_latched && engaging_press && just_pressed))
+}
+
+/// Whether to relax the size pin: only once engagement has become a REAL drag
+/// (a stationary title-bar click keeps the pin so egui can't snap the window
+/// back to its remembered desired_size).
+fn should_relax_size_pin(
+    window_is_engaged: bool,
+    press_origin: Option<egui::Pos2>,
+    pointer_pos: Option<egui::Pos2>,
+    latched_and_drag_seen: bool,
+) -> bool {
+    window_is_engaged
+        && press_became_drag(press_origin, pointer_pos, latched_and_drag_seen)
+}
+
+/// Whether this window should claim the engagement latch on a fresh press
+/// (post-show, real rendered `rect` known). True when the press is inside the
+/// window's resize ring AND this window is topmost there — or the point is
+/// over uncontested bare background (the outer half of the resize band, where
+/// `layer_id_at` reports the panel). A press over another window's area yields
+/// to that window's own claim.
+#[allow(clippy::too_many_arguments)]
+fn should_claim_latch(
+    just_pressed: bool,
+    window_locked: bool,
+    any_window_latched: bool,
+    press_origin: Option<egui::Pos2>,
+    rect: egui::Rect,
+    top_is_self: bool,
+    top_is_none: bool,
+    top_is_background: bool,
+    contested: bool,
+) -> bool {
+    if !just_pressed || window_locked || any_window_latched {
+        return false;
+    }
     let Some(pos) = press_origin else {
         return false;
     };
-    if !rect.expand(RESIZE_GRAB).contains(pos) {
-        return false;
-    }
-    // Inside the outer ring but NOT the deep interior => on an edge/corner.
-    !rect.shrink(RESIZE_GRAB).contains(pos)
+    let in_window = rect.expand(RESIZE_GRAB).contains(pos);
+    let topmost =
+        top_is_self || (!contested && (top_is_none || top_is_background));
+    in_window && topmost
 }
 
 pub(super) fn effective_sidebar_gaps(zone_height: f32, items: &[(f32, f32)]) -> Vec<f32> {
@@ -406,7 +512,6 @@ impl VellumGuiApp {
         ctx: &egui::Context,
         tab_key: &TabKey,
         window: &WindowState,
-        title_bar_hidden: bool,
     ) -> Option<f32> {
         use crate::frontend::gui::persistence::VitalsOrientation;
         let row = match window.widget_type {
@@ -469,8 +574,21 @@ impl VellumGuiApp {
             &mut frame,
         );
         let margins = f32::from(frame.inner_margin.top) + f32::from(frame.inner_margin.bottom);
-        let title_bar = if title_bar_hidden {
+        // Chrome above the content row. Computed HERE, from the same sources
+        // the render pass uses, so the cap and the rendered chrome can't
+        // disagree (a cap that budgets the wrong bar squeezes the row under
+        // it, or reserves a phantom slab). Three cases, mirroring render:
+        //   user hid the bar        -> nothing
+        //   skin title bar active   -> the sprite band, reserved as top inset
+        //                              via max(margin.top, band) at render
+        //   plain egui title bar    -> the title font height
+        let title_bar = if self.title_bar_hidden(tab_key) {
             0.0
+        } else if let Some(bar) = self.skin_titlebar_for_tab(tab_key) {
+            let band = self.skin_titlebar_height(tab_key, &bar).ceil();
+            // Render applies the band as max(inner_margin.top, band), so the
+            // extra height beyond the margin already counted above.
+            (band - f32::from(frame.inner_margin.top)).max(0.0)
         } else {
             // None/0 = "derive from the title font"; 22 is a generous stand-in.
             self.title_bar_height_for_tab(tab_key)
@@ -1104,14 +1222,8 @@ impl VellumGuiApp {
                     .unwrap_or(false);
                 let min_height = if compact { 40.0 } else { 120.0 };
                 let default_height = if compact { 72.0 } else { 240.0 };
-                let height_cap = window.and_then(|window| {
-                    self.compact_height_cap(
-                        ctx,
-                        &tab.id.key,
-                        window,
-                        self.title_bar_hidden(&tab.id.key),
-                    )
-                });
+                let height_cap = window
+                    .and_then(|window| self.compact_height_cap(ctx, &tab.id.key, window));
                 let desired_height = self
                     .main_window_rects
                     .get(&tab.id.key)
@@ -1476,12 +1588,9 @@ impl VellumGuiApp {
                             .group_for_tab(&tab.id.key)
                             .is_some_and(|group| group.members.len() > 1);
                         if !grouped {
-                            if let Some(cap) = self.compact_height_cap(
-                                ctx,
-                                &tab.id.key,
-                                window,
-                                self.title_bar_hidden(&tab.id.key),
-                            ) {
+                            if let Some(cap) =
+                                self.compact_height_cap(ctx, &tab.id.key, window)
+                            {
                                 let capped =
                                     rect.height().min(cap.max(MIN_DOCKED_WINDOW_HEIGHT));
                                 rect.set_height(capped);
@@ -1515,7 +1624,14 @@ impl VellumGuiApp {
                 120.0_f32.min(window_bounds.width().max(1.0)),
                 min_window_height.min(window_bounds.height().max(1.0)),
             );
-            let title_bar_hidden = self.title_bar_hidden(&tab.id.key);
+            let user_title_hidden = self.title_bar_hidden(&tab.id.key);
+            // A skin title bar takes over egui's: hide egui's bar and paint
+            // our own sprite band + caption + close post-show. Only when the
+            // user hasn't already hidden the title bar entirely.
+            let skin_titlebar = (!user_title_hidden)
+                .then(|| self.skin_titlebar_for_tab(&tab.id.key))
+                .flatten();
+            let title_bar_hidden = user_title_hidden || skin_titlebar.is_some();
             let window_locked = self.window_locked(&tab.id.key);
             let grouped = group_shape.is_some_and(|(count, _)| count > 1);
             // Docked text-like windows fill their zone's full height — no
@@ -1527,7 +1643,9 @@ impl VellumGuiApp {
                 let cap = if grouped {
                     None
                 } else {
-                    self.compact_height_cap(ctx, &tab.id.key, window, title_bar_hidden)
+                    // The cap derives its own chrome height (user-hidden /
+                    // skin band / egui bar) — same sources as the render pass.
+                    self.compact_height_cap(ctx, &tab.id.key, window)
                 };
                 match cap {
                     Some(cap) => cap.clamp(min_window_size.y, zone_max),
@@ -1580,6 +1698,25 @@ impl VellumGuiApp {
                 let capped = initial_rect.height().min(max_window_size.y);
                 initial_rect.set_height(capped);
             }
+            // The compass reads as SQUARE — the visible ring+arrows fill a
+            // square, even though the rose SPRITE's bounds are wider (storm's
+            // 103x62 includes side sweep-arrows). A free-width compass window
+            // left mesh-filled dead space beside the square content — and,
+            // worse, snapping used that wider rect, so guides landed at the
+            // empty edge instead of the compass frame. Constrain the window to a
+            // square (width == height) so it hugs the visible compass: no
+            // trailing mesh, snap edges hit the frame. Computed as a plain bool
+            // (no lingering `self` borrow) and reused by `normalize_height`
+            // below so the release doesn't re-widen the stored rect. Ungrouped.
+            let compass_derived =
+                matches!(window.widget_type, WidgetType::Compass) && !grouped;
+            if compass_derived {
+                // Side length bounded by the zone's width, or a tall compass
+                // in a narrow sidebar would square itself wider than the zone.
+                let side = initial_rect.height().min(window_bounds.width().max(1.0));
+                initial_rect.set_height(side);
+                initial_rect.set_width(side);
+            }
 
             let mut clicked_link = None;
             // WebUI windows get a title-bar close button: unlike layout
@@ -1601,6 +1738,15 @@ impl VellumGuiApp {
             self.apply_border_plan_to_frame(&border_plan, &mut docked_window_frame);
             let skin_sides = self.skin_border_sides_for_tab(&tab.id.key);
             self.apply_skin_border_to_frame(&tab.id.key, skin_sides, &mut docked_window_frame);
+            // A skinned title bar replaces egui's, which reclaims the top space
+            // for content. Reserve the band's height as top inset so content
+            // starts BELOW the painted title bar instead of under it.
+            if let Some(bar) = &skin_titlebar {
+                let band = self.skin_titlebar_height(&tab.id.key, bar);
+                let inset = band.ceil().clamp(0.0, 127.0) as i8;
+                docked_window_frame.inner_margin.top =
+                    docked_window_frame.inner_margin.top.max(inset);
+            }
             // `default_size` (like `fixed_size`) is the whole window rect in
             // this egui fork, so every zone passes the outer size directly.
             // Declared before the builder so the close-button borrow
@@ -1668,8 +1814,7 @@ impl VellumGuiApp {
             // to catch a press on a non-overlapping window on its first frame
             // (the common case, where topmost is unambiguous anyway). The
             // post-show claim corrects any ambiguous edge-band press.
-            let engaging_press = press_origin
-                .is_some_and(|pos| initial_rect.expand(12.0).contains(pos));
+            let engaging_press = press_engages_window(press_origin, initial_rect);
             let already_latched = self.zone_engaged_tab.as_ref() == Some(&tab.id.key);
             // The pre-latch `engaging_press` fallback counts ONLY on the
             // press frame (the latch doesn't exist yet within it); from the
@@ -1682,10 +1827,14 @@ impl VellumGuiApp {
             // the phantom fed-vs-rendered divergence ran the snap hook,
             // whose release pass then promoted/cleared anchors for a
             // gesture that never happened.
-            let user_engaging_window = !window_locked
-                && pointer_interacting
-                && (already_latched
-                    || (self.zone_engaged_tab.is_none() && engaging_press && just_pressed));
+            let user_engaging_window = window_is_engaged(
+                window_locked,
+                pointer_interacting,
+                already_latched,
+                self.zone_engaged_tab.is_some(),
+                engaging_press,
+                just_pressed,
+            );
             // The size pin only relaxes once the press becomes a real drag —
             // a stationary title-bar click keeps the pin, so egui can't snap
             // the window (grouped windows especially, whose max height is the
@@ -1700,16 +1849,31 @@ impl VellumGuiApp {
             // divergence pops the snap grid on a plain click.
             // A resize-edge drag can't be seen through pointer travel: egui
             // captures the pointer while resizing, so `pointer_pos` freezes at
-            // the grab point and `zone_press_drag_seen` never trips. Relax the
-            // pin for a resize too — a pre-show resize-ring press (frame 1) or
-            // the post-show `zone_resize_active` latch (subsequent frames) — so
-            // a resize can pull the window SMALLER, not only bigger.
+            // the grab point and `zone_press_drag_seen` never trips. Instead,
+            // ask egui directly whether one of THIS window's resize handles is
+            // the dragged widget (exact — a content press near an edge never
+            // matches). Post-show (below) `zone_resize_active` latches once
+            // the rendered size actually diverges under a live press; relax
+            // the pin for EITHER signal so a resize can pull the window
+            // SMALLER, not only bigger.
+            let window_layer = egui::LayerId::new(
+                if overlay_zone {
+                    egui::Order::Foreground
+                } else {
+                    egui::Order::Middle
+                },
+                window_id,
+            );
             let latched_and_dragging = already_latched
                 && (self.zone_press_drag_seen
                     || self.zone_resize_active
-                    || press_in_resize_ring(press_origin, initial_rect));
-            let relax_size_pin = user_engaging_window
-                && press_became_drag(press_origin, pointer_pos, latched_and_dragging);
+                    || resize_handle_dragged(ctx, window_layer));
+            let relax_size_pin = should_relax_size_pin(
+                user_engaging_window,
+                press_origin,
+                pointer_pos,
+                latched_and_dragging,
+            );
             if !being_moved && !relax_size_pin {
                 // Pin every window to its display size when the user isn't
                 // engaging it: egui's Resize state re-clamps its remembered
@@ -1757,7 +1921,45 @@ impl VellumGuiApp {
                 .perf_stats
                 .record_window_render(&tab.window_name, window_render_start.elapsed());
             if let Some(inner) = window_shown {
-                self.paint_skin_border(ctx, &tab.id.key, skin_sides, &inner.response);
+                // When a window owns a skinned title bar, the TITLE BAR owns the
+                // top edge: its sprite carries the top border line AND a
+                // transparent cutout notch that the window mesh (painted behind)
+                // must show through. So the window frame must NOT paint its own
+                // top edge here — an opaque frame-top would fill the notch and
+                // hide the mesh (the reported "missing cutout"). Suppress the
+                // top side of the frame border; the title bar draws it instead.
+                let border_sides = if skin_titlebar.is_some() {
+                    [false, skin_sides[1], skin_sides[2], skin_sides[3]]
+                } else {
+                    skin_sides
+                };
+                // Border first (top suppressed when titled), then decorative
+                // edge overlays over it, then the title bar ON TOP so its
+                // cutout and edge line are never overdrawn.
+                self.paint_skin_border(ctx, &tab.id.key, border_sides, &inner.response);
+                // Edge overlays start below the title bar (so a corner flourish
+                // lines up with the body top, not the bar). No title bar -> the
+                // flourish ornament is suppressed, only the strip runs.
+                let edge_top_inset = skin_titlebar
+                    .as_ref()
+                    .map(|bar| self.skin_titlebar_height(&tab.id.key, bar))
+                    .unwrap_or(0.0);
+                let edge_show_ornament = skin_titlebar.is_some();
+                self.paint_skin_edges(
+                    ctx,
+                    &inner.response,
+                    edge_top_inset,
+                    edge_show_ornament,
+                );
+                if let Some(titlebar) = &skin_titlebar {
+                    self.paint_skin_titlebar(
+                        ctx,
+                        &tab.id.key,
+                        &tab.window_name,
+                        titlebar,
+                        &inner.response,
+                    );
+                }
                 self.paint_border_plan(ctx, &border_plan, &inner.response);
                 // Claim the engagement latch here, where the real rendered rect
                 // and layer id are known, gated on this window being TOPMOST at
@@ -1767,51 +1969,38 @@ impl VellumGuiApp {
                 // the wrong window latch, re-pin the resized one, and stall it
                 // after ~12px. Topmost-at-press is exactly egui's own choice,
                 // so the latch and egui's resize target always agree.
-                if just_pressed && !window_locked && self.zone_engaged_tab.is_none() {
-                    const RESIZE_GRAB: f32 = 6.0;
-                    let rect = inner.response.rect;
-                    if let Some(pos) = press_origin {
-                        // The press hits this window's body or its resize ring
-                        // (the edge band extends a few px outside the frame).
-                        let in_window = rect.expand(RESIZE_GRAB).contains(pos);
-                        // Topmost at the press point — OR the point sits over
-                        // bare background. The OUTER half of the resize band
-                        // is outside the window's area, so layer_id_at
-                        // reports the panel there and the claim used to fail:
-                        // the size pin stayed on and egui's resize was forced
-                        // back every frame. That was the "cursor shows but
-                        // can't grab until the pointer is half inside the
-                        // border" dead zone. A press over ANOTHER window's
-                        // area still yields to that window's own claim.
-                        let top_layer = ctx.layer_id_at(pos);
-                        // Over background, claim only when UNCONTESTED: if a
-                        // neighbor's ring also covers the point (windows a
-                        // few px apart), stay conservative and let the
-                        // inside-half claims disambiguate as before.
-                        let contested = snap_siblings.iter().any(|(other, _, sibling)| {
-                            *other != tab.id.key
-                                && sibling.expand(RESIZE_GRAB).contains(pos)
-                        });
-                        let topmost = top_layer == Some(inner.response.layer_id)
-                            || (!contested
-                                && top_layer.is_none_or(|layer| {
-                                    layer.order == egui::Order::Background
-                                }));
-                        if in_window && topmost {
-                            self.zone_engaged_tab = Some(tab.id.key.clone());
-                            ctx.request_repaint();
-                        }
+                if let Some(pos) = press_origin {
+                    let top_layer = ctx.layer_id_at(pos);
+                    // A neighbor's resize ring also covering the point (windows
+                    // a few px apart) makes a background claim contested.
+                    let contested = snap_siblings.iter().any(|(other, _, sibling)| {
+                        *other != tab.id.key && sibling.expand(RESIZE_GRAB).contains(pos)
+                    });
+                    let claim = should_claim_latch(
+                        just_pressed,
+                        window_locked,
+                        self.zone_engaged_tab.is_some(),
+                        press_origin,
+                        inner.response.rect,
+                        top_layer == Some(inner.response.layer_id),
+                        top_layer.is_none(),
+                        top_layer.is_some_and(|layer| layer.order == egui::Order::Background),
+                        contested,
+                    );
+                    if claim {
+                        self.zone_engaged_tab = Some(tab.id.key.clone());
+                        ctx.request_repaint();
                     }
                 }
-                // Ground-truth fallback: if egui is actually DRAGGING this
-                // window, latch it no matter what `layer_id_at` said — a
-                // Foreground gutter/drawer-handle/backdrop can be topmost
-                // at the press point while egui still routes the body-drag
-                // here. Without the latch the position feed keeps pinning
-                // the content every frame while egui's drag state (and the
-                // skin frame painted from response.rect) walks off with
-                // the pointer — the reported "frame drags away, window
-                // stays, snaps back on release".
+                // Ground-truth fallback: if egui reports this window's body
+                // as the DRAGGED widget, latch it no matter what
+                // `layer_id_at` said — a Foreground gutter/drawer-handle/
+                // backdrop can be topmost at the press point while egui
+                // still routes the body-drag here. Without the latch the
+                // position feed keeps pinning the content every frame while
+                // egui's drag state (and the skin frame painted from
+                // response.rect) walks off with the pointer — the reported
+                // "frame drags away, window stays, snaps back on release".
                 if pointer_down
                     && !window_locked
                     && self.zone_engaged_tab.is_none()
@@ -1849,16 +2038,27 @@ impl VellumGuiApp {
                 let rect_changed = (inner.response.rect.min - initial_rect.min).length_sq() > 0.25
                     || (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25;
                 // Resize evidence: egui rendered this window at a different SIZE
-                // than the pin fed it, while it holds the latch and the pointer
-                // is down. A resize-edge drag freezes `pointer_pos`, so this is
-                // the only signal a shrink/grow is in progress — latch it sticky
-                // so NEXT frame's pin relaxes and the resize isn't clamped back.
+                // than the pin fed it, while it holds the engagement latch and
+                // the pointer is still down. A resize-edge drag freezes
+                // `pointer_pos` (egui captures the pointer), so this is the only
+                // signal that a shrink/grow is in progress — latch it sticky so
+                // NEXT frame's pin relaxes and the resize isn't clamped back.
                 // Position-only divergence (a move) is excluded: moves relax via
-                // `zone_press_drag_seen`, and a displaced rect on click-anywhere
-                // must not defeat the pin.
+                // `zone_press_drag_seen` and must not set this flag, or a mere
+                // displaced rect on click-anywhere would defeat the pin.
+                // Gated on the resize HANDLE being the dragged widget: size
+                // can also diverge from non-user causes (shell-zone
+                // displacement, viewport clamping, `.loadlayout` replacing
+                // the canonical map mid-press), and latching on those while
+                // the user merely held a click would relax the pin and bake
+                // the displaced size in.
                 let size_changed =
                     (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25;
-                if size_changed && already_latched && pointer_down {
+                if size_changed
+                    && already_latched
+                    && pointer_down
+                    && resize_handle_dragged(ctx, window_layer)
+                {
                     self.zone_resize_active = true;
                 }
                 // Only geometry the user changed by grabbing THIS window may
@@ -1891,9 +2091,19 @@ impl VellumGuiApp {
                 // height. Nothing downstream can resurrect a stale height
                 // (e.g. a layout saved under a larger icon-size setting).
                 let compact_derived = is_compact_widget && !grouped;
+                // The compass window is squared (see the fed-rect constraint
+                // above): normalize the STORED rect the same way — reusing the
+                // pre-computed `compass_derived` — or a wide rendered/snapped
+                // rect on release would be tracked as canonical and "spit back
+                // out" wide next frame despite the fed-rect squaring.
                 let normalize_height = |mut rect: Rect| -> Rect {
                     if compact_derived {
                         rect.set_height(rect.height().min(max_window_size.y));
+                    }
+                    if compass_derived {
+                        let side = rect.height().min(window_bounds.width().max(1.0));
+                        rect.set_height(side);
+                        rect.set_width(side);
                     }
                     rect
                 };
@@ -2148,24 +2358,6 @@ mod tests {
     }
 
     #[test]
-    fn resize_ring_press_covers_edges_not_interior() {
-        // 200x150 window at (100,100). Ring is 6px around the boundary.
-        let r = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 150.0));
-        // Deep interior press -> move zone, NOT a resize.
-        assert!(!super::press_in_resize_ring(Some(egui::pos2(200.0, 175.0)), r));
-        // Just inside the left edge -> resize.
-        assert!(super::press_in_resize_ring(Some(egui::pos2(102.0, 175.0)), r));
-        // Just OUTSIDE the right edge, still in the grab ring -> resize.
-        assert!(super::press_in_resize_ring(Some(egui::pos2(303.0, 175.0)), r));
-        // A corner -> resize.
-        assert!(super::press_in_resize_ring(Some(egui::pos2(101.0, 101.0)), r));
-        // Far outside the ring -> not a resize.
-        assert!(!super::press_in_resize_ring(Some(egui::pos2(400.0, 175.0)), r));
-        // No press point -> not a resize.
-        assert!(!super::press_in_resize_ring(None, r));
-    }
-
-    #[test]
     fn send_to_back_raises_other_center_windows_in_order() {
         let a = egui::Id::new("a");
         let b = egui::Id::new("b");
@@ -2298,5 +2490,124 @@ mod tests {
         // layout bakes to a flush-bottom set of rects.
         let gaps = super::effective_sidebar_gaps(400.0, &[(96.0, 204.0), (0.0, 100.0)]);
         assert_eq!(gaps, vec![96.0, 0.0]);
+    }
+
+    // --- Window engagement / latch / size-pin decisions (characterization).
+    // These pin the render loop's inline drag logic so the title-bar takeover
+    // (and any future edit) can't silently change move/resize/snap behavior.
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+    }
+
+    #[test]
+    fn press_engages_window_uses_12px_ring() {
+        let r = rect(100.0, 100.0, 200.0, 150.0);
+        // Just outside the frame but inside the 12px ring: engaged.
+        assert!(super::press_engages_window(Some(egui::pos2(94.0, 175.0)), r));
+        // Well outside the ring: not engaged.
+        assert!(!super::press_engages_window(Some(egui::pos2(80.0, 175.0)), r));
+        // No press at all: not engaged.
+        assert!(!super::press_engages_window(None, r));
+    }
+
+    #[test]
+    fn window_is_engaged_needs_pointer_and_unlocked() {
+        let r = |locked, interacting, latched, any, ep, jp| {
+            super::window_is_engaged(locked, interacting, latched, any, ep, jp)
+        };
+        // Already latched + interacting + unlocked -> engaged.
+        assert!(r(false, true, true, true, false, false));
+        // Locked never engages, even when latched.
+        assert!(!r(true, true, true, true, false, false));
+        // Not interacting never engages.
+        assert!(!r(false, false, true, true, false, false));
+        // First-press claim path: no window latched yet, engaging press, just
+        // pressed -> engaged.
+        assert!(r(false, true, false, false, true, true));
+        // But if another window already latched, the press path is blocked.
+        assert!(!r(false, true, false, true, true, true));
+    }
+
+    #[test]
+    fn size_pin_relaxes_only_on_real_drag_while_engaged() {
+        let origin = egui::pos2(50.0, 50.0);
+        // Engaged + genuine drag -> relax.
+        assert!(super::should_relax_size_pin(
+            true,
+            Some(origin),
+            Some(egui::pos2(90.0, 90.0)),
+            false
+        ));
+        // Engaged but stationary -> keep the pin.
+        assert!(!super::should_relax_size_pin(true, Some(origin), Some(origin), false));
+        // Not engaged -> never relax, even mid-drag.
+        assert!(!super::should_relax_size_pin(
+            false,
+            Some(origin),
+            Some(egui::pos2(90.0, 90.0)),
+            false
+        ));
+        // Latched-and-drag-seen forces the drag verdict even without motion.
+        assert!(super::should_relax_size_pin(true, Some(origin), Some(origin), true));
+    }
+
+    #[test]
+    fn latch_claim_requires_fresh_uncontested_topmost_press() {
+        let r = rect(100.0, 100.0, 200.0, 150.0);
+        let inside = Some(egui::pos2(150.0, 150.0));
+        // Topmost-self press inside the window on a fresh press -> claim.
+        assert!(super::should_claim_latch(
+            true, false, false, inside, r, true, false, false, false,
+        ));
+        // Not a fresh press -> no claim.
+        assert!(!super::should_claim_latch(
+            false, false, false, inside, r, true, false, false, false,
+        ));
+        // Locked -> no claim.
+        assert!(!super::should_claim_latch(
+            true, true, false, inside, r, true, false, false, false,
+        ));
+        // Another window already latched -> no claim.
+        assert!(!super::should_claim_latch(
+            true, false, true, inside, r, true, false, false, false,
+        ));
+        // Over uncontested background (outer resize ring) -> claim.
+        let ring = Some(egui::pos2(97.0, 150.0));
+        assert!(super::should_claim_latch(
+            true, false, false, ring, r, false, false, true, false,
+        ));
+        // Over CONTESTED background (a neighbor's ring covers it) -> no claim.
+        assert!(!super::should_claim_latch(
+            true, false, false, ring, r, false, false, true, true,
+        ));
+        // Press outside the window entirely -> no claim.
+        assert!(!super::should_claim_latch(
+            true, false, false, Some(egui::pos2(400.0, 400.0)), r, false, true, false, false,
+        ));
+    }
+
+    #[test]
+    fn titlebar_layout_places_bar_and_caption() {
+        let win = rect(100.0, 100.0, 300.0, 200.0);
+        let l = super::titlebar_layout(win, 20.0);
+        // Bar spans the FULL window width, flush to top + side edges.
+        assert_eq!(l.bar.left(), 100.0);
+        assert_eq!(l.bar.right(), 400.0);
+        assert_eq!(l.bar.top(), 100.0);
+        assert_eq!(l.bar.height(), 20.0);
+        // Caption sits inside the bar with a small pad each side.
+        assert!(l.bar.contains_rect(l.caption));
+        assert!(l.caption.left() >= l.bar.left());
+        assert!(l.caption.right() <= l.bar.right());
+    }
+
+    #[test]
+    fn titlebar_layout_frameless_is_flush() {
+        let win = rect(0.0, 0.0, 200.0, 120.0);
+        let l = super::titlebar_layout(win, 18.0);
+        assert_eq!(l.bar.left(), 0.0);
+        assert_eq!(l.bar.top(), 0.0);
+        assert_eq!(l.bar.right(), 200.0);
     }
 }

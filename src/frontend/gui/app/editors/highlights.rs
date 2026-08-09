@@ -348,9 +348,8 @@ impl VellumGuiApp {
             });
 
         if let Some(name) = delete_request {
-            let is_global = !self.highlight_is_character_override(&name);
             let character = self.app_core.config.character.clone();
-            match Config::delete_single_highlight(&name, is_global, character.as_deref()) {
+            match Config::delete_highlight_everywhere(&name, character.as_deref()) {
                 Ok(()) => {
                     self.app_core.reload_highlights();
                     self.app_core

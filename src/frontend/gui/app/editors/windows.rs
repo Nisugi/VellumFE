@@ -18,6 +18,11 @@ pub(in super::super) struct WindowEditorState {
     /// None = window picker; Some = editing that window.
     selected: Option<String>,
     title: String,
+    /// Per-window custom title-bar override (GUI `tab_settings.custom_title`),
+    /// separate from `title` (the core stream title). Empty = automatic title
+    /// (stream title, or the member-join for grouped windows). The escape
+    /// hatch for grouped windows whose auto-title runs long.
+    custom_title: String,
     streams: String,
     max_lines: String,
     supports_streams: bool,
@@ -203,6 +208,7 @@ impl WindowEditorState {
         Self {
             selected: None,
             title: String::new(),
+            custom_title: String::new(),
             streams: String::new(),
             max_lines: String::new(),
             supports_streams: false,
@@ -281,6 +287,12 @@ impl VellumGuiApp {
         };
         state.selected = Some(name.to_string());
         state.error = None;
+        // Per-window custom title override (GUI tab_settings), independent of
+        // the core stream title loaded below.
+        state.custom_title = Self::tab_key_for_window(name, window)
+            .and_then(|key| self.tab_settings.get(&key))
+            .and_then(|settings| settings.custom_title.clone())
+            .unwrap_or_default();
         state.feed = None;
         state.supports_compact = false;
         state.compact = false;
@@ -765,6 +777,24 @@ impl VellumGuiApp {
             self.layout_dirty = true;
         }
 
+        // Per-window custom title-bar override (tab_settings). Empty clears it
+        // so the automatic title returns. For a grouped window this edits the
+        // GROUP LEADER (the window others were grouped onto — the only one the
+        // editor opens for a group), which is exactly the tab whose title bar
+        // renders, so its custom title governs the group's bar.
+        if let Some(window) = self.app_core.ui_state.windows.get(name) {
+            if let Some(key) = Self::tab_key_for_window(name, window) {
+                let trimmed = state.custom_title.trim();
+                let entry = self.tab_settings.entry(key).or_default();
+                entry.custom_title = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                self.layout_dirty = true;
+            }
+        }
+
         // Rename through the shared dot-command so the layout definition and
         // system messaging behave exactly like the TUI.
         let _ = self
@@ -907,6 +937,17 @@ impl VellumGuiApp {
                     .show(ui, |ui| {
                         ui.label("Title");
                         ui.text_edit_singleline(&mut state.title);
+                        ui.end_row();
+                        ui.label("Title bar")
+                            .on_hover_text(
+                                "Custom text shown in the window's title bar. \
+                                 Leave blank for the automatic title (for a \
+                                 grouped window, the joined member names).",
+                            );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut state.custom_title)
+                                .hint_text("(automatic)"),
+                        );
                         ui.end_row();
                         if let Some(locked) = state.locked.as_mut() {
                             ui.label("Locked");

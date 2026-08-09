@@ -92,6 +92,13 @@ pub struct TabSettings {
     #[serde(default)]
     pub skin_frame: Option<String>,
 
+    /// Per-window multiplier on the skin frame's authored scale, adjustable
+    /// live from the window editor. None = use the frame's own scale as-is
+    /// (1.0x). The content inset (inner_margin) is derived from the same
+    /// scaled slice, so the frame never covers window content.
+    #[serde(default)]
+    pub frame_scale: Option<f32>,
+
     /// Background override: None follows the skin's per-window mapping,
     /// "none" disables the background, anything else is a pool-relative
     /// image path ("backgrounds/parchment.png").
@@ -119,6 +126,13 @@ pub struct TabSettings {
     /// Mini map zoom (pixels per grid cell); None uses the widget default
     #[serde(default)]
     pub map_zoom: Option<f32>,
+
+    /// Custom title shown in the window's title bar. None/empty follows the
+    /// automatic title (the stream title, or the "A + B + C" member join for
+    /// grouped windows) — the escape hatch for groups whose auto-title runs
+    /// long.
+    #[serde(default)]
+    pub custom_title: Option<String>,
 }
 
 fn default_wrap_text() -> bool {
@@ -134,12 +148,14 @@ impl Default for TabSettings {
             accent_color: None,
             corner_radius: None,
             skin_frame: None,
+            frame_scale: None,
             background_image: None,
             title_bar_height: None,
             title_bar_align: None,
             wrap_text: true,
             copy_behavior: CopyBehavior::PlainText,
             map_zoom: None,
+            custom_title: None,
         }
     }
 }
@@ -1391,12 +1407,14 @@ mod tests {
             accent_color: None,
             corner_radius: None,
             skin_frame: None,
+            frame_scale: None,
             background_image: None,
             title_bar_height: None,
             title_bar_align: None,
             wrap_text: false,
             copy_behavior: CopyBehavior::Html,
             map_zoom: None,
+            custom_title: None,
         };
 
         let json = serde_json::to_string(&settings).unwrap();
@@ -1615,12 +1633,14 @@ mod tests {
                 accent_color: Some("#4784d9".to_string()),
                 corner_radius: None,
                 skin_frame: None,
+                frame_scale: None,
                 background_image: None,
                 title_bar_height: None,
                 title_bar_align: None,
                 wrap_text: true,
                 copy_behavior: CopyBehavior::AnsiCodes,
                 map_zoom: None,
+                custom_title: None,
             },
         );
         layout.set_tab_settings(

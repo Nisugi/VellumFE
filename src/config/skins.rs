@@ -47,6 +47,15 @@ pub struct SkinManifest {
     /// applies to windows without their own entry.
     #[serde(default, rename = "window")]
     pub windows: HashMap<String, WindowSkin>,
+    /// Decorative edge overlays keyed by edge name ("top"/"right"/"bottom"/
+    /// "left"), painted along a window's edge ON TOP of the nine-slice border.
+    /// Each edge may carry a tiling strip (runs the length of the edge) and/or
+    /// a corner ornament (anchored to one end) — e.g. StormFront's flourished
+    /// right border: a `vertical` strip down the edge with a `panelFrameUnder`
+    /// flourish at the top. Applies to every window; the nine-slice border
+    /// remains the body frame.
+    #[serde(default)]
+    pub edges: HashMap<String, EdgeSpec>,
     /// Status icon sprites keyed by indicator id ("kneeling", "STUNNED",
     /// ...; case-insensitive). Replace the built-in vector pictograms in
     /// the dashboard and indicator widgets.
@@ -69,6 +78,18 @@ pub struct SkinManifest {
     /// Sprite paperdoll replacing the vector injury doll.
     #[serde(default)]
     pub injury_doll: InjuryDollSkin,
+    /// Editor/menu color palette. Every field is optional: unset colors are
+    /// auto-derived from the skin's art at load, and any `[ui]` entry
+    /// overrides its derived default. This is what makes config editors,
+    /// menus, and the GUI's native controls take on the skin.
+    #[serde(default)]
+    pub ui: UiPalette,
+    /// Nine-slice sprites for interactive dialog-panel controls (Wrayth
+    /// `Button`, `DropDownBox`, ...). Keyed by `"<control>"` or
+    /// `"<control>.<state>"` where state is one of normal/hover/pressed
+    /// (normal is the bare key). Missing entries fall back to the theme.
+    #[serde(default)]
+    pub controls: HashMap<String, BorderSpec>,
 }
 
 /// One hotbar icon sprite sheet: an image path (relative to the skin dir)
@@ -300,12 +321,119 @@ pub struct SkinMeta {
     pub description: String,
 }
 
+/// Editor/menu color palette (skin.toml `[ui]`). Every field is an optional
+/// "#rrggbb" string: `None` means "auto-derive from the skin's art at load".
+/// The GUI applies it globally to its widget visuals, coloring editors, menus,
+/// dropdowns, checkboxes/radios, and every other native control at once.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct UiPalette {
+    /// Editor/window body background.
+    #[serde(default)]
+    pub window_bg: Option<String>,
+    /// Inset/panel background (list rows, sunken areas).
+    #[serde(default)]
+    pub panel_bg: Option<String>,
+    /// Button / interactive-control fill.
+    #[serde(default)]
+    pub button_bg: Option<String>,
+    /// Button fill while hovered.
+    #[serde(default)]
+    pub button_hover: Option<String>,
+    /// Label color for skinned dialog/combat buttons. Defaults to `text` when
+    /// unset. Skins whose button ART is light (StormFront's silver button)
+    /// need this dark so the label reads on the button, not the palette's
+    /// light body text meant for dark surfaces.
+    #[serde(default)]
+    pub button_text: Option<String>,
+    /// Body text.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Accent — selection fill, active highlights.
+    #[serde(default)]
+    pub accent: Option<String>,
+    /// Window title-bar caption text color. Defaults to `accent` when unset;
+    /// some skins need it distinct (StormFront's silver bars want dark text,
+    /// not the steel-blue accent, so the caption stays readable).
+    #[serde(default)]
+    pub titlebar_text: Option<String>,
+    /// Window / control border stroke.
+    #[serde(default)]
+    pub border: Option<String>,
+    /// Menu / popup background.
+    #[serde(default)]
+    pub menu_bg: Option<String>,
+}
+
+impl UiPalette {
+    /// Whether the skin author set ANY `[ui]` override. Lives next to the
+    /// struct so a new field can't be forgotten (the old inline check in the
+    /// palette builder silently dropped `titlebar_text`/`button_text`-only
+    /// skins). Keep this exhaustive: destructure, don't enumerate.
+    pub fn any_set(&self) -> bool {
+        let Self {
+            window_bg,
+            panel_bg,
+            button_bg,
+            button_hover,
+            button_text,
+            text,
+            accent,
+            titlebar_text,
+            border,
+            menu_bg,
+        } = self;
+        window_bg.is_some()
+            || panel_bg.is_some()
+            || button_bg.is_some()
+            || button_hover.is_some()
+            || button_text.is_some()
+            || text.is_some()
+            || accent.is_some()
+            || titlebar_text.is_some()
+            || border.is_some()
+            || menu_bg.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WindowSkin {
     #[serde(default)]
     pub background: Option<BackgroundSpec>,
     #[serde(default)]
     pub border: Option<BorderSpec>,
+}
+
+/// A decorative overlay painted along ONE window edge, over the nine-slice
+/// border. It has two independent, optional layers:
+///   - `strip`: a sprite tiled (or stretched) along the full length of the
+///     edge — e.g. a thin vertical border texture.
+///   - `ornament`: a fixed sprite anchored to one END of the edge — e.g. a
+///     corner flourish. `anchor` picks the end ("start" = top/left,
+///     "end" = bottom/right); the ornament keeps its native size.
+/// `thickness` is how far (in source px × scale) the overlay reaches inward
+/// from the edge; `scale` maps source px to on-screen points.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EdgeSpec {
+    /// Tiling/stretched strip run along the edge.
+    #[serde(default)]
+    pub strip: Option<String>,
+    /// `true` tiles the strip along the edge; `false` (default) stretches it.
+    #[serde(default)]
+    pub tile: bool,
+    /// Corner ornament anchored to one end of the edge.
+    #[serde(default)]
+    pub ornament: Option<String>,
+    /// Which end the ornament anchors to: "start" (top/left) or "end"
+    /// (bottom/right). Defaults to "start".
+    #[serde(default)]
+    pub anchor: Option<String>,
+    /// Inward reach of the overlay from the edge, in source px (× `scale`).
+    /// When absent the strip's own cross-axis size is used.
+    #[serde(default)]
+    pub thickness: Option<f32>,
+    /// Source-px → on-screen-point multiplier.
+    #[serde(default = "default_border_scale")]
+    pub scale: f32,
 }
 
 /// Nine-slice border image: the `slice` insets (source pixels, top/right/
