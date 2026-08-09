@@ -80,7 +80,14 @@ pub(super) fn apply_ui_palette(
     visuals.faint_bg_color = palette.panel_bg;
     visuals.window_stroke = stroke(palette.border);
     visuals.override_text_color = Some(palette.text);
-    visuals.selection.bg_fill = palette.accent;
+    // Selected rows (menus, combos, lists) paint this fill UNDER the
+    // override_text_color text, so the raw accent can't be used directly: a
+    // skin whose text and accent share a hue (stealth: orange on orange)
+    // makes the highlighted row unreadable, and bright accents are glaring
+    // as a full row fill. Blend the accent into the menu background and
+    // then force luminance contrast against the text color.
+    visuals.selection.bg_fill =
+        readable_selection_fill(palette.accent, palette.menu_bg, palette.text);
     // NOTE: do NOT override selection.stroke.color — the snap alignment
     // guides (snap.rs) draw their lines with it, so hijacking it for the
     // palette washes those guides out. Leave it at the theme's accent.
@@ -111,6 +118,100 @@ pub(super) fn apply_ui_palette(
     w.open.bg_fill = palette.menu_bg;
     w.open.weak_bg_fill = palette.menu_bg;
     w.open.bg_stroke = stroke(palette.border);
+}
+
+/// Linear-ish relative luminance of a color (0 = black, 1 = white).
+fn relative_luminance(color: Color32) -> f32 {
+    let channel = |value: u8| {
+        let v = value as f32 / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+}
+
+/// WCAG-style contrast ratio between two colors (1.0..=21.0).
+fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
+}
+
+/// `amount` of `top` blended over `base` (0.0 = base, 1.0 = top).
+fn blend(base: Color32, top: Color32, amount: f32) -> Color32 {
+    let mix = |b: u8, t: u8| (b as f32 + (t as f32 - b as f32) * amount).round() as u8;
+    Color32::from_rgb(
+        mix(base.r(), top.r()),
+        mix(base.g(), top.g()),
+        mix(base.b(), top.b()),
+    )
+}
+
+/// Highlight fill for selected rows: the skin accent toned down into the
+/// menu background, then nudged away from the text's luminance until the
+/// (override) text color stays readable on it. Skins are free to pick
+/// text ≈ accent (stealth's orange-on-orange), so this is the only place
+/// that guarantees the pairing works.
+fn readable_selection_fill(accent: Color32, menu_bg: Color32, text: Color32) -> Color32 {
+    // Keep the accent's hue but at row-fill intensity.
+    let mut fill = blend(menu_bg, accent, 0.35);
+    // Push the fill toward whichever pole the text is NOT (dark text →
+    // lighten, light text → darken) until it reads. 3.0 is the WCAG
+    // large-text bar — enough for a one-line menu row.
+    let pole = if relative_luminance(text) >= 0.5 {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    };
+    for _ in 0..8 {
+        if contrast_ratio(fill, text) >= 3.0 {
+            break;
+        }
+        fill = blend(fill, pole, 0.25);
+    }
+    fill
+}
+
+#[cfg(test)]
+mod selection_fill_tests {
+    use super::*;
+
+    #[test]
+    fn same_hue_text_and_accent_stays_readable() {
+        // Stealth-like: orange text on an orange accent.
+        let orange = Color32::from_rgb(0xff, 0x8c, 0x1a);
+        let menu_bg = Color32::from_rgb(0x14, 0x12, 0x10);
+        let fill = readable_selection_fill(orange, menu_bg, orange);
+        assert!(
+            contrast_ratio(fill, orange) >= 3.0,
+            "fill {:?} unreadable under orange text",
+            fill
+        );
+    }
+
+    #[test]
+    fn bright_accent_is_toned_down() {
+        // Storm-like: bright blue accent, near-white text.
+        let accent = Color32::from_rgb(0x4d, 0xc3, 0xff);
+        let menu_bg = Color32::from_rgb(0x10, 0x16, 0x1c);
+        let text = Color32::from_rgb(0xe6, 0xee, 0xf4);
+        let fill = readable_selection_fill(accent, menu_bg, text);
+        assert!(contrast_ratio(fill, text) >= 3.0);
+        // Dimmer than the raw accent as a row fill.
+        assert!(relative_luminance(fill) < relative_luminance(accent));
+    }
+
+    #[test]
+    fn dark_text_pushes_fill_light() {
+        let accent = Color32::from_rgb(0x22, 0x22, 0x2a);
+        let menu_bg = Color32::from_rgb(0x1a, 0x1a, 0x20);
+        let text = Color32::from_rgb(0x11, 0x11, 0x11);
+        let fill = readable_selection_fill(accent, menu_bg, text);
+        assert!(contrast_ratio(fill, text) >= 3.0);
+    }
 }
 
 /// Lazily-loaded system font database, shared by name resolution and the
