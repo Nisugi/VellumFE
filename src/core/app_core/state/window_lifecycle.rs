@@ -372,7 +372,7 @@ impl AppCore {
     }
 
     /// Delete a window (legacy - use hide_window instead)
-    pub(crate) fn delete_window(&mut self, name: &str) {
+    pub(in crate::core::app_core) fn delete_window(&mut self, name: &str) {
         // For backwards compatibility, redirect to hide
         self.hide_window(name);
     }
@@ -1147,7 +1147,7 @@ impl AppCore {
     }
 
     /// Add a new window
-    pub(crate) fn add_window(
+    pub(in crate::core::app_core) fn add_window(
         &mut self,
         name: &str,
         widget_type_str: &str,
@@ -1477,7 +1477,7 @@ impl AppCore {
     }
 
     /// Rename a window's title
-    pub(crate) fn rename_window(&mut self, window_name: &str, new_title: &str) {
+    pub(in crate::core::app_core) fn rename_window(&mut self, window_name: &str, new_title: &str) {
         // Update in layout definition
         if let Some(window_def) = self
             .layout
@@ -1497,7 +1497,7 @@ impl AppCore {
     }
 
     /// Set window border style and color
-    pub(crate) fn set_window_border(&mut self, window_name: &str, style: &str, color: Option<String>) {
+    pub(in crate::core::app_core) fn set_window_border(&mut self, window_name: &str, style: &str, color: Option<String>) {
         if let Some(window_def) = self
             .layout
             .windows
@@ -1581,7 +1581,7 @@ impl AppCore {
     }
 
     /// Toggle transparent_background for all windows in the current layout.
-    pub(crate) fn toggle_transparent_background_all(&mut self) {
+    pub(in crate::core::app_core) fn toggle_transparent_background_all(&mut self) {
         if self.layout.windows.is_empty() {
             self.add_system_message("No windows found in layout");
             return;

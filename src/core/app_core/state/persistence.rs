@@ -179,7 +179,7 @@ impl AppCore {
     /// Wrapper for resize command - gets terminal size from layout
 
     /// List all windows
-    pub(crate) fn list_windows(&mut self) {
+    pub(in crate::core::app_core) fn list_windows(&mut self) {
         let window_count = self.ui_state.windows.len();
 
         // Collect window info first to avoid borrow checker issues

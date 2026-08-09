@@ -119,6 +119,9 @@ fn core_is_android_safe() {
             violations.push(format!("src/parser.rs:{}: {}", idx + 1, line.trim()));
         }
     }
+    // The parser was split into src/parser/ submodules; they carry the same
+    // Android-safety obligation as the facade file.
+    scan_dir(&src.join("parser"), needles, &mut violations);
     assert!(
         violations.is_empty(),
         "core/, data/, and parser.rs must not use desktop-only crates directly \
@@ -147,6 +150,42 @@ fn config_root_stays_a_facade() {
         lines <= MAX_CONFIG_ROOT_LINES,
         "src/config.rs has {lines} lines (limit {MAX_CONFIG_ROOT_LINES}). \
          Move new types/impls into the appropriate src/config/ submodule."
+    );
+}
+
+#[test]
+fn split_parents_stay_facades() {
+    // The 2026-08 monolith splits moved impl blocks into submodules
+    // (frontend/gui/app/, core/app_core/state/, frontend/tui/window_editor/,
+    // core/messages/, frontend/gui/app/widgets/, parser/). The residual
+    // parents hold the type definitions, dispatchers, and (for now) the test
+    // modules — new methods belong in the matching submodule. Limits are the
+    // current size rounded up a little; if one trips, move code down into a
+    // submodule instead of raising the cap.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let caps: &[(&str, usize)] = &[
+        ("src/frontend/gui/app.rs", 4800),
+        ("src/core/app_core/state.rs", 3600),
+        ("src/frontend/tui/window_editor.rs", 2100),
+        ("src/core/messages.rs", 3400),
+        ("src/frontend/gui/app/widgets.rs", 1200),
+        ("src/parser.rs", 3600),
+    ];
+    let mut violations = Vec::new();
+    for (rel, cap) in caps {
+        let path = root.join(rel);
+        let lines = fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e))
+            .lines()
+            .count();
+        if lines > *cap {
+            violations.push(format!("{rel}: {lines} lines (limit {cap})"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "split parent files must stay facades — move new code into their submodules:\n{}",
+        violations.join("\n")
     );
 }
 

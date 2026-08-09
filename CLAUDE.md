@@ -130,7 +130,7 @@ Defaults embedded from `defaults/` directory via `include_dir` crate.
 | Window definitions | `config.rs` (`get_window_template`, `list_window_templates`) |
 | Layout positioning | `core/app_core/layout.rs` |
 | Min/max window sizes | `widget_min_size()` in `layout.rs` |
-| Menu building | `frontend/tui/menu_builders.rs`, `core/app_core/state.rs` (`build_*_menu`) |
+| Menu building | `frontend/tui/menu_builders.rs`, `core/app_core/state/menus.rs` (`build_*_menu`) |
 | Menu actions | `frontend/tui/menu_actions.rs`, `core/menu_actions.rs` |
 | Keyboard input | `frontend/tui/input.rs`, `input_handlers.rs` |
 | Dot-commands | `core/app_core/commands.rs` |

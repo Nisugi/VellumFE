@@ -12,17 +12,21 @@ Pure business logic layer - handles game state, message processing, UI interacti
 
 ```
 src/core/
-├── app_core/          # Core application orchestrator
-│   ├── state.rs      # Central game state (GameState, vitals, room data)
+├── app_core/          # Core application orchestrator (AppCore)
+│   ├── state.rs      # AppCore struct, constructors, process_server_data
+│   ├── state/        # AppCore impl submodules: windows, window_lifecycle,
+│   │                 #   menus, persistence, travel_ticks, remote, focus
 │   ├── commands.rs   # Dot command parsing and execution
-│   ├── keybinds.rs  # Keybind mapping and action handling
-│   ├── layout.rs     # Layout management and window positioning
-│   ├── highlight_engine.rs  # Text highlighting with Aho-Corasick optimization
-│   ├── input_router.rs  # Menu input routing based on context
-│   ├── menu_actions.rs  # Shared action vocabulary for UI widgets
-│   ├── messages.rs        # XML message processing and state updates
-│   ├── bounty_parser.rs  # Compact bounty text formatting
-│   └── state.rs           # Game session state (alternative to app_core/state.rs)
+│   ├── keybinds.rs   # Keybind mapping and action handling
+│   └── layout.rs     # Layout management and window positioning
+├── messages.rs        # MessageProcessor facade (struct, config, tests)
+├── messages/          # MessageProcessor impl submodules: element (XML
+│                      #   dispatch), component, flush_line, buffers, routing
+├── state.rs           # GameState (vitals, status, inventory, room data)
+├── highlight_engine.rs  # Text highlighting with Aho-Corasick optimization
+├── input_router.rs    # Menu input routing based on context
+├── menu_actions.rs    # Shared action vocabulary for UI widgets
+├── bounty_parser.rs   # Compact bounty text formatting
 ```
 
 ## WHERE TO LOOK
@@ -30,9 +34,10 @@ src/core/
 | Task | Location | Notes |
 |------|----------|-------|
 | Add game state | `src/core/state.rs` | Central GameState struct with vitals, status, inventory, room data |
-| Process XML messages | `src/core/messages.rs` | MessageProcessor routes parsed XML to update state |
-| Update vitals/hands | `src/core/messages.rs` | Updates GameState from progress bars, hands, status indicators |
-| Handle dialog data | `src/core/messages.rs` | Processes `<dialog>` tags for popup management |
+| Process XML messages | `src/core/messages/element.rs` | `process_element` dispatches every ParsedElement variant |
+| Update vitals/hands | `src/core/messages/element.rs` | Updates GameState from progress bars, hands, status indicators |
+| Handle dialog data | `src/core/messages/component.rs` | dialogData ingest, shown-dialog reflection (routing in `messages/routing.rs`) |
+| Flush text lines | `src/core/messages/flush_line.rs` | Highlights, squelch, redirects, sorter, TTS per completed line |
 | Apply highlights | `src/core/highlight_engine.rs` | CoreHighlightEngine with fast Aho-Corasick matching |
 | Parse bounty text | `src/core/bounty_parser.rs` | Transforms verbose bounty into compact format |
 | Route input actions | `src/core/input_router.rs` | Maps key events to actions based on context |

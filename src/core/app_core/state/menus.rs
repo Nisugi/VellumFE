@@ -6,7 +6,7 @@ use super::*;
 
 impl AppCore {
     /// Build main menu for .menu command
-    pub(crate) fn build_main_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
+    pub(in crate::core::app_core) fn build_main_menu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         vec![
             crate::data::ui_state::PopupMenuItem {
                 text: "Colors >".to_string(),
@@ -90,7 +90,7 @@ impl AppCore {
     }
 
     /// Build highlights submenu
-    pub(crate) fn build_highlights_submenu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
+    pub(in crate::core::app_core) fn build_highlights_submenu(&self) -> Vec<crate::data::ui_state::PopupMenuItem> {
         vec![
             crate::data::ui_state::PopupMenuItem {
                 text: "Add".to_string(),
