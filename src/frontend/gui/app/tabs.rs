@@ -429,6 +429,15 @@ impl VellumGuiApp {
         if leader == &other {
             return;
         }
+        // Invariant (see detach_tab): a detached tab is never grouped. A
+        // detached leader would leave the follower unrendered — grouped
+        // followers are skipped by every zone surface, and the detached
+        // render path has no group awareness.
+        if self.detached_tabs.contains_key(leader) || self.detached_tabs.contains_key(&other) {
+            self.app_core
+                .add_system_message("Can't group a detached window. Reattach it first.");
+            return;
+        }
         self.ungroup_tab(&other);
         let leader_zone = self.zone_for_tab(leader);
         if let Some(index) = self

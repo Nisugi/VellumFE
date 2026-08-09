@@ -350,6 +350,20 @@ impl VellumGuiApp {
         let Some(tab_key) = Self::tab_key_for_window(name, window) else {
             return;
         };
+        // A detached window lives in its own OS viewport: give it the
+        // detached menu, never the attached one — the attached menu's
+        // Group/Arrange/Detach actions are meaningless (and grouping a
+        // detached leader can orphan the follower from every render
+        // surface).
+        if self.detached_tabs.contains_key(&tab_key) {
+            self.close_all_popup_menus();
+            self.window_context_menu = None;
+            self.detached_context_menu = Some(super::detached::DetachedMenuState {
+                tab_key,
+                pos: egui::pos2(24.0, 40.0),
+            });
+            return;
+        }
         let zone = self.zone_for_tab(&tab_key);
         let rect = self
             .main_window_rects
