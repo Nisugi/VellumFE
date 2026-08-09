@@ -2435,6 +2435,26 @@ pub fn paint_nine_slice(
     }
 }
 
+/// Nine-slice for a control FACE (button, tab, dropdown): like
+/// `paint_nine_slice` but the center patch is painted too, stretched from
+/// the sprite's own center region. A window frame wants the hollow center
+/// (content shows through); a button face painted hollow shows the window
+/// mesh through its middle — the reported dark box behind every combat
+/// button label.
+pub fn paint_nine_slice_filled(painter: &egui::Painter, rect: egui::Rect, border: &ResolvedBorder) {
+    let full_alpha = egui::Color32::WHITE;
+    for (dest, uv) in nine_slice_patches_impl(
+        border.tex_size,
+        border.slice,
+        border.scale,
+        rect,
+        [true; 4],
+        true,
+    ) {
+        painter.image(border.texture, dest, uv, full_alpha);
+    }
+}
+
 /// The eight border patches as (destination rect, UV rect) pairs. Slice
 /// insets larger than the destination shrink proportionally so opposite
 /// borders never overlap. Degenerate patches (zero-size) are skipped —
@@ -2448,6 +2468,17 @@ fn nine_slice_patches(
     scale: f32,
     rect: egui::Rect,
     sides: [bool; 4],
+) -> Vec<(egui::Rect, egui::Rect)> {
+    nine_slice_patches_impl(tex, slice, scale, rect, sides, false)
+}
+
+fn nine_slice_patches_impl(
+    tex: egui::Vec2,
+    slice: [f32; 4],
+    scale: f32,
+    rect: egui::Rect,
+    sides: [bool; 4],
+    include_center: bool,
 ) -> Vec<(egui::Rect, egui::Rect)> {
     if tex.x <= 0.0 || tex.y <= 0.0 || !rect.is_positive() {
         return Vec::new();
@@ -2476,11 +2507,11 @@ fn nine_slice_patches(
     let ux = [0.0, (left / tex.x).min(1.0), 1.0 - (right / tex.x).min(1.0), 1.0];
     let uy = [0.0, (top / tex.y).min(1.0), 1.0 - (bottom / tex.y).min(1.0), 1.0];
 
-    let mut patches = Vec::with_capacity(8);
+    let mut patches = Vec::with_capacity(9);
     for row in 0..3 {
         for col in 0..3 {
-            if row == 1 && col == 1 {
-                continue; // center stays empty
+            if row == 1 && col == 1 && !include_center {
+                continue; // window frames: center stays empty
             }
             let dest = egui::Rect::from_min_max(
                 egui::pos2(dx[col], dy[row]),
@@ -2698,6 +2729,32 @@ mod tests {
         // No patch covers the center point.
         let center = rect.center();
         assert!(patches.iter().all(|(dest, _)| !dest.contains(center)));
+    }
+
+    #[test]
+    fn nine_slice_patches_filled_covers_the_center() {
+        // Control faces (buttons/tabs/dropdowns) paint their center from the
+        // sprite; the hollow variant let the window mesh show through as a
+        // dark box behind every button label.
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(100.0, 80.0));
+        let patches = nine_slice_patches_impl(
+            egui::vec2(32.0, 32.0),
+            [8.0, 8.0, 8.0, 8.0],
+            1.0,
+            rect,
+            [true; 4],
+            true,
+        );
+        assert_eq!(patches.len(), 9);
+        let center = rect.center();
+        let (dest, uv) = patches
+            .iter()
+            .find(|(dest, _)| dest.contains(center))
+            .expect("center patch present");
+        // Center dest spans between the border insets; UV is the sprite's
+        // own middle region.
+        assert_eq!(*dest, egui::Rect::from_min_max(egui::pos2(8.0, 8.0), egui::pos2(92.0, 72.0)));
+        assert_eq!(*uv, egui::Rect::from_min_max(egui::pos2(0.25, 0.25), egui::pos2(0.75, 0.75)));
     }
 
     #[test]

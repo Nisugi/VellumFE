@@ -2838,11 +2838,10 @@ impl VellumGuiApp {
                             if let Some(border) =
                                 skin_art.and_then(|art| art.control_border("dropdown", "normal"))
                             {
-                                crate::frontend::gui::skin::paint_nine_slice(
+                                crate::frontend::gui::skin::paint_nine_slice_filled(
                                     ui.painter(),
                                     rect,
                                     border,
-                                    [true; 4],
                                 );
                             }
                             if let Some(value) =
@@ -2924,11 +2923,10 @@ impl VellumGuiApp {
                                 if let Some(border) =
                                     skin_art.and_then(|art| art.control_border("link", state))
                                 {
-                                    crate::frontend::gui::skin::paint_nine_slice(
+                                    crate::frontend::gui::skin::paint_nine_slice_filled(
                                         ui.painter(),
                                         rect,
                                         border,
-                                        [true; 4],
                                     );
                                 }
                             }
@@ -3140,7 +3138,10 @@ impl VellumGuiApp {
                 "normal"
             };
             if let Some(border) = skin_art.and_then(|art| art.control_border("button", state)) {
-                crate::frontend::gui::skin::paint_nine_slice(ui.painter(), rect, border, [true; 4]);
+                // Filled: a button FACE paints its center from the sprite —
+                // the hollow window-frame variant let the dark window mesh
+                // show through the middle of every button.
+                crate::frontend::gui::skin::paint_nine_slice_filled(ui.painter(), rect, border);
             }
             // PAINT the label directly over the nine-slice art — do NOT place an
             // egui Button, which draws its own dark widget background (button_bg
@@ -3580,11 +3581,10 @@ impl VellumGuiApp {
                         "normal"
                     };
                     if let Some(border) = skin_art.and_then(|art| art.control_border("tab", state)) {
-                        crate::frontend::gui::skin::paint_nine_slice(
+                        crate::frontend::gui::skin::paint_nine_slice_filled(
                             ui.painter(),
                             rect,
                             border,
-                            [true; 4],
                         );
                     }
                     ui.put(
