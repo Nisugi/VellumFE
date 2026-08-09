@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Keybind Actions - VellumFE User Guide</title>
+        <title>Emoji - VellumFE User Guide</title>
 
 
         <!-- Custom HTML head -->
@@ -179,61 +179,95 @@
 
                 <div id="mdbook-content" class="content">
                     <main>
-                        <h1 id="keybind-actions"><a class="header" href="#keybind-actions">Keybind Actions</a></h1>
-<p>Recipes for common keybind tasks. Full format and action reference:
-<a href="../configuration/keybinds-toml.html">keybinds.toml</a>. The in-app editor
-(<code>.keybinds</code> / <code>.addkeybind</code>) edits the same file.</p>
-<p>Your custom binds go in the <code>[user]</code> section, as <code>"key" = value</code>.</p>
-<h2 id="send-a-command-with-one-key"><a class="header" href="#send-a-command-with-one-key">Send a Command with One Key</a></h2>
-<p>Use <code>macro_text</code>; end with <code>\r</code> to press Enter:</p>
-<pre><code class="language-toml">[user]
-f5 = { macro_text = "stance defensive\r" }
-f6 = { macro_text = "look in my backpack\r" }
-"ctrl+g" = { macro_text = "group\r" }
+                        <h1 id="emoji"><a class="header" href="#emoji">Emoji</a></h1>
+<p>VellumFE renders <code>:shortcode:</code>-style emoji in incoming game text, and lets you
+add your own custom (Discord-server-style) emoji.</p>
+<h2 id="standard-emoji"><a class="header" href="#standard-emoji">Standard emoji</a></h2>
+<p>Any standard gemoji shortcode in game text is rendered as its emoji:</p>
+<pre><code>Someone thinks, "heading to town :grin:"
 </code></pre>
-<p>Omit the <code>\r</code> to type text into the input line without sending — useful
-for prefixes you finish by hand:</p>
-<pre><code class="language-toml">"ctrl+w" = { macro_text = "whisper Rolfard " }
-</code></pre>
-<h2 id="numpad-movement"><a class="header" href="#numpad-movement">Numpad Movement</a></h2>
-<p>Ships by default; adjust to taste:</p>
-<pre><code class="language-toml">num_8 = { macro_text = "n\r" }
-num_2 = { macro_text = "s\r" }
-num_5 = { macro_text = "out\r" }
-"num_." = { macro_text = "up\r" }
-"num_+" = { macro_text = "look\r" }
-</code></pre>
-<h2 id="rebind-a-client-action"><a class="header" href="#rebind-a-client-action">Rebind a Client Action</a></h2>
-<pre><code class="language-toml">[user]
-"ctrl+r" = "send_last_command"
-tab = "switch_current_window"
-page_up = "scroll_current_window_up_page"
-</code></pre>
-<h2 id="change-the-quit--search-keys"><a class="header" href="#change-the-quit--search-keys">Change the Quit / Search Keys</a></h2>
-<p>Application-level keys live in <code>[app]</code>:</p>
-<pre><code class="language-toml">[app]
-quit = "ctrl+q"          # default is ctrl+c
-start_search = "ctrl+f"
-</code></pre>
-<h2 id="swap-keybind-sets"><a class="header" href="#swap-keybind-sets">Swap Keybind Sets</a></h2>
-<pre><code>.savekeybinds hunting
-.loadkeybinds hunting
-.keybindprofiles
-</code></pre>
-<h2 id="when-a-key-doesnt-work"><a class="header" href="#when-a-key-doesnt-work">When a Key Doesn’t Work</a></h2>
-<p>Terminals differ in what they send. Run with <code>RUST_LOG=debug</code>, press the
-key, and look for <code>KEY EVENT</code> lines in the log — then bind exactly that
-name. Classic case: terminals that send <code>delete</code> for backspace.</p>
+<ul>
+<li>In the <strong>GUI</strong>, emoji are drawn in full color (Twemoji artwork). Toggle color
+vs. monochrome with the <code>ui.color_emoji</code> setting.</li>
+<li>On the <strong>phone/web</strong> client, emoji use the system emoji font.</li>
+<li>In the <strong>TUI</strong>, emoji render as whatever Unicode glyph your terminal font
+provides.</li>
+</ul>
+<p>Shortcode expansion is controlled by the <code>ui.emoji_shortcodes</code> setting
+(default on).</p>
+<h2 id="custom-emoji"><a class="header" href="#custom-emoji">Custom emoji</a></h2>
+<p>Drop image files into <code>~/.vellum-fe/emoji/</code> and reference them as <code>:name:</code>,
+just like Discord server emoji.</p>
+<ol>
+<li>Create the directory <code>~/.vellum-fe/emoji/</code> if it does not exist.</li>
+<li>Add an image named after the shortcode you want, e.g.
+<code>~/.vellum-fe/emoji/vibecat.png</code> for <code>:vibecat:</code>.</li>
+<li>Restart, or run <code>.reload</code>, to pick up new files.</li>
+</ol>
+<p>Supported formats:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Format</th><th>Extension</th><th>Animated</th></tr>
+</thead>
+<tbody>
+<tr><td>PNG</td><td><code>.png</code></td><td>if it is an animated PNG (APNG)</td></tr>
+<tr><td>APNG</td><td><code>.apng</code></td><td>yes</td></tr>
+<tr><td>GIF</td><td><code>.gif</code></td><td>yes</td></tr>
+<tr><td>WebP</td><td><code>.webp</code></td><td>yes, if the file is animated</td></tr>
+</tbody>
+</table>
+</div>
+<p>Animated GIF, WebP, and APNG all animate in the GUI and on the phone. Discord
+serves its animated custom emoji as <strong>animated WebP</strong> — save one as
+<code>~/.vellum-fe/emoji/&lt;name&gt;.webp</code> and it animates. (To grab one: right-click the
+emoji in Discord → Copy Link, open the <code>…​.webp</code> URL in a browser, and save it.)</p>
+<p>Naming rules: the filename (without extension) is the shortcode, and may
+contain letters, digits, <code>_</code>, <code>+</code>, and <code>-</code> only. Names are case-insensitive
+(<code>VibeCat.png</code> matches <code>:vibecat:</code> and <code>:VibeCat:</code>). If a custom emoji shares a
+name with a standard one, <strong>your custom emoji wins</strong>.</p>
+<h3 id="sizing-custom-emoji-gui"><a class="header" href="#sizing-custom-emoji-gui">Sizing custom emoji (GUI)</a></h3>
+<p>Two settings tune how custom emoji look in the GUI (Client settings → UI):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Setting</th><th>Default</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Custom Emoji Size</code> (<code>ui.custom_emoji_size</code>)</td><td>1.0</td><td>Image height as a multiple of the text line height. Above 1.0 the emoji stand out above the line.</td></tr>
+<tr><td><code>Custom Emoji Spacing</code> (<code>ui.custom_emoji_spacing</code>)</td><td>0.2</td><td>Breathing room around each emoji, as a fraction of the line height added to its width.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="how-each-frontend-renders-custom-emoji"><a class="header" href="#how-each-frontend-renders-custom-emoji">How each frontend renders custom emoji</a></h3>
+<ul>
+<li><strong>GUI</strong> — draws the image inline, animating APNG/GIF frames.</li>
+<li><strong>Phone/web</strong> — draws the image inline via a private, token-gated endpoint;
+GIF/APNG animate natively in the browser.</li>
+<li><strong>TUI</strong> — cannot render images, so it shows the literal <code>:name:</code> text as a
+readable fallback.</li>
+</ul>
+<h2 id="emoji-are-never-sent-to-the-game"><a class="header" href="#emoji-are-never-sent-to-the-game">Emoji are never sent to the game</a></h2>
+<p>GemStone IV is a roleplaying game, and sending emoji (or the shortcodes that
+render as emoji) as speech, thoughts, whispers, or actions can get you warned
+or banned. Emoji are a <strong>display convenience on your side only</strong>.</p>
+<p>VellumFE strips emoji from every command before it reaches the game — whether
+you type it, a hotbar sends it, or a Lich script sends it. This includes actual
+emoji characters and any <code>:shortcode:</code> that resolves to a known emoji (standard
+or custom). Ordinary text, unknown shortcodes, Lich script syntax, and things
+like time strings (<code>12:30:45</code>) are left untouched. This protection is always on.</p>
+<p>So a Lich script can safely send <code>:vibecat:</code> for VellumFE to display, and the
+game will never see it.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../customization/highlights.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../customization/sounds.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                             </a>
 
-                            <a rel="next prefetch" href="../customization/sounds.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next prefetch" href="../customization/themes.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                             </a>
 
@@ -243,11 +277,11 @@ name. Classic case: terminals that send <code>delete</code> for backspace.</p>
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../customization/highlights.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../customization/sounds.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
                     </a>
 
-                    <a rel="next prefetch" href="../customization/sounds.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next prefetch" href="../customization/themes.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
                     </a>
             </nav>

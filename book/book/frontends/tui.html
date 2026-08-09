@@ -28,6 +28,8 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../theme/tabs-52f01167.css">
+        <link rel="stylesheet" href="../theme/shot-3066427f.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -35,10 +37,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
+            window.path_to_searchindex_js = "../searchindex-713601b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a6416afc.js"></script>
+        <script src="../toc-eabfdacc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,6 +188,12 @@ are laid out on a character grid via
 <a href="../configuration/layout-toml.html">layout.toml</a>, and everything is
 keyboard-driven with mouse support for links, scrolling, selection, and
 window dragging.</p>
+<p>As you type in the command input, the newest command-history entry with
+the same prefix appears as muted text beginning at the cursor. Press <code>Tab</code>
+to accept it. When no suggestion or dot-command completion is available,
+<code>Tab</code> keeps its normal switch-window behavior; Up/Down still browse the full
+history. The suggestion uses the theme’s <code>text_secondary</code> color by default;
+set <code>completion_color</code> on the command-input window to override it.</p>
 <h2 id="terminal-recommendations"><a class="header" href="#terminal-recommendations">Terminal Recommendations</a></h2>
 <ul>
 <li>Use a terminal with 24-bit color (Windows Terminal, kitty, alacritty,
@@ -260,6 +268,7 @@ this session.</p>
         <script src="../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../theme/tabs-0c8cb93b.js"></script>
 
 
 

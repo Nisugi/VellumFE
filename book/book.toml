@@ -7,7 +7,14 @@ src = "src"
 [build]
 build-dir = "book"
 
+# Per-frontend "Set it up" tabs (GUI / TUI / Mobile). See book/AUTHORING.md §3.
+# CI must `cargo install mdbook-tabs` or the build fails — see .github/workflows/docs.yml.
+[preprocessor.tabs]
+
 [output.html]
 default-theme = "coal"
 preferred-dark-theme = "coal"
 git-repository-url = "https://github.com/Nisugi/VellumFE"
+# tabs.css/js ship with mdbook-tabs (copied into theme/); shot.css is ours. See book/AUTHORING.md §6.
+additional-css = ["theme/tabs.css", "theme/shot.css"]
+additional-js = ["theme/tabs.js"]

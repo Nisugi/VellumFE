@@ -29,6 +29,8 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="theme/tabs-52f01167.css">
+        <link rel="stylesheet" href="theme/shot-3066427f.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -36,10 +38,10 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-a26607cf.js";
+            window.path_to_searchindex_js = "searchindex-713601b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-a6416afc.js"></script>
+        <script src="toc-eabfdacc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -441,7 +443,7 @@ Credentials can also be stored in <code>config.toml</code> under <code>[connecti
 <tr><td><code>Enter</code></td><td>Send command</td></tr>
 <tr><td><code>Up</code> / <code>Down</code></td><td>Command history</td></tr>
 <tr><td><code>Page Up/Down</code></td><td>Scroll focused window</td></tr>
-<tr><td><code>Tab</code></td><td>Switch focused window</td></tr>
+<tr><td><code>Tab</code></td><td>Accept a muted history suggestion; otherwise switch focused window</td></tr>
 <tr><td><code>Ctrl+F</code></td><td>Search in window (<code>F3</code> next match)</td></tr>
 <tr><td><code>Ctrl+R</code></td><td>Repeat last command</td></tr>
 <tr><td><code>Escape</code></td><td>Close dialogs / cancel</td></tr>
@@ -514,6 +516,12 @@ are laid out on a character grid via
 <a href="#layouttoml">layout.toml</a>, and everything is
 keyboard-driven with mouse support for links, scrolling, selection, and
 window dragging.</p>
+<p>As you type in the command input, the newest command-history entry with
+the same prefix appears as muted text beginning at the cursor. Press <code>Tab</code>
+to accept it. When no suggestion or dot-command completion is available,
+<code>Tab</code> keeps its normal switch-window behavior; Up/Down still browse the full
+history. The suggestion uses the theme’s <code>text_secondary</code> color by default;
+set <code>completion_color</code> on the command-input window to override it.</p>
 <h2 id="terminal-recommendations"><a class="header" href="#terminal-recommendations">Terminal Recommendations</a></h2>
 <ul>
 <li>Use a terminal with 24-bit color (Windows Terminal, kitty, alacritty,
@@ -546,18 +554,21 @@ this session.</p>
 <p>Connection settings, highlights, keybinds, colors, themes, and all
 dot-commands work identically — editors opened in the GUI write to the same
 config files, so changes carry over if you switch frontends.</p>
-<p><strong>Layout is not shared.</strong> The GUI keeps its own per-character layout
+<p><strong>Layout is not shared.</strong> The GUI keeps its own per-character live layout
 (window positions, zoom, fonts) in <code>~/.vellum-fe/gui/</code>, separate from the
 TUI’s layout.toml. Window size, position, and zoom are restored between
 sessions automatically.</p>
 <p><code>.savelayout &lt;name&gt;</code> / <code>.loadlayout &lt;name&gt;</code> / <code>.layouts</code> work here too,
 on GUI-native layouts: save the current arrangement as a named
 checkpoint (say, <code>combat</code> vs <code>town</code>), then swap with one command.
-Loading applies instantly — windows, zones, tab groups, detached
-windows, fonts, zoom — and later rearranging never rewrites a
-checkpoint; only an explicit <code>.savelayout</code> does. TUI <code>.toml</code> layouts
-are a separate format and can’t be loaded here (<code>.resize</code> is also
-TUI-only).</p>
+Checkpoints go to the shared <code>~/.vellum-fe/layouts/</code> folder (as
+<code>&lt;name&gt;.json</code>), so — like TUI layouts — any character can load a layout
+any character saved; a checkpoint carries the whole look, including
+skin, fonts, and zoom. Loading applies instantly — windows, zones, tab
+groups, detached windows, fonts, zoom — and later rearranging never
+rewrites a checkpoint; only an explicit <code>.savelayout</code> does. TUI <code>.toml</code>
+layouts are a separate format and can’t be loaded here (<code>.resize</code> is
+also TUI-only).</p>
 <h2 id="windows-and-zones"><a class="header" href="#windows-and-zones">Windows and Zones</a></h2>
 <p>The GUI arranges windows in five zones: header, footer, left sidebar,
 center, and right sidebar. Toggle zones from the top toolbar. Every zone
@@ -583,12 +594,21 @@ footer heights have their own edge handles.</li>
 <li><strong>Lock Window</strong> (context menu) pins a window’s position and size;
 <code>.lockwindows</code> locks everything at once.</li>
 <li><strong>The Windows manager</strong>: the <strong>Windows</strong> button in the toolbar opens one
-window listing everything the client knows about — layout widgets, game
-dialogs, streams, and containers — grouped by category and collapsible.
-Each row has a <strong>show/hide checkbox</strong> and a <strong>Zone</strong> selector; <strong>➕ Add
-window…</strong> creates a new one (custom windows open the editor). Hidden
-windows stay hidden even when the game re-sends them (there is no dialog
-blocklist — hiding is the control).</li>
+window listing <strong>every window the client can have</strong> — the full built-in
+catalog plus game dialogs, streams, and containers — grouped into
+categories (Status, Progress Bars, Character, Navigation, Hotbars,
+Containers, Dialogs, …) that start collapsed. Each row has a
+<strong>show/hide checkbox</strong> (ticking a never-added window creates it) and a
+<strong>Zone</strong> dropdown — set the zone on a hidden window and it appears
+there when shown; otherwise placement defaults to a sensible zone
+(usually Center). <strong>➕ Custom window…</strong> creates blank custom widgets
+(text, tabbed, progress, countdown, entity, active effects) and drops
+you into the editor; they then appear as rows under their category.
+Hidden windows stay hidden even when the game re-sends them (there is
+no dialog blocklist — hiding is the control). Even the <strong>story (main)
+window</strong> can be hidden once another window or tab carries the <code>main</code>
+stream, and hiding the <strong>command input</strong> hands typing to the built-in
+bottom bar (the TUI always keeps its input line).</li>
 <li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
 Window…</strong>, which opens the window editor; title bars can be hidden
 per-window. Overlapping windows offer <strong>Send to Back</strong>, dropping the
@@ -798,6 +818,8 @@ lines currently scrolled out of view.</li>
 <li><code>Ctrl+F</code> opens in-window search with match highlighting.</li>
 <li>Up/Down in the input bar browse command history; whatever you were
 typing is stashed and restored when you come back down.</li>
+<li>The newest history entry matching what you type appears as dim text after
+the cursor; press <code>Tab</code> to accept it.</li>
 <li>Terminal-only commands (<code>.setpalette</code>, <code>.resetpalette</code>, <code>.transparent</code>)
 don’t apply; themes handle appearance instead.</li>
 </ul>
@@ -860,7 +882,8 @@ devices).</li>
 <li><strong>Send commands</strong> — identical to typing at the PC, including
 dot-commands. With a keyboard, Up/Down browse command history; the ↻
 button resends the last command, and long-pressing it opens a history
-sheet.</li>
+sheet. The newest history entry matching what you type appears in dim
+text after the cursor; press Tab to accept it.</li>
 <li><strong>Tap links, nouns, and exits</strong> — context menus open in a bottom
 sheet; a mini <strong>compass</strong> floats over the text pane (exits light up,
 tap to move). It starts bottom-right; hold it about half a second to
@@ -1662,6 +1685,7 @@ row = 47
 col = 0
 rows = 3
 cols = 160
+completion_color = "#808080" # Optional; defaults to theme text_secondary (TUI; GUI/web use theme colors)
 </code></pre>
 <h2 id="hidden-windows"><a class="header" href="#hidden-windows">Hidden Windows</a></h2>
 <p>Set <code>visible = false</code> to define windows that can be shown later via the menu:</p>
@@ -1843,7 +1867,7 @@ harmlessly) builds its slices from the current room’s noun exits at
 open time — the same list <code>.portal</code> resolves — shadowing any static
 wheel of that name),
 and <code>controller_overlay</code>
-(toggle the binding legend — curated by <code>[controller_overlay] buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
+(toggle the binding legend — curated by <code>[controller_overlay]  buttons</code>, with <code>shift/&lt;button&gt;</code> entries for the shift bank). Rumble
 lives in <code>[controller_rumble]</code>: a pattern per event (<code>off</code>, the
 built-ins <code>short</code>/<code>long</code>/<code>double</code>, or the name of one of your own),
 plus custom patterns under <code>[[controller_rumble.patterns]]</code> — each has
@@ -1874,7 +1898,7 @@ wheel button fires the committed leaf; returning the stick to center
 before releasing cancels. Sweeping across the ring never commits the
 slices you pass through, so a far slice is safe to reach. Inside a folder
 a Back slice is reserved at the <code>back_slice</code> screen anchor
-(<code>up</code>/<code>down</code>/<code>left</code>/<code>right</code> and the four diagonals) — or <code>back_slice = "none"</code> drops the reserved seat entirely and you back out with East.
+(<code>up</code>/<code>down</code>/<code>left</code>/<code>right</code> and the four diagonals) — or <code>back_slice =  "none"</code> drops the reserved seat entirely and you back out with East.
 <code>deadzone</code> (percent)
 is how far the stick must deflect before a slice registers; a <code>0</code> dwell
 means instant commit. <code>fire_debounce_ms</code> suppresses double-fires and
@@ -2160,6 +2184,24 @@ bg_color = "#000000"
 color2 = "#abc"         # hex (3-digit, expanded)
 color3 = "Link Blue"    # palette color name from [[color_palette]]
 </code></pre>
+<h2 id="harmony-recipe"><a class="header" href="#harmony-recipe">Harmony Recipe</a></h2>
+<p>Generating preset colors with <code>.harmony</code> (or the GUI Colors editor’s
+Generate tab) also stores the generation recipe, so the look stays
+reproducible and re-tunable instead of frozen as opaque hex:</p>
+<pre><code class="language-toml">[harmony]
+seed = "#bf616a"        # theme swatch the set was seeded from
+background = "#2e3440"  # theme background it was generated against
+scheme = "triadic"      # color-theory scheme (.harmony schemes lists them)
+variance = 1.0          # hue spread: 0.7 low / 1.0 medium / 1.4 high
+min_contrast = 4.5      # WCAG floor vs background: 3.0 / 4.5 / 7.0
+separation = 0.09       # min perceptual distance between roles
+room_title_spread = 2.5 # room title vs its background plate: 2.5 / 7.0
+
+[harmony.pins]          # roles held verbatim while the rest regenerate
+speech = "#53a684"
+</code></pre>
+<p>The recipe is written for you; there is no need to hand-edit it. It is
+ignored (and re-seeded) once the active theme’s background changes.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="macrostoml"><a class="header" href="#macrostoml">macros.toml</a></h1>
 <p>Macro buttons for the <a href="#mobile-web">mobile web frontend</a>. These are
@@ -3857,7 +3899,9 @@ Every container the game mentions (a <code>LOOK IN</code>, opening a bag, the st
 feed) is added to the list automatically; tick its row to open a window
 for it, untick to close it again.</p>
 <p>Open the list from the menu: <strong>Windows → Show/Hide windows</strong> (TUI popup
-menu; on the GUI the same list is a checkbox panel). <code>.hidecontainers  [title]</code> closes container windows without changing anything else.</p>
+menu; on the GUI the same list is the Windows manager window). Container
+rows sit under the <strong>Containers</strong> category. <code>.hidecontainers [title]</code>
+closes container windows without changing anything else.</p>
 <p>Your choice is remembered for the session: a ticked container’s window
 re-opens whenever the game mentions it again. Containers are session-only
 and are not saved across relogs.</p>
@@ -4047,8 +4091,10 @@ layout (<code>.savelayout</code> with no name) if no auto-save exists. Use
 <code>.loadlayout &lt;name&gt;</code> to switch layouts.</p>
 <p>The same three commands work in the <a href="#desktop-gui">Desktop GUI</a>
 on its own layout format: named checkpoints of the GUI arrangement,
-saved per character under <code>~/.vellum-fe/gui/</code>, applied live by
-<code>.loadlayout</code>. The two formats don’t cross-load.</p>
+saved to the same shared <code>~/.vellum-fe/layouts/</code> folder (as
+<code>&lt;name&gt;.json</code> next to the TUI’s <code>&lt;name&gt;.toml</code>), so any character can
+load a layout any character saved — exactly like the TUI. The two
+formats don’t cross-load.</p>
 <h2 id="example-layouts"><a class="header" href="#example-layouts">Example Layouts</a></h2>
 <h3 id="hunting-layout"><a class="header" href="#hunting-layout">Hunting Layout</a></h3>
 <pre><code class="language-toml">terminal_width = 160
@@ -4379,6 +4425,86 @@ sound = "danger.wav"
 <li>Try increasing volume</li>
 </ol>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="emoji"><a class="header" href="#emoji">Emoji</a></h1>
+<p>VellumFE renders <code>:shortcode:</code>-style emoji in incoming game text, and lets you
+add your own custom (Discord-server-style) emoji.</p>
+<h2 id="standard-emoji"><a class="header" href="#standard-emoji">Standard emoji</a></h2>
+<p>Any standard gemoji shortcode in game text is rendered as its emoji:</p>
+<pre><code>Someone thinks, "heading to town :grin:"
+</code></pre>
+<ul>
+<li>In the <strong>GUI</strong>, emoji are drawn in full color (Twemoji artwork). Toggle color
+vs. monochrome with the <code>ui.color_emoji</code> setting.</li>
+<li>On the <strong>phone/web</strong> client, emoji use the system emoji font.</li>
+<li>In the <strong>TUI</strong>, emoji render as whatever Unicode glyph your terminal font
+provides.</li>
+</ul>
+<p>Shortcode expansion is controlled by the <code>ui.emoji_shortcodes</code> setting
+(default on).</p>
+<h2 id="custom-emoji"><a class="header" href="#custom-emoji">Custom emoji</a></h2>
+<p>Drop image files into <code>~/.vellum-fe/emoji/</code> and reference them as <code>:name:</code>,
+just like Discord server emoji.</p>
+<ol>
+<li>Create the directory <code>~/.vellum-fe/emoji/</code> if it does not exist.</li>
+<li>Add an image named after the shortcode you want, e.g.
+<code>~/.vellum-fe/emoji/vibecat.png</code> for <code>:vibecat:</code>.</li>
+<li>Restart, or run <code>.reload</code>, to pick up new files.</li>
+</ol>
+<p>Supported formats:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Format</th><th>Extension</th><th>Animated</th></tr>
+</thead>
+<tbody>
+<tr><td>PNG</td><td><code>.png</code></td><td>if it is an animated PNG (APNG)</td></tr>
+<tr><td>APNG</td><td><code>.apng</code></td><td>yes</td></tr>
+<tr><td>GIF</td><td><code>.gif</code></td><td>yes</td></tr>
+<tr><td>WebP</td><td><code>.webp</code></td><td>yes, if the file is animated</td></tr>
+</tbody>
+</table>
+</div>
+<p>Animated GIF, WebP, and APNG all animate in the GUI and on the phone. Discord
+serves its animated custom emoji as <strong>animated WebP</strong> — save one as
+<code>~/.vellum-fe/emoji/&lt;name&gt;.webp</code> and it animates. (To grab one: right-click the
+emoji in Discord → Copy Link, open the <code>…​.webp</code> URL in a browser, and save it.)</p>
+<p>Naming rules: the filename (without extension) is the shortcode, and may
+contain letters, digits, <code>_</code>, <code>+</code>, and <code>-</code> only. Names are case-insensitive
+(<code>VibeCat.png</code> matches <code>:vibecat:</code> and <code>:VibeCat:</code>). If a custom emoji shares a
+name with a standard one, <strong>your custom emoji wins</strong>.</p>
+<h3 id="sizing-custom-emoji-gui"><a class="header" href="#sizing-custom-emoji-gui">Sizing custom emoji (GUI)</a></h3>
+<p>Two settings tune how custom emoji look in the GUI (Client settings → UI):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Setting</th><th>Default</th><th>Effect</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Custom Emoji Size</code> (<code>ui.custom_emoji_size</code>)</td><td>1.0</td><td>Image height as a multiple of the text line height. Above 1.0 the emoji stand out above the line.</td></tr>
+<tr><td><code>Custom Emoji Spacing</code> (<code>ui.custom_emoji_spacing</code>)</td><td>0.2</td><td>Breathing room around each emoji, as a fraction of the line height added to its width.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="how-each-frontend-renders-custom-emoji"><a class="header" href="#how-each-frontend-renders-custom-emoji">How each frontend renders custom emoji</a></h3>
+<ul>
+<li><strong>GUI</strong> — draws the image inline, animating APNG/GIF frames.</li>
+<li><strong>Phone/web</strong> — draws the image inline via a private, token-gated endpoint;
+GIF/APNG animate natively in the browser.</li>
+<li><strong>TUI</strong> — cannot render images, so it shows the literal <code>:name:</code> text as a
+readable fallback.</li>
+</ul>
+<h2 id="emoji-are-never-sent-to-the-game"><a class="header" href="#emoji-are-never-sent-to-the-game">Emoji are never sent to the game</a></h2>
+<p>GemStone IV is a roleplaying game, and sending emoji (or the shortcodes that
+render as emoji) as speech, thoughts, whispers, or actions can get you warned
+or banned. Emoji are a <strong>display convenience on your side only</strong>.</p>
+<p>VellumFE strips emoji from every command before it reaches the game — whether
+you type it, a hotbar sends it, or a Lich script sends it. This includes actual
+emoji characters and any <code>:shortcode:</code> that resolves to a known emoji (standard
+or custom). Ordinary text, unknown shortcodes, Lich script syntax, and things
+like time strings (<code>12:30:45</code>) are left untouched. This protection is always on.</p>
+<p>So a Lich script can safely send <code>:vibecat:</code> for VellumFE to display, and the
+game will never see it.</p>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="themes"><a class="header" href="#themes">Themes</a></h1>
 <p>Themes control the client’s UI colors — windows, menus, editors, buttons —
 as one switchable unit. They work in both the TUI and GUI.</p>
@@ -4616,16 +4742,97 @@ opacity = 0.9
 diameter = 0.07     # fraction of the drawn doll height
 </code></pre>
 <h3 id="hand-drawn-overlays-optional"><a class="header" href="#hand-drawn-overlays-optional">Hand-drawn overlays (optional)</a></h3>
-<p>A part can instead ship full-canvas overlays per severity, authored on the
+<p>A part can instead ship full-canvas overlays per state, authored on the
 same canvas as the base so they stack in place — useful for effects a dot
 can’t express, like nervous-system damage drawn across the whole body.
-Overlays take precedence over the generated dot for that part and
-severity; every other part keeps its dot.</p>
+The state keys are <code>healthy</code> (uninjured), <code>injury1</code>–<code>injury3</code> (wounds),
+and <code>scar1</code>–<code>scar3</code> (scars). The renderer draws the base, then exactly
+one overlay per part — the one matching that part’s current state.</p>
+<p>A part with <strong>any</strong> overlay art is treated as fully hand-drawn: at a
+state with no art, nothing is drawn over the base — never a generated
+dot. Parts with no overlay art keep their dots, so one doll can mix
+hand-drawn limbs with dot-only <code>back</code> / <code>nsys</code> / eyes.</p>
 <pre><code class="language-toml">[injury_doll.nsys]
 injury1 = "doll/nerves_i1.png"
 injury2 = "doll/nerves_i2.png"
 injury3 = "doll/nerves_i3.png"
 </code></pre>
+<p>Because a missing state deliberately reveals the base, two authoring
+schemes both work:</p>
+<ul>
+<li><strong>Worst-case base</strong>: the base is the fully-wounded body, with
+transparent holes where limbs can be severed. Each part’s overlays
+paint it back toward health (<code>healthy</code>, <code>injury1</code>, <code>injury2</code>, scars);
+the severe state ships no overlay so the base shows through. Omitting
+a state reveals the hole — a severed limb.</li>
+<li><strong>Empty base</strong>: the base is empty (or just a backdrop) and every state,
+including the severe one, is its own transparent overlay.</li>
+</ul>
+<pre><code class="language-toml">[injury_doll.leftArm]
+healthy = "doll/arm_ok.png"
+injury1 = "doll/arm_i1.png"
+injury2 = "doll/arm_i2.png"
+# injury3 omitted -&gt; the base shows at rank 3 (e.g. a severed arm)
+scar1 = "doll/arm_s1.png"
+scar2 = "doll/arm_s2.png"
+scar3 = "doll/arm_s3.png"
+</code></pre>
+<h3 id="suppressing-a-part-conditionally"><a class="header" href="#suppressing-a-part-conditionally">Suppressing a part conditionally</a></h3>
+<p>A part can be skipped entirely — no overlay, no dot, at any severity —
+while a condition holds, using the same condition vocabulary as
+variants. This encodes anatomical dependencies in the skin: a severed
+arm’s base hole would otherwise leave a healthy hand floating next to
+the stump.</p>
+<pre><code class="language-toml">[injury_doll.leftHand]
+hidden_when = { type = "injury", area = "leftArm", cmp = "&gt;=", level = 3 }
+healthy = "doll/leftHand_ok.png"
+injury1 = "doll/leftHand_i1.png"
+</code></pre>
+<p>While <code>leftArm</code> is at rank 3, <code>leftHand</code> draws nothing; its wound (if
+any) still lists in the hover tooltip. Each doll set — the default and
+every variant — carries its own <code>hidden_when</code> rules.</p>
+<h3 id="doll-variants-optional"><a class="header" href="#doll-variants-optional">Doll variants (optional)</a></h3>
+<p>Named alternate dolls selected by game state — for example a body on the
+ground when the character is prone or has lost both legs. Each variant
+is a <strong>complete replacement doll</strong>: its own base, anchors, dot styling,
+and overlays. That’s deliberate — a prone body repositions every limb,
+so inheriting standing anchors would misplace every wound.</p>
+<p>Variants are checked in the order they appear; the first whose <code>when</code>
+condition matches wins, and none matching falls back to the default
+<code>[injury_doll]</code> set. Conditions use the same vocabulary as hotbar
+button states: <code>indicator</code> (prone, kneeling, sitting, dead, …),
+<code>injury</code> (<code>area</code> / <code>cmp</code> / <code>level</code>), and <code>all</code> / <code>any</code> nesting.</p>
+<pre><code class="language-toml">[injury_doll]
+base = "doll/standing.png"        # default when no variant matches
+
+[[injury_doll.variants]]
+name = "downed"
+[injury_doll.variants.when]
+type = "any"
+conditions = [
+  { type = "indicator", id = "prone", active = true },
+  { type = "all", conditions = [
+      { type = "injury", area = "leftLeg",  cmp = "&gt;=", level = 3 },
+      { type = "injury", area = "rightLeg", cmp = "&gt;=", level = 3 } ] },
+]
+[injury_doll.variants.skin]
+base = "doll/downed.png"
+[injury_doll.variants.skin.anchors]
+head = [0.2, 0.7]
+[injury_doll.variants.skin.leftArm]
+healthy = "doll/downed_arm_ok.png"
+</code></pre>
+<p>Variants apply to your own doll only — another player’s injuries popup
+always shows the default set, since the conditions read your character’s
+state. Doll images picked from the pool (right-click → Appearance →
+<em>Doll image</em>) carry no overlays or variants; these features live in a
+skin’s <code>[injury_doll]</code> section.</p>
+<p>Each variant calibrates separately: the calibrator’s <strong>Doll set</strong> picker
+switches between the default doll and each variant (a prone body puts
+every anchor somewhere new), and Save writes into that variant’s own
+tables inside <code>[[injury_doll.variants]]</code>. The phone client follows along
+automatically — the host resolves which variant and which suppressed
+parts are active and pushes them to the phone, which just switches art.</p>
 <h2 id="notes-2"><a class="header" href="#notes-2">Notes</a></h2>
 <ul>
 <li>Absolute image paths are allowed on purpose, so a skin can point at art
@@ -5154,7 +5361,8 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><td><code>.rename &lt;window&gt; &lt;new title&gt;</code></td><td></td><td>Rename a window’s title</td></tr>
 <tr><td><code>.border &lt;window&gt; &lt;style&gt; [color]</code></td><td></td><td>Set border sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code></td></tr>
 <tr><td><code>.lockwindows</code></td><td><code>.lockall</code>, <code>.unlockwindows</code>, <code>.unlockall</code></td><td>Toggle move/resize lock on all windows</td></tr>
-<tr><td><code>.savelayout [name]</code></td><td></td><td>Save the current layout under a name (each frontend keeps its own: TUI <code>.toml</code> grids, GUI checkpoints)</td></tr>
+<tr><td><code>.performance [dump]</code></td><td><code>.perf</code></td><td>Toggle the <a href="#performance-monitor">performance monitor</a>; <code>dump</code> writes a diagnostic report file</td></tr>
+<tr><td><code>.savelayout [name]</code></td><td></td><td>Save the current layout under a name in the shared <code>~/.vellum-fe/layouts/</code> folder, loadable by any character (each frontend has its own format: TUI <code>.toml</code> grids, GUI <code>.json</code> checkpoints)</td></tr>
 <tr><td><code>.loadlayout &lt;name&gt;</code></td><td></td><td>Load a saved layout; in the GUI it applies live to the running session</td></tr>
 <tr><td><code>.layouts</code></td><td></td><td>List saved layouts for this frontend</td></tr>
 <tr><td><code>.resize</code></td><td></td><td>Refit layout to the current terminal size (TUI)</td></tr>
@@ -5171,9 +5379,10 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tr><th>Command</th><th>Aliases</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>.uiexport &lt;name&gt; [parts...]</code></td><td></td><td>Bundle the files that make your UI into <code>~/.vellum-fe/exports/&lt;name&gt;.vellumpack</code> — a single shareable file. Parts: <code>layout</code> (TUI grid + the GUI’s live arrangement when exported from the GUI), <code>highlights</code>, <code>keybinds</code>, <code>hotbars</code>, <code>colors</code>, <code>macros</code>, <code>skin</code> (the active skin’s whole folder). Default: all. Connection settings and passwords are never included.</td></tr>
-<tr><td><code>.uiimport &lt;name|file&gt;</code></td><td></td><td>Preview a pack: its parts, skin, and file count</td></tr>
-<tr><td><code>.uiimport &lt;name|file&gt; apply</code></td><td></td><td>Install a pack: replaced files are backed up to <code>~/.vellum-fe/backups/</code>, everything hot-reloads, and layouts land as named checkpoints (<code>.loadlayout &lt;packname&gt;</code>). Skins extract and activate. Unknown or unsafe entries in a pack are skipped, never written.</td></tr>
+<tr><td><code>.packs</code></td><td><code>.packeditor</code></td><td>Open the pack editor panel (TUI and GUI): pick parts with checkboxes, export to a folder of your choice, and import from <code>~/.vellum-fe/imports/</code> (a dropdown lists any <code>.vellumpack</code> you drop there) or a pasted path, with a preview and per-part install selection.</td></tr>
+<tr><td><code>.uiexport &lt;name&gt; [parts...]</code></td><td></td><td>Bundle the files that make your UI into <code>~/.vellum-fe/exports/&lt;name&gt;.vellumpack</code> — a single shareable file. Parts: <code>layout</code> (TUI grid + the GUI’s live arrangement when exported from the GUI), <code>highlights</code>, <code>keybinds</code>, <code>controller</code>, <code>hotbars</code>, <code>colors</code>, <code>macros</code>, <code>skin</code> (the active skin’s whole folder), <code>theme</code> (the active theme, including its file for custom themes), <code>sounds</code> (the shared sound folder), <code>quickbars</code>, and <code>settings</code> (general settings: UI options, sound/TTS prefs, stream routes — never connection or account data). Default: all. Connection settings and passwords are never included.</td></tr>
+<tr><td><code>.uiimport &lt;name|file&gt;</code></td><td></td><td>Preview a pack: its parts, skin, theme, and file count. Names resolve from <code>~/.vellum-fe/imports/</code> and <code>exports/</code>.</td></tr>
+<tr><td><code>.uiimport &lt;name|file&gt; apply [parts...]</code></td><td></td><td>Install a pack (optionally only the listed parts): replaced files are backed up to <code>~/.vellum-fe/backups/</code>, everything hot-reloads, and layouts land as named checkpoints (<code>.loadlayout &lt;packname&gt;</code>). Skins and themes activate; quickbars and settings merge into your config without touching connection data. Unknown or unsafe entries in a pack are skipped, never written.</td></tr>
 </tbody>
 </table>
 </div>
@@ -5244,6 +5453,8 @@ default layouts.</p>
 <tr><td><code>.addspellcolor</code></td><td><code>.newspellcolor</code></td><td>Add a spell color entry</td></tr>
 <tr><td><code>.setpalette</code></td><td></td><td>Load palette into terminal slots (TUI, 256-color mode)</td></tr>
 <tr><td><code>.resetpalette</code></td><td></td><td>Reset the terminal palette (TUI)</td></tr>
+<tr><td><code>.harmony [scheme]</code></td><td></td><td>Generate the game-text preset colors from the active theme (<code>.harmony schemes</code> lists the schemes; the GUI Colors editor’s Generate tab adds seed swatches, pins, and a live preview)</td></tr>
+<tr><td><code>.harmony skin &lt;name&gt;</code></td><td></td><td>Write a matching skin — panel backgrounds and nine-slice frames rendered from the same harmony — to <code>global/skins/&lt;name&gt;/</code>; activate with <code>.setskin &lt;name&gt;</code> (GUI)</td></tr>
 </tbody>
 </table>
 </div>
@@ -5462,6 +5673,162 @@ first available of three sources:</p>
 <strong>Settings → Data</strong>. Setting your Lich folder (<strong>Settings → Map → Lich
 Directory</strong>) lets VellumFE use your <code>;repo</code>-maintained copy, which is
 always the freshest.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="performance-monitor"><a class="header" href="#performance-monitor">Performance Monitor</a></h1>
+<p>VellumFE ships with a built-in performance monitor: a window of live
+metrics about the client itself — how fast it draws, how much data the
+game is sending, how hard it’s working your CPU, and where the slow spots
+are. When the client feels sluggish, this window turns “it stutters
+sometimes” into an actual diagnosis.</p>
+<h2 id="opening-it"><a class="header" href="#opening-it">Opening it</a></h2>
+<ul>
+<li><code>.performance</code> (or <code>.perf</code>) toggles the monitor in any frontend.</li>
+<li>The <code>toggle_performance_stats</code> keybind action does the same thing.</li>
+<li>“Performance” is also in the window catalog (Windows menu), so you can
+add it as a permanent window like any other.</li>
+<li><code>.performance dump</code> writes a full diagnostic report to a file — see
+<a href="#diagnostic-dumps-performance-dump">Diagnostic dumps</a> below.</li>
+</ul>
+<p>Each metric row can be shown or hidden in <strong>Settings → Performance</strong>, or
+in the TUI by right-clicking the monitor window. The toggles control what
+the window <em>displays</em>; collection itself is always on and costs almost
+nothing (a few timestamps per redraw and one CPU/memory sample per
+second). That’s deliberate: when the client hitches, <code>.performance dump</code>
+has the history — including the spike that already happened — even if the
+monitor was never open.</p>
+<p>The TUI and GUI each show only the metrics <strong>that frontend actually
+measures</strong>, so the two lists differ slightly. A metric you don’t see in
+one frontend isn’t broken — it doesn’t apply there.</p>
+<h2 id="reading-the-rows"><a class="header" href="#reading-the-rows">Reading the rows</a></h2>
+<p>Timing rows show three numbers: <strong>average</strong>, <strong>p95</strong>, and <strong>max</strong>. The
+average is what a typical frame/operation costs. The <strong>p95</strong> (“95th
+percentile”) is the cost that 95% of samples beat — it answers <em>“how bad
+is it when it’s bad?”</em>. The max is the single worst recent sample. A low
+average with a low p95 and one high max means a single freak spike —
+usually ignorable. A low average with a <strong>high p95</strong> means one operation
+in twenty is slow: that’s a real, recurring stutter worth chasing.</p>
+<p>Rows with thresholds change color when a value crosses them — yellow for
+“worth a look”, red for “there’s your problem”. Rows with a small graph
+next to them (sparklines, toggleable in settings) show the last minute or
+so of history: a flat line is calm, a ramp that keeps climbing is a leak
+or a growing backlog, regular spikes point at something periodic.</p>
+<h2 id="what-each-stat-tells-you"><a class="header" href="#what-each-stat-tells-you">What each stat tells you</a></h2>
+<h3 id="drawss"><a class="header" href="#drawss">Draws/s</a></h3>
+<p>How many times per second the window is actually redrawn, averaged over
+the last five seconds. VellumFE redraws <strong>on demand</strong>, not at a fixed
+frame rate — so near-zero while you’re idle is normal and good (the
+client is asleep). During scrolling combat expect roughly 10–60. If
+draws/s is pegged high <em>while nothing is happening on screen</em>, something
+is requesting repaints in a loop and burning CPU for nothing — check the
+CPU row, and include a <code>.performance dump</code> if you report it.</p>
+<h3 id="render"><a class="header" href="#render">Render</a></h3>
+<p>What one repaint costs. In the <strong>TUI</strong> this is the whole terminal pass:
+drawing every widget <em>plus</em> flushing the result to the terminal. In the
+<strong>GUI</strong> it is the CPU cost of building and painting the frame, as
+reported by the UI toolkit.</p>
+<p>Healthy values are a few milliseconds. The row turns yellow when p95
+passes 10 ms and red past 25 ms — at 25 ms per frame, dragging a window
+visibly judders. If Render is red, look at <strong>Windows</strong> (below) to find
+<em>which</em> window is expensive, and at the <strong>spike log</strong> to see <em>when</em> it
+spikes and what was happening.</p>
+<h3 id="draw-tui-only"><a class="header" href="#draw-tui-only">Draw (TUI only)</a></h3>
+<p>The widget-drawing part of Render, measured before the terminal flush.
+Comparing Draw against Render splits the blame: if Render is high but
+Draw is low, the time is going into the terminal itself (flushing cells
+to the emulator) — try a faster terminal emulator or a smaller window. If
+Draw is high too, the cost is in VellumFE’s widgets — usually one huge
+text window; check <strong>Windows</strong>.</p>
+<h3 id="wrap-tui-only"><a class="header" href="#wrap-tui-only">Wrap (TUI only)</a></h3>
+<p>Time spent word-wrapping incoming text into window-width lines, in
+microseconds. Normally double digits. It grows with very wide windows and
+very long unbroken lines (walls of travel spam). High wrap times show up
+as sluggishness <em>while text is arriving</em>, not while idle.</p>
+<h3 id="net"><a class="header" href="#net">Net</a></h3>
+<p>Bytes per second in and out. This is the game feed itself — during
+normal play expect a few KB/s in and near-zero out. Its real value is
+context: a Render or Parse spike that lines up with a burst on the Net
+sparkline means the game sent something enormous (an inventory dump, a
+busy room) and the client choked digesting it — which is a different
+problem from a spike with <em>no</em> network burst behind it.</p>
+<h3 id="parse"><a class="header" href="#parse">Parse</a></h3>
+<p>What it costs to turn the game’s XML protocol into client state:
+per-chunk parse time (avg and p95, in microseconds), plus chunks and XML
+elements processed per second. Parse time should stay well under a
+millisecond. Elements/s is the best “how busy is the game feed” gauge —
+idle rooms tick along in the tens, invasions can push thousands. If parse
+p95 climbs into milliseconds, note what was on screen and grab a dump —
+that’s a protocol edge case worth reporting.</p>
+<h3 id="events"><a class="header" href="#events">Events</a></h3>
+<p>How long the client takes to process each unit of incoming work, and how
+many are waiting. In the TUI, events are input events (keys, mouse); in
+the GUI, each queued server message counts as one event. <strong>Queue</strong> is the
+backlog right now; <strong>peak</strong> is the worst backlog since the monitor was
+opened (peaks reset each time it opens, so the login flood doesn’t pin
+them forever).</p>
+<p>Queue near zero means the client is keeping up. A queue that grows and
+stays yellow/red (&gt;10 / &gt;50) means messages are arriving faster than they
+are processed — the game will feel like it’s lagging even though the
+network is fine. That’s a client-side problem: check CPU and Render.</p>
+<h3 id="cpu"><a class="header" href="#cpu">CPU</a></h3>
+<p>VellumFE’s own CPU use, with the whole system’s in parentheses. A few
+percent is normal; the row warns past 30% and goes red past 70%. High
+VellumFE CPU with low draws/s means something is spinning without
+painting. High <em>system</em> CPU with normal VellumFE CPU means the problem is
+elsewhere on the machine — the client can feel laggy because it isn’t
+getting scheduled, and no client-side setting will fix that.</p>
+<h3 id="memory"><a class="header" href="#memory">Memory</a></h3>
+<p>Real process memory: <strong>RSS</strong> (what the OS says the client actually
+occupies) with virtual size in parentheses. Steady RSS after an hour of
+play is what you want; the number depends on skins, fonts, and buffer
+sizes, so absolute values vary. What matters is the <em>trend</em> — RSS that
+climbs continuously without leveling off is a leak: note how long the
+session ran, save a dump, and report it. Warns at 750 MB, red at 1.5 GB.</p>
+<h3 id="buffers"><a class="header" href="#buffers">Buffers</a></h3>
+<p>Total text lines held in scrollback across all windows, and how many
+windows exist. This is the main thing you control that drives memory:
+<code>buffer_size</code> in settings caps lines per window. Huge buffer counts with
+high RSS is expected; high RSS with <em>small</em> buffers points at something
+else (textures, leaks).</p>
+<h3 id="uptime"><a class="header" href="#uptime">Uptime</a></h3>
+<p>How long this session has been running — mostly context for the other
+numbers (“RSS after 6 hours” means something different than after 6
+minutes).</p>
+<h3 id="windows"><a class="header" href="#windows">Windows</a></h3>
+<p>The three most expensive windows to draw, by average cost over their last
+30 draws. This is the “which of my 20 windows is the slow one” answer:
+before blaming the client, check whether one window dominates — a huge
+unwrapped text window, a map at high zoom, a WebUI panel. Windows that
+haven’t drawn in the last 5 seconds drop off the list, so it reflects
+what’s actually on screen.</p>
+<h3 id="spikes"><a class="header" href="#spikes">Spikes</a></h3>
+<p>The last 10 operations that blew past their threshold (renders over
+10 ms, event processing over 10 ms, parses over 5 ms), each with a
+timestamp and a snapshot of what the client was doing: network bytes that
+second, XML elements parsed, and the event queue depth. This is the
+single most useful row for diagnosing “it hitched a minute ago”:</p>
+<pre><code>14:32:07  render    42.1 ms  18.2 KB, 312 elems, queue 27
+</code></pre>
+<p>reads as “at 14:32:07 a redraw took 42 ms while digesting an 18 KB burst
+with 27 messages backed up” — i.e. the game sent something huge. A spike
+with <em>no</em> bytes and <em>no</em> queue behind it is the client’s own fault —
+those are the ones worth reporting. The log keeps the 10 most recent
+spikes for the whole session; the timestamps tell you whether an entry is
+news or ancient history.</p>
+<h2 id="diagnostic-dumps-performance-dump"><a class="header" href="#diagnostic-dumps-performance-dump">Diagnostic dumps (<code>.performance dump</code>)</a></h2>
+<p><code>.performance dump</code> writes everything — every metric the current frontend
+measures (whether or not its row is visible), the full spike log, and
+per-window costs — to a timestamped file:</p>
+<pre><code>~/.vellum-fe/perf-dump-20260731-143512.txt
+</code></pre>
+<p>In the GUI the dump also includes a <strong>graphics internals</strong> section:
+allocated texture count and bytes (skins and images live here — a
+runaway texture count means art is being re-uploaded instead of cached),
+visible areas, and the DPI/zoom factors, which explain most “it looks
+blurry/huge on my monitor” reports.</p>
+<p>The dump works whether or not the monitor is open — collection runs all
+session, so a hitch that already happened is still in the spike log. When
+reporting a performance problem on Discord, <code>.performance dump</code> right
+after the hitch and attach the file — it carries the whole diagnosis.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
 <pre><code>vellum-fe [OPTIONS] [SUBCOMMAND]
@@ -5757,6 +6124,7 @@ or email <a href="mailto:nisugi.gs4@gmail.com">nisugi.gs4@gmail.com</a>.</p>
         <script src="book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="theme/tabs-0c8cb93b.js"></script>
 
         <script>
         window.addEventListener('load', function() {

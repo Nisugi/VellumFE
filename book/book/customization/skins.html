@@ -28,6 +28,8 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../theme/tabs-52f01167.css">
+        <link rel="stylesheet" href="../theme/shot-3066427f.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -35,10 +37,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
+            window.path_to_searchindex_js = "../searchindex-713601b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a6416afc.js"></script>
+        <script src="../toc-eabfdacc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -356,16 +358,97 @@ opacity = 0.9
 diameter = 0.07     # fraction of the drawn doll height
 </code></pre>
 <h3 id="hand-drawn-overlays-optional"><a class="header" href="#hand-drawn-overlays-optional">Hand-drawn overlays (optional)</a></h3>
-<p>A part can instead ship full-canvas overlays per severity, authored on the
+<p>A part can instead ship full-canvas overlays per state, authored on the
 same canvas as the base so they stack in place — useful for effects a dot
 can’t express, like nervous-system damage drawn across the whole body.
-Overlays take precedence over the generated dot for that part and
-severity; every other part keeps its dot.</p>
+The state keys are <code>healthy</code> (uninjured), <code>injury1</code>–<code>injury3</code> (wounds),
+and <code>scar1</code>–<code>scar3</code> (scars). The renderer draws the base, then exactly
+one overlay per part — the one matching that part’s current state.</p>
+<p>A part with <strong>any</strong> overlay art is treated as fully hand-drawn: at a
+state with no art, nothing is drawn over the base — never a generated
+dot. Parts with no overlay art keep their dots, so one doll can mix
+hand-drawn limbs with dot-only <code>back</code> / <code>nsys</code> / eyes.</p>
 <pre><code class="language-toml">[injury_doll.nsys]
 injury1 = "doll/nerves_i1.png"
 injury2 = "doll/nerves_i2.png"
 injury3 = "doll/nerves_i3.png"
 </code></pre>
+<p>Because a missing state deliberately reveals the base, two authoring
+schemes both work:</p>
+<ul>
+<li><strong>Worst-case base</strong>: the base is the fully-wounded body, with
+transparent holes where limbs can be severed. Each part’s overlays
+paint it back toward health (<code>healthy</code>, <code>injury1</code>, <code>injury2</code>, scars);
+the severe state ships no overlay so the base shows through. Omitting
+a state reveals the hole — a severed limb.</li>
+<li><strong>Empty base</strong>: the base is empty (or just a backdrop) and every state,
+including the severe one, is its own transparent overlay.</li>
+</ul>
+<pre><code class="language-toml">[injury_doll.leftArm]
+healthy = "doll/arm_ok.png"
+injury1 = "doll/arm_i1.png"
+injury2 = "doll/arm_i2.png"
+# injury3 omitted -&gt; the base shows at rank 3 (e.g. a severed arm)
+scar1 = "doll/arm_s1.png"
+scar2 = "doll/arm_s2.png"
+scar3 = "doll/arm_s3.png"
+</code></pre>
+<h3 id="suppressing-a-part-conditionally"><a class="header" href="#suppressing-a-part-conditionally">Suppressing a part conditionally</a></h3>
+<p>A part can be skipped entirely — no overlay, no dot, at any severity —
+while a condition holds, using the same condition vocabulary as
+variants. This encodes anatomical dependencies in the skin: a severed
+arm’s base hole would otherwise leave a healthy hand floating next to
+the stump.</p>
+<pre><code class="language-toml">[injury_doll.leftHand]
+hidden_when = { type = "injury", area = "leftArm", cmp = "&gt;=", level = 3 }
+healthy = "doll/leftHand_ok.png"
+injury1 = "doll/leftHand_i1.png"
+</code></pre>
+<p>While <code>leftArm</code> is at rank 3, <code>leftHand</code> draws nothing; its wound (if
+any) still lists in the hover tooltip. Each doll set — the default and
+every variant — carries its own <code>hidden_when</code> rules.</p>
+<h3 id="doll-variants-optional"><a class="header" href="#doll-variants-optional">Doll variants (optional)</a></h3>
+<p>Named alternate dolls selected by game state — for example a body on the
+ground when the character is prone or has lost both legs. Each variant
+is a <strong>complete replacement doll</strong>: its own base, anchors, dot styling,
+and overlays. That’s deliberate — a prone body repositions every limb,
+so inheriting standing anchors would misplace every wound.</p>
+<p>Variants are checked in the order they appear; the first whose <code>when</code>
+condition matches wins, and none matching falls back to the default
+<code>[injury_doll]</code> set. Conditions use the same vocabulary as hotbar
+button states: <code>indicator</code> (prone, kneeling, sitting, dead, …),
+<code>injury</code> (<code>area</code> / <code>cmp</code> / <code>level</code>), and <code>all</code> / <code>any</code> nesting.</p>
+<pre><code class="language-toml">[injury_doll]
+base = "doll/standing.png"        # default when no variant matches
+
+[[injury_doll.variants]]
+name = "downed"
+[injury_doll.variants.when]
+type = "any"
+conditions = [
+  { type = "indicator", id = "prone", active = true },
+  { type = "all", conditions = [
+      { type = "injury", area = "leftLeg",  cmp = "&gt;=", level = 3 },
+      { type = "injury", area = "rightLeg", cmp = "&gt;=", level = 3 } ] },
+]
+[injury_doll.variants.skin]
+base = "doll/downed.png"
+[injury_doll.variants.skin.anchors]
+head = [0.2, 0.7]
+[injury_doll.variants.skin.leftArm]
+healthy = "doll/downed_arm_ok.png"
+</code></pre>
+<p>Variants apply to your own doll only — another player’s injuries popup
+always shows the default set, since the conditions read your character’s
+state. Doll images picked from the pool (right-click → Appearance →
+<em>Doll image</em>) carry no overlays or variants; these features live in a
+skin’s <code>[injury_doll]</code> section.</p>
+<p>Each variant calibrates separately: the calibrator’s <strong>Doll set</strong> picker
+switches between the default doll and each variant (a prone body puts
+every anchor somewhere new), and Save writes into that variant’s own
+tables inside <code>[[injury_doll.variants]]</code>. The phone client follows along
+automatically — the host resolves which variant and which suppressed
+parts are active and pushes them to the phone, which just switches art.</p>
 <h2 id="notes"><a class="header" href="#notes">Notes</a></h2>
 <ul>
 <li>Absolute image paths are allowed on purpose, so a skin can point at art
@@ -424,6 +507,7 @@ from another install (e.g. your local Wrayth graphics) without copying.</li>
         <script src="../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../theme/tabs-0c8cb93b.js"></script>
 
 
 

@@ -29,6 +29,11 @@ jobs:
         with:
           mdbook-version: 'latest'
 
+      # Required by the [preprocessor.tabs] block in book/book.toml (per-frontend
+      # "Set it up" tabs). Without this the build fails. See book/AUTHORING.md §3.
+      - name: Install mdbook-tabs
+        run: cargo install mdbook-tabs --version '^1.0'
+
       - name: Build documentation
         run: mdbook build book
 

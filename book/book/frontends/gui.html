@@ -28,6 +28,8 @@
         <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
 
         <!-- Custom theme stylesheets -->
+        <link rel="stylesheet" href="../theme/tabs-52f01167.css">
+        <link rel="stylesheet" href="../theme/shot-3066427f.css">
 
 
         <!-- Provide site root and default themes to javascript -->
@@ -35,10 +37,10 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-a26607cf.js";
+            window.path_to_searchindex_js = "../searchindex-713601b6.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="../toc-a6416afc.js"></script>
+        <script src="../toc-eabfdacc.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -186,18 +188,21 @@
 <p>Connection settings, highlights, keybinds, colors, themes, and all
 dot-commands work identically — editors opened in the GUI write to the same
 config files, so changes carry over if you switch frontends.</p>
-<p><strong>Layout is not shared.</strong> The GUI keeps its own per-character layout
+<p><strong>Layout is not shared.</strong> The GUI keeps its own per-character live layout
 (window positions, zoom, fonts) in <code>~/.vellum-fe/gui/</code>, separate from the
 TUI’s layout.toml. Window size, position, and zoom are restored between
 sessions automatically.</p>
 <p><code>.savelayout &lt;name&gt;</code> / <code>.loadlayout &lt;name&gt;</code> / <code>.layouts</code> work here too,
 on GUI-native layouts: save the current arrangement as a named
 checkpoint (say, <code>combat</code> vs <code>town</code>), then swap with one command.
-Loading applies instantly — windows, zones, tab groups, detached
-windows, fonts, zoom — and later rearranging never rewrites a
-checkpoint; only an explicit <code>.savelayout</code> does. TUI <code>.toml</code> layouts
-are a separate format and can’t be loaded here (<code>.resize</code> is also
-TUI-only).</p>
+Checkpoints go to the shared <code>~/.vellum-fe/layouts/</code> folder (as
+<code>&lt;name&gt;.json</code>), so — like TUI layouts — any character can load a layout
+any character saved; a checkpoint carries the whole look, including
+skin, fonts, and zoom. Loading applies instantly — windows, zones, tab
+groups, detached windows, fonts, zoom — and later rearranging never
+rewrites a checkpoint; only an explicit <code>.savelayout</code> does. TUI <code>.toml</code>
+layouts are a separate format and can’t be loaded here (<code>.resize</code> is
+also TUI-only).</p>
 <h2 id="windows-and-zones"><a class="header" href="#windows-and-zones">Windows and Zones</a></h2>
 <p>The GUI arranges windows in five zones: header, footer, left sidebar,
 center, and right sidebar. Toggle zones from the top toolbar. Every zone
@@ -223,12 +228,21 @@ footer heights have their own edge handles.</li>
 <li><strong>Lock Window</strong> (context menu) pins a window’s position and size;
 <code>.lockwindows</code> locks everything at once.</li>
 <li><strong>The Windows manager</strong>: the <strong>Windows</strong> button in the toolbar opens one
-window listing everything the client knows about — layout widgets, game
-dialogs, streams, and containers — grouped by category and collapsible.
-Each row has a <strong>show/hide checkbox</strong> and a <strong>Zone</strong> selector; <strong>➕ Add
-window…</strong> creates a new one (custom windows open the editor). Hidden
-windows stay hidden even when the game re-sends them (there is no dialog
-blocklist — hiding is the control).</li>
+window listing <strong>every window the client can have</strong> — the full built-in
+catalog plus game dialogs, streams, and containers — grouped into
+categories (Status, Progress Bars, Character, Navigation, Hotbars,
+Containers, Dialogs, …) that start collapsed. Each row has a
+<strong>show/hide checkbox</strong> (ticking a never-added window creates it) and a
+<strong>Zone</strong> dropdown — set the zone on a hidden window and it appears
+there when shown; otherwise placement defaults to a sensible zone
+(usually Center). <strong>➕ Custom window…</strong> creates blank custom widgets
+(text, tabbed, progress, countdown, entity, active effects) and drops
+you into the editor; they then appear as rows under their category.
+Hidden windows stay hidden even when the game re-sends them (there is
+no dialog blocklist — hiding is the control). Even the <strong>story (main)
+window</strong> can be hidden once another window or tab carries the <code>main</code>
+stream, and hiding the <strong>command input</strong> hands typing to the built-in
+bottom bar (the TUI always keeps its input line).</li>
 <li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
 Window…</strong>, which opens the window editor; title bars can be hidden
 per-window. Overlapping windows offer <strong>Send to Back</strong>, dropping the
@@ -438,6 +452,8 @@ lines currently scrolled out of view.</li>
 <li><code>Ctrl+F</code> opens in-window search with match highlighting.</li>
 <li>Up/Down in the input bar browse command history; whatever you were
 typing is stashed and restored when you come back down.</li>
+<li>The newest history entry matching what you type appears as dim text after
+the cursor; press <code>Tab</code> to accept it.</li>
 <li>Terminal-only commands (<code>.setpalette</code>, <code>.resetpalette</code>, <code>.transparent</code>)
 don’t apply; themes handle appearance instead.</li>
 </ul>
@@ -493,6 +509,7 @@ don’t apply; themes handle appearance instead.</li>
         <script src="../book-a0b12cfe.js"></script>
 
         <!-- Custom JS scripts -->
+        <script src="../theme/tabs-0c8cb93b.js"></script>
 
 
 
