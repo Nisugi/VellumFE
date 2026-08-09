@@ -308,7 +308,18 @@ impl VellumGuiApp {
                             });
                         } else {
                             let lower = id.to_ascii_lowercase();
-                            for tab in tabs.iter_mut() {
+                            // Drop a tab only when THIS untick emptied it.
+                            // Rows that were already stream-less (a freshly
+                            // added tab mid-setup, a placeholder) must
+                            // survive an unrelated stream toggle.
+                            tabs.retain_mut(|tab| {
+                                let had_stream = tab
+                                    .streams
+                                    .split(',')
+                                    .any(|s| s.trim().to_ascii_lowercase() == lower);
+                                if !had_stream {
+                                    return true;
+                                }
                                 tab.streams = tab
                                     .streams
                                     .split(',')
@@ -318,8 +329,8 @@ impl VellumGuiApp {
                                     })
                                     .collect::<Vec<_>>()
                                     .join(", ");
-                            }
-                            tabs.retain(|tab| !tab.streams.trim().is_empty());
+                                !tab.streams.trim().is_empty()
+                            });
                             if tabs.is_empty() {
                                 tabs.push(TabBuffer::empty());
                             }
