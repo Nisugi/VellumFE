@@ -40,6 +40,7 @@ mod status_icons;
 mod theme;
 mod webui_panel;
 mod widgets;
+mod window_config;
 mod window_manager;
 mod zones;
 
@@ -488,7 +489,7 @@ pub struct VellumGuiApp {
     indicator_templates_editor: Option<editors::IndicatorTemplatesEditorState>,
     dashboard_editor: Option<editors::DashboardEditorState>,
     jinx_panel: Option<editors::JinxPanelState>,
-    window_editor: Option<editors::WindowEditorState>,
+    tab_editor: Option<editors::TabEditorState>,
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
     sorter_editor: Option<editors::SorterEditorState>,
@@ -968,7 +969,7 @@ impl VellumGuiApp {
             indicator_templates_editor: None,
             dashboard_editor: None,
             jinx_panel: None,
-            window_editor: None,
+            tab_editor: None,
             custom_windows_editor: None,
             known_windows_editor: None,
             sorter_editor: None,
@@ -5830,9 +5831,9 @@ impl VellumGuiApp {
                         .add_system_message(&format!("Window '{}' added.", actual_name));
                     // Blank custom widgets start unconfigured (e.g. a countdown
                     // with no feed id renders as nothing) — drop the user
-                    // straight into the editor, like the TUI does.
+                    // straight into the context menu that configures it.
                     if template.ends_with("_custom") {
-                        self.open_window_editor(Some(&actual_name));
+                        self.open_window_menu_for_window(&actual_name);
                     }
                 } else {
                     self.app_core.add_system_message(&format!(
@@ -6229,25 +6230,9 @@ impl VellumGuiApp {
             A::Keybinds => self.open_keybind_editor(),
             A::MenuKeybinds => self.open_menu_keybind_editor(),
             A::EditStatusAbbrev => {
-                // The GUI edits status_abbrev inside the Window Editor's
-                // "Targets (global)" section, so open that editor on the first
-                // Targets window (falling back to the picker with a hint).
-                let targets_window = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter()
-                    .find(|w| matches!(w, crate::config::WindowDef::Targets { .. }))
-                    .map(|w| w.name().to_string());
-                match targets_window {
-                    Some(name) => self.open_window_editor(Some(&name)),
-                    None => {
-                        self.open_window_editor(None);
-                        self.app_core.add_system_message(
-                            "Add a Targets window, then edit status abbreviations in its editor.",
-                        );
-                    }
-                }
+                // Status abbreviations are global target_list settings; they
+                // live in Settings ▸ Targets.
+                self.open_settings_editor_at("Targets");
             }
             A::Controller => {
                 #[cfg(feature = "gamepad")]
@@ -6273,8 +6258,14 @@ impl VellumGuiApp {
                 self.open_theme_editor(&base);
             }
             A::EditWindow(name) => match name.as_deref() {
-                Some(name) => self.open_window_editor(Some(name)),
-                None => self.open_window_editor(None),
+                // The Window Editor is gone: per-window settings live in the
+                // window's right-click menu, and the Windows catalog is the
+                // all-windows list.
+                Some(name) => {
+                    let name = name.to_string();
+                    self.open_window_menu_for_window(&name);
+                }
+                None => self.open_known_windows_editor(),
             },
             A::NextTab => self.cycle_tabbed_tabs(true),
             A::PrevTab => self.cycle_tabbed_tabs(false),

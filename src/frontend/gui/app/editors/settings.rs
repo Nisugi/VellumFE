@@ -119,13 +119,6 @@ fn changed_keys(
         .collect()
 }
 
-/// Categories deliberately NOT rendered by this GUI Settings window: their
-/// settings are edited in the Window Editor (editors/windows.rs) next to
-/// the window they configure. Targets lives in the Window Editor's
-/// "Targets (global)" section on any targets window. The TUI settings
-/// editor still shows these categories.
-const CATEGORIES_IN_WINDOW_EDITOR: &[&str] = &["Targets"];
-
 /// Individual registry keys deliberately NOT rendered by this GUI Settings
 /// window. `streams.drop_unsubscribed` is legacy: config load migrates its
 /// entries into `[streams.routes]` and clears the list, so at runtime the
@@ -135,13 +128,11 @@ const CATEGORIES_IN_WINDOW_EDITOR: &[&str] = &["Targets"];
 /// settings editor is unaffected).
 const HIDDEN_KEYS: &[&str] = &["streams.drop_unsubscribed"];
 
-/// All categories present in the registry, in display order (minus those
-/// the Window Editor owns in the GUI).
+/// All categories present in the registry, in display order.
 fn ordered_categories() -> Vec<&'static str> {
     let mut categories: Vec<&'static str> = CATEGORY_ORDER
         .iter()
         .copied()
-        .filter(|cat| !CATEGORIES_IN_WINDOW_EDITOR.contains(cat))
         .filter(|cat| {
             registry::registry()
                 .iter()
@@ -152,9 +143,7 @@ fn ordered_categories() -> Vec<&'static str> {
         .iter()
         .filter(|def| def.frontend.includes_gui())
         .map(|def| def.category)
-        .filter(|cat| {
-            !CATEGORY_ORDER.contains(cat) && !CATEGORIES_IN_WINDOW_EDITOR.contains(cat)
-        })
+        .filter(|cat| !CATEGORY_ORDER.contains(cat))
         .collect();
     extras.sort_unstable();
     extras.dedup();
@@ -221,6 +210,9 @@ pub(in super::super) struct SettingsEditorState {
     /// Pronunciation substitutions (pattern, replacement) — registry-exempt
     /// structured data with bespoke rows.
     tts_subs: Vec<(String, String)>,
+    /// Target status abbreviations (full name, short tag) — registry-exempt
+    /// structured data with bespoke rows, in the Targets section.
+    status_abbrev: Vec<(String, String)>,
     /// GUI sizing settings; persisted in the per-character GUI layout file,
     /// not config.toml.
     gui_settings: crate::frontend::gui::persistence::GuiUiSettings,
@@ -259,6 +251,18 @@ impl SettingsEditorState {
                 .iter()
                 .map(|sub| (sub.pattern.clone(), sub.replacement.clone()))
                 .collect(),
+            status_abbrev: {
+                // Sorted by name so rows keep a stable order across opens
+                // (HashMap iteration order is otherwise arbitrary).
+                let mut rows: Vec<(String, String)> = config
+                    .target_list
+                    .status_abbrev
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                rows.sort_by(|a, b| a.0.cmp(&b.0));
+                rows
+            },
             gui_settings,
             focus_section: None,
         }
@@ -1004,8 +1008,8 @@ impl VellumGuiApp {
                                         ui.label(
                                             "Text-to-speech reads incoming lines aloud. Pick \
                                              which windows speak with the checkbox in each \
-                                             window's editor; the speak toggles below cover \
-                                             the classic three.",
+                                             window's right-click menu; the speak toggles \
+                                             below cover the classic three.",
                                         );
                                         state.render_category_grid(ui, "Speech");
                                         if state.tts_voices.is_empty() {
@@ -1185,6 +1189,56 @@ impl VellumGuiApp {
                                         );
                                     });
                                 }
+                                "Targets" => {
+                                    focus_collapsing(ui, &mut focus_section, "Targets", |ui| {
+                                        ui.label(
+                                            "Global target list settings — they apply to \
+                                             target parsing/display everywhere. Per-window \
+                                             options are in each targets window's \
+                                             right-click menu.",
+                                        );
+                                        state.render_category_grid(ui, "Targets");
+                                        ui.separator();
+                                        ui.strong("Status abbreviations");
+                                        ui.weak(
+                                            "Full status name ▸ short tag (shown in \
+                                             targets & players).",
+                                        );
+                                        let mut remove_abbrev: Option<usize> = None;
+                                        for (index, (name, abbrev)) in
+                                            state.status_abbrev.iter_mut().enumerate()
+                                        {
+                                            ui.horizontal(|ui| {
+                                                ui.add(
+                                                    egui::TextEdit::singleline(name)
+                                                        .hint_text("stunned")
+                                                        .desired_width(140.0),
+                                                );
+                                                ui.label("▸");
+                                                ui.add(
+                                                    egui::TextEdit::singleline(abbrev)
+                                                        .hint_text("stu")
+                                                        .desired_width(60.0),
+                                                );
+                                                if ui
+                                                    .small_button("✕")
+                                                    .on_hover_text("Remove")
+                                                    .clicked()
+                                                {
+                                                    remove_abbrev = Some(index);
+                                                }
+                                            });
+                                        }
+                                        if let Some(index) = remove_abbrev {
+                                            state.status_abbrev.remove(index);
+                                        }
+                                        if ui.button("Add abbreviation").clicked() {
+                                            state
+                                                .status_abbrev
+                                                .push((String::new(), String::new()));
+                                        }
+                                    });
+                                }
                                 other => {
                                     focus_collapsing(ui, &mut focus_section, other, |ui| {
                                         if let Some(intro) = category_intro(other) {
@@ -1361,6 +1415,24 @@ impl VellumGuiApp {
                 }
             }
 
+            // Status abbreviations are registry-exempt structured data too:
+            // rebuild the map from the edited rows (dropping blank-name
+            // rows) and persist with the sparse whole-config save.
+            let new_abbrev: std::collections::HashMap<String, String> = state
+                .status_abbrev
+                .iter()
+                .filter(|(name, _)| !name.trim().is_empty())
+                .map(|(name, abbrev)| {
+                    (name.trim().to_lowercase(), abbrev.trim().to_string())
+                })
+                .collect();
+            if new_abbrev != self.app_core.config.target_list.status_abbrev {
+                self.app_core.config.target_list.status_abbrev = new_abbrev;
+                if let Err(err) = self.app_core.save_config() {
+                    errors.push(format!("target_list.status_abbrev: {err}"));
+                }
+            }
+
             // Side effects for the keys that just changed. Theme needs no
             // explicit hook: apply_theme_if_changed watches
             // config.active_theme every frame. The skin's home is the GUI
@@ -1386,9 +1458,10 @@ impl VellumGuiApp {
 
             // GUI sizing lives in the per-character layout file; force the
             // zoom/title-bar values to re-apply on the next frame. Vitals
-            // options are edited in the Window Editor now, and the active
-            // skin was routed above — preserve the live values for both
-            // rather than restoring this editor's stale open-time snapshot.
+            // options are edited in the vitals window's context menu, and
+            // the active skin was routed above — preserve the live values
+            // for both rather than restoring this editor's stale open-time
+            // snapshot.
             let vitals = self.ui_settings.vitals.clone();
             let active_skin = self.ui_settings.active_skin.clone();
             self.ui_settings = state.gui_settings.clone();
@@ -1491,13 +1564,12 @@ mod tests {
 
     #[test]
     fn ordered_categories_cover_the_whole_registry() {
-        // Every category is rendered by this editor EXCEPT the ones the
-        // Window Editor owns in the GUI (Targets, deliberately: its global
-        // settings live in the "Targets (global)" section of any targets
-        // window's editor).
+        // Every GUI-visible category is rendered by this editor — including
+        // Targets, which moved back here when the Window Editor was retired
+        // (per-window targets options live in the window's context menu).
         let categories = ordered_categories();
         for def in registry::registry() {
-            if CATEGORIES_IN_WINDOW_EDITOR.contains(&def.category) {
+            if !def.frontend.includes_gui() {
                 continue;
             }
             assert!(
@@ -1507,16 +1579,9 @@ mod tests {
             );
         }
         assert!(
-            !categories.contains(&"Targets"),
-            "Targets is edited in the Window Editor, not the GUI Settings window"
+            categories.contains(&"Targets"),
+            "Targets global settings belong to the GUI Settings window"
         );
-        // The exclusion list only names categories that actually exist.
-        for excluded in CATEGORIES_IN_WINDOW_EDITOR {
-            assert!(
-                registry::registry().iter().any(|def| def.category == *excluded),
-                "excluded category {excluded} is not in the registry"
-            );
-        }
         // No duplicates.
         let mut deduped = categories.clone();
         deduped.dedup();

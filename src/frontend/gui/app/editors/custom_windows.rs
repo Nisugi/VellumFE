@@ -824,8 +824,8 @@ fn render_stream_row(
 }
 
 /// Append a stream id to a comma-separated field if not already present.
-/// Shared with the Window Editor's seen-streams picker.
-pub(super) fn append_stream_id(field: &mut String, id: &str) {
+/// Shared with the Tab Editor and the context menu's seen-streams picker.
+pub(crate) fn append_stream_id(field: &mut String, id: &str) {
     let already = field
         .split(',')
         .any(|s| s.trim().eq_ignore_ascii_case(id));

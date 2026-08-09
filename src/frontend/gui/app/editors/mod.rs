@@ -20,9 +20,9 @@ mod menu_keybinds;
 mod packs;
 mod settings;
 mod sorter;
+mod tabs;
 mod themes;
 mod touch_wheel;
-mod windows;
 
 pub(super) use colors::ColorsEditorState;
 #[cfg(feature = "gamepad")]
@@ -42,9 +42,12 @@ pub(super) use menu_keybinds::MenuKeybindEditorState;
 pub(super) use packs::PackEditorState;
 pub(super) use settings::{settings_sections, SettingsEditorState};
 pub(super) use sorter::SorterEditorState;
+pub(super) use tabs::TabEditorState;
 pub(super) use themes::{ThemeBrowserState, ThemeEditorState};
 pub(super) use touch_wheel::TouchWheelEditorState;
-pub(super) use windows::WindowEditorState;
+
+/// Shared by the Tab Editor and the context menu's Streams "+" picker.
+pub(in super::super) use custom_windows::append_stream_id;
 
 use super::{theme, VellumGuiApp};
 use eframe::egui;
@@ -81,7 +84,7 @@ impl VellumGuiApp {
         self.render_theme_browser(ctx);
         self.render_theme_editor(ctx);
         self.render_indicator_templates_editor(ctx);
-        self.render_window_editor(ctx);
+        self.render_tab_editor(ctx);
         self.render_hand_icons_editor(ctx);
         self.render_custom_windows_editor(ctx);
         self.render_known_windows_editor(ctx);

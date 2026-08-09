@@ -32,8 +32,6 @@ pub(super) struct GuiWindowMenuRequest {
 
 #[derive(Clone, Debug)]
 pub(super) enum GuiWindowMenuCommand {
-    /// Open the Window Editor on this window (title, streams, feed ids).
-    Edit,
     Hide,
     Detach,
     /// Send this floating window behind any windows it overlaps in its
@@ -136,6 +134,48 @@ pub(super) enum GuiWindowMenuCommand {
     ToggleSlotAnchor(TabKey),
     /// Set a member's relative size weight along the group's stack axis.
     SetMemberWeight { member: TabKey, weight: f32 },
+    // ---- Window/widget config commands (the former Window Editor fields;
+    // see window_config.rs for the views, rendering, and appliers). All
+    // live-apply: the change hits the running window and the layout def
+    // immediately, persisted by the debounced autosave.
+    /// Rename the window (the core/stream title, via `.rename`).
+    Rename(String),
+    /// Per-window custom title-bar text; None/empty = automatic title.
+    SetCustomTitle(Option<String>),
+    /// Replace a text-list window's streams (raw comma-separated ids).
+    SetStreams(String),
+    /// Scrollback size for a text-list window (min 1).
+    SetBufferLines(usize),
+    /// Compact mode (condense known content; plain text windows).
+    SetCompact(bool),
+    /// Per-line timestamps (plain text windows).
+    SetTimestamps { show: bool, at_start: bool },
+    /// Read lines routed to this window aloud.
+    SetTtsSpeak(bool),
+    /// Countdown/progress feed binding (id, label, color, display flags).
+    SetFeed(super::window_config::FeedConfig),
+    /// ActiveEffects feed category.
+    SetEffectsCategory(String),
+    /// Room window section visibility.
+    SetRoomSections(super::window_config::RoomSections),
+    /// Targets window per-window display options.
+    SetTargetsConfig(super::window_config::TargetsConfig),
+    /// gs4_experience display toggles + bar colors.
+    SetExperienceConfig(super::window_config::ExperienceConfig),
+    /// Encumbrance display toggles.
+    SetEncumConfig(super::window_config::EncumConfig),
+    /// MiniVitals bar options (GuiUiSettings.vitals).
+    SetVitals(crate::frontend::gui::persistence::VitalsConfig),
+    /// Remove the window from the layout entirely (confirmed in the menu).
+    DeleteWindow,
+    /// Open the Tab Editor (tabbedtext windows).
+    EditTabs,
+    /// Open the hotbar editor (hotkeybar windows).
+    EditHotbar,
+    /// Open the indicator templates editor (indicator windows).
+    EditIndicators,
+    /// Jump to Settings ▸ Targets (global target_list.* settings).
+    OpenTargetsSettings,
 }
 
 /// Everything the window context menu needs to render, resolved up front so
@@ -148,6 +188,9 @@ struct WindowMenuView<'a> {
     anchored: bool,
     /// Size role is Fixed (keeps its size through proportional rescales).
     fixed_size: bool,
+    /// Window/widget config sections (the former Window Editor fields);
+    /// None when the tab no longer maps to a live window.
+    config: Option<super::window_config::WindowConfigView>,
     appearance: WindowAppearanceView,
     /// None = not grouped; Some(horizontal) = grouped with this orientation.
     group_horizontal: Option<bool>,
@@ -386,15 +429,6 @@ impl VellumGuiApp {
         command: GuiWindowMenuCommand,
     ) {
         match command {
-            GuiWindowMenuCommand::Edit => {
-                let window_name = self
-                    .available_tabs
-                    .get(&request.tab_key)
-                    .map(|tab| tab.window_name.clone());
-                if let Some(name) = window_name {
-                    self.open_window_editor(Some(&name));
-                }
-            }
             GuiWindowMenuCommand::Hide => {
                 // Hide IS the Windows-window uncheck (one visibility layer):
                 // core WindowVisibility flips, auto-spawn is suppressed, and
@@ -601,6 +635,38 @@ impl VellumGuiApp {
                     }
                     self.layout_dirty = true;
                 }
+            }
+            GuiWindowMenuCommand::Rename(_)
+            | GuiWindowMenuCommand::SetCustomTitle(_)
+            | GuiWindowMenuCommand::SetStreams(_)
+            | GuiWindowMenuCommand::SetBufferLines(_)
+            | GuiWindowMenuCommand::SetCompact(_)
+            | GuiWindowMenuCommand::SetTimestamps { .. }
+            | GuiWindowMenuCommand::SetTtsSpeak(_)
+            | GuiWindowMenuCommand::SetFeed(_)
+            | GuiWindowMenuCommand::SetEffectsCategory(_)
+            | GuiWindowMenuCommand::SetRoomSections(_)
+            | GuiWindowMenuCommand::SetTargetsConfig(_)
+            | GuiWindowMenuCommand::SetExperienceConfig(_)
+            | GuiWindowMenuCommand::SetEncumConfig(_)
+            | GuiWindowMenuCommand::SetVitals(_)
+            | GuiWindowMenuCommand::DeleteWindow => {
+                let tab_key = request.tab_key.clone();
+                self.apply_window_config_command(&tab_key, command);
+            }
+            GuiWindowMenuCommand::EditTabs => {
+                if let Some(name) = self
+                    .available_tabs
+                    .get(&request.tab_key)
+                    .map(|tab| tab.window_name.clone())
+                {
+                    self.open_tab_editor(name);
+                }
+            }
+            GuiWindowMenuCommand::EditHotbar => self.open_hotbar_editor(),
+            GuiWindowMenuCommand::EditIndicators => self.open_indicator_templates_editor(),
+            GuiWindowMenuCommand::OpenTargetsSettings => {
+                self.open_settings_editor_at("Targets");
             }
             GuiWindowMenuCommand::SetMemberWeight { member, weight } => {
                 if let Some(group) = self
@@ -996,6 +1062,7 @@ impl VellumGuiApp {
                 .is_some_and(|anchors| !anchors.is_free()),
             fixed_size: self.window_size_roles.get(&request.tab_key).copied()
                 == Some(super::dock::SizeRole::Fixed),
+            config: self.window_config_view_for_tab(&request.tab_key),
             appearance: self.appearance_view_for_tab(ctx, &request.tab_key),
             group_horizontal: self
                 .group_for_tab(&request.tab_key)
@@ -1021,35 +1088,29 @@ impl VellumGuiApp {
 
         if let Some(command) = selected_command {
             // Live-adjustable settings keep the menu open so their controls
-            // stay usable across repeated changes.
-            let keep_open = matches!(
+            // stay usable across repeated changes; only one-shot actions
+            // (open/close/move/delete/editor launches) dismiss it.
+            let keep_open = !matches!(
                 command,
-                GuiWindowMenuCommand::SetTextSize(_)
-                    | GuiWindowMenuCommand::SetMapZoom(_)
-                    | GuiWindowMenuCommand::SetWrapText(_)
-                    | GuiWindowMenuCommand::SetAccent(_)
-                    | GuiWindowMenuCommand::ToggleTitleBar
-                    | GuiWindowMenuCommand::SetGroupOrientation(_)
-                    | GuiWindowMenuCommand::MoveGroupMember { .. }
-                    | GuiWindowMenuCommand::UngroupMember(_)
-                    | GuiWindowMenuCommand::ToggleMemberMerge(_)
-                    | GuiWindowMenuCommand::ToggleSlotAnchor(_)
-                    | GuiWindowMenuCommand::SetMemberWeight { .. }
-                    | GuiWindowMenuCommand::SetCornerRadius(_)
-                    | GuiWindowMenuCommand::SetSkinFrame(_)
-                    | GuiWindowMenuCommand::SetFrameScale(_)
-                    | GuiWindowMenuCommand::SetDollImage(_)
-                    | GuiWindowMenuCommand::SetDollGrayscale(_)
-                    | GuiWindowMenuCommand::SetCompassSet(_)
-                    | GuiWindowMenuCommand::SetHandIcon { .. }
-                    | GuiWindowMenuCommand::SetBackground(_)
-                    | GuiWindowMenuCommand::SetTitleBarHeight(_)
-                    | GuiWindowMenuCommand::SetTitleBarAlign(_)
-                    | GuiWindowMenuCommand::SetShowBorder(_)
-                    | GuiWindowMenuCommand::SetBorderStyle(_)
-                    | GuiWindowMenuCommand::SetBorderSides(_)
-                    | GuiWindowMenuCommand::SetContentAlign(_)
-                    | GuiWindowMenuCommand::SetFont(_)
+                GuiWindowMenuCommand::Hide
+                    | GuiWindowMenuCommand::Detach
+                    | GuiWindowMenuCommand::SendToBack
+                    | GuiWindowMenuCommand::StartMove
+                    | GuiWindowMenuCommand::MoveTo(_)
+                    | GuiWindowMenuCommand::GroupWith(_)
+                    | GuiWindowMenuCommand::DissolveGroup
+                    | GuiWindowMenuCommand::OpenMapExplorer
+                    | GuiWindowMenuCommand::CalibrateDoll
+                    | GuiWindowMenuCommand::EditHandIcons
+                    | GuiWindowMenuCommand::EditDashboard
+                    | GuiWindowMenuCommand::EditTabs
+                    | GuiWindowMenuCommand::EditHotbar
+                    | GuiWindowMenuCommand::EditIndicators
+                    | GuiWindowMenuCommand::OpenTargetsSettings
+                    | GuiWindowMenuCommand::DeleteWindow
+                    // Renaming can change the tab key the open menu points
+                    // at; close rather than dangle.
+                    | GuiWindowMenuCommand::Rename(_)
             );
             self.apply_window_menu_command(ctx, &request, command);
             if !keep_open {
@@ -1516,41 +1577,9 @@ impl VellumGuiApp {
         ui: &mut egui::Ui,
         view: &WindowMenuView<'_>,
     ) -> Option<GuiWindowMenuCommand> {
-        // Action rows are flat selectable labels (hover highlight only);
-        // framed buttons read as noisy chips here.
-        if ui.selectable_label(false, "Edit Window…").clicked() {
-            return Some(GuiWindowMenuCommand::Edit);
-        }
-        // Widget tools sit next to Edit: they open something, unlike the
-        // settings grouped under Appearance.
-        if view.appearance.is_map
-            && ui.selectable_label(false, "Open Map Explorer").clicked()
-        {
-            return Some(GuiWindowMenuCommand::OpenMapExplorer);
-        }
-        if view.appearance.is_doll
-            && ui.selectable_label(false, "Calibrate doll…").clicked()
-        {
-            return Some(GuiWindowMenuCommand::CalibrateDoll);
-        }
-        if view.appearance.is_dashboard
-            && ui
-                .selectable_label(false, "Edit dashboard…")
-                .on_hover_text("Which statuses to show, plus layout and spacing")
-                .clicked()
-        {
-            return Some(GuiWindowMenuCommand::EditDashboard);
-        }
-        if view.appearance.hand_id.is_some()
-            && ui
-                .selectable_label(false, "Hand icons…")
-                .on_hover_text(
-                    "Status-driven icons: empty hand, held weapon, prepared spell, ...",
-                )
-                .clicked()
-        {
-            return Some(GuiWindowMenuCommand::EditHandIcons);
-        }
+        // Flat quick actions: the genuine one-click operations. Action rows
+        // are flat selectable labels (hover highlight only); framed buttons
+        // read as noisy chips here.
         if ui.selectable_label(false, "Hide").clicked() {
             return Some(GuiWindowMenuCommand::Hide);
         }
@@ -1569,52 +1598,40 @@ impl VellumGuiApp {
         {
             return Some(GuiWindowMenuCommand::SendToBack);
         }
-        if ui
-            .selectable_label(
-                view.locked,
-                if view.locked { "Unlock Window" } else { "Lock Window" },
-            )
-            .on_hover_text(
-                "Locked windows ignore dragging and resizing. \
-                 Arrange ▸ Move Window still works deliberately.",
-            )
-            .clicked()
-        {
-            return Some(GuiWindowMenuCommand::ToggleLock);
-        }
-        if view.anchored
-            && ui
-                .selectable_label(false, "Release Anchors")
-                .on_hover_text(
-                    "Forget this window's snap anchors. It stays exactly where \
-                     it is and stops following the pane edges. (Dragging it \
-                     away from a snap does the same thing.)",
-                )
-                .clicked()
-        {
-            return Some(GuiWindowMenuCommand::ReleaseAnchors);
-        }
         ui.separator();
         // Everything below folds into sections so the menu opens short.
         // Commands are collected instead of returned early so the layout
         // stays stable while a slider or palette inside a section is in use.
         let mut command = None;
+        if let Some(config) = &view.config {
+            ui.collapsing("Window", |ui| {
+                if let Some(window_command) =
+                    Self::render_window_section(ui, config, view.locked)
+                {
+                    command = Some(window_command);
+                }
+            });
+            // Widget-specific section, named for the widget: config rows
+            // (feed ids, display toggles, editor links) plus the widget's
+            // appearance controls (art pickers, map zoom).
+            if let Some(label) = config.widget_label {
+                ui.collapsing(label, |ui| {
+                    if let Some(widget_command) =
+                        Self::render_widget_config_controls(ui, config)
+                    {
+                        command = Some(widget_command);
+                    }
+                    if let Some(widget_command) =
+                        Self::render_widget_appearance_controls(ui, &view.appearance)
+                    {
+                        command = Some(widget_command);
+                    }
+                });
+            }
+        }
         ui.collapsing("Arrange", |ui| {
             if ui.selectable_label(false, "Move Window").clicked() {
                 command = Some(GuiWindowMenuCommand::StartMove);
-            }
-            let mut fixed = view.fixed_size;
-            if ui
-                .checkbox(&mut fixed, "Fixed size")
-                .on_hover_text(
-                    "Keep this window's exact width and height when the app \
-                     window resizes, zooms, or a zone squeezes the layout — \
-                     only its position adapts. Good for HUD widgets like the \
-                     compass or hands.",
-                )
-                .changed()
-            {
-                command = Some(GuiWindowMenuCommand::SetFixedSize(fixed));
             }
             ui.label("Move to");
             for target in GuiShellZone::all() {
@@ -1628,6 +1645,33 @@ impl VellumGuiApp {
                     command = Some(GuiWindowMenuCommand::MoveTo(target));
                 }
             }
+            if view.anchored
+                && ui
+                    .selectable_label(false, "Release Anchors")
+                    .on_hover_text(
+                        "Forget this window's snap anchors. It stays exactly \
+                         where it is and stops following the pane edges. \
+                         (Dragging it away from a snap does the same thing.)",
+                    )
+                    .clicked()
+            {
+                command = Some(GuiWindowMenuCommand::ReleaseAnchors);
+            }
+            ui.collapsing("Advanced", |ui| {
+                let mut fixed = view.fixed_size;
+                if ui
+                    .checkbox(&mut fixed, "Fixed size")
+                    .on_hover_text(
+                        "Keep this window's exact width and height when the app \
+                         window resizes, zooms, or a zone squeezes the layout — \
+                         only its position adapts. Good for HUD widgets like the \
+                         compass or hands.",
+                    )
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetFixedSize(fixed));
+                }
+            });
         });
         ui.collapsing("Appearance", |ui| {
             if let Some(appearance) = Self::render_appearance_controls(ui, &view.appearance) {
@@ -1784,20 +1828,39 @@ impl VellumGuiApp {
         command
     }
 
-    /// Per-window appearance controls: widget-specific settings first (map
-    /// zoom, doll, compass, hand icon), then Text / Title bar / Frame
-    /// subsections. The context menu is their only home (attached and
-    /// detached windows both route here). Returns a command to run through
-    /// `apply_appearance_command`; live controls (sliders, swatches) emit
-    /// one every frame their value changes.
-    pub(super) fn render_appearance_controls(
+    /// Widget-specific appearance controls (map zoom + explorer, doll art +
+    /// calibrator, compass art, hand icons, dashboard editor). Rendered
+    /// inside the widget section of the context menu, next to the widget's
+    /// config rows from `render_widget_config_controls`.
+    pub(super) fn render_widget_appearance_controls(
         ui: &mut egui::Ui,
         view: &WindowAppearanceView,
     ) -> Option<GuiWindowMenuCommand> {
         let mut command = None;
-        // Widget-specific settings surface first — for a map or doll window
-        // they are the reason the menu was opened. General settings follow,
-        // grouped into Text / Title bar / Frame subsections.
+        if view.is_map && ui.selectable_label(false, "Open Map Explorer").clicked() {
+            command = Some(GuiWindowMenuCommand::OpenMapExplorer);
+        }
+        if view.is_doll && ui.selectable_label(false, "Calibrate doll…").clicked() {
+            command = Some(GuiWindowMenuCommand::CalibrateDoll);
+        }
+        if view.is_dashboard
+            && ui
+                .selectable_label(false, "Edit dashboard…")
+                .on_hover_text("Which statuses to show, plus layout and spacing")
+                .clicked()
+        {
+            command = Some(GuiWindowMenuCommand::EditDashboard);
+        }
+        if view.hand_id.is_some()
+            && ui
+                .selectable_label(false, "Hand icons…")
+                .on_hover_text(
+                    "Status-driven icons: empty hand, held weapon, prepared spell, ...",
+                )
+                .clicked()
+        {
+            command = Some(GuiWindowMenuCommand::EditHandIcons);
+        }
         if view.is_map {
             let mut has_override = view.map_zoom.is_some();
             if ui.checkbox(&mut has_override, "Custom map zoom").changed() {
@@ -1982,6 +2045,19 @@ impl VellumGuiApp {
                 ui.weak("No hand icons in the pool — install with .jinx");
             }
         }
+        command
+    }
+
+    /// General per-window appearance controls, grouped into Text / Title
+    /// bar / Frame subsections with the rarely-touched knobs under
+    /// Advanced. The context menu is their only home. Returns a command to
+    /// run through `apply_appearance_command`; live controls (sliders,
+    /// swatches) emit one every frame their value changes.
+    pub(super) fn render_appearance_controls(
+        ui: &mut egui::Ui,
+        view: &WindowAppearanceView,
+    ) -> Option<GuiWindowMenuCommand> {
+        let mut command = None;
         ui.collapsing("Text", |ui| {
             ui.collapsing("Font", |ui| {
                 // Filter box: system font lists run to hundreds of families.
@@ -2113,31 +2189,6 @@ impl VellumGuiApp {
                         }
                     });
             });
-            let mut tb_enabled = view.title_bar_height_override.is_some();
-            if ui
-                .checkbox(&mut tb_enabled, "Custom title bar height")
-                .changed()
-            {
-                command = Some(GuiWindowMenuCommand::SetTitleBarHeight(if tb_enabled {
-                    let seed = if view.global_title_bar_height > 0.0 {
-                        view.global_title_bar_height
-                    } else {
-                        18.0
-                    };
-                    Some(view.title_bar_height_override.unwrap_or(seed))
-                } else {
-                    None
-                }));
-            }
-            if let Some(current) = view.title_bar_height_override {
-                let mut value = current;
-                if ui
-                    .add(egui::Slider::new(&mut value, 12.0..=32.0).step_by(1.0))
-                    .changed()
-                {
-                    command = Some(GuiWindowMenuCommand::SetTitleBarHeight(Some(value)));
-                }
-            }
         });
         ui.collapsing("Frame", |ui| {
             if let Some(border) = &view.border {
@@ -2171,37 +2222,6 @@ impl VellumGuiApp {
                                 }
                             }
                         });
-                    ui.horizontal(|ui| {
-                        let mut sides = border.sides.clone();
-                        let mut changed = false;
-                        changed |= ui.checkbox(&mut sides.top, "Top").changed();
-                        changed |= ui.checkbox(&mut sides.bottom, "Bottom").changed();
-                        changed |= ui.checkbox(&mut sides.left, "Left").changed();
-                        changed |= ui.checkbox(&mut sides.right, "Right").changed();
-                        if changed {
-                            command = Some(GuiWindowMenuCommand::SetBorderSides(sides));
-                        }
-                    });
-                }
-            }
-            let mut radius_enabled = view.corner_radius_override.is_some();
-            if ui
-                .checkbox(&mut radius_enabled, "Custom corner radius")
-                .changed()
-            {
-                command = Some(GuiWindowMenuCommand::SetCornerRadius(if radius_enabled {
-                    Some(view.corner_radius_override.unwrap_or(view.global_corner_radius))
-                } else {
-                    None
-                }));
-            }
-            if let Some(current) = view.corner_radius_override {
-                let mut value = current;
-                if ui
-                    .add(egui::Slider::new(&mut value, 0.0..=12.0).step_by(0.5))
-                    .changed()
-                {
-                    command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
                 }
             }
             ui.label("Accent color");
@@ -2259,34 +2279,6 @@ impl VellumGuiApp {
                             }
                         });
                 });
-                // Live frame-size slider: multiplies the frame's authored
-                // scale (and its content inset, in lockstep). Only meaningful
-                // when a frame actually draws.
-                let frame_off = view
-                    .skin_frame_override
-                    .as_deref()
-                    .is_some_and(|name| name.eq_ignore_ascii_case(NO_FRAME));
-                if view.has_skin_border && !frame_off {
-                    ui.horizontal(|ui| {
-                        ui.label("Frame size");
-                        let mut scale = view.frame_scale_override.unwrap_or(1.0);
-                        if ui
-                            .add(
-                                egui::Slider::new(&mut scale, 0.25..=4.0)
-                                    .fixed_decimals(2)
-                                    .suffix("x"),
-                            )
-                            .changed()
-                        {
-                            command = Some(GuiWindowMenuCommand::SetFrameScale(Some(scale)));
-                        }
-                        if view.frame_scale_override.is_some()
-                            && ui.small_button("✕").on_hover_text("Reset to 1.0x").clicked()
-                        {
-                            command = Some(GuiWindowMenuCommand::SetFrameScale(None));
-                        }
-                    });
-                }
             }
             if !view.background_images.is_empty() || view.has_skin_background {
                 ui.horizontal(|ui| {
@@ -2332,6 +2324,97 @@ impl VellumGuiApp {
                                 }
                             }
                         });
+                });
+            }
+        });
+        ui.collapsing("Advanced", |ui| {
+            let mut tb_enabled = view.title_bar_height_override.is_some();
+            if ui
+                .checkbox(&mut tb_enabled, "Custom title bar height")
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetTitleBarHeight(if tb_enabled {
+                    let seed = if view.global_title_bar_height > 0.0 {
+                        view.global_title_bar_height
+                    } else {
+                        18.0
+                    };
+                    Some(view.title_bar_height_override.unwrap_or(seed))
+                } else {
+                    None
+                }));
+            }
+            if let Some(current) = view.title_bar_height_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 12.0..=32.0).step_by(1.0))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetTitleBarHeight(Some(value)));
+                }
+            }
+            if let Some(border) = &view.border {
+                if border.show_border {
+                    ui.label("Border sides");
+                    ui.horizontal(|ui| {
+                        let mut sides = border.sides.clone();
+                        let mut changed = false;
+                        changed |= ui.checkbox(&mut sides.top, "Top").changed();
+                        changed |= ui.checkbox(&mut sides.bottom, "Bottom").changed();
+                        changed |= ui.checkbox(&mut sides.left, "Left").changed();
+                        changed |= ui.checkbox(&mut sides.right, "Right").changed();
+                        if changed {
+                            command = Some(GuiWindowMenuCommand::SetBorderSides(sides));
+                        }
+                    });
+                }
+            }
+            let mut radius_enabled = view.corner_radius_override.is_some();
+            if ui
+                .checkbox(&mut radius_enabled, "Custom corner radius")
+                .changed()
+            {
+                command = Some(GuiWindowMenuCommand::SetCornerRadius(if radius_enabled {
+                    Some(view.corner_radius_override.unwrap_or(view.global_corner_radius))
+                } else {
+                    None
+                }));
+            }
+            if let Some(current) = view.corner_radius_override {
+                let mut value = current;
+                if ui
+                    .add(egui::Slider::new(&mut value, 0.0..=12.0).step_by(0.5))
+                    .changed()
+                {
+                    command = Some(GuiWindowMenuCommand::SetCornerRadius(Some(value)));
+                }
+            }
+            // Live frame-size slider: multiplies the frame's authored scale
+            // (and its content inset, in lockstep). Only meaningful when a
+            // frame actually draws.
+            let frame_off = view
+                .skin_frame_override
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(crate::config::skins::NO_FRAME));
+            if view.has_skin_border && !frame_off {
+                ui.horizontal(|ui| {
+                    ui.label("Frame size");
+                    let mut scale = view.frame_scale_override.unwrap_or(1.0);
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut scale, 0.25..=4.0)
+                                .fixed_decimals(2)
+                                .suffix("x"),
+                        )
+                        .changed()
+                    {
+                        command = Some(GuiWindowMenuCommand::SetFrameScale(Some(scale)));
+                    }
+                    if view.frame_scale_override.is_some()
+                        && ui.small_button("✕").on_hover_text("Reset to 1.0x").clicked()
+                    {
+                        command = Some(GuiWindowMenuCommand::SetFrameScale(None));
+                    }
                 });
             }
         });
