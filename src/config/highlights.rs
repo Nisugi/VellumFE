@@ -450,6 +450,18 @@ impl Config {
     /// Delete a single highlight from the appropriate file based on scope
     /// is_global = true: deletes from global/highlights.toml
     /// is_global = false: deletes from profiles/{char}/highlights.toml
+    /// Delete a highlight from BOTH scopes — the global file and this
+    /// character's override file. A character override can shadow a
+    /// same-named global entry; deleting only the override just uncovers
+    /// the global copy on the next reload, which reads as "delete didn't
+    /// work". User-facing Delete buttons mean "make this highlight gone",
+    /// so every copy goes. (Scoped deletion below stays available for the
+    /// editor's internal rename/re-scope cleanup.)
+    pub fn delete_highlight_everywhere(name: &str, character: Option<&str>) -> Result<()> {
+        Self::delete_character_highlight(name, character)?;
+        Self::delete_common_highlight(name)
+    }
+
     pub fn delete_single_highlight(
         name: &str,
         is_global: bool,
