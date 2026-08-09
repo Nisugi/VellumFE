@@ -43,6 +43,9 @@ impl DetachedWindowState {
 pub(super) struct DetachedMenuState {
     pub(super) tab_key: TabKey,
     pub(super) pos: Pos2,
+    /// True for the first render frame after opening; consumed to reset
+    /// one-shot menu state (the Delete Window confirmation).
+    pub(super) just_opened: bool,
 }
 
 /// Everything a detached viewport's render pass wants to change on the app.
@@ -254,6 +257,15 @@ impl VellumGuiApp {
         }
         let mut keys: Vec<TabKey> = self.detached_tabs.keys().cloned().collect();
         keys.sort_by_key(|key| key.short_id());
+        // Fresh detached menu, fresh Delete confirmation (mirrors the
+        // attached menu's just_opened disarm).
+        if let Some(menu_key) = self.detached_context_menu.as_mut().and_then(|menu| {
+            std::mem::take(&mut menu.just_opened).then(|| menu.tab_key.clone())
+        }) {
+            if let Some(tab) = self.available_tabs.get(&menu_key) {
+                Self::disarm_window_delete(ctx, &tab.window_name.clone());
+            }
+        }
         let suppress_macro_dispatch = self.should_suppress_macro_dispatch();
 
         let mut results: Vec<(TabKey, DetachedFrameOutput)> = Vec::new();
@@ -351,6 +363,7 @@ impl VellumGuiApp {
                 self.detached_context_menu = Some(DetachedMenuState {
                     tab_key: key.clone(),
                     pos,
+                    just_opened: true,
                 });
             } else if out.close_menu
                 && self

@@ -1064,6 +1064,14 @@ impl VellumGuiApp {
             return;
         };
 
+        // Fresh menu, fresh Delete confirmation — a dismissed menu must
+        // never reopen with the destructive second step pre-armed.
+        if self.window_context_menu_just_opened {
+            if let Some(tab) = self.available_tabs.get(&request.tab_key) {
+                Self::disarm_window_delete(ctx, &tab.window_name.clone());
+            }
+        }
+
         let detached_tabs = self.detached_tab_keys();
         let mut group_candidates: Vec<(TabKey, String)> = self
             .available_tabs

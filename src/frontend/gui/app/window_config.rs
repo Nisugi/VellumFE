@@ -361,6 +361,7 @@ impl VellumGuiApp {
             self.detached_context_menu = Some(super::detached::DetachedMenuState {
                 tab_key,
                 pos: egui::pos2(24.0, 40.0),
+                just_opened: true,
             });
             return;
         }
@@ -721,6 +722,17 @@ impl VellumGuiApp {
 
     /// The "Window" section: identity + content routing + lock, with the
     /// rarely-used and destructive bits folded under Advanced.
+    /// egui temp-data key for the Delete Window two-step confirmation.
+    fn delete_arm_id(window_name: &str) -> egui::Id {
+        egui::Id::new(("cfg_delete_armed", window_name))
+    }
+
+    /// Reset the Delete Window confirmation for `window_name`. Called from
+    /// every menu-open path so the armed state can't leak across menus.
+    pub(super) fn disarm_window_delete(ctx: &egui::Context, window_name: &str) {
+        ctx.data_mut(|data| data.remove_temp::<bool>(Self::delete_arm_id(window_name)));
+    }
+
     pub(super) fn render_window_section(
         ui: &mut egui::Ui,
         view: &WindowConfigView,
@@ -862,8 +874,11 @@ impl VellumGuiApp {
                 ui.separator();
             }
             // Destructive, so double-gated: inside Advanced AND armed by a
-            // first click before the real delete row appears.
-            let arm_id = ui.id().with((name, "cfg_delete_armed"));
+            // first click before the real delete row appears. Fixed Id (not
+            // ui.id()-derived) so menu-open sites can disarm it; every open
+            // path calls disarm_window_delete, so a dismissed confirmation
+            // never survives into the next menu.
+            let arm_id = Self::delete_arm_id(name);
             let armed: bool = ui.data_mut(|data| data.get_temp(arm_id).unwrap_or(false));
             if !armed {
                 if ui
