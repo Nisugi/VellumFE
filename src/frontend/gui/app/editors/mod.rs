@@ -40,7 +40,7 @@ pub(super) use known_windows::KnownWindowsEditorState;
 pub(super) use launcher::LauncherEditorState;
 pub(super) use menu_keybinds::MenuKeybindEditorState;
 pub(super) use packs::PackEditorState;
-pub(super) use settings::SettingsEditorState;
+pub(super) use settings::{settings_sections, SettingsEditorState};
 pub(super) use sorter::SorterEditorState;
 pub(super) use themes::{ThemeBrowserState, ThemeEditorState};
 pub(super) use touch_wheel::TouchWheelEditorState;

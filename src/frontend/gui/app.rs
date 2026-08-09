@@ -6915,7 +6915,6 @@ impl eframe::App for VellumGuiApp {
         }
 
         let detached_before_frame = self.detached_tab_keys();
-        let mut open_windows_manager = false;
         let mut reconnect_clicked = false;
         let mut zone_actions = GuiWindowActions::default();
         let mut visible_zone_rects: Vec<(GuiShellZone, Rect)> = Vec::new();
@@ -7054,11 +7053,107 @@ impl eframe::App for VellumGuiApp {
                         );
                     });
 
-                    // U6: the "Windows" button opens the single Windows
-                    // manager (show/hide + zone + add-window, grouped by
-                    // category) instead of an inline menu.
-                    if ui.button("Windows").clicked() {
-                        open_windows_manager = true;
+                    // "Windows" is the same catalog the floating manager
+                    // shows (show/hide + zone + add-window, grouped by
+                    // category), inline as a stay-open menu like Zones:
+                    // nothing inside closes it, only clicking outside.
+                    egui::containers::menu::MenuButton::new("Windows")
+                        .config(
+                            egui::containers::menu::MenuConfig::new()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(380.0);
+                            ui.set_max_height(520.0);
+                            self.known_windows_body(ui);
+                        });
+
+                    // "Settings" is the hub for the knobs in config.toml
+                    // (the registry-driven Settings window): one row per
+                    // section, and clicking a row opens the Settings
+                    // window with that section expanded and scrolled into
+                    // view. Stay-open like Zones/Windows.
+                    egui::containers::menu::MenuButton::new("Settings")
+                        .config(
+                            egui::containers::menu::MenuConfig::new()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(160.0);
+                            if ui.button("All Settings…").clicked() {
+                                self.open_settings_editor();
+                            }
+                            ui.separator();
+                            for section in editors::settings_sections() {
+                                if ui.button(section).clicked() {
+                                    self.open_settings_editor_at(section);
+                                }
+                            }
+                        });
+
+                    // "Editors" is the hub for authored content — the
+                    // standalone editors that manage their own files
+                    // (highlights, keybinds, hotbars, …) rather than
+                    // config.toml knobs. Same stay-open behavior.
+                    egui::containers::menu::MenuButton::new("Editors")
+                        .config(
+                            egui::containers::menu::MenuConfig::new()
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
+                        )
+                        .ui(ui, |ui| {
+                            ui.set_min_width(180.0);
+                            if ui.button("Themes").clicked() {
+                                self.open_theme_browser();
+                            }
+                            if ui.button("Colors").clicked() {
+                                self.open_colors_editor();
+                            }
+                            if ui.button("Highlights").clicked() {
+                                self.open_highlight_editor(None);
+                            }
+                            ui.separator();
+                            if ui.button("Keybinds").clicked() {
+                                self.open_keybind_editor();
+                            }
+                            if ui.button("Menu Keybinds").clicked() {
+                                self.open_menu_keybind_editor();
+                            }
+                            #[cfg(feature = "gamepad")]
+                            if ui.button("Controller").clicked() {
+                                self.open_controller_editor();
+                            }
+                            if ui.button("Touch Wheel").clicked() {
+                                self.open_touch_wheel_editor();
+                            }
+                            if ui.button("Hotbars").clicked() {
+                                self.open_hotbar_editor();
+                            }
+                            ui.separator();
+                            if ui.button("Indicators").clicked() {
+                                self.open_indicator_templates_editor();
+                            }
+                            if ui.button("Streams & Custom Windows").clicked() {
+                                self.open_custom_windows_editor();
+                            }
+                            if ui.button("Sorter").clicked() {
+                                self.open_sorter_editor();
+                            }
+                            ui.separator();
+                            if ui.button("UI Packs").clicked() {
+                                self.open_pack_editor();
+                            }
+                            if ui.button("Asset Manager (Jinx)").clicked() {
+                                self.open_jinx_panel();
+                            }
+                            if ui.button("Launcher").clicked() {
+                                self.open_launcher_editor();
+                            }
+                        });
+
+                    // "Explorer" is a one-shot: open (or surface) the Map
+                    // Explorer's native window.
+                    if ui.button("Explorer").clicked() {
+                        self.map_explorer.open = true;
                     }
                 });
             });
@@ -7588,9 +7683,6 @@ impl eframe::App for VellumGuiApp {
             self.refresh_zorder_cache(&ctx);
         }
 
-        if open_windows_manager {
-            self.open_known_windows_editor();
-        }
         if reconnect_clicked {
             self.reconnect();
         }
