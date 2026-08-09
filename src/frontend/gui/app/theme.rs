@@ -158,10 +158,16 @@ fn blend(base: Color32, top: Color32, amount: f32) -> Color32 {
 fn readable_selection_fill(accent: Color32, menu_bg: Color32, text: Color32) -> Color32 {
     // Keep the accent's hue but at row-fill intensity.
     let mut fill = blend(menu_bg, accent, 0.35);
-    // Push the fill toward whichever pole the text is NOT (dark text →
-    // lighten, light text → darken) until it reads. 3.0 is the WCAG
-    // large-text bar — enough for a one-line menu row.
-    let pole = if relative_luminance(text) >= 0.5 {
+    // Push the fill toward whichever pole can actually clear the bar.
+    // 3.0 is the WCAG large-text bar — enough for a one-line menu row.
+    // The pole must be chosen by ACHIEVABLE contrast, not text lightness:
+    // against white the ceiling is 1.05/(L+0.05), against black it is
+    // (L+0.05)/0.05 — for mid-gray text (L in ~0.18..0.50) only the black
+    // pole can reach 3.0, even though the text reads as "dark".
+    let text_luminance = relative_luminance(text);
+    let white_ceiling = 1.05 / (text_luminance + 0.05);
+    let black_ceiling = (text_luminance + 0.05) / 0.05;
+    let pole = if black_ceiling >= white_ceiling {
         Color32::BLACK
     } else {
         Color32::WHITE
@@ -202,6 +208,22 @@ mod selection_fill_tests {
         assert!(contrast_ratio(fill, text) >= 3.0);
         // Dimmer than the raw accent as a row fill.
         assert!(relative_luminance(fill) < relative_luminance(accent));
+    }
+
+    #[test]
+    fn mid_gray_text_pushes_fill_dark() {
+        // Mid-gray text (relative luminance ~0.32) on a light menu: only
+        // the BLACK pole can reach 3.0 (white ceiling is ~2.7). Choosing
+        // by text lightness alone strands the fill near-white.
+        let accent = Color32::from_rgb(0xd0, 0xd0, 0xd0);
+        let menu_bg = Color32::from_rgb(0xec, 0xec, 0xec);
+        let text = Color32::from_rgb(0x99, 0x99, 0x99);
+        let fill = readable_selection_fill(accent, menu_bg, text);
+        assert!(
+            contrast_ratio(fill, text) >= 3.0,
+            "fill {:?} unreadable under mid-gray text",
+            fill
+        );
     }
 
     #[test]
@@ -436,6 +458,11 @@ impl VellumGuiApp {
         );
         if let Some(theme) = presets.get(&active) {
             let mut visuals = visuals_from_theme(theme);
+            // The raw accent widgets paint with (map, dialog progress fills,
+            // wheel highlight, focus rings). selection.bg_fill can't serve
+            // both masters: menus need the readability-adjusted fill, widgets
+            // need the accent itself — so the accent is published separately.
+            let mut widget_accent = visuals.selection.bg_fill;
             // Overlay the active skin's UI palette (derived from art + [ui]
             // overrides) so config editors, menus, and native controls take
             // on the skin. No skin / no palette -> plain theme visuals.
@@ -445,7 +472,9 @@ impl VellumGuiApp {
                 .and_then(|art| art.ui_palette)
             {
                 apply_ui_palette(&mut visuals, &palette);
+                widget_accent = palette.accent;
             }
+            super::widgets::set_widget_accent(ctx, widget_accent);
             // "Settled" = the art we just read belongs to the target skin. When
             // the loaded skin still lags the target (async switch frame), this
             // stays false so the next frame re-applies from the correct art.

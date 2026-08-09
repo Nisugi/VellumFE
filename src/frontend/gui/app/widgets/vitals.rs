@@ -159,7 +159,7 @@ impl VellumGuiApp {
             .color
             .as_deref()
             .and_then(parse_hex_color)
-            .unwrap_or_else(|| ui.visuals().selection.bg_fill);
+            .unwrap_or_else(|| widget_accent(ui.ctx(), ui.visuals()));
         let text = if data.current_only {
             data.value.to_string()
         } else if data.numbers_only {

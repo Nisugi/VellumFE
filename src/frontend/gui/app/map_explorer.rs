@@ -833,7 +833,8 @@ impl VellumGuiApp {
                 center: ex.center,
                 px_per_cell: ex.px_per_cell,
             };
-            let style = MapStyle::from_visuals(ui.visuals());
+            let style = MapStyle::from_visuals(ui.visuals())
+                .with_accent(super::widgets::widget_accent(ui.ctx(), ui.visuals()));
             let browsing_here = map.current_location == ex.location;
             // Session ghost sketches: anchored clusters land on whichever
             // sheet their anchor room is drawn on (no group filter — the

@@ -67,6 +67,15 @@ impl MapStyle {
             current_ring: Stroke::new(2.0, visuals.strong_text_color()),
         }
     }
+
+    /// Override the accent-derived colors. `from_visuals` falls back to
+    /// `selection.bg_fill`, which under a skin carries the readability-
+    /// adjusted menu fill — callers with access to the raw accent (the
+    /// app's `widget_accent`) pass it here.
+    pub fn with_accent(mut self, accent: Color32) -> Self {
+        self.current_fill = accent;
+        self
+    }
 }
 
 /// A text label whose paint is deferred until after the rooms. `candidates`

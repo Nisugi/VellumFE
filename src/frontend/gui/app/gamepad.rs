@@ -1107,7 +1107,7 @@ pub(super) fn paint_wheel_ring(
         let fill = match (tint, is_selected) {
             (Some(c), true) => c.gamma_multiply(0.85),
             (Some(c), false) => c.gamma_multiply(0.22),
-            (None, true) => visuals.selection.bg_fill,
+            (None, true) => super::widgets::widget_accent(painter.ctx(), visuals),
             (None, false) => egui::Color32::TRANSPARENT,
         };
         if fill != egui::Color32::TRANSPARENT {

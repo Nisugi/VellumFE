@@ -866,7 +866,7 @@ impl VellumGuiApp {
         if frac > f32::EPSILON {
             let mut fill_rect = rect;
             fill_rect.set_width(rect.width() * frac);
-            painter.rect_filled(fill_rect, radius, visuals.selection.bg_fill);
+            painter.rect_filled(fill_rect, radius, widget_accent(ui.ctx(), visuals));
         }
         // Skin frame paints on top so its border edges the fill.
         if let Some(border) = frame {
@@ -875,7 +875,7 @@ impl VellumGuiApp {
         // Centered text (auto-contrast against the ground it sits on).
         if !bar.text.is_empty() {
             let behind = if frac >= 0.5 {
-                visuals.selection.bg_fill
+                widget_accent(ui.ctx(), visuals)
             } else {
                 visuals.extreme_bg_color
             };

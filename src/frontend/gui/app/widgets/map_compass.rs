@@ -113,7 +113,8 @@ impl VellumGuiApp {
             center: egui::Pos2::new(cx, cy),
             px_per_cell: zoom_override.unwrap_or(map_data.zoom).clamp(2.0, 96.0),
         };
-        let style = MapStyle::from_visuals(ui.visuals());
+        let style = MapStyle::from_visuals(ui.visuals())
+            .with_accent(widget_accent(ui.ctx(), ui.visuals()));
         let compass = Some(app_core.game_state.compass_dirs.as_slice());
         // While standing in a ghost, the ring and compass ticks belong to the
         // sketch, not the held anchor room.

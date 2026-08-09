@@ -14,6 +14,28 @@ mod panels;
 mod text;
 mod vitals;
 
+/// egui data key holding the RAW skin/theme accent for widget painting.
+/// `visuals.selection.bg_fill` carries the readability-adjusted menu-row
+/// fill (see `readable_selection_fill`), which is deliberately dimmer than
+/// the accent — widgets that want the accent itself (map, dialog progress
+/// fills, wheel highlight, focus rings, effect bars) read this instead.
+fn widget_accent_id() -> egui::Id {
+    egui::Id::new("vellum_widget_accent")
+}
+
+/// Publish the raw accent for `widget_accent` readers. Called wherever the
+/// application visuals are (re)built.
+pub(super) fn set_widget_accent(ctx: &egui::Context, accent: Color32) {
+    ctx.data_mut(|data| data.insert_temp(widget_accent_id(), accent));
+}
+
+/// The raw skin/theme accent. Falls back to `selection.bg_fill` when no
+/// accent has been published (plain theme, tests).
+pub(super) fn widget_accent(ctx: &egui::Context, visuals: &egui::Visuals) -> Color32 {
+    ctx.data(|data| data.get_temp(widget_accent_id()))
+        .unwrap_or(visuals.selection.bg_fill)
+}
+
 /// Seconds for a value-driven bar to glide to a new target value.
 const BAR_ANIMATION_SECONDS: f32 = 0.2;
 

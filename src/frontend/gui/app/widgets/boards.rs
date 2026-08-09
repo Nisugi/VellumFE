@@ -374,7 +374,7 @@ impl VellumGuiApp {
         // Interact-mode focus ring: paint the focused entity's link with the
         // selection background so keyboard focus is visible in the room text.
         if let Some(focus) = interact_focus {
-            let sel = visuals.selection.bg_fill;
+            let sel = widget_accent(ui.ctx(), visuals);
             let sel_hex = format!("#{:02x}{:02x}{:02x}", sel.r(), sel.g(), sel.b());
             for line in &mut body {
                 for segment in &mut line.segments {
@@ -488,7 +488,7 @@ impl VellumGuiApp {
                         .bar_color
                         .as_deref()
                         .and_then(parse_hex_color)
-                        .unwrap_or(visuals.selection.bg_fill);
+                        .unwrap_or(widget_accent(ui.ctx(), visuals));
                     let preferred_text_color = effect
                         .text_color
                         .as_deref()
