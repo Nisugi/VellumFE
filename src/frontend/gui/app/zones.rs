@@ -1493,7 +1493,8 @@ impl VellumGuiApp {
                     }
                 };
                 let min_size = Vec2::new(
-                    120.0_f32.min(window_bounds.width().max(1.0)),
+                    self.solver_min_width(&tab.id.key)
+                        .min(window_bounds.width().max(1.0)),
                     min_height.min(window_bounds.height().max(1.0)),
                 );
                 let Some(stored) = self
@@ -1538,7 +1539,10 @@ impl VellumGuiApp {
                     Some(super::window_manager::ZoneSolveInput {
                         key: tab.id.key.clone(),
                         free,
-                        min_size: Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT),
+                        min_size: Vec2::new(
+                            self.solver_min_width(&tab.id.key),
+                            MIN_DOCKED_WINDOW_HEIGHT,
+                        ),
                     })
                 })
                 .collect();

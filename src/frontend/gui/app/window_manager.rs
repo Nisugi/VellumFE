@@ -490,6 +490,24 @@ impl VellumGuiApp {
         self.layout_dirty = true;
     }
 
+    /// Minimum width the anchor solver may squeeze a window to. Must agree
+    /// with the render path's `min_window_size` floor: the solver re-solves
+    /// anchored rects every frame, so a larger solver floor silently
+    /// re-inflates any width the user set below it (the compass "can't
+    /// shrink after docking" bug).
+    pub(super) fn solver_min_width(&self, key: &TabKey) -> f32 {
+        let is_compass = self
+            .available_tabs
+            .get(key)
+            .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
+            .is_some_and(|window| matches!(window.widget_type, WidgetType::Compass));
+        if is_compass {
+            48.0
+        } else {
+            120.0
+        }
+    }
+
     /// Context-menu "Release anchors": commit-on-detach, then forget. The
     /// resolved rect (anchors against the pane the window last rendered
     /// in) is written into the store first so the window stays exactly
@@ -518,7 +536,7 @@ impl VellumGuiApp {
                 &anchors,
                 free,
                 pane,
-                Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT),
+                Vec2::new(self.solver_min_width(key), MIN_DOCKED_WINDOW_HEIGHT),
             );
             self.main_window_rects
                 .insert(key.clone(), Self::rect_to_snapshot(resolved));
@@ -885,7 +903,7 @@ impl VellumGuiApp {
                         anchors,
                         free,
                         pane,
-                        Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT),
+                        Vec2::new(self.solver_min_width(gone), MIN_DOCKED_WINDOW_HEIGHT),
                     ),
                     _ => free,
                 }
@@ -905,7 +923,7 @@ impl VellumGuiApp {
                     .and_then(|zone| self.last_zone_pane_rects.get(zone))
                     .copied(),
             ) {
-                let min = Vec2::new(120.0, MIN_DOCKED_WINDOW_HEIGHT);
+                let min = Vec2::new(self.solver_min_width(&dep), MIN_DOCKED_WINDOW_HEIGHT);
                 let resolve_x = |t: &EdgeRef| match t {
                     EdgeRef::Sibling { key, side } if key == gone => {
                         gone_rect.map(|r| match side {
