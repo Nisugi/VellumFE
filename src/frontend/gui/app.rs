@@ -404,6 +404,22 @@ pub struct VellumGuiApp {
     /// [controller_tuning] fire_debounce_ms is suppressed.
     #[cfg(feature = "gamepad")]
     gp_wheel_last_fire: Option<std::time::Instant>,
+    /// When the current wheel overlay opened. A release inside the
+    /// minimum-open window doesn't close it — a bouncing button contact
+    /// would otherwise strobe the overlay open/closed.
+    #[cfg(feature = "gamepad")]
+    gp_wheel_opened_at: Option<std::time::Instant>,
+    /// When the wheel last closed. Movement stays hushed for
+    /// [controller_tuning] release_grace_ms afterwards, so releasing the
+    /// wheel doesn't also walk a direction.
+    #[cfg(feature = "gamepad")]
+    gp_wheel_closed_at: Option<std::time::Instant>,
+    /// "Spent" latch: set when a wheel fires, cleared only once the aim
+    /// stick returns to center. A wheel opened while spent starts in
+    /// rearm-until-center, so a still-deflected stick can't instantly
+    /// re-aim and re-fire.
+    #[cfg(feature = "gamepad")]
+    gp_wheel_spent: bool,
     /// Set when a wheel closes while the aim stick is still deflected: the
     /// stick's normal function (scroll / interact cycle) stays suppressed
     /// until it returns to center once, so releasing the wheel can't also
@@ -910,6 +926,12 @@ impl VellumGuiApp {
             gp_wheel_fired: false,
             #[cfg(feature = "gamepad")]
             gp_wheel_last_fire: None,
+            #[cfg(feature = "gamepad")]
+            gp_wheel_opened_at: None,
+            #[cfg(feature = "gamepad")]
+            gp_wheel_closed_at: None,
+            #[cfg(feature = "gamepad")]
+            gp_wheel_spent: false,
             #[cfg(feature = "gamepad")]
             gp_aim_recenter_needed: false,
             gp_aim_seen_center: false,

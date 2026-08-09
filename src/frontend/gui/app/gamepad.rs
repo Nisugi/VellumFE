@@ -235,6 +235,12 @@ impl VellumGuiApp {
             self.gp_stick_sector =
                 stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
         }
+        // Once opened, the overlay stays up at least this long: a noisy
+        // contact's release+repress inside the window reads as one
+        // continuous hold instead of an open/close strobe. Nothing can
+        // dwell-commit this fast, so delaying the close never delays a
+        // real fire.
+        const WHEEL_MIN_OPEN_MS: u128 = 150;
         match (self.gp_wheel.is_some(), held_key) {
             (false, Some(key)) => {
                 // A fired leaf keeps the wheel closed for the rest of this
@@ -247,32 +253,46 @@ impl VellumGuiApp {
                         aimed: None,
                         candidate: None,
                         candidate_since: None,
-                        rearm_until_center: false,
+                        // Spent latch: after a fire, no new dwell may start
+                        // until the stick has returned to center once — a
+                        // still-deflected stick can't instantly re-aim and
+                        // re-fire on a fresh hold.
+                        rearm_until_center: self.gp_wheel_spent,
                         peak_magnitude: 0.0,
                     });
+                    self.gp_wheel_opened_at = Some(std::time::Instant::now());
                     self.app_core.needs_render = true;
                 }
             }
             (true, None) => {
-                // Release: fire the committed leaf, if any and if the
-                // debounce window has elapsed. `wheel_release_command` is
-                // the machine-side decision (display-indexed, Back/folder/
-                // empty-guarded via `leaf_command_at`).
-                let ui = self.gp_wheel.take().expect("just matched Some");
-                if let Some(view) = self.wheel_view(&ui.key, &ui.path) {
-                    if let Some(command) = wheel_release_command(&ui, &view) {
-                        self.wheel_fire(command);
+                // Inside the minimum-open window, treat the release as
+                // bounce: keep the overlay up and wait. A re-press lands in
+                // (true, Some) and the hold simply continues.
+                let bounce = self
+                    .gp_wheel_opened_at
+                    .is_some_and(|at| at.elapsed().as_millis() < WHEEL_MIN_OPEN_MS);
+                if !bounce {
+                    // Release: fire the committed leaf, if any and if the
+                    // debounce window has elapsed. `wheel_release_command` is
+                    // the machine-side decision (display-indexed, Back/folder/
+                    // empty-guarded via `leaf_command_at`).
+                    let ui = self.gp_wheel.take().expect("just matched Some");
+                    if let Some(view) = self.wheel_view(&ui.key, &ui.path) {
+                        if let Some(command) = wheel_release_command(&ui, &view) {
+                            self.wheel_fire(command);
+                        }
                     }
+                    // The aim stick is usually still deflected on release; if it
+                    // is also the movement stick, seed the hysteresis so firing
+                    // doesn't also walk. And require the aim stick to return to
+                    // center before its scroll / interact-cycle function resumes,
+                    // so the leftover deflection can't scroll or cycle.
+                    self.gp_stick_sector =
+                        stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
+                    self.gp_aim_recenter_needed = true;
+                    self.gp_wheel_closed_at = Some(std::time::Instant::now());
+                    self.app_core.needs_render = true;
                 }
-                // The aim stick is usually still deflected on release; if it
-                // is also the movement stick, seed the hysteresis so firing
-                // doesn't also walk. And require the aim stick to return to
-                // center before its scroll / interact-cycle function resumes,
-                // so the leftover deflection can't scroll or cycle.
-                self.gp_stick_sector =
-                    stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
-                self.gp_aim_recenter_needed = true;
-                self.app_core.needs_render = true;
             }
             (true, Some(_)) => {
                 self.wheel_aim(aim_x, aim_y);
@@ -287,7 +307,22 @@ impl VellumGuiApp {
         // Niffy's "movement stays on the left" case (e.g. an exits wheel
         // that aims with the right stick).
         let wheel_up = self.gp_wheel.is_some() || self.gp_wheel_fired;
-        let wheel_owns_move = wheel_up && aim_is_move_stick;
+        // Release grace: after the wheel closes, movement stays hushed for
+        // release_grace_ms so releasing the wheel (stick still deflected)
+        // doesn't also walk a direction.
+        let release_grace_ms =
+            self.app_core.config.controller_tuning.release_grace_ms as u128;
+        let in_release_grace = self
+            .gp_wheel_closed_at
+            .is_some_and(|at| at.elapsed().as_millis() < release_grace_ms);
+        let wheel_owns_move = (wheel_up && aim_is_move_stick) || in_release_grace;
+        if wheel_owns_move {
+            // Track the sector silently while hushed so the hysteresis is
+            // already in sync when movement resumes — a still-deflected
+            // stick can't fire a stale step the moment the hush lifts.
+            self.gp_stick_sector =
+                stick.and_then(|(x, y_up)| stick_sector(x, y_up, self.gp_stick_sector));
+        }
         if let Some((x, y_up)) = stick.filter(|_| !wheel_owns_move) {
             let sector = stick_sector(x, y_up, self.gp_stick_sector);
             if sector != self.gp_stick_sector {
@@ -322,6 +357,9 @@ impl VellumGuiApp {
             if self.gp_aim_recenter_needed {
                 self.gp_aim_recenter_needed = false;
             }
+            // Recentre-to-rearm: only a centered stick clears the spent
+            // latch, so the next wheel hold starts from neutral.
+            self.gp_wheel_spent = false;
         }
         let aim_owned_by_wheel =
             self.gp_wheel.is_some() || self.gp_wheel_fired || self.gp_aim_recenter_needed;
@@ -663,8 +701,18 @@ impl VellumGuiApp {
     /// The wheel key of the wheel button currently held, if any:
     /// "" for `controller_wheel` (the default wheel), "<name>" for
     /// `controller_wheel:<name>`.
+    ///
+    /// Analog triggers (l2/r2) get hysteresis instead of the raw digital
+    /// press: a wheel opens only past a high threshold and stays held
+    /// until the trigger falls below a lower one. A trigger resting near
+    /// the press point otherwise chatters and strobes the overlay.
     fn held_wheel_key(&self) -> Option<String> {
+        const TRIGGER_OPEN: f32 = 0.6;
+        const TRIGGER_CLOSE: f32 = 0.4;
         let gilrs = self.gamepad.as_ref()?;
+        // The wheel currently up (or in its fired-hold tail): its trigger
+        // uses the low release threshold; everything else the high open one.
+        let open_key = self.gp_wheel.as_ref().map(|ui| ui.key.as_str());
         for (button_name, action) in &self.app_core.config.controller_binds {
             let crate::config::KeyBindAction::Action(name) = action else {
                 continue;
@@ -679,7 +727,31 @@ impl VellumGuiApp {
             let Some(button) = gamepad_button_from_name(button_name) else {
                 continue;
             };
-            if gilrs.gamepads().any(|(_, pad)| pad.is_pressed(button)) {
+            let analog = matches!(
+                button,
+                gilrs::Button::LeftTrigger2 | gilrs::Button::RightTrigger2
+            );
+            let held = gilrs.gamepads().any(|(_, pad)| {
+                if analog {
+                    // A pad that reports the trigger digitally has value
+                    // 0.0/1.0, which clears both thresholds cleanly.
+                    let value = pad
+                        .button_data(button)
+                        .map(|d| d.value())
+                        .unwrap_or(if pad.is_pressed(button) { 1.0 } else { 0.0 });
+                    // The fired-hold tail keeps the low threshold too, so a
+                    // trigger drifting in the hysteresis band can't end the
+                    // hold and instantly reopen the wheel.
+                    if open_key == Some(key) || self.gp_wheel_fired {
+                        value > TRIGGER_CLOSE
+                    } else {
+                        value >= TRIGGER_OPEN
+                    }
+                } else {
+                    pad.is_pressed(button)
+                }
+            });
+            if held {
                 return Some(key.to_string());
             }
         }
@@ -785,6 +857,10 @@ impl VellumGuiApp {
     /// the same fire; the configured value extends it further.
     fn wheel_fire(&mut self, command: String) {
         const DEBOUNCE_FLOOR_MS: u128 = 50;
+        // Spent latch: whatever happens below (fired, debounced, dropped
+        // for a missing target), this hold's aim is used up — the stick
+        // must recentre before a new dwell can start.
+        self.gp_wheel_spent = true;
         let debounce =
             (self.app_core.config.controller_tuning.fire_debounce_ms as u128).max(DEBOUNCE_FLOOR_MS);
         if let Some(last) = self.gp_wheel_last_fire {
@@ -834,6 +910,7 @@ impl VellumGuiApp {
         self.gp_wheel = None;
         self.gp_wheel_fired = true;
         self.gp_aim_recenter_needed = true;
+        self.gp_wheel_closed_at = Some(std::time::Instant::now());
         self.wheel_fire(command);
         self.app_core.needs_render = true;
     }
@@ -955,18 +1032,21 @@ impl VellumGuiApp {
                 // committed slice (post-dwell); until a dwell lands it is
                 // None and the prompt explains the gesture.
                 painter.circle_filled(center, hub, bg);
-                let stick_word = if self.app_core.config.controller_tuning.movement_stick == "right"
-                {
-                    "left stick"
-                } else {
-                    "right stick"
-                };
+                // The stick that actually aims THIS wheel: its own meta
+                // `stick` override when set, else the non-movement stick —
+                // the same resolution `poll_gamepad` uses, so the hint can
+                // never name the wrong stick.
+                let move_on_right =
+                    self.app_core.config.controller_tuning.movement_stick == "right";
+                let aim_on_right =
+                    resolve_aim_stick(move_on_right, self.wheel_aim_stick(&key));
+                let stick_word = if aim_on_right { "right stick" } else { "left stick" };
                 let hint = match selected.and_then(|i| slices.get(i)) {
                     Some(slice) if is_back_slice(slice) => "dwell to go back".to_string(),
                     Some(slice) if slice.is_folder() => format!("{}: dwell to open", slice.label),
                     Some(slice) => format!("release to fire: {}", slice.command),
                     None if in_folder => "dwell a slice · release fires · center to cancel".to_string(),
-                    None => format!("aim with the {stick_word}, dwell, release to fire"),
+                    None => format!("aim with the {stick_word}"),
                 };
                 painter.text(
                     center,

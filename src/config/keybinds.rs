@@ -1920,8 +1920,10 @@ impl Config {
 
     /// Replace one wheel's slice list in the global keybinds.toml:
     /// None = the default wheel ([[controller_wheel]]), Some(name) =
-    /// [controller_wheels.<name>]. An empty slice list deletes a named
-    /// wheel outright.
+    /// [controller_wheels.<name>]. An empty slice list keeps the wheel
+    /// (as an empty array) — wheel lifetime is decoupled from its
+    /// contents; deleting a wheel is an explicit act
+    /// (`delete_controller_wheel_named`).
     /// Serialize a wheel slice array to a TOML fragment under the given
     /// top-level key, with nested folder `slices` emitted as inline arrays
     /// of inline tables. `toml::to_string_pretty` writes a folder's nested
@@ -2037,27 +2039,45 @@ impl Config {
                 );
             }
             Some(wheel) => {
-                if slices.is_empty() {
-                    if let Some(t) = doc
-                        .get_mut("controller_wheels")
-                        .and_then(|i| i.as_table_mut())
-                    {
-                        t.remove(wheel);
-                    }
-                } else {
-                    // Ensure the parent table exists, then set the named
-                    // wheel's slice array (inline tables so nested folders
-                    // stay bound to their parent).
-                    if doc.get("controller_wheels").is_none() {
-                        doc["controller_wheels"] = toml_edit::table();
-                    }
-                    doc["controller_wheels"][wheel] =
-                        toml_edit::Item::Value(Self::wheel_slices_to_inline(slices));
+                // Ensure the parent table exists, then set the named
+                // wheel's slice array (inline tables so nested folders
+                // stay bound to their parent). An empty list writes an
+                // empty array — never a delete: a wheel the user emptied
+                // mid-edit (or that only meta references) must survive.
+                if doc.get("controller_wheels").is_none() {
+                    doc["controller_wheels"] = toml_edit::table();
                 }
+                doc["controller_wheels"][wheel] =
+                    toml_edit::Item::Value(Self::wheel_slices_to_inline(slices));
             }
         }
         write_atomic(&path, doc.to_string())
             .with_context(|| format!("Failed to write controller file: {:?}", path))?;
+        Ok(())
+    }
+
+    /// Delete a named wheel outright: its `[controller_wheels.<name>]`
+    /// slice array AND its `[controller_wheels_meta.<name>]` entry, from
+    /// the chosen scope's controller file. The caller owns the guardrails
+    /// (clearing any `controller_wheel:<name>` opener binds so no dangling
+    /// reference survives).
+    pub fn delete_controller_wheel_named(
+        name: &str,
+        is_global: bool,
+        character: Option<&str>,
+    ) -> Result<()> {
+        let (path, mut doc) = Self::load_controller_document(is_global, character)?;
+        let mut changed = false;
+        for section in ["controller_wheels", "controller_wheels_meta"] {
+            if let Some(t) = doc.get_mut(section).and_then(|i| i.as_table_mut()) {
+                changed |= t.remove(name).is_some();
+            }
+        }
+        if changed {
+            write_atomic(&path, doc.to_string())
+                .with_context(|| format!("Failed to write controller file: {:?}", path))?;
+            tracing::info!("Deleted controller wheel '{}' from {:?}", name, path);
+        }
         Ok(())
     }
 

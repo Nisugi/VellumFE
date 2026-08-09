@@ -82,6 +82,10 @@ pub(in super::super) struct ControllerEditorState {
     wheel_buffer: Option<Vec<WheelSlice>>,
     wheel_new_name: String,
     wheel_status: Option<String>,
+    /// Two-click Delete-wheel confirm: armed by the first click (naming
+    /// the opener that will be cleared), executed by the second. Any
+    /// wheel switch disarms it.
+    wheel_delete_armed: bool,
     /// Unsaved working copy of the selected wheel's button/stick meta.
     wheel_meta_buffer: Option<crate::config::WheelMeta>,
     /// Visual designer canvas vs numeric row list.
@@ -109,6 +113,7 @@ impl ControllerEditorState {
             wheel_buffer: None,
             wheel_new_name: String::new(),
             wheel_status: None,
+            wheel_delete_armed: false,
             wheel_meta_buffer: None,
             wheel_view_mode: WheelViewMode::Visual,
             wheel_designer_path: Vec::new(),
@@ -302,6 +307,14 @@ impl ControllerFormState {
                 if KeyAction::from_str(&name).is_none() {
                     return Err(format!("Unknown action '{}'.", name));
                 }
+                // A wheel opens on a held bare button; the runtime never
+                // resolves a modifier combo as a wheel opener.
+                if name.starts_with("controller_wheel") && !mods.is_empty() {
+                    return Err(
+                        "A wheel opener can't require modifiers — bind it to a bare button."
+                            .to_string(),
+                    );
+                }
                 KeyBindAction::Action(name)
             }
             BindingType::Modifier => unreachable!("handled above"),
@@ -330,27 +343,33 @@ fn wheel_button_from_binds(config: &Config, name_key: &str) -> Option<String> {
 
 /// One `Modifier N` combo row in the Add/Edit form: a `none` sentinel plus
 /// every declared-modifier button, minus `exclude` (the button already chosen
-/// in the other slot, so `l2+l2` is impossible). `ends the grid row itself.
+/// in the other slot, so `l2+l2` is impossible). Ends the grid row itself.
+/// `enabled` disables only the dropdown — the label and the row structure
+/// stay on the grid's own `Ui`, so the grid's columns (and thus the left
+/// edges of Button / Modifier 1 / Modifier 2) keep lining up.
 fn render_modifier_row(
     ui: &mut egui::Ui,
     label: &str,
     value: &mut String,
     pool: &[String],
     exclude: Option<&str>,
+    enabled: bool,
 ) {
     ui.label(label);
     let id = egui::Id::new("controller_modifier_pick").with(label);
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(value.as_str())
-        .show_ui(ui, |ui| {
-            ui.selectable_value(value, MODIFIER_NONE.to_string(), MODIFIER_NONE);
-            for name in pool {
-                if exclude == Some(name.as_str()) {
-                    continue;
+    ui.add_enabled_ui(enabled, |ui| {
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(value.as_str())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(value, MODIFIER_NONE.to_string(), MODIFIER_NONE);
+                for name in pool {
+                    if exclude == Some(name.as_str()) {
+                        continue;
+                    }
+                    ui.selectable_value(value, name.clone(), name);
                 }
-                ui.selectable_value(value, name.clone(), name);
-            }
-        });
+            });
+    });
     ui.end_row();
 }
 
@@ -434,6 +453,24 @@ impl VellumGuiApp {
         Config::save_single_controller_bind(&key, &action, is_global, character)
             .map_err(|err| format!("Failed to save controller bind: {}", err))?;
         self.reload_controller_binds();
+        // Two-way sync: the wheel editor's "Opens with" mirrors whatever
+        // this edit did to the touched buttons (assigned a wheel opener,
+        // moved it, or replaced one with another action). Only bare
+        // buttons can open wheels, so composite keys sync nothing.
+        let mut touched: Vec<String> = Vec::new();
+        if !key.contains('+') {
+            touched.push(key.clone());
+        }
+        if let Some(original) = &form.original_key {
+            if let Some(parsed) = crate::config::ControllerBindKey::parse(original) {
+                if parsed.mods.is_empty() && !touched.contains(&parsed.button) {
+                    touched.push(parsed.button);
+                }
+            }
+        }
+        if !touched.is_empty() {
+            self.sync_wheel_meta_for_buttons(&touched, is_global);
+        }
         Ok(())
     }
 
@@ -458,6 +495,69 @@ impl VellumGuiApp {
                 .strip_prefix("controller_wheel:")
                 .map(|n| n.to_string()),
             _ => None,
+        }
+    }
+
+    /// Wheel-opener actions offered in the binding dialog's Action
+    /// dropdown: the default wheel plus every named wheel (slice arrays ∪
+    /// meta entries ∪ the dynamic portals wheel), as
+    /// `controller_wheel[:name]`. Selecting one makes the button that
+    /// wheel's opener — the same relationship the wheel editor's "Opens
+    /// with" edits (see `sync_wheel_meta_for_buttons`).
+    fn wheel_action_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = self
+            .app_core
+            .config
+            .controller_wheels
+            .keys()
+            .cloned()
+            .collect();
+        names.extend(self.app_core.config.controller_wheels_meta.keys().cloned());
+        // "default" is the bare `controller_wheel` action, not a named form.
+        names.remove("default");
+        names.insert(PORTAL_WHEEL_KEY.to_string());
+        let mut out = vec!["controller_wheel".to_string()];
+        out.extend(names.into_iter().map(|n| format!("controller_wheel:{n}")));
+        out
+    }
+
+    /// Re-point wheel meta after a `[controller]` edit touching `buttons`,
+    /// so the binding dialog's Action selection and the wheel editor's
+    /// "Opens with" stay two views of one relationship. For each touched
+    /// button: a wheel whose meta claims it but that `[controller]` (the
+    /// authority) no longer routes there is marked unbound — the wheel
+    /// survives, shown as "(unset)", re-assignable; and the wheel the
+    /// button now opens records it. Wheels/buttons outside the edit are
+    /// never touched (their disagreements stay visible as warnings).
+    fn sync_wheel_meta_for_buttons(&mut self, buttons: &[String], is_global: bool) {
+        let character = self.app_core.config.character.clone();
+        let mut map = self.app_core.config.controller_wheels_meta.clone();
+        let mut changed = false;
+        for button in buttons {
+            // The wheel this button now opens per [controller], as a meta
+            // key ("default" for the bare action), if any.
+            let now_opens = self.wheel_key_for_button(button);
+            for (name, meta) in map.iter_mut() {
+                if meta.button.as_deref() == Some(button.as_str())
+                    && now_opens.as_deref() != Some(name.as_str())
+                {
+                    meta.button = None;
+                    changed = true;
+                }
+            }
+            if let Some(name) = now_opens {
+                let entry = map.entry(name).or_default();
+                if entry.button.as_deref() != Some(button.as_str()) {
+                    entry.button = Some(button.clone());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            match Config::save_controller_wheels_meta(&map, is_global, character.as_deref()) {
+                Ok(()) => self.app_core.config.controller_wheels_meta = map,
+                Err(err) => tracing::warn!("Failed to sync wheel meta: {}", err),
+            }
         }
     }
 
@@ -507,6 +607,7 @@ impl VellumGuiApp {
         let mut open_form: Option<ControllerFormState> = None;
         let mut delete_request: Option<String> = None;
         let mut wheel_save = false;
+        let mut wheel_delete: Option<String> = None;
         let mut overlay_toggle: Option<String> = None;
         let mut rumble_save: Option<crate::config::RumbleConfig> = None;
         let mut rumble_test: Option<(f32, u32, u32, u32)> = None;
@@ -583,6 +684,7 @@ impl VellumGuiApp {
                         &self.app_core.config,
                         &mut wheel_save,
                         &mut meta_save,
+                        &mut wheel_delete,
                     );
                     return;
                 }
@@ -1068,7 +1170,36 @@ impl VellumGuiApp {
             }
             // Setting a button also writes the matching [controller] entry
             // (the runtime authority) so the two never silently drift.
+            // The inverse holds too: this wheel's action lives on exactly
+            // the button meta names — a previous opener's bind (or every
+            // opener, when unset) is removed, so changing "Opens with"
+            // can never leave two buttons opening one wheel or a dangling
+            // `controller_wheel:<name>` reference.
             if ok {
+                let action_name = if name == "default" {
+                    "controller_wheel".to_string()
+                } else {
+                    format!("controller_wheel:{}", name)
+                };
+                let stale: Vec<String> = self
+                    .app_core
+                    .config
+                    .controller_binds
+                    .iter()
+                    .filter(|(key, bind)| {
+                        matches!(bind, KeyBindAction::Action(n) if *n == action_name)
+                            && meta.button.as_deref() != Some(key.as_str())
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                for key in stale {
+                    let is_char = self.controller_bind_is_character_override(&key);
+                    if let Err(err) =
+                        Config::delete_single_controller_bind(&key, !is_char, scope_char)
+                    {
+                        tracing::warn!("Failed to clear old wheel opener '{}': {}", key, err);
+                    }
+                }
                 if let Some(button) = meta.button.as_deref() {
                     // Wheel ↔ modifier exclusivity: a wheel button can't also
                     // be a modifier. Block and name the conflict.
@@ -1140,13 +1271,57 @@ impl VellumGuiApp {
                         // ring). The inline editor advisory is B6.
                         self.app_core.warn_wheel_span_conflicts();
                         state.wheel_status = Some(if buffer.is_empty() && name.is_some() {
-                            "Wheel deleted (no slices).".to_string()
+                            "Saved (empty wheel — add slices, or use Delete wheel to remove it)."
+                                .to_string()
                         } else {
                             "Saved.".to_string()
                         });
                     }
                     Err(err) => state.wheel_status = Some(format!("Save failed: {}", err)),
                 }
+            }
+        }
+
+        if let Some(name) = wheel_delete {
+            // Guardrail: clear every [controller] bind that opens this wheel
+            // first, so no dangling `controller_wheel:<name>` reference
+            // survives the delete. Each bind is removed from whichever file
+            // it actually lives in.
+            let action_name = format!("controller_wheel:{}", name);
+            let openers: Vec<String> = self
+                .app_core
+                .config
+                .controller_binds
+                .iter()
+                .filter(|(_, bind)| {
+                    matches!(bind, KeyBindAction::Action(n) if *n == action_name)
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in openers {
+                let is_char = self.controller_bind_is_character_override(&key);
+                if let Err(err) = Config::delete_single_controller_bind(&key, !is_char, scope_char)
+                {
+                    tracing::warn!("Failed to clear opener bind '{}': {}", key, err);
+                }
+            }
+            match Config::delete_controller_wheel_named(&name, scope_global, scope_char) {
+                Ok(()) => {
+                    let ch = self.app_core.config.character.as_deref();
+                    self.app_core.config.controller_wheels =
+                        Config::load_controller_wheels(ch).unwrap_or_default();
+                    self.app_core.config.controller_wheels_meta =
+                        Config::load_controller_wheels_meta(ch).unwrap_or_default();
+                    self.reload_controller_binds();
+                    self.app_core.push_remote_wheels();
+                    state.wheel_selected.clear();
+                    state.wheel_buffer = None;
+                    state.wheel_meta_buffer = None;
+                    state.wheel_designer_path.clear();
+                    state.wheel_selected_slice = None;
+                    state.wheel_status = Some(format!("Wheel '{}' deleted.", name));
+                }
+                Err(err) => state.wheel_status = Some(format!("Delete failed: {}", err)),
             }
         }
 
@@ -1157,6 +1332,12 @@ impl VellumGuiApp {
             match Config::delete_single_controller_bind(&key, !is_char, scope_char) {
                 Ok(()) => {
                     self.reload_controller_binds();
+                    // Deleting a wheel-opener bind unbinds the wheel — the
+                    // wheel definition and its slices survive, shown as
+                    // "(unset)" and re-assignable from the Wheels tab.
+                    if !key.contains('+') {
+                        self.sync_wheel_meta_for_buttons(&[key.clone()], scope_global);
+                    }
                     self.app_core
                         .add_system_message(&format!("Controller bind '{}' deleted.", key));
                 }
@@ -1225,22 +1406,21 @@ impl VellumGuiApp {
                             // of buttons currently declared as modifiers.
                             if form.binding_type != BindingType::Modifier {
                                 let mod_pool = self.declared_modifier_buttons();
-                                render_modifier_row(ui, "Modifier 1", &mut form.modifier1, &mod_pool, None);
+                                render_modifier_row(ui, "Modifier 1", &mut form.modifier1, &mod_pool, None, true);
                                 // Modifier 1 = none forces Modifier 2 = none.
                                 if form.modifier1 == MODIFIER_NONE {
                                     form.modifier2 = MODIFIER_NONE.to_string();
                                 }
                                 let exclude = (form.modifier1 != MODIFIER_NONE)
                                     .then(|| form.modifier1.clone());
-                                ui.add_enabled_ui(form.modifier1 != MODIFIER_NONE, |ui| {
-                                    render_modifier_row(
-                                        ui,
-                                        "Modifier 2",
-                                        &mut form.modifier2,
-                                        &mod_pool,
-                                        exclude.as_deref(),
-                                    );
-                                });
+                                render_modifier_row(
+                                    ui,
+                                    "Modifier 2",
+                                    &mut form.modifier2,
+                                    &mod_pool,
+                                    exclude.as_deref(),
+                                    form.modifier1 != MODIFIER_NONE,
+                                );
                             }
 
                             ui.label("Type");
@@ -1272,6 +1452,19 @@ impl VellumGuiApp {
                                                     &mut form.action,
                                                     name.to_string(),
                                                     name,
+                                                );
+                                            }
+                                            // Wheels: selecting one makes this
+                                            // button the wheel's opener (the
+                                            // wheel editor's "Opens with"
+                                            // follows — same relationship).
+                                            ui.separator();
+                                            ui.weak("Wheels");
+                                            for name in self.wheel_action_names() {
+                                                ui.selectable_value(
+                                                    &mut form.action,
+                                                    name.clone(),
+                                                    &name,
                                                 );
                                             }
                                         });
@@ -1339,6 +1532,7 @@ fn render_wheels_tab(
     config: &Config,
     save_clicked: &mut bool,
     meta_save: &mut Option<(String, crate::config::WheelMeta)>,
+    delete_request: &mut Option<String>,
 ) {
     ui.horizontal(|ui| {
         // User-defined wheels, minus "portals": the portals wheel is dynamic
@@ -1357,6 +1551,7 @@ fn render_wheels_tab(
             state.wheel_buffer = None;
             state.wheel_meta_buffer = None;
             state.wheel_status = None;
+            state.wheel_delete_armed = false;
             state.wheel_designer_path.clear();
             state.wheel_selected_slice = None;
             state.wheel_drag = WheelDesignerDrag::None;
@@ -1408,8 +1603,51 @@ fn render_wheels_tab(
                 state.wheel_buffer = Some(Vec::new());
                 state.wheel_meta_buffer = Some(crate::config::WheelMeta::default());
                 state.wheel_status = None;
+                state.wheel_delete_armed = false;
                 state.wheel_designer_path.clear();
                 state.wheel_selected_slice = None;
+            }
+        }
+        // Delete a named wheel (the default and dynamic-portals entries are
+        // permanent). Two clicks: the first arms and names the opener bind
+        // that will be cleared, the second executes.
+        if !state.wheel_selected.is_empty() && state.wheel_selected != PORTAL_WHEEL_KEY {
+            let label = if state.wheel_delete_armed {
+                "Confirm delete"
+            } else {
+                "Delete wheel"
+            };
+            if ui
+                .button(label)
+                .on_hover_text(
+                    "Delete this wheel: its slices, its meta, and any button \
+                     bound to open it. Click twice.",
+                )
+                .clicked()
+            {
+                if state.wheel_delete_armed {
+                    *delete_request = Some(state.wheel_selected.clone());
+                    state.wheel_delete_armed = false;
+                } else {
+                    state.wheel_delete_armed = true;
+                    let opener = wheel_button_from_binds(config, &state.wheel_selected)
+                        .or_else(|| {
+                            config
+                                .controller_wheels_meta
+                                .get(&state.wheel_selected)
+                                .and_then(|m| m.button.clone())
+                        });
+                    state.wheel_status = Some(match opener {
+                        Some(button) => format!(
+                            "'{}' opens with '{}' — that bind will be cleared. Click again to delete.",
+                            state.wheel_selected, button
+                        ),
+                        None => format!(
+                            "Delete wheel '{}'? Click again to confirm.",
+                            state.wheel_selected
+                        ),
+                    });
+                }
             }
         }
     });
@@ -1506,6 +1744,14 @@ fn render_wheels_tab(
         if changed {
             *meta_save = Some((name_key.to_string(), meta.clone()));
         }
+    }
+    // Wheel↔button validation, inline where the controls live (never in
+    // the story window): recomputed from config each frame, so edits from
+    // the binding dialog or this tab refresh the warnings in place.
+    // [controller] is the source of truth — when a wheel's meta opener
+    // disagrees with it, [controller] wins.
+    for warning in crate::core::AppCore::wheel_binding_conflicts(config) {
+        ui.colored_label(ui.visuals().warn_fg_color, format!("⚠ {}", warning));
     }
     ui.separator();
 
@@ -2681,6 +2927,45 @@ fn apply_divider_drag(
         start_deg + d / 2.0
     } else {
         start_deg
+    }
+}
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+
+    fn wheel_form(button: &str, action: &str, modifier1: &str) -> ControllerFormState {
+        let mut form = ControllerFormState::empty();
+        form.button = button.to_string();
+        form.binding_type = BindingType::Action;
+        form.action = action.to_string();
+        form.modifier1 = modifier1.to_string();
+        form
+    }
+
+    /// Wheel openers bind bare buttons only: the runtime's held-wheel scan
+    /// never resolves modifier combos, so the form must refuse them.
+    #[test]
+    fn wheel_opener_rejects_modifiers() {
+        let form = wheel_form("r2", "controller_wheel:left2", "l1");
+        let err = form.build_binding().unwrap_err();
+        assert!(err.contains("bare button"), "unexpected error: {err}");
+    }
+
+    /// Both wheel action forms (bare default + named prefix) save from the
+    /// Action dropdown on a bare button.
+    #[test]
+    fn wheel_actions_accepted_on_bare_buttons() {
+        for action in ["controller_wheel", "controller_wheel:portals"] {
+            let (key, bind) = wheel_form("r2", action, MODIFIER_NONE)
+                .build_binding()
+                .expect("wheel action on a bare button must validate");
+            assert_eq!(key, "r2");
+            assert!(
+                matches!(&bind, KeyBindAction::Action(name) if name == action),
+                "expected wheel action bind for {action}"
+            );
+        }
     }
 }
 

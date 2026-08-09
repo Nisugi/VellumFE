@@ -2107,12 +2107,26 @@ impl AppCore {
     ///     its `controller_wheel[:name]` action — `[controller]` wins, so
     ///     the note tells the user which button really opens the wheel;
     ///   - two wheels claim the same `button` — only one can win.
-    /// Called after controller config (re)loads. Silent when clean.
+    /// Called after controller config (re)loads. Silent when clean. These
+    /// are wheel-config validation results, not gameplay output: they go
+    /// to the log, and the `.controller` editor's Wheels tab shows them
+    /// inline (`wheel_binding_conflicts`) next to the controls they
+    /// concern — never into the story window.
     pub fn warn_wheel_binding_conflicts(&mut self) {
+        for w in Self::wheel_binding_conflicts(&self.config) {
+            tracing::warn!("{}", w);
+        }
+    }
+
+    /// The current wheel↔button conflict list, computed fresh from config.
+    /// Pure so the controller editor can render it live each frame (edits
+    /// from either surface — binding dialog or wheel editor — re-validate
+    /// in place).
+    pub fn wheel_binding_conflicts(config: &crate::config::Config) -> Vec<String> {
         use crate::config::KeyBindAction;
         // button -> wheel key ("" = default) from [controller].
         let mut bound: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-        for (button, action) in &self.config.controller_binds {
+        for (button, action) in &config.controller_binds {
             if let KeyBindAction::Action(name) = action {
                 let key = if name == "controller_wheel" {
                     Some(String::new())
@@ -2129,7 +2143,7 @@ impl AppCore {
         // Meta button vs [controller] authority.
         let mut claimed: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
-        for (name, meta) in &self.config.controller_wheels_meta {
+        for (name, meta) in &config.controller_wheels_meta {
             let Some(button) = meta.button.as_deref() else {
                 continue;
             };
@@ -2158,9 +2172,7 @@ impl AppCore {
             }
         }
 
-        for w in warnings {
-            self.add_system_message(&w);
-        }
+        warnings
     }
 
     /// Surface `span` problems across every configured wheel (default +
