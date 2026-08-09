@@ -1620,8 +1620,16 @@ impl VellumGuiApp {
                     _ => base,
                 }
             };
+            // The blanket 120pt floor suits text windows; the free-form
+            // compass is a HUD square the user may want hugging its art
+            // (the renderer keeps the rose usable down to ~40pt).
+            let min_window_width = if matches!(window.widget_type, WidgetType::Compass) {
+                48.0_f32
+            } else {
+                120.0_f32
+            };
             let min_window_size = Vec2::new(
-                120.0_f32.min(window_bounds.width().max(1.0)),
+                min_window_width.min(window_bounds.width().max(1.0)),
                 min_window_height.min(window_bounds.height().max(1.0)),
             );
             let user_title_hidden = self.title_bar_hidden(&tab.id.key);
