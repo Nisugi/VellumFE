@@ -471,6 +471,19 @@ impl VellumGuiApp {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
+            // Body drag moves the OS window, mirroring the docked windows'
+            // drag-anywhere. Registered BEFORE the content so interactive
+            // content (links, compass arrows, scrollbars) still wins
+            // hit-testing; dragging empty space falls through to this and
+            // hands the gesture to the OS.
+            let drag_bg = ui.interact(
+                ui.max_rect(),
+                ui.id().with("detached_body_drag"),
+                egui::Sense::drag(),
+            );
+            if drag_bg.drag_started_by(egui::PointerButton::Primary) {
+                ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+            }
             ui.push_id(&tab.id.key, |ui| {
                 if let Some(click) =
                     Self::render_window_content(app_core, ui, tab, render_settings)

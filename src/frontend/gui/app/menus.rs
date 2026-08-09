@@ -1723,16 +1723,27 @@ impl VellumGuiApp {
                     command = Some(GuiWindowMenuCommand::MoveTo(target));
                 }
             }
-            if view.anchored
-                && ui
-                    .selectable_label(false, "Release Anchors")
-                    .on_hover_text(
-                        "Forget this window's snap anchors. It stays exactly \
-                         where it is and stops following the pane edges. \
-                         (Dragging it away from a snap does the same thing.)",
-                    )
-                    .clicked()
-            {
+            // Always visible so users can SEE whether anchors exist; a
+            // hidden row read as "there's no remove-anchor option" when a
+            // window misbehaved for unrelated reasons.
+            let release = ui.add_enabled(
+                view.anchored,
+                egui::Button::selectable(false, "Release Anchors"),
+            );
+            let release = if view.anchored {
+                release.on_hover_text(
+                    "Forget this window's snap anchors. It stays exactly \
+                     where it is and stops following the pane edges. \
+                     (Dragging it away from a snap does the same thing.)",
+                )
+            } else {
+                release.on_disabled_hover_text(
+                    "No snap anchors on this window. Anchors form when a \
+                     snapped drop shows a guide line; they make the window \
+                     follow the edge it snapped to.",
+                )
+            };
+            if release.clicked() {
                 command = Some(GuiWindowMenuCommand::ReleaseAnchors);
             }
             ui.collapsing("Advanced", |ui| {

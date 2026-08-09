@@ -321,11 +321,19 @@ impl VellumGuiApp {
         [rect.min.x, rect.min.y, rect.width(), rect.height()]
     }
 
+    /// Sanitization floor for stored rect widths — degenerate-data guard
+    /// only, NOT a UX minimum. Per-widget minimums are enforced at render
+    /// (`min_window_size`) and by the anchor solver (`solver_min_width`);
+    /// this floor must stay at or below the smallest of those (the compass'
+    /// 48pt), or every snapshot read silently re-inflates a narrower
+    /// user-set width (the "compass can't shrink after docking" bug).
+    pub(super) const MIN_SNAPSHOT_WIDTH: f32 = 48.0;
+
     pub(super) fn rect_from_snapshot(raw: [f32; 4]) -> Option<Rect> {
         if !raw.iter().all(|value| value.is_finite()) {
             return None;
         }
-        let width = raw[2].max(120.0);
+        let width = raw[2].max(Self::MIN_SNAPSHOT_WIDTH);
         let height = raw[3].max(MIN_DOCKED_WINDOW_HEIGHT);
         Some(Rect::from_min_size(
             Pos2::new(raw[0], raw[1]),
@@ -340,7 +348,7 @@ impl VellumGuiApp {
 
         let bounds_w = bounds.width().max(1.0);
         let bounds_h = bounds.height().max(1.0);
-        let min_w = 120.0_f32.min(bounds_w);
+        let min_w = Self::MIN_SNAPSHOT_WIDTH.min(bounds_w);
         let min_h = MIN_DOCKED_WINDOW_HEIGHT.min(bounds_h);
         let width = rect.width().clamp(min_w, bounds_w);
         let height = rect.height().clamp(min_h, bounds_h);
