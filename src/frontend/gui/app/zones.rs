@@ -1874,7 +1874,16 @@ impl VellumGuiApp {
                 pointer_pos,
                 latched_and_dragging,
             );
-            if !being_moved && !relax_size_pin {
+            // A relaxed pin lets egui re-clamp to its remembered desired_size
+            // — a size the compass squaring below never taught it (the pin
+            // always overrode it), so a mere MOVE drag popped the compass back
+            // to its old pre-square width for the whole gesture: the mesh
+            // filled the wide rect and snapping ran against the phantom right
+            // edge. A move never changes size, so the squared window keeps its
+            // pin unless a real resize-handle drag is in progress.
+            let resize_in_progress =
+                self.zone_resize_active || resize_handle_dragged(ctx, window_layer);
+            if !being_moved && (!relax_size_pin || (compass_derived && !resize_in_progress)) {
                 // Pin every window to its display size when the user isn't
                 // engaging it: egui's Resize state re-clamps its remembered
                 // desired_size each frame, so without this a release-snap's new
@@ -2101,7 +2110,15 @@ impl VellumGuiApp {
                         rect.set_height(rect.height().min(max_window_size.y));
                     }
                     if compass_derived {
-                        let side = rect.height().min(window_bounds.width().max(1.0));
+                        // Square from whichever dimension the gesture changed:
+                        // height-only squaring silently discarded width drags,
+                        // so the compass could never be widened from its side
+                        // handles. With no size change both deltas are zero
+                        // and the height branch preserves the stored square.
+                        let dw = (rect.width() - initial_rect.width()).abs();
+                        let dh = (rect.height() - initial_rect.height()).abs();
+                        let side = if dw > dh { rect.width() } else { rect.height() }
+                            .min(window_bounds.width().max(1.0));
                         rect.set_height(side);
                         rect.set_width(side);
                     }

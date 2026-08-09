@@ -6323,7 +6323,11 @@ impl VellumGuiApp {
         };
 
         if let Some((slot, avail, background)) = background_slot {
-            let mut rect = avail;
+            // Same tightest-of-three confinement as the group mesh: the
+            // pre-layout available rect can exceed the actual window while a
+            // gesture or clamp is in flight, and the mesh must never paint
+            // past the frame it belongs to.
+            let mut rect = avail.intersect(ui.max_rect()).intersect(ui.clip_rect());
             if Self::is_compact_center_widget(&window.widget_type) {
                 // One-row widgets: hug the rendered content so the art can't
                 // run past an auto-shrunk frame.
