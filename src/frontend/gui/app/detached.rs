@@ -55,6 +55,9 @@ struct DetachedFrameOutput {
     close_menu: bool,
     reattach: bool,
     hide: bool,
+    /// Command picked in this window's context menu; applied with `&mut
+    /// self` after the viewport closure returns.
+    menu_command: Option<super::menus::GuiWindowMenuCommand>,
     dispatch_targets: Vec<GlobalDispatchTarget>,
     typed_text: String,
     backspaces: usize,
@@ -273,6 +276,11 @@ impl VellumGuiApp {
                 .detached_context_menu
                 .clone()
                 .filter(|menu| menu.tab_key == key);
+            // Menu view data needs &mut self (thumbnail decode cache), so
+            // resolve it here — the viewport closure only borrows AppCore.
+            let menu_data = menu
+                .as_ref()
+                .map(|_| self.detached_window_menu_data(ctx, &key));
             let hosts_popup_menus = self.popup_menu_host.as_ref() == Some(&key);
             let render_settings = self.widget_render_settings(&tab.id.key);
             let command_completion_end = (key == TabKey::CommandInput
@@ -286,6 +294,9 @@ impl VellumGuiApp {
                         .count()
                 });
             let app_core = &self.app_core;
+            // The viewport callback is FnMut to egui but runs exactly once
+            // per show call; take() lets the owned menu data move through.
+            let mut menu_data = menu_data;
             let out = ctx.show_viewport_immediate(viewport_id, builder, |ui, _class| {
                 let mut out = DetachedFrameOutput::default();
                 Self::render_detached_viewport_contents(
@@ -294,6 +305,7 @@ impl VellumGuiApp {
                     &tab,
                     render_settings.clone(),
                     menu.as_ref(),
+                    menu_data.take(),
                     hosts_popup_menus,
                     suppress_macro_dispatch,
                     command_completion_end,
@@ -348,6 +360,45 @@ impl VellumGuiApp {
             {
                 self.detached_context_menu = None;
             }
+            if let Some(command) = out.menu_command {
+                let keep_open = Self::window_menu_command_keeps_open(&command);
+                let menu_pos = self
+                    .detached_context_menu
+                    .as_ref()
+                    .filter(|menu| menu.tab_key == key)
+                    .map(|menu| menu.pos)
+                    .unwrap_or_default();
+                // Rect only seeds Move mode, which the detached menu never
+                // offers; the viewport's size is a faithful stand-in.
+                let window_rect = self
+                    .detached_tabs
+                    .get(&key)
+                    .map(|state| {
+                        Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(
+                                state.current.outer_size_px[0],
+                                state.current.outer_size_px[1],
+                            ),
+                        )
+                    })
+                    .unwrap_or(Rect::ZERO);
+                let request = super::menus::GuiWindowMenuRequest {
+                    tab_key: key.clone(),
+                    zone: self.zone_for_tab(&key),
+                    position: menu_pos,
+                    window_rect,
+                };
+                self.apply_window_menu_command(ctx, &request, command);
+                if !keep_open
+                    && self
+                        .detached_context_menu
+                        .as_ref()
+                        .is_some_and(|menu| menu.tab_key == key)
+                {
+                    self.detached_context_menu = None;
+                }
+            }
             if out.hide {
                 // Hide = the Windows-window uncheck (core visibility); the
                 // next available-tabs refresh prunes this viewport.
@@ -388,12 +439,14 @@ impl VellumGuiApp {
 
     /// Body of one detached viewport pass. Runs inside the child viewport,
     /// so all `ctx.input` reads see the child window's input.
+    #[allow(clippy::too_many_arguments)]
     fn render_detached_viewport_contents(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         tab: &GuiTab,
         render_settings: WidgetRenderSettings,
         menu: Option<&DetachedMenuState>,
+        menu_data: Option<super::menus::DetachedWindowMenuData>,
         hosts_popup_menus: bool,
         suppress_macro_dispatch: bool,
         command_completion_end: Option<usize>,
@@ -403,13 +456,19 @@ impl VellumGuiApp {
 
         // Keybinds first, mirroring handle_global_input's ordering: consumed
         // keys must not reach widgets or the command-line forwarding below.
-        Self::forward_detached_input(
-            &ctx,
-            app_core,
-            suppress_macro_dispatch,
-            command_completion_end,
-            out,
-        );
+        // While this window's context menu is open, skip the pipeline
+        // entirely: the menu hosts text fields (title, streams, feed ids)
+        // and forwarding that typing to the root command line would send it
+        // to the game.
+        if menu.is_none() {
+            Self::forward_detached_input(
+                &ctx,
+                app_core,
+                suppress_macro_dispatch,
+                command_completion_end,
+                out,
+            );
+        }
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.push_id(&tab.id.key, |ui| {
@@ -432,25 +491,21 @@ impl VellumGuiApp {
             out.open_menu_at = Some(pos);
         }
 
-        if let Some(menu) = menu {
+        if let (Some(menu), Some(menu_data)) = (menu, menu_data) {
             let area_response = egui::Area::new(egui::Id::new("gui_detached_context_menu"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(menu.pos)
                 .interactable(true)
                 .show(&ctx, |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.set_min_width(160.0);
-                        if ui.button("Reattach").clicked() {
-                            out.reattach = true;
-                        }
-                        if ui.button("Hide").clicked() {
-                            out.hide = true;
-                        }
+                        ui.set_min_width(220.0);
+                        out.menu_command = Self::render_detached_window_menu(ui, menu_data);
                     });
                 });
-            if out.reattach || out.hide {
-                out.close_menu = true;
-            } else if out.open_menu_at.is_none() {
+            // A command consumed this frame's click; skip the click-outside
+            // check so picking from a combo popup (which renders outside the
+            // menu rect) doesn't also close the menu.
+            if out.menu_command.is_none() && out.open_menu_at.is_none() {
                 let menu_rect = area_response.response.rect;
                 let should_close = ctx.input(|input| {
                     Self::should_close_popup_menus_on_outside_click(

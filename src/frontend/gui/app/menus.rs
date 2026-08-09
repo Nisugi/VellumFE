@@ -176,12 +176,27 @@ pub(super) enum GuiWindowMenuCommand {
     EditIndicators,
     /// Jump to Settings ▸ Targets (global target_list.* settings).
     OpenTargetsSettings,
+    /// Return a detached window to its zone (detached menu only).
+    Reattach,
+}
+
+/// Owned bundle for the DETACHED window menu: resolved with `&mut self`
+/// before the child viewport closure runs, consumed by
+/// `render_detached_window_menu` inside it.
+pub(super) struct DetachedWindowMenuData {
+    locked: bool,
+    config: Option<super::window_config::WindowConfigView>,
+    appearance: WindowAppearanceView,
 }
 
 /// Everything the window context menu needs to render, resolved up front so
 /// the menu body stays a static fn.
 struct WindowMenuView<'a> {
     zone: GuiShellZone,
+    /// Rendering inside a detached viewport: the flat actions swap Detach
+    /// for Reattach, and the zone-placement sections (Arrange, Group,
+    /// Send to Back) are omitted — they're meaningless in an OS window.
+    detached: bool,
     /// Position/size lock state, rendered as a checked row.
     locked: bool,
     /// Window has at least one snap anchor; shows the release row.
@@ -422,7 +437,38 @@ impl VellumGuiApp {
         }
     }
 
-    fn apply_window_menu_command(
+    /// Whether the window context menu stays open after `command` applies.
+    /// Live-adjustable settings keep it open so their controls stay usable
+    /// across repeated changes; one-shot actions (open/close/move/delete/
+    /// editor launches) dismiss it. Shared by the attached and detached
+    /// menus.
+    pub(super) fn window_menu_command_keeps_open(command: &GuiWindowMenuCommand) -> bool {
+        !matches!(
+            command,
+            GuiWindowMenuCommand::Hide
+                | GuiWindowMenuCommand::Detach
+                | GuiWindowMenuCommand::Reattach
+                | GuiWindowMenuCommand::SendToBack
+                | GuiWindowMenuCommand::StartMove
+                | GuiWindowMenuCommand::MoveTo(_)
+                | GuiWindowMenuCommand::GroupWith(_)
+                | GuiWindowMenuCommand::DissolveGroup
+                | GuiWindowMenuCommand::OpenMapExplorer
+                | GuiWindowMenuCommand::CalibrateDoll
+                | GuiWindowMenuCommand::EditHandIcons
+                | GuiWindowMenuCommand::EditDashboard
+                | GuiWindowMenuCommand::EditTabs
+                | GuiWindowMenuCommand::EditHotbar
+                | GuiWindowMenuCommand::EditIndicators
+                | GuiWindowMenuCommand::OpenTargetsSettings
+                | GuiWindowMenuCommand::DeleteWindow
+                // Renaming can change the tab key the open menu points at;
+                // close rather than dangle.
+                | GuiWindowMenuCommand::Rename(_)
+        )
+    }
+
+    pub(super) fn apply_window_menu_command(
         &mut self,
         ctx: &egui::Context,
         request: &GuiWindowMenuRequest,
@@ -448,6 +494,7 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::Detach => self.detach_tab(request.tab_key.clone()),
+            GuiWindowMenuCommand::Reattach => self.reattach_tab(request.tab_key.clone()),
             GuiWindowMenuCommand::SendToBack => {
                 self.send_window_to_back(ctx, &request.tab_key);
             }
@@ -1055,6 +1102,7 @@ impl VellumGuiApp {
             .unwrap_or_default();
         let view = WindowMenuView {
             zone: request.zone,
+            detached: false,
             locked: self.window_locked(&request.tab_key),
             anchored: self
                 .window_anchors
@@ -1087,31 +1135,7 @@ impl VellumGuiApp {
             });
 
         if let Some(command) = selected_command {
-            // Live-adjustable settings keep the menu open so their controls
-            // stay usable across repeated changes; only one-shot actions
-            // (open/close/move/delete/editor launches) dismiss it.
-            let keep_open = !matches!(
-                command,
-                GuiWindowMenuCommand::Hide
-                    | GuiWindowMenuCommand::Detach
-                    | GuiWindowMenuCommand::SendToBack
-                    | GuiWindowMenuCommand::StartMove
-                    | GuiWindowMenuCommand::MoveTo(_)
-                    | GuiWindowMenuCommand::GroupWith(_)
-                    | GuiWindowMenuCommand::DissolveGroup
-                    | GuiWindowMenuCommand::OpenMapExplorer
-                    | GuiWindowMenuCommand::CalibrateDoll
-                    | GuiWindowMenuCommand::EditHandIcons
-                    | GuiWindowMenuCommand::EditDashboard
-                    | GuiWindowMenuCommand::EditTabs
-                    | GuiWindowMenuCommand::EditHotbar
-                    | GuiWindowMenuCommand::EditIndicators
-                    | GuiWindowMenuCommand::OpenTargetsSettings
-                    | GuiWindowMenuCommand::DeleteWindow
-                    // Renaming can change the tab key the open menu points
-                    // at; close rather than dangle.
-                    | GuiWindowMenuCommand::Rename(_)
-            );
+            let keep_open = Self::window_menu_command_keeps_open(&command);
             self.apply_window_menu_command(ctx, &request, command);
             if !keep_open {
                 self.window_context_menu = None;
@@ -1573,6 +1597,49 @@ impl VellumGuiApp {
         self.apply_popup_menu_layer_result(clicked_command, should_close);
     }
 
+    /// Resolve everything the DETACHED window menu needs, before the child
+    /// viewport closure runs (view building needs `&mut self`, which the
+    /// closure can't have — it only borrows `AppCore`).
+    pub(super) fn detached_window_menu_data(
+        &mut self,
+        ctx: &egui::Context,
+        tab_key: &TabKey,
+    ) -> DetachedWindowMenuData {
+        DetachedWindowMenuData {
+            locked: self.window_locked(tab_key),
+            config: self.window_config_view_for_tab(tab_key),
+            appearance: self.appearance_view_for_tab(ctx, tab_key),
+        }
+    }
+
+    /// Render the full sectioned window menu inside a detached viewport.
+    /// Same body as the attached menu with the zone-placement parts
+    /// (Arrange, Group, Send to Back) swapped out and Detach replaced by
+    /// Reattach.
+    pub(super) fn render_detached_window_menu(
+        ui: &mut egui::Ui,
+        data: DetachedWindowMenuData,
+    ) -> Option<GuiWindowMenuCommand> {
+        let view = WindowMenuView {
+            // Zone is only read by zone-gated rows, all skipped when
+            // detached; Center is an inert placeholder.
+            zone: GuiShellZone::Center,
+            detached: true,
+            locked: data.locked,
+            anchored: false,
+            fixed_size: false,
+            config: data.config,
+            appearance: data.appearance,
+            group_horizontal: None,
+            group_members: &[],
+            group_merged: &[],
+            group_end_anchored: &[],
+            group_weights: &[],
+            group_candidates: &[],
+        };
+        Self::render_window_context_menu(ui, &view)
+    }
+
     fn render_window_context_menu(
         ui: &mut egui::Ui,
         view: &WindowMenuView<'_>,
@@ -1583,18 +1650,28 @@ impl VellumGuiApp {
         if ui.selectable_label(false, "Hide").clicked() {
             return Some(GuiWindowMenuCommand::Hide);
         }
-        if ui.selectable_label(false, "Detach").clicked() {
+        if view.detached {
+            if ui
+                .selectable_label(false, "Reattach")
+                .on_hover_text("Return this window to its zone in the main window")
+                .clicked()
+            {
+                return Some(GuiWindowMenuCommand::Reattach);
+            }
+        } else if ui.selectable_label(false, "Detach").clicked() {
             return Some(GuiWindowMenuCommand::Detach);
         }
         // Stacking matters wherever windows float freely and can overlap —
-        // every zone except the packed sidebars.
-        if matches!(
-            view.zone,
-            GuiShellZone::Center | GuiShellZone::Header | GuiShellZone::Footer
-        ) && ui
-            .selectable_label(false, "Send to Back")
-            .on_hover_text("Drop this window behind any it overlaps")
-            .clicked()
+        // every zone except the packed sidebars (and never in an OS window).
+        if !view.detached
+            && matches!(
+                view.zone,
+                GuiShellZone::Center | GuiShellZone::Header | GuiShellZone::Footer
+            )
+            && ui
+                .selectable_label(false, "Send to Back")
+                .on_hover_text("Drop this window behind any it overlaps")
+                .clicked()
         {
             return Some(GuiWindowMenuCommand::SendToBack);
         }
@@ -1629,6 +1706,7 @@ impl VellumGuiApp {
                 });
             }
         }
+        if !view.detached {
         ui.collapsing("Arrange", |ui| {
             if ui.selectable_label(false, "Move Window").clicked() {
                 command = Some(GuiWindowMenuCommand::StartMove);
@@ -1673,12 +1751,15 @@ impl VellumGuiApp {
                 }
             });
         });
+        }
         ui.collapsing("Appearance", |ui| {
             if let Some(appearance) = Self::render_appearance_controls(ui, &view.appearance) {
                 command = Some(appearance);
             }
         });
-        if view.group_horizontal.is_some() || !view.group_candidates.is_empty() {
+        if !view.detached
+            && (view.group_horizontal.is_some() || !view.group_candidates.is_empty())
+        {
             ui.collapsing("Group", |ui| {
                 if let Some(horizontal) = view.group_horizontal {
                     ui.horizontal(|ui| {
