@@ -152,73 +152,63 @@ fn press_became_drag(
 /// Radius (points) of the resize-grab ring extending outside a window's frame.
 const RESIZE_GRAB: f32 = 6.0;
 
-/// Whether a press landed in the window's resize ring — the band within
-/// `RESIZE_GRAB` of the frame boundary (both just outside and just inside),
-/// which is where egui puts its edge/corner resize handles. A press here means
-/// the user grabbed to RESIZE, not to move; the interior is the move zone.
+/// Whether egui is dragging one of this window's edge/corner resize handles
+/// right now. The handles are real widgets — egui's window.rs registers them
+/// as `Id::new(layer_id).with("edge_drag").with(<side>)` — so
+/// `Context::dragged_id` names the grabbed one exactly. This replaced a
+/// press-proximity ring test (press within 6px of the frame counts as a
+/// resize), which also fired on a stationary CONTENT click near an edge and
+/// relaxed the size pin on a press that never touched a handle.
 ///
-/// This is a PRE-show signal (it needs only the press point and the fed rect),
-/// so it can relax the size pin on the very first resize frame — before egui
-/// has rendered any size change to observe. Without it the pin holds the size
-/// fixed, egui reports the pinned size every frame, no size change is ever
-/// seen, and a shrink deadlocks (grow-only). Combined with the post-show
-/// `zone_resize_active` latch so the relaxation persists for the whole drag.
-fn press_in_resize_ring(press_origin: Option<egui::Pos2>, rect: egui::Rect) -> bool {
-    let Some(pos) = press_origin else {
+/// The pin can't rely on observed size divergence for this: while pinned,
+/// egui reports the pinned size every frame, no change is ever seen, and a
+/// shrink deadlocks (grow-only). The handle widgets exist regardless of the
+/// pin, so this signal fires even while the size is held fixed.
+fn resize_handle_dragged(ctx: &egui::Context, layer_id: egui::LayerId) -> bool {
+    let Some(dragged) = ctx.dragged_id() else {
         return false;
     };
-    let outer = rect.expand(RESIZE_GRAB);
-    if !outer.contains(pos) {
-        return false;
-    }
-    // Inside the outer ring but NOT in the deep interior => on an edge/corner.
-    let interior = rect.shrink(RESIZE_GRAB);
-    !interior.contains(pos)
+    let base = egui::Id::new(layer_id).with("edge_drag");
+    [
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "left_bottom",
+        "right_bottom",
+        "left_top",
+        "right_top",
+    ]
+    .into_iter()
+    .any(|side| dragged == base.with(side))
 }
 
 /// Geometry of a skinned title bar within a window's rect: the full bar band
-/// (a `height`-tall strip across the top, inset by the frame's side
-/// thickness), the close-button square at the right end, and the caption
-/// area between the left edge and the close button. Pure so it's unit-tested
+/// (a `height`-tall strip across the top) and the caption area within it.
+/// There is no skinned close button — windows hide via the Windows menu /
+/// right-click, like the layout widgets. Pure so it's unit-tested
 /// independently of the render/paint path.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct TitleBarLayout {
     pub bar: egui::Rect,
-    pub close: egui::Rect,
     pub caption: egui::Rect,
 }
 
-pub(super) fn titlebar_layout(
-    window_rect: egui::Rect,
-    height: f32,
-    _frame_left: f32,
-    _frame_right: f32,
-    _frame_top: f32,
-    close_size: f32,
-) -> TitleBarLayout {
+pub(super) fn titlebar_layout(window_rect: egui::Rect, height: f32) -> TitleBarLayout {
     // The band spans the FULL window width, flush to the top and both side
     // edges, so it reads as part of the window chrome (no gap where the
     // window background would show through). The frame's nine-slice paints
-    // over the corners afterward, edging it. (frame_* args kept for callers /
-    // future per-edge tuning but no longer inset the band.)
+    // over the corners afterward, edging it.
     let bar = egui::Rect::from_min_max(
         window_rect.min,
         egui::pos2(window_rect.right(), window_rect.top() + height.max(1.0)),
     );
-    // Close button: a square at the right end, vertically centered, with a
-    // small inset. Clamped so it never exceeds the bar.
     let pad = 2.0;
-    let sz = close_size.min(bar.height() - pad * 2.0).max(0.0);
-    let close = egui::Rect::from_min_size(
-        egui::pos2(bar.right() - sz - pad, bar.center().y - sz / 2.0),
-        egui::vec2(sz, sz),
-    );
-    // Caption fills the space left of the close button.
     let caption = egui::Rect::from_min_max(
         egui::pos2(bar.left() + pad, bar.top()),
-        egui::pos2((close.left() - pad).max(bar.left()), bar.bottom()),
+        egui::pos2(bar.right() - pad, bar.bottom()),
     );
-    TitleBarLayout { bar, close, caption }
+    TitleBarLayout { bar, caption }
 }
 
 /// Whether a press at `press_origin` engages `initial_rect`: inside the
@@ -522,7 +512,6 @@ impl VellumGuiApp {
         ctx: &egui::Context,
         tab_key: &TabKey,
         window: &WindowState,
-        title_bar_hidden: bool,
     ) -> Option<f32> {
         use crate::frontend::gui::persistence::VitalsOrientation;
         let row = match window.widget_type {
@@ -585,8 +574,21 @@ impl VellumGuiApp {
             &mut frame,
         );
         let margins = f32::from(frame.inner_margin.top) + f32::from(frame.inner_margin.bottom);
-        let title_bar = if title_bar_hidden {
+        // Chrome above the content row. Computed HERE, from the same sources
+        // the render pass uses, so the cap and the rendered chrome can't
+        // disagree (a cap that budgets the wrong bar squeezes the row under
+        // it, or reserves a phantom slab). Three cases, mirroring render:
+        //   user hid the bar        -> nothing
+        //   skin title bar active   -> the sprite band, reserved as top inset
+        //                              via max(margin.top, band) at render
+        //   plain egui title bar    -> the title font height
+        let title_bar = if self.title_bar_hidden(tab_key) {
             0.0
+        } else if let Some(bar) = self.skin_titlebar_for_tab(tab_key) {
+            let band = self.skin_titlebar_height(tab_key, &bar).ceil();
+            // Render applies the band as max(inner_margin.top, band), so the
+            // extra height beyond the margin already counted above.
+            (band - f32::from(frame.inner_margin.top)).max(0.0)
         } else {
             // None/0 = "derive from the title font"; 22 is a generous stand-in.
             self.title_bar_height_for_tab(tab_key)
@@ -1220,14 +1222,8 @@ impl VellumGuiApp {
                     .unwrap_or(false);
                 let min_height = if compact { 40.0 } else { 120.0 };
                 let default_height = if compact { 72.0 } else { 240.0 };
-                let height_cap = window.and_then(|window| {
-                    self.compact_height_cap(
-                        ctx,
-                        &tab.id.key,
-                        window,
-                        self.title_bar_hidden(&tab.id.key),
-                    )
-                });
+                let height_cap = window
+                    .and_then(|window| self.compact_height_cap(ctx, &tab.id.key, window));
                 let desired_height = self
                     .main_window_rects
                     .get(&tab.id.key)
@@ -1592,12 +1588,9 @@ impl VellumGuiApp {
                             .group_for_tab(&tab.id.key)
                             .is_some_and(|group| group.members.len() > 1);
                         if !grouped {
-                            if let Some(cap) = self.compact_height_cap(
-                                ctx,
-                                &tab.id.key,
-                                window,
-                                self.title_bar_hidden(&tab.id.key),
-                            ) {
+                            if let Some(cap) =
+                                self.compact_height_cap(ctx, &tab.id.key, window)
+                            {
                                 let capped =
                                     rect.height().min(cap.max(MIN_DOCKED_WINDOW_HEIGHT));
                                 rect.set_height(capped);
@@ -1650,7 +1643,9 @@ impl VellumGuiApp {
                 let cap = if grouped {
                     None
                 } else {
-                    self.compact_height_cap(ctx, &tab.id.key, window, title_bar_hidden)
+                    // The cap derives its own chrome height (user-hidden /
+                    // skin band / egui bar) — same sources as the render pass.
+                    self.compact_height_cap(ctx, &tab.id.key, window)
                 };
                 match cap {
                     Some(cap) => cap.clamp(min_window_size.y, zone_max),
@@ -1716,7 +1711,11 @@ impl VellumGuiApp {
             let compass_derived =
                 matches!(window.widget_type, WidgetType::Compass) && !grouped;
             if compass_derived {
-                initial_rect.set_width(initial_rect.height());
+                // Side length bounded by the zone's width, or a tall compass
+                // in a narrow sidebar would square itself wider than the zone.
+                let side = initial_rect.height().min(window_bounds.width().max(1.0));
+                initial_rect.set_height(side);
+                initial_rect.set_width(side);
             }
 
             let mut clicked_link = None;
@@ -1850,14 +1849,25 @@ impl VellumGuiApp {
             // divergence pops the snap grid on a plain click.
             // A resize-edge drag can't be seen through pointer travel: egui
             // captures the pointer while resizing, so `pointer_pos` freezes at
-            // the grab point and `zone_press_drag_seen` never trips. Post-show
-            // (below) we set `zone_resize_active` once the rendered size
-            // actually diverges under a live press; relax the pin for EITHER
-            // signal so a resize can pull the window SMALLER, not only bigger.
+            // the grab point and `zone_press_drag_seen` never trips. Instead,
+            // ask egui directly whether one of THIS window's resize handles is
+            // the dragged widget (exact — a content press near an edge never
+            // matches). Post-show (below) `zone_resize_active` latches once
+            // the rendered size actually diverges under a live press; relax
+            // the pin for EITHER signal so a resize can pull the window
+            // SMALLER, not only bigger.
+            let window_layer = egui::LayerId::new(
+                if overlay_zone {
+                    egui::Order::Foreground
+                } else {
+                    egui::Order::Middle
+                },
+                window_id,
+            );
             let latched_and_dragging = already_latched
                 && (self.zone_press_drag_seen
                     || self.zone_resize_active
-                    || press_in_resize_ring(press_origin, initial_rect));
+                    || resize_handle_dragged(ctx, window_layer));
             let relax_size_pin = should_relax_size_pin(
                 user_engaging_window,
                 press_origin,
@@ -1982,16 +1992,15 @@ impl VellumGuiApp {
                         ctx.request_repaint();
                     }
                 }
-                // Ground-truth fallback: if the primary press is down ON this
-                // window, latch it no matter what `layer_id_at` said — a
-                // Foreground gutter/drawer-handle/backdrop can be topmost
-                // at the press point while egui still routes the body-drag
-                // here. Without the latch the position feed keeps pinning
-                // the content every frame while egui's drag state (and the
-                // skin frame painted from response.rect) walks off with
-                // the pointer — the reported "frame drags away, window
-                // stays, snaps back on release".
-                //
+                // Ground-truth fallback: if egui reports this window's body
+                // as the DRAGGED widget, latch it no matter what
+                // `layer_id_at` said — a Foreground gutter/drawer-handle/
+                // backdrop can be topmost at the press point while egui
+                // still routes the body-drag here. Without the latch the
+                // position feed keeps pinning the content every frame while
+                // egui's drag state (and the skin frame painted from
+                // response.rect) walks off with the pointer — the reported
+                // "frame drags away, window stays, snaps back on release".
                 if pointer_down
                     && !window_locked
                     && self.zone_engaged_tab.is_none()
@@ -2037,9 +2046,19 @@ impl VellumGuiApp {
                 // Position-only divergence (a move) is excluded: moves relax via
                 // `zone_press_drag_seen` and must not set this flag, or a mere
                 // displaced rect on click-anywhere would defeat the pin.
+                // Gated on the resize HANDLE being the dragged widget: size
+                // can also diverge from non-user causes (shell-zone
+                // displacement, viewport clamping, `.loadlayout` replacing
+                // the canonical map mid-press), and latching on those while
+                // the user merely held a click would relax the pin and bake
+                // the displaced size in.
                 let size_changed =
                     (inner.response.rect.size() - initial_rect.size()).length_sq() > 0.25;
-                if size_changed && already_latched && pointer_down {
+                if size_changed
+                    && already_latched
+                    && pointer_down
+                    && resize_handle_dragged(ctx, window_layer)
+                {
                     self.zone_resize_active = true;
                 }
                 // Only geometry the user changed by grabbing THIS window may
@@ -2072,18 +2091,19 @@ impl VellumGuiApp {
                 // height. Nothing downstream can resurrect a stale height
                 // (e.g. a layout saved under a larger icon-size setting).
                 let compact_derived = is_compact_widget && !grouped;
-                // The compass window hugs its rose aspect (see the fed-rect
-                // constraint above): normalize the STORED rect too — reusing the
-                // pre-computed compass_derived/compass_aspect — or a wide
-                // rendered/snapped rect on release would be tracked as canonical
-                // and "spit back out" wide next frame despite the fed-rect
-                // squaring.
+                // The compass window is squared (see the fed-rect constraint
+                // above): normalize the STORED rect the same way — reusing the
+                // pre-computed `compass_derived` — or a wide rendered/snapped
+                // rect on release would be tracked as canonical and "spit back
+                // out" wide next frame despite the fed-rect squaring.
                 let normalize_height = |mut rect: Rect| -> Rect {
                     if compact_derived {
                         rect.set_height(rect.height().min(max_window_size.y));
                     }
                     if compass_derived {
-                        rect.set_width(rect.height());
+                        let side = rect.height().min(window_bounds.width().max(1.0));
+                        rect.set_height(side);
+                        rect.set_width(side);
                     }
                     rect
                 };
@@ -2533,24 +2553,6 @@ mod tests {
     }
 
     #[test]
-    fn resize_ring_press_covers_edges_not_interior() {
-        // 200x150 window at (100,100). RESIZE_GRAB is 6px.
-        let r = rect(100.0, 100.0, 200.0, 150.0);
-        // Deep interior press -> move zone, NOT a resize.
-        assert!(!super::press_in_resize_ring(Some(egui::pos2(200.0, 175.0)), r));
-        // On the left edge (just inside) -> resize.
-        assert!(super::press_in_resize_ring(Some(egui::pos2(102.0, 175.0)), r));
-        // Just OUTSIDE the right edge, still in the grab ring -> resize.
-        assert!(super::press_in_resize_ring(Some(egui::pos2(303.0, 175.0)), r));
-        // A corner -> resize.
-        assert!(super::press_in_resize_ring(Some(egui::pos2(101.0, 101.0)), r));
-        // Far outside the ring -> not a resize.
-        assert!(!super::press_in_resize_ring(Some(egui::pos2(400.0, 175.0)), r));
-        // No press point -> not a resize.
-        assert!(!super::press_in_resize_ring(None, r));
-    }
-
-    #[test]
     fn latch_claim_requires_fresh_uncontested_topmost_press() {
         let r = rect(100.0, 100.0, 200.0, 150.0);
         let inside = Some(egui::pos2(150.0, 150.0));
@@ -2586,27 +2588,24 @@ mod tests {
     }
 
     #[test]
-    fn titlebar_layout_places_bar_close_and_caption() {
+    fn titlebar_layout_places_bar_and_caption() {
         let win = rect(100.0, 100.0, 300.0, 200.0);
-        let l = super::titlebar_layout(win, 20.0, 4.0, 4.0, 4.0, 14.0);
+        let l = super::titlebar_layout(win, 20.0);
         // Bar spans the FULL window width, flush to top + side edges.
         assert_eq!(l.bar.left(), 100.0);
         assert_eq!(l.bar.right(), 400.0);
         assert_eq!(l.bar.top(), 100.0);
         assert_eq!(l.bar.height(), 20.0);
-        // Close is a square at the right end, within the bar.
-        assert!(l.bar.contains_rect(l.close));
-        assert!((l.close.right() - (l.bar.right() - 2.0)).abs() < 0.01);
-        assert!(l.close.width() > 0.0 && (l.close.width() - l.close.height()).abs() < 0.01);
-        // Caption fills the space to the left of the close button.
-        assert!(l.caption.right() <= l.close.left());
+        // Caption sits inside the bar with a small pad each side.
+        assert!(l.bar.contains_rect(l.caption));
         assert!(l.caption.left() >= l.bar.left());
+        assert!(l.caption.right() <= l.bar.right());
     }
 
     #[test]
     fn titlebar_layout_frameless_is_flush() {
         let win = rect(0.0, 0.0, 200.0, 120.0);
-        let l = super::titlebar_layout(win, 18.0, 0.0, 0.0, 0.0, 12.0);
+        let l = super::titlebar_layout(win, 18.0);
         assert_eq!(l.bar.left(), 0.0);
         assert_eq!(l.bar.top(), 0.0);
         assert_eq!(l.bar.right(), 200.0);

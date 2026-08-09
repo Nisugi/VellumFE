@@ -57,6 +57,11 @@ const MAX_RENDERED_LINES: usize = 10_000;
 const MIN_VIEWPORT_WIDTH: f32 = 180.0;
 const MIN_VIEWPORT_HEIGHT: f32 = 120.0;
 const MIN_DOCKED_WINDOW_HEIGHT: f32 = 24.0;
+/// Title-bar band height bounds, shared by the egui bar override and the
+/// skinned sprite band — two different clamps here once let the caption sit
+/// on art it shouldn't.
+const TITLE_BAR_MIN_HEIGHT: f32 = 12.0;
+const TITLE_BAR_MAX_HEIGHT: f32 = 48.0;
 /// Idle delay before a dirty layout is flushed to disk. Saves are blocking
 /// on the UI thread, so writes must not happen per interaction.
 const LAYOUT_SAVE_DEBOUNCE: Duration = Duration::from_secs(2);
@@ -2684,21 +2689,22 @@ impl VellumGuiApp {
         key: &TabKey,
         titlebar: &skin::ResolvedBorder,
     ) -> f32 {
-        let art_height = (titlebar.tex_size.y * titlebar.scale).max(12.0);
+        let art_height = (titlebar.tex_size.y * titlebar.scale).max(TITLE_BAR_MIN_HEIGHT);
         self.tab_settings
             .get(key)
             .and_then(|s| s.title_bar_height)
             .filter(|h| *h > 0.0)
             .unwrap_or(art_height)
-            .clamp(14.0, 48.0)
+            .clamp(TITLE_BAR_MIN_HEIGHT, TITLE_BAR_MAX_HEIGHT)
     }
 
     /// Paint a skin's title bar over the top of a rendered window: the
-    /// nine-slice band, the caption, and a close button (from the skin's
-    /// `titlebar_close` icon). Runs on the window's own layer so it moves and
-    /// stacks with the window; the close button hides the window.
+    /// nine-slice band and the caption. There is no skinned close button —
+    /// windows hide via the Windows menu / right-click, like the layout
+    /// widgets. Runs on the window's own layer so it moves and stacks with
+    /// the window.
     fn paint_skin_titlebar(
-        &mut self,
+        &self,
         ctx: &egui::Context,
         key: &TabKey,
         window_name: &str,
@@ -2706,21 +2712,7 @@ impl VellumGuiApp {
         response: &egui::Response,
     ) {
         let height = self.skin_titlebar_height(key, titlebar);
-        // Frame side thicknesses so the bar sits inside the frame art.
-        let (fl, fr, ft) = self
-            .skin_border_for_tab(key)
-            .map(|b| {
-                (
-                    b.slice[3] * b.scale,
-                    b.slice[1] * b.scale,
-                    b.slice[0] * b.scale,
-                )
-            })
-            .unwrap_or((0.0, 0.0, 0.0));
-        // No skinned close button: the title bar shows caption + cutout only,
-        // and windows hide via the Windows menu / right-click (like the layout
-        // widgets). Passing close_size 0 lets the caption reclaim the full bar.
-        let layout = zones::titlebar_layout(response.rect, height, fl, fr, ft, 0.0);
+        let layout = zones::titlebar_layout(response.rect, height);
         let painter = ctx.layer_painter(response.layer_id);
 
         // Fill the band region with the window's own mesh BEFORE the sprite, so
@@ -2758,11 +2750,9 @@ impl VellumGuiApp {
             .unwrap_or_else(|| visuals.text_color());
         if !caption.is_empty() {
             // Sit the caption in the SOLID top band of the title-bar art, not
-            // the full-bar center — these sprites carry a mesh-notch in their
-            // lower half (StormFront's silver bar, stealth's cutout), so a
-            // vertically-centered caption lands over the notch where dark text
-            // blends into the mesh. Anchor near the top and use a smaller font
-            // so it fits the thin solid strip.
+            // the full-bar center — these sprites carry a mesh-notch / stretch
+            // region in their lower half, so a vertically-centered caption lands
+            // over it. Anchor near the top; a smaller font fits the solid strip.
             let font_size = (height * 0.42).clamp(8.0, 13.0);
             let baseline_y = layout.caption.top() + font_size * 0.5 + 2.0;
             painter.text(
@@ -2883,7 +2873,7 @@ impl VellumGuiApp {
         } else {
             frame_top
         };
-        (height > 0.0).then(|| height.clamp(12.0, 48.0))
+        (height > 0.0).then(|| height.clamp(TITLE_BAR_MIN_HEIGHT, TITLE_BAR_MAX_HEIGHT))
     }
 
     /// Effective title text alignment for a game window.
