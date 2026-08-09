@@ -2754,7 +2754,25 @@ impl VellumGuiApp {
 
         // Band sprite over the mesh: its transparent notch lets the mesh show
         // through, and its opaque edge carries the grey line under the bar.
-        skin::paint_nine_slice(&painter, layout.bar, titlebar, [true; 4]);
+        //
+        // A custom title-bar height rescales the band art UNIFORMLY (the
+        // same idea as the Frame size slider): the sprite's scale is derived
+        // so its authored height lands exactly on the band height, which
+        // keeps the notch and end caps in proportion at any height. Without
+        // this the nine-slice stretched (or squashed) only the sprite's
+        // vertical middle, distorting the notch — and cropping the sprite
+        // instead (the earlier attempt) cut art off. With no custom height
+        // the derived scale equals the authored scale, so default bars are
+        // untouched.
+        let band = skin::ResolvedBorder {
+            scale: if titlebar.tex_size.y > 0.0 {
+                height / titlebar.tex_size.y
+            } else {
+                titlebar.scale
+            },
+            ..titlebar.clone()
+        };
+        skin::paint_nine_slice(&painter, layout.bar, &band, [true; 4]);
 
         // Caption, left-aligned within its area, vertically centered.
         let caption = match self.available_tabs.get(key).cloned() {
