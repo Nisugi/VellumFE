@@ -39,5 +39,6 @@ menu).
 ## Notes
 
 - No scrollback: the content is replaced on each update, like inventory.
-- The streams field is editable in the window editor, but the default
+- The streams field is editable (GUI: right-click menu; TUI: window
+  editor), but the default
   (`reserve`) is what the game sends.

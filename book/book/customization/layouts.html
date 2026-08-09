@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-713601b6.js";
+            window.path_to_searchindex_js = "../searchindex-d490dc0a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-eabfdacc.js"></script>
@@ -181,16 +181,17 @@
                     <main>
                         <h1 id="creating-layouts"><a class="header" href="#creating-layouts">Creating Layouts</a></h1>
 <p>Design custom window arrangements for different playstyles.</p>
-<h2 id="using-the-window-editor"><a class="header" href="#using-the-window-editor">Using the Window Editor</a></h2>
-<ol>
-<li><code>.menu</code> → Windows → Edit Window → [window name]</li>
-<li>Modify position, size, and properties</li>
-<li>Save changes (applied immediately)</li>
-</ol>
-<p>Or via command: <code>.editwindow &lt;name&gt;</code> (no name opens a picker)</p>
-<p>On a text window’s <strong>Streams</strong> field, <code>Ctrl+P</code> opens a picker of stream
-ids seen this session — the easy way to wire a window to a Lich script’s
-custom stream (see
+<h2 id="editing-a-window"><a class="header" href="#editing-a-window">Editing a Window</a></h2>
+<ul>
+<li><strong>GUI</strong>: right-click the window — every setting lives in its menu and
+applies live (see <a href="../frontends/gui.html#the-window-menu">The Window Menu</a>).
+The Streams field has a <strong>+</strong> picker of stream ids seen this session.</li>
+<li><strong>TUI</strong>: <code>.menu</code> → Windows → Edit Window → [window name], then save
+(applied immediately). On a text window’s <strong>Streams</strong> field, <code>Ctrl+P</code>
+opens the seen-streams picker.</li>
+</ul>
+<p>Or via command: <code>.editwindow &lt;name&gt;</code> — the easy way to wire a window to
+a Lich script’s custom stream (see
 <a href="../widgets/text-windows.html#custom-streams">Custom Streams</a>).</p>
 <h2 id="adding-windows"><a class="header" href="#adding-windows">Adding Windows</a></h2>
 <h3 id="via-menu"><a class="header" href="#via-menu">Via Menu</a></h3>

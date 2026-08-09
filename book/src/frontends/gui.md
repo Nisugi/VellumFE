@@ -54,8 +54,8 @@ and remember their spot.
 - **Sidebar width**: drag the strip on the sidebar/center boundary — it
   stays grabbable even with a window parked flush against it. Header and
   footer heights have their own edge handles.
-- **Lock Window** (context menu) pins a window's position and size;
-  `.lockwindows` locks everything at once.
+- **Lock in place** (right-click → Window) pins a window's position and
+  size; `.lockwindows` locks everything at once.
 - **The Windows manager**: the **Windows** button in the toolbar opens one
   window listing **every window the client can have** — the full built-in
   catalog plus game dialogs, streams, and containers — grouped into
@@ -66,20 +66,23 @@ and remember their spot.
   there when shown; otherwise placement defaults to a sensible zone
   (usually Center). **➕ Custom window…** creates blank custom widgets
   (text, tabbed, progress, countdown, entity, active effects) and drops
-  you into the editor; they then appear as rows under their category.
+  you into the new window's right-click menu to configure it; they then
+  appear as rows under their category.
   Hidden windows stay hidden even when the game re-sends them (there is
   no dialog blocklist — hiding is the control). Even the **story (main)
   window** can be hidden once another window or tab carries the `main`
   stream, and hiding the **command input** hands typing to the built-in
   bottom bar (the TUI always keeps its input line).
-- **Right-click** a window body for its context menu — including **Edit
-  Window…**, which opens the window editor; title bars can be hidden
-  per-window. Overlapping windows offer **Send to Back**, dropping the
-  window behind any it covers so a buried one can be reached (clicking a
-  window still raises it to the front).
+- **Right-click** a window body for its menu — every per-window setting
+  lives there (see [The Window Menu](#the-window-menu) below).
+  Overlapping windows offer **Send to Back**, dropping the window behind
+  any it covers so a buried one can be reached (clicking a window still
+  raises it to the front).
 - Windows can be **detached** into separate OS windows (restored across
-  sessions), or locked together into tab groups that move as a unit. The
-  context menu reorders group members (⬆ / ⬇) and can ungroup one member
+  sessions) — drag anywhere on the body to move one, and right-click for
+  the same menu (with **Reattach** in place of the zone controls) — or
+  locked together into tab groups that move as a unit. The menu's
+  **Group** section reorders members (⬆ / ⬇) and can ungroup one member
   or the whole group.
 
 Layouts saved by older versions arranged sidebar windows in a fixed
@@ -95,29 +98,45 @@ with a drag-to-tidy override editor. Map data comes from your Lich install
 or a one-click download in **Settings → Map** — see the
 [Map page](../widgets/map.md) for setup.
 
-## The Window Editor
+## The Window Menu
 
-Right-click a window → **Edit Window…** (or `.editwindow`) to configure
-it in place. Beyond title, streams, and buffer size, the editor exposes:
+Right-click any window (or run `.editwindow <name>`) for its menu — the
+one home for every per-window setting, applied **live** as you change
+them. Three quick actions sit on top (**Hide**, **Detach** — or
+**Reattach** on a detached window — and **Send to Back** where windows
+can overlap), then collapsible sections:
 
-- **Text windows**: per-line **timestamps** (with an at-line-start
-  toggle) and **compact** mode (drop blank lines).
-- **Tabbed windows**: add, remove, rename, and reorder tabs; edit each
-  tab's stream subscriptions; a **Quiet** toggle stops a tab from
-  marking unread; per-tab timestamps.
-- **Progress bars**: bar color (hex or palette picker) and display
-  modes (`value/max` or bare `value` instead of a filled bar).
-- **Countdowns**: a **fill color** override (defaults: roundtime red,
-  casttime blue).
-- **Active effects**: category (spells/buffs/debuffs/cooldowns).
-- **Vitals bars**: orientation, height, text format, and per-bar toggles
-  are edited here, on the vitals window itself.
-- **Targets windows**: also edit the global `target_list.*` display
-  settings (status position, truncation, boss colors) in place.
-- **Speech**: a **speak new lines (TTS)** checkbox reads everything routed
-  to this window aloud (needs TTS on in Settings > Speech).
-- **Delete Window** — actually removes the window from the layout
-  (unlike hiding, or the `.deletewindow` command, which only hides).
+- **Window** — title, custom title-bar text, stream subscriptions (with
+  a picker of streams seen this session), scrollback size, the **speak
+  new lines (TTS)** checkbox, and **Lock in place**. Under **Advanced**:
+  per-line **timestamps** (with an at-line-start toggle), **compact**
+  mode, and **Delete Window** — which, behind a confirmation, actually
+  removes the window from the layout (unlike hiding, or the
+  `.deletewindow` command, which only hides).
+- **A widget section**, named for the widget, when it has settings of
+  its own:
+  - **Timer / Bar**: the feed id the widget tracks, its label, color
+    (defaults: roundtime red, casttime blue), and display modes
+    (`value/max` or bare `value`; timers can stay visible at rest).
+  - **Effects**: category (spells/buffs/debuffs/cooldowns).
+  - **Room**: section toggles (description, objects, players, exits).
+  - **Targets / Experience / Encumbrance**: per-window display toggles
+    and bar colors; targets windows also link to the global settings in
+    **Settings → Targets**.
+  - **Vitals**: orientation, bar height, text format, and per-bar
+    toggles, edited right on the vitals window.
+  - Widgets with a dedicated editor link to it here: **Edit tabs…**
+    (tabbed windows — names, streams, order, per-tab quiet/timestamps),
+    **Edit hotbars…**, **Edit dashboard…**, **Edit indicators…**,
+    **Hand icons…**, **Calibrate doll…**, and the **Map Explorer**.
+- **Arrange** — Move Window, move to a zone, and **Release Anchors**
+  (enabled when a snapped drop has anchored an edge). Under Advanced:
+  **Fixed size**.
+- **Appearance** — Text (font, size, wrap, alignment), Title bar, and
+  Frame (border, accent color, skin frame, background), with the
+  rarely-touched knobs (title-bar height, border sides, corner radius,
+  frame scale) under Advanced.
+- **Group** — orientation, member order, and grouping controls.
 
 ## Streams & Custom Windows
 
@@ -271,7 +290,8 @@ Beyond plain bindings:
 **Settings > Speech** holds the TTS controls: enable, rate, volume, a
 voice picker, pronunciation substitutions, gag patterns, and a **Test**
 button that speaks a sample line. Pick which windows are read aloud with
-the per-window **speak new lines** checkbox in the window editor; the
+the per-window **speak new lines** checkbox in each window's right-click
+menu (Window section); the
 [`.tts` commands](../reference/commands.md#text-to-speech) drive the same
 settings from the input line.
 

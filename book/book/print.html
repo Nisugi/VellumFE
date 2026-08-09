@@ -38,7 +38,7 @@
             const path_to_root = "";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "searchindex-713601b6.js";
+            window.path_to_searchindex_js = "searchindex-d490dc0a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-eabfdacc.js"></script>
@@ -591,8 +591,8 @@ conform to it as you drag).</li>
 <li><strong>Sidebar width</strong>: drag the strip on the sidebar/center boundary — it
 stays grabbable even with a window parked flush against it. Header and
 footer heights have their own edge handles.</li>
-<li><strong>Lock Window</strong> (context menu) pins a window’s position and size;
-<code>.lockwindows</code> locks everything at once.</li>
+<li><strong>Lock in place</strong> (right-click → Window) pins a window’s position and
+size; <code>.lockwindows</code> locks everything at once.</li>
 <li><strong>The Windows manager</strong>: the <strong>Windows</strong> button in the toolbar opens one
 window listing <strong>every window the client can have</strong> — the full built-in
 catalog plus game dialogs, streams, and containers — grouped into
@@ -603,20 +603,23 @@ Containers, Dialogs, …) that start collapsed. Each row has a
 there when shown; otherwise placement defaults to a sensible zone
 (usually Center). <strong>➕ Custom window…</strong> creates blank custom widgets
 (text, tabbed, progress, countdown, entity, active effects) and drops
-you into the editor; they then appear as rows under their category.
+you into the new window’s right-click menu to configure it; they then
+appear as rows under their category.
 Hidden windows stay hidden even when the game re-sends them (there is
 no dialog blocklist — hiding is the control). Even the <strong>story (main)
 window</strong> can be hidden once another window or tab carries the <code>main</code>
 stream, and hiding the <strong>command input</strong> hands typing to the built-in
 bottom bar (the TUI always keeps its input line).</li>
-<li><strong>Right-click</strong> a window body for its context menu — including <strong>Edit
-Window…</strong>, which opens the window editor; title bars can be hidden
-per-window. Overlapping windows offer <strong>Send to Back</strong>, dropping the
-window behind any it covers so a buried one can be reached (clicking a
-window still raises it to the front).</li>
+<li><strong>Right-click</strong> a window body for its menu — every per-window setting
+lives there (see <a href="#the-window-menu">The Window Menu</a> below).
+Overlapping windows offer <strong>Send to Back</strong>, dropping the window behind
+any it covers so a buried one can be reached (clicking a window still
+raises it to the front).</li>
 <li>Windows can be <strong>detached</strong> into separate OS windows (restored across
-sessions), or locked together into tab groups that move as a unit. The
-context menu reorders group members (⬆ / ⬇) and can ungroup one member
+sessions) — drag anywhere on the body to move one, and right-click for
+the same menu (with <strong>Reattach</strong> in place of the zone controls) — or
+locked together into tab groups that move as a unit. The menu’s
+<strong>Group</strong> section reorders members (⬆ / ⬇) and can ungroup one member
 or the whole group.</li>
 </ul>
 <p>Layouts saved by older versions arranged sidebar windows in a fixed
@@ -629,28 +632,47 @@ and a <strong>Map Explorer</strong> native window for browsing any mapped locati
 with a drag-to-tidy override editor. Map data comes from your Lich install
 or a one-click download in <strong>Settings → Map</strong> — see the
 <a href="#map-1">Map page</a> for setup.</p>
-<h2 id="the-window-editor"><a class="header" href="#the-window-editor">The Window Editor</a></h2>
-<p>Right-click a window → <strong>Edit Window…</strong> (or <code>.editwindow</code>) to configure
-it in place. Beyond title, streams, and buffer size, the editor exposes:</p>
+<h2 id="the-window-menu"><a class="header" href="#the-window-menu">The Window Menu</a></h2>
+<p>Right-click any window (or run <code>.editwindow &lt;name&gt;</code>) for its menu — the
+one home for every per-window setting, applied <strong>live</strong> as you change
+them. Three quick actions sit on top (<strong>Hide</strong>, <strong>Detach</strong> — or
+<strong>Reattach</strong> on a detached window — and <strong>Send to Back</strong> where windows
+can overlap), then collapsible sections:</p>
 <ul>
-<li><strong>Text windows</strong>: per-line <strong>timestamps</strong> (with an at-line-start
-toggle) and <strong>compact</strong> mode (drop blank lines).</li>
-<li><strong>Tabbed windows</strong>: add, remove, rename, and reorder tabs; edit each
-tab’s stream subscriptions; a <strong>Quiet</strong> toggle stops a tab from
-marking unread; per-tab timestamps.</li>
-<li><strong>Progress bars</strong>: bar color (hex or palette picker) and display
-modes (<code>value/max</code> or bare <code>value</code> instead of a filled bar).</li>
-<li><strong>Countdowns</strong>: a <strong>fill color</strong> override (defaults: roundtime red,
-casttime blue).</li>
-<li><strong>Active effects</strong>: category (spells/buffs/debuffs/cooldowns).</li>
-<li><strong>Vitals bars</strong>: orientation, height, text format, and per-bar toggles
-are edited here, on the vitals window itself.</li>
-<li><strong>Targets windows</strong>: also edit the global <code>target_list.*</code> display
-settings (status position, truncation, boss colors) in place.</li>
-<li><strong>Speech</strong>: a <strong>speak new lines (TTS)</strong> checkbox reads everything routed
-to this window aloud (needs TTS on in Settings &gt; Speech).</li>
-<li><strong>Delete Window</strong> — actually removes the window from the layout
-(unlike hiding, or the <code>.deletewindow</code> command, which only hides).</li>
+<li><strong>Window</strong> — title, custom title-bar text, stream subscriptions (with
+a picker of streams seen this session), scrollback size, the <strong>speak
+new lines (TTS)</strong> checkbox, and <strong>Lock in place</strong>. Under <strong>Advanced</strong>:
+per-line <strong>timestamps</strong> (with an at-line-start toggle), <strong>compact</strong>
+mode, and <strong>Delete Window</strong> — which, behind a confirmation, actually
+removes the window from the layout (unlike hiding, or the
+<code>.deletewindow</code> command, which only hides).</li>
+<li><strong>A widget section</strong>, named for the widget, when it has settings of
+its own:
+<ul>
+<li><strong>Timer / Bar</strong>: the feed id the widget tracks, its label, color
+(defaults: roundtime red, casttime blue), and display modes
+(<code>value/max</code> or bare <code>value</code>; timers can stay visible at rest).</li>
+<li><strong>Effects</strong>: category (spells/buffs/debuffs/cooldowns).</li>
+<li><strong>Room</strong>: section toggles (description, objects, players, exits).</li>
+<li><strong>Targets / Experience / Encumbrance</strong>: per-window display toggles
+and bar colors; targets windows also link to the global settings in
+<strong>Settings → Targets</strong>.</li>
+<li><strong>Vitals</strong>: orientation, bar height, text format, and per-bar
+toggles, edited right on the vitals window.</li>
+<li>Widgets with a dedicated editor link to it here: <strong>Edit tabs…</strong>
+(tabbed windows — names, streams, order, per-tab quiet/timestamps),
+<strong>Edit hotbars…</strong>, <strong>Edit dashboard…</strong>, <strong>Edit indicators…</strong>,
+<strong>Hand icons…</strong>, <strong>Calibrate doll…</strong>, and the <strong>Map Explorer</strong>.</li>
+</ul>
+</li>
+<li><strong>Arrange</strong> — Move Window, move to a zone, and <strong>Release Anchors</strong>
+(enabled when a snapped drop has anchored an edge). Under Advanced:
+<strong>Fixed size</strong>.</li>
+<li><strong>Appearance</strong> — Text (font, size, wrap, alignment), Title bar, and
+Frame (border, accent color, skin frame, background), with the
+rarely-touched knobs (title-bar height, border sides, corner radius,
+frame scale) under Advanced.</li>
+<li><strong>Group</strong> — orientation, member order, and grouping controls.</li>
 </ul>
 <h2 id="streams--custom-windows"><a class="header" href="#streams--custom-windows">Streams &amp; Custom Windows</a></h2>
 <p><strong>Windows menu → Streams &amp; Custom Windows…</strong> opens a panel that does two
@@ -792,7 +814,8 @@ pad-navigable picker menu.</li>
 <p><strong>Settings &gt; Speech</strong> holds the TTS controls: enable, rate, volume, a
 voice picker, pronunciation substitutions, gag patterns, and a <strong>Test</strong>
 button that speaks a sample line. Pick which windows are read aloud with
-the per-window <strong>speak new lines</strong> checkbox in the window editor; the
+the per-window <strong>speak new lines</strong> checkbox in each window’s right-click
+menu (Window section); the
 <a href="#text-to-speech-1"><code>.tts</code> commands</a> drive the same
 settings from the input line.</p>
 <h2 id="graphics"><a class="header" href="#graphics">Graphics</a></h2>
@@ -1401,7 +1424,8 @@ speak_main = false              # Usually too noisy
 </code></pre>
 <p>The three <code>speak_*</code> toggles are classic shortcuts for main/thoughts/speech.
 Any other window can opt in per-window: the “speak new lines” checkbox in
-its window editor (<code>tts_speak</code> in <a href="#layouttoml">layout.toml</a>).</p>
+its right-click menu (TUI: window editor; <code>tts_speak</code> in
+<a href="#layouttoml">layout.toml</a>).</p>
 <p>TTS queue navigation keys are bound in <a href="#keybindstoml">keybinds.toml</a>
 (defaults: <code>Ctrl+Alt+arrows</code>, <code>F7</code>–<code>F11</code>).</p>
 <h2 id="web-server-mobile-frontend"><a class="header" href="#web-server-mobile-frontend">Web Server (Mobile Frontend)</a></h2>
@@ -3157,7 +3181,8 @@ colors = ["#555555", "#ff0000"]
 </div>
 <p>There is no default indicator set — an empty dashboard shows nothing until
 you add indicator entries (the shipped <code>sidebar</code> layout includes a
-configured example, and the GUI window editor can edit them).</p>
+configured example, and the GUI’s right-click <strong>Edit dashboard…</strong> can
+edit them).</p>
 <h2 id="display-3"><a class="header" href="#display-3">Display</a></h2>
 <p>Shows the configured indicator icons in the chosen layout:</p>
 <pre><code>┌────────────┐
@@ -3849,7 +3874,8 @@ menu).</p>
 <h2 id="notes-1"><a class="header" href="#notes-1">Notes</a></h2>
 <ul>
 <li>No scrollback: the content is replaced on each update, like inventory.</li>
-<li>The streams field is editable in the window editor, but the default
+<li>The streams field is editable (GUI: right-click menu; TUI: window
+editor), but the default
 (<code>reserve</code>) is what the game sends.</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div>
@@ -4035,16 +4061,17 @@ f3 = { macro_text = "stance defensive\r" }
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="creating-layouts"><a class="header" href="#creating-layouts">Creating Layouts</a></h1>
 <p>Design custom window arrangements for different playstyles.</p>
-<h2 id="using-the-window-editor"><a class="header" href="#using-the-window-editor">Using the Window Editor</a></h2>
-<ol>
-<li><code>.menu</code> → Windows → Edit Window → [window name]</li>
-<li>Modify position, size, and properties</li>
-<li>Save changes (applied immediately)</li>
-</ol>
-<p>Or via command: <code>.editwindow &lt;name&gt;</code> (no name opens a picker)</p>
-<p>On a text window’s <strong>Streams</strong> field, <code>Ctrl+P</code> opens a picker of stream
-ids seen this session — the easy way to wire a window to a Lich script’s
-custom stream (see
+<h2 id="editing-a-window"><a class="header" href="#editing-a-window">Editing a Window</a></h2>
+<ul>
+<li><strong>GUI</strong>: right-click the window — every setting lives in its menu and
+applies live (see <a href="#the-window-menu">The Window Menu</a>).
+The Streams field has a <strong>+</strong> picker of stream ids seen this session.</li>
+<li><strong>TUI</strong>: <code>.menu</code> → Windows → Edit Window → [window name], then save
+(applied immediately). On a text window’s <strong>Streams</strong> field, <code>Ctrl+P</code>
+opens the seen-streams picker.</li>
+</ul>
+<p>Or via command: <code>.editwindow &lt;name&gt;</code> — the easy way to wire a window to
+a Lich script’s custom stream (see
 <a href="#custom-streams">Custom Streams</a>).</p>
 <h2 id="adding-windows"><a class="header" href="#adding-windows">Adding Windows</a></h2>
 <h3 id="via-menu"><a class="header" href="#via-menu">Via Menu</a></h3>
@@ -4650,8 +4677,8 @@ image = "borders/plain.png"
 slice = [6, 6, 6, 6]
 </code></pre>
 <p>Every named frame shows up in each window’s right-click menu under
-<strong>Appearance → Skin frame</strong> (also in the Window Editor’s Appearance
-section), alongside <strong>Skin default</strong> (follow the skin’s own
+<strong>Appearance → Frame → Skin frame</strong>, alongside <strong>Skin default</strong> (follow
+the skin’s own
 <code>[window.*]</code> mapping) and <strong>None</strong> (no frame on this window). The
 choice is saved per window in the GUI layout, so it survives restarts
 and travels with <code>.savelayout</code> checkpoints. If a layout names a frame
@@ -5355,8 +5382,8 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tbody>
 <tr><td><code>.windows</code></td><td></td><td>List all windows</td></tr>
 <tr><td><code>.addwindow [name type x y w [h]]</code></td><td></td><td>Add a window (no args opens a picker)</td></tr>
-<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Hide a window (kept in the layout; in the GUI, the window editor’s Delete Window button removes it for real)</td></tr>
-<tr><td><code>.editwindow [name]</code></td><td><code>.editwin</code></td><td>Edit a window (no name opens a picker)</td></tr>
+<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Hide a window (kept in the layout; in the GUI, Delete Window in the right-click menu’s Window ▸ Advanced removes it for real)</td></tr>
+<tr><td><code>.editwindow [name]</code></td><td><code>.editwin</code></td><td>Edit a window — TUI: opens its window editor; GUI: opens its right-click menu (no name: TUI picker / GUI Windows catalog)</td></tr>
 <tr><td><code>.hidewindow [name]</code></td><td><code>.hidewin</code></td><td>Hide a window</td></tr>
 <tr><td><code>.rename &lt;window&gt; &lt;new title&gt;</code></td><td></td><td>Rename a window’s title</td></tr>
 <tr><td><code>.border &lt;window&gt; &lt;style&gt; [color]</code></td><td></td><td>Set border sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code></td></tr>
@@ -5461,8 +5488,8 @@ default layouts.</p>
 <h2 id="text-to-speech-1"><a class="header" href="#text-to-speech-1">Text-to-Speech</a></h2>
 <p><code>.tts</code> with no subcommand shows status. Settings changes save immediately.
 The GUI has the same controls in Settings &gt; Speech; per-window speech is
-the “speak new lines” checkbox in the window editor (<code>tts_speak</code> in
-layout.toml).</p>
+the “speak new lines” checkbox in the window’s right-click menu
+(<code>tts_speak</code> in layout.toml).</p>
 <div class="table-wrapper">
 <table>
 <thead>

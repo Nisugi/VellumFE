@@ -44,7 +44,8 @@ Each `[[windows.dashboard_indicators]]` entry has:
 
 There is no default indicator set — an empty dashboard shows nothing until
 you add indicator entries (the shipped `sidebar` layout includes a
-configured example, and the GUI window editor can edit them).
+configured example, and the GUI's right-click **Edit dashboard…** can
+edit them).
 
 ## Display
 

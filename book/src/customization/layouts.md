@@ -2,17 +2,17 @@
 
 Design custom window arrangements for different playstyles.
 
-## Using the Window Editor
+## Editing a Window
 
-1. `.menu` → Windows → Edit Window → [window name]
-2. Modify position, size, and properties
-3. Save changes (applied immediately)
+- **GUI**: right-click the window — every setting lives in its menu and
+  applies live (see [The Window Menu](../frontends/gui.md#the-window-menu)).
+  The Streams field has a **+** picker of stream ids seen this session.
+- **TUI**: `.menu` → Windows → Edit Window → [window name], then save
+  (applied immediately). On a text window's **Streams** field, `Ctrl+P`
+  opens the seen-streams picker.
 
-Or via command: `.editwindow <name>` (no name opens a picker)
-
-On a text window's **Streams** field, `Ctrl+P` opens a picker of stream
-ids seen this session — the easy way to wire a window to a Lich script's
-custom stream (see
+Or via command: `.editwindow <name>` — the easy way to wire a window to
+a Lich script's custom stream (see
 [Custom Streams](../widgets/text-windows.md#custom-streams)).
 
 ## Adding Windows

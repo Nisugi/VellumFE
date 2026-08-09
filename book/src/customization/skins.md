@@ -111,8 +111,8 @@ slice = [6, 6, 6, 6]
 ```
 
 Every named frame shows up in each window's right-click menu under
-**Appearance → Skin frame** (also in the Window Editor's Appearance
-section), alongside **Skin default** (follow the skin's own
+**Appearance → Frame → Skin frame**, alongside **Skin default** (follow
+the skin's own
 `[window.*]` mapping) and **None** (no frame on this window). The
 choice is saved per window in the GUI layout, so it survives restarts
 and travels with `.savelayout` checkpoints. If a layout names a frame

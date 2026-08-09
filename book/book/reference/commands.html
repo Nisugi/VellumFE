@@ -37,7 +37,7 @@
             const path_to_root = "../";
             const default_light_theme = "coal";
             const default_dark_theme = "coal";
-            window.path_to_searchindex_js = "../searchindex-713601b6.js";
+            window.path_to_searchindex_js = "../searchindex-d490dc0a.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-eabfdacc.js"></script>
@@ -221,8 +221,8 @@ command <code>quit</code> also saves your settings on the way out.)</p>
 <tbody>
 <tr><td><code>.windows</code></td><td></td><td>List all windows</td></tr>
 <tr><td><code>.addwindow [name type x y w [h]]</code></td><td></td><td>Add a window (no args opens a picker)</td></tr>
-<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Hide a window (kept in the layout; in the GUI, the window editor’s Delete Window button removes it for real)</td></tr>
-<tr><td><code>.editwindow [name]</code></td><td><code>.editwin</code></td><td>Edit a window (no name opens a picker)</td></tr>
+<tr><td><code>.deletewindow &lt;name&gt;</code></td><td><code>.delwindow</code></td><td>Hide a window (kept in the layout; in the GUI, Delete Window in the right-click menu’s Window ▸ Advanced removes it for real)</td></tr>
+<tr><td><code>.editwindow [name]</code></td><td><code>.editwin</code></td><td>Edit a window — TUI: opens its window editor; GUI: opens its right-click menu (no name: TUI picker / GUI Windows catalog)</td></tr>
 <tr><td><code>.hidewindow [name]</code></td><td><code>.hidewin</code></td><td>Hide a window</td></tr>
 <tr><td><code>.rename &lt;window&gt; &lt;new title&gt;</code></td><td></td><td>Rename a window’s title</td></tr>
 <tr><td><code>.border &lt;window&gt; &lt;style&gt; [color]</code></td><td></td><td>Set border sides: <code>all</code>, <code>none</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code></td></tr>
@@ -327,8 +327,8 @@ default layouts.</p>
 <h2 id="text-to-speech"><a class="header" href="#text-to-speech">Text-to-Speech</a></h2>
 <p><code>.tts</code> with no subcommand shows status. Settings changes save immediately.
 The GUI has the same controls in Settings &gt; Speech; per-window speech is
-the “speak new lines” checkbox in the window editor (<code>tts_speak</code> in
-layout.toml).</p>
+the “speak new lines” checkbox in the window’s right-click menu
+(<code>tts_speak</code> in layout.toml).</p>
 <div class="table-wrapper">
 <table>
 <thead>

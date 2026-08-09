@@ -170,7 +170,8 @@ speak_main = false              # Usually too noisy
 
 The three `speak_*` toggles are classic shortcuts for main/thoughts/speech.
 Any other window can opt in per-window: the "speak new lines" checkbox in
-its window editor (`tts_speak` in [layout.toml](./layout-toml.md)).
+its right-click menu (TUI: window editor; `tts_speak` in
+[layout.toml](./layout-toml.md)).
 
 TTS queue navigation keys are bound in [keybinds.toml](./keybinds-toml.md)
 (defaults: `Ctrl+Alt+arrows`, `F7`–`F11`).

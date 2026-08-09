@@ -35,8 +35,8 @@ command `quit` also saves your settings on the way out.)
 |---------|---------|-------------|
 | `.windows` | | List all windows |
 | `.addwindow [name type x y w [h]]` | | Add a window (no args opens a picker) |
-| `.deletewindow <name>` | `.delwindow` | Hide a window (kept in the layout; in the GUI, the window editor's Delete Window button removes it for real) |
-| `.editwindow [name]` | `.editwin` | Edit a window (no name opens a picker) |
+| `.deletewindow <name>` | `.delwindow` | Hide a window (kept in the layout; in the GUI, Delete Window in the right-click menu's Window ▸ Advanced removes it for real) |
+| `.editwindow [name]` | `.editwin` | Edit a window — TUI: opens its window editor; GUI: opens its right-click menu (no name: TUI picker / GUI Windows catalog) |
 | `.hidewindow [name]` | `.hidewin` | Hide a window |
 | `.rename <window> <new title>` | | Rename a window's title |
 | `.border <window> <style> [color]` | | Set border sides: `all`, `none`, `top`, `bottom`, `left`, `right` |
@@ -116,8 +116,8 @@ default layouts.
 
 `.tts` with no subcommand shows status. Settings changes save immediately.
 The GUI has the same controls in Settings > Speech; per-window speech is
-the "speak new lines" checkbox in the window editor (`tts_speak` in
-layout.toml).
+the "speak new lines" checkbox in the window's right-click menu
+(`tts_speak` in layout.toml).
 
 | Command | Description |
 |---------|-------------|
