@@ -81,7 +81,7 @@ pub struct SkinManifest {
     /// Editor/menu color palette. Every field is optional: unset colors are
     /// auto-derived from the skin's art at load, and any `[ui]` entry
     /// overrides its derived default. This is what makes config editors,
-    /// menus, and native egui controls take on the skin.
+    /// menus, and the GUI's native controls take on the skin.
     #[serde(default)]
     pub ui: UiPalette,
     /// Nine-slice sprites for interactive dialog-panel controls (Wrayth
@@ -323,7 +323,7 @@ pub struct SkinMeta {
 
 /// Editor/menu color palette (skin.toml `[ui]`). Every field is an optional
 /// "#rrggbb" string: `None` means "auto-derive from the skin's art at load".
-/// Applied globally to egui's `Visuals`, so it colors config editors, menus,
+/// The GUI applies it globally to its widget visuals, coloring editors, menus,
 /// dropdowns, checkboxes/radios, and every other native control at once.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct UiPalette {
@@ -339,6 +339,12 @@ pub struct UiPalette {
     /// Button fill while hovered.
     #[serde(default)]
     pub button_hover: Option<String>,
+    /// Label color for skinned dialog/combat buttons. Defaults to `text` when
+    /// unset. Skins whose button ART is light (StormFront's silver button)
+    /// need this dark so the label reads on the button, not the palette's
+    /// light body text meant for dark surfaces.
+    #[serde(default)]
+    pub button_text: Option<String>,
     /// Body text.
     #[serde(default)]
     pub text: Option<String>,
@@ -356,6 +362,37 @@ pub struct UiPalette {
     /// Menu / popup background.
     #[serde(default)]
     pub menu_bg: Option<String>,
+}
+
+impl UiPalette {
+    /// Whether the skin author set ANY `[ui]` override. Lives next to the
+    /// struct so a new field can't be forgotten (the old inline check in the
+    /// palette builder silently dropped `titlebar_text`/`button_text`-only
+    /// skins). Keep this exhaustive: destructure, don't enumerate.
+    pub fn any_set(&self) -> bool {
+        let Self {
+            window_bg,
+            panel_bg,
+            button_bg,
+            button_hover,
+            button_text,
+            text,
+            accent,
+            titlebar_text,
+            border,
+            menu_bg,
+        } = self;
+        window_bg.is_some()
+            || panel_bg.is_some()
+            || button_bg.is_some()
+            || button_hover.is_some()
+            || button_text.is_some()
+            || text.is_some()
+            || accent.is_some()
+            || titlebar_text.is_some()
+            || border.is_some()
+            || menu_bg.is_some()
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

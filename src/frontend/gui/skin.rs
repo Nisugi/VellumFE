@@ -136,6 +136,8 @@ pub struct ResolvedUiPalette {
     /// Title-bar caption color (defaults to `accent` when the skin doesn't set
     /// `titlebar_text`).
     pub titlebar_text: egui::Color32,
+    /// Label color for skinned buttons (defaults to `text`).
+    pub button_text: egui::Color32,
 }
 
 /// One loaded conditional doll variant: the activation condition plus a
@@ -948,6 +950,18 @@ impl SkinState {
                 })
         };
         for (key, spec) in &self.manifest.edges {
+            // The paint pass only ever asks for these four names; anything
+            // else ([edges.rigth]) would load its textures and then silently
+            // never paint — warn so the skin author finds the typo.
+            if !matches!(
+                key.to_ascii_lowercase().as_str(),
+                "top" | "right" | "bottom" | "left"
+            ) {
+                tracing::warn!(
+                    "skin edge '[edges.{key}]' is not one of top/right/bottom/left and will never paint"
+                );
+                continue;
+            }
             let strip = edge_tex(&spec.strip);
             let ornament = edge_tex(&spec.ornament);
             if strip.is_none() && ornament.is_none() {
@@ -1201,14 +1215,9 @@ impl SkinState {
     /// to derive from AND no `[ui]` entries (editors keep theme visuals).
     fn build_ui_palette(&self) -> Option<ResolvedUiPalette> {
         let ui = &self.manifest.ui;
-        let has_overrides = ui.window_bg.is_some()
-            || ui.panel_bg.is_some()
-            || ui.button_bg.is_some()
-            || ui.button_hover.is_some()
-            || ui.text.is_some()
-            || ui.accent.is_some()
-            || ui.border.is_some()
-            || ui.menu_bg.is_some();
+        // Exhaustive-by-construction (destructures the struct) so a future
+        // [ui] field can't be silently ignored here.
+        let has_overrides = ui.any_set();
 
         // Sample key assets for derived defaults.
         let sample = |path: &str| sample_image_colors(&self.root, path);
@@ -1257,17 +1266,20 @@ impl SkinState {
             field.as_deref().and_then(parse_hex_rgb).unwrap_or(default)
         };
         let accent_c = ov(&ui.accent, accent);
+        let text_c = ov(&ui.text, text);
         Some(ResolvedUiPalette {
             window_bg: ov(&ui.window_bg, win),
             panel_bg: ov(&ui.panel_bg, panel),
             button_bg: ov(&ui.button_bg, btn),
             button_hover: ov(&ui.button_hover, btn_hover),
-            text: ov(&ui.text, text),
+            text: text_c,
             accent: accent_c,
             border: ov(&ui.border, border),
             menu_bg: ov(&ui.menu_bg, panel),
             // Title-bar caption defaults to the accent unless the skin pins it.
             titlebar_text: ov(&ui.titlebar_text, accent_c),
+            // Button label defaults to the body text unless pinned.
+            button_text: ov(&ui.button_text, text_c),
         })
     }
 
@@ -2334,8 +2346,16 @@ pub fn edge_overlay_layout(
     anchor_end: bool,
     top_inset: f32,
 ) -> EdgeOverlayLayout {
+    debug_assert!(
+        matches!(edge, "top" | "right" | "bottom" | "left"),
+        "edge_overlay_layout: unknown edge '{edge}' (falls back to top)"
+    );
     let t = thickness.max(0.0);
     let inset = top_inset.max(0.0);
+    // A window smaller than the ornament must not have the ornament spill
+    // past its far side onto neighbors — shrink it to fit (keeps the
+    // flush-to-edge anchoring below valid on tiny windows).
+    let ornament_size = ornament_size.min(window.size());
     let (strip, ornament) = match edge {
         "left" | "right" => {
             // Strip flush to the edge, inside the window; starts below the
