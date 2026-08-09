@@ -8,6 +8,12 @@ use super::*;
 /// Seconds for a value-driven bar to glide to a new target value.
 const BAR_ANIMATION_SECONDS: f32 = 0.2;
 
+/// Height (points) of the band at the bottom of a positioned dialog canvas
+/// whose links render in the footer row instead of the canvas. The canvas
+/// skip test and the footer's membership test MUST use the same value, or a
+/// bottom-anchored link draws twice — or not at all.
+const PANEL_FOOTER_BAND: f32 = 40.0;
+
 /// Editing operations the command input applies for BOUND key combos (see
 /// `render_command_input_widget`) — the GUI mirror of the TUI's
 /// `apply_command_input_action`. Bound combos are consumed before the
@@ -2791,6 +2797,12 @@ impl VellumGuiApp {
             ui.allocate_exact_size(egui::vec2(content_w, content_h), egui::Sense::hover());
         let origin = canvas_rect.min;
 
+        // Positioned commanded images the canvas loop actually painted (skin
+        // sprite found). Any commanded image NOT in here must still surface in
+        // the footer fallback below, or the command is unreachable — the
+        // default skin-less install has no sprites at all.
+        let mut drawn_images: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
         if let Some((controls, _)) = &positioned {
             use crate::data::ui_state::PositionedControlKind;
             for control in controls {
@@ -2886,7 +2898,7 @@ impl VellumGuiApp {
                             .get(i)
                             .and_then(|l| l.layout.as_ref())
                             .and_then(|layout| layout.top)
-                            .is_some_and(|top| top as f32 >= content_h - 40.0);
+                            .is_some_and(|top| top as f32 >= content_h - PANEL_FOOTER_BAND);
                         if bottom_floor {
                             continue;
                         }
@@ -2959,6 +2971,7 @@ impl VellumGuiApp {
                             let sprite =
                                 skin_art.and_then(|art| art.icon(&img.name.to_ascii_lowercase()));
                             if let Some(icon) = sprite {
+                                drawn_images.insert(i);
                                 let resp = ui.interact(
                                     rect,
                                     ui.id().with(("panel_img", dialog_id, i)),
@@ -2968,19 +2981,24 @@ impl VellumGuiApp {
                                         egui::Sense::hover()
                                     },
                                 );
-                                let tint = if has_cmd && resp.hovered() {
-                                    Self::lighten(egui::Color32::WHITE, 0.0)
-                                } else {
-                                    egui::Color32::WHITE
-                                };
                                 let dest =
                                     crate::frontend::gui::skin::icon_dest(&icon, rect);
                                 crate::frontend::gui::skin::paint_icon(
                                     ui.painter(),
                                     dest,
                                     &icon,
-                                    tint,
+                                    egui::Color32::WHITE,
                                 );
+                                // A multiply tint can't brighten past the
+                                // sprite's own colors, so hover feedback is a
+                                // translucent wash over the icon instead.
+                                if has_cmd && resp.hovered() {
+                                    ui.painter().rect_filled(
+                                        dest,
+                                        3.0,
+                                        egui::Color32::from_white_alpha(24),
+                                    );
+                                }
                                 if has_cmd {
                                     let resp = img
                                         .tooltip
@@ -2992,11 +3010,11 @@ impl VellumGuiApp {
                                     }
                                 }
                             }
-                            // No sprite for a positioned image: draw nothing (as
-                            // before). It stays reachable through the footer's
-                            // labeled-button fallback, which handles the same
-                            // commanded images without stacking a stray button
-                            // behind neighboring controls.
+                            // No sprite for a positioned image: draw nothing
+                            // here (a stray button behind neighboring controls
+                            // is worse) — it's not in `drawn_images`, so the
+                            // footer's labeled-button fallback picks it up and
+                            // the command stays reachable even skin-less.
                         }
                     }
                 }
@@ -3016,15 +3034,20 @@ impl VellumGuiApp {
 
         // Links and remaining images: combat's icon/link footer. Images with a
         // command render as buttons; the doll's wound images are excluded above.
-        // Images that carry layout data are already drawn as positioned icon
-        // buttons in the canvas loop above — only the layout-less ones belong
-        // in this fallback footer (otherwise they'd render twice).
+        // Images the canvas loop drew as positioned icon buttons are excluded
+        // (they'd render twice); everything else commanded lands here. Keying
+        // on `drawn_images` — NOT `layout.is_some()` — matters: a positioned
+        // image with no matching skin sprite (skin-less runs, or a skin
+        // missing that icon) draws nothing above, and this footer is the only
+        // way its command stays clickable.
         let footer_images: Vec<_> = dialog
             .images
             .iter()
-            .filter(|image| !image.command.trim().is_empty())
-            .filter(|image| !doll_owned.contains(image.id.as_str()))
-            .filter(|image| image.layout.is_none())
+            .enumerate()
+            .filter(|(_, image)| !image.command.trim().is_empty())
+            .filter(|(_, image)| !doll_owned.contains(image.id.as_str()))
+            .filter(|(idx, _)| !drawn_images.contains(idx))
+            .map(|(_, image)| image)
             .collect();
         if !footer_images.is_empty() {
             let has_btn_art = skin_art
@@ -3067,7 +3090,7 @@ impl VellumGuiApp {
         // positioned in the bottom ~40px of the canvas are treated as footer
         // links here instead of drawn in the canvas — keeping the footer a single
         // clean row. The `has_positions` canvas still owns everything above.
-        let floor = content_h - 40.0;
+        let floor = content_h - PANEL_FOOTER_BAND;
         let footer_links: Vec<_> = dialog
             .links
             .iter()
@@ -3119,12 +3142,22 @@ impl VellumGuiApp {
             if let Some(border) = skin_art.and_then(|art| art.control_border("button", state)) {
                 crate::frontend::gui::skin::paint_nine_slice(ui.painter(), rect, border, [true; 4]);
             }
-            ui.put(
-                rect,
-                egui::Button::new(label)
-                    .small()
-                    .frame(false)
-                    .fill(egui::Color32::TRANSPARENT),
+            // PAINT the label directly over the nine-slice art — do NOT place an
+            // egui Button, which draws its own dark widget background (button_bg
+            // / hover fill) even frameless+transparent, leaving a black box on
+            // top of the silver button sprite. Color follows button_text
+            // (defaults to body text); the skin pins it dark so it reads on a
+            // light button.
+            let color = skin_art
+                .and_then(|art| art.ui_palette.as_ref())
+                .map(|pal| pal.button_text)
+                .unwrap_or_else(|| ui.visuals().text_color());
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::proportional((rect.height() * 0.6).clamp(9.0, 14.0)),
+                color,
             );
             resp
         } else {
@@ -3528,9 +3561,13 @@ impl VellumGuiApp {
                 let hit = if tab_art.is_some() {
                     // Skinned tab: content-sized rect, nine-slice behind a
                     // frameless label, active/normal state-keyed.
+                    // Measure with the SAME text style the label renders in —
+                    // a hardcoded size clipped tab names for users running a
+                    // larger UI font (accessibility sizes must always fit).
+                    let font = egui::TextStyle::Body.resolve(ui.style());
                     let galley = ui.painter().layout_no_wrap(
                         tab_state.definition.name.clone(),
-                        egui::FontId::proportional(13.0),
+                        font,
                         ui.visuals().text_color(),
                     );
                     let size = galley.size() + egui::vec2(16.0, 6.0);
