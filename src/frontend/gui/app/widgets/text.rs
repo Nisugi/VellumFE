@@ -21,6 +21,19 @@ pub(in crate::frontend::gui::app) struct LineInset {
     pub width: f32,
     /// How far right to paint the galley.
     pub x_offset: f32,
+    /// How far DOWN to paint the galley.
+    ///
+    /// Non-zero only when a float collapsed to its own rows (too narrow to
+    /// wrap beside): the text starts below the picture instead of over it.
+    pub y_offset: f32,
+    /// Painted height of the float's picture.
+    ///
+    /// Stored because the paint pass otherwise has to derive it from the
+    /// row block's total stride — which stretches the picture whenever the
+    /// text beside it is TALLER than the image (a narrow window wraps the
+    /// origin row past the picture's bottom). The picture paints at its
+    /// fitted size; the block just has to be big enough.
+    pub float_height: f32,
     /// Width of the column the float reserves.
     ///
     /// Stored rather than re-derived at paint time: the painter's row width
@@ -34,7 +47,13 @@ pub(in crate::frontend::gui::app) struct LineInset {
 impl LineInset {
     /// No float: the line uses the full width and no shift.
     pub(in crate::frontend::gui::app) fn full(width: f32) -> Self {
-        Self { width, x_offset: 0.0, float_width: 0.0 }
+        Self {
+            width,
+            x_offset: 0.0,
+            y_offset: 0.0,
+            float_height: 0.0,
+            float_width: 0.0,
+        }
     }
 }
 
@@ -1011,10 +1030,23 @@ impl VellumGuiApp {
                 crate::data::INLINE_IMAGE_MAX_ROWS,
             );
             if crate::data::InlineImage::should_collapse(img_w, wrap_width) {
-                // Too narrow to wrap beside: the image takes its own rows and
-                // the text stays full width.
-                cache.extra[i] = (img_h - cache.heights[i]).max(0.0);
+                // Too narrow to wrap beside: the image takes its OWN rows and
+                // the text starts below it.
+                //
+                // The row must reserve the picture's full height, and the
+                // line's own text must be pushed past it — leaving the inset
+                // at full width made the text wrap across the whole row and
+                // paint on top of the picture, which is what a narrow window
+                // actually showed.
+                cache.extra[i] = img_h;
                 cache.spans[i] = 1;
+                cache.insets[i] = LineInset {
+                    width: wrap_width,
+                    x_offset: 0.0,
+                    y_offset: img_h,
+                    float_height: img_h,
+                    float_width: img_w,
+                };
                 i += 1;
                 continue;
             }
@@ -1027,11 +1059,31 @@ impl VellumGuiApp {
             let inset = LineInset {
                 width: text_w,
                 x_offset,
+                y_offset: 0.0,
+                // The FITTED height, captured before the origin-row growth
+                // below: the picture paints at this size even when the text
+                // block beside it ends up taller.
+                float_height: img_h,
                 float_width: img_w,
             };
 
             // Re-measure the covered rows at the narrower width, taking them
             // while they fit within the image's height.
+            // If the ORIGIN row's own text needs more height than the
+            // picture covers, the picture cannot "end" partway down a single
+            // galley — egui wraps a line to one width for its whole height.
+            // Grow the reserved column to that row instead, so the text
+            // stays beside the picture rather than running across it.
+            let origin_h = Self::measure_line_height(
+                ctx,
+                &content.lines[start + i],
+                visuals,
+                inset,
+                font_id,
+                timestamps,
+            );
+            let img_h = img_h.max(origin_h);
+
             let mut used = 0.0f32;
             let mut span = 0usize;
             while i + span < cache.heights.len() {
@@ -1058,8 +1110,35 @@ impl VellumGuiApp {
 
             // Reserve any image height the covered text did not consume, so
             // the row block is tall enough for the picture.
+            //
+            // `used` can EXCEED img_h: the origin row is always taken (it is
+            // the line carrying the image), and in a narrow window its own
+            // text can wrap to more rows than the picture is tall. That is
+            // fine — extra goes to zero and the block is text-height — but
+            // the rows past the image must go back to FULL width, or they
+            // keep the narrowed inset and wrap into the picture's column.
             let last = i + span.saturating_sub(1);
             cache.extra[last] = (img_h - used).max(0.0);
+
+            // Any covered row whose top starts below the image rejoins the
+            // full width. Walk the span accumulating heights; once past
+            // img_h, the float no longer applies to that row.
+            let mut y = 0.0f32;
+            for offset in 0..span {
+                let row = i + offset;
+                if y >= img_h {
+                    cache.insets[row] = LineInset::full(wrap_width);
+                    cache.heights[row] = Self::measure_line_height(
+                        ctx,
+                        &content.lines[start + row],
+                        visuals,
+                        cache.insets[row],
+                        font_id,
+                        timestamps,
+                    );
+                }
+                y += cache.heights[row];
+            }
             cache.spans[i] = span.min(u16::MAX as usize) as u16;
             i += span.max(1);
         }
@@ -1583,7 +1662,11 @@ impl VellumGuiApp {
                             // selects the wrong character.
                             let local = egui::Vec2::new(
                                 pos.x - content_left - drag_h_offset - drag_inset.x_offset,
-                                pos.y - slot_top,
+                                // A collapsed float paints its galley BELOW
+                                // the picture; map the pointer through the
+                                // same shift or a drag in that block selects
+                                // rows-of-picture instead of text.
+                                pos.y - slot_top - drag_inset.y_offset,
                             );
                             sel.head = (
                                 base_uid.wrapping_add(line_index as u64),
@@ -1733,8 +1816,17 @@ impl VellumGuiApp {
                     } else {
                         egui::Sense::click_and_drag()
                     };
+                    // The row's rect must include the RESERVED float space
+                    // (`extra`), not just the text height. The spacer math
+                    // already counts extra via stride(); allocating only the
+                    // galley here let every following line render straight
+                    // over the bottom of the picture whenever the text
+                    // beside it was shorter — the live "text overlaps the
+                    // image" bug. The collapse case's y_offset rides inside
+                    // extra, so it is covered by the same allocation.
+                    let alloc_h = height + cache.extra.get(slot).copied().unwrap_or(0.0);
                     let (rect, response) =
-                        ui.allocate_exact_size(Vec2::new(width, height), sense);
+                        ui.allocate_exact_size(Vec2::new(width, alloc_h), sense);
                     let h_offset = match h_align {
                         1 => ((rect.width() - galley_size.x) / 2.0).max(0.0),
                         2 => (rect.width() - galley_size.x).max(0.0),
@@ -1744,8 +1836,8 @@ impl VellumGuiApp {
                     // left float); h_align then centres/right-aligns within
                     // what remains. The hit-test below derives from this same
                     // galley_pos, so the two stay in agreement.
-                    let galley_pos =
-                        rect.left_top() + Vec2::new(h_offset + line_inset.x_offset, 0.0);
+                    let galley_pos = rect.left_top()
+                        + Vec2::new(h_offset + line_inset.x_offset, line_inset.y_offset);
 
                     // Paint the float this row originates. The image spans
                     // the rows the layout pass reserved, so its height comes
@@ -1754,9 +1846,7 @@ impl VellumGuiApp {
                         if let Some(image) =
                             line.segments.iter().find_map(|s| s.inline_image.as_ref())
                         {
-                            let span = cache.spans[slot] as usize;
-                            let img_h =
-                                cache.stride_sum(slot..slot + span, spacing_y) - spacing_y;
+                            let img_h = line_inset.float_height;
                             let img_w = line_inset.float_width;
                             if img_w > 0.0 && img_h > 0.0 {
                                 let left = match image.align {

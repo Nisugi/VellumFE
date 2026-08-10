@@ -1504,7 +1504,7 @@ fn inset_width_changes_how_a_line_wraps() {
         &ctx,
         &line,
         &visuals,
-        super::LineInset { width: 200.0, x_offset: 800.0, float_width: 800.0 },
+        super::LineInset { width: 200.0, x_offset: 800.0, y_offset: 0.0, float_height: 0.0, float_width: 800.0 },
         &font_id,
         None,
     );
@@ -1773,6 +1773,8 @@ fn float_width_survives_a_window_resize() {
     let wide = super::LineInset {
         width: 440.0,
         x_offset: 160.0,
+        y_offset: 0.0,
+        float_height: 68.0,
         float_width: 160.0,
     };
     // The window is now narrower; the painter's row width shrank.
@@ -1799,4 +1801,169 @@ fn a_full_width_line_reserves_no_float_column() {
     let inset = super::LineInset::full(400.0);
     assert_eq!(inset.float_width, 0.0);
     assert_eq!(inset.x_offset, 0.0);
+}
+
+/// REGRESSION (live, 2026-08-10): in a narrow window the room description
+/// wrapped to MORE rows than the picture was tall, and the overflow ran
+/// across the image instead of stopping beside it.
+///
+/// egui wraps a line to one width for its whole height — a galley cannot be
+/// inset for its first rows only — so the picture's reserved column grows to
+/// the origin row's real height rather than the text spilling over it.
+#[test]
+fn a_tall_origin_row_grows_the_reserved_column() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    use crate::data::{FloatAlign, InlineImage, StyledLine, TextSegment};
+
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = std::env::temp_dir().join(format!("vellum_tall_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let path = tmp.join("wide.png");
+    {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[9, 9, 9, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(&path, png).unwrap();
+    }
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "wide".into(),
+        path,
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    // One line: a small image plus a LOT of prose. In a narrow window the
+    // prose wraps to more rows than a 2-row picture covers.
+    let mut content = cache_test_content(&["after"], 2);
+    content.lines.push_front(StyledLine {
+        segments: vec![
+            TextSegment {
+                text: "[img:wide]".into(),
+                inline_image: Some(InlineImage {
+                    name: "wide".into(),
+                    rows: 2.0,
+                    align: FloatAlign::Left,
+                }),
+                ..Default::default()
+            },
+            TextSegment::plain("word ".repeat(120)),
+        ],
+        stream: "main".into(),
+        timestamp: None,
+    });
+
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &content, 260.0, &font);
+
+    let span = cache.spans()[0] as usize;
+    assert!(span > 0, "the image line originates a float");
+
+    // The reserved block must cover the origin row's FULL wrapped height,
+    // so no part of that text sits over the picture.
+    let reserved = cache.stride_sum(0..span, 0.0);
+    assert!(
+        reserved >= cache.heights()[0] - 0.5,
+        "reserved {reserved} must cover the origin row's {} of text",
+        cache.heights()[0]
+    );
+
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}
+
+/// REGRESSION (live, 2026-08-10): text rendered OVER the picture whenever
+/// the text beside it was shorter than the image.
+///
+/// The reserved float height (`extra`) was counted by the virtualization
+/// spacers but never ALLOCATED by the visible rows — the row rect was only
+/// the galley's height, so every following line rendered straight over the
+/// bottom of the painted image. Driven through the real renderer: the
+/// window's total content height must include the picture's reserved space,
+/// which shows up as a larger bottom-of-buffer scroll offset than the same
+/// text without the image.
+#[test]
+fn reserved_float_height_is_actually_allocated() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    use crate::data::{FloatAlign, InlineImage, StyledLine, TextSegment};
+
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = std::env::temp_dir().join(format!("vellum_alloc_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let path = tmp.join("tall.png");
+    {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[40, 40, 40, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(&path, png).unwrap();
+    }
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "tall".into(),
+        path,
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let image_line = StyledLine {
+        segments: vec![
+            TextSegment {
+                text: "[img:tall]".into(),
+                inline_image: Some(InlineImage {
+                    name: "tall".into(),
+                    rows: 6.0,
+                    align: FloatAlign::Left,
+                }),
+                ..Default::default()
+            },
+            // ONE short line of text: far shorter than a 6-row picture, so
+            // the block's height is almost entirely reserved `extra`.
+            TextSegment::plain("short"),
+        ],
+        stream: "main".into(),
+        timestamp: None,
+    };
+
+    // Identical buffers except for the image segment.
+    // The image is the LAST line: nothing follows to fill its span, so the
+    // reserved height stands alone (lines pushed after would slide up
+    // beside the picture and mask the difference).
+    let mut with_image = ScrollHarness::new("alloc_with", 100.0);
+    with_image.push_lines(30);
+    with_image.content.lines.push_back(image_line);
+    with_image.content.generation += 1;
+    with_image.frame();
+    with_image.frame();
+    with_image.frame();
+
+    let mut without = ScrollHarness::new("alloc_without", 100.0);
+    without.push_lines(30);
+    without.content.lines.push_back(StyledLine {
+        segments: vec![TextSegment::plain("short")],
+        stream: "main".into(),
+        timestamp: None,
+    });
+    without.content.generation += 1;
+    without.frame();
+    without.frame();
+    without.frame();
+
+    let row_h = 17.0; // monospace 14 is ~17pt; the margin below absorbs slop
+    let gap = with_image.offset() - without.offset();
+    assert!(
+        gap > row_h * 3.0,
+        "the picture's reserved rows must exist in the REAL layout, not just \
+         the spacer math: content grew by only {gap:.1}pt over the text-only \
+         baseline (expected several rows)"
+    );
+
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
 }
