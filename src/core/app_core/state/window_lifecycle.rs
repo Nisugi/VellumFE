@@ -1043,12 +1043,10 @@ impl AppCore {
         }
 
         // Pick the seed view + binding for this discovery kind through the
-        // presentation resolver (redesign Phase 3: the discovery base
-        // comes from resolve_view, not scattered id-maps — a dedicated
-        // view resolves to its widget's seed, everything else to the
-        // generic view for its kind).
-        use crate::core::view_resolver::resolve_view;
-        use crate::data::view_kind::ViewKind;
+        // presentation resolver (redesign Phase 3: seed_template_for routes
+        // the binding through resolve_view, not scattered id-maps — a
+        // dedicated view resolves to its widget's seed, everything else to
+        // the generic view for its kind).
         let binding = match d.kind {
             WindowDiscoveryKind::Stream => WindowBinding::Stream(d.id.clone()),
             WindowDiscoveryKind::DialogPanel => WindowBinding::Dialog(d.id.clone()),

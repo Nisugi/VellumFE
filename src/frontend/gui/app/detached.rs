@@ -57,7 +57,6 @@ struct DetachedFrameOutput {
     open_menu_at: Option<Pos2>,
     close_menu: bool,
     reattach: bool,
-    hide: bool,
     /// Command picked in this window's context menu; applied with `&mut
     /// self` after the viewport closure returns.
     menu_command: Option<super::menus::GuiWindowMenuCommand>,
@@ -411,12 +410,6 @@ impl VellumGuiApp {
                 {
                     self.detached_context_menu = None;
                 }
-            }
-            if out.hide {
-                // Hide = the Windows-window uncheck (core visibility); the
-                // next available-tabs refresh prunes this viewport.
-                self.core_hide_tab(&key);
-                continue;
             }
             if out.reattach {
                 self.reattach_tab(key);

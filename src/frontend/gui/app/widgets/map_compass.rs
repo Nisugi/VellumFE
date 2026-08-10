@@ -14,7 +14,7 @@ impl VellumGuiApp {
         zoom_override: Option<f32>,
     ) -> Option<GuiLinkClick> {
         use crate::core::map_service::DbState;
-        use crate::frontend::gui::map_view::{self, MapCamera, MapStyle};
+        use crate::frontend::gui::map_view::{self, MapStyle};
 
         let map = &app_core.map;
         let hint = |ui: &mut egui::Ui, text: &str| {

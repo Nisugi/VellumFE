@@ -51,13 +51,7 @@ impl TabBuffer {
         let mut tab = self.original.clone().unwrap_or_default();
         tab.name = self.name.trim().to_string();
         tab.stream = None; // legacy single-stream field superseded below
-        tab.streams = self
-            .streams
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
+        tab.streams = super::custom_windows::parse_streams(&self.streams);
         tab.ignore_activity = if self.ignore_activity { Some(true) } else { None };
         tab.show_timestamps = if self.show_timestamps { Some(true) } else { None };
         tab

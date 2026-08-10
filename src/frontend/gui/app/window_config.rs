@@ -192,6 +192,17 @@ fn commit_text_field(
 }
 
 impl VellumGuiApp {
+    /// The shared layout definition for `name`, mutable — the write-back
+    /// target every live-apply command persists into (the debounced
+    /// autosave then writes it to disk).
+    fn layout_def_mut(&mut self, name: &str) -> Option<&mut crate::config::WindowDef> {
+        self.app_core
+            .layout
+            .windows
+            .iter_mut()
+            .find(|window| window.name() == name)
+    }
+
     /// Resolve the Window/widget section state for `tab_key`; None when the
     /// tab no longer maps to a live window.
     pub(super) fn window_config_view_for_tab(&self, tab_key: &TabKey) -> Option<WindowConfigView> {
@@ -427,11 +438,7 @@ impl VellumGuiApp {
                 self.layout_dirty = true;
             }
             GuiWindowMenuCommand::SetStreams(raw) => {
-                let streams: Vec<String> = raw
-                    .split(',')
-                    .map(|stream| stream.trim().to_string())
-                    .filter(|stream| !stream.is_empty())
-                    .collect();
+                let streams = super::editors::parse_streams(&raw);
                 if let Some(text) = self
                     .app_core
                     .ui_state
@@ -448,12 +455,7 @@ impl VellumGuiApp {
                     .message_processor
                     .update_text_stream_subscribers(&self.app_core.ui_state);
                 self.app_core.refresh_bounty_window(&name);
-                match self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                match self.layout_def_mut(&name)
                 {
                     Some(crate::config::WindowDef::Text { data, .. }) => {
                         data.streams = streams;
@@ -479,12 +481,7 @@ impl VellumGuiApp {
                 } else {
                     return;
                 }
-                match self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                match self.layout_def_mut(&name)
                 {
                     Some(crate::config::WindowDef::Text { data, .. }) => {
                         data.buffer_size = max_lines;
@@ -506,12 +503,7 @@ impl VellumGuiApp {
                 // Compaction happens at ingestion; re-feed a bounty window
                 // from cached data so the toggle applies now.
                 self.app_core.refresh_bounty_window(&name);
-                if let Some(crate::config::WindowDef::Text { data, .. }) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(crate::config::WindowDef::Text { data, .. }) = self.layout_def_mut(&name)
                 {
                     data.compact = compact;
                 }
@@ -529,12 +521,7 @@ impl VellumGuiApp {
                         text.timestamp_position = position.clone();
                     }
                 }
-                if let Some(crate::config::WindowDef::Text { data, .. }) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(crate::config::WindowDef::Text { data, .. }) = self.layout_def_mut(&name)
                 {
                     data.show_timestamps = show;
                     data.timestamp_position = Some(position);
@@ -542,12 +529,7 @@ impl VellumGuiApp {
                 self.app_core.schedule_layout_autosave();
             }
             GuiWindowMenuCommand::SetTtsSpeak(tts_speak) => {
-                if let Some(def) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(def) = self.layout_def_mut(&name)
                 {
                     if def.base().tts_speak != tts_speak {
                         def.base_mut().tts_speak = tts_speak;
@@ -587,12 +569,7 @@ impl VellumGuiApp {
                         Some(value.to_string())
                     }
                 }
-                if let Some(def) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(def) = self.layout_def_mut(&name)
                 {
                     match (def, feed.kind) {
                         (
@@ -630,12 +607,7 @@ impl VellumGuiApp {
                         }
                     }
                 }
-                if let Some(crate::config::WindowDef::ActiveEffects { data, .. }) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(crate::config::WindowDef::ActiveEffects { data, .. }) = self.layout_def_mut(&name)
                 {
                     data.category = category;
                 }
@@ -646,12 +618,7 @@ impl VellumGuiApp {
                 self.app_core.schedule_layout_autosave();
             }
             GuiWindowMenuCommand::SetRoomSections(room) => {
-                if let Some(crate::config::WindowDef::Room { data, .. }) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(crate::config::WindowDef::Room { data, .. }) = self.layout_def_mut(&name)
                 {
                     data.show_desc = room.show_desc;
                     data.show_objs = room.show_objs;
@@ -661,12 +628,7 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::SetTargetsConfig(targets) => {
-                if let Some(crate::config::WindowDef::Targets { data, .. }) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(crate::config::WindowDef::Targets { data, .. }) = self.layout_def_mut(&name)
                 {
                     data.show_body_part_count = targets.show_appendages;
                     data.status_position = Some(targets.status_position)
@@ -675,12 +637,7 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::SetExperienceConfig(experience) => {
-                if let Some(crate::config::WindowDef::GS4Experience { data, .. }) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(crate::config::WindowDef::GS4Experience { data, .. }) = self.layout_def_mut(&name)
                 {
                     data.show_level = experience.show_level;
                     data.show_mind_bar = experience.show_mind_bar;
@@ -701,12 +658,7 @@ impl VellumGuiApp {
                 }
             }
             GuiWindowMenuCommand::SetEncumConfig(encum) => {
-                if let Some(crate::config::WindowDef::Encumbrance { data, .. }) = self
-                    .app_core
-                    .layout
-                    .windows
-                    .iter_mut()
-                    .find(|w| w.name() == name)
+                if let Some(crate::config::WindowDef::Encumbrance { data, .. }) = self.layout_def_mut(&name)
                 {
                     data.show_bar = encum.show_bar;
                     data.show_label = encum.show_label;

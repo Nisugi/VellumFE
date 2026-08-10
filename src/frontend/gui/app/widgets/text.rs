@@ -823,26 +823,6 @@ impl VellumGuiApp {
         (start, end)
     }
 
-    /// WCAG relative luminance (0 = black, 1 = white).
-    pub(super) fn relative_luminance(color: Color32) -> f32 {
-        fn channel(value: u8) -> f32 {
-            let value = value as f32 / 255.0;
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        }
-        0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
-    }
-
-    /// WCAG contrast ratio between two colors (1.0 to 21.0).
-    pub(super) fn contrast_ratio(a: Color32, b: Color32) -> f32 {
-        let la = Self::relative_luminance(a);
-        let lb = Self::relative_luminance(b);
-        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-    }
-
     /// Pick a readable text color for text painted over `background`.
     /// Keeps `preferred` when it has enough contrast; otherwise falls back
     /// to near-black or near-white, whichever contrasts with the background.
@@ -853,10 +833,12 @@ impl VellumGuiApp {
     ) -> Color32 {
         // 3.0 is the WCAG minimum for large text; bar labels are short and
         // bold enough that this is a reasonable floor.
-        if !auto_contrast || Self::contrast_ratio(preferred, background) >= 3.0 {
+        if !auto_contrast
+            || crate::frontend::gui::app::theme::contrast_ratio(preferred, background) >= 3.0
+        {
             return preferred;
         }
-        if Self::relative_luminance(background) > 0.35 {
+        if crate::frontend::gui::app::theme::relative_luminance(background) > 0.35 {
             Color32::from_rgb(0x14, 0x14, 0x14)
         } else {
             Color32::from_rgb(0xf2, 0xf2, 0xf2)

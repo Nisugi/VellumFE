@@ -48,6 +48,7 @@ pub(super) use touch_wheel::TouchWheelEditorState;
 
 /// Shared by the Tab Editor and the context menu's Streams "+" picker.
 pub(in super::super) use custom_windows::append_stream_id;
+pub(in super::super) use custom_windows::parse_streams;
 
 use super::{theme, VellumGuiApp};
 use eframe::egui;

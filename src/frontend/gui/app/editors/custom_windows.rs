@@ -81,7 +81,11 @@ fn text_content_mut(content: &mut WindowContent) -> Option<&mut crate::data::Tex
 }
 
 /// Parse a comma-separated streams string into a trimmed, de-duplicated list.
-fn parse_streams(raw: &str) -> Vec<String> {
+/// Comma-separated stream ids -> trimmed, case-insensitively deduped list.
+/// The ONE parser for every stream field (custom-windows editor, context
+/// menu SetStreams, Tab Editor) so "main, Main" can't store duplicates in
+/// one path and collapse in another.
+pub(crate) fn parse_streams(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for stream in raw.split(',') {
         let stream = stream.trim();

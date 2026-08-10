@@ -121,7 +121,10 @@ pub(super) fn apply_ui_palette(
 }
 
 /// Linear-ish relative luminance of a color (0 = black, 1 = white).
-fn relative_luminance(color: Color32) -> f32 {
+/// THE WCAG pair for the whole GUI app module — widget label contrast
+/// (widgets/text.rs readable_text_color) and menu-row readability both
+/// resolve through these, so a gamma or threshold fix lands everywhere.
+pub(super) fn relative_luminance(color: Color32) -> f32 {
     let channel = |value: u8| {
         let v = value as f32 / 255.0;
         if v <= 0.04045 {
@@ -134,7 +137,7 @@ fn relative_luminance(color: Color32) -> f32 {
 }
 
 /// WCAG-style contrast ratio between two colors (1.0..=21.0).
-fn contrast_ratio(a: Color32, b: Color32) -> f32 {
+pub(super) fn contrast_ratio(a: Color32, b: Color32) -> f32 {
     let (la, lb) = (relative_luminance(a), relative_luminance(b));
     let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
     (hi + 0.05) / (lo + 0.05)

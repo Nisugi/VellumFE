@@ -442,30 +442,79 @@ impl VellumGuiApp {
     /// across repeated changes; one-shot actions (open/close/move/delete/
     /// editor launches) dismiss it. Shared by the attached and detached
     /// menus.
+    /// Whether the context menu stays open after this command applies.
+    /// EXHAUSTIVE on purpose (no wildcard arm): adding a variant must
+    /// declare its menu behavior here or the build fails — a forgotten
+    /// one-shot would otherwise silently leave the menu dangling open.
     pub(super) fn window_menu_command_keeps_open(command: &GuiWindowMenuCommand) -> bool {
-        !matches!(
-            command,
-            GuiWindowMenuCommand::Hide
-                | GuiWindowMenuCommand::Detach
-                | GuiWindowMenuCommand::Reattach
-                | GuiWindowMenuCommand::SendToBack
-                | GuiWindowMenuCommand::StartMove
-                | GuiWindowMenuCommand::MoveTo(_)
-                | GuiWindowMenuCommand::GroupWith(_)
-                | GuiWindowMenuCommand::DissolveGroup
-                | GuiWindowMenuCommand::OpenMapExplorer
-                | GuiWindowMenuCommand::CalibrateDoll
-                | GuiWindowMenuCommand::EditHandIcons
-                | GuiWindowMenuCommand::EditDashboard
-                | GuiWindowMenuCommand::EditTabs
-                | GuiWindowMenuCommand::EditHotbar
-                | GuiWindowMenuCommand::EditIndicators
-                | GuiWindowMenuCommand::OpenTargetsSettings
-                | GuiWindowMenuCommand::DeleteWindow
-                // Renaming can change the tab key the open menu points at;
-                // close rather than dangle.
-                | GuiWindowMenuCommand::Rename(_)
-        )
+        use GuiWindowMenuCommand as C;
+        match command {
+            // One-shot actions: the menu closes when they fire. Rename is
+            // here because it can change the tab key the open menu points
+            // at; close rather than dangle.
+            C::Hide
+            | C::Detach
+            | C::Reattach
+            | C::SendToBack
+            | C::StartMove
+            | C::MoveTo(_)
+            | C::GroupWith(_)
+            | C::DissolveGroup
+            | C::OpenMapExplorer
+            | C::CalibrateDoll
+            | C::EditHandIcons
+            | C::EditDashboard
+            | C::EditTabs
+            | C::EditHotbar
+            | C::EditIndicators
+            | C::OpenTargetsSettings
+            | C::DeleteWindow
+            | C::Rename(_) => false,
+            // Live-apply controls: the menu stays up while the user tweaks
+            // (sliders and toggles emit these repeatedly).
+            C::ToggleLock
+            | C::ReleaseAnchors
+            | C::ToggleTitleBar
+            | C::SetTextSize(_)
+            | C::SetWrapText(_)
+            | C::SetFont(_)
+            | C::SetAccent(_)
+            | C::SetCornerRadius(_)
+            | C::SetSkinFrame(_)
+            | C::SetFrameScale(_)
+            | C::SetDollImage(_)
+            | C::SetDollGrayscale(_)
+            | C::SetCompassSet(_)
+            | C::SetHandIcon { .. }
+            | C::SetBackground(_)
+            | C::SetTitleBarHeight(_)
+            | C::SetTitleBarAlign(_)
+            | C::SetShowBorder(_)
+            | C::SetBorderStyle(_)
+            | C::SetBorderSides(_)
+            | C::SetContentAlign(_)
+            | C::SetFixedSize(_)
+            | C::UngroupMember(_)
+            | C::SetMapZoom(_)
+            | C::SetGroupOrientation(_)
+            | C::MoveGroupMember { .. }
+            | C::ToggleMemberMerge(_)
+            | C::ToggleSlotAnchor(_)
+            | C::SetMemberWeight { .. }
+            | C::SetCustomTitle(_)
+            | C::SetStreams(_)
+            | C::SetBufferLines(_)
+            | C::SetCompact(_)
+            | C::SetTimestamps { .. }
+            | C::SetTtsSpeak(_)
+            | C::SetFeed(_)
+            | C::SetEffectsCategory(_)
+            | C::SetRoomSections(_)
+            | C::SetTargetsConfig(_)
+            | C::SetExperienceConfig(_)
+            | C::SetEncumConfig(_)
+            | C::SetVitals(_) => true,
+        }
     }
 
     pub(super) fn apply_window_menu_command(
