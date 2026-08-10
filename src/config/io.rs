@@ -544,6 +544,7 @@ impl Config {
         // Room art toggle: character overrides global. Same restart-amnesia
         // trap as active_skin — saved to the profile, dropped by the merge.
         self.room_images = character_config.room_images;
+        self.game_art = character_config.game_art;
     }
 
     pub fn load_with_options(character: Option<&str>, port_override: Option<u16>) -> Result<Self> {
@@ -811,6 +812,7 @@ impl Default for Config {
             streams: StreamsConfig::default(), // Stream routing config
             sorter: SorterConfig::default(),
             room_images: RoomImagesSettings::default(),
+            game_art: GameArtSettings::default(),
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default

@@ -3298,3 +3298,48 @@ fn mirrored_art_clears_on_an_unmapped_room() {
         "unmapped room must not inherit the previous picture"
     );
 }
+
+/// Game art is OFF by default: the client must not send requests to
+/// play.net because a user installed it. This pins the opt-in.
+#[test]
+fn game_art_is_off_by_default() {
+    let config = Config::default();
+    assert!(
+        !config.game_art.enabled,
+        "downloading from a third party must be an explicit opt-in"
+    );
+}
+
+/// With the toggle off, a picture id resolves only against the user's own
+/// pool — never a download.
+#[test]
+fn resource_picture_does_not_fetch_when_disabled() {
+    use crate::core::custom_emoji::CustomEmojiRegistry;
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+
+    let mut config = Config::default();
+    config.game_art.enabled = false;
+    let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+    let mut ui = UiState::new();
+    let mut game_state = crate::core::state::GameState::new();
+
+    processor.process_element(
+        &crate::parser::ParsedElement::RoomPicture { id: 1 },
+        &mut game_state,
+        &mut ui,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+    assert_eq!(
+        game_state.story_picture, None,
+        "no art installed and downloads off: the slot stays empty"
+    );
+}

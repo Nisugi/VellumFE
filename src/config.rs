@@ -65,7 +65,7 @@ pub use window_registry::{RegistryBinding, WindowRegistry};
 pub use paths::VELLUM_FE_DIR_TEST_LOCK;
 pub use settings::{
     ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
-    RoomImagesSettings, SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
+    GameArtSettings, RoomImagesSettings, SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
     TtsConfig, TtsSubstitution, UiConfig, WebConfig,
 };
 pub use presets::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};
@@ -347,6 +347,8 @@ pub struct Config {
     pub sorter: SorterConfig,
     #[serde(default)] // `[room_images]` — room art by uid (.roomimages)
     pub room_images: RoomImagesSettings,
+    #[serde(default)] // `[game_art]` — download play.net room pictures
+    pub game_art: GameArtSettings,
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml
     pub highlight_settings: HighlightsConfig, // Highlight system toggles (sounds, replace, redirect, coloring)
     #[serde(default)]

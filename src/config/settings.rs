@@ -744,6 +744,16 @@ pub struct RoomImagesSettings {
     pub enabled: bool,
 }
 
+/// `[game_art]` — download GemStone's own room pictures
+/// (`<resource picture='N'/>`) from play.net and show them in the story
+/// window. OFF by default: this is outbound traffic to a third party the
+/// user did not initiate, so it is always an explicit opt-in.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GameArtSettings {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 /// `[sorter]` — categorized container looks (`.sorter`, sorter.lic's
 /// native cousin). The transform lives in `core/sorter.rs`; the editor is
 /// `.sorter edit`. `ui.sorter_enabled` is the legacy home of `enabled`

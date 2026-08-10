@@ -182,6 +182,31 @@ hotbars and the doll for the same reason.
 Script art still wins: if a script sends a `sprite` for the room you are in,
 that is what shows.
 
+## GemStone's own room pictures
+
+The game sends `<resource picture='N'/>` on every room change — the official
+client uses it to show a picture beside the room name. The wire carries only
+the number, so VellumFE fetches the art from play.net and caches it.
+
+**This is off by default.** It sends requests to play.net, so it is an
+explicit opt-in:
+
+```
+.set game_art.enabled true
+```
+
+or Settings → Appearance → **Game Room Pictures**.
+
+Once on, walking into a room with a picture downloads it once and caches it
+under `global/images/gs-art/`. The image appears on the next room change
+after it arrives — fetching happens in the background so the game feed is
+never held up.
+
+Your own art still wins: install `images/inline/32.png` and rooms with
+`picture='32'` use yours instead of the download. Most rooms send
+`picture='0'`, meaning no picture at all, and ids with no art are remembered
+so they are not requested again.
+
 ## Putting an image in the story window
 
 Send the tag on its own:

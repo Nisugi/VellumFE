@@ -659,15 +659,35 @@ impl MessageProcessor {
                 }
             }
             ParsedElement::RoomPicture { id } => {
-                // The game says "this room has picture N". We have no access
-                // to Simu's art (the wire carries only the number), so N is
-                // resolved against the user's own pool by name — art for
-                // `picture='32'` lives at images/inline/32.png. Unknown ids
-                // and the near-universal 0 simply clear the slot, so a room
-                // without art never shows the previous room's picture.
-                let art = (*id != 0)
+                // The game says "this room has picture N"; the wire carries
+                // only the number. Resolution order:
+                //   1. the user's own pool (images/inline/<id>.png) — always
+                //      wins, so installed art overrides the download
+                //   2. GemStone's art, downloaded from play.net, but ONLY
+                //      when the user opted in
+                // Unknown ids and the near-universal 0 clear the slot, so a
+                // room without a picture never shows the previous room's.
+                let mut art = (*id != 0)
                     .then(|| id.to_string())
                     .filter(|name| crate::core::inline_image::contains(name));
+
+                if art.is_none() && *id != 0 && self.config.game_art.enabled {
+                    let picture = *id;
+                    if let Some(path) = crate::core::game_art::cached_art(picture) {
+                        art = Some(path.to_string_lossy().into_owned());
+                    } else if crate::core::game_art::claim_fetch(picture) {
+                        // Off the feed thread: a room render must never wait
+                        // on the network. The picture appears on the next
+                        // visit (or the next room change) once cached.
+                        std::thread::spawn(move || {
+                            if crate::core::game_art::fetch_blocking(picture).is_err() {
+                                // Remember the miss so this id is not
+                                // requested again on every future visit.
+                                crate::core::game_art::mark_missing(picture);
+                            }
+                        });
+                    }
+                }
                 if game_state.story_picture != art {
                     game_state.story_picture = art;
                     *room_window_dirty = true;

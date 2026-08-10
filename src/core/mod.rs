@@ -12,6 +12,7 @@ pub mod conditions;
 pub mod doll_rules;
 pub mod custom_emoji;
 pub mod elanthian_time;
+pub mod game_art;
 pub mod inline_image;
 pub mod data_pack;
 pub mod emoji;
