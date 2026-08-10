@@ -41,12 +41,20 @@ looks identical to a 4000×4000 one and loads far faster.
 | `rows` | `1` | Height in text rows. Width follows the art's aspect ratio. |
 | `align` | `left` | Which side the image floats on: `left` or `right`. |
 
-`rows` is a request, not a guarantee. The image is scaled down to fit the
-window's own height (and a ceiling of 8 rows), keeping its aspect ratio, so a
-script asking for more than fits gets a smaller image rather than a broken
-window. A very wide image is also narrowed so the text keeps a readable
-column, and in a window too narrow to wrap beside at all, the image simply
-takes its own rows with the text below.
+`rows` is a request, not a guarantee, and the two window kinds size the
+picture differently — on purpose:
+
+- **Text windows** (story, thoughts, custom, tabs): the picture follows the
+  height of the text that wraps it. One short line beside it gives a small
+  picture; a paragraph grows it toward `rows`. A standalone image with no
+  text after it renders at exactly `rows`. Press-and-hold always shows the
+  art at full size, so a small float loses nothing.
+- **The room window**: the picture renders at `rows`, shrinking only with
+  the window itself (its height, and a cap of about half its width).
+
+In both, aspect ratio is always preserved, the ceiling is 8 rows, and a
+window too narrow to wrap beside at all puts the image on its own rows with
+the text below.
 
 ## Putting an image in the room window
 
