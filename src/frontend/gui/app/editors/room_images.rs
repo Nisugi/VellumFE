@@ -236,6 +236,7 @@ impl VellumGuiApp {
                                 rooms: Vec::new(),
                                 rows: Some(DEFAULT_ROOM_IMAGE_ROWS),
                                 align: None,
+                                variants: Vec::new(),
                             });
                         }
                     });

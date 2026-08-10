@@ -144,6 +144,37 @@ align = "left"
 Rooms are keyed by the game's own room id. A room can belong to only one
 image — mapping it somewhere else moves it rather than leaving a duplicate.
 
+### Different art by time of day
+
+Add variants to show a night version of the same view:
+
+```toml
+[[image]]
+name = "krakens_fall_pier"
+rooms = [7118245, 7118250]
+
+  [[image.variant]]
+  name = "krakens_fall_pier_night"
+  when = { type = "time_of_day", phase = "night" }
+```
+
+The first variant whose condition matches wins; none matching falls back to
+the entry's own `name`.
+
+Elanthian time runs on **US Eastern**, so VellumFE computes the phase from
+your system clock — no `time` command, no waiting for the game to tell it,
+and it is correct the moment you log in. The four phases are `dawn`, `day`,
+`dusk`, and `night`.
+
+> Sunrise and sunset in Elanthia follow Central more closely than Eastern,
+> so the phase boundaries are approximate by design rather than a claim of
+> exactness.
+
+Variants use the same condition system as hotbar button states and injury
+doll art, so they are not limited to time — a variant can key off effects,
+injuries, vitals, or any combination. Time of day is also now available to
+hotbars and the doll for the same reason.
+
 Script art still wins: if a script sends a `sprite` for the room you are in,
 that is what shows.
 

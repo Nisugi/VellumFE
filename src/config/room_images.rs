@@ -61,6 +61,48 @@ pub struct RoomImageDef {
     /// Which side the art floats on; None uses Left.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub align: Option<FloatAlign>,
+    /// Alternate art shown when a condition matches — a night version of
+    /// the same view, a wounded version, whatever the condition system can
+    /// express. First match wins; no match falls back to `name`.
+    #[serde(default, rename = "variant", skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<RoomImageVariant>,
+}
+
+/// Conditional art for a room mapping.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoomImageVariant {
+    /// Pool image name to use instead of the entry's default.
+    pub name: String,
+    /// When to use it. Reuses the shared condition system, so a variant can
+    /// key off time of day, effects, injuries, vitals — anything hotbars
+    /// and the injury doll can.
+    pub when: crate::config::Condition,
+}
+
+impl RoomImageDef {
+    /// The art to show right now: the first variant whose condition matches,
+    /// else the entry's own `name`.
+    pub fn resolve_name(
+        &self,
+        game_state: &crate::core::GameState,
+        now_server: i64,
+        gameobj: Option<&crate::core::gameobj_data::GameObjData>,
+    ) -> &str {
+        for variant in &self.variants {
+            if variant.name.trim().is_empty() {
+                continue;
+            }
+            if crate::core::conditions::eval_condition(
+                &variant.when,
+                game_state,
+                now_server,
+                gameobj,
+            ) {
+                return &variant.name;
+            }
+        }
+        &self.name
+    }
 }
 
 impl RoomImageDef {
@@ -206,6 +248,7 @@ mod tests {
             rooms: rooms.to_vec(),
             rows: None,
             align: None,
+            variants: Vec::new(),
         }
     }
 
@@ -278,6 +321,7 @@ mod tests {
             rooms: vec![7118245, 7118250],
             rows: Some(6.0),
             align: Some(FloatAlign::Right),
+            variants: Vec::new(),
         }]);
         config.images.push(def("river", &[7503201]));
         config.names.insert("7118245".into(), "Third Pier".into());
@@ -287,5 +331,117 @@ mod tests {
         assert_eq!(back, config);
         // The bare entry must not gain phantom rows/align on the way out.
         assert!(!text.contains("rows = 4"), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::*;
+    use crate::config::Condition;
+    use crate::core::elanthian_time::DayPhase;
+    use crate::core::GameState;
+
+    fn night_variant(name: &str) -> RoomImageVariant {
+        RoomImageVariant {
+            name: name.to_string(),
+            when: Condition::TimeOfDay {
+                phase: DayPhase::Night,
+            },
+        }
+    }
+
+    /// 2026-08-10 20:44 UTC = 16:44 Eastern (Day); minus 10h = 06:44 (Dawn).
+    const DAYTIME: i64 = 1_786_394_661;
+    const NIGHTTIME: i64 = 1_786_394_661 - 20 * 3600; // 20:44 Eastern
+
+    /// The whole point: one image by day, another at night.
+    #[test]
+    fn a_matching_variant_replaces_the_default_art() {
+        let gs = GameState::new();
+        let def = RoomImageDef {
+            name: "pier_day".into(),
+            rooms: vec![1],
+            rows: None,
+            align: None,
+            variants: vec![night_variant("pier_night")],
+        };
+        assert_eq!(def.resolve_name(&gs, DAYTIME, None), "pier_day");
+        assert_eq!(def.resolve_name(&gs, NIGHTTIME, None), "pier_night");
+    }
+
+    /// No variants at all is the common case and must stay the default.
+    #[test]
+    fn no_variants_always_resolves_to_the_default() {
+        let gs = GameState::new();
+        let def = RoomImageDef {
+            name: "pier".into(),
+            rooms: vec![1],
+            rows: None,
+            align: None,
+            variants: Vec::new(),
+        };
+        assert_eq!(def.resolve_name(&gs, DAYTIME, None), "pier");
+        assert_eq!(def.resolve_name(&gs, NIGHTTIME, None), "pier");
+    }
+
+    /// First match wins, so ordering is the author's control.
+    #[test]
+    fn the_first_matching_variant_wins() {
+        let gs = GameState::new();
+        let def = RoomImageDef {
+            name: "default".into(),
+            rooms: vec![1],
+            rows: None,
+            align: None,
+            variants: vec![night_variant("first"), night_variant("second")],
+        };
+        assert_eq!(def.resolve_name(&gs, NIGHTTIME, None), "first");
+    }
+
+    /// A variant with no name is skipped rather than resolving to nothing.
+    #[test]
+    fn an_unnamed_variant_is_skipped() {
+        let gs = GameState::new();
+        let def = RoomImageDef {
+            name: "pier".into(),
+            rooms: vec![1],
+            rows: None,
+            align: None,
+            variants: vec![night_variant(""), night_variant("real_night")],
+        };
+        assert_eq!(def.resolve_name(&gs, NIGHTTIME, None), "real_night");
+    }
+
+    /// Variants round-trip through TOML, and an entry without them stays
+    /// clean in the file.
+    #[test]
+    fn variants_round_trip_through_toml() {
+        let config = RoomImagesConfig {
+            images: vec![
+                RoomImageDef {
+                    name: "pier_day".into(),
+                    rooms: vec![7118245],
+                    rows: Some(4.0),
+                    align: None,
+                    variants: vec![night_variant("pier_night")],
+                },
+                RoomImageDef {
+                    name: "plain".into(),
+                    rooms: vec![1],
+                    rows: None,
+                    align: None,
+                    variants: Vec::new(),
+                },
+            ],
+            names: Default::default(),
+        };
+        let text = toml::to_string_pretty(&config).unwrap();
+        let back: RoomImagesConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back, config);
+        assert_eq!(
+            text.matches("[[image.variant]]").count(),
+            1,
+            "only the entry with a variant writes one:\n{text}"
+        );
     }
 }

@@ -2905,6 +2905,7 @@ impl AppCore {
                         rooms: vec![uid],
                         rows: None,
                         align: None,
+                        variants: Vec::new(),
                     }),
                 }
                 if let Some(name) = self.game_state.room_name.clone().or_else(|| self.room_subtitle.clone()) {

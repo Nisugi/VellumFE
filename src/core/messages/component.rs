@@ -555,24 +555,30 @@ impl MessageProcessor {
             && value.trim().is_empty()
             && self.config.room_images.enabled
         {
+            // Resolve conditional art (day/night and friends) BEFORE the
+            // installed-file check, so a night variant is what gets tested
+            // rather than the daytime default.
+            let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
             match self
                 .current_room_uid
                 .and_then(|uid| self.room_image_index.get(uid))
-                .filter(|art| crate::core::inline_image::contains(&art.name))
+                .map(|art| (art, art.resolve_name(game_state, now_server, None).to_string()))
+                .filter(|(_, name)| crate::core::inline_image::contains(name))
             {
-                Some(art) => {
+                Some((art, name)) => {
                     let align = match art.align_or_default() {
                         crate::data::FloatAlign::Right => "right",
                         crate::data::FloatAlign::Left => "left",
                     };
                     injected = format!(
                         "<vellumImg src='{}' rows='{}' align='{align}'/>",
-                        art.name,
+                        name,
                         art.rows_or_default()
                     );
                     tracing::debug!(
-                        "room art: room {:?} -> '{}'",
+                        "room art: room {:?} -> '{}' (mapping '{}')",
                         self.current_room_uid,
+                        name,
                         art.name
                     );
                     injected.as_str()

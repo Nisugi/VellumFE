@@ -3043,6 +3043,7 @@ fn processor_with_room_art(
             rooms: rooms.to_vec(),
             rows: None,
             align: None,
+            variants: Vec::new(),
         }],
         names: Default::default(),
     }));
