@@ -495,17 +495,28 @@ impl VellumGuiApp {
     /// anchored rects every frame, so a larger solver floor silently
     /// re-inflates any width the user set below it (the compass "can't
     /// shrink after docking" bug).
-    pub(super) fn solver_min_width(&self, key: &TabKey) -> f32 {
-        let is_compass = self
-            .available_tabs
-            .get(key)
-            .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
-            .is_some_and(|window| matches!(window.widget_type, WidgetType::Compass));
-        if is_compass {
+    /// SINGLE AUTHORITY for a docked window's minimum on-screen width.
+    /// The anchor solver (`solver_min_width`), the render path
+    /// (zones.rs), and the layout-derived placement rect
+    /// (`tab_window_rect`) all read this — a site with its own floor
+    /// re-inflates a user-set width on every frame, which is exactly the
+    /// compass-can't-shrink bug that took three commits to chase.
+    /// `dock.rs::MIN_SNAPSHOT_WIDTH` must stay at or below the smallest
+    /// value returned here (asserted by `min_width_tests`).
+    pub(super) fn min_window_width_for(widget_type: &WidgetType) -> f32 {
+        if matches!(widget_type, WidgetType::Compass) {
             48.0
         } else {
             120.0
         }
+    }
+
+    pub(super) fn solver_min_width(&self, key: &TabKey) -> f32 {
+        self.available_tabs
+            .get(key)
+            .and_then(|tab| self.app_core.ui_state.windows.get(&tab.window_name))
+            .map(|window| Self::min_window_width_for(&window.widget_type))
+            .unwrap_or(120.0)
     }
 
     /// Context-menu "Release anchors": commit-on-detach, then forget. The
@@ -1373,5 +1384,21 @@ mod tests {
         // Missing axes deserialize Free.
         let legacy: WindowAnchors = serde_json::from_str("{}").unwrap();
         assert!(legacy.is_free());
+    }
+
+    #[test]
+    fn snapshot_floor_stays_below_every_widget_floor() {
+        // dock.rs sanitizes stored rects with an unconditional
+        // MIN_SNAPSHOT_WIDTH; if it ever rises above a widget's
+        // min_window_width_for value, that widget's stored width is
+        // silently re-inflated on every snapshot READ — the hardest
+        // variant of the compass-can't-shrink bug to diagnose.
+        for widget_type in [WidgetType::Compass, WidgetType::Text] {
+            assert!(
+                VellumGuiApp::MIN_SNAPSHOT_WIDTH
+                    <= VellumGuiApp::min_window_width_for(&widget_type),
+                "MIN_SNAPSHOT_WIDTH exceeds the {widget_type:?} floor"
+            );
+        }
     }
 }

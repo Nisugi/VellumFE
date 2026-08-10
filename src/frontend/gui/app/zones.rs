@@ -960,7 +960,8 @@ impl VellumGuiApp {
         let left =
             root_rect.left() + (window.position.x.get() as f32 / max_col) * root_rect.width();
         let top = root_rect.top() + (window.position.y.get() as f32 / max_row) * root_rect.height();
-        let width = ((window.position.width.get() as f32 / max_col) * root_rect.width()).max(120.0);
+        let min_width = Self::min_window_width_for(&window.widget_type);
+        let width = ((window.position.width.get() as f32 / max_col) * root_rect.width()).max(min_width);
         let height = ((window.position.height.get() as f32 / max_row) * root_rect.height())
             .max(MIN_DOCKED_WINDOW_HEIGHT);
         if !left.is_finite() || !top.is_finite() || !width.is_finite() || !height.is_finite() {
@@ -971,7 +972,7 @@ impl VellumGuiApp {
         if !clipped.is_finite() {
             return None;
         }
-        if clipped.width() < 60.0 || clipped.height() < MIN_DOCKED_WINDOW_HEIGHT {
+        if clipped.width() < min_width * 0.5 || clipped.height() < MIN_DOCKED_WINDOW_HEIGHT {
             None
         } else {
             Some(clipped)
@@ -1624,14 +1625,11 @@ impl VellumGuiApp {
                     _ => base,
                 }
             };
-            // The blanket 120pt floor suits text windows; the free-form
-            // compass is a HUD square the user may want hugging its art
-            // (the renderer keeps the rose usable down to ~40pt).
-            let min_window_width = if matches!(window.widget_type, WidgetType::Compass) {
-                48.0_f32
-            } else {
-                120.0_f32
-            };
+            // Per-widget floor from the single authority (the blanket
+            // 120pt suits text windows; the free-form compass hugs its
+            // art) — must match the anchor solver or user-set widths
+            // re-inflate every frame.
+            let min_window_width = Self::min_window_width_for(&window.widget_type);
             let min_window_size = Vec2::new(
                 min_window_width.min(window_bounds.width().max(1.0)),
                 min_window_height.min(window_bounds.height().max(1.0)),

@@ -203,127 +203,27 @@ impl VellumGuiApp {
             .map(|direction| direction.to_ascii_lowercase())
             .collect();
 
-        // A skinned compass integrates up/down into the rose sprite the way
-        // Wrayth authored them, so there is no separate arrow column. Vector
-        // mode keeps the rose square plus an up/down triangle column to its
-        // right. Either way the art occupies a CENTERED square of
-        // min(width, height): the window itself is free-form (grow one axis
-        // and the art holds its size, grow both and it scales), so extra
-        // space pads evenly around the rose instead of trailing off one
-        // side.
-        let has_skin_rose = skin_art.and_then(|art| art.compass_rose).is_some();
-
-        if has_skin_rose {
-            let side = ui
-                .available_height()
-                .min(ui.available_width())
-                .max(40.0);
-            let (outer, _) =
-                ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
-            let rect = Rect::from_center_size(outer.center(), Vec2::splat(side));
-            if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
-                clicked_link = Some(click);
-            }
-        } else {
-            ui.horizontal_centered(|ui| {
-                // Rose square: whatever height we have, leaving room for the
-                // up/down arrow column to the right. Out is the rose's hub.
-                let arrow_side = (ui.available_height() * 0.28).clamp(14.0, 30.0);
-                let side = ui
-                    .available_height()
-                    .min(ui.available_width() - arrow_side - 8.0)
-                    .max(40.0);
-                // Center the rose + arrow column pair in the leftover width.
-                let content_width = side + arrow_side + 8.0;
-                let lead = ((ui.available_width() - content_width) * 0.5).max(0.0);
-                if lead > 0.0 {
-                    ui.add_space(lead);
-                }
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-                if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
-                    clicked_link = Some(click);
-                }
-
-                ui.vertical(|ui| {
-                    for (direction, points_up) in [("up", true), ("down", false)] {
-                        if let Some(click) = Self::paint_vertical_arrow(
-                            ui, arrow_side, direction, points_up, &available,
-                        ) {
-                            if clicked_link.is_none() {
-                                clicked_link = Some(click);
-                            }
-                        }
-                    }
-                });
-            });
+        // Skinned and vector compasses both integrate up/down into the rose:
+        // skins the way Wrayth authored them into the sprite, vector mode as
+        // hub chevrons (see paint_compass_rose). No side column means both
+        // stay usable at the 48pt window floor. The art occupies a CENTERED
+        // square of min(width, height): the window itself is free-form (grow
+        // one axis and the art holds its size, grow both and it scales), so
+        // extra space pads evenly around the rose instead of trailing off
+        // one side.
+        let side = ui
+            .available_height()
+            .min(ui.available_width())
+            .max(40.0);
+        let (outer, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        let rect = Rect::from_center_size(outer.center(), Vec2::splat(side));
+        if let Some(click) = Self::paint_compass_rose(ui, rect, &available, skin_art) {
+            clicked_link = Some(click);
         }
 
         clicked_link
     }
 
-    /// One up/down movement arrow beside the compass rose: a triangle in
-    /// the same color language as the rose (link color when the exit is
-    /// available, faint outline otherwise), clickable like a rose arrow.
-    pub(super) fn paint_vertical_arrow(
-        ui: &mut egui::Ui,
-        side: f32,
-        direction: &str,
-        points_up: bool,
-        available: &HashSet<String>,
-    ) -> Option<GuiLinkClick> {
-        let is_available = available.contains(direction);
-        let (rect, response) = ui.allocate_exact_size(
-            Vec2::splat(side),
-            if is_available {
-                egui::Sense::click()
-            } else {
-                egui::Sense::hover()
-            },
-        );
-
-        let visuals = ui.visuals();
-        let available_fill = visuals.hyperlink_color;
-        let idle_stroke = visuals.widgets.noninteractive.bg_stroke.color;
-        let (fill, stroke) = if !is_available {
-            (Color32::TRANSPARENT, egui::Stroke::new(1.0, idle_stroke))
-        } else if response.hovered() {
-            let hover = Self::lighten(available_fill, 0.35);
-            (hover, egui::Stroke::new(1.0, hover))
-        } else {
-            (available_fill, egui::Stroke::new(1.0, available_fill))
-        };
-
-        let inner = rect.shrink(side * 0.18);
-        let points = if points_up {
-            vec![
-                Pos2::new(inner.center().x, inner.min.y),
-                Pos2::new(inner.min.x, inner.max.y),
-                Pos2::new(inner.max.x, inner.max.y),
-            ]
-        } else {
-            vec![
-                Pos2::new(inner.min.x, inner.min.y),
-                Pos2::new(inner.max.x, inner.min.y),
-                Pos2::new(inner.center().x, inner.max.y),
-            ]
-        };
-        ui.painter()
-            .add(egui::Shape::convex_polygon(points, fill, stroke));
-
-        if is_available {
-            let response = response
-                .on_hover_text(direction.to_string())
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if response.clicked() {
-                return Some(Self::gui_link_click_from_response(
-                    &response,
-                    ui,
-                    Self::direct_command_link(direction.to_string()),
-                ));
-            }
-        }
-        None
-    }
 
     /// Draw the compass rose into `rect`. Sprite mode (skin `[compass]`
     /// with a rose image) paints the rose plus a lit overlay per available
@@ -437,6 +337,59 @@ impl VellumGuiApp {
                         ui,
                         Self::direct_command_link(direction.to_string()),
                     ));
+                }
+            }
+        }
+
+        // Vector mode integrates up/down into the rose square's free
+        // corners (the sprite compass has them authored into the art):
+        // UP top-right, DOWN bottom-right, in the same color language as
+        // the rose arrows. Living inside the rose square — instead of the
+        // old side column — is what keeps the vector compass usable at the
+        // 48pt window floor.
+        if rose_sprite.is_none() {
+            for (direction, points_up) in [("up", true), ("down", false)] {
+                let is_available = available.contains(direction);
+                let y_sign = if points_up { -1.0 } else { 1.0 };
+                let arrow_center = center + Vec2::new(0.82, 0.82 * y_sign) * radius;
+                let half = (radius * 0.16).max(4.0);
+                let hit = Rect::from_center_size(
+                    arrow_center,
+                    Vec2::splat((radius * 0.3).max(10.0)),
+                );
+                let response = ui.interact(
+                    hit,
+                    ui.id().with(("compass_rose", direction)),
+                    if is_available {
+                        egui::Sense::click()
+                    } else {
+                        egui::Sense::hover()
+                    },
+                );
+                let (fill, stroke) = if !is_available {
+                    (Color32::TRANSPARENT, egui::Stroke::new(1.0, idle_stroke))
+                } else if response.hovered() {
+                    (hover_fill, egui::Stroke::new(1.0, hover_fill))
+                } else {
+                    (available_fill, egui::Stroke::new(1.0, available_fill))
+                };
+                let points = vec![
+                    arrow_center + Vec2::new(0.0, y_sign * half),
+                    arrow_center + Vec2::new(-half, -y_sign * half * 0.7),
+                    arrow_center + Vec2::new(half, -y_sign * half * 0.7),
+                ];
+                painter.add(egui::Shape::convex_polygon(points, fill, stroke));
+                if is_available {
+                    let response = response
+                        .on_hover_text(if points_up { "up" } else { "down" })
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if response.clicked() && clicked_link.is_none() {
+                        clicked_link = Some(Self::gui_link_click_from_response(
+                            &response,
+                            ui,
+                            Self::direct_command_link(direction.to_string()),
+                        ));
+                    }
                 }
             }
         }
