@@ -165,6 +165,9 @@ pub fn install_asset(
                 tracing::warn!("installed {name} but couldn't write its sidecar: {e}");
             }
             record(db, &name, repo, asset);
+            // New pool file: flush the category-listing cache so pickers
+            // see it this frame, not after the TTL.
+            crate::config::pool::invalidate_cache();
             Ok(InstallOutcome::Installed { path: dest })
         }
         // Composed bundles are extracted from the verified zip, not written
@@ -172,6 +175,7 @@ pub fn install_asset(
         None => {
             let path = install_bundle(kind, &name, &bytes)?;
             record(db, &name, repo, asset);
+            crate::config::pool::invalidate_cache();
             Ok(InstallOutcome::Installed { path })
         }
     }

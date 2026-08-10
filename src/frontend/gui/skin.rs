@@ -1551,15 +1551,16 @@ impl SkinState {
                 continue;
             }
             // Without a slice/scale sidecar the frame can't nine-slice;
-            // leave it out rather than offering a dead entry.
-            if !image.sidecar_path().is_file() {
+            // leave it out rather than offering a dead entry. Uses the
+            // scan-time flag: this runs every frame a picker is open.
+            if !image.has_sidecar {
                 continue;
             }
             if !names.iter().any(|name| name.eq_ignore_ascii_case(stem)) {
                 names.push(stem.to_owned());
             }
         }
-        names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+        names.sort_by_cached_key(|name| name.to_ascii_lowercase());
         names
     }
 }

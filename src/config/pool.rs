@@ -12,6 +12,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
@@ -32,6 +34,10 @@ pub struct PoolImage {
     pub pool_path: String,
     /// Absolute path on disk.
     pub abs_path: PathBuf,
+    /// Whether a `<stem>.toml` sidecar existed at scan time. Cached here so
+    /// per-frame consumers (the frame picker) don't stat every pool image
+    /// every frame.
+    pub has_sidecar: bool,
 }
 
 impl PoolImage {
@@ -50,9 +56,46 @@ impl PoolImage {
     }
 }
 
+/// Category listings live briefly in a cache: pickers in the window
+/// context menu re-list their category every frame while open, and a
+/// directory read plus per-file stats at 60fps is real I/O for a folder
+/// that almost never changes. New files dropped in externally appear
+/// within the TTL; in-app pool writes call [`invalidate_cache`] so their
+/// results show immediately.
+const LIST_CACHE_TTL: Duration = Duration::from_secs(2);
+
+fn list_cache() -> &'static Mutex<HashMap<String, (Instant, Vec<PoolImage>)>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, (Instant, Vec<PoolImage>)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Flush the category-listing cache. Call after writing into the pool
+/// (jinx installs, sidecar saves) so the new file is listed on the next
+/// frame instead of after the TTL.
+pub fn invalidate_cache() {
+    if let Ok(mut cache) = list_cache().lock() {
+        cache.clear();
+    }
+}
+
 /// Images in one pool category, sorted by file name. A missing category
 /// folder is just an empty list.
 pub fn list_category(category: &str) -> Vec<PoolImage> {
+    if let Ok(cache) = list_cache().lock() {
+        if let Some((at, images)) = cache.get(category) {
+            if at.elapsed() < LIST_CACHE_TTL {
+                return images.clone();
+            }
+        }
+    }
+    let images = scan_category(category);
+    if let Ok(mut cache) = list_cache().lock() {
+        cache.insert(category.to_owned(), (Instant::now(), images.clone()));
+    }
+    images
+}
+
+fn scan_category(category: &str) -> Vec<PoolImage> {
     let Ok(dir) = Config::global_image_category_dir(category) else {
         return Vec::new();
     };
@@ -71,10 +114,12 @@ pub fn list_category(category: &str) -> Vec<PoolImage> {
                 return None;
             }
             let file_name = path.file_name()?.to_str()?.to_owned();
+            let has_sidecar = path.with_extension("toml").is_file();
             Some(PoolImage {
                 pool_path: format!("{}/{}", category, file_name),
                 abs_path: path,
                 file_name,
+                has_sidecar,
             })
         })
         .collect();
@@ -216,7 +261,10 @@ pub fn write_doll_sidecar(
     doc.insert("dots", Item::Table(dots_table));
 
     crate::config::write_atomic(&path, doc.to_string())
-        .map_err(|err| anyhow::anyhow!("cannot write {}: {}", path.display(), err))
+        .map_err(|err| anyhow::anyhow!("cannot write {}: {}", path.display(), err))?;
+    // The listing cache carries has_sidecar; a fresh sidecar must show now.
+    invalidate_cache();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -307,6 +355,9 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("VELLUM_FE_DIR", dir.path());
+        // The listing cache is process-wide and keyed by category name; a
+        // redirected VELLUM_FE_DIR must not serve another test's listing.
+        invalidate_cache();
 
         let cat = Config::global_image_category_dir("statusicons").unwrap();
         std::fs::create_dir_all(&cat).unwrap();
