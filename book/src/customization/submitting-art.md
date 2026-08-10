@@ -98,12 +98,14 @@ their **role** so the client knows what each image is:
 - **Hand icons**: `lefthand` `righthand` `spellhand`
 
 Name each file either `<role>.png` or `<anything>_<role>.png` — both
-work. A partial set is fine (just a rose, say). Files named for a bare
-role take your set name as prefix, so `emberiron` + `rose.png` is
-published as `emberiron_rose.png`; files with their own prefix keep it,
-so one zip can carry `ember_spellhand.png` and `frost_spellhand.png` as
-two separate assets. You don't need a zip at all for one image — attach
-it directly and pick its role in the form's dropdown.
+work. A partial set is fine (just a rose, say). Each set is published
+as its own folder: files named for a bare role land in the set named on
+the form, so `emberiron` + `rose.png` becomes `emberiron/rose.png`;
+files with their own prefix land in a set of that name, so one zip can
+carry `ember_spellhand.png` and `frost_spellhand.png` into two separate
+sets. You don't need a zip at all for one image — attach it directly
+and pick its role in the form's dropdown. Adding a missing piece to an
+existing set later is fine too.
 
 ## What happens after you click Submit
 
