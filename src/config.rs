@@ -19,6 +19,7 @@ mod conditions;
 mod highlights;
 mod hotbars;
 mod io;
+pub mod room_images;
 mod macros;
 mod paths;
 pub mod pool;
@@ -64,7 +65,7 @@ pub use window_registry::{RegistryBinding, WindowRegistry};
 pub use paths::VELLUM_FE_DIR_TEST_LOCK;
 pub use settings::{
     ConnectionConfig, FocusConfig, Go2Config, HighlightsConfig, LoggingConfig, MapConfig,
-    SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
+    RoomImagesSettings, SorterConfig, SorterRule, SoundConfig, StreamRoute, StreamsConfig, TargetListConfig,
     TtsConfig, TtsSubstitution, UiConfig, WebConfig,
 };
 pub use presets::{IndicatorTemplateEntry, IndicatorTemplateStore, StatusIconState};

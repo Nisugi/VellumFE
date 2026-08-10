@@ -1170,6 +1170,7 @@ fn dispatch_ui_action(
         | A::Themes
         | A::SetTheme(_)
         | A::EditTheme
+        | A::RoomImagesEdit
         | A::SorterEdit
         | A::Skins
         | A::SetSkin(_)

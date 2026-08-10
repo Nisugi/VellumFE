@@ -440,8 +440,10 @@ impl AppCore {
         self.reload_colors();
         self.reload_layout();
         let emoji_count = crate::core::custom_emoji::reload();
+        let image_count = crate::core::inline_image::reload();
         self.add_system_message(&format!(
-            "All configuration reloaded ({emoji_count} custom emoji)"
+            "All configuration reloaded ({emoji_count} custom emoji, \
+             {image_count} inline images)"
         ));
     }
 

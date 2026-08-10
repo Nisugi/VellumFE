@@ -514,6 +514,7 @@ pub struct VellumGuiApp {
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
     sorter_editor: Option<editors::SorterEditorState>,
+    room_images_editor: Option<editors::RoomImagesEditorState>,
     touch_wheel_editor: Option<editors::TouchWheelEditorState>,
     launcher_editor: Option<editors::LauncherEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
@@ -1003,6 +1004,7 @@ impl VellumGuiApp {
             custom_windows_editor: None,
             known_windows_editor: None,
             sorter_editor: None,
+            room_images_editor: None,
             touch_wheel_editor: None,
             launcher_editor: None,
             doll_calibration: None,
@@ -1543,6 +1545,7 @@ impl VellumGuiApp {
                         .add_system_message("No skin active. Use .setskin <name> first.");
                 }
             },
+            A::RoomImagesEdit => self.open_room_images_editor(),
             A::SorterEdit => self.open_sorter_editor(),
             A::TouchWheelEditor => self.open_touch_wheel_editor(),
             A::Reconnect => self.reconnect(),
@@ -2496,6 +2499,9 @@ impl eframe::App for VellumGuiApp {
                             }
                             if ui.button("Sorter").clicked() {
                                 self.open_sorter_editor();
+                            }
+                            if ui.button("Room Images").clicked() {
+                                self.open_room_images_editor();
                             }
                             ui.separator();
                             if ui.button("UI Packs").clicked() {

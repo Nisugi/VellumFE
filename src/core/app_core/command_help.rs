@@ -351,6 +351,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
             ),
             entry!(&["makeskin"], "<name>", "Create a starter skin to edit"),
             entry!(
+                &["roomimages", "roomimg"],
+                "[on|off|set <image>|clear|list|edit]",
+                "Room art by room id (set/clear act on the room you are in)"
+            ),
+            entry!(
                 &["saveskin"],
                 "<name>",
                 "Bake the current GUI appearance into a skin (GUI)"

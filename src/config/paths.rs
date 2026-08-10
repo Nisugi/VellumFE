@@ -238,6 +238,17 @@ impl Config {
         Ok(Self::global_dir()?.join("hotbars.toml"))
     }
 
+    /// Global room art mappings: ~/.vellum-fe/global/room_images.toml
+    pub fn common_room_images_path() -> Result<PathBuf> {
+        Ok(Self::global_dir()?.join("room_images.toml"))
+    }
+
+    /// Per-character room art overrides:
+    /// ~/.vellum-fe/profiles/{character}/room_images.toml
+    pub fn room_images_path(character: Option<&str>) -> Result<PathBuf> {
+        Ok(Self::profile_dir(character)?.join("room_images.toml"))
+    }
+
     /// Get path to common (global) colors file
     /// Returns: ~/.vellum-fe/global/colors.toml
     pub fn common_colors_path() -> Result<PathBuf> {

@@ -540,6 +540,10 @@ impl Config {
 
         // Sorter (rules/order/labels/format): character overrides global.
         self.sorter = character_config.sorter;
+
+        // Room art toggle: character overrides global. Same restart-amnesia
+        // trap as active_skin — saved to the profile, dropped by the merge.
+        self.room_images = character_config.room_images;
     }
 
     pub fn load_with_options(character: Option<&str>, port_override: Option<u16>) -> Result<Self> {
@@ -806,6 +810,7 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             streams: StreamsConfig::default(), // Stream routing config
             sorter: SorterConfig::default(),
+            room_images: RoomImagesSettings::default(),
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default

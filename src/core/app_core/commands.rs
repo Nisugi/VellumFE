@@ -273,6 +273,7 @@ impl AppCore {
                 span_type: SpanType::Normal,
                 link_data: None,
                 custom_emoji: None,
+                inline_image: None,
             });
         }
 
@@ -286,6 +287,7 @@ impl AppCore {
             span_type: SpanType::Normal,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         });
 
         let styled_line = StyledLine {
@@ -2016,6 +2018,10 @@ impl AppCore {
                 }
             }
 
+            "roomimages" | "roomimg" => {
+                return self.handle_room_images_command(&parts);
+            }
+
             // Batch item commands over tracked containers (foreach.lic's
             // native cousin). Needs raw text - ';' separates commands.
             "foreach" => {
@@ -2779,6 +2785,211 @@ impl AppCore {
 
         // Don't send anything to server
         Ok(CommandOutcome::Handled)
+    }
+
+    /// `.roomimages [on|off|set <image>|clear|list|edit]` — room art by uid.
+    ///
+    /// `set`/`clear` act on the room the character is standing in, which is
+    /// the whole point: the user never types a uid.
+    fn handle_room_images_command(&mut self, parts: &[&str]) -> Result<CommandOutcome> {
+        let sub = parts.get(1).map(|s| s.to_lowercase());
+        match sub.as_deref() {
+            None => {
+                let state = if self.config.room_images.enabled { "on" } else { "off" };
+                let uid_now = self.message_processor.current_room_uid();
+                let store = self.room_images_store().clone();
+                let mapped: usize = store.images.iter().map(|i| i.rooms.len()).sum();
+                let here = uid_now.and_then(|uid| {
+                    store
+                        .images
+                        .iter()
+                        .find(|i| i.rooms.contains(&uid))
+                        .map(|i| (uid, i.name.clone()))
+                });
+                self.add_system_message(&format!(
+                    "Room images {state} — {mapped} room(s) mapped."
+                ));
+                match here {
+                    Some((uid, image)) => self.add_system_message(&format!(
+                        "This room ({uid}) shows '{image}'."
+                    )),
+                    None => match uid_now {
+                        Some(uid) => self.add_system_message(&format!(
+                            "This room ({uid}) has no art. Use .roomimages set <image>."
+                        )),
+                        None => self.add_system_message(
+                            "Room id unknown yet — move once, then try again.",
+                        ),
+                    },
+                }
+                self.add_system_message(
+                    "Usage: .roomimages [on|off|set <image>|clear|list|edit]",
+                );
+            }
+            Some("on") | Some("off") => {
+                let target = sub.as_deref() == Some("on");
+                self.config.room_images.enabled = target;
+                self.message_processor.set_room_images_enabled(target);
+                let note = match self.save_config() {
+                    Ok(()) => String::new(),
+                    Err(e) => format!(" (session only: {e})"),
+                };
+                self.add_system_message(&format!(
+                    "Room images {}{note}.",
+                    if target { "on" } else { "off" }
+                ));
+            }
+            Some("edit") => {
+                return Ok(CommandOutcome::Ui(UiAction::RoomImagesEdit));
+            }
+            Some("list") => {
+                let store = self.room_images_store().clone();
+                if store.images.is_empty() {
+                    self.add_system_message("No room art mapped yet.");
+                } else {
+                    self.add_system_message("Room art:");
+                    for entry in &store.images {
+                        let rooms: Vec<String> =
+                            entry.rooms.iter().map(|r| r.to_string()).collect();
+                        self.add_system_message(&format!(
+                            "  {} -> {}",
+                            entry.name,
+                            if rooms.is_empty() {
+                                "(no rooms)".to_string()
+                            } else {
+                                rooms.join(", ")
+                            }
+                        ));
+                    }
+                }
+            }
+            Some("set") => {
+                let Some(image) = parts.get(2) else {
+                    self.add_system_message("Usage: .roomimages set <image>");
+                    return Ok(CommandOutcome::Handled);
+                };
+                let image = image.to_string();
+                let Some(uid) = self.message_processor.current_room_uid() else {
+                    self.add_system_message(
+                        "Room id unknown yet — move once, then try again.",
+                    );
+                    return Ok(CommandOutcome::Handled);
+                };
+                if !crate::core::inline_image::contains(&image) {
+                    self.add_system_message(&format!(
+                        "No image named '{image}' in global/images/inline. \
+                         Add the file and run .reload."
+                    ));
+                    return Ok(CommandOutcome::Handled);
+                }
+
+                let mut store = self.room_images_store().clone();
+                // A room belongs to exactly one image: drop it from any other
+                // entry first so `set` MOVES rather than silently duplicating.
+                let moved_from = store
+                    .images
+                    .iter_mut()
+                    .find(|i| i.name != image && i.rooms.contains(&uid))
+                    .map(|i| {
+                        i.rooms.retain(|r| *r != uid);
+                        i.name.clone()
+                    });
+                match store.images.iter_mut().find(|i| i.name == image) {
+                    Some(entry) => {
+                        if !entry.rooms.contains(&uid) {
+                            entry.rooms.push(uid);
+                        }
+                    }
+                    None => store.images.push(crate::config::room_images::RoomImageDef {
+                        name: image.clone(),
+                        rooms: vec![uid],
+                        rows: None,
+                        align: None,
+                    }),
+                }
+                if let Some(name) = self.game_state.room_name.clone().or_else(|| self.room_subtitle.clone()) {
+                    store.names.insert(uid.to_string(), name);
+                }
+                self.commit_room_images(store);
+                match moved_from {
+                    Some(old) => self.add_system_message(&format!(
+                        "Room {uid} moved from '{old}' to '{image}'."
+                    )),
+                    None => self.add_system_message(&format!(
+                        "Room {uid} now shows '{image}'."
+                    )),
+                }
+                if !self.config.room_images.enabled {
+                    self.add_system_message(
+                        "Note: room images are off — turn on with .roomimages on.",
+                    );
+                }
+            }
+            Some("clear") => {
+                let Some(uid) = self.message_processor.current_room_uid() else {
+                    self.add_system_message(
+                        "Room id unknown yet — move once, then try again.",
+                    );
+                    return Ok(CommandOutcome::Handled);
+                };
+                let mut store = self.room_images_store().clone();
+                let removed = store
+                    .images
+                    .iter_mut()
+                    .find(|i| i.rooms.contains(&uid))
+                    .map(|i| {
+                        i.rooms.retain(|r| *r != uid);
+                        i.name.clone()
+                    });
+                match removed {
+                    Some(name) => {
+                        store.names.remove(&uid.to_string());
+                        self.commit_room_images(store);
+                        self.add_system_message(&format!(
+                            "Room {uid} no longer shows '{name}'."
+                        ));
+                    }
+                    None => self
+                        .add_system_message(&format!("Room {uid} has no art mapped.")),
+                }
+            }
+            Some(other) => {
+                self.add_system_message(&format!(
+                    "Unknown .roomimages option '{other}'. \
+                     Usage: .roomimages [on|off|set <image>|clear|list|edit]"
+                ));
+            }
+        }
+        Ok(CommandOutcome::Handled)
+    }
+
+    /// The loaded room-art mappings, loading them on first use.
+    pub fn room_images_store(&mut self) -> &crate::config::room_images::RoomImagesConfig {
+        if self.room_images.is_none() {
+            self.room_images = Some(
+                crate::config::Config::load_room_images(self.config.character.as_deref())
+                    .unwrap_or_default(),
+            );
+        }
+        self.room_images.as_ref().expect("just loaded")
+    }
+
+    /// Persist mappings, republish the lookup index, and keep the in-memory
+    /// copy in sync so the next command sees the change.
+    pub fn commit_room_images(&mut self, store: crate::config::room_images::RoomImagesConfig) {
+        use crate::config::room_images::RoomImageIndex;
+        self.message_processor
+            .set_room_image_index(RoomImageIndex::build(&store));
+        if let Err(e) = crate::config::Config::save_room_images(
+            &store,
+            true,
+            self.config.character.as_deref(),
+        ) {
+            self.add_system_message(&format!("Room art saved to session only: {e}"));
+        }
+        self.room_images = Some(store);
+        // Re-render the room so the change is visible without walking out.
+        self.room_window_dirty = true;
     }
 }
 
@@ -3960,5 +4171,168 @@ mod foreach_tests {
         let _ = core.handle_dot_command(".foreach in bandolier");
         assert!(!core.foreach.is_running());
         assert!(core.take_outbound().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod room_images_command_tests {
+    use crate::core::AppCore;
+    use crate::data::{CommandOutcome, UiAction};
+
+    /// Guards a test: holds the registry + config-dir locks and redirects
+    /// VELLUM_FE_DIR to a scratch dir. Without the redirect these tests
+    /// WRITE ROOM MAPPINGS INTO THE USER'S REAL ~/.vellum-fe.
+    struct ArtTestEnv {
+        _art: std::sync::MutexGuard<'static, ()>,
+        _dir_lock: std::sync::MutexGuard<'static, ()>,
+        _dir: tempfile::TempDir,
+    }
+
+    impl Drop for ArtTestEnv {
+        fn drop(&mut self) {
+            std::env::remove_var("VELLUM_FE_DIR");
+        }
+    }
+
+    /// Install one image in the pool so `.roomimages set` accepts it.
+    fn install_art(name: &str) -> ArtTestEnv {
+        use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+        let guard = crate::core::inline_image::TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir_lock = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        let mut registry = CustomEmojiRegistry::default();
+        registry.insert_for_test(CustomEmoji {
+            name: name.to_string(),
+            path: std::path::PathBuf::from(format!("{name}.png")),
+            format: EmojiFormat::Png,
+        });
+        crate::core::inline_image::set_for_test(registry);
+        ArtTestEnv { _art: guard, _dir_lock: dir_lock, _dir: dir }
+    }
+
+    /// Put the core "in" a room the way <nav rm=> does.
+    fn enter(core: &mut AppCore, uid: &str) {
+        core.message_processor.process_element(
+            &crate::parser::ParsedElement::RoomId { id: uid.to_string() },
+            &mut core.game_state,
+            &mut core.ui_state,
+            &mut core.room_components,
+            &mut core.current_room_component,
+            &mut core.room_window_dirty,
+            &mut core.nav_room_id,
+            &mut core.lich_room_id,
+            &mut core.room_subtitle,
+            None,
+        );
+    }
+
+    fn mapped_rooms(core: &mut AppCore, image: &str) -> Vec<u64> {
+        core.room_images_store()
+            .images
+            .iter()
+            .find(|i| i.name == image)
+            .map(|i| i.rooms.clone())
+            .unwrap_or_default()
+    }
+
+    /// `.roomimages set` maps the room the character is standing in, so the
+    /// user never types a uid.
+    #[test]
+    fn set_maps_the_current_room() {
+        let _guard = install_art("pier");
+        let mut core = AppCore::new_for_test();
+        enter(&mut core, "7118245");
+
+        let _ = core.send_command(".roomimages set pier".to_string());
+        assert_eq!(mapped_rooms(&mut core, "pier"), vec![7118245]);
+    }
+
+    /// Setting a room that already belongs to another image MOVES it, rather
+    /// than leaving a duplicate the format would permit but the loader would
+    /// have to arbitrate.
+    #[test]
+    fn set_moves_a_room_between_images() {
+        let _guard = install_art("pier");
+        let mut core = AppCore::new_for_test();
+        enter(&mut core, "7118245");
+        let _ = core.send_command(".roomimages set pier".to_string());
+
+        // A second image, also installed.
+        {
+            use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+            let mut registry = CustomEmojiRegistry::default();
+            for name in ["pier", "dock"] {
+                registry.insert_for_test(CustomEmoji {
+                    name: name.into(),
+                    path: std::path::PathBuf::from(format!("{name}.png")),
+                    format: EmojiFormat::Png,
+                });
+            }
+            crate::core::inline_image::set_for_test(registry);
+        }
+        let _ = core.send_command(".roomimages set dock".to_string());
+
+        assert_eq!(mapped_rooms(&mut core, "dock"), vec![7118245]);
+        assert!(
+            mapped_rooms(&mut core, "pier").is_empty(),
+            "the room must not stay mapped to both images"
+        );
+    }
+
+    /// `.roomimages clear` unmaps the current room.
+    #[test]
+    fn clear_unmaps_the_current_room() {
+        let _guard = install_art("pier");
+        let mut core = AppCore::new_for_test();
+        enter(&mut core, "7118245");
+        let _ = core.send_command(".roomimages set pier".to_string());
+        let _ = core.send_command(".roomimages clear".to_string());
+        assert!(mapped_rooms(&mut core, "pier").is_empty());
+    }
+
+    /// Naming art that isn't installed is refused with a message rather than
+    /// writing a mapping that could never render.
+    #[test]
+    fn set_refuses_an_uninstalled_image() {
+        let _guard = install_art("pier");
+        let mut core = AppCore::new_for_test();
+        enter(&mut core, "7118245");
+        let _ = core.send_command(".roomimages set nope".to_string());
+        assert!(mapped_rooms(&mut core, "nope").is_empty());
+    }
+
+    /// Before any <nav rm=>, the client does not know where it is; `set` must
+    /// say so instead of mapping room 0 or panicking.
+    #[test]
+    fn set_without_a_known_room_is_refused() {
+        let _guard = install_art("pier");
+        let mut core = AppCore::new_for_test();
+        let _ = core.send_command(".roomimages set pier".to_string());
+        assert!(mapped_rooms(&mut core, "pier").is_empty());
+    }
+
+    #[test]
+    fn toggle_flips_the_setting() {
+        let _guard = install_art("pier");
+        let mut core = AppCore::new_for_test();
+        assert!(!core.config.room_images.enabled, "off by default");
+        let _ = core.send_command(".roomimages on".to_string());
+        assert!(core.config.room_images.enabled);
+        let _ = core.send_command(".roomimages off".to_string());
+        assert!(!core.config.room_images.enabled);
+    }
+
+    #[test]
+    fn edit_returns_its_ui_action() {
+        let mut core = AppCore::new_for_test();
+        let outcome = core
+            .send_command(".roomimages edit".to_string())
+            .expect("command should not error");
+        assert_eq!(outcome, CommandOutcome::Ui(UiAction::RoomImagesEdit));
     }
 }
