@@ -1967,3 +1967,173 @@ fn reserved_float_height_is_actually_allocated() {
 
     crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
 }
+
+/// Owner request (live, 2026-08-10): when the following text cannot fit
+/// beside the picture, scale the picture DOWN rather than leaving it at
+/// full size over a text-below layout. The requested `rows` is a ceiling,
+/// not a promise — but only when there is a follower to make room for: a
+/// standalone image keeps its requested size, so a script's `rows=` still
+/// means what it says.
+#[test]
+fn picture_shrinks_when_the_following_text_cannot_fit_beside_it() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    use crate::data::{FloatAlign, InlineImage, StyledLine, TextSegment};
+
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = std::env::temp_dir().join(format!("vellum_shrink_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let path = tmp.join("art.png");
+    {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[7, 7, 7, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(&path, png).unwrap();
+    }
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "art".into(),
+        path,
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let image_line = || StyledLine {
+        segments: vec![
+            TextSegment {
+                text: "[img:art]".into(),
+                inline_image: Some(InlineImage {
+                    name: "art".into(),
+                    rows: 6.0,
+                    align: FloatAlign::Left,
+                }),
+                ..Default::default()
+            },
+            TextSegment::plain("name"),
+        ],
+        stream: "main".into(),
+        timestamp: None,
+    };
+    let font = eframe::egui::FontId::monospace(14.0);
+
+    // Standalone: the image line is LAST, nothing to make room for.
+    let mut alone = cache_test_content(&["before"], 2);
+    alone.lines.push_back(image_line());
+    let mut cache_alone = super::RowHeightCache::default();
+    update_cache(&mut cache_alone, &alone, 300.0, &font);
+    let kept = cache_alone
+        .inset(cache_alone.heights().len() - 1, 300.0)
+        .float_height;
+    assert!(kept > 0.0, "standalone float laid out");
+
+    // Followed by prose too long to fit beside a 6-row picture at this
+    // width: the picture must come out SMALLER than the standalone one.
+    let mut followed = cache_test_content(&[], 1);
+    followed.lines.push_back(image_line());
+    followed.lines.push_back(StyledLine {
+        segments: vec![TextSegment::plain("word ".repeat(200))],
+        stream: "main".into(),
+        timestamp: None,
+    });
+    followed.generation = 3;
+    let mut cache_followed = super::RowHeightCache::default();
+    update_cache(&mut cache_followed, &followed, 300.0, &font);
+    let shrunk = cache_followed.inset(0, 300.0).float_height;
+
+    assert!(
+        shrunk > 0.0 && shrunk < kept,
+        "an unfittable follower must shrink the picture: {shrunk} vs {kept}"
+    );
+
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}
+
+/// Owner decision (2026-08-10): `rows` is a DEFAULT, and the displayed
+/// picture follows the text block that wraps it — press-and-hold shows the
+/// real size. Three lines of neighboring text produce a taller picture than
+/// one line, and both come out smaller than the standalone default.
+#[test]
+fn picture_height_follows_the_text_block_beside_it() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    use crate::data::{FloatAlign, InlineImage, StyledLine, TextSegment};
+
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = std::env::temp_dir().join(format!("vellum_dyn_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let path = tmp.join("art.png");
+    {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[3, 3, 3, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(&path, png).unwrap();
+    }
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "art".into(),
+        path,
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let image_line = || StyledLine {
+        segments: vec![
+            TextSegment {
+                text: "[img:art]".into(),
+                inline_image: Some(InlineImage {
+                    name: "art".into(),
+                    rows: 6.0,
+                    align: FloatAlign::Left,
+                }),
+                ..Default::default()
+            },
+            TextSegment::plain("name"),
+        ],
+        stream: "main".into(),
+        timestamp: None,
+    };
+    let text = |t: &str| StyledLine {
+        segments: vec![TextSegment::plain(t.to_string())],
+        stream: "main".into(),
+        timestamp: None,
+    };
+    let font = eframe::egui::FontId::monospace(14.0);
+    let height_of = |lines: Vec<StyledLine>| {
+        let mut content = cache_test_content(&[], 1);
+        for line in lines {
+            content.lines.push_back(line);
+        }
+        content.generation = content.lines.len() as u64;
+        let mut cache = super::RowHeightCache::default();
+        update_cache(&mut cache, &content, 400.0, &font);
+        cache.inset(0, 400.0).float_height
+    };
+
+    let standalone = height_of(vec![image_line()]);
+    let one_line = height_of(vec![image_line(), text("a")]);
+    let three_lines = height_of(vec![
+        image_line(),
+        text("mid one"),
+        text("mid two"),
+        text("mid three"),
+    ]);
+
+    assert!(standalone > 0.0 && one_line > 0.0 && three_lines > 0.0);
+    assert!(
+        one_line < three_lines,
+        "more neighboring text means a taller picture: {one_line} vs {three_lines}"
+    );
+    assert!(
+        three_lines < standalone,
+        "wrapped pictures stay smaller than the standalone default: \
+         {three_lines} vs {standalone}"
+    );
+
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}

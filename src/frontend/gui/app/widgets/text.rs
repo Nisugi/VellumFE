@@ -1022,13 +1022,96 @@ impl VellumGuiApp {
                 continue;
             };
 
-            let (img_w, img_h) = image.fitted_size(
-                (natural.x, natural.y),
-                row_height,
-                wrap_width,
-                view_height,
-                crate::data::INLINE_IMAGE_MAX_ROWS,
-            );
+            // ---- Size to the text that wraps it -----------------------
+            // `rows` is a DEFAULT, not a contract (owner decision,
+            // 2026-08-10): the displayed picture follows the height of the
+            // text block that actually sits beside it, and press-and-hold
+            // shows the full-size art. The fixed point below starts at the
+            // requested rows and shrinks toward the measured text block --
+            // shrinking also NARROWS the picture, which widens the text
+            // column and re-wraps the text shorter, so each pass
+            // re-measures at the new width until the two agree. Floor of 2
+            // rows; below that a picture stops reading as one.
+            //
+            // A standalone image (no follower, or the next line carries its
+            // own image) keeps its requested size: there is no text block
+            // to follow, so the default IS the size.
+            let has_follower = content
+                .lines
+                .get(start + i + 1)
+                .is_some_and(|next| {
+                    !next.segments.iter().any(|s| s.inline_image.is_some())
+                });
+            let mut attempt = image.rows.clamp(2.0, crate::data::INLINE_IMAGE_MAX_ROWS);
+            let refit = |rows: f32| {
+                image.fitted_size(
+                    (natural.x, natural.y),
+                    row_height,
+                    wrap_width,
+                    view_height,
+                    rows,
+                )
+            };
+            let mut fit = refit(attempt);
+            if has_follower {
+                for _ in 0..8 {
+                    let (w, h) = fit;
+                    if attempt <= 2.0 {
+                        break;
+                    }
+                    if crate::data::InlineImage::should_collapse(w, wrap_width) {
+                        attempt = (attempt - 1.0).max(2.0);
+                        fit = refit(attempt);
+                        continue;
+                    }
+                    // Measure the text block that would sit beside a picture
+                    // this size: origin plus followers, with the same stop
+                    // rules the span pass uses (another image ends it, and a
+                    // straddling row is excluded).
+                    let probe = LineInset {
+                        width: (wrap_width - w).max(1.0),
+                        x_offset: match image.align {
+                            crate::data::FloatAlign::Left => w,
+                            crate::data::FloatAlign::Right => 0.0,
+                        },
+                        y_offset: 0.0,
+                        float_height: h,
+                        float_width: w,
+                    };
+                    let mut block = Self::measure_line_height(
+                        ctx,
+                        &content.lines[start + i],
+                        visuals,
+                        probe,
+                        font_id,
+                        timestamps,
+                    );
+                    let mut j = i + 1;
+                    while block < h {
+                        let Some(follower) = content.lines.get(start + j) else {
+                            break;
+                        };
+                        if follower.segments.iter().any(|s| s.inline_image.is_some()) {
+                            break;
+                        }
+                        let fh = Self::measure_line_height(
+                            ctx, follower, visuals, probe, font_id, timestamps,
+                        );
+                        if block + fh > h {
+                            break;
+                        }
+                        block += fh;
+                        j += 1;
+                    }
+                    let text_rows = (block / row_height).ceil().max(2.0);
+                    if text_rows >= attempt {
+                        break; // the text fills the picture: agreed
+                    }
+                    attempt = text_rows;
+                    fit = refit(attempt);
+                }
+            }
+            let (img_w, img_h) = fit;
             if crate::data::InlineImage::should_collapse(img_w, wrap_width) {
                 // Too narrow to wrap beside: the image takes its OWN rows and
                 // the text starts below it.
