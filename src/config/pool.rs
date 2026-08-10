@@ -38,6 +38,11 @@ pub struct PoolImage {
     /// per-frame consumers (the frame picker) don't stat every pool image
     /// every frame.
     pub has_sidecar: bool,
+    /// Set folder this image sits in (`Some("stormfront")` for
+    /// `compass/stormfront/ne.png`), or `None` for a file at the category
+    /// root. Legacy `<set>_<role>` files are at the root and so carry
+    /// `None` here — [`PoolImage::set_role`] resolves both forms.
+    pub set: Option<String>,
 }
 
 impl PoolImage {
@@ -49,10 +54,44 @@ impl PoolImage {
             .unwrap_or(&self.file_name)
     }
 
+    /// The set this image belongs to, and its role within that set.
+    ///
+    /// Two layouts are recognized, because a pool can be half-migrated (and
+    /// because users drop files in by hand):
+    ///
+    /// - foldered — `compass/stormfront/ne.png` → `("stormfront", "ne")`
+    /// - legacy prefix — `compass/stormfront_ne.png` → `("stormfront", "ne")`
+    ///
+    /// A file that is neither (no folder, no underscore) belongs to no set.
+    /// Roles are lowercased; set names are compared case-insensitively by
+    /// [`set_members`], so authors' casing never decides whether art loads.
+    pub fn set_role(&self) -> Option<(&str, String)> {
+        if let Some(set) = &self.set {
+            return Some((set.as_str(), self.stem().to_ascii_lowercase()));
+        }
+        let (set, role) = self.stem().split_once('_')?;
+        if set.is_empty() || role.is_empty() {
+            return None;
+        }
+        Some((set, role.to_ascii_lowercase()))
+    }
+
     /// Sidecar path: `<stem>.toml` beside the image (the same convention the
     /// vellum-assets generator reads for gallery/render metadata).
     pub fn sidecar_path(&self) -> PathBuf {
         self.abs_path.with_extension("toml")
+    }
+
+    /// Label for per-image pickers: `"meteor / spellhand"` for set art,
+    /// plain `"parchment"` for standalone art.
+    ///
+    /// Set pieces are named for their role, so every hand set ships a
+    /// `lefthand.png` — a stem-only list would be forty identical rows.
+    pub fn display_label(&self) -> String {
+        match &self.set {
+            Some(set) => format!("{set} / {}", self.stem()),
+            None => self.stem().to_owned(),
+        }
     }
 }
 
@@ -102,42 +141,262 @@ fn scan_category(category: &str) -> Vec<PoolImage> {
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
-    let mut images: Vec<PoolImage> = entries
-        .flatten()
-        .filter_map(|entry| {
+    // Root files first, then one level of set folders. Deeper nesting is
+    // ignored on purpose: a set is a flat bag of roles, and unbounded
+    // recursion would let a stray directory tree stall the 60fps pickers.
+    let mut images: Vec<PoolImage> = Vec::new();
+    let mut set_dirs: Vec<(String, PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                set_dirs.push((name.to_owned(), path));
+            }
+            continue;
+        }
+        if let Some(image) = pool_image(category, None, &path) {
+            images.push(image);
+        }
+    }
+    set_dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    for (set, path) in set_dirs {
+        let Ok(entries) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_file() {
-                return None;
+            if path.is_file() {
+                if let Some(image) = pool_image(category, Some(&set), &path) {
+                    images.push(image);
+                }
             }
-            let ext = path.extension()?.to_str()?.to_ascii_lowercase();
-            if !IMAGE_EXTS.contains(&ext.as_str()) {
-                return None;
-            }
-            let file_name = path.file_name()?.to_str()?.to_owned();
-            let has_sidecar = path.with_extension("toml").is_file();
-            Some(PoolImage {
-                pool_path: format!("{}/{}", category, file_name),
-                abs_path: path,
-                file_name,
-                has_sidecar,
-            })
-        })
-        .collect();
-    images.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+        }
+    }
+    // Sort by pool_path, not file_name: with folders in play, file names
+    // collide across sets ("stormfront/n.png" and "stealthblue/n.png" are
+    // both "n.png") and a file-name sort would interleave them.
+    images.sort_by(|a, b| a.pool_path.cmp(&b.pool_path));
     images
 }
 
-/// Distinct `<set>_` prefixes in a category, sorted — how compass and
-/// statusicon art groups into sets ("runic_stunned.png" → set "runic").
-/// Files without an underscore don't form a set.
+/// Build a [`PoolImage`] for one path, or `None` when it isn't image art.
+fn pool_image(category: &str, set: Option<&str>, path: &Path) -> Option<PoolImage> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    if !IMAGE_EXTS.contains(&ext.as_str()) {
+        return None;
+    }
+    let file_name = path.file_name()?.to_str()?.to_owned();
+    let has_sidecar = path.with_extension("toml").is_file();
+    let pool_path = match set {
+        Some(set) => format!("{category}/{set}/{file_name}"),
+        None => format!("{category}/{file_name}"),
+    };
+    Some(PoolImage {
+        pool_path,
+        abs_path: path.to_path_buf(),
+        file_name,
+        has_sidecar,
+        set: set.map(str::to_owned),
+    })
+}
+
+/// Distinct set names in a category, sorted and case-insensitively deduped.
+///
+/// Sets come from set folders (`compass/stormfront/`) and from legacy
+/// `<set>_<role>` file names at the category root, unioned — a pool that is
+/// mid-migration, or that a user has hand-populated in either style, lists
+/// every set exactly once.
 pub fn set_names(category: &str) -> Vec<String> {
-    let mut names: Vec<String> = list_category(category)
-        .iter()
-        .filter_map(|image| image.stem().split_once('_').map(|(set, _)| set.to_owned()))
-        .collect();
-    names.sort();
-    names.dedup();
+    let mut names: Vec<String> = Vec::new();
+    for image in list_category(category) {
+        let Some((set, _)) = image.set_role() else {
+            continue;
+        };
+        if !names.iter().any(|n| n.eq_ignore_ascii_case(set)) {
+            names.push(set.to_owned());
+        }
+    }
+    names.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
     names
+}
+
+/// One set's members as `role -> pool_path` ("ne" → "compass/stormfront/ne.png").
+///
+/// The single place set membership is decided. Every consumer — the compass
+/// and statusicon loaders, `.saveskin`, the editors — goes through here, so
+/// folder and legacy-prefix layouts resolve identically everywhere and a set
+/// can never render one way in the widget and another in a saved skin.
+///
+/// When both layouts somehow describe the same role, the foldered file wins:
+/// migration writes folders, so the folder is the newer truth.
+pub fn set_members(category: &str, set: &str) -> HashMap<String, String> {
+    let mut members: HashMap<String, String> = HashMap::new();
+    for image in list_category(category) {
+        let Some((image_set, role)) = image.set_role() else {
+            continue;
+        };
+        if !image_set.eq_ignore_ascii_case(set) {
+            continue;
+        }
+        if image.set.is_some() {
+            members.insert(role, image.pool_path.clone());
+        } else {
+            members.entry(role).or_insert_with(|| image.pool_path.clone());
+        }
+    }
+    members
+}
+
+/// Pool categories whose art groups into sets, and so gets foldered.
+///
+/// `hands` is a set category even though its pieces are chosen
+/// independently: a hand set ships `lefthand`/`righthand`/`spellhand` under
+/// one name, and every set now has a bare `lefthand.png`, so the folder is
+/// what keeps them apart. Mixing pieces across sets stays a picker choice.
+///
+/// `frames`/`backgrounds` hold single self-contained images, `icons` holds
+/// sprite sheets, and `dolls` need a manifest no filename convention can
+/// express — none are sets, and foldering them would only break the paths
+/// skins already reference.
+pub const SET_CATEGORIES: &[&str] = &["compass", "statusicons", "hands"];
+
+/// Suffix of the one-time pre-migration backup folder.
+const MIGRATION_BACKUP_SUFFIX: &str = ".pre-sets.bak";
+
+/// One legacy path rewritten by [`migrate_sets`], as pool-relative strings:
+/// `("statusicons/runic_stunned.png", "statusicons/runic/stunned.png")`.
+pub type PathRewrite = (String, String);
+
+/// Fold legacy `<set>_<role>` files into set folders, once.
+///
+/// `compass/stormfront_ne.png` becomes `compass/stormfront/ne.png`, with
+/// the image's `.toml` sidecar carried along. Files with no underscore stay
+/// at the category root — a bare `rose.png` is not a set member and keeps
+/// its path.
+///
+/// Returns every pool-path rewrite performed so callers can fix up saved
+/// references (per-indicator icon overrides name a `pool_path` directly and
+/// would otherwise silently go blank).
+///
+/// Safety: before touching a category, the whole folder is copied to
+/// `<category>.pre-sets.bak/`. The backup is never auto-deleted — if art
+/// goes missing the originals are one folder away. A category that already
+/// has a backup is treated as already migrated and skipped, which is what
+/// makes this idempotent across restarts.
+///
+/// Failures are collected, not propagated: a locked file must not stop the
+/// client from starting, and the scanner reads both layouts, so a partial
+/// migration still renders.
+pub fn migrate_sets() -> Vec<PathRewrite> {
+    let mut rewrites = Vec::new();
+    for category in SET_CATEGORIES {
+        match migrate_category(category) {
+            Ok(mut moved) => rewrites.append(&mut moved),
+            Err(err) => {
+                tracing::warn!("pool: set migration skipped for '{category}': {err}");
+            }
+        }
+    }
+    if !rewrites.is_empty() {
+        invalidate_cache();
+        tracing::info!("pool: foldered {} set file(s)", rewrites.len());
+    }
+    rewrites
+}
+
+fn migrate_category(category: &str) -> Result<Vec<PathRewrite>, String> {
+    let dir = Config::global_image_category_dir(category)
+        .map_err(|e| format!("cannot resolve pool dir: {e}"))?;
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let backup = dir.with_file_name(format!(
+        "{}{MIGRATION_BACKUP_SUFFIX}",
+        dir.file_name().and_then(|n| n.to_str()).unwrap_or(category)
+    ));
+    // Already migrated on an earlier run.
+    if backup.exists() {
+        return Ok(Vec::new());
+    }
+
+    // Legacy members to fold: root files whose stem splits on '_'. Anything
+    // already in a folder, and anything without an underscore, is left alone.
+    let mut pending: Vec<(PathBuf, String, String)> = Vec::new();
+    for entry in std::fs::read_dir(&dir)
+        .map_err(|e| format!("cannot read {}: {e}", dir.display()))?
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(image) = pool_image(category, None, &path) else {
+            continue;
+        };
+        let Some((set, _)) = image.stem().split_once('_') else {
+            continue;
+        };
+        let role_ext = image.file_name[set.len() + 1..].to_owned();
+        if set.is_empty() || role_ext.is_empty() {
+            continue;
+        }
+        pending.push((path, set.to_ascii_lowercase(), role_ext));
+    }
+    if pending.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    copy_dir_shallow(&dir, &backup)
+        .map_err(|e| format!("backup to {} failed: {e}", backup.display()))?;
+
+    let mut rewrites = Vec::new();
+    for (src, set, role_ext) in pending {
+        let set_dir = dir.join(&set);
+        if let Err(err) = std::fs::create_dir_all(&set_dir) {
+            tracing::warn!("pool: cannot create {}: {err}", set_dir.display());
+            continue;
+        }
+        let dest = set_dir.join(&role_ext);
+        if dest.exists() {
+            // A foldered file already claims this role; the folder is the
+            // newer truth, so drop the legacy copy rather than clobber it.
+            continue;
+        }
+        if let Err(err) = std::fs::rename(&src, &dest) {
+            tracing::warn!("pool: cannot move {}: {err}", src.display());
+            continue;
+        }
+        // Carry the sidecar with its image; a doll's calibration or a
+        // frame's slice must not be orphaned by the move.
+        let sidecar_src = src.with_extension("toml");
+        if sidecar_src.is_file() {
+            let _ = std::fs::rename(&sidecar_src, dest.with_extension("toml"));
+        }
+        let Some(old_name) = src.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        rewrites.push((
+            format!("{category}/{old_name}"),
+            format!("{category}/{set}/{role_ext}"),
+        ));
+    }
+    Ok(rewrites)
+}
+
+/// Copy a directory's files (not its subdirectories) into `dest`. The
+/// backup only needs the legacy flat layer — set folders, if any already
+/// exist, are not what the migration touches.
+fn copy_dir_shallow(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)?.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(name) = path.file_name() {
+                std::fs::copy(&path, dest.join(name))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Doll sidecar: calibration anchors and dot styling that travel with the
@@ -384,6 +643,173 @@ mod tests {
         assert_eq!(set_names("statusicons"), ["flat", "runic"]);
         // Missing category: empty, not an error.
         assert!(list_category("no-such-category").is_empty());
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    /// A set folder and legacy prefixed files describe sets the same way, so
+    /// a half-migrated pool (or a hand-populated one) lists each set once.
+    #[test]
+    fn foldered_and_legacy_sets_resolve_alike() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        invalidate_cache();
+
+        let cat = Config::global_image_category_dir("compass").unwrap();
+        std::fs::create_dir_all(cat.join("stormfront")).unwrap();
+        std::fs::write(cat.join("stormfront/ne.png"), b"x").unwrap();
+        std::fs::write(cat.join("stormfront/rose.png"), b"x").unwrap();
+        // Legacy layout for a different set, plus a loose non-set file.
+        std::fs::write(cat.join("stealth_ne.png"), b"x").unwrap();
+        std::fs::write(cat.join("plain.png"), b"x").unwrap();
+
+        assert_eq!(set_names("compass"), ["stealth", "stormfront"]);
+
+        let foldered = set_members("compass", "stormfront");
+        assert_eq!(foldered.get("ne").unwrap(), "compass/stormfront/ne.png");
+        assert_eq!(foldered.get("rose").unwrap(), "compass/stormfront/rose.png");
+
+        // Legacy members resolve to the same role keys.
+        let legacy = set_members("compass", "stealth");
+        assert_eq!(legacy.get("ne").unwrap(), "compass/stealth_ne.png");
+
+        // Set names match case-insensitively; unknown sets are empty.
+        assert_eq!(set_members("compass", "STORMFRONT").len(), 2);
+        assert!(set_members("compass", "nosuchset").is_empty());
+
+        // A file with no folder and no underscore belongs to no set, but is
+        // still listed as a pool image.
+        let images = list_category("compass");
+        assert!(images.iter().any(|i| i.pool_path == "compass/plain.png"));
+        assert!(images
+            .iter()
+            .find(|i| i.file_name == "plain.png")
+            .unwrap()
+            .set_role()
+            .is_none());
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    /// The foldered file wins when both layouts claim a role — migration
+    /// writes folders, so the folder is the newer truth.
+    #[test]
+    fn foldered_member_wins_over_legacy_duplicate() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        invalidate_cache();
+
+        let cat = Config::global_image_category_dir("compass").unwrap();
+        std::fs::create_dir_all(cat.join("dup")).unwrap();
+        std::fs::write(cat.join("dup/ne.png"), b"new").unwrap();
+        std::fs::write(cat.join("dup_ne.png"), b"old").unwrap();
+
+        assert_eq!(
+            set_members("compass", "dup").get("ne").unwrap(),
+            "compass/dup/ne.png"
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    /// Hand sets arrive foldered from the repo and their pieces are bare
+    /// role names, so a set is discovered with no filename parsing — and a
+    /// one-piece set (spellhand-only art is common) is perfectly normal.
+    #[test]
+    fn partial_and_single_piece_sets_are_normal() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        invalidate_cache();
+
+        let cat = Config::global_image_category_dir("hands").unwrap();
+        std::fs::create_dir_all(cat.join("meteor")).unwrap();
+        std::fs::write(cat.join("meteor/spellhand.png"), b"x").unwrap();
+        std::fs::create_dir_all(cat.join("bone")).unwrap();
+        std::fs::write(cat.join("bone/lefthand.png"), b"x").unwrap();
+        std::fs::write(cat.join("bone/righthand.png"), b"x").unwrap();
+
+        assert_eq!(set_names("hands"), ["bone", "meteor"]);
+
+        // A single-piece set resolves fine; nothing demands completeness.
+        let meteor = set_members("hands", "meteor");
+        assert_eq!(meteor.len(), 1);
+        assert_eq!(meteor.get("spellhand").unwrap(), "hands/meteor/spellhand.png");
+
+        // Same bare role name in another set stays distinct — the folder is
+        // what keeps forty sets' "lefthand.png" apart.
+        assert_eq!(
+            set_members("hands", "bone").get("lefthand").unwrap(),
+            "hands/bone/lefthand.png"
+        );
+
+        // Per-image pickers label by set, or every row would read the same.
+        let images = list_category("hands");
+        let labels: Vec<String> = images.iter().map(|i| i.display_label()).collect();
+        assert!(labels.contains(&"bone / lefthand".to_string()));
+        assert!(labels.contains(&"meteor / spellhand".to_string()));
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    #[test]
+    fn migration_folders_legacy_sets_and_is_idempotent() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+        invalidate_cache();
+
+        let cat = Config::global_image_category_dir("compass").unwrap();
+        std::fs::create_dir_all(&cat).unwrap();
+        std::fs::write(cat.join("stormfront_ne.png"), b"ne").unwrap();
+        std::fs::write(cat.join("stormfront_rose.png"), b"rose").unwrap();
+        // Sidecars travel with their image.
+        std::fs::write(cat.join("stormfront_rose.toml"), b"scale = 2.0").unwrap();
+        // Unprefixed art is not a set member and must stay put.
+        std::fs::write(cat.join("plain.png"), b"plain").unwrap();
+
+        let rewrites = migrate_sets();
+        invalidate_cache();
+
+        assert!(cat.join("stormfront/ne.png").is_file());
+        assert!(cat.join("stormfront/rose.png").is_file());
+        assert!(cat.join("stormfront/rose.toml").is_file(), "sidecar follows its image");
+        assert!(!cat.join("stormfront_ne.png").exists());
+        assert!(cat.join("plain.png").is_file(), "non-set art stays at the root");
+
+        // The backup keeps the originals recoverable.
+        let backup = cat.with_file_name("compass.pre-sets.bak");
+        assert!(backup.join("stormfront_ne.png").is_file());
+
+        // Rewrites describe every moved pool path, for saved references.
+        assert!(rewrites.contains(&(
+            "compass/stormfront_ne.png".to_string(),
+            "compass/stormfront/ne.png".to_string()
+        )));
+
+        // Sets resolve through the new layout.
+        assert_eq!(set_names("compass"), ["stormfront"]);
+        assert_eq!(
+            set_members("compass", "stormfront").get("ne").unwrap(),
+            "compass/stormfront/ne.png"
+        );
+
+        // Running again is a no-op: the backup marks the category done, so a
+        // restart can't re-migrate or clobber the backup.
+        std::fs::write(cat.join("later_n.png"), b"n").unwrap();
+        invalidate_cache();
+        assert!(migrate_sets().is_empty(), "second run must not move anything");
+        assert!(cat.join("later_n.png").is_file());
 
         std::env::remove_var("VELLUM_FE_DIR");
     }

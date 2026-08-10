@@ -444,6 +444,13 @@ fn main() -> Result<()> {
         config::Config::load_with_options(profile, cli.port)?
     };
 
+    // Fold legacy `<set>_<role>` pool art into set folders, once, before any
+    // frontend reads the pool. Set art (compass, statusicons) installs and
+    // lists as one unit now; this brings art installed under the old flat
+    // layout along. Returns the pool-path rewrites so saved per-image
+    // references can be fixed up to match.
+    let pool_rewrites = config::pool::migrate_sets();
+
     // Apply CLI flag overrides (CLI takes precedence over config.toml)
     if let Some(port) = cli.port {
         config.connection.port = port;
