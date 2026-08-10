@@ -986,6 +986,36 @@ impl VellumGuiApp {
                         " ms",
                         &mut changed,
                     );
+                    slider_row(
+                        ui,
+                        "Wheel min open",
+                        "A wheel stays up at least this long after the button comes up, so                          a bouncy trigger can't strobe the overlay open and closed.",
+                        &mut tuning.wheel_min_open_ms,
+                        0..=500,
+                        " ms",
+                        &mut changed,
+                    );
+                    ui.horizontal(|ui| {
+                        ui.label("Trigger open / close").on_hover_text(
+                            "Analog trigger (L2/R2) travel that counts as pressed /                              released for wheel binds. Lower the open value for a worn                              pad that never reports full pull; raise close for a hair                              trigger that idles part-way down. Close always stays below                              open (the gap is the anti-chatter hysteresis).",
+                        );
+                        if ui
+                            .add(egui::Slider::new(&mut tuning.trigger_open_pct, 10..=100).suffix("%"))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        if ui
+                            .add(egui::Slider::new(&mut tuning.trigger_close_pct, 0..=95).suffix("%"))
+                            .changed()
+                        {
+                            changed = true;
+                        }
+                        if tuning.trigger_close_pct >= tuning.trigger_open_pct {
+                            tuning.trigger_close_pct = tuning.trigger_open_pct.saturating_sub(5);
+                            changed = true;
+                        }
+                    });
 
                     ui.separator();
                     combo_row(

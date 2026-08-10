@@ -903,6 +903,22 @@ pub struct TuningConfig {
     /// must fall below its tracked peak to fire the committed leaf.
     #[serde(default = "default_retract_delta")]
     pub retract_delta: u8,
+    /// Analog trigger travel (percent of full pull) at which an l2/r2
+    /// wheel bind counts as pressed. Hysteresis pair with
+    /// `trigger_close_pct`; worn or third-party pads that never report
+    /// full travel can lower this instead of rebuilding.
+    #[serde(default = "default_trigger_open_pct")]
+    pub trigger_open_pct: u8,
+    /// Analog trigger travel (percent) below which a held l2/r2 wheel
+    /// bind counts as released. Must sit below `trigger_open_pct` (the
+    /// gap is the hysteresis that stops a resting trigger strobing).
+    #[serde(default = "default_trigger_close_pct")]
+    pub trigger_close_pct: u8,
+    /// Minimum time (ms) a wheel stays open after the button comes up.
+    /// Absorbs trigger bounce: a release inside this window is treated as
+    /// part of the same hold instead of an open/close strobe.
+    #[serde(default = "default_wheel_min_open_ms")]
+    pub wheel_min_open_ms: u32,
 }
 
 fn default_movement_stick() -> String {
@@ -935,6 +951,15 @@ fn default_edge_threshold() -> u8 {
 fn default_retract_delta() -> u8 {
     10
 }
+fn default_trigger_open_pct() -> u8 {
+    60
+}
+fn default_trigger_close_pct() -> u8 {
+    40
+}
+fn default_wheel_min_open_ms() -> u32 {
+    150
+}
 
 impl Default for TuningConfig {
     fn default() -> Self {
@@ -949,6 +974,9 @@ impl Default for TuningConfig {
             fire_mode: default_fire_mode(),
             edge_threshold: default_edge_threshold(),
             retract_delta: default_retract_delta(),
+            trigger_open_pct: default_trigger_open_pct(),
+            trigger_close_pct: default_trigger_close_pct(),
+            wheel_min_open_ms: default_wheel_min_open_ms(),
         }
     }
 }

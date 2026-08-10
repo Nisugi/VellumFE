@@ -189,6 +189,15 @@ impl VellumGuiApp {
         // True when the in-effect aim stick is also the movement stick, so
         // movement must be silenced while that wheel is open.
         let aim_is_move_stick = aim_on_right == move_on_right;
+        // Remember the OPEN wheel's aiming stick: once the wheel closes,
+        // aim_x/aim_y revert to the default stick, but the spent latch and
+        // the release grace must keep judging the stick that actually
+        // aimed (a wheel whose `stick` override is the movement stick
+        // leaves THAT stick deflected, not the default one).
+        if self.gp_wheel.is_some() || self.gp_wheel_fired {
+            self.gp_wheel_aim_on_right = aim_on_right;
+            self.gp_wheel_aim_was_move = aim_is_move_stick;
+        }
 
         // Stale-axis guard: a live analog stick jitters every few frames,
         // so a deflected value that stays BIT-IDENTICAL for seconds is a
@@ -240,7 +249,8 @@ impl VellumGuiApp {
         // continuous hold instead of an open/close strobe. Nothing can
         // dwell-commit this fast, so delaying the close never delays a
         // real fire.
-        const WHEEL_MIN_OPEN_MS: u128 = 150;
+        let wheel_min_open_ms =
+            self.app_core.config.controller_tuning.wheel_min_open_ms as u128;
         match (self.gp_wheel.is_some(), held_key) {
             (false, Some(key)) => {
                 // A fired leaf keeps the wheel closed for the rest of this
@@ -270,7 +280,7 @@ impl VellumGuiApp {
                 // (true, Some) and the hold simply continues.
                 let bounce = self
                     .gp_wheel_opened_at
-                    .is_some_and(|at| at.elapsed().as_millis() < WHEEL_MIN_OPEN_MS);
+                    .is_some_and(|at| at.elapsed().as_millis() < wheel_min_open_ms);
                 if !bounce {
                     // Release: fire the committed leaf, if any and if the
                     // debounce window has elapsed. `wheel_release_command` is
@@ -312,9 +322,15 @@ impl VellumGuiApp {
         // doesn't also walk a direction.
         let release_grace_ms =
             self.app_core.config.controller_tuning.release_grace_ms as u128;
-        let in_release_grace = self
-            .gp_wheel_closed_at
-            .is_some_and(|at| at.elapsed().as_millis() < release_grace_ms);
+        // The grace exists to keep wheel-aim residue on the MOVEMENT
+        // stick from walking a direction. A wheel that aimed with the
+        // other stick never touched the movement stick — movement was
+        // live the whole time — so hushing it would swallow a genuine
+        // direction change made during the window.
+        let in_release_grace = self.gp_wheel_aim_was_move
+            && self
+                .gp_wheel_closed_at
+                .is_some_and(|at| at.elapsed().as_millis() < release_grace_ms);
         let wheel_owns_move = (wheel_up && aim_is_move_stick) || in_release_grace;
         if wheel_owns_move {
             // Track the sector silently while hushed so the hysteresis is
@@ -357,8 +373,19 @@ impl VellumGuiApp {
             if self.gp_aim_recenter_needed {
                 self.gp_aim_recenter_needed = false;
             }
-            // Recentre-to-rearm: only a centered stick clears the spent
-            // latch, so the next wheel hold starts from neutral.
+        }
+        // Recentre-to-rearm: only a centered stick clears the spent latch,
+        // so the next wheel hold starts from neutral. Judged against the
+        // stick that aimed the LAST wheel — after close the default aim
+        // stick may be a different (already centered) stick, and clearing
+        // on that one would let a still-deflected override stick instantly
+        // re-aim and re-fire on a fresh hold.
+        let (latch_x, latch_y) = if self.gp_wheel_aim_on_right {
+            right_xy
+        } else {
+            left_xy
+        };
+        if aim_stick_centered(latch_x, latch_y) {
             self.gp_wheel_spent = false;
         }
         let aim_owned_by_wheel =
@@ -707,8 +734,14 @@ impl VellumGuiApp {
     /// until the trigger falls below a lower one. A trigger resting near
     /// the press point otherwise chatters and strobes the overlay.
     fn held_wheel_key(&self) -> Option<String> {
-        const TRIGGER_OPEN: f32 = 0.6;
-        const TRIGGER_CLOSE: f32 = 0.4;
+        // User-tunable ([controller_tuning]): worn pads that never reach
+        // the stock open threshold, or hair triggers idling above close,
+        // adjust here instead of rebuilding. close is clamped below open
+        // so the hysteresis band can't invert.
+        let tuning = &self.app_core.config.controller_tuning;
+        let trigger_open = (tuning.trigger_open_pct as f32 / 100.0).clamp(0.05, 1.0);
+        let trigger_close = (tuning.trigger_close_pct as f32 / 100.0)
+            .clamp(0.0, trigger_open - 0.01);
         let gilrs = self.gamepad.as_ref()?;
         // The wheel currently up (or in its fired-hold tail): its trigger
         // uses the low release threshold; everything else the high open one.
@@ -743,9 +776,9 @@ impl VellumGuiApp {
                     // trigger drifting in the hysteresis band can't end the
                     // hold and instantly reopen the wheel.
                     if open_key == Some(key) || self.gp_wheel_fired {
-                        value > TRIGGER_CLOSE
+                        value > trigger_close
                     } else {
-                        value >= TRIGGER_OPEN
+                        value >= trigger_open
                     }
                 } else {
                     pad.is_pressed(button)

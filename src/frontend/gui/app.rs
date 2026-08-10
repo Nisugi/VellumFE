@@ -431,6 +431,17 @@ pub struct VellumGuiApp {
     /// re-aim and re-fire.
     #[cfg(feature = "gamepad")]
     gp_wheel_spent: bool,
+    /// Which stick aimed the most recently open wheel (true = right).
+    /// The spent latch clears against THIS stick, not the default aim
+    /// stick — a wheel whose `stick` override is the movement stick
+    /// leaves that stick deflected after close.
+    #[cfg(feature = "gamepad")]
+    gp_wheel_aim_on_right: bool,
+    /// Whether the most recently open wheel aimed with the movement
+    /// stick; scopes the release grace to wheels that actually hushed
+    /// movement.
+    #[cfg(feature = "gamepad")]
+    gp_wheel_aim_was_move: bool,
     /// Set when a wheel closes while the aim stick is still deflected: the
     /// stick's normal function (scroll / interact cycle) stays suppressed
     /// until it returns to center once, so releasing the wheel can't also
@@ -943,6 +954,10 @@ impl VellumGuiApp {
             gp_wheel_closed_at: None,
             #[cfg(feature = "gamepad")]
             gp_wheel_spent: false,
+            #[cfg(feature = "gamepad")]
+            gp_wheel_aim_on_right: false,
+            #[cfg(feature = "gamepad")]
+            gp_wheel_aim_was_move: false,
             #[cfg(feature = "gamepad")]
             gp_aim_recenter_needed: false,
             gp_aim_seen_center: false,
