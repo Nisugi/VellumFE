@@ -673,8 +673,9 @@ impl MessageProcessor {
 
                 if art.is_none() && *id != 0 && self.config.game_art.enabled {
                     let picture = *id;
-                    if let Some(path) = crate::core::game_art::cached_art(picture) {
-                        art = Some(path.to_string_lossy().into_owned());
+                    let downloaded = crate::core::game_art::pool_name(picture);
+                    if crate::core::inline_image::contains(&downloaded) {
+                        art = Some(downloaded);
                     } else if crate::core::game_art::claim_fetch(picture) {
                         // Off the feed thread: a room render must never wait
                         // on the network. The picture appears on the next
@@ -687,6 +688,23 @@ impl MessageProcessor {
                             }
                         });
                     }
+                }
+                // Emit the picture into the STORY line, which is where
+                // Wrayth shows it: floated left with the room name and
+                // description wrapping beside it. `<resource>` arrives just
+                // before the room name, so pushing a segment here puts the
+                // image at the head of that line — the same float the
+                // <vellumImg> path produces.
+                if let Some(name) = &art {
+                    self.current_segments.push(TextSegment {
+                        text: format!("[img:{name}]"),
+                        inline_image: Some(crate::data::InlineImage {
+                            name: name.clone(),
+                            rows: crate::config::room_images::DEFAULT_ROOM_IMAGE_ROWS,
+                            align: crate::data::FloatAlign::Left,
+                        }),
+                        ..Default::default()
+                    });
                 }
                 if game_state.story_picture != art {
                     game_state.story_picture = art;

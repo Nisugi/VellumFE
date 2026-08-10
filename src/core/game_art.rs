@@ -42,19 +42,34 @@ fn attempted() -> &'static Mutex<HashSet<u32>> {
 }
 
 /// Cache directory for downloaded game art.
+///
+/// This is the SAME pool inline images resolve from, not a private folder:
+/// downloaded art is referenced by name like any other picture, so it goes
+/// through one lookup path instead of a second, path-based one.
 pub fn cache_dir() -> Option<PathBuf> {
-    crate::config::Config::global_image_category_dir("gs-art").ok()
+    crate::config::Config::global_image_category_dir(
+        crate::core::inline_image::POOL_CATEGORY,
+    )
+    .ok()
+}
+
+/// Pool name for a downloaded picture.
+///
+/// Prefixed so Simu's numbering can never collide with a user's own art: a
+/// file the user calls `32.png` stays theirs, and this is `gs-art-32`.
+pub fn pool_name(id: u32) -> String {
+    format!("gs-art-{id}")
 }
 
 /// The cached file for `id`, whether or not it exists.
 fn cache_path(id: u32) -> Option<PathBuf> {
-    cache_dir().map(|dir| dir.join(format!("{id}.jpg")))
+    cache_dir().map(|dir| dir.join(format!("{}.jpg", pool_name(id))))
 }
 
 /// Marker recording that `id` has no art, so a miss is not re-fetched every
 /// time the player walks back into the room.
 fn miss_path(id: u32) -> Option<PathBuf> {
-    cache_dir().map(|dir| dir.join(format!("{id}.missing")))
+    cache_dir().map(|dir| dir.join(format!(".{}.missing", pool_name(id))))
 }
 
 /// Is this id already resolved on disk (either cached art or a known miss)?
@@ -132,6 +147,9 @@ pub fn fetch_blocking(id: u32) -> Result<PathBuf, String> {
     crate::config::write_atomic(&path, &body)
         .map_err(|e| format!("cannot write {path:?}: {e}"))?;
     crate::config::pool::invalidate_cache();
+    // Re-scan so the just-downloaded picture resolves by name without a
+    // restart or a manual .reload.
+    crate::core::inline_image::reload();
     Ok(path)
 }
 

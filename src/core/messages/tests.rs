@@ -3343,3 +3343,52 @@ fn resource_picture_does_not_fetch_when_disabled() {
         "no art installed and downloads off: the slot stays empty"
     );
 }
+
+/// `<resource picture='N'/>` must put the picture INTO the story line —
+/// floated, with the room name wrapping beside it, the way Wrayth shows it.
+/// Writing it to game_state alone rendered nothing at all.
+#[test]
+fn resource_picture_emits_a_floating_story_segment() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    // Pretend picture 7 has already been downloaded into the pool.
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: crate::core::game_art::pool_name(7),
+        path: std::path::PathBuf::from("gs-art-7.jpg"),
+        format: EmojiFormat::Jpeg,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let mut config = Config::default();
+    config.game_art.enabled = true;
+    let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+    let mut ui = UiState::new();
+    let mut game_state = crate::core::state::GameState::new();
+
+    processor.process_element(
+        &crate::parser::ParsedElement::RoomPicture { id: 7 },
+        &mut game_state,
+        &mut ui,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+
+    let image = processor
+        .current_segments
+        .iter()
+        .find_map(|s| s.inline_image.as_ref())
+        .expect("the picture must ride the story line as a segment");
+    assert_eq!(image.name, crate::core::game_art::pool_name(7));
+    assert_eq!(image.align, crate::data::FloatAlign::Left, "floats left");
+
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}

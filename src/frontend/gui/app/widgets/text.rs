@@ -21,12 +21,20 @@ pub(in crate::frontend::gui::app) struct LineInset {
     pub width: f32,
     /// How far right to paint the galley.
     pub x_offset: f32,
+    /// Width of the column the float reserves.
+    ///
+    /// Stored rather than re-derived at paint time: the painter's row width
+    /// comes from the CURRENT layout, while `width` was computed when the
+    /// row was measured. After a window resize those disagree, and deriving
+    /// the image width from their difference collapsed the picture to a
+    /// sliver behind the text.
+    pub float_width: f32,
 }
 
 impl LineInset {
     /// No float: the line uses the full width and no shift.
     pub(in crate::frontend::gui::app) fn full(width: f32) -> Self {
-        Self { width, x_offset: 0.0 }
+        Self { width, x_offset: 0.0, float_width: 0.0 }
     }
 }
 
@@ -1016,7 +1024,11 @@ impl VellumGuiApp {
                 crate::data::FloatAlign::Left => img_w,
                 crate::data::FloatAlign::Right => 0.0,
             };
-            let inset = LineInset { width: text_w, x_offset };
+            let inset = LineInset {
+                width: text_w,
+                x_offset,
+                float_width: img_w,
+            };
 
             // Re-measure the covered rows at the narrower width, taking them
             // while they fit within the image's height.
@@ -1745,11 +1757,7 @@ impl VellumGuiApp {
                             let span = cache.spans[slot] as usize;
                             let img_h =
                                 cache.stride_sum(slot..slot + span, spacing_y) - spacing_y;
-                            let img_w = if line_inset.x_offset > 0.0 {
-                                line_inset.x_offset
-                            } else {
-                                (width - line_inset.width).max(0.0)
-                            };
+                            let img_w = line_inset.float_width;
                             if img_w > 0.0 && img_h > 0.0 {
                                 let left = match image.align {
                                     crate::data::FloatAlign::Left => rect.left(),

@@ -189,13 +189,8 @@ client uses it to show a picture beside the room name. The wire carries only
 the number, so VellumFE fetches the art from play.net and caches it.
 
 **This is off by default.** It sends requests to play.net, so it is an
-explicit opt-in:
-
-```
-.set game_art.enabled true
-```
-
-or Settings → Appearance → **Game Room Pictures**.
+explicit opt-in: run `.settings` and turn on **Game Room Pictures** under
+Appearance.
 
 Once on, walking into a room with a picture downloads it once and caches it
 under `global/images/gs-art/`. The image appears on the next room change

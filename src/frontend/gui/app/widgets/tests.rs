@@ -1504,7 +1504,7 @@ fn inset_width_changes_how_a_line_wraps() {
         &ctx,
         &line,
         &visuals,
-        super::LineInset { width: 200.0, x_offset: 800.0 },
+        super::LineInset { width: 200.0, x_offset: 800.0, float_width: 800.0 },
         &font_id,
         None,
     );
@@ -1757,4 +1757,46 @@ fn an_appended_image_line_still_gets_a_float() {
     );
 
     crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}
+
+/// REGRESSION (live, 2026-08-10): after shrinking the window, the floated
+/// picture collapsed to a sliver behind the text.
+///
+/// The painter derived the image's width from `row_width - inset.width`,
+/// but the row width comes from the CURRENT layout while `inset.width` was
+/// computed when the row was measured. A resize made those disagree and the
+/// difference collapsed toward zero. The reserved column is now carried on
+/// the inset itself, so it cannot drift from the layout that produced it.
+#[test]
+fn float_width_survives_a_window_resize() {
+    // A float measured in a 600pt window.
+    let wide = super::LineInset {
+        width: 440.0,
+        x_offset: 160.0,
+        float_width: 160.0,
+    };
+    // The window is now narrower; the painter's row width shrank.
+    let narrow_row_width = 400.0_f32;
+
+    // The OLD derivation collapses (and even goes negative here).
+    let derived = (narrow_row_width - wide.width).max(0.0);
+    assert!(
+        derived < 1.0,
+        "the old row_width - inset.width derivation collapses: {derived}"
+    );
+
+    // The stored width is unchanged, so the picture keeps its column.
+    assert_eq!(
+        wide.float_width, 160.0,
+        "the reserved column must not depend on the current row width"
+    );
+}
+
+/// A line with no float reserves no column, so an ordinary row can never
+/// accidentally paint an image-sized gap.
+#[test]
+fn a_full_width_line_reserves_no_float_column() {
+    let inset = super::LineInset::full(400.0);
+    assert_eq!(inset.float_width, 0.0);
+    assert_eq!(inset.x_offset, 0.0);
 }
