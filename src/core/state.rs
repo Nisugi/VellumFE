@@ -131,6 +131,18 @@ pub struct GameState {
     /// Bumped whenever room_description is rewritten
     pub room_description_generation: u64,
 
+    /// Pool image name for the game's current room picture, from the
+    /// `<resource picture='N'/>` feed. `None` when the room has no picture
+    /// (`picture='0'`, the near-universal case) or when the user has no art
+    /// installed for that id. The wire carries only the number, so this is
+    /// the id stringified — art lives at `images/inline/<id>.png`.
+    ///
+    /// NOT room-window state: `<resource>` arrives in the STORY stream, and
+    /// the room window's art comes from the `sprite` component instead. This
+    /// is parsed and tracked now so the story window can render it once that
+    /// path supports inline images; nothing reads it yet.
+    pub story_picture: Option<String>,
+
     /// Spellbook (the "Spells" stream) as styled lines: segments keep spell
     /// coloring and links. Owned here so remote clients get the full
     /// active-spell list without a Spells window; the local Spells widgets
@@ -965,6 +977,7 @@ impl GameState {
             room_players_generation: 0,
             room_description: Vec::new(),
             room_description_generation: 0,
+            story_picture: None,
             spellbook: Vec::new(),
             spellbook_generation: 0,
             room_meta: RoomMetaState::default(),

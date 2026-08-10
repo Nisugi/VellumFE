@@ -275,6 +275,15 @@ impl CoreHighlightEngine {
             return None;
         }
 
+        // Inline images: the rebuild below reassembles segments from a flat
+        // char-style map, which cannot carry the image reference — a
+        // highlighted line would silently lose its picture. Feed-injected
+        // art is not prose worth matching against, so leave the whole line
+        // alone rather than half-styling it.
+        if segments.iter().any(|seg| seg.inline_image.is_some()) {
+            return None;
+        }
+
         // STEP 2: Build full text for pattern matching
         let mut full_text: String = segments.iter().map(|s| s.text.as_str()).collect();
 
@@ -674,6 +683,7 @@ impl CoreHighlightEngine {
                 span_type: current_style.span_type,
                 link_data: current_link,
                 custom_emoji: None,
+                inline_image: None,
             });
         }
 
@@ -812,6 +822,7 @@ pub fn apply_deferred_for_window(
         span_type: SpanType::Normal,
         link_data: None,
         custom_emoji: None,
+        inline_image: None,
     });
 
     vec![TextSegment {
@@ -823,6 +834,7 @@ pub fn apply_deferred_for_window(
         span_type: first_style.span_type,
         link_data: None,
         custom_emoji: None,
+        inline_image: None,
     }]
 }
 
@@ -869,6 +881,7 @@ mod tests {
             span_type: SpanType::Normal,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         }
     }
 
@@ -1460,6 +1473,7 @@ mod tests {
             span_type: SpanType::Link,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         }];
 
         let result = engine.apply_highlights(&segments, "main");
@@ -1501,6 +1515,7 @@ mod tests {
             span_type: SpanType::System,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         }];
 
         let result = engine.apply_highlights(&segments, "main");
@@ -1794,6 +1809,7 @@ mod tests {
                 span_type: SpanType::Normal,
                 link_data: None,
                 custom_emoji: None,
+                inline_image: None,
             },
             TextSegment {
                 text: "red text".to_string(),
@@ -1804,6 +1820,7 @@ mod tests {
                 span_type: SpanType::Normal,
                 link_data: None,
                 custom_emoji: None,
+                inline_image: None,
             },
         ];
 
@@ -1835,6 +1852,7 @@ mod tests {
             span_type: SpanType::Normal,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         }];
 
         let result = engine.apply_highlights(&segments, "main");

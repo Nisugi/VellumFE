@@ -121,6 +121,29 @@ pub enum ParsedElement {
     VellumCommand {
         command: String,
     },
+    /// `<vellumImg src='banner' rows='4' align='left'/>` - VellumFE extension
+    /// letting a script float a real image into a text window.
+    ///
+    /// `src` is a pool image NAME (shortcode alphabet), never a path: the
+    /// frontend resolves it through the image registry, so a feed can name
+    /// art but can never read an arbitrary file. `rows` is the requested
+    /// height in text rows, clamped by the renderer to what the window can
+    /// actually show.
+    VellumImage {
+        src: String,
+        rows: f32,
+        align: crate::data::FloatAlign,
+    },
+    /// `<resource picture='32'/>` - the game's own room-picture feed.
+    ///
+    /// Wrayth resolves the id against Simu's art and shows it beside the room
+    /// name; the wire carries only the NUMBER, never the image or a URL. So
+    /// VellumFE treats it as "this room has picture N" and resolves N against
+    /// the user's own image pool. `0` is the overwhelmingly common value and
+    /// means *no* picture — it clears whatever the last room set.
+    RoomPicture {
+        id: u32,
+    },
     ProgressBar {
         id: String,
         value: u32,
@@ -759,6 +782,16 @@ impl XmlParser {
             self.handle_vellum_timer(tag, elements);
         } else if tag.starts_with("<vellumCmd ") || tag.starts_with("<vellum-cmd ") {
             self.handle_vellum_cmd(tag, elements);
+        } else if tag.starts_with("<resource") {
+            self.handle_resource(tag, elements);
+        } else if tag.starts_with("<vellumImg ") || tag.starts_with("<vellum-img ") {
+            // The image becomes its own segment, so any text buffered before
+            // it must land first or the two would merge into one run. This
+            // tag is not in the color open/close sets that flush above.
+            if !text_buffer.is_empty() {
+                self.flush_text_with_events(std::mem::take(text_buffer), elements);
+            }
+            self.handle_vellum_img(tag, elements);
         } else if tag.starts_with("<spell") {
             self.handle_spell(tag, text_buffer, elements);
         } else if tag.starts_with("<left") {

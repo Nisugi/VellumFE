@@ -61,22 +61,118 @@ impl VellumGuiApp {
         }]
     }
 
+    /// The room window's title line, matching the story window's shape:
+    /// `[Kraken's Fall, Third Pier - 29043] (u7118245)`.
+    ///
+    /// The bracketed part is the room name plus the Lich room id; the
+    /// parenthesised part is the game's own uid, prefixed `u` because that
+    /// is how it is typed in commands (`go2 u7118245`). Either id may be
+    /// missing — the game sends the uid via `<nav rm=>` and the Lich id only
+    /// under Lich — so each is simply omitted when absent, and a room with
+    /// neither renders as `[Name]`.
+    ///
+    /// The incoming name may already be bracketed (the `roomName` style
+    /// carries them) or already carry ` - <lich id>`; both are stripped first
+    /// so the format is applied exactly once and re-syncing cannot nest.
+    pub(super) fn format_room_title(
+        name: String,
+        lich_id: Option<&str>,
+        uid: Option<&str>,
+    ) -> String {
+        // Strip a previously-applied " (u<digits>)" suffix before anything
+        // else, or the trailing ']' is not at the end and the whole format
+        // nests on the next sync.
+        let mut trimmed = name.trim();
+        if trimmed.ends_with(')') {
+            if let Some(open) = trimmed.rfind(" (u") {
+                if trimmed[open + 3..trimmed.len() - 1]
+                    .chars()
+                    .all(|c| c.is_ascii_digit())
+                {
+                    trimmed = trimmed[..open].trim_end();
+                }
+            }
+        }
+        let mut base = trimmed
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim()
+            .to_string();
+
+        // Drop a trailing " - <digits>" the name already carries so the id
+        // isn't printed twice.
+        if let Some(dash) = base.rfind(" - ") {
+            if base[dash + 3..]
+                .trim()
+                .chars()
+                .all(|c| c.is_ascii_digit())
+                && !base[dash + 3..].trim().is_empty()
+            {
+                base.truncate(dash);
+            }
+        }
+        if base.is_empty() {
+            return String::new();
+        }
+
+        let mut out = match lich_id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => format!("[{base} - {id}]"),
+            None => format!("[{base}]"),
+        };
+        if let Some(uid) = uid.map(str::trim).filter(|id| !id.is_empty()) {
+            let uid = uid.trim_start_matches('u');
+            out.push_str(&format!(" (u{uid})"));
+        }
+        out
+    }
+
     pub(super) fn sync_room_windows_from_components(&mut self) {
         if !self.app_core.room_window_dirty {
             return;
         }
 
-        let room_name = self
-            .app_core
-            .game_state
-            .room_name
-            .as_ref()
-            .filter(|name| !name.trim().is_empty())
-            .cloned()
-            .or_else(|| self.app_core.room_subtitle.clone())
-            .unwrap_or_default();
-        let description =
+        let room_name = Self::format_room_title(
+            self.app_core
+                .game_state
+                .room_name
+                .as_ref()
+                .filter(|name| !name.trim().is_empty())
+                .cloned()
+                .or_else(|| self.app_core.room_subtitle.clone())
+                .unwrap_or_default(),
+            self.app_core.lich_room_id.as_deref(),
+            self.app_core.nav_room_id.as_deref(),
+        );
+        let mut description =
             Self::room_component_lines(self.app_core.room_components.get("room desc"));
+        // Room art (the game's own `sprite` slot) leads the description, so an
+        // image there floats and the prose wraps beside it. Merging into the
+        // first description line rather than standing alone is what makes it a
+        // float instead of a banner with text below.
+        // Room art comes from the game's `sprite` component ONLY. The
+        // `<resource picture='N'/>` feed arrives in the STORY stream and stays
+        // there — mixing the two would put a story-stream picture in the room
+        // window, which is a different feature wearing the same clothes.
+        let sprite = Self::room_component_lines(
+            self.app_core
+                .room_components
+                .get(crate::core::messages::SPRITE_COMPONENT),
+        );
+        if !sprite.is_empty() {
+            let mut lead: Vec<TextSegment> =
+                sprite.into_iter().flat_map(|line| line.segments).collect();
+            match description.first_mut() {
+                Some(first) => {
+                    lead.append(&mut first.segments);
+                    first.segments = lead;
+                }
+                None => description.push(StyledLine {
+                    segments: lead,
+                    stream: "room".to_string(),
+                    timestamp: None,
+                }),
+            }
+        }
         // Prefer the styled component text verbatim (natural "Obvious
         // paths:" / "Also here:" phrasing, monsterbold creatures, links);
         // synthesize an equivalent line from game state only when absent.

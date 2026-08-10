@@ -117,6 +117,38 @@ fn frame_cache(ctx: &egui::Context) -> FrameCache {
     })
 }
 
+/// Which registry a name is resolved through. Inline images (`<vellumImg>`)
+/// reuse this module's decode/animation/caching machinery wholesale — only
+/// the name→file lookup and the cache bucket differ.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArtSource {
+    Emoji,
+    InlineImage,
+}
+
+impl ArtSource {
+    fn lookup(self, name: &str) -> Option<custom_emoji::CustomEmoji> {
+        match self {
+            ArtSource::Emoji => custom_emoji::get(name),
+            ArtSource::InlineImage => crate::core::inline_image::get(name),
+        }
+    }
+
+    fn cache_id(self) -> egui::Id {
+        match self {
+            ArtSource::Emoji => egui::Id::new("custom_emoji_frame_cache"),
+            ArtSource::InlineImage => egui::Id::new("inline_image_frame_cache"),
+        }
+    }
+
+    fn cache(self, ctx: &egui::Context) -> FrameCache {
+        ctx.data_mut(|data| {
+            data.get_temp_mut_or_insert_with::<FrameCache>(self.cache_id(), Default::default)
+                .clone()
+        })
+    }
+}
+
 /// Upload a single RGBA image as a texture.
 fn upload_rgba(
     ctx: &egui::Context,
@@ -239,8 +271,8 @@ fn decode_apng(ctx: &egui::Context, name: &str, bytes: &[u8]) -> Option<EmojiFra
 /// PNG/WebP are single textures. An animated decode that finds no animation
 /// (static file with an animated-capable extension) falls back to a static
 /// texture.
-fn decode_emoji(ctx: &egui::Context, name: &str) -> Option<EmojiFrames> {
-    let meta = custom_emoji::get(name)?;
+fn decode_emoji(ctx: &egui::Context, name: &str, source: ArtSource) -> Option<EmojiFrames> {
+    let meta = source.lookup(name)?;
     let bytes = std::fs::read(&meta.path)
         .map_err(|err| {
             tracing::warn!(
@@ -254,6 +286,7 @@ fn decode_emoji(ctx: &egui::Context, name: &str) -> Option<EmojiFrames> {
         EmojiFormat::Apng => decode_apng(ctx, name, &bytes)
             .or_else(|| decode_static(ctx, name, &bytes, image::ImageFormat::Png)),
         EmojiFormat::Png => decode_static(ctx, name, &bytes, image::ImageFormat::Png),
+        EmojiFormat::Jpeg => decode_static(ctx, name, &bytes, image::ImageFormat::Jpeg),
         // WebP may be animated (Discord's animated emoji) or static.
         EmojiFormat::Webp => decode_webp(ctx, name, &bytes)
             .or_else(|| decode_static(ctx, name, &bytes, image::ImageFormat::WebP)),
@@ -264,12 +297,21 @@ fn decode_emoji(ctx: &egui::Context, name: &str) -> Option<EmojiFrames> {
 /// if the emoji is unknown, its file is gone, or it failed to decode. The
 /// `None` result is cached so the caller's text fallback path stays cheap.
 fn frames_for(ctx: &egui::Context, cache: &FrameCache, name: &str) -> Option<EmojiFrames> {
+    frames_for_source(ctx, cache, name, ArtSource::Emoji)
+}
+
+fn frames_for_source(
+    ctx: &egui::Context,
+    cache: &FrameCache,
+    name: &str,
+    source: ArtSource,
+) -> Option<EmojiFrames> {
     let key = name.to_ascii_lowercase();
     let mut cache = cache.lock().expect("custom emoji frame cache poisoned");
     if let Some(cached) = cache.get(&key) {
         return cached.clone();
     }
-    let decoded = decode_emoji(ctx, &key);
+    let decoded = decode_emoji(ctx, &key, source);
     cache.insert(key, decoded.clone());
     decoded
 }
@@ -335,6 +377,54 @@ pub(super) fn paint_custom_emoji(
             .unwrap_or(frames.total);
         let wait = (next_end - phase).max(0.0);
         ctx.request_repaint_after(Duration::from_secs_f32(wait));
+    }
+    true
+}
+
+/// Natural pixel size of an inline image's first frame, or `None` when the
+/// name doesn't resolve. Callers need this to preserve aspect ratio: the
+/// float's height comes from `rows`, and the width follows from this.
+pub(super) fn inline_image_size(ctx: &egui::Context, name: &str) -> Option<egui::Vec2> {
+    let cache = ArtSource::InlineImage.cache(ctx);
+    let frames = frames_for_source(ctx, &cache, name, ArtSource::InlineImage)?;
+    let (texture, _) = frames.frames.first()?;
+    Some(texture.size_vec2())
+}
+
+/// Paint the inline image `name` to exactly fill `rect`, returning `true` if
+/// it painted. Unlike [`paint_custom_emoji`] the rect is used verbatim — the
+/// caller has already computed an aspect-correct, clamped size — so nothing
+/// is squared or re-centered here.
+///
+/// Animated formats tick the same way custom emoji do.
+pub(super) fn paint_inline_image(
+    ctx: &egui::Context,
+    painter: &egui::Painter,
+    name: &str,
+    rect: egui::Rect,
+) -> bool {
+    let cache = ArtSource::InlineImage.cache(ctx);
+    let Some(frames) = frames_for_source(ctx, &cache, name, ArtSource::InlineImage) else {
+        return false;
+    };
+    let time = ctx.input(|i| i.time);
+    let texture = frames.frame_at(time);
+    painter.image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::WHITE,
+    );
+
+    if frames.total > 0.0 && frames.frames.len() > 1 {
+        let phase = (time % frames.total as f64) as f32;
+        let next_end = frames
+            .frames
+            .iter()
+            .map(|(_, end)| *end)
+            .find(|end| *end > phase)
+            .unwrap_or(frames.total);
+        ctx.request_repaint_after(Duration::from_secs_f32((next_end - phase).max(0.0)));
     }
     true
 }

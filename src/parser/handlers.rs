@@ -132,8 +132,8 @@ impl XmlParser {
         // stream, which emits a `<pushBold/>` whose matching `<popBold/>` is
         // dropped, leaking monsterbold onto every subsequent line. Reset the
         // transient style stacks at the prompt so a missing close can never
-        // bleed past the current round. (This does NOT touch stream/mono
-        // state, which spans prompts legitimately.)
+        // bleed past the current round. (This does NOT touch stream state,
+        // which spans prompts legitimately.)
         if !self.bold_stack.is_empty()
             || !self.preset_stack.is_empty()
             || !self.color_stack.is_empty()
@@ -155,6 +155,19 @@ impl XmlParser {
             // bookkeeping.
             self.link_pushed_color.clear();
             self.current_preset_id = None;
+        }
+
+        // Mono regions never legitimately span a prompt either — the game
+        // always closes <output class="mono"/> with <output class=""/> before
+        // prompting. A mono region still open here means the closing tag was
+        // eaten upstream (e.g. a Lich script's DownstreamHook suppressing the
+        // line that carried it), which would otherwise leave every subsequent
+        // line stuck in monospace.
+        if self.mono_output {
+            tracing::debug!(
+                "[parser] clearing mono output region left open at prompt (missing <output class=\"\"/>)"
+            );
+            self.mono_output = false;
         }
 
         // Extract time and text content
@@ -399,6 +412,70 @@ impl XmlParser {
                 elements.push(ParsedElement::VellumTimer { id, value });
             }
         }
+    }
+
+    /// Largest `rows` a feed may request. The renderer clamps further to the
+    /// window's own visible height; this only stops an absurd value from
+    /// reaching it (and from being stored in a buffered line forever).
+    const VELLUM_IMG_MAX_ROWS: f32 = 64.0;
+
+    /// True for names made only of the shortcode alphabet, the same set
+    /// `custom_emoji` and the web endpoint accept. Rejects `/ \ . :` and
+    /// everything else, so a feed-supplied name can never escape the pool
+    /// directory — validation happens here, before any lookup.
+    fn is_image_name(name: &str) -> bool {
+        !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'+' || b == b'-')
+    }
+
+    pub(super) fn handle_vellum_img(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <vellumImg src='banner' rows='4' align='left'/> - script-facing
+        // inline image (typically sent by a Lich script; the game never
+        // emits this). The tag renders as an image, never as text.
+        let Some(src) = Self::extract_attribute(tag, "src") else {
+            return;
+        };
+        if !Self::is_image_name(&src) {
+            tracing::warn!("vellumImg: rejected src '{}' (name must be alphanumeric/_+-)", src);
+            return;
+        }
+
+        // rows: default 1, clamped rather than rejected — a script asking
+        // for too much should get a smaller image, not a dropped one.
+        let rows = match Self::extract_attribute(tag, "rows") {
+            Some(raw) => match raw.trim().parse::<f32>() {
+                Ok(value) if value.is_finite() && value > 0.0 => {
+                    value.min(Self::VELLUM_IMG_MAX_ROWS)
+                }
+                _ => return,
+            },
+            None => 1.0,
+        };
+
+        // align: unrecognized values fall back to Left rather than dropping
+        // the image, so a typo degrades instead of vanishing.
+        let align = match Self::extract_attribute(tag, "align") {
+            Some(raw) if raw.trim().eq_ignore_ascii_case("right") => {
+                crate::data::FloatAlign::Right
+            }
+            _ => crate::data::FloatAlign::Left,
+        };
+
+        elements.push(ParsedElement::VellumImage { src, rows, align });
+    }
+
+    pub(super) fn handle_resource(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {
+        // <resource picture='32'/> - the game's room-picture id. Always
+        // present on a room change; `0` (by far the common case) means the
+        // room has no picture. A bare <resource/> with no attribute is also
+        // seen on the wire and means the same as 0.
+        let id = match Self::extract_attribute(tag, "picture") {
+            Some(raw) => raw.trim().parse::<u32>().unwrap_or(0),
+            None => 0,
+        };
+        elements.push(ParsedElement::RoomPicture { id });
     }
 
     pub(super) fn handle_vellum_cmd(&mut self, tag: &str, elements: &mut Vec<ParsedElement>) {

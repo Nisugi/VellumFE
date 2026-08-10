@@ -4,7 +4,38 @@
 
 use super::*;
 
+/// Component id VellumFE uses for room-window art.
+///
+/// GemStone declares `sprite` on every room change and has never once been
+/// observed filling it (785k empty occurrences in the wire logs); Wrayth
+/// renders no room-window images, showing its room pictures in the STORY
+/// stream via `<resource picture>`. The name suggests it was meant for art
+/// of some kind, but whatever the intent, the slot is inert in practice —
+/// so scripts get a room-art channel and the game's own empty
+/// re-declaration clears it on every move.
+///
+/// If Simu ever starts populating it, non-empty values already win over our
+/// injection (see `handle_component`), so the game's content would take
+/// precedence rather than being overwritten.
+pub const SPRITE_COMPONENT: &str = "sprite";
+
 impl MessageProcessor {
+    /// Publish the room uid -> art index built from room_images.toml. Called
+    /// at startup and on `.reload`; also after the editor saves, so mappings
+    /// take effect without a restart.
+    pub fn set_room_image_index(
+        &mut self,
+        index: crate::config::room_images::RoomImageIndex,
+    ) {
+        self.room_image_index = index;
+    }
+
+    /// The room uid the client currently believes it is in (last `<nav rm=>`).
+    /// Used by `.roomimages set` to map "here" without the user typing a uid.
+    pub fn current_room_uid(&self) -> Option<u64> {
+        self.current_room_uid
+    }
+
     /// After ingesting a dialogData delta into the store, reflect it into
     /// the visible `active_dialog` if this dialog should be shown. When
     /// first materializing a shown dialog, seed its saved position/size.
@@ -124,8 +155,13 @@ impl MessageProcessor {
             return;
         }
 
-        // Only process room-related components for room window updates
-        if !id.starts_with("room ") {
+        // Only process room-related components for room window updates.
+        // `sprite` rides along: the game declares it on every room change but
+        // has never once filled it (785k empty occurrences in the wire logs),
+        // so it is the natural slot for room art — a script writes a
+        // `<vellumImg>` there and it lands in the room window's own stream
+        // instead of detouring through the story feed.
+        if !id.starts_with("room ") && id != SPRITE_COMPONENT {
             tracing::trace!("Ignoring non-room component: {}", id);
             return;
         }
@@ -136,9 +172,12 @@ impl MessageProcessor {
             return;
         }
 
-        // Check if component value has changed (avoid unnecessary processing)
+        // Check if component value has changed (avoid unnecessary processing).
+        // `sprite` is exempt: the game sends it EMPTY on every room change, so
+        // "unchanged" would short-circuit before room-art injection runs and
+        // art would only ever appear in the first mapped room of a session.
         if let Some(previous_value) = self.previous_room_components.get(id) {
-            if previous_value == value {
+            if previous_value == value && id != SPRITE_COMPONENT {
                 tracing::trace!("Room component {} unchanged - skipping processing", id);
                 return;
             }
@@ -503,11 +542,66 @@ impl MessageProcessor {
         // This ensures the room window updates when items are picked up, etc.
         *room_window_dirty = true;
 
+        // Room art: the game hands us an EMPTY `sprite` slot on every room
+        // change, and the uid arrived earlier in the same block via <nav rm=>.
+        // If this room is mapped, fill the slot with the same <vellumImg> a
+        // script would have sent — no rewriting of game text anywhere.
+        //
+        // A non-empty sprite means a script claimed it; script art always
+        // wins. An unmapped room, missing art file, or the feature being off
+        // all leave the slot empty rather than showing a broken label.
+        let injected;
+        let value = if id == SPRITE_COMPONENT
+            && value.trim().is_empty()
+            && self.config.room_images.enabled
+        {
+            match self
+                .current_room_uid
+                .and_then(|uid| self.room_image_index.get(uid))
+                .filter(|art| crate::core::inline_image::contains(&art.name))
+            {
+                Some(art) => {
+                    let align = match art.align_or_default() {
+                        crate::data::FloatAlign::Right => "right",
+                        crate::data::FloatAlign::Left => "left",
+                    };
+                    injected = format!(
+                        "<vellumImg src='{}' rows='{}' align='{align}'/>",
+                        art.name,
+                        art.rows_or_default()
+                    );
+                    tracing::debug!(
+                        "room art: room {:?} -> '{}'",
+                        self.current_room_uid,
+                        art.name
+                    );
+                    injected.as_str()
+                }
+                None => value,
+            }
+        } else {
+            value
+        };
+
         // An empty "room desc" component clears the mirrored prose (the parse
-        // block below is skipped for empty values, so clear it here).
-        if id == "room desc" && value.trim().is_empty() && !game_state.room_description.is_empty() {
-            game_state.room_description.clear();
-            game_state.room_description_generation += 1;
+        // block below is skipped for empty values, so clear it here). Room
+        // art survives on its own: a room with a picture but no description
+        // should still show the picture.
+        if id == "room desc" && value.trim().is_empty() {
+            let art = std::mem::take(&mut self.pending_room_art);
+            let new_desc: Vec<crate::data::widget::StyledLine> = if art.is_empty() {
+                Vec::new()
+            } else {
+                vec![crate::data::widget::StyledLine {
+                    segments: art,
+                    stream: "room".to_string(),
+                    timestamp: None,
+                }]
+            };
+            if game_state.room_description != new_desc {
+                game_state.room_description = new_desc;
+                game_state.room_description_generation += 1;
+            }
         }
 
         // Parse the component value to extract styled segments
@@ -570,6 +664,7 @@ impl MessageProcessor {
                             span_type: data_span_type,
                             link_data: link.clone(),
                             custom_emoji: None,
+                            inline_image: None,
                         };
 
                         // Debug logging for room exits to understand link coloring
@@ -585,6 +680,20 @@ impl MessageProcessor {
 
                         current_line_segments.push(segment);
                     }
+                    crate::parser::ParsedElement::VellumImage { src, rows, align } => {
+                        // Inline image inside a room component, so a script
+                        // can float art into the room window the same way it
+                        // can into the story window.
+                        current_line_segments.push(TextSegment {
+                            text: format!("[img:{src}]"),
+                            inline_image: Some(crate::data::InlineImage {
+                                name: src,
+                                rows,
+                                align,
+                            }),
+                            ..Default::default()
+                        });
+                    }
                     _ => {
                         // Ignore other parsed elements (we only care about Text)
                     }
@@ -597,15 +706,35 @@ impl MessageProcessor {
             // The game sends a full component replacement and handle_component
             // early-returns on unchanged values, so this runs only on real
             // changes — the generation bump stays accurate.
+            if id == SPRITE_COMPONENT {
+                // Remember the room's art so the `room desc` mirror below can
+                // lead with it. Sprite arrives BEFORE the description in the
+                // room block, so storing it into room_description here would
+                // just be overwritten a moment later.
+                self.pending_room_art = current_line_segments
+                    .iter()
+                    .filter(|s| s.inline_image.is_some())
+                    .cloned()
+                    .collect();
+            }
+
             if id == "room desc" {
                 let is_blank = current_line_segments
                     .iter()
                     .all(|s| s.text.trim().is_empty());
-                let new_desc: Vec<crate::data::widget::StyledLine> = if is_blank {
+                // Lead with the room's art (if any) so non-GUI frontends —
+                // the phone especially — float it beside the prose exactly
+                // like the GUI room window does. The GUI merges the same way
+                // in `room_sync`; this is the copy every OTHER frontend
+                // reads.
+                let mut segments = std::mem::take(&mut self.pending_room_art);
+                let has_art = !segments.is_empty();
+                let new_desc: Vec<crate::data::widget::StyledLine> = if is_blank && !has_art {
                     Vec::new()
                 } else {
+                    segments.extend(current_line_segments.iter().cloned());
                     vec![crate::data::widget::StyledLine {
-                        segments: current_line_segments.clone(),
+                        segments,
                         stream: "room".to_string(),
                         timestamp: None,
                     }]

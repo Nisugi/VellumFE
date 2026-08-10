@@ -316,3 +316,16 @@ script:
 ```ruby
 puts "<vellumTimer id='dark-cataclyst' value='#{Time.now.to_i + 90}'/>"
 ```
+
+### Script-driven images: `<vellumImg>`
+
+Lich scripts can float a real image into a text window, with the text
+wrapping around it:
+
+```ruby
+_respond "<compDef id='sprite' src='sunset' rows='4' align='left'/>"
+```
+
+Art lives in `~/.vellum-fe/global/images/inline/`. See
+[Inline Images](../customization/inline-images.md) for the full tag
+reference, room-window examples, and supported formats.

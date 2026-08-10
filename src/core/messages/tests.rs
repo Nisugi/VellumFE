@@ -2033,6 +2033,7 @@ fn push_test_segment(processor: &mut MessageProcessor, text: &str) {
         span_type: SpanType::Normal,
         link_data: None,
         custom_emoji: None,
+        inline_image: None,
     });
 }
 
@@ -2041,6 +2042,140 @@ fn text_line_count(ui_state: &UiState, window: &str) -> usize {
         WindowContent::Text(c) => c.lines.len(),
         _ => panic!("not a text window"),
     }
+}
+
+fn text_lines(ui_state: &UiState, window: &str) -> Vec<crate::data::StyledLine> {
+    match &ui_state.windows.get(window).expect("window exists").content {
+        WindowContent::Text(c) => c.lines.iter().cloned().collect(),
+        _ => panic!("not a text window"),
+    }
+}
+
+// ===========================================
+// Inline images (<vellumImg>)
+// ===========================================
+
+/// Drive one element through the processor with throwaway room/nav state.
+fn process_one(
+    processor: &mut MessageProcessor,
+    element: &crate::parser::ParsedElement,
+    ui_state: &mut UiState,
+) {
+    let mut game_state = crate::core::state::GameState::new();
+    processor.process_element(
+        element,
+        &mut game_state,
+        ui_state,
+        &mut std::collections::HashMap::new(),
+        &mut None,
+        &mut false,
+        &mut None,
+        &mut None,
+        &mut None,
+        None,
+    );
+}
+
+/// A `<vellumImg>` tag must reach a text window as a segment carrying the
+/// image reference, with a readable fallback in `text` for frontends that
+/// cannot draw it.
+#[test]
+fn vellum_img_becomes_an_image_segment() {
+    use crate::data::FloatAlign;
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    ui_state
+        .windows
+        .insert("main".to_string(), make_text_window("main", &["main"]));
+    processor.update_text_stream_subscribers(&ui_state);
+    processor.current_stream = "main".to_string();
+
+    process_one(
+        &mut processor,
+        &crate::parser::ParsedElement::VellumImage {
+            src: "banner".to_string(),
+            rows: 4.0,
+            align: FloatAlign::Right,
+        },
+        &mut ui_state,
+    );
+    processor.flush_current_stream(&mut ui_state);
+
+    let lines = text_lines(&ui_state, "main");
+    assert_eq!(lines.len(), 1);
+    let image = lines[0]
+        .segments
+        .iter()
+        .find_map(|s| s.inline_image.as_ref())
+        .expect("segment carries the image");
+    assert_eq!(image.name, "banner");
+    assert_eq!(image.rows, 4.0);
+    assert_eq!(image.align, FloatAlign::Right);
+    // The fallback text keeps the line readable without art.
+    assert!(
+        lines[0].segments.iter().any(|s| s.text.contains("banner")),
+        "expected a readable fallback label"
+    );
+}
+
+/// Highlights rebuild segments from a flat char-style map that cannot carry
+/// an image reference. A matching highlight must therefore leave an
+/// image-bearing line alone rather than silently dropping the picture.
+#[test]
+fn highlights_do_not_strip_inline_images() {
+    use crate::data::FloatAlign;
+    let mut config = Config::default();
+    let mut pattern = make_redirect_pattern("img");
+    pattern.redirect_to = None;
+    pattern.redirect_mode = crate::config::RedirectMode::RedirectOnly;
+    pattern.fg = Some("#ff0000".to_string());
+    config.highlights.insert("img_hl".to_string(), pattern);
+
+    let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+    let mut ui_state = UiState::new();
+    ui_state
+        .windows
+        .insert("main".to_string(), make_text_window("main", &["main"]));
+    processor.update_text_stream_subscribers(&ui_state);
+    processor.current_stream = "main".to_string();
+
+    process_one(
+        &mut processor,
+        &crate::parser::ParsedElement::VellumImage {
+            src: "banner".to_string(),
+            rows: 2.0,
+            align: FloatAlign::Left,
+        },
+        &mut ui_state,
+    );
+    processor.flush_current_stream(&mut ui_state);
+
+    let lines = text_lines(&ui_state, "main");
+    assert!(
+        lines[0].segments.iter().any(|s| s.inline_image.is_some()),
+        "highlight pass must not drop the image reference"
+    );
+}
+
+/// Emoji resolution splits and rewrites segment text. An image segment's
+/// text is a label, not prose, so it must pass through untouched or the
+/// painter's reserved run would desync from the drawn image.
+#[test]
+fn emoji_pass_leaves_inline_image_segments_alone() {
+    use crate::data::{FloatAlign, InlineImage};
+    let mut segments = vec![TextSegment {
+        text: "[img:grin]".to_string(),
+        inline_image: Some(InlineImage {
+            name: "grin".to_string(),
+            rows: 3.0,
+            align: FloatAlign::Left,
+        }),
+        ..Default::default()
+    }];
+    crate::core::emoji::apply_to_segments(&mut segments);
+    assert_eq!(segments.len(), 1, "must not split");
+    assert_eq!(segments[0].text, "[img:grin]", "must not rewrite the label");
+    assert!(segments[0].inline_image.is_some());
 }
 
 #[test]
@@ -2431,6 +2566,7 @@ fn test_clear_inventory_cache() {
         span_type: SpanType::Normal,
         link_data: None,
         custom_emoji: None,
+        inline_image: None,
     }]];
     assert!(!processor.previous_inventory.is_empty());
 
@@ -2676,5 +2812,488 @@ fn bug_dialog_box_popup_populates_despite_name_keyed_dialog_data() {
             .as_ref()
             .is_some_and(|d| d.id == "bugDialogBox"),
         "the popup actually shows"
+    );
+}
+
+/// A `<vellumImg>` inside a room component must reach the room window's
+/// styled lines, so a script can float art into the room the same way it
+/// can into the story window.
+#[test]
+fn vellum_img_inside_a_room_component_reaches_the_room() {
+    use crate::data::FloatAlign;
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+
+    process_component(
+        &mut processor,
+        &mut game_state,
+        "room desc",
+        "<vellumImg src='sunset' rows='4' align='right'/>A quiet clearing.",
+    );
+
+    let image = game_state
+        .room_description
+        .iter()
+        .flat_map(|line| line.segments.iter())
+        .find_map(|seg| seg.inline_image.as_ref())
+        .expect("room description carries the image");
+    assert_eq!(image.name, "sunset");
+    assert_eq!(image.rows, 4.0);
+    assert_eq!(image.align, FloatAlign::Right);
+
+    // The prose alongside it survives.
+    let text: String = game_state
+        .room_description
+        .iter()
+        .flat_map(|line| line.segments.iter())
+        .map(|seg| seg.text.as_str())
+        .collect();
+    assert!(text.contains("A quiet clearing."), "got {text:?}");
+}
+
+/// Reproduce the live report: one `<vellumImg>` plus prose in a room
+/// component must yield ONE image and keep the text.
+#[test]
+fn room_component_image_appears_once_and_keeps_text() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current_room_component = None;
+    let mut room_dirty = false;
+
+    processor.handle_component(
+        "room desc",
+        "<vellumImg src='sunset' rows='4' align='left'/>Stretching like long fingers.",
+        &mut game_state,
+        &mut room_components,
+        &mut current_room_component,
+        &mut room_dirty,
+    );
+
+    let buffer = room_components.get("room desc").expect("component buffered");
+    let images: usize = buffer
+        .iter()
+        .flat_map(|line| line.iter())
+        .filter(|s| s.inline_image.is_some())
+        .count();
+    let text: String = buffer
+        .iter()
+        .flat_map(|line| line.iter())
+        .filter(|s| s.inline_image.is_none())
+        .map(|s| s.text.as_str())
+        .collect();
+
+    assert_eq!(images, 1, "exactly one image segment, got {images}");
+    assert!(
+        text.contains("Stretching like long fingers"),
+        "prose must survive alongside the image, got {text:?}"
+    );
+    assert_eq!(buffer.len(), 1, "one line, got {}", buffer.len());
+}
+
+/// The game declares `<compDef id='sprite'>` on every room change but never
+/// fills it (785k empty occurrences in the wire logs), so a script can put a
+/// `<vellumImg>` there and have it land in the ROOM window's data — the room
+/// stream's own art slot, no story-window detour.
+#[test]
+fn sprite_component_carries_an_inline_image() {
+    use crate::data::FloatAlign;
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current = None;
+    let mut dirty = false;
+
+    processor.handle_component(
+        "sprite",
+        "<vellumImg src='sunset' rows='4' align='left'/>",
+        &mut game_state,
+        &mut room_components,
+        &mut current,
+        &mut dirty,
+    );
+
+    let image = room_components
+        .get("sprite")
+        .expect("sprite buffered")
+        .iter()
+        .flat_map(|line| line.iter())
+        .find_map(|s| s.inline_image.as_ref())
+        .expect("sprite carries the image");
+    assert_eq!(image.name, "sunset");
+    assert_eq!(image.align, FloatAlign::Left);
+    assert!(dirty, "room window must repaint");
+}
+
+/// `<resource picture='N'/>` (STORY stream) tracks the game's room picture
+/// when the user has art installed for that id; `picture='0'` (the
+/// near-universal value) clears it, so art never carries between rooms.
+#[test]
+fn resource_picture_sets_and_clears_story_picture() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "32".into(),
+        path: std::path::PathBuf::from("32.png"),
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let mut processor = create_test_processor();
+    let mut ui_state = UiState::new();
+    // One GameState across all three sends, so each case starts from the
+    // PREVIOUS room's value — that is what makes the clearing meaningful.
+    let mut game_state = crate::core::state::GameState::new();
+
+    let mut send = |processor: &mut MessageProcessor, gs: &mut crate::core::state::GameState, id: u32, ui: &mut UiState| {
+        processor.process_element(
+            &crate::parser::ParsedElement::RoomPicture { id },
+            gs,
+            ui,
+            &mut std::collections::HashMap::new(),
+            &mut None,
+            &mut false,
+            &mut None,
+            &mut None,
+            &mut None,
+            None,
+        );
+    };
+
+    // Installed art resolves.
+    send(&mut processor, &mut game_state, 32, &mut ui_state);
+    assert_eq!(game_state.story_picture.as_deref(), Some("32"));
+
+    // 0 clears the art the previous room set.
+    send(&mut processor, &mut game_state, 0, &mut ui_state);
+    assert_eq!(game_state.story_picture, None);
+
+    // An id with NO installed art also clears rather than leaving the last
+    // picture up.
+    send(&mut processor, &mut game_state, 32, &mut ui_state);
+    assert_eq!(game_state.story_picture.as_deref(), Some("32"));
+    send(&mut processor, &mut game_state, 999, &mut ui_state);
+    assert_eq!(game_state.story_picture, None, "unknown id must clear");
+}
+
+/// The `<component id='sprite'>` form must work as well as `<compDef>`, so a
+/// script can use whichever it already uses for other room content.
+#[test]
+fn sprite_accepts_the_component_form_too() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut room_components = std::collections::HashMap::new();
+    let mut current = None;
+    let mut dirty = false;
+
+    processor.handle_component(
+        "sprite",
+        "<vellumImg src='sunset' rows='3'/>",
+        &mut game_state,
+        &mut room_components,
+        &mut current,
+        &mut dirty,
+    );
+    assert!(room_components
+        .get("sprite")
+        .expect("buffered")
+        .iter()
+        .flat_map(|l| l.iter())
+        .any(|s| s.inline_image.is_some()));
+}
+
+// ===========================================
+// Room art injection (room_images.toml)
+// ===========================================
+
+/// A processor with room art enabled and one image mapped to `rooms`.
+fn processor_with_room_art(
+    enabled: bool,
+    image: &str,
+    rooms: &[u64],
+    install_art: bool,
+) -> (MessageProcessor, std::sync::MutexGuard<'static, ()>) {
+    // set_for_test writes process-wide state; hold the lock for the test.
+    let guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    use crate::config::room_images::{RoomImageDef, RoomImageIndex, RoomImagesConfig};
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+
+    // Injection deliberately skips art the user has not installed.
+    let mut registry = CustomEmojiRegistry::default();
+    if install_art {
+        registry.insert_for_test(CustomEmoji {
+            name: image.to_string(),
+            path: std::path::PathBuf::from(format!("{image}.png")),
+            format: EmojiFormat::Png,
+        });
+    }
+    crate::core::inline_image::set_for_test(registry);
+
+    let mut config = Config::default();
+    config.room_images.enabled = enabled;
+    let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+    processor.set_room_image_index(RoomImageIndex::build(&RoomImagesConfig {
+        images: vec![RoomImageDef {
+            name: image.to_string(),
+            rooms: rooms.to_vec(),
+            rows: None,
+            align: None,
+        }],
+        names: Default::default(),
+    }));
+    (processor, guard)
+}
+
+/// Drive one room change the way the game does: `<nav rm=uid>` first, then
+/// the empty `sprite` slot later in the same block.
+fn enter_room(
+    processor: &mut MessageProcessor,
+    uid: &str,
+    ui_state: &mut UiState,
+) -> Option<String> {
+    let mut game_state = crate::core::state::GameState::new();
+    let mut components = std::collections::HashMap::new();
+    let mut current = None;
+    let mut dirty = false;
+    process_one(
+        processor,
+        &crate::parser::ParsedElement::RoomId { id: uid.to_string() },
+        ui_state,
+    );
+    processor.handle_component(
+        "sprite",
+        "",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+    components
+        .get("sprite")?
+        .iter()
+        .flat_map(|line| line.iter())
+        .find_map(|s| s.inline_image.as_ref())
+        .map(|i| i.name.clone())
+}
+
+/// The core promise: walk into a mapped room and the game's empty sprite
+/// slot is filled with that room's art.
+#[test]
+fn mapped_room_gets_its_art_injected() {
+    let (mut processor, _art_guard) = processor_with_room_art(true, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    assert_eq!(
+        enter_room(&mut processor, "7118245", &mut ui).as_deref(),
+        Some("pier")
+    );
+}
+
+/// Every room sends an EMPTY sprite, so the unchanged-value dedup must not
+/// short-circuit it — otherwise art appears only in the first mapped room of
+/// a session and never again.
+#[test]
+fn art_injects_on_every_room_not_just_the_first() {
+    let (mut processor, _art_guard) = processor_with_room_art(true, "pier", &[7118245, 7118250], true);
+    let mut ui = UiState::new();
+    assert_eq!(
+        enter_room(&mut processor, "7118245", &mut ui).as_deref(),
+        Some("pier")
+    );
+    assert_eq!(
+        enter_room(&mut processor, "7118250", &mut ui).as_deref(),
+        Some("pier"),
+        "dedup must not suppress the repeated empty sprite"
+    );
+}
+
+/// An unmapped room leaves the slot empty — no art, no placeholder label.
+#[test]
+fn unmapped_room_gets_no_art() {
+    let (mut processor, _art_guard) = processor_with_room_art(true, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    assert_eq!(enter_room(&mut processor, "9999999", &mut ui), None);
+}
+
+/// Walking from a mapped room to an unmapped one must CLEAR the art, not
+/// leave the previous room's picture up.
+#[test]
+fn art_clears_when_leaving_a_mapped_room() {
+    let (mut processor, _art_guard) = processor_with_room_art(true, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    assert!(enter_room(&mut processor, "7118245", &mut ui).is_some());
+    assert_eq!(
+        enter_room(&mut processor, "9999999", &mut ui),
+        None,
+        "previous room's art must not persist"
+    );
+}
+
+/// The master toggle suppresses injection entirely.
+#[test]
+fn disabled_toggle_suppresses_injection() {
+    let (mut processor, _art_guard) = processor_with_room_art(false, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    assert_eq!(enter_room(&mut processor, "7118245", &mut ui), None);
+}
+
+/// A mapping naming art the user has not installed leaves the slot empty
+/// rather than emitting a broken `[img:]` label.
+#[test]
+fn missing_art_file_leaves_the_slot_empty() {
+    let (mut processor, _art_guard) = processor_with_room_art(true, "missing", &[7118245], false);
+    let mut ui = UiState::new();
+    assert_eq!(enter_room(&mut processor, "7118245", &mut ui), None);
+}
+
+/// Script art always wins: a non-empty sprite is never overwritten.
+#[test]
+fn script_sprite_is_not_overwritten_by_room_art() {
+    let (mut processor, _art_guard) = processor_with_room_art(true, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    process_one(
+        &mut processor,
+        &crate::parser::ParsedElement::RoomId { id: "7118245".into() },
+        &mut ui,
+    );
+
+    let mut game_state = crate::core::state::GameState::new();
+    let mut components = std::collections::HashMap::new();
+    let mut current = None;
+    let mut dirty = false;
+    processor.handle_component(
+        "sprite",
+        "<vellumImg src='scripted' rows='2'/>",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+    let image = components
+        .get("sprite")
+        .unwrap()
+        .iter()
+        .flat_map(|line| line.iter())
+        .find_map(|s| s.inline_image.as_ref())
+        .map(|i| i.name.clone());
+    assert_eq!(
+        image.as_deref(),
+        Some("scripted"),
+        "a script's own sprite must win over the room mapping"
+    );
+}
+
+/// The phone/headless clients read `game_state.room_description`, not the
+/// GUI's assembled room body — so room art must be mirrored there too, or
+/// only the desktop GUI ever shows it.
+#[test]
+fn room_art_reaches_game_state_for_remote_clients() {
+    let (mut processor, _art) = processor_with_room_art(true, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    let mut game_state = crate::core::state::GameState::new();
+
+    process_one(
+        &mut processor,
+        &crate::parser::ParsedElement::RoomId { id: "7118245".into() },
+        &mut ui,
+    );
+    // The game sends sprite BEFORE room desc in the room block.
+    let mut components = std::collections::HashMap::new();
+    let mut current = None;
+    let mut dirty = false;
+    processor.handle_component(
+        "sprite",
+        "",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+    processor.handle_component(
+        "room desc",
+        "A quiet clearing.",
+        &mut game_state,
+        &mut components,
+        &mut current,
+        &mut dirty,
+    );
+
+    let line = game_state
+        .room_description
+        .first()
+        .expect("description mirrored");
+    assert_eq!(
+        line.segments
+            .iter()
+            .find_map(|s| s.inline_image.as_ref())
+            .map(|i| i.name.as_str()),
+        Some("pier"),
+        "art must ride along with the mirrored description"
+    );
+    // Art LEADS, so the text wraps beside it rather than under it.
+    assert!(
+        line.segments[0].inline_image.is_some(),
+        "art must be the first segment"
+    );
+    let text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
+    assert!(text.contains("A quiet clearing."), "prose kept: {text:?}");
+}
+
+/// A room with art but no description still shows the picture — the empty
+/// `room desc` clear must not wipe it.
+#[test]
+fn room_art_survives_an_empty_description() {
+    let (mut processor, _art) = processor_with_room_art(true, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    let mut game_state = crate::core::state::GameState::new();
+    process_one(
+        &mut processor,
+        &crate::parser::ParsedElement::RoomId { id: "7118245".into() },
+        &mut ui,
+    );
+    let mut components = std::collections::HashMap::new();
+    let mut current = None;
+    let mut dirty = false;
+    processor.handle_component("sprite", "", &mut game_state, &mut components, &mut current, &mut dirty);
+    processor.handle_component("room desc", "", &mut game_state, &mut components, &mut current, &mut dirty);
+
+    assert!(
+        game_state
+            .room_description
+            .first()
+            .is_some_and(|l| l.segments.iter().any(|s| s.inline_image.is_some())),
+        "art-only room must still mirror its picture"
+    );
+}
+
+/// Leaving a mapped room clears the mirrored art, so the phone never shows
+/// the previous room's picture.
+#[test]
+fn mirrored_art_clears_on_an_unmapped_room() {
+    let (mut processor, _art) = processor_with_room_art(true, "pier", &[7118245], true);
+    let mut ui = UiState::new();
+    let mut game_state = crate::core::state::GameState::new();
+    let mut components = std::collections::HashMap::new();
+    let mut current = None;
+    let mut dirty = false;
+
+    process_one(&mut processor, &crate::parser::ParsedElement::RoomId { id: "7118245".into() }, &mut ui);
+    processor.handle_component("sprite", "", &mut game_state, &mut components, &mut current, &mut dirty);
+    processor.handle_component("room desc", "First room.", &mut game_state, &mut components, &mut current, &mut dirty);
+    assert!(game_state.room_description[0].segments[0].inline_image.is_some());
+
+    process_one(&mut processor, &crate::parser::ParsedElement::RoomId { id: "9999999".into() }, &mut ui);
+    processor.handle_component("sprite", "", &mut game_state, &mut components, &mut current, &mut dirty);
+    processor.handle_component("room desc", "Second room.", &mut game_state, &mut components, &mut current, &mut dirty);
+    assert!(
+        !game_state.room_description[0]
+            .segments
+            .iter()
+            .any(|s| s.inline_image.is_some()),
+        "unmapped room must not inherit the previous picture"
     );
 }

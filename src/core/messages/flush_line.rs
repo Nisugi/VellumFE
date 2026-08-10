@@ -412,6 +412,7 @@ impl MessageProcessor {
                     span_type: crate::data::SpanType::Normal,
                     link_data,
                     custom_emoji: None,
+                    inline_image: None,
                 };
 
                 self.perception_buffer.push(vec![entry_segment]);

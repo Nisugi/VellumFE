@@ -557,6 +557,28 @@ fn test_output_mono_region_marks_text() {
     assert!(!*mono, "text after the region closes must not be mono");
 }
 
+#[test]
+fn test_prompt_clears_leaked_mono_region() {
+    let mut parser = test_parser();
+
+    // A mono region whose closing <output class=""/> was eaten upstream
+    // (e.g. a Lich script's DownstreamHook suppressing the line carrying
+    // it) must not survive past the prompt — otherwise every subsequent
+    // line renders monospace until something else closes it.
+    parser.parse_line(r#"<output class="mono"/>"#);
+    parser.parse_line("She has old battle scars across her face.");
+    parser.parse_line(r#"<prompt time="1234567890">&gt;</prompt>"#);
+
+    let elements = parser.parse_line("You are standing in a field.");
+    let ParsedElement::Text { mono, .. } = &elements[0] else {
+        panic!("Expected Text element, got {:?}", elements[0]);
+    };
+    assert!(
+        !*mono,
+        "a mono region left open at the prompt must be force-closed"
+    );
+}
+
 // ==================== GemStone IV Link Parsing (<a> tags) ====================
 
 #[test]
@@ -989,6 +1011,120 @@ fn test_vellum_cmd_malformed_ignored() {
             line
         );
     }
+}
+
+// ==================== VellumImg Parsing ====================
+
+#[test]
+fn test_vellum_img_parsing() {
+    use crate::data::FloatAlign;
+    let mut parser = test_parser();
+    // Both spellings, all attributes present.
+    for line in [
+        "<vellumImg src='banner' rows='4' align='right'/>",
+        "<vellum-img src='banner' rows='4' align='right'/>",
+    ] {
+        let elements = parser.parse_line(line);
+        let images: Vec<_> = elements
+            .iter()
+            .filter(|e| matches!(e, ParsedElement::VellumImage { .. }))
+            .collect();
+        assert_eq!(images.len(), 1, "line {:?}", line);
+        let ParsedElement::VellumImage { src, rows, align } = images[0] else {
+            panic!("Expected VellumImage element, got {:?}", images[0]);
+        };
+        assert_eq!(src, "banner");
+        assert_eq!(*rows, 4.0);
+        assert_eq!(*align, FloatAlign::Right);
+    }
+}
+
+#[test]
+fn test_vellum_img_defaults() {
+    use crate::data::FloatAlign;
+    let mut parser = test_parser();
+    // rows defaults to 1, align to Left, and an unrecognized align falls
+    // back to Left rather than dropping the image.
+    for (line, want_rows) in [
+        ("<vellumImg src='banner'/>", 1.0),
+        ("<vellumImg src='banner' align='sideways'/>", 1.0),
+        ("<vellumImg src='banner' rows='3'/>", 3.0),
+    ] {
+        let elements = parser.parse_line(line);
+        let ParsedElement::VellumImage { rows, align, .. } = elements
+            .iter()
+            .find(|e| matches!(e, ParsedElement::VellumImage { .. }))
+            .unwrap_or_else(|| panic!("no image for {:?}", line))
+        else {
+            unreachable!()
+        };
+        assert_eq!(*rows, want_rows, "line {:?}", line);
+        assert_eq!(*align, FloatAlign::Left, "line {:?}", line);
+    }
+}
+
+#[test]
+fn test_vellum_img_clamps_absurd_rows() {
+    let mut parser = test_parser();
+    let elements = parser.parse_line("<vellumImg src='banner' rows='9999'/>");
+    let ParsedElement::VellumImage { rows, .. } = elements
+        .iter()
+        .find(|e| matches!(e, ParsedElement::VellumImage { .. }))
+        .expect("clamped, not dropped")
+    else {
+        unreachable!()
+    };
+    assert_eq!(*rows, 64.0, "rows should clamp to the parser ceiling");
+}
+
+#[test]
+fn test_vellum_img_malformed_ignored() {
+    let mut parser = test_parser();
+    // Missing/empty src, a src that tries to escape the pool directory, and
+    // junk rows: no element, no text.
+    for line in [
+        "<vellumImg/>",
+        "<vellumImg src=''/>",
+        "<vellumImg src='../../secret'/>",
+        "<vellumImg src='sub/dir'/>",
+        "<vellumImg src='a\\b'/>",
+        "<vellumImg src='banner.png'/>",
+        "<vellumImg src='ban:ner'/>",
+        "<vellumImg src='banner' rows='abc'/>",
+        "<vellumImg src='banner' rows='0'/>",
+        "<vellumImg src='banner' rows='-2'/>",
+    ] {
+        let elements = parser.parse_line(line);
+        assert!(
+            !elements
+                .iter()
+                .any(|e| matches!(e, ParsedElement::VellumImage { .. })),
+            "line {:?} should not produce an image",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_vellum_img_breaks_surrounding_text() {
+    let mut parser = test_parser();
+    // Text before the tag must flush as its own element, so the image never
+    // merges into a neighbouring text run.
+    let elements = parser.parse_line("before <vellumImg src='banner'/> after");
+    let kinds: Vec<&str> = elements
+        .iter()
+        .map(|e| match e {
+            ParsedElement::Text { .. } => "text",
+            ParsedElement::VellumImage { .. } => "img",
+            _ => "other",
+        })
+        .collect();
+    let img_at = kinds.iter().position(|k| *k == "img").expect("image parsed");
+    assert!(
+        kinds[..img_at].contains(&"text"),
+        "text before the tag should flush first, got {:?}",
+        kinds
+    );
 }
 
 // ==================== Stream Parsing ====================
@@ -3107,4 +3243,71 @@ fn open_dialog_size_hints_are_captured_and_absent_attrs_emit_nothing() {
     assert!(!bare
         .iter()
         .any(|e| matches!(e, ParsedElement::WindowHints { .. })));
+}
+
+// ==================== Resource (room picture) Parsing ====================
+
+#[test]
+fn test_resource_picture_parsing() {
+    let mut parser = test_parser();
+    for (line, want) in [
+        ("<resource picture='32'/>", 32u32),
+        ("<resource picture=\"1002\"/>", 1002),
+        // 0 is the near-universal value and means "no picture".
+        ("<resource picture='0'/>", 0),
+        // A bare <resource/> appears on the wire; treat as no picture.
+        ("<resource/>", 0),
+        // Junk degrades to "no picture" rather than dropping the element,
+        // so a bad value still CLEARS the previous room's art.
+        ("<resource picture='abc'/>", 0),
+    ] {
+        let elements = parser.parse_line(line);
+        let ParsedElement::RoomPicture { id } = elements
+            .iter()
+            .find(|e| matches!(e, ParsedElement::RoomPicture { .. }))
+            .unwrap_or_else(|| panic!("no RoomPicture for {line:?}"))
+        else {
+            unreachable!()
+        };
+        assert_eq!(*id, want, "line {line:?}");
+    }
+}
+
+/// The tag must not leak into the visible text, and the room name that
+/// follows it on the same line must survive.
+#[test]
+fn test_resource_does_not_render_as_text() {
+    let mut parser = test_parser();
+    let elements =
+        parser.parse_line("<resource picture=\"0\"/><style id=\"roomName\" />[Kraken's Fall]");
+    let text: String = elements
+        .iter()
+        .filter_map(|e| match e {
+            ParsedElement::Text { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(!text.contains("resource"), "tag leaked into text: {text:?}");
+    assert!(text.contains("Kraken's Fall"), "room name lost: {text:?}");
+}
+
+/// A self-closing `<compDef>` from the game carries no content and must
+/// keep falling through to the ignore arm; the paired empty form still
+/// clears the component, as the game intends.
+#[test]
+fn test_compdef_self_closing_is_ignored() {
+    let mut parser = test_parser();
+    for line in ["<compDef id='sprite'/>", "<compDef id='room desc'/>"] {
+        let elements = parser.parse_line(line);
+        assert!(
+            !elements
+                .iter()
+                .any(|e| matches!(e, ParsedElement::Component { .. })),
+            "line {line:?} should not emit a Component"
+        );
+    }
+    let elements = parser.parse_line("<compDef id='sprite'></compDef>");
+    assert!(elements
+        .iter()
+        .any(|e| matches!(e, ParsedElement::Component { value, .. } if value.is_empty())));
 }

@@ -122,6 +122,10 @@ impl MessageProcessor {
             }
             ParsedElement::RoomId { id } => {
                 *nav_room_id = Some(id.clone());
+                // Mirror onto the processor so the `sprite` component (which
+                // arrives later in the same room block, and does not receive
+                // nav_room_id) can look up this room's art.
+                self.current_room_uid = id.parse::<u64>().ok();
                 *room_window_dirty = true;
                 // A <nav> tag is the universal "you moved" signal (Lich's
                 // room_count increment). Push it for the walk executor even
@@ -431,6 +435,7 @@ impl MessageProcessor {
                             span_type: SpanType::Normal,
                             link_data: None,
                             custom_emoji: None,
+                            inline_image: None,
                         });
                     }
 
@@ -510,6 +515,7 @@ impl MessageProcessor {
                         span_type: data_span_type,
                         link_data: link_data.clone(),
                         custom_emoji: None,
+                        inline_image: None,
                     };
 
                     // Accumulate this segment in the current line buffer
@@ -581,6 +587,7 @@ impl MessageProcessor {
                     span_type: data_span_type,
                     link_data: link_data.clone(),
                     custom_emoji: None,
+                    inline_image: None,
                 });
             }
             ParsedElement::RoundTime { value } => {
@@ -650,6 +657,36 @@ impl MessageProcessor {
                         "vellumCmd rejected (only dot-commands are allowed): {command}"
                     );
                 }
+            }
+            ParsedElement::RoomPicture { id } => {
+                // The game says "this room has picture N". We have no access
+                // to Simu's art (the wire carries only the number), so N is
+                // resolved against the user's own pool by name — art for
+                // `picture='32'` lives at images/inline/32.png. Unknown ids
+                // and the near-universal 0 simply clear the slot, so a room
+                // without art never shows the previous room's picture.
+                let art = (*id != 0)
+                    .then(|| id.to_string())
+                    .filter(|name| crate::core::inline_image::contains(name));
+                if game_state.story_picture != art {
+                    game_state.story_picture = art;
+                    *room_window_dirty = true;
+                }
+            }
+            ParsedElement::VellumImage { src, rows, align } => {
+                // Script-facing inline image. The segment keeps a readable
+                // `[img:name]` fallback in `text` so the TUI (and any
+                // frontend that can't resolve the art) shows something
+                // rather than a blank, exactly like custom emoji.
+                self.current_segments.push(TextSegment {
+                    text: format!("[img:{src}]"),
+                    inline_image: Some(crate::data::InlineImage {
+                        name: src.clone(),
+                        rows: *rows,
+                        align: *align,
+                    }),
+                    ..Default::default()
+                });
             }
             ParsedElement::LeftHand { item, link } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
@@ -1436,6 +1473,7 @@ impl MessageProcessor {
                                         span_type: SpanType::Normal,
                                         link_data: None,
                                         custom_emoji: None,
+                                        inline_image: None,
                                     });
                                     let rest = label.value[1..].to_string();
                                     if !rest.is_empty() {
@@ -1448,6 +1486,7 @@ impl MessageProcessor {
                                             span_type: SpanType::Normal,
                                             link_data: None,
                                             custom_emoji: None,
+                                            inline_image: None,
                                         });
                                     }
                                     content.add_line(StyledLine {

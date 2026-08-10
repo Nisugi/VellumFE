@@ -286,6 +286,7 @@ pub async fn serve_listener_with_token(
         .route("/sounds/{name}", get(sound_file))
         .route("/emoji", get(emoji_list))
         .route("/emoji/{name}", get(emoji_file))
+        .route("/image/{name}", get(inline_image_file))
         .route("/doll.json", get(doll_json))
         .route("/doll/image", get(doll_image))
         .route("/ws", get(ws_upgrade))
@@ -606,6 +607,36 @@ async fn emoji_file(
     };
     match std::fs::read(&emoji.path) {
         Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, emoji.format.mime())], bytes),
+        Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
+    }
+}
+
+/// Serve one inline image (`<vellumImg src=..>` art) by name. Same gating as
+/// [`emoji_file`]: pairing token, then the shortcode alphabet, then a
+/// registry lookup that resolves the name to a path the scan itself
+/// discovered — the client never supplies a path, so there is no traversal
+/// surface. Unknown names 404.
+async fn inline_image_file(
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    State(state): State<Arc<WebState>>,
+) -> impl IntoResponse {
+    use axum::http::StatusCode;
+
+    if !params
+        .get("token")
+        .is_some_and(|t| token_matches(t, &state.auth_token))
+    {
+        return (StatusCode::FORBIDDEN, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    if !is_emoji_shortcode(&name) {
+        return (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    }
+    let Some(image) = crate::core::inline_image::get(&name) else {
+        return (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new());
+    };
+    match std::fs::read(&image.path) {
+        Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE, image.format.mime())], bytes),
         Err(_) => (StatusCode::NOT_FOUND, [(header::CONTENT_TYPE, "text/plain")], Vec::new()),
     }
 }

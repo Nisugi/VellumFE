@@ -2538,6 +2538,7 @@ fn make_segment(text: &str) -> TextSegment {
         span_type: SpanType::Normal,
         link_data: None,
         custom_emoji: None,
+        inline_image: None,
     }
 }
 

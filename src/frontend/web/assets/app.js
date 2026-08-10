@@ -345,6 +345,35 @@ pane.addEventListener("scroll", () => {
   autoScroll = atBottom();
 }, { passive: true });
 
+// Press-and-hold an inline image to see it full size; release to dismiss.
+// Mirrors the GUI (and Wrayth's own behavior). Uses pointer events so touch
+// and mouse behave the same, and cancels the browser's long-press menu on
+// mobile so holding shows the picture instead of a context menu.
+function attachInlineImageZoom(img) {
+  let overlay = null;
+  const dismiss = () => {
+    if (overlay) {
+      overlay.remove();
+      overlay = null;
+    }
+  };
+  img.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    dismiss();
+    overlay = document.createElement("div");
+    overlay.className = "inline-image-zoom";
+    const big = document.createElement("img");
+    big.src = img.src;
+    big.alt = img.alt;
+    overlay.appendChild(big);
+    document.body.appendChild(overlay);
+    // Release anywhere dismisses, including outside the image.
+    window.addEventListener("pointerup", dismiss, { once: true });
+    window.addEventListener("pointercancel", dismiss, { once: true });
+  });
+  img.addEventListener("contextmenu", (event) => event.preventDefault());
+}
+
 function renderLine(line) {
   const div = document.createElement("div");
   div.className = "line";
@@ -361,6 +390,27 @@ function renderLine(line) {
       const label = seg.text || `:${seg.custom_emoji}:`;
       img.alt = label;
       img.title = label;
+      div.appendChild(img);
+      continue;
+    }
+    // Inline image (<vellumImg>): a real picture floated beside the text.
+    // The browser's own CSS float does the wrapping, so the following lines
+    // flow around it and rejoin below with no layout math on our side.
+    // Height is set in `em` so it tracks the reader's font size, matching
+    // the GUI's "height in text rows" model.
+    if (seg.inline_image) {
+      // Mark the line so CSS can drop flex layout: flex items never float.
+      div.classList.add("has-inline-image");
+      const img = document.createElement("img");
+      img.className = "inline-image";
+      const info = seg.inline_image;
+      img.src = `/image/${encodeURIComponent(info.name)}?token=${encodeURIComponent(pairingToken)}`;
+      img.style.height = `${Math.max(1, info.rows || 1)}em`;
+      img.style.float = info.align === "right" ? "right" : "left";
+      const label = seg.text || `[img:${info.name}]`;
+      img.alt = label;
+      img.title = label;
+      attachInlineImageZoom(img);
       div.appendChild(img);
       continue;
     }

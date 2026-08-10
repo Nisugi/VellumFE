@@ -717,6 +717,14 @@ pub fn handle_ui_action(
             );
             app_core.needs_render = true;
         }
+        UiAction::RoomImagesEdit => {
+            // The grouped image->rooms editor is GUI-only for now; the
+            // dot-command covers the whole workflow in the TUI.
+            app_core.add_system_message(
+                "The room-art editor is GUI-only for now. Use .roomimages                  set <image> while standing in a room, .roomimages clear,                  and .roomimages list.",
+            );
+            app_core.needs_render = true;
+        }
         UiAction::SorterEdit => {
             // TUI parity for the structured editor (rules/order/renames)
             // is planned; the scalar toggles already ride the registry.

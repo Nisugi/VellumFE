@@ -620,6 +620,7 @@ fn test_segment_has_clickable_link_for_monsterbold_link_segment() {
             coord: None,
         }),
         custom_emoji: None,
+        inline_image: None,
     };
 
     assert!(VellumGuiApp::segment_has_clickable_link(&segment));
@@ -636,6 +637,7 @@ fn test_segment_has_clickable_link_false_without_link_data() {
         span_type: SpanType::Link,
         link_data: None,
         custom_emoji: None,
+        inline_image: None,
     };
 
     assert!(!VellumGuiApp::segment_has_clickable_link(&segment));

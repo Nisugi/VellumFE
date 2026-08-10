@@ -11,6 +11,7 @@ pub mod day_pass;
 pub mod conditions;
 pub mod doll_rules;
 pub mod custom_emoji;
+pub mod inline_image;
 pub mod data_pack;
 pub mod emoji;
 pub mod evidence;

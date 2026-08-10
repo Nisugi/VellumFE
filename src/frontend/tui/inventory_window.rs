@@ -157,6 +157,7 @@ mod tests {
             span_type: SpanType::Normal,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         }
     }
 

@@ -63,6 +63,7 @@
   - [Controller & Gamepad](./customization/controller.md)
   - [Sound Alerts](./customization/sounds.md)
   - [Emoji](./customization/emoji.md)
+  - [Inline Images](./customization/inline-images.md)
   - [Themes](./customization/themes.md)
   - [Skins (GUI Graphics)](./customization/skins.md)
   - [Sharing UI Packs](./customization/ui-packs.md)
