@@ -445,3 +445,74 @@ mod variant_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod variant_edit_tests {
+    use super::*;
+    use crate::config::Condition;
+    use crate::core::elanthian_time::DayPhase;
+
+    fn def_with(variants: Vec<RoomImageVariant>) -> RoomImageDef {
+        RoomImageDef {
+            name: "pier".into(),
+            rooms: vec![1],
+            rows: None,
+            align: None,
+            variants,
+        }
+    }
+
+    fn variant(name: &str, phase: DayPhase) -> RoomImageVariant {
+        RoomImageVariant {
+            name: name.into(),
+            when: Condition::TimeOfDay { phase },
+        }
+    }
+
+    /// Removing a variant takes the right one out and leaves order intact —
+    /// order is meaningful, since the first match wins.
+    #[test]
+    fn removing_a_variant_preserves_the_order_of_the_rest() {
+        let mut def = def_with(vec![
+            variant("dawn_art", DayPhase::Dawn),
+            variant("dusk_art", DayPhase::Dusk),
+            variant("night_art", DayPhase::Night),
+        ]);
+        def.variants.remove(1);
+        let names: Vec<&str> = def.variants.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, vec!["dawn_art", "night_art"]);
+    }
+
+    /// An out-of-range removal is a no-op rather than a panic: the editor
+    /// defers mutations, so an index can outlive the list it referenced.
+    #[test]
+    fn an_out_of_range_variant_index_is_ignored() {
+        let mut def = def_with(vec![variant("night_art", DayPhase::Night)]);
+        let before = def.variants.clone();
+        if 5 < def.variants.len() {
+            def.variants.remove(5);
+        }
+        assert_eq!(def.variants, before);
+    }
+
+    /// Editing a variant's phase changes which art resolves, without
+    /// touching the default.
+    #[test]
+    fn changing_a_variant_phase_changes_what_resolves() {
+        use crate::core::GameState;
+        let gs = GameState::new();
+        const DAYTIME: i64 = 1_786_394_661; // 16:44 Eastern -> Day
+        let mut def = def_with(vec![variant("other_art", DayPhase::Night)]);
+
+        assert_eq!(def.resolve_name(&gs, DAYTIME, None), "pier", "night misses");
+        def.variants[0].when = Condition::TimeOfDay {
+            phase: DayPhase::Day,
+        };
+        assert_eq!(
+            def.resolve_name(&gs, DAYTIME, None),
+            "other_art",
+            "day now matches"
+        );
+        assert_eq!(def.name, "pier", "the default art is untouched");
+    }
+}

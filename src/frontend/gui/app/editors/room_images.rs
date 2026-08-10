@@ -6,6 +6,7 @@
 //! room": the uid comes from the game, so the user never types one.
 
 use crate::config::room_images::{RoomImageDef, RoomImagesConfig, DEFAULT_ROOM_IMAGE_ROWS};
+use crate::core::elanthian_time::DayPhase;
 use crate::data::FloatAlign;
 use crate::frontend::gui::app::VellumGuiApp;
 
@@ -22,6 +23,8 @@ enum Op {
     RemoveRoom { image: usize, room: usize },
     RemoveImage(usize),
     AddCurrentRoom(usize),
+    AddVariant(usize),
+    RemoveVariant { image: usize, variant: usize },
 }
 
 impl VellumGuiApp {
@@ -203,6 +206,103 @@ impl VellumGuiApp {
                                 if already_here {
                                     ui.weak("This room is already mapped here.");
                                 }
+
+                                // Conditional art: a night version of the
+                                // same view, a wounded version, and so on.
+                                // First match wins, which is why order is
+                                // shown and adjustable.
+                                ui.separator();
+                                if entry.variants.is_empty() {
+                                    ui.weak("No variants — this art always shows.");
+                                }
+                                for (variant_idx, variant) in
+                                    entry.variants.iter_mut().enumerate()
+                                {
+                                    ui.horizontal(|ui| {
+                                        ui.label("when");
+                                        // Time of day is the case this was
+                                        // built for; other conditions are
+                                        // editable in the file and shown
+                                        // read-only here rather than
+                                        // silently dropped.
+                                        match &mut variant.when {
+                                            crate::config::Condition::TimeOfDay { phase } => {
+                                                egui::ComboBox::from_id_salt((
+                                                    "room_img_variant_phase",
+                                                    image_idx,
+                                                    variant_idx,
+                                                ))
+                                                .selected_text(phase.as_str())
+                                                .show_ui(ui, |ui| {
+                                                    for option in [
+                                                        DayPhase::Dawn,
+                                                        DayPhase::Day,
+                                                        DayPhase::Dusk,
+                                                        DayPhase::Night,
+                                                    ] {
+                                                        ui.selectable_value(
+                                                            phase,
+                                                            option,
+                                                            option.as_str(),
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                            other => {
+                                                ui.weak(format!("{other:?}"))
+                                                    .on_hover_text(
+                                                        "Edit this condition in                                                          room_images.toml",
+                                                    );
+                                            }
+                                        }
+                                        ui.label("show");
+                                        egui::ComboBox::from_id_salt((
+                                            "room_img_variant_art",
+                                            image_idx,
+                                            variant_idx,
+                                        ))
+                                        .selected_text(if variant.name.is_empty() {
+                                            "(pick art)".to_string()
+                                        } else {
+                                            variant.name.clone()
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            for art in &state.available {
+                                                ui.selectable_value(
+                                                    &mut variant.name,
+                                                    art.clone(),
+                                                    art,
+                                                );
+                                            }
+                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if ui
+                                                    .small_button("✕")
+                                                    .on_hover_text("Remove this variant")
+                                                    .clicked()
+                                                {
+                                                    op = Some(Op::RemoveVariant {
+                                                        image: image_idx,
+                                                        variant: variant_idx,
+                                                    });
+                                                }
+                                            },
+                                        );
+                                    });
+                                }
+                                ui.add_enabled_ui(!state.available.is_empty(), |ui| {
+                                    if ui
+                                        .button("+ Add variant")
+                                        .on_hover_text(
+                                            "Show different art when a condition matches                                              (e.g. at night)",
+                                        )
+                                        .clicked()
+                                    {
+                                        op = Some(Op::AddVariant(image_idx));
+                                    }
+                                });
                             });
                         }
                     });
@@ -286,6 +386,26 @@ impl VellumGuiApp {
                     }
                     if let Some(name) = current_name.clone() {
                         state.draft.names.insert(uid.to_string(), name);
+                    }
+                }
+            }
+            Some(Op::AddVariant(idx)) => {
+                if let Some(entry) = state.draft.images.get_mut(idx) {
+                    // Default to a night variant: that is the case this
+                    // exists for, and it is one combo change away from any
+                    // other phase.
+                    entry.variants.push(crate::config::room_images::RoomImageVariant {
+                        name: state.new_image.clone(),
+                        when: crate::config::Condition::TimeOfDay {
+                            phase: DayPhase::Night,
+                        },
+                    });
+                }
+            }
+            Some(Op::RemoveVariant { image, variant }) => {
+                if let Some(entry) = state.draft.images.get_mut(image) {
+                    if variant < entry.variants.len() {
+                        entry.variants.remove(variant);
                     }
                 }
             }

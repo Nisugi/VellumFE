@@ -161,6 +161,10 @@ rooms = [7118245, 7118250]
 The first variant whose condition matches wins; none matching falls back to
 the entry's own `name`.
 
+In the editor, each image card has an **+ Add variant** button and a row per
+variant — pick the phase and the art from dropdowns. Conditions more complex
+than time of day are shown read-only there and edited in the file.
+
 Elanthian time runs on **US Eastern**, so VellumFE computes the phase from
 your system clock — no `time` command, no waiting for the game to tell it,
 and it is correct the moment you log in. The four phases are `dawn`, `day`,
