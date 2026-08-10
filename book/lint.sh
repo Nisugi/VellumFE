@@ -79,6 +79,13 @@ echo "== duplicate shot IDs =="
 dupes=$(grep -rho 'data-shot="[^"]*"' src | sort | uniq -d)
 [ -n "$dupes" ] && err "duplicate data-shot IDs: $dupes"
 
+
+echo "== built HTML has no leaked tab syntax =="
+if [ -d book ]; then
+  leaked=$(grep -rl '{{#tab\|{{#endtab\|{{#tabs' book 2>/dev/null | head -5)
+  [ -n "$leaked" ] && err "leaked tab syntax in built HTML (missing blank line before {{#endtab}}): $leaked"
+fi
+
 if [ "$STRICT" = "1" ]; then
   echo "== STRICT: Page Contract compliance =="
   for p in $pages; do

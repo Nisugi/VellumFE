@@ -62,6 +62,41 @@
 
 ---
 
+## Launching & sessions (pre-session — added 2026-08-10)
+
+> The matrix used to cover only IN-session gestures, so the first pages written
+> against it (introduction, installation, launcher) had no rows to transcribe.
+> These were verified directly in source during Wave 1.
+>
+> **Two different things are called "the Launcher."** The **Launcher** is the
+> graphical connection list (`launcher.toml`, double-click / `--launcher`). The
+> **SSH Launcher** is a separate in-session panel (`ssh-launcher.toml`,
+> `.launcher` / `.launch`) that cold-starts a headless Lich on another machine.
+> Never conflate them on a page.
+
+| Task | Terminal (TUI) | Desktop GUI | Mobile / Web |
+|------|----------------|-------------|--------------|
+| **Open the Launcher** | ❌ n/a — the Launcher is an egui window; `run_launcher()` is eframe-only. `src/main.rs:424` | ✅ Run with **no arguments** (double-click) or `--launcher`. Window **"VellumFE Launcher"**, heading **VellumFE**, subheading **"Choose a connection to launch"**. `src/frontend/gui/launcher.rs:787-788,813` | ❌ the apps use their own login screen |
+| **Add a connection** | ❌ | ✅ **➕ New connection** → form headed **New connection** → **Save**. `launcher.rs:387,415` | ❌ |
+| **Launch / Edit / Delete** | ⚠️ `--launch-profile "<name>"` runs a saved connection by name | ✅ Per-row **Launch**, **Edit**, **Delete**; Delete confirms in a **"Delete profile?"** window. `launcher.rs:754` | ❌ |
+| **Save a password** | ❌ | ✅ **Save password** checkbox → OS credential store via the `keyring` crate, service id `vellum-fe`, keyed by the LOWERCASED account. `launcher.rs:472`, `src/config/profiles.rs:23,293-294` | ❌ |
+| **Set a connection's frontend** | ❌ | ✅ **Advanced** ▸ **Frontend** ▸ **GUI** / **Terminal**. **Default is GUI.** `src/config/profiles.rs:79-83` | ❌ |
+| **Cold-start a remote Lich** | ⚠️ `.launch`/`.launcher` dispatch a UiAction; the panel itself is GUI-only | ✅ `.launcher` opens the **SSH Launcher** panel; `.launch <character>` runs the flow. `src/frontend/gui/app/editors/launcher.rs` | ❌ |
+
+**The default-frontend trap (state this on any page that launches anything):**
+the CLI's `--frontend` defaults to **`tui`** (`src/main.rs:40`), while a saved
+connection's frontend defaults to **GUI** (`profiles.rs:79-83`). The same
+character started two ways lands in two different interfaces.
+
+**Connection list summary format:** `<character> @ <game>` for direct,
+`<character> via Lich @ <host>:<port>` for Lich. The account is deliberately
+NOT shown (source comment says the list is on screen and in screenshots
+constantly). `profiles.rs:187-197`
+
+**`.quit` vs `.exit`:** `.quit` disconnects but keeps the window open — run it
+again, or use `.exit`, to close. Governed by `ui.keep_open_on_quit`.
+`src/config/registry.rs:394-395`
+
 ## Core layout gestures
 
 | Task | Terminal (TUI) | Desktop GUI | Mobile / Web |

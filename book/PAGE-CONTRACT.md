@@ -49,6 +49,12 @@ each tab is `{{#tab name="…"}}` … `{{#endtab}}` (it is `{{#endtab}}`, NOT `{
 line** is required after `{{#tab …}}` before content. `global="frontend"` makes all blocks on a
 page switch together.
 
+> ⚠️ **A blank line is also required BEFORE `{{#endtab}}` when the tab's last
+> content is a raw HTML block** — most often a screenshot `</figure>`. Without
+> it the preprocessor stops parsing and the literal `{{#tab …}}` text leaks into
+> the built page. Found the hard way in Wave 1; verify by grepping the built
+> HTML for `{{#` (must be zero) after every build.
+
     ## Set it up
 
     {{#tabs global="frontend"}}
