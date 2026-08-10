@@ -44,6 +44,22 @@ pub fn image_dir() -> Option<PathBuf> {
 /// (Re)scan the inline image directory and publish the new snapshot. Call at
 /// startup and on `.reload`. Returns the number of images found.
 pub fn reload() -> usize {
+    // In the test process, a pinned test registry must survive unrelated
+    // tests spinning up app state: reload() rebuilds the process-wide
+    // registry from disk WITHOUT the test lock, and that race intermittently
+    // wiped a float test's fake art mid-assertion (caught live as a flaky
+    // reserved_float_height failure). Once any test pins a registry, disk
+    // reloads stay off for the remainder of the process — every test that
+    // needs content installs it explicitly.
+    #[cfg(test)]
+    if TEST_PINNED.load(std::sync::atomic::Ordering::Relaxed) {
+        return REGISTRY
+            .read()
+            .expect("inline image registry poisoned")
+            .as_ref()
+            .map(|r| r.len())
+            .unwrap_or(0);
+    }
     let registry = match image_dir() {
         Some(dir) => CustomEmojiRegistry::scan_dir(&dir),
         None => CustomEmojiRegistry::default(),
@@ -88,8 +104,14 @@ pub fn all() -> Vec<InlineImageArt> {
 /// Install a registry snapshot directly (tests only).
 #[cfg(test)]
 pub fn set_for_test(registry: CustomEmojiRegistry) {
+    TEST_PINNED.store(true, std::sync::atomic::Ordering::Relaxed);
     *REGISTRY.write().expect("inline image registry poisoned") = Some(registry);
 }
+
+/// True once any test has pinned the registry; see [`reload`].
+#[cfg(test)]
+static TEST_PINNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Serializes tests that install a snapshot: [`set_for_test`] writes
 /// process-wide state, so two tests running in parallel otherwise clobber
