@@ -405,7 +405,7 @@ pub struct GuiUiSettings {
     #[serde(default)]
     pub status_icons: StatusIconSettings,
 
-    /// Compass art set from the pool (`compass/<set>_<role>.png`, roles
+    /// Compass art set from the pool (`compass/<set>/<role>.png`, roles
     /// rose/n/ne/.../out); None follows the active skin's `[compass]`.
     #[serde(default)]
     pub compass_set: Option<String>,
@@ -522,6 +522,57 @@ pub struct StatusIconSettings {
 }
 
 impl StatusIconSettings {
+    /// Repoint image overrides whose art moved into a set folder, returning
+    /// whether anything changed (the caller persists if so).
+    ///
+    /// An override stores a pool path (`statusicons/runic_stunned.png`).
+    /// Foldering the pool makes that path stale, and a stale override
+    /// renders as a missing icon rather than an error — so this rewrites to
+    /// the foldered path when the flat file is gone and the set folder has
+    /// the same role.
+    ///
+    /// Deliberately resolved against the pool as it is now, not against the
+    /// migration's return value: a user who folders their art by hand, or
+    /// whose migration half-completed, gets healed the same way. Overrides
+    /// whose file still exists are never touched.
+    pub fn rewrite_pool_paths(&mut self) -> bool {
+        let mut changed = false;
+        for icon in self.overrides.values_mut() {
+            let crate::data::IconRef::Image { path } = icon else {
+                continue;
+            };
+            // "statusicons/runic_stunned.png" -> category "statusicons",
+            // file "runic_stunned.png". A path already containing a set
+            // folder has two slashes and is left alone.
+            let Some((category, file)) = path.split_once('/') else {
+                continue;
+            };
+            if file.contains('/') {
+                continue;
+            }
+            let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+            let Some((set, role)) = stem.split_once('_') else {
+                continue;
+            };
+            if set.is_empty() || role.is_empty() {
+                continue;
+            }
+            // set_members is keyed by role, so the lookup is direct — and it
+            // returns the foldered path only if that art actually exists.
+            let Some(foldered) = crate::config::pool::set_members(category, set)
+                .remove(&role.to_ascii_lowercase())
+            else {
+                continue;
+            };
+            if foldered != *path {
+                *path = foldered;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+
     /// Whether this indicator grays out when inactive: its override if it
     /// has one, else the global toggle.
     pub fn gray_for(&self, indicator_id: &str) -> bool {

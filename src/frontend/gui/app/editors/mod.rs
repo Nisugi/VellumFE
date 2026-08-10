@@ -271,7 +271,7 @@ pub(super) fn sheet_cell_grid(
 pub(super) fn pool_picker_rows(category: &str) -> Vec<(String, String)> {
     crate::config::pool::list_category(category)
         .into_iter()
-        .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+        .map(|image| (image.pool_path.clone(), image.display_label()))
         .collect()
 }
 

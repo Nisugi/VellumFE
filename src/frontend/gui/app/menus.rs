@@ -987,7 +987,7 @@ impl VellumGuiApp {
                 .iter()
                 .map(|image| {
                     let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
-                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                    (image.pool_path.clone(), image.display_label(), thumb)
                 })
                 .collect()
         } else {
@@ -1020,7 +1020,7 @@ impl VellumGuiApp {
                 .iter()
                 .map(|image| {
                     let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
-                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                    (image.pool_path.clone(), image.display_label(), thumb)
                 })
                 .collect()
         } else {
@@ -1073,7 +1073,7 @@ impl VellumGuiApp {
                 .iter()
                 .map(|image| {
                     let thumb = self.skin_state.thumbnail(ctx, &image.pool_path);
-                    (image.pool_path.clone(), image.stem().to_string(), thumb)
+                    (image.pool_path.clone(), image.display_label(), thumb)
                 })
                 .collect(),
             background_override: self

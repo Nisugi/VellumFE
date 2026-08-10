@@ -145,7 +145,7 @@ impl VellumGuiApp {
         let pool_images: Vec<(String, String)> =
             crate::config::pool::list_category("statusicons")
                 .iter()
-                .map(|image| (image.pool_path.clone(), image.stem().to_string()))
+                .map(|image| (image.pool_path.clone(), image.display_label()))
                 .collect();
         let art = self.skin_state.widget_art();
         let sheets: Vec<String> = art.as_ref().map(|a| a.sheet_names()).unwrap_or_default();

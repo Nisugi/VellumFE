@@ -40,14 +40,7 @@ impl VellumGuiApp {
         let mut icon_entries: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         if let Some(set) = &self.ui_settings.status_icons.set {
-            for image in crate::config::pool::list_category("statusicons") {
-                if let Some((prefix, glyph)) = image.stem().split_once('_') {
-                    if prefix.eq_ignore_ascii_case(set) && !glyph.is_empty() {
-                        icon_entries
-                            .insert(glyph.to_ascii_lowercase(), image.pool_path.clone());
-                    }
-                }
-            }
+            icon_entries.extend(crate::config::pool::set_members("statusicons", set));
         }
         for (id, icon) in &self.ui_settings.status_icons.overrides {
             if let crate::data::IconRef::Image { path } = icon {
@@ -64,15 +57,10 @@ impl VellumGuiApp {
 
         // Compass set (only meaningful with a rose).
         if let Some(set) = &self.ui_settings.compass_set {
-            let mut entries: std::collections::BTreeMap<String, String> =
-                std::collections::BTreeMap::new();
-            for image in crate::config::pool::list_category("compass") {
-                if let Some((prefix, role)) = image.stem().split_once('_') {
-                    if prefix.eq_ignore_ascii_case(set) && !role.is_empty() {
-                        entries.insert(role.to_ascii_lowercase(), image.pool_path.clone());
-                    }
-                }
-            }
+            let entries: std::collections::BTreeMap<String, String> =
+                crate::config::pool::set_members("compass", set)
+                    .into_iter()
+                    .collect();
             if let Some(rose) = entries.get("rose").cloned() {
                 let mut compass = Table::new();
                 compass.insert("rose", value(rose));

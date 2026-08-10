@@ -1565,22 +1565,15 @@ impl SkinState {
     }
 }
 
-/// Resolve one pool set: `<set>_<suffix>.png` -> lowercase suffix -> pool
-/// path (glyph ids for statusicons, roles for compass). No set = empty.
+/// Resolve one pool set to `role -> pool path` (glyph ids for statusicons,
+/// directions for compass). No set selected = empty. Set membership itself
+/// is decided by `pool::set_members`, which handles both the foldered and
+/// legacy `<set>_<role>` layouts.
 fn load_pool_set(category: &str, set: Option<&str>) -> HashMap<String, String> {
-    let mut entries = HashMap::new();
-    let Some(set) = set else {
-        return entries;
-    };
-    for image in crate::config::pool::list_category(category) {
-        let Some((prefix, suffix)) = image.stem().split_once('_') else {
-            continue;
-        };
-        if prefix.eq_ignore_ascii_case(set) && !suffix.is_empty() {
-            entries.insert(suffix.to_ascii_lowercase(), image.pool_path.clone());
-        }
+    match set {
+        Some(set) => crate::config::pool::set_members(category, set),
+        None => HashMap::new(),
     }
-    entries
 }
 
 /// Load the specs (not textures) for the needed pool frames: match stems

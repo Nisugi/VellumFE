@@ -837,6 +837,11 @@ impl VellumGuiApp {
             seeded_active_skin = true;
         }
 
+        // Set art moved into per-set folders at startup; per-indicator icon
+        // overrides name a pool path directly, so rewrite the ones whose art
+        // moved or those icons silently go blank.
+        let rewrote_icon_paths = ui_settings.status_icons.rewrite_pool_paths();
+
         // Legacy GUI files stored per-window text size/font/wrap in
         // TabSettings; those now live on the shared layout defs. Migrate
         // once: marking both stores dirty persists the move on both sides.
@@ -922,7 +927,7 @@ impl VellumGuiApp {
             // Migration emptied legacy TabSettings fields (and may have
             // seeded the layout's active_skin from config); rewrite the
             // GUI file so both stick.
-            layout_dirty: migrated_gui || seeded_active_skin,
+            layout_dirty: migrated_gui || seeded_active_skin || rewrote_icon_paths,
             layout_dirty_since: None,
             applied_theme_id: None,
             applied_skin_ui_id: None,

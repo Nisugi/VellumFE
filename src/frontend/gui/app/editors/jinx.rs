@@ -129,7 +129,10 @@ impl VellumGuiApp {
         let mut open = true;
         let mut refresh = false;
         let mut update_all = false;
-        let mut install: Option<(String, String, bool)> = None; // (name, repo, overwrite)
+        // (install name, category, repo, overwrite) — the category qualifies
+        // a name other categories may share (a `stealthblue` compass set and
+        // a `stealthblue.vellumpack` skin both exist).
+        let mut install: Option<(String, String, String, bool)> = None;
         let mut repo_add: Option<(String, String)> = None;
         let mut repo_remove: Option<String> = None;
 
@@ -235,7 +238,8 @@ impl VellumGuiApp {
                                                     .clicked()
                                                 {
                                                     install = Some((
-                                                        entry.name.clone(),
+                                                        entry.install_name.clone(),
+                                                        entry.category.clone(),
                                                         entry.repo.clone(),
                                                         overwrite,
                                                     ));
@@ -319,9 +323,10 @@ impl VellumGuiApp {
                 .log
                 .push(self.app_core.jinx_worker.start(Request::AutoUpdate { dry_run: false }));
         }
-        if let Some((name, repo, overwrite)) = install {
+        if let Some((name, category, repo, overwrite)) = install {
             state.log.push(self.app_core.jinx_worker.start(Request::Install {
                 name,
+                category: Some(category),
                 only_repo: Some(repo),
                 overwrite,
             }));
