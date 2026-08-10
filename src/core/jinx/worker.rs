@@ -33,6 +33,13 @@ pub enum Request {
     /// Install (or update, when `overwrite`) one named asset.
     Install {
         name: String,
+        /// Asset category the name is scoped to (`compass`, `hands`,
+        /// `skin`, …), from `.jinx install <category> <name>`. Names
+        /// collide across categories — a `stealthblue` compass set and a
+        /// `stealthblue.vellumpack` skin both exist — so the category is
+        /// part of naming an asset, not a tiebreaker. `None` means the
+        /// user gave a bare name; resolution demands one if it's ambiguous.
+        category: Option<String>,
         only_repo: Option<String>,
         overwrite: bool,
     },
@@ -49,6 +56,13 @@ pub struct CatalogEntry {
     pub name: String,
     pub kind: String,
     pub repo: String,
+    /// What to install to get this entry: the set name for set members
+    /// (installing one piece means installing its set), else the file name.
+    /// Paired with `category` so a name shared across categories still
+    /// resolves to exactly this asset.
+    pub install_name: String,
+    /// Category qualifier for `install_name` (`compass`, `hands`, `skin`).
+    pub category: String,
     pub title: Option<String>,
     pub version: Option<String>,
     /// Manifest digest (md5 field); compared against the installed record to
@@ -197,9 +211,27 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
                             continue;
                         }
                         send(format!("[jinx] {}:", repo.name), None);
+                        // Set members collapse to one line: a compass is a
+                        // dozen files but a single thing to install, and
+                        // listing every piece buried the actual choices.
+                        let mut sets: Vec<(String, String, usize)> = Vec::new();
                         for asset in installable {
                             any = true;
-                            send(format!("  {} ({})", asset.basename(), asset.kind()), None);
+                            let Some(set) = asset.set_name() else {
+                                send(format!("  {} ({})", asset.basename(), asset.kind()), None);
+                                continue;
+                            };
+                            match sets.iter_mut().find(|(name, _, _)| name == set) {
+                                Some((_, _, count)) => *count += 1,
+                                None => sets.push((set.to_string(), asset.kind().to_string(), 1)),
+                            }
+                        }
+                        for (set, kind, count) in sets {
+                            send(
+                                format!("  {set} ({kind} set, {count} file{})",
+                                    if count == 1 { "" } else { "s" }),
+                                None,
+                            );
                         }
                     }
                     Err(e) => send(format!("[jinx] {} unavailable: {e}", repo.name), None),
@@ -248,8 +280,17 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
             }
         }
 
-        Request::Install { name, only_repo, overwrite } => {
-            run_install(&agent, &repos, &mut cache, &name, only_repo.as_deref(), overwrite, &send);
+        Request::Install { name, category, only_repo, overwrite } => {
+            run_install(
+                &agent,
+                &repos,
+                &mut cache,
+                &name,
+                category.as_deref(),
+                only_repo.as_deref(),
+                overwrite,
+                &send,
+            );
         }
 
         Request::AutoUpdate { dry_run } => {
@@ -267,12 +308,26 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
                             if !asset.is_installable() {
                                 continue;
                             }
-                            let name = asset.basename().to_string();
-                            let installed = db.get(&name);
+                            let key = installer::tracking_key(asset);
+                            let installed = db.get(&key);
+                            // A set member's install unit is its set, not the
+                            // single piece; the category qualifies a name that
+                            // other categories may also use. Both go through
+                            // resolve::install_category so the panel's button
+                            // types the same word the command line accepts.
+                            let install_name = match asset.set_name() {
+                                Some(set) => set.to_string(),
+                                None => asset.basename().to_string(),
+                            };
+                            let category = resolve::install_category(asset);
+                            // Set pieces show as "<set>/<role>" so the
+                            // catalog can't show forty identical rows.
                             entries.push(CatalogEntry {
-                                name: name.clone(),
+                                name: key.clone(),
                                 kind: asset.kind().to_string(),
                                 repo: repo.name.clone(),
+                                install_name,
+                                category,
                                 title: asset.vellum.as_ref().and_then(|v| v.title.clone()),
                                 version: asset.vellum.as_ref().and_then(|v| v.version.clone()),
                                 digest: asset.md5.clone(),
@@ -304,36 +359,81 @@ fn run_job(game: Option<GameType>, request: Request, tx: &mpsc::Sender<Update>) 
 }
 
 /// Install/update one asset and persist the metadata db.
+#[allow(clippy::too_many_arguments)]
 fn run_install(
     agent: &ureq::Agent,
     repos: &RepoList,
     cache: &mut ManifestCache,
     name: &str,
+    category: Option<&str>,
     only_repo: Option<&str>,
     overwrite: bool,
     send: &dyn Fn(String, Option<Effect>),
 ) {
-    let m = match resolve::resolve_one(agent, repos, cache, name, only_repo) {
+    // One file, or every member of a set — a set is only usable complete, so
+    // it installs as a unit.
+    let matches = match resolve::resolve_target(agent, repos, cache, name, category, only_repo) {
         Ok(m) => m,
         Err(e) => return send(format!("[jinx] {e}"), None),
     };
+    let is_set = matches.len() > 1 || matches.first().is_some_and(|m| m.asset.set_name().is_some());
+
     let mut db = InstalledDb::load().unwrap_or_default();
-    match installer::install_asset(agent, &m.repo, &m.asset, &mut db, overwrite) {
-        Ok(InstallOutcome::Installed { .. }) => {
-            if let Err(e) = db.save() {
-                send(format!("[jinx] installed {name} but tracking save failed: {e}"), None);
+    let (mut installed, mut current, mut failed) = (0usize, 0usize, 0usize);
+    let mut kind = String::new();
+    for m in &matches {
+        match installer::install_asset(agent, &m.repo, &m.asset, &mut db, overwrite) {
+            Ok(InstallOutcome::Installed { .. }) => {
+                installed += 1;
+                kind = m.asset.kind().to_string();
+                // Per-file progress would be a dozen lines for one compass;
+                // single installs still get their own line below.
+                if !is_set {
+                    send(format!("[jinx] {} installed", m.asset.basename()), None);
+                }
             }
-            let kind = m.asset.kind().to_string();
+            Ok(InstallOutcome::AlreadyCurrent) => {
+                current += 1;
+                if !is_set {
+                    send(format!("[jinx] {} already up to date", m.asset.basename()), None);
+                }
+            }
+            Err(e) => {
+                failed += 1;
+                send(format!("[jinx] {e}"), None);
+            }
+        }
+    }
+    if let Err(e) = db.save() {
+        send(format!("[jinx] installed {name} but tracking save failed: {e}"), None);
+    }
+
+    if is_set {
+        // A partly-installed set renders with holes, so say so plainly
+        // rather than reporting a clean success.
+        if failed > 0 {
             send(
-                format!("[jinx] {} installed", m.asset.basename()),
-                Some(Effect::Installed { name: m.asset.basename().to_string(), kind }),
+                format!("[jinx] {name}: {installed} installed, {failed} failed — set is incomplete"),
+                None,
+            );
+        } else if installed == 0 {
+            send(format!("[jinx] {name} already up to date ({current} files)"), None);
+        } else {
+            send(
+                format!("[jinx] {name} installed ({installed} file{}{})",
+                    plural(installed),
+                    if current > 0 { format!(", {current} already current") } else { String::new() }),
+                None,
             );
         }
-        Ok(InstallOutcome::AlreadyCurrent) => {
-            let _ = db.save();
-            send(format!("[jinx] {} already up to date", m.asset.basename()), None);
-        }
-        Err(e) => send(format!("[jinx] {e}"), None),
+    }
+    // The effect drives cache invalidation and pickers; fire it once for the
+    // whole set, named by what the user asked for.
+    if installed > 0 {
+        send(
+            String::new(),
+            Some(Effect::Installed { name: name.to_string(), kind }),
+        );
     }
 }
 
@@ -364,7 +464,15 @@ fn run_auto_update(
             continue;
         };
         let Ok(manifest) = cache.get(agent, &repo) else { continue };
-        let Some(asset) = manifest.available.iter().find(|a| a.basename() == name).cloned() else {
+        // Match on the tracking key, not the basename: set members share
+        // basenames across sets, so a basename match could update a piece
+        // from the wrong set over this one.
+        let Some(asset) = manifest
+            .available
+            .iter()
+            .find(|a| installer::tracking_key(a) == name)
+            .cloned()
+        else {
             send(format!("[jinx] {name}: no longer in {repo_name}"), None);
             continue;
         };

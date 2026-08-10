@@ -1064,23 +1064,27 @@ impl AppCore {
                 }
                 None => self.add_system_message("[jinx] usage: .jinx info <name>"),
             },
-            "install" => match pos.get(1) {
-                Some(name) => {
+            "install" => match jinx_install_target(&pos) {
+                Some((category, name)) => {
                     let ack = self.jinx_worker.start(Request::Install {
-                        name: name.to_string(),
+                        name,
+                        category,
                         only_repo,
                         overwrite: force,
                     });
                     self.add_system_message(&ack);
                 }
-                None => self.add_system_message("[jinx] usage: .jinx install <name> [--repo=<r>]"),
+                None => self.add_system_message(
+                    "[jinx] usage: .jinx install [<category>] <name> [--repo=<r>]",
+                ),
             },
-            "update" => match pos.get(1) {
+            "update" => match jinx_install_target(&pos) {
                 // Update is install with overwrite; a bare `.jinx update`
                 // updates everything (auto-update).
-                Some(name) => {
+                Some((category, name)) => {
                     let ack = self.jinx_worker.start(Request::Install {
-                        name: name.to_string(),
+                        name,
+                        category,
                         only_repo,
                         overwrite: true,
                     });
@@ -1165,8 +1169,10 @@ impl AppCore {
             "  .jinx list [--repo=<r>]        list available assets",
             "  .jinx search <pattern>         search asset names",
             "  .jinx info <name>              show details",
-            "  .jinx install <name> [--force] install an asset",
-            "  .jinx update [<name>]          update one asset, or all if omitted",
+            "  .jinx install [<category>] <name> [--force]   install an asset",
+            "      e.g. .jinx install compass stormfront / .jinx install hands bone",
+            "      names repeat across categories, so name one when asked",
+            "  .jinx update [<category>] [<name>]  update one asset, or all if omitted",
             "  .jinx auto-update [--dry-run]  update every installed asset",
             "  .jinx repo list|add|rm|change  manage repositories",
         ] {
@@ -2099,6 +2105,9 @@ impl AppCore {
                             let ack = self.jinx_worker.start(
                                 crate::core::jinx::worker::Request::Install {
                                     name: name.to_string(),
+                                    // Game-data files are named exactly and
+                                    // share no namespace with set art.
+                                    category: None,
                                     only_repo: None,
                                     overwrite: true,
                                 },
@@ -2805,6 +2814,51 @@ fn parse_jinx_flags(args: &[String]) -> Result<(JinxFlags, Vec<&str>), String> {
         }
     }
     Ok((flags, pos))
+}
+
+/// Split `install`/`update` positionals into `(category, name)`.
+///
+/// Asset names are not unique across categories — a `stealthblue` compass
+/// set and a `stealthblue.vellumpack` skin both exist — so the category can
+/// be given as its own word: `.jinx install compass stealthblue`. Two
+/// positionals means category-then-name; one means a bare name, which
+/// resolution accepts when it's unambiguous and rejects (listing the
+/// choices) when it isn't.
+///
+/// A free function so it's unit-testable without an `AppCore`.
+fn jinx_install_target(pos: &[&str]) -> Option<(Option<String>, String)> {
+    match (pos.get(1), pos.get(2)) {
+        (Some(category), Some(name)) => {
+            Some((Some(category.to_string()), name.to_string()))
+        }
+        (Some(name), None) => Some((None, name.to_string())),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod jinx_install_target_tests {
+    use super::jinx_install_target;
+
+    #[test]
+    fn splits_category_and_name() {
+        // `.jinx install compass stealthblue` — category then name.
+        let pos = ["install", "compass", "stealthblue"];
+        assert_eq!(
+            jinx_install_target(&pos),
+            Some((Some("compass".to_string()), "stealthblue".to_string()))
+        );
+
+        // A bare name stays a bare name; resolution decides if it's ambiguous.
+        let pos = ["install", "stealthblue"];
+        assert_eq!(
+            jinx_install_target(&pos),
+            Some((None, "stealthblue".to_string()))
+        );
+
+        // `.jinx install` alone has no target — the caller prints usage.
+        assert_eq!(jinx_install_target(&["install"]), None);
+    }
 }
 
 #[cfg(test)]

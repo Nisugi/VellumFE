@@ -106,7 +106,7 @@ pub fn install_asset(
     db: &mut InstalledDb,
     overwrite: bool,
 ) -> Result<InstallOutcome, String> {
-    let name = asset.basename().to_string();
+    let name = tracking_key(asset);
     let kind = asset.kind();
 
     // Refuse code assets up front — no execution path exists or should.
@@ -211,6 +211,21 @@ fn install_bundle(kind: &str, name: &str, zip_bytes: &[u8]) -> Result<PathBuf, S
     }
 }
 
+/// The key an asset is tracked under in `jinx-installed.toml`.
+///
+/// Set pieces are named for their role, so every hand set ships a bare
+/// `lefthand.png` and every compass a bare `ne.png`. Keying on the basename
+/// alone would collapse every set into one entry — installing one set would
+/// report all the others as already-current, and auto-update would chase the
+/// wrong file. Set members are keyed `<set>/<file>`; everything else keeps
+/// its plain basename, so existing tracking entries stay valid.
+pub fn tracking_key(asset: &Asset) -> String {
+    match asset.set_name() {
+        Some(set) => format!("{set}/{}", asset.basename()),
+        None => asset.basename().to_string(),
+    }
+}
+
 /// Destination path for a plain single-file asset, or `None` for a kind that is
 /// a composed bundle needing extraction (`skin`, `layout`, `uipack`).
 fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
@@ -226,6 +241,16 @@ fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
             crate::core::mapdb_update::download_dir(&base).join(name),
         ));
     }
+    // Set members land in a folder named for their set
+    // (`compass/stormfront/ne.png`) so a set is one unit on disk: installable
+    // and removable together, with no cross-set filename collisions. Only the
+    // pooled image categories participate — `set_name` is directory-sanitized,
+    // and kinds with their own homes (dolls, icon sheets, sounds) ignore it.
+    let set = match kind {
+        "frame" | "background" | "compass" | "statusicon" | "hand" => asset.set_name(),
+        _ if asset.pool_category().is_some() => asset.set_name(),
+        _ => None,
+    };
     let dir = match kind {
         // Game data resolves through the data-pack local-store tier.
         "data" => Config::global_data_dir(),
@@ -257,6 +282,10 @@ fn plain_file_dest(asset: &Asset) -> Result<Option<PathBuf>, String> {
         },
     };
     let dir = dir.map_err(|e| format!("cannot resolve install dir: {e}"))?;
+    let dir = match set {
+        Some(set) => dir.join(set),
+        None => dir,
+    };
     Ok(Some(dir.join(name)))
 }
 
@@ -591,6 +620,116 @@ mod tests {
             );
             assert_eq!(db.get(&format!("asset-{kind}.png")).unwrap().kind, kind);
         }
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    /// A set member installs into a folder named for its set, so the set is
+    /// one unit on disk and pieces of different sets never collide.
+    #[test]
+    fn install_set_member_lands_in_set_subfolder() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+        let body = b"COMPASSPNG".to_vec();
+        let base = spawn_stub(body.clone());
+        let mut a = asset("/compass/ne.png", &digest_b64(&body));
+        a.kind = Some("compass".into());
+        a.vellum = Some(crate::core::jinx::protocol::VellumMeta {
+            set: Some("stormfront".into()),
+            ..Default::default()
+        });
+
+        let out = install_asset(&ag, &repo(&base), &a, &mut db, false).unwrap();
+        let dest = match out {
+            InstallOutcome::Installed { path } => path,
+            other => panic!("expected Installed, got {other:?}"),
+        };
+        let unix = "global/images/compass/stormfront/ne.png";
+        assert!(
+            dest.ends_with(unix) || dest.ends_with(&unix.replace('/', "\\")),
+            "{}",
+            dest.display()
+        );
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    /// Set pieces are bare role names, so two sets both ship "lefthand.png".
+    /// They must track separately or installing one set would report every
+    /// other as already-current.
+    #[test]
+    fn set_members_track_under_distinct_keys() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+
+        for set in ["bone", "meteor"] {
+            let body = format!("HAND-{set}").into_bytes();
+            let base = spawn_stub(body.clone());
+            let mut a = asset("/lefthand.png", &digest_b64(&body));
+            a.kind = Some("hand".into());
+            a.vellum = Some(crate::core::jinx::protocol::VellumMeta {
+                set: Some(set.into()),
+                ..Default::default()
+            });
+            let out = install_asset(&ag, &repo(&base), &a, &mut db, false).unwrap();
+            assert!(
+                matches!(out, InstallOutcome::Installed { .. }),
+                "{set} must install, not read as already-current"
+            );
+        }
+
+        // Both tracked, under set-qualified keys; the bare name is not a key.
+        assert!(db.get("bone/lefthand.png").is_some());
+        assert!(db.get("meteor/lefthand.png").is_some());
+        assert!(db.get("lefthand.png").is_none());
+        // And the files themselves didn't collide on disk.
+        let hands = cfg.path().join("global/images/hands");
+        assert!(hands.join("bone/lefthand.png").is_file());
+        assert!(hands.join("meteor/lefthand.png").is_file());
+
+        std::env::remove_var("VELLUM_FE_DIR");
+    }
+
+    /// A `set` that isn't directory-safe is ignored rather than obeyed: the
+    /// manifest must never be able to steer bytes out of the pool.
+    #[test]
+    fn install_rejects_path_escaping_set_name() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let cfg = tempfile::tempdir().unwrap();
+        std::env::set_var("VELLUM_FE_DIR", cfg.path());
+
+        let ag = agent().unwrap();
+        let mut db = InstalledDb::default();
+        let body = b"EVIL".to_vec();
+        let base = spawn_stub(body.clone());
+        let mut a = asset("/compass/ne.png", &digest_b64(&body));
+        a.kind = Some("compass".into());
+        a.vellum = Some(crate::core::jinx::protocol::VellumMeta {
+            set: Some("../../../escaped".into()),
+            ..Default::default()
+        });
+
+        let out = install_asset(&ag, &repo(&base), &a, &mut db, false).unwrap();
+        let dest = match out {
+            InstallOutcome::Installed { path } => path,
+            other => panic!("expected Installed, got {other:?}"),
+        };
+        // Falls back to the category root; nothing escapes the pool.
+        let unix = "global/images/compass/ne.png";
+        assert!(
+            dest.ends_with(unix) || dest.ends_with(&unix.replace('/', "\\")),
+            "{}",
+            dest.display()
+        );
+        assert!(dest.starts_with(cfg.path()), "must stay under the config dir");
 
         std::env::remove_var("VELLUM_FE_DIR");
     }

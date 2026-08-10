@@ -955,7 +955,11 @@ impl AppCore {
     pub fn poll_jinx(&mut self) {
         let updates = self.jinx_worker.poll();
         for update in updates {
-            self.add_system_message(&update.line);
+            // Effect-only updates carry no line (a set install reports once
+            // for the whole set, then fires one effect); don't print blanks.
+            if !update.line.is_empty() {
+                self.add_system_message(&update.line);
+            }
             if let Some(effect) = update.effect {
                 self.apply_jinx_effect(effect);
             }

@@ -74,6 +74,15 @@ pub struct VellumMeta {
     /// its category layout, so a brand-new category needs no client change.
     #[serde(default)]
     pub pool: Option<String>,
+    /// Art set this file is one member of ("stormfront" for a compass
+    /// piece). Members install together into `global/images/<pool>/<set>/`
+    /// and `.jinx` lists and installs them as one unit rather than as
+    /// twelve loose files.
+    ///
+    /// Absent for self-contained art (frames, sheets, backgrounds) — those
+    /// are complete on their own and stay at the category root.
+    #[serde(default)]
+    pub set: Option<String>,
     /// Render metadata for single-file assets (frames, sheets). Installed
     /// into the image's pool sidecar toml so the art arrives ready to use.
     #[serde(default)]
@@ -151,6 +160,20 @@ impl Asset {
             .pool
             .as_deref()
             .filter(|pool| valid_pool_category(pool))
+    }
+
+    /// The art set this asset belongs to, when the manifest names one and
+    /// the name is directory-safe.
+    ///
+    /// Reusing `valid_pool_category` is the point: the set becomes a
+    /// directory name, so a manifest must never be able to steer bytes out
+    /// of the pool with a `set` of `../..` or an absolute path.
+    pub fn set_name(&self) -> Option<&str> {
+        self.vellum
+            .as_ref()?
+            .set
+            .as_deref()
+            .filter(|set| valid_pool_category(set))
     }
 }
 
