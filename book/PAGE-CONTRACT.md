@@ -88,6 +88,33 @@ Wrapped in `<details><summary>Config reference (TOML)</summary> … </details>`.
 name · type · default · what it does. Never the primary instruction — if a reader needs this to
 do the basic task, §2 failed.
 
+## Variant skeleton — How-To guides
+
+How-to pages are **goal-shaped, not feature-shaped**: the reader arrives wanting
+an outcome ("my health bar should flash when I'm hurt"), not a tour of a widget.
+They cut across several features, so they use this variant instead of §1–§6:
+
+```markdown
+# <The goal, in the player's words>
+
+> One line: what you'll have when you're done.
+
+## What you'll build      ← the finished state, concretely. A sentence or two + a screenshot placeholder.
+## Before you start       ← prerequisites only if real (a GS4-only widget, TTS enabled, Lich running). Omit if none.
+## Steps                  ← tabbed per-frontend, numbered, each tab ending in → Expected result.
+## Make it yours          ← 2-3 variations on the finished setup ("do this instead if you hunt in melee").
+## When it doesn't work   ← the specific failure modes of THIS task, with the fix.
+## See also               ← the feature pages behind each step.
+```
+
+Rules that still apply: GUI-first tabs in the same order, every tab ends in an
+Expected result, honest-redirect for frontends that can't do it, no banned words,
+screenshot placeholders with real captions.
+
+Rules that do **not** apply: there is no §6 TOML appendix — a how-to links to the
+feature page's appendix instead of repeating it. Never make a how-to the only
+place a setting is documented; it teaches a path, the feature page owns the facts.
+
 ## Screenshots
 Placeholder wherever a visual helps (every §2 GUI tab, the frontends overview):
 
