@@ -12,6 +12,7 @@ mod links_bars;
 mod map_compass;
 mod panels;
 mod text;
+pub(super) use text::LineInset;
 mod vitals;
 
 /// egui data key holding the RAW skin/theme accent for widget painting.
@@ -483,6 +484,116 @@ pub(super) struct RowHeightCache {
     font_id: egui::FontId,
     generation: u64,
     heights: Vec<f32>,
+    /// Extra vertical space a row must reserve beyond its own text, because
+    /// a floated inline image overhangs it. Parallel to `heights`.
+    ///
+    /// This is a SEPARATE column on purpose. The render loop writes the
+    /// measured galley height back into `heights` every frame
+    /// (`text.rs`, "correct the cached estimate"), so any reservation folded
+    /// into `heights` would be erased on the very next frame. Everything
+    /// that consumes a row's vertical span — the visible-range scan, the
+    /// spacers, the drag hit-test, the trim pre-pass — must use
+    /// [`Self::stride`] rather than `heights[i]` directly.
+    extra: Vec<f32>,
+    /// Per-row wrap width and paint offset, so measurement, painting, and
+    /// the drag hit-test all lay a line out identically. Parallel to
+    /// `heights`; a row with no float carries the full width and no shift.
+    insets: Vec<LineInset>,
+    /// Rows that ORIGINATE a float, and how many rows each one spans.
+    /// Parallel to `heights`: `spans[i] > 0` means row `i` paints an image
+    /// that overhangs the next `spans[i] - 1` rows.
+    ///
+    /// Virtualization needs this: when the viewport starts partway through a
+    /// float the origin row is scrolled out, so without a lookback nothing
+    /// would paint the image at all.
+    spans: Vec<u16>,
+    /// Bumped whenever float geometry changes (an image resolves, `rows`
+    /// changes, the window's row count changes). Participates in cache
+    /// invalidation: float heights depend on the window's own height, which
+    /// the wrap-width test cannot see.
+    float_epoch: u64,
+}
+
+impl RowHeightCache {
+    /// Cached per-line heights, for characterization tests that pin the
+    /// virtualization invariants (incremental append, full rebuild on width
+    /// or font change, one entry per rendered line).
+    #[cfg(test)]
+    pub(super) fn heights(&self) -> &[f32] {
+        &self.heights
+    }
+
+    /// Total vertical space row `i` occupies: its text height plus any
+    /// reserved float overhang. The ONE way to ask "how tall is this row".
+    pub(super) fn stride(&self, i: usize) -> f32 {
+        self.heights.get(i).copied().unwrap_or(0.0)
+            + self.extra.get(i).copied().unwrap_or(0.0)
+    }
+
+    /// Sum of strides over a range, the shape every offset computation needs
+    /// (`spacing_y` is added per row by the caller).
+    pub(super) fn stride_sum(&self, range: std::ops::Range<usize>, spacing_y: f32) -> f32 {
+        range
+            .filter(|i| *i < self.heights.len())
+            .map(|i| self.stride(i) + spacing_y)
+            .sum()
+    }
+
+    /// Reserve `extra` pixels below row `i` for a float that overhangs it.
+    pub(super) fn set_extra(&mut self, i: usize, extra: f32) {
+        if i < self.extra.len() {
+            self.extra[i] = extra;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn extra(&self) -> &[f32] {
+        &self.extra
+    }
+
+    /// The first row at or before `from` that originates a float covering
+    /// `from`, or `from` itself when no float reaches it.
+    ///
+    /// The scan is bounded by the longest span the cache holds, so it stays
+    /// O(max_span) rather than walking to the top of the buffer.
+    pub(super) fn float_origin_at(&self, from: usize) -> usize {
+        let reach = self.spans.iter().copied().max().unwrap_or(0) as usize;
+        let lowest = from.saturating_sub(reach.saturating_sub(1));
+        for i in (lowest..=from.min(self.spans.len().saturating_sub(1))).rev() {
+            let span = self.spans.get(i).copied().unwrap_or(0) as usize;
+            if span > 0 && i + span > from {
+                return i;
+            }
+        }
+        from
+    }
+
+    /// Record that row `i` originates a float spanning `span` rows.
+    pub(super) fn set_span(&mut self, i: usize, span: u16) {
+        if i < self.spans.len() {
+            self.spans[i] = span;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn spans(&self) -> &[u16] {
+        &self.spans
+    }
+
+    /// The layout this row was measured with — the ONE source painting and
+    /// hit-testing must reuse, or their galleys disagree and selection lands
+    /// on the wrong character.
+    pub(super) fn inset(&self, i: usize, fallback: f32) -> LineInset {
+        self.insets
+            .get(i)
+            .copied()
+            .unwrap_or_else(|| LineInset::full(fallback))
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_float_epoch(&mut self, epoch: u64) {
+        self.float_epoch = epoch;
+    }
 }
 
 pub(super) fn parse_hex_color(input: &str) -> Option<Color32> {

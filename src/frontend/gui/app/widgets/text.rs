@@ -4,6 +4,32 @@
 
 use super::*;
 
+/// How a floated image narrows and shifts one line of text.
+///
+/// The float is laid out by reserving a column on one side: the text wraps
+/// to `width` instead of the full window, and (for a left float) paints
+/// `x_offset` further right. A right float narrows without shifting, so
+/// `x_offset` stays 0 and only `width` changes.
+///
+/// This is a single value computed ONCE per line and handed to every
+/// consumer — measurement, painting, and the drag hit-test — because the
+/// three must produce byte-identical galleys or selection lands on the wrong
+/// character.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub(in crate::frontend::gui::app) struct LineInset {
+    /// Wrap width for this line (already reduced by the float).
+    pub width: f32,
+    /// How far right to paint the galley.
+    pub x_offset: f32,
+}
+
+impl LineInset {
+    /// No float: the line uses the full width and no shift.
+    pub(in crate::frontend::gui::app) fn full(width: f32) -> Self {
+        Self { width, x_offset: 0.0 }
+    }
+}
+
 impl VellumGuiApp {
     /// Animate a bar fraction toward its target so server updates glide
     /// instead of jumping. The first paint for a given id snaps straight to
@@ -549,12 +575,12 @@ impl VellumGuiApp {
         visuals: &egui::Visuals,
         search_query: Option<&str>,
         font_id: &egui::FontId,
-        wrap_width: f32,
+        inset: LineInset,
         timestamps: Option<crate::config::TimestampPosition>,
     ) -> GuiLineJob {
         let mut job = egui::text::LayoutJob {
             wrap: egui::text::TextWrapping {
-                max_width: wrap_width,
+                max_width: inset.width,
                 ..Default::default()
             },
             ..Default::default()
@@ -583,6 +609,16 @@ impl VellumGuiApp {
                 continue;
             }
             let search_match = Self::segment_matches_query(segment, search_query);
+            // Inline image: the picture is painted separately in its own
+            // reserved column, so the `[img:name]` label must NOT also appear
+            // as text beside it. It stays in the segment as the fallback for
+            // frontends that cannot draw (the TUI) and for art that fails to
+            // resolve — hence the paintable check, mirroring custom emoji.
+            if let Some(image) = &segment.inline_image {
+                if super::custom_emoji_render::inline_image_size(ctx, &image.name).is_some() {
+                    continue;
+                }
+            }
             // Custom emoji: reserve the `:name:` fallback run and record it for
             // an image overlay painted after the galley. Only when it resolves
             // to a paintable image; otherwise fall through to plain text so the
@@ -889,14 +925,14 @@ impl VellumGuiApp {
         ctx: &egui::Context,
         line: &StyledLine,
         visuals: &egui::Visuals,
-        wrap_width: f32,
+        inset: LineInset,
         font_id: &egui::FontId,
         timestamps: Option<crate::config::TimestampPosition>,
     ) -> f32 {
         // Same job builder as rendering, so measured heights match rendered
         // heights exactly (timestamps included).
         let built =
-            Self::build_line_job(ctx, line, visuals, None, font_id, wrap_width, timestamps);
+            Self::build_line_job(ctx, line, visuals, None, font_id, inset, timestamps);
         let min_height = built.min_height;
         if built.job.is_empty() {
             // Blank line: renders as one empty text row.
@@ -914,6 +950,109 @@ impl VellumGuiApp {
     ///
     /// The scroll-anchoring pre-pass in `render_text_content` reads the
     /// heights this update is about to drain, so it must run before this.
+    /// Assign float geometry to the cached rows: which row originates each
+    /// image, how wide the text beside it wraps, and how many rows it covers.
+    ///
+    /// Mirrors the room window's proven layout (`boards.rs::float_covered_end`)
+    /// but runs during MEASUREMENT rather than paint, because virtualization
+    /// has to know a row is floated before it decides whether to lay it out.
+    ///
+    /// Rows are taken greedily while they fit beside the image. A row that
+    /// would straddle the image's bottom edge is excluded and rejoins the
+    /// full width — egui's single `max_width` per job cannot shorten part of
+    /// a row, so excluding the straddler is the honest approximation (the
+    /// same rule the room window documents).
+    #[allow(clippy::too_many_arguments)]
+    fn layout_floats(
+        cache: &mut RowHeightCache,
+        ctx: &egui::Context,
+        content: &TextContent,
+        start: usize,
+        wrap_width: f32,
+        view_height: f32,
+        visuals: &egui::Visuals,
+        font_id: &egui::FontId,
+        timestamps: Option<crate::config::TimestampPosition>,
+    ) {
+        if !wrap_width.is_finite() || wrap_width <= 0.0 {
+            return; // horizontal-scroll windows never float
+        }
+        let row_height = ctx.fonts_mut(|f| f.row_height(font_id)).max(1.0);
+
+        let mut i = 0usize;
+        while i < cache.heights.len() {
+            let Some(line) = content.lines.get(start + i) else {
+                break;
+            };
+            let Some(image) = line.segments.iter().find_map(|s| s.inline_image.as_ref())
+            else {
+                i += 1;
+                continue;
+            };
+            let Some(natural) = super::custom_emoji_render::inline_image_size(ctx, &image.name)
+            else {
+                i += 1; // art not installed: the `[img:name]` text stands in
+                continue;
+            };
+
+            let (img_w, img_h) = image.fitted_size(
+                (natural.x, natural.y),
+                row_height,
+                wrap_width,
+                view_height,
+                crate::data::INLINE_IMAGE_MAX_ROWS,
+            );
+            if crate::data::InlineImage::should_collapse(img_w, wrap_width) {
+                // Too narrow to wrap beside: the image takes its own rows and
+                // the text stays full width.
+                cache.extra[i] = (img_h - cache.heights[i]).max(0.0);
+                cache.spans[i] = 1;
+                i += 1;
+                continue;
+            }
+
+            let text_w = (wrap_width - img_w).max(1.0);
+            let x_offset = match image.align {
+                crate::data::FloatAlign::Left => img_w,
+                crate::data::FloatAlign::Right => 0.0,
+            };
+            let inset = LineInset { width: text_w, x_offset };
+
+            // Re-measure the covered rows at the narrower width, taking them
+            // while they fit within the image's height.
+            let mut used = 0.0f32;
+            let mut span = 0usize;
+            while i + span < cache.heights.len() {
+                let Some(covered) = content.lines.get(start + i + span) else {
+                    break;
+                };
+                // A row carrying its own image ends this float rather than
+                // nesting: stacked floats are out of scope, and a hard break
+                // beats overlapping pictures.
+                if span > 0 && covered.segments.iter().any(|s| s.inline_image.is_some()) {
+                    break;
+                }
+                let h = Self::measure_line_height(
+                    ctx, covered, visuals, inset, font_id, timestamps,
+                );
+                if span > 0 && used + h > img_h {
+                    break; // would straddle the image's bottom edge
+                }
+                cache.heights[i + span] = h;
+                cache.insets[i + span] = inset;
+                used += h;
+                span += 1;
+            }
+
+            // Reserve any image height the covered text did not consume, so
+            // the row block is tall enough for the picture.
+            let last = i + span.saturating_sub(1);
+            cache.extra[last] = (img_h - used).max(0.0);
+            cache.spans[i] = span.min(u16::MAX as usize) as u16;
+            i += span.max(1);
+        }
+    }
+
     pub(super) fn update_row_height_cache(
         cache: &mut RowHeightCache,
         ctx: &egui::Context,
@@ -923,12 +1062,33 @@ impl VellumGuiApp {
         wrap_width: f32,
         visuals: &egui::Visuals,
         font_id: &egui::FontId,
+        float_epoch: u64,
+        view_height: f32,
     ) {
         let timestamps = content.show_timestamps.then_some(content.timestamp_position);
-        let width_changed =
-            (cache.wrap_width - wrap_width).abs() > 0.5 || cache.font_id != *font_id;
+        // `float_epoch` rides the same "rebuild everything" test as width and
+        // font: a float's height depends on the window's own row count and on
+        // art that may resolve asynchronously, neither of which changes
+        // wrap_width or the generation. Without this the incremental path
+        // would never re-measure the affected rows.
+        let width_changed = (cache.wrap_width - wrap_width).abs() > 0.5
+            || cache.font_id != *font_id
+            || cache.float_epoch != float_epoch;
         let delta = content.generation.wrapping_sub(cache.generation) as usize;
+        // A newly appended line carrying an image needs the FULL layout pass:
+        // a float's span depends on the rows after it, which the incremental
+        // path (append-only) cannot compute. `float_epoch` does not catch
+        // this — it tracks the window's row capacity, which an arriving line
+        // does not change — so test the new lines themselves.
+        let appended_float = delta > 0
+            && delta <= content.lines.len()
+            && content
+                .lines
+                .iter()
+                .skip(content.lines.len() - delta)
+                .any(|line| line.segments.iter().any(|s| s.inline_image.is_some()));
         let incremental = !width_changed
+            && !appended_float
             && content.generation >= cache.generation
             && delta <= rendered_count
             && cache.heights.len() + delta >= rendered_count;
@@ -937,26 +1097,85 @@ impl VellumGuiApp {
             if delta > 0 {
                 let drop_front = (cache.heights.len() + delta).saturating_sub(rendered_count);
                 cache.heights.drain(..drop_front.min(cache.heights.len()));
+                // `extra` and `insets` are parallel to `heights` and must
+                // slide with it, or reservations and wrap widths would drift
+                // onto the wrong rows as the ring buffer trims.
+                cache.extra.drain(..drop_front.min(cache.extra.len()));
+                cache.insets.drain(..drop_front.min(cache.insets.len()));
+                cache.spans.drain(..drop_front.min(cache.spans.len()));
                 let len = content.lines.len();
                 for line in content.lines.iter().skip(len - delta) {
+                    // Appended lines are past any float that began earlier in
+                    // the buffer, so they lay out at full width. A float that
+                    // starts ON one of these lines is picked up by the next
+                    // full rebuild (its epoch bumps when the art resolves).
+                    let inset = LineInset::full(wrap_width);
                     cache.heights.push(Self::measure_line_height(
-                        ctx, line, visuals, wrap_width, font_id, timestamps,
+                        ctx, line, visuals, inset, font_id, timestamps,
                     ));
+                    cache.extra.push(0.0);
+                    cache.insets.push(inset);
+                    cache.spans.push(0);
                 }
             }
         } else {
             cache.heights.clear();
+            cache.extra.clear();
+            cache.insets.clear();
+            cache.spans.clear();
             cache.heights.reserve(rendered_count);
+            cache.extra.reserve(rendered_count);
+            cache.insets.reserve(rendered_count);
             for line in content.lines.iter().skip(start) {
+                let inset = LineInset::full(wrap_width);
                 cache.heights.push(Self::measure_line_height(
-                    ctx, line, visuals, wrap_width, font_id, timestamps,
+                    ctx, line, visuals, inset, font_id, timestamps,
                 ));
+                cache.extra.push(0.0);
+                cache.insets.push(inset);
+                cache.spans.push(0);
             }
         }
+        // ---- Float layout ------------------------------------------------
+        // Runs only on a full rebuild: a float's span depends on the heights
+        // of the rows AFTER it, which the incremental append path does not
+        // have (it only ever adds rows past the end). Anything that changes
+        // float geometry — including a newly arrived image line — forces the
+        // incremental path off, so this is not a gap.
+        if !incremental {
+            Self::layout_floats(
+                cache,
+                ctx,
+                content,
+                start,
+                wrap_width,
+                view_height,
+                visuals,
+                font_id,
+                timestamps,
+            );
+        }
+
         cache.wrap_width = wrap_width;
         cache.font_id = font_id.clone();
         cache.generation = content.generation;
+        cache.float_epoch = float_epoch;
         debug_assert_eq!(cache.heights.len(), rendered_count);
+        debug_assert_eq!(
+            cache.extra.len(),
+            cache.heights.len(),
+            "extra must stay parallel to heights"
+        );
+        debug_assert_eq!(
+            cache.insets.len(),
+            cache.heights.len(),
+            "insets must stay parallel to heights"
+        );
+        debug_assert_eq!(
+            cache.spans.len(),
+            cache.heights.len(),
+            "spans must stay parallel to heights"
+        );
     }
 
     pub(super) fn render_text_content(
@@ -1003,9 +1222,9 @@ impl VellumGuiApp {
         // scroll offset stays a raw pixel value. Nudge the stored offset by
         // the outgoing rows' strides (known from LAST frame's height cache)
         // BEFORE the ScrollArea reads it, so an up-scrolled reader keeps
-        // their exact place with no one-frame flicker. At the bottom this is
-        // a no-op: the area's stuck-to-end flag re-pins the offset to the
-        // end regardless of the stored value. The area id comes from last
+        // their exact place with no one-frame flicker. While following the
+        // tail this is a no-op: the offset is pinned to the end below
+        // regardless of the stored value. The area id comes from last
         // frame's ScrollAreaOutput (stashed below) rather than re-deriving
         // egui's salt hashing.
         let outer_ctx = ui.ctx().clone();
@@ -1031,10 +1250,7 @@ impl VellumGuiApp {
                     .saturating_sub(rendered_count)
                     .min(cache.heights.len());
                 if drop_front > 0 {
-                    let dropped_px: f32 = cache.heights[..drop_front]
-                        .iter()
-                        .map(|h| h + outer_spacing_y)
-                        .sum();
+                    let dropped_px: f32 = cache.stride_sum(0..drop_front, outer_spacing_y);
                     let area_id =
                         outer_ctx.data_mut(|data| data.get_temp::<egui::Id>(area_id_key));
                     if let Some(area_id) = area_id {
@@ -1058,20 +1274,42 @@ impl VellumGuiApp {
             );
         });
 
+        // Float geometry epoch: bumped whenever anything that changes a
+        // float's size changes. Float heights depend on the window's own row
+        // count (and on art that resolves asynchronously), neither of which
+        // moves wrap_width or the buffer generation — so without this the
+        // incremental cache path would never re-measure the affected rows.
+        // P2.2 folds resolved image sizes in; today only the window's row
+        // capacity varies, which is exactly the resize case.
+        let float_epoch: u64 = {
+            let row_h = ui.ctx().fonts_mut(|f| f.row_height(font_id)).max(1.0);
+            (max_height / row_h).floor().max(0.0) as u64
+        };
+
         let mut scroll_area = if wrap {
             egui::ScrollArea::vertical()
         } else {
             egui::ScrollArea::both()
         };
 
-        // Programmatic scroll (page keys / controller). egui's private
-        // stuck-to-end flag only clears on USER input — a one-frame
-        // explicit offset snaps back to the bottom next frame. So while a
-        // key/pad scroll has us paged up, we HOLD the offset by
-        // re-applying it every frame, and release the hold when the user
-        // touches the wheel/drag, reaches the bottom, or presses End.
+        // Scroll position has exactly ONE authority: `follow_bottom`.
+        //
+        // egui's `stick_to_bottom` cannot be suspended — its stuck flag is
+        // private with no setter, and it re-sticks only on exact float
+        // equality — so negotiating with it required a hold loop that
+        // re-asserted an offset every frame, a settle/clamp, and a snap to
+        // re-arm stickiness. Those three mechanisms were a second, competing
+        // source of truth, and they produced two real bugs: trim
+        // compensation wrote to an offset the hold then discarded, and a
+        // level-triggered producer (the phantom gamepad axis, 82c2a8d5)
+        // could rebuild the hold faster than user input cleared it.
+        //
+        // Instead we do not use stick_to_bottom at all: while following, we
+        // set the offset to the end ourselves each frame. "Following" is a
+        // single persisted bool that user input clears idempotently, so a
+        // repeating producer can no longer starve the mouse.
         let pending_key = egui::Id::new(("text_scroll_pending", scroll_id));
-        let hold_key = egui::Id::new(("text_scroll_hold", scroll_id));
+        let follow_key = egui::Id::new(("text_scroll_follow", scroll_id));
         let pending: Option<(u8, f32)> = outer_ctx.data_mut(|data| {
             let value = data.get_temp(pending_key);
             if value.is_some() {
@@ -1079,70 +1317,123 @@ impl VellumGuiApp {
             }
             value
         });
-        let mut hold: Option<f32> = outer_ctx.data_mut(|data| data.get_temp(hold_key));
+        // Default to following: a fresh window shows the newest text.
+        let mut follow_bottom: bool = outer_ctx
+            .data_mut(|data| data.get_temp(follow_key))
+            .unwrap_or(true);
+        // An explicit offset to apply this frame (a programmatic jump).
+        // None means "leave the offset alone" — either we are following (and
+        // pin to the end below) or the user owns it.
+        let mut goto: Option<f32> = None;
 
         // The user's own scroll input takes over instantly.
+        // A wheel event is not a single-frame signal: egui SMOOTHS it, so the
+        // motion it produces lands over several later frames that carry no
+        // raw event of their own. Pinning the offset on any of those frames
+        // would swallow the rest of the gesture, so the smoothed delta counts
+        // as user input for as long as it is still moving.
         let user_scrolled = ui.input(|input| {
-            input.raw.events.iter().any(|event| {
-                matches!(
-                    event,
-                    egui::Event::MouseWheel { .. } | egui::Event::PointerButton { pressed: true, .. }
-                )
-            })
+            input.smooth_scroll_delta.y != 0.0
+                || input.raw.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::MouseWheel { .. }
+                            | egui::Event::PointerButton { pressed: true, .. }
+                    )
+                })
         });
+        // User input owns the window the moment it arrives. Setting the flag
+        // is idempotent, so a producer repeating every frame can no longer
+        // out-race it (the 82c2a8d5 failure: "the mouse lost every round").
         if user_scrolled {
-            hold = None;
+            follow_bottom = false;
         }
 
         if let Some((kind, value)) = pending {
-            let current = hold.or_else(|| {
-                outer_ctx
-                    .data_mut(|data| data.get_temp::<egui::Id>(area_id_key))
-                    .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
-                    .map(|state| state.offset.y)
-            });
-            hold = match kind {
-                1 => Some(0.0),      // home
-                2 => None,           // end: drop the hold, stickiness resumes
+            let current = outer_ctx
+                .data_mut(|data| data.get_temp::<egui::Id>(area_id_key))
+                .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
+                .map(|state| state.offset.y)
+                .unwrap_or(0.0);
+            match kind {
+                1 => {
+                    // Home
+                    follow_bottom = false;
+                    goto = Some(0.0);
+                }
+                2 => {
+                    // End: resume following the tail.
+                    follow_bottom = true;
+                }
                 3 => {
-                    // Absolute: scroll so buffer line `value` sits near the top.
-                    // The height cache covers only the rendered tail (lines
-                    // `start..`), so map the absolute index into it and sum the
-                    // preceding rows' strides. Out-of-range clamps to the ends.
+                    // Absolute: scroll so buffer line `value` sits near the
+                    // top. The height cache covers only the rendered tail
+                    // (lines `start..`), so map the absolute index into it
+                    // and sum the preceding rows' strides.
                     let target_line = value as usize;
-                    let offset = if target_line < start {
+                    follow_bottom = false;
+                    goto = if target_line < start {
                         Some(0.0)
                     } else {
                         let rendered_idx = target_line - start;
                         let cache = cache_handle.lock().expect("row height cache poisoned");
-                        if rendered_idx >= cache.heights.len() {
-                            None // past the cached tail → fall through to end
-                        } else {
-                            Some(
-                                cache.heights[..rendered_idx]
-                                    .iter()
-                                    .map(|h| h + outer_spacing_y)
-                                    .sum::<f32>()
-                                    .max(0.0),
-                            )
-                        }
+                        // Past the cached tail: clamp to the last cached row
+                        // rather than silently becoming "jump to the end" —
+                        // a search hit off the top of the buffer should land
+                        // as close as we can get, not at the newest line.
+                        let idx = rendered_idx.min(cache.heights.len().saturating_sub(1));
+                        Some(cache.stride_sum(0..idx, outer_spacing_y).max(0.0))
                     };
-                    offset
                 }
-                _ => Some((current.unwrap_or(0.0) + value).max(0.0)),
-            };
-            if hold.is_none() {
-                // Nudge to the bottom so stick_to_bottom re-engages.
-                scroll_area = scroll_area.vertical_scroll_offset(f32::MAX / 4.0);
+                _ => {
+                    // Relative nudge (page/line keys, controller stick).
+                    follow_bottom = false;
+                    goto = Some((current + value).max(0.0));
+                }
             }
         }
-        if let Some(target) = hold {
+
+        // Following pins to the end; egui's own stickiness stays off so
+        // there is never a second authority to negotiate with.
+        //
+        // The target is the content height we already know from the height
+        // cache (the same sum the bottom spacer uses), NOT a huge sentinel:
+        // without stick_to_bottom nothing clamps an out-of-range offset, so
+        // a sentinel would be stored verbatim and the window would render
+        // blank. Any error here self-corrects — the post-pass below re-pins
+        // against the real layout on the very next frame.
+        //
+        // Skipped on a frame carrying user scroll input: an explicit offset
+        // overrides egui's own wheel/drag handling, so pinning here would
+        // swallow the very gesture that is supposed to take the window back.
+        // `user_scrolled` already cleared `follow_bottom` above; this guard
+        // covers the same frame's pin.
+        // The builder offset is applied BEFORE the pass and overwrites the
+        // stored value (egui scroll_area.rs:743), so pinning unconditionally
+        // would clobber the wheel/drag every frame and the window could never
+        // be scrolled by hand. Pin only when the stored position is actually
+        // behind the tail — i.e. new content arrived — and never on a frame
+        // carrying user scroll input.
+        if follow_bottom && !user_scrolled {
+            let content_h: f32 = {
+                let cache = cache_handle.lock().expect("row height cache poisoned");
+                cache.stride_sum(0..cache.heights.len(), outer_spacing_y)
+            };
+            let target = (content_h - max_height).max(0.0);
+            let stored = outer_ctx
+                .data_mut(|data| data.get_temp::<egui::Id>(area_id_key))
+                .and_then(|area_id| egui::scroll_area::State::load(&outer_ctx, area_id))
+                .map(|state| state.offset.y);
+            if stored.is_none_or(|current| target - current > 0.5) {
+                goto = Some(target);
+            }
+        }
+        if let Some(target) = goto {
             scroll_area = scroll_area.vertical_scroll_offset(target);
         }
 
         let output = scroll_area
             .id_salt(format!("text_scroll_{}", scroll_id))
-            .stick_to_bottom(true)
             .auto_shrink([false, false])
             .min_scrolled_height(max_height)
             .max_height(max_height)
@@ -1175,7 +1466,7 @@ impl VellumGuiApp {
                     let cache = cache_handle.lock().expect("row height cache poisoned");
                     if cache.heights.len() == rendered_count {
                         let total: f32 =
-                            cache.heights.iter().map(|h| h + spacing_y).sum();
+                            cache.stride_sum(0..cache.heights.len(), spacing_y);
                         let free = max_height - total;
                         if free > 0.0 {
                             ui.add_space(if v_align == 1 { free / 2.0 } else { free });
@@ -1202,6 +1493,8 @@ impl VellumGuiApp {
                     wrap_width,
                     &visuals,
                     font_id,
+                    float_epoch,
+                    max_height,
                 );
 
                 // ---- Buffer-anchored selection: window-level updates ----
@@ -1238,7 +1531,8 @@ impl VellumGuiApp {
                             let mut slot = rendered_count - 1;
                             let mut slot_top = content_top;
                             let mut y = content_top;
-                            for (i, h) in cache.heights.iter().enumerate() {
+                            for i in 0..cache.heights.len() {
+                                let h = cache.stride(i);
                                 if pos.y < y + h + spacing_y || i == rendered_count - 1 {
                                     slot = i;
                                     slot_top = y;
@@ -1247,27 +1541,36 @@ impl VellumGuiApp {
                                 y += h + spacing_y;
                             }
                             let line_index = start + slot;
+                            // Reuse the row's MEASURED layout: laying it out
+                            // at a different width here would produce a
+                            // different galley, and the character the drag
+                            // resolves to would not be the one painted.
                             let line_job = Self::build_line_job(
                                 &ctx,
                                 &content.lines[line_index],
                                 &visuals,
                                 search_query,
                                 font_id,
-                                wrap_width,
+                                cache.inset(slot, wrap_width),
                                 timestamps,
                             );
                             let galley = ctx.fonts_mut(|fonts| fonts.layout_job(line_job.job));
                             // Centered/right rows paint their galley offset
                             // within the full-width row; mirror that offset
                             // when mapping the pointer back to a character.
-                            let drag_h_offset = if h_align != 0 && wrap_width.is_finite() {
-                                let free = (wrap_width - galley.size().x).max(0.0);
+                            let drag_inset = cache.inset(slot, wrap_width);
+                            let drag_h_offset = if h_align != 0 && drag_inset.width.is_finite() {
+                                let free = (drag_inset.width - galley.size().x).max(0.0);
                                 if h_align == 1 { free / 2.0 } else { free }
                             } else {
                                 0.0
                             };
+                            // Subtract the float's column too: the galley was
+                            // PAINTED that far right, so the pointer must be
+                            // mapped back through the same shift or the drag
+                            // selects the wrong character.
                             let local = egui::Vec2::new(
-                                pos.x - content_left - drag_h_offset,
+                                pos.x - content_left - drag_h_offset - drag_inset.x_offset,
                                 pos.y - slot_top,
                             );
                             sel.head = (
@@ -1334,14 +1637,26 @@ impl VellumGuiApp {
                 let mut first_visible = rendered_count;
                 let mut top_space = 0.0f32;
                 let mut y = 0.0f32;
-                for (i, h) in cache.heights.iter().enumerate() {
-                    let stride = h + spacing_y;
+                for i in 0..cache.heights.len() {
+                    let stride = cache.stride(i) + spacing_y;
                     if y + stride > top {
                         first_visible = i;
                         top_space = y;
                         break;
                     }
                     y += stride;
+                }
+                // A float that STARTED above the viewport still overhangs
+                // into it, and only its origin row paints the image. Walk
+                // back to that origin (and reclaim the space we already
+                // counted) so scrolling into the middle of a float does not
+                // make the picture vanish.
+                if first_visible < rendered_count {
+                    let origin = cache.float_origin_at(first_visible);
+                    if origin < first_visible {
+                        top_space -= cache.stride_sum(origin..first_visible, spacing_y);
+                        first_visible = origin;
+                    }
                 }
                 let mut last_visible = rendered_count;
                 let mut yy = top_space;
@@ -1350,7 +1665,7 @@ impl VellumGuiApp {
                         last_visible = i;
                         break;
                     }
-                    yy += cache.heights[i] + spacing_y;
+                    yy += cache.stride(i) + spacing_y;
                 }
 
                 if first_visible > 0 && top_space > spacing_y {
@@ -1370,13 +1685,14 @@ impl VellumGuiApp {
                     let line_index = start + slot;
                     let uid = base_uid.wrapping_add(line_index as u64);
 
+                    let line_inset = cache.inset(slot, wrap_width);
                     let line_job = Self::build_line_job(
                         &ctx,
                         line,
                         &visuals,
                         search_query,
                         font_id,
-                        wrap_width,
+                        line_inset,
                         timestamps,
                     );
                     let links = line_job.links;
@@ -1412,7 +1728,73 @@ impl VellumGuiApp {
                         2 => (rect.width() - galley_size.x).max(0.0),
                         _ => 0.0,
                     };
-                    let galley_pos = rect.left_top() + Vec2::new(h_offset, 0.0);
+                    // The float's reserved column shifts the text right (a
+                    // left float); h_align then centres/right-aligns within
+                    // what remains. The hit-test below derives from this same
+                    // galley_pos, so the two stay in agreement.
+                    let galley_pos =
+                        rect.left_top() + Vec2::new(h_offset + line_inset.x_offset, 0.0);
+
+                    // Paint the float this row originates. The image spans
+                    // the rows the layout pass reserved, so its height comes
+                    // from those strides rather than this row alone.
+                    if cache.spans[slot] > 0 {
+                        if let Some(image) =
+                            line.segments.iter().find_map(|s| s.inline_image.as_ref())
+                        {
+                            let span = cache.spans[slot] as usize;
+                            let img_h =
+                                cache.stride_sum(slot..slot + span, spacing_y) - spacing_y;
+                            let img_w = if line_inset.x_offset > 0.0 {
+                                line_inset.x_offset
+                            } else {
+                                (width - line_inset.width).max(0.0)
+                            };
+                            if img_w > 0.0 && img_h > 0.0 {
+                                let left = match image.align {
+                                    crate::data::FloatAlign::Left => rect.left(),
+                                    crate::data::FloatAlign::Right => rect.right() - img_w,
+                                };
+                                let img_rect = egui::Rect::from_min_size(
+                                    egui::pos2(left, rect.top()),
+                                    Vec2::new(img_w, img_h),
+                                );
+                                super::custom_emoji_render::paint_inline_image(
+                                    &ctx,
+                                    ui.painter(),
+                                    &image.name,
+                                    img_rect,
+                                );
+                                // Press-and-hold blows the picture up, the
+                                // same gesture the room window offers.
+                                //
+                                // The ROW already owns this area's
+                                // interaction (it was allocated with
+                                // click_and_drag for text selection), so a
+                                // second `interact` over the same rect would
+                                // lose. Test the pointer directly instead:
+                                // held down, and inside the picture.
+                                let holding_image = ui.input(|i| {
+                                    i.pointer.any_down()
+                                        && i.pointer
+                                            .interact_pos()
+                                            .is_some_and(|p| img_rect.contains(p))
+                                });
+                                if holding_image {
+                                    Self::paint_enlarged_image(ui, &image.name, img_rect);
+                                    ctx.set_cursor_icon(egui::CursorIcon::ZoomIn);
+                                }
+                            }
+                        }
+                    }
+                    // Correct the estimate for rows we actually laid out.
+                    // This only ever touches VISIBLE rows, so an off-screen
+                    // row whose float changed height would keep a stale
+                    // value — that case is covered by `float_epoch`, which
+                    // forces a full re-measure of every row (see
+                    // update_row_height_cache). Reserved float space lives in
+                    // `extra` and is deliberately NOT written here, or it
+                    // would be erased every frame.
                     if (cache.heights[slot] - height).abs() > 0.5 {
                         cache.heights[slot] = height;
                     }
@@ -1597,10 +1979,8 @@ impl VellumGuiApp {
                 {
                     Self::store_buffer_selection(&ctx, None);
                 }
-                let bottom_space: f32 = cache.heights[last_visible..]
-                    .iter()
-                    .map(|h| h + spacing_y)
-                    .sum();
+                let bottom_space: f32 =
+                    cache.stride_sum(last_visible..cache.heights.len(), spacing_y);
                 if bottom_space > spacing_y {
                     ui.allocate_space(Vec2::new(1.0, bottom_space - spacing_y));
                 }
@@ -1608,50 +1988,35 @@ impl VellumGuiApp {
         // Next frame's anchoring pre-pass targets this area's real id.
         outer_ctx.data_mut(|data| data.insert_temp(area_id_key, output.id));
 
-        // Settle the programmatic hold against the real layout: clamp to
-        // the actual max offset, and release it once we're at the bottom
-        // so stick-to-bottom auto-scroll resumes.
+        // Resolve `follow_bottom` against the real layout.
+        //
+        // A user scroll that comes to rest within a row of the end counts as
+        // "at the bottom" and resumes following — egui's own re-stick needed
+        // exact float equality, which a scrollbar drag or kinetic flick
+        // almost never lands on, leaving the window permanently unstuck. A
+        // tolerance is the whole fix; no snapping or shadow state required.
         let max_offset = (output.content_size.y - output.inner_rect.height()).max(0.0);
-        let settled = hold.map(|h| h.min(max_offset)).filter(|h| *h < max_offset - 4.0);
-        outer_ctx.data_mut(|data| match settled {
-            Some(value) => {
-                data.insert_temp(hold_key, value);
+        if follow_bottom && !user_scrolled {
+            // Correct the cache-derived estimate against the real layout, so
+            // a stale height (an image that just decoded, a font swap) can
+            // never leave the tail slightly off-screen. Not on a user-input
+            // frame: that would undo the gesture egui just applied.
+            if (output.state.offset.y - max_offset).abs() > 0.5 {
+                if let Some(mut state) = egui::scroll_area::State::load(&outer_ctx, output.id) {
+                    state.offset.y = max_offset;
+                    state.store(&outer_ctx, output.id);
+                    outer_ctx.request_repaint();
+                }
             }
-            None => {
-                data.remove::<f32>(hold_key);
-            }
-        });
-
-        // Re-arm stick-to-bottom when a user scroll settles just shy of the
-        // end. egui only re-sticks on EXACT offset equality, and scrollbar
-        // drags / kinetic flicks routinely stop a fraction of a row short —
-        // visually "at the bottom" but unstuck, so incoming text left the
-        // view trailing slightly. When the scroll is at rest (no button
-        // held, not moving up, no programmatic hold) within one row of the
-        // end, snap to it; egui's equality check then re-sticks next frame.
-        let prev_offset_key = egui::Id::new(("text_scroll_prev_offset", scroll_id));
-        let prev_offset = outer_ctx.data_mut(|data| {
-            let prev = data.get_temp::<f32>(prev_offset_key);
-            data.insert_temp(prev_offset_key, output.state.offset.y);
-            prev
-        });
-        let snap_tolerance =
-            outer_ctx.fonts_mut(|fonts| fonts.row_height(font_id)) + outer_spacing_y;
-        let shy_of_bottom = max_offset - output.state.offset.y;
-        let moving_up = prev_offset.is_some_and(|prev| output.state.offset.y < prev - 0.1);
-        let pointer_down = outer_ctx.input(|i| i.pointer.any_down());
-        if settled.is_none()
-            && shy_of_bottom > 0.0
-            && shy_of_bottom <= snap_tolerance
-            && !moving_up
-            && !pointer_down
-        {
-            if let Some(mut state) = egui::scroll_area::State::load(&outer_ctx, output.id) {
-                state.offset.y = max_offset;
-                state.store(&outer_ctx, output.id);
-                outer_ctx.request_repaint();
+        } else {
+            let tolerance =
+                outer_ctx.fonts_mut(|fonts| fonts.row_height(font_id)) + outer_spacing_y;
+            let at_rest = !outer_ctx.input(|i| i.pointer.any_down());
+            if at_rest && max_offset - output.state.offset.y <= tolerance {
+                follow_bottom = true;
             }
         }
+        outer_ctx.data_mut(|data| data.insert_temp(follow_key, follow_bottom));
 
         clicked_link
     }

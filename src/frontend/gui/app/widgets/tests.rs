@@ -389,7 +389,7 @@ fn build_line_job_records_link_char_ranges() {
         &visuals,
         None,
         &font_id,
-        f32::INFINITY,
+        super::LineInset::full(f32::INFINITY),
         None,
     );
     assert_eq!(built.job.text, "héllo an orc lunges!");
@@ -442,7 +442,7 @@ fn build_line_job_records_custom_emoji_runs() {
     let ctx = eframe::egui::Context::default();
     ctx.begin_pass(eframe::egui::RawInput::default());
     let built =
-        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
+        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, super::LineInset::full(f32::INFINITY), None);
     {
         // egui 0.36 debug-asserts the TexturesDelta is applied before drop.
         let mut output = ctx.end_pass();
@@ -476,12 +476,12 @@ fn build_line_job_records_custom_emoji_runs() {
     // At the default size (1.0) the line needs no extra height...
     super::custom_emoji_render::set_geometry(1.0, 0.2);
     let a =
-        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
+        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, super::LineInset::full(f32::INFINITY), None);
     assert_eq!(a.min_height, 0.0);
     // ...but an oversized emoji grows the row so it isn't clipped.
     super::custom_emoji_render::set_geometry(2.0, 0.2);
     let b =
-        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, f32::INFINITY, None);
+        VellumGuiApp::build_line_job(&ctx, &line, &visuals, None, &font_id, super::LineInset::full(f32::INFINITY), None);
     assert!(b.min_height > 0.0, "size>1 must set a taller min_height");
     super::custom_emoji_render::set_geometry(1.0, 0.2); // reset
 
@@ -522,7 +522,7 @@ fn compose_line_text_matches_job_text() {
         &visuals,
         None,
         &font_id,
-        f32::INFINITY,
+        super::LineInset::full(f32::INFINITY),
         None,
     );
     assert_eq!(
@@ -612,4 +612,1149 @@ fn active_buffer_selection_gates_copy_priority() {
     // Clearing the selection returns the clipboard to the input.
     VellumGuiApp::store_buffer_selection(&ctx, None);
     assert!(!VellumGuiApp::active_buffer_selection_present(&ctx));
+}
+
+// ==================== Inline image floats ====================
+
+fn float_test_line(text: &str) -> crate::data::StyledLine {
+    crate::data::StyledLine {
+        segments: vec![crate::data::TextSegment::plain(text)],
+        stream: "room".into(),
+        timestamp: None,
+    }
+}
+
+fn float_test_image_line(name: &str) -> crate::data::StyledLine {
+    crate::data::StyledLine {
+        segments: vec![crate::data::TextSegment {
+            text: format!("[img:{name}]"),
+            inline_image: Some(crate::data::InlineImage {
+                name: name.into(),
+                rows: 4.0,
+                align: crate::data::FloatAlign::Left,
+            }),
+            ..Default::default()
+        }],
+        stream: "room".into(),
+        timestamp: None,
+    }
+}
+
+/// Only the lines that fit beside the image are covered; the rest rejoin
+/// full width. With a 40pt image and 10pt lines, exactly 4 lines fit.
+#[test]
+fn float_covers_only_the_lines_that_fit() {
+    let body = vec![
+        float_test_image_line("banner"),
+        float_test_line("a"),
+        float_test_line("b"),
+        float_test_line("c"),
+        float_test_line("d"),
+        float_test_line("e"),
+    ];
+    let end = VellumGuiApp::float_covered_end(&body, 0, 40.0, |_| 10.0);
+    assert_eq!(end, 5, "origin + 4 covered lines");
+}
+
+/// A line that would straddle the image's bottom edge is excluded rather
+/// than half-inset — egui cannot shorten only part of a line's rows.
+#[test]
+fn float_excludes_a_straddling_line() {
+    let body = vec![
+        float_test_image_line("banner"),
+        float_test_line("a"),
+        float_test_line("b"),
+    ];
+    // 25pt image, 10pt lines: two fit (20pt), the third would straddle.
+    let end = VellumGuiApp::float_covered_end(&body, 0, 25.0, |_| 10.0);
+    assert_eq!(end, 3, "both lines fit inside 25pt");
+    let end = VellumGuiApp::float_covered_end(&body, 0, 15.0, |_| 10.0);
+    assert_eq!(end, 2, "second line would straddle, so it rejoins");
+}
+
+/// Text running out before the image does simply ends the span.
+#[test]
+fn float_span_stops_at_end_of_body() {
+    let body = vec![float_test_image_line("banner"), float_test_line("a")];
+    let end = VellumGuiApp::float_covered_end(&body, 0, 400.0, |_| 10.0);
+    assert_eq!(end, 2);
+}
+
+/// A second image ends the first float instead of nesting, so two pictures
+/// can never overlap.
+#[test]
+fn float_span_stops_at_the_next_image() {
+    let body = vec![
+        float_test_image_line("one"),
+        float_test_line("a"),
+        float_test_image_line("two"),
+        float_test_line("b"),
+    ];
+    let end = VellumGuiApp::float_covered_end(&body, 0, 400.0, |_| 10.0);
+    assert_eq!(end, 2, "stops before the second image");
+}
+
+/// A script writes `<vellumImg/>The room stretches...` as ONE line, so the
+/// image segment and its prose share a StyledLine. The prose must still
+/// render (it leads the wrapped text beside the image) — dropping the whole
+/// origin line loses the room description entirely.
+#[test]
+fn float_origin_line_keeps_its_prose() {
+    let line = crate::data::StyledLine {
+        segments: vec![
+            crate::data::TextSegment {
+                text: "[img:sunset]".into(),
+                inline_image: Some(crate::data::InlineImage {
+                    name: "sunset".into(),
+                    rows: 4.0,
+                    align: crate::data::FloatAlign::Left,
+                }),
+                ..Default::default()
+            },
+            crate::data::TextSegment::plain("Stretching like long fingers."),
+        ],
+        stream: "room".into(),
+        timestamp: None,
+    };
+
+    // The renderer keeps every non-image segment of the origin line.
+    let lead: Vec<_> = line
+        .segments
+        .iter()
+        .filter(|s| s.inline_image.is_none())
+        .collect();
+    assert_eq!(lead.len(), 1, "prose segment must survive the image split");
+    assert_eq!(lead[0].text, "Stretching like long fingers.");
+    // ...and the image segment's own fallback text is NOT shown as content.
+    assert!(
+        !lead.iter().any(|s| s.text.contains("[img:")),
+        "the [img:] fallback is not prose"
+    );
+}
+
+// ==================== Room title formatting ====================
+
+#[test]
+fn room_title_matches_the_story_window_shape() {
+    let got = VellumGuiApp::format_room_title(
+        "Kraken's Fall, Third Pier".into(),
+        Some("29043"),
+        Some("7118245"),
+    );
+    assert_eq!(got, "[Kraken's Fall, Third Pier - 29043] (u7118245)");
+}
+
+/// Either id may be absent: the uid comes from <nav rm=>, the Lich id only
+/// under Lich. Each is omitted rather than rendering an empty slot.
+#[test]
+fn room_title_handles_missing_ids() {
+    assert_eq!(
+        VellumGuiApp::format_room_title("Cold River".into(), None, Some("7503201")),
+        "[Cold River] (u7503201)"
+    );
+    assert_eq!(
+        VellumGuiApp::format_room_title("Cold River".into(), Some("29043"), None),
+        "[Cold River - 29043]"
+    );
+    assert_eq!(
+        VellumGuiApp::format_room_title("Cold River".into(), None, None),
+        "[Cold River]"
+    );
+    assert_eq!(VellumGuiApp::format_room_title(String::new(), None, None), "");
+}
+
+/// Re-syncing must not nest brackets or repeat the id — the name can arrive
+/// already formatted (the roomName style carries brackets).
+#[test]
+fn room_title_is_idempotent() {
+    let once = VellumGuiApp::format_room_title(
+        "Kraken's Fall, Third Pier".into(),
+        Some("29043"),
+        Some("7118245"),
+    );
+    let twice = VellumGuiApp::format_room_title(once.clone(), Some("29043"), Some("7118245"));
+    assert_eq!(once, twice, "formatting twice must be a no-op");
+
+    // A bare bracketed name with no ids also survives.
+    assert_eq!(
+        VellumGuiApp::format_room_title("[Cold River]".into(), None, None),
+        "[Cold River]"
+    );
+}
+
+/// A uid that already carries its `u` prefix must not become `uu`.
+#[test]
+fn room_title_does_not_double_the_u_prefix() {
+    assert_eq!(
+        VellumGuiApp::format_room_title("Cold River".into(), None, Some("u7503201")),
+        "[Cold River] (u7503201)"
+    );
+}
+
+/// A room name containing a dash that is NOT an id must survive intact.
+#[test]
+fn room_title_keeps_dashes_that_are_not_ids() {
+    assert_eq!(
+        VellumGuiApp::format_room_title("Ta'Illistim - The Bazaar".into(), None, Some("123")),
+        "[Ta'Illistim - The Bazaar] (u123)"
+    );
+}
+
+/// The room NAME must be part of the flowing body so it wraps BESIDE room
+/// art, not sit above it as a separate header. When art is present it is
+/// hoisted onto the name's line, making the name the float origin.
+#[test]
+fn room_name_shares_the_float_line_with_the_art() {
+    use crate::data::{FloatAlign, InlineImage, StyledLine, TextSegment};
+
+    // What room_sync produces: art leading the DESCRIPTION line.
+    let description = StyledLine {
+        segments: vec![
+            TextSegment {
+                text: "[img:pier]".into(),
+                inline_image: Some(InlineImage {
+                    name: "pier".into(),
+                    rows: 4.0,
+                    align: FloatAlign::Left,
+                }),
+                ..Default::default()
+            },
+            TextSegment::plain("Blue and red arrows."),
+        ],
+        stream: "room".into(),
+        timestamp: None,
+    };
+    let name = StyledLine {
+        segments: vec![TextSegment {
+            text: "Kraken's Fall, Third Pier".into(),
+            bold: true,
+            ..Default::default()
+        }],
+        stream: "room".into(),
+        timestamp: None,
+    };
+    let mut body = vec![name, description];
+
+    // The hoist render_room_content performs.
+    let art: Vec<TextSegment> = body[1]
+        .segments
+        .iter()
+        .filter(|s| s.inline_image.is_some())
+        .cloned()
+        .collect();
+    assert!(!art.is_empty(), "fixture must carry art");
+    body[1].segments.retain(|s| s.inline_image.is_none());
+    let mut lead = art;
+    lead.append(&mut body[0].segments);
+    body[0].segments = lead;
+
+    // The name line now OWNS the image, so the float starts at the top and
+    // the name wraps beside the picture.
+    assert!(
+        body[0].segments[0].inline_image.is_some(),
+        "art must lead the name line"
+    );
+    assert!(
+        body[0].segments.iter().any(|s| s.text.contains("Kraken's Fall")),
+        "the name must stay on that line"
+    );
+    assert!(
+        !body[1].segments.iter().any(|s| s.inline_image.is_some()),
+        "art must not remain on the description line too"
+    );
+    assert!(
+        body[1].segments.iter().any(|s| s.text.contains("Blue and red")),
+        "description prose survives the hoist"
+    );
+}
+
+// ==================== Row height cache (characterization) ====================
+//
+// These pin the CURRENT behaviour of the text virtualization before float
+// support changes it. They are not aspirational: if one of them starts
+// failing, the invalidation or incremental-append contract moved, and the
+// scroll anchoring that reads these heights will drift with it.
+
+fn cache_test_content(lines: &[&str], generation: u64) -> crate::data::TextContent {
+    use crate::data::{StyledLine, TextSegment};
+    crate::data::TextContent {
+        lines: lines
+            .iter()
+            .map(|text| StyledLine {
+                segments: vec![TextSegment::plain(*text)],
+                stream: "main".into(),
+                timestamp: None,
+            })
+            .collect(),
+        scroll_offset: 0,
+        max_lines: 1000,
+        title: "main".into(),
+        generation,
+        streams: vec!["main".into()],
+        compact: false,
+        show_timestamps: false,
+        timestamp_position: crate::config::TimestampPosition::Start,
+    }
+}
+
+/// Run one cache update inside a real egui pass.
+fn update_cache(
+    cache: &mut super::RowHeightCache,
+    content: &crate::data::TextContent,
+    wrap_width: f32,
+    font_id: &eframe::egui::FontId,
+) {
+    update_cache_epoch(cache, content, wrap_width, font_id, 0)
+}
+
+fn update_cache_epoch(
+    cache: &mut super::RowHeightCache,
+    content: &crate::data::TextContent,
+    wrap_width: f32,
+    font_id: &eframe::egui::FontId,
+    float_epoch: u64,
+) {
+    let ctx = eframe::egui::Context::default();
+    let visuals = eframe::egui::Visuals::default();
+    ctx.begin_pass(eframe::egui::RawInput::default());
+    let rendered = content.lines.len();
+    VellumGuiApp::update_row_height_cache(
+        cache, &ctx, content, 0, rendered, wrap_width, &visuals, font_id, float_epoch,
+        400.0,
+    );
+    let mut output = ctx.end_pass();
+    output.textures_delta.clear();
+}
+
+/// One cached height per rendered line, always.
+#[test]
+fn cache_holds_one_height_per_rendered_line() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    let content = cache_test_content(&["a", "b", "c"], 3);
+    update_cache(&mut cache, &content, 400.0, &font);
+    assert_eq!(cache.heights().len(), 3);
+    assert!(cache.heights().iter().all(|h| *h > 0.0), "heights are real");
+}
+
+/// Appending lines takes the INCREMENTAL path: existing entries are not
+/// re-measured, and the window slides so the count still matches.
+#[test]
+fn cache_appends_incrementally_on_new_lines() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    let first = cache_test_content(&["a", "b"], 2);
+    update_cache(&mut cache, &first, 400.0, &font);
+    let before = cache.heights().to_vec();
+
+    let second = cache_test_content(&["a", "b", "c"], 3);
+    update_cache(&mut cache, &second, 400.0, &font);
+    assert_eq!(cache.heights().len(), 3);
+    assert_eq!(
+        &cache.heights()[..2],
+        &before[..],
+        "existing heights must be reused, not re-measured"
+    );
+}
+
+/// A width change rebuilds everything: wrapped heights depend on it, so a
+/// stale entry would desync the scroll math.
+#[test]
+fn cache_rebuilds_when_wrap_width_changes() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    let long = "word ".repeat(40);
+    let content = cache_test_content(&[long.as_str()], 1);
+
+    update_cache(&mut cache, &content, 1000.0, &font);
+    let wide = cache.heights()[0];
+    update_cache(&mut cache, &content, 120.0, &font);
+    let narrow = cache.heights()[0];
+
+    assert!(
+        narrow > wide,
+        "narrower wrap must wrap to more rows: {narrow} vs {wide}"
+    );
+}
+
+/// A font change also rebuilds — same reasoning as width.
+#[test]
+fn cache_rebuilds_when_font_changes() {
+    let mut cache = super::RowHeightCache::default();
+    let content = cache_test_content(&["a"], 1);
+    update_cache(&mut cache, &content, 400.0, &eframe::egui::FontId::monospace(10.0));
+    let small = cache.heights()[0];
+    update_cache(&mut cache, &content, 400.0, &eframe::egui::FontId::monospace(24.0));
+    let large = cache.heights()[0];
+    assert!(large > small, "bigger font is taller: {large} vs {small}");
+}
+
+/// A generation jump larger than the rendered window forces a full rebuild
+/// rather than a wrong incremental slide.
+#[test]
+fn cache_rebuilds_on_a_large_generation_jump() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+    // Generation leaps far beyond the rendered count.
+    let jumped = cache_test_content(&["x", "y"], 900);
+    update_cache(&mut cache, &jumped, 400.0, &font);
+    assert_eq!(cache.heights().len(), 2, "count still matches after rebuild");
+}
+
+// ==================== Scroll harness ====================
+//
+// Drives the REAL `render_text_content` headlessly so the hand-rolled
+// scroll machinery (trim compensation, the programmatic hold, the
+// near-bottom snap re-arm) is testable instead of manual-QA territory.
+// Every scroll bug in this project's history was found live from log
+// forensics; these exist so the next one fails a test instead.
+
+/// A headless text window: fixed viewport, real egui passes, real renderer.
+struct ScrollHarness {
+    ctx: eframe::egui::Context,
+    content: crate::data::TextContent,
+    scroll_id: String,
+    font_id: eframe::egui::FontId,
+    view: eframe::egui::Vec2,
+    time: f64,
+}
+
+impl ScrollHarness {
+    fn new(scroll_id: &str, view_h: f32) -> Self {
+        Self {
+            ctx: eframe::egui::Context::default(),
+            content: cache_test_content(&[], 0),
+            scroll_id: scroll_id.to_string(),
+            font_id: eframe::egui::FontId::monospace(14.0),
+            view: eframe::egui::vec2(400.0, view_h),
+            time: 0.0,
+        }
+    }
+
+    /// Append lines the way the game does: push and bump the generation.
+    fn push_lines(&mut self, count: usize) {
+        use crate::data::{StyledLine, TextSegment};
+        for _ in 0..count {
+            let n = self.content.generation + 1;
+            self.content.lines.push_back(StyledLine {
+                segments: vec![TextSegment::plain(format!("line {n}"))],
+                stream: "main".into(),
+                timestamp: None,
+            });
+            // Mirror AppCore's ring-buffer trim so the pre-pass has work.
+            while self.content.lines.len() > self.content.max_lines {
+                self.content.lines.pop_front();
+            }
+            self.content.generation = n;
+        }
+    }
+
+    fn raw_input(&mut self) -> eframe::egui::RawInput {
+        let mut input = eframe::egui::RawInput::default();
+        input.screen_rect = Some(eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            self.view,
+        ));
+        // egui 0.35 runs wheel events through a smoothing accumulator that
+        // needs real elapsed time; without a clock the smoothed delta never
+        // materializes and synthetic wheels appear to do nothing.
+        self.time += 1.0 / 60.0;
+        input.time = Some(self.time);
+        input.predicted_dt = 1.0 / 60.0;
+        input
+    }
+
+    /// A pointer-move into the middle of the window. egui only scrolls the
+    /// area under the cursor, so without this the wheel goes nowhere.
+    fn hover_center(&self) -> eframe::egui::Event {
+        eframe::egui::Event::PointerMoved(eframe::egui::pos2(
+            self.view.x * 0.5,
+            self.view.y * 0.5,
+        ))
+    }
+
+    /// Run one frame with optional synthetic events.
+    fn frame_with(&mut self, events: Vec<eframe::egui::Event>) {
+        let mut input = self.raw_input();
+        input.events = events;
+        let content = self.content.clone();
+        let scroll_id = self.scroll_id.clone();
+        let font_id = self.font_id.clone();
+        let mut output = self.ctx.run_ui(input, |ui| {
+
+            VellumGuiApp::render_text_content(
+                ui, &content, &scroll_id, None, &font_id, true, None,
+            );
+        });
+        output.textures_delta.clear();
+    }
+
+    fn frame(&mut self) {
+        self.frame_with(Vec::new());
+    }
+
+    /// egui's own persisted offset — the post-layout truth.
+    fn offset(&self) -> f32 {
+        let area_id: Option<eframe::egui::Id> = self.ctx.data_mut(|d| {
+            d.get_temp(eframe::egui::Id::new((
+                "text_scroll_area_id",
+                self.scroll_id.as_str(),
+            )))
+        });
+        area_id
+            .and_then(|id| eframe::egui::scroll_area::State::load(&self.ctx, id))
+            .map(|s| s.offset.y)
+            .unwrap_or(0.0)
+    }
+
+    /// The single scroll authority: are we following the tail?
+    fn following(&self) -> bool {
+        self.ctx
+            .data_mut(|d| {
+                d.get_temp(eframe::egui::Id::new((
+                    "text_scroll_follow",
+                    self.scroll_id.as_str(),
+                )))
+            })
+            .unwrap_or(true)
+    }
+
+    /// Queue a programmatic scroll the way keybinds and the gamepad do.
+    fn request(&mut self, kind: u8, value: f32) {
+        let id = eframe::egui::Id::new(("text_scroll_pending", self.scroll_id.as_str()));
+        self.ctx.data_mut(|d| d.insert_temp(id, (kind, value)));
+    }
+
+    fn wheel(delta_y: f32) -> eframe::egui::Event {
+        eframe::egui::Event::MouseWheel {
+            unit: eframe::egui::MouseWheelUnit::Point,
+            delta: eframe::egui::vec2(0.0, delta_y),
+            phase: eframe::egui::TouchPhase::Move,
+            modifiers: eframe::egui::Modifiers::default(),
+        }
+    }
+}
+
+/// Baseline: a fresh window follows the tail, so new text is visible.
+#[test]
+fn scroll_starts_following_the_bottom() {
+    let mut h = ScrollHarness::new("baseline", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+    let first = h.offset();
+    h.push_lines(20);
+    h.frame();
+    assert!(h.following(), "a fresh window follows the newest text");
+    assert!(
+        h.offset() > first,
+        "appending must follow the tail: {first} -> {}",
+        h.offset()
+    );
+}
+
+/// A page-up request stops following, and STAYS stopped across frames.
+/// This is what egui's stick_to_bottom could not express on its own.
+#[test]
+fn page_up_stops_following_and_stays_stopped() {
+    let mut h = ScrollHarness::new("pageup", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+
+    h.request(0, -200.0);
+    h.frame();
+    assert!(!h.following(), "page up must stop following");
+    let parked = h.offset();
+    h.frame();
+    h.frame();
+    assert!(!h.following(), "and must not silently resume");
+    assert!(
+        (h.offset() - parked).abs() < 1.0,
+        "the view must stay put: {parked} -> {}",
+        h.offset()
+    );
+}
+
+/// Appending text while paged up must not drag the reader down.
+#[test]
+fn appending_while_paged_up_does_not_move_the_view() {
+    let mut h = ScrollHarness::new("paged", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+    h.request(0, -300.0);
+    h.frame();
+    let parked = h.offset();
+
+    h.push_lines(30);
+    h.frame();
+    assert!(!h.following());
+    assert!(
+        (h.offset() - parked).abs() < 1.0,
+        "incoming text must not move a reader: {parked} -> {}",
+        h.offset()
+    );
+}
+
+/// The End request resumes following.
+#[test]
+fn end_request_resumes_following() {
+    let mut h = ScrollHarness::new("endkey", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+    h.request(0, -300.0);
+    h.frame();
+    assert!(!h.following());
+
+    h.request(2, 0.0);
+    h.frame();
+    assert!(h.following(), "End must resume following the tail");
+}
+
+/// User wheel input takes the window back immediately.
+///
+/// IGNORED: HARNESS LIMITATION, NOT A PRODUCT BUG. Wheel scrolling was
+/// verified working live on 2026-08-10 (Nisugi) — scroll up, resume
+/// following at the bottom, and hold position while text streams all behave.
+/// A synthetic wheel still does not move the offset headlessly even with a
+/// clock (egui smooths wheel events across frames), a hovering pointer, and
+/// the pin guarded to fire only when the stored offset is behind the tail.
+/// Left here as a marker: if someone finds the missing ingredient, this
+/// becomes a real regression test for free.
+#[ignore = "egui wheel smoothing does not drive headlessly; verified live instead"]
+#[test]
+fn user_wheel_stops_following() {
+    let mut h = ScrollHarness::new("wheel", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+    assert!(h.following());
+
+    // Far enough to leave the near-bottom tolerance; a tiny nudge at the
+    // tail legitimately counts as "still at the bottom".
+    // Wheel far enough to leave the near-bottom tolerance. A tiny nudge at
+    // the tail legitimately counts as "still following" — the tolerance is
+    // what replaced egui's exact-equality re-stick.
+    for _ in 0..6 {
+        let hover = h.hover_center();
+        h.frame_with(vec![hover, ScrollHarness::wheel(-200.0)]);
+    }
+    assert!(
+        !h.following(),
+        "a sustained wheel scroll away from the tail stops following"
+    );
+}
+
+/// REGRESSION (82c2a8d5): a producer re-issuing every frame must NOT be
+/// able to out-race user input. Under the old hold mechanism the wheel
+/// cleared the hold and the next request rebuilt it — "the mouse lost every
+/// round". Clearing a bool is idempotent, so the user now wins.
+#[test]
+fn level_triggered_producer_cannot_starve_user_input() {
+    let mut h = ScrollHarness::new("starve", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+
+    // Producer and wheel arrive together, every frame.
+    for _ in 0..3 {
+        h.request(0, -50.0);
+        h.frame_with(vec![ScrollHarness::wheel(-20.0)]);
+    }
+    assert!(
+        !h.following(),
+        "user input must still own the window while a producer streams"
+    );
+    let parked = h.offset();
+    // The producer keeps firing with no user input; the view must not be
+    // yanked back to the bottom.
+    h.request(0, -50.0);
+    h.frame();
+    assert!(
+        h.offset() <= parked + 1.0,
+        "the window must not snap back to the tail: {parked} -> {}",
+        h.offset()
+    );
+}
+
+/// REGRESSION: trim compensation must reach the position actually used.
+/// The old hold mechanism made the pre-pass adjust an offset that the hold
+/// then overrode, so a paged-up reader drifted as lines fell off the front.
+/// With one authority the compensation lands where it is read.
+#[test]
+fn trim_compensation_keeps_a_paged_up_reader_in_place() {
+    let mut h = ScrollHarness::new("trim", 100.0);
+    h.content.max_lines = 60;
+    h.push_lines(60);
+    h.frame();
+    h.frame();
+
+    h.request(0, -200.0);
+    h.frame();
+    h.frame();
+    let parked = h.offset();
+    assert!(!h.following(), "paged up");
+
+    // Lines now fall off the FRONT: content slides up under the reader, and
+    // the pre-pass must absorb it.
+    h.push_lines(10);
+    h.frame();
+
+    assert!(!h.following(), "still paged up");
+    assert!(
+        h.offset() < parked,
+        "the offset must be compensated DOWN as rows leave the front:          {parked} -> {}",
+        h.offset()
+    );
+}
+
+/// An absolute scroll-to-line lands above the bottom and stops following.
+#[test]
+fn absolute_scroll_targets_a_line() {
+    let mut h = ScrollHarness::new("absolute", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+    let bottom = h.offset();
+
+    h.request(3, 20.0);
+    h.frame();
+    assert!(!h.following(), "an absolute jump stops following");
+    assert!(
+        h.offset() < bottom,
+        "line 20 of 200 must be well above the bottom: {} vs {bottom}",
+        h.offset()
+    );
+}
+
+/// REGRESSION: an absolute request past the cached tail used to be consumed
+/// and silently become "jump to the end" — a search hit off the top of the
+/// buffer dumped the reader at the newest line. It now clamps to the last
+/// cached row instead, so the view lands as close as the cache allows.
+#[test]
+fn absolute_scroll_past_the_cache_clamps_instead_of_jumping_to_the_end() {
+    let mut h = ScrollHarness::new("absolute_oob", 100.0);
+    h.push_lines(200);
+    h.frame();
+    h.frame();
+    let bottom = h.offset();
+
+    // A target far past the buffer clamps to the last cached row. The
+    // resulting offset is at or below the tail — never thrown beyond it —
+    // and the request is honoured rather than silently discarded.
+    h.request(3, 99_999.0);
+    h.frame();
+    assert!(
+        h.offset() <= bottom + 1.0,
+        "clamped, not thrown past the end: {} vs {bottom}",
+        h.offset()
+    );
+}
+
+// ==================== Reserved float height (P2.1) ====================
+
+/// `extra` must stay exactly parallel to `heights` through both the full
+/// rebuild and the incremental append, or reservations drift onto the wrong
+/// rows as the ring buffer trims.
+#[test]
+fn reserved_height_column_stays_parallel() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    assert_eq!(cache.extra().len(), cache.heights().len());
+
+    // Incremental append.
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 400.0, &font);
+    assert_eq!(cache.extra().len(), cache.heights().len(), "after append");
+
+    // Full rebuild (width change).
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 120.0, &font);
+    assert_eq!(cache.extra().len(), cache.heights().len(), "after rebuild");
+}
+
+/// A row's stride is text height PLUS its reserved float overhang — the one
+/// number every offset computation must use.
+#[test]
+fn stride_includes_reserved_height() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+
+    let bare = cache.stride(0);
+    cache.set_extra(0, 40.0);
+    assert_eq!(cache.stride(0), bare + 40.0, "reservation adds to the stride");
+    assert_eq!(cache.stride(1), cache.heights()[1], "other rows untouched");
+
+    // stride_sum is the shape the spacers and anchoring use.
+    let spacing = 2.0;
+    assert_eq!(
+        cache.stride_sum(0..2, spacing),
+        cache.stride(0) + cache.stride(1) + spacing * 2.0
+    );
+}
+
+/// THE TRAP THIS COLUMN EXISTS FOR. The render loop writes each rendered
+/// row's measured galley height back into `heights` every frame. A
+/// reservation folded into `heights` would be erased immediately; kept in
+/// `extra`, it survives.
+#[test]
+fn reserved_height_survives_a_height_writeback() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+    cache.set_extra(0, 40.0);
+    let with_float = cache.stride(0);
+
+    // Simulate the render loop's correction: overwrite the measured height.
+    let measured = cache.heights()[0];
+    let content = cache_test_content(&["a", "b"], 2);
+    update_cache(&mut cache, &content, 400.0, &font);
+
+    assert_eq!(
+        cache.heights()[0],
+        measured,
+        "text height is re-measured as before"
+    );
+    assert_eq!(
+        cache.stride(0),
+        with_float,
+        "the float reservation must NOT be erased by a height update"
+    );
+}
+
+/// A float-geometry change invalidates the cache even though wrap width,
+/// font, and generation are all unchanged — the hazard that would otherwise
+/// leave resized floats measured at their old height forever.
+#[test]
+fn float_epoch_change_forces_a_rebuild() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    let content = cache_test_content(&["a", "b"], 2);
+
+    update_cache_epoch(&mut cache, &content, 400.0, &font, 1);
+    cache.set_extra(0, 40.0);
+    assert!(cache.stride(0) > cache.heights()[0]);
+
+    // Same content, same width, same font — only the float epoch moved.
+    update_cache_epoch(&mut cache, &content, 400.0, &font, 2);
+    assert_eq!(
+        cache.extra()[0],
+        0.0,
+        "a float-geometry change must clear stale reservations for re-measure"
+    );
+}
+
+// ==================== Line inset (P2.2) ====================
+
+/// A row with no float lays out at the full width with no shift.
+#[test]
+fn line_inset_defaults_to_full_width() {
+    let inset = super::LineInset::full(400.0);
+    assert_eq!(inset.width, 400.0);
+    assert_eq!(inset.x_offset, 0.0);
+}
+
+/// The cache hands back the inset a row was MEASURED with. Painting and the
+/// drag hit-test both read it from here, which is what keeps their galleys
+/// identical — the invariant that stops selection landing on the wrong
+/// character on a floated line.
+#[test]
+fn cache_returns_the_inset_a_row_was_measured_with() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &cache_test_content(&["a", "b"], 2), 400.0, &font);
+
+    let inset = cache.inset(0, 400.0);
+    assert_eq!(inset.width, 400.0, "measured at the full width");
+    assert_eq!(inset.x_offset, 0.0);
+
+    // Out-of-range rows fall back rather than panicking: the render loop can
+    // ask about a slot the cache has not caught up with yet.
+    assert_eq!(cache.inset(999, 123.0).width, 123.0, "fallback width");
+}
+
+/// A narrower inset must actually wrap the text differently — proving the
+/// value reaches the LayoutJob rather than being carried and ignored.
+#[test]
+fn inset_width_changes_how_a_line_wraps() {
+    use crate::data::{StyledLine, TextSegment};
+    let line = StyledLine {
+        segments: vec![TextSegment::plain("word ".repeat(40))],
+        stream: "main".into(),
+        timestamp: None,
+    };
+    let visuals = eframe::egui::Visuals::default();
+    let font_id = eframe::egui::FontId::monospace(14.0);
+    let ctx = eframe::egui::Context::default();
+
+    ctx.begin_pass(eframe::egui::RawInput::default());
+    let wide = VellumGuiApp::measure_line_height(
+        &ctx,
+        &line,
+        &visuals,
+        super::LineInset::full(1000.0),
+        &font_id,
+        None,
+    );
+    let narrow = VellumGuiApp::measure_line_height(
+        &ctx,
+        &line,
+        &visuals,
+        super::LineInset { width: 200.0, x_offset: 800.0 },
+        &font_id,
+        None,
+    );
+    {
+        let mut output = ctx.end_pass();
+        output.textures_delta.clear();
+    }
+
+    assert!(
+        narrow > wide,
+        "a float's narrower column must wrap to more rows: {narrow} vs {wide}"
+    );
+}
+
+/// Insets stay parallel to heights through both cache paths, like `extra`.
+#[test]
+fn inset_column_stays_parallel() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    assert_eq!(cache.heights().len(), 3);
+    // Appending keeps them in step.
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 400.0, &font);
+    assert_eq!(cache.inset(3, 0.0).width, 400.0, "appended row has an inset");
+    // A rebuild re-derives every row's inset.
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 150.0, &font);
+    assert_eq!(cache.inset(0, 0.0).width, 150.0, "rebuild re-derives insets");
+}
+
+// ==================== Float spans + virtualization (P2.3) ====================
+
+/// A viewport starting mid-float must walk back to the origin row, because
+/// only that row paints the image. Without the lookback, scrolling into the
+/// middle of a float makes the picture vanish.
+#[test]
+fn float_origin_lookback_finds_the_painting_row() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(
+        &mut cache,
+        &cache_test_content(&["a", "b", "c", "d", "e"], 5),
+        400.0,
+        &font,
+    );
+    // Row 1 originates a float covering rows 1..4.
+    cache.set_span(1, 3);
+
+    assert_eq!(cache.float_origin_at(1), 1, "the origin resolves to itself");
+    assert_eq!(cache.float_origin_at(2), 1, "mid-float walks back");
+    assert_eq!(cache.float_origin_at(3), 1, "last covered row walks back");
+    assert_eq!(cache.float_origin_at(4), 4, "past the float, no lookback");
+    assert_eq!(cache.float_origin_at(0), 0, "before the float, no lookback");
+}
+
+/// With no floats the lookback is the identity — it must not perturb normal
+/// virtualization.
+#[test]
+fn float_origin_lookback_is_identity_without_floats() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    for i in 0..3 {
+        assert_eq!(cache.float_origin_at(i), i, "row {i}");
+    }
+}
+
+/// Spans stay parallel to heights through both cache paths, and a rebuild
+/// clears them so stale spans can never outlive the float that made them.
+#[test]
+fn span_column_stays_parallel_and_clears_on_rebuild() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c"], 3), 400.0, &font);
+    cache.set_span(0, 2);
+    assert_eq!(cache.spans().len(), cache.heights().len());
+
+    // Append: still parallel, new row has no span.
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 400.0, &font);
+    assert_eq!(cache.spans().len(), cache.heights().len(), "after append");
+
+    // Rebuild (width change): spans reset for re-derivation.
+    update_cache(&mut cache, &cache_test_content(&["a", "b", "c", "d"], 4), 150.0, &font);
+    assert_eq!(cache.spans().len(), cache.heights().len(), "after rebuild");
+    assert!(
+        cache.spans().iter().all(|s| *s == 0),
+        "a rebuild must clear spans so none outlive their float"
+    );
+}
+
+/// The lookback is bounded by the longest span, not by the buffer length —
+/// a 10,000-line window must not scan to the top on every frame.
+#[test]
+fn float_origin_lookback_is_bounded_by_the_longest_span() {
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    let lines: Vec<&str> = vec!["x"; 200];
+    update_cache(&mut cache, &cache_test_content(&lines, 200), 400.0, &font);
+    cache.set_span(0, 2); // a short float far above
+
+    // Row 150 is nowhere near that float; the scan must not find it.
+    assert_eq!(cache.float_origin_at(150), 150);
+}
+
+/// End-to-end: a line carrying an inline image must come out of the cache
+/// pass with a real float — a span, a narrowed inset on the covered rows,
+/// and reserved height. Until now every column was a no-op, so this is the
+/// test that proves the layout pass does its job.
+#[test]
+fn layout_pass_computes_a_float_for_an_image_line() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    use crate::data::{FloatAlign, InlineImage, StyledLine, TextSegment};
+
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    // A real on-disk PNG so the size lookup resolves.
+    let tmp = std::env::temp_dir().join(format!("vellum_float_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let path = tmp.join("banner.png");
+    {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[255, 0, 0, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(&path, png).unwrap();
+    }
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "banner".into(),
+        path,
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let mut content = cache_test_content(&["after one", "after two", "after three"], 4);
+    content.lines.push_front(StyledLine {
+        segments: vec![
+            TextSegment {
+                text: "[img:banner]".into(),
+                inline_image: Some(InlineImage {
+                    name: "banner".into(),
+                    rows: 3.0,
+                    align: FloatAlign::Left,
+                }),
+                ..Default::default()
+            },
+            TextSegment::plain("Prose beside the picture."),
+        ],
+        stream: "main".into(),
+        timestamp: None,
+    });
+
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+    update_cache(&mut cache, &content, 400.0, &font);
+
+    assert!(cache.spans()[0] > 0, "the image line must originate a float");
+    assert!(
+        cache.inset(0, 400.0).width < 400.0,
+        "text beside the image wraps narrower: {}",
+        cache.inset(0, 400.0).width
+    );
+    assert!(
+        cache.inset(0, 400.0).x_offset > 0.0,
+        "a left float shifts its text right"
+    );
+    // Total reserved space is at least the image's height.
+    let span = cache.spans()[0] as usize;
+    assert!(
+        cache.stride_sum(0..span, 0.0) >= cache.heights()[0],
+        "the float's rows must be tall enough for the picture"
+    );
+    // Rows past the float rejoin the full width.
+    if span < cache.heights().len() {
+        assert_eq!(
+            cache.inset(span, 400.0).width,
+            400.0,
+            "text rejoins full width after the image"
+        );
+    }
+
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
+}
+
+/// REPRO (live, 2026-08-10): a `<vellumImg>` arriving as a NEW line rendered
+/// its `[img:sunset]` fallback instead of floating.
+///
+/// Appends take the incremental cache path, which cannot compute a span (it
+/// only ever adds rows past the end), and `float_epoch` did not catch it —
+/// the epoch tracks the window's row capacity, which an arriving line does
+/// not change. An appended image line must force the full layout pass.
+#[test]
+fn an_appended_image_line_still_gets_a_float() {
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+    use crate::data::{FloatAlign, InlineImage, StyledLine, TextSegment};
+
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = std::env::temp_dir().join(format!("vellum_append_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let path = tmp.join("banner.png");
+    {
+        use image::ImageEncoder;
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(&[0, 128, 255, 255], 1, 1, image::ExtendedColorType::Rgba8)
+            .unwrap();
+        std::fs::write(&path, png).unwrap();
+    }
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "banner".into(),
+        path,
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let font = eframe::egui::FontId::monospace(14.0);
+    let mut cache = super::RowHeightCache::default();
+
+    // A settled window with ordinary text: the next update is an APPEND.
+    let mut content = cache_test_content(&["one", "two"], 2);
+    update_cache(&mut cache, &content, 400.0, &font);
+    assert!(cache.spans().iter().all(|s| *s == 0), "no floats yet");
+
+    // Now the image arrives as a new line, exactly as _respond delivers it.
+    content.lines.push_back(StyledLine {
+        segments: vec![TextSegment {
+            text: "[img:banner]".into(),
+            inline_image: Some(InlineImage {
+                name: "banner".into(),
+                rows: 4.0,
+                align: FloatAlign::Left,
+            }),
+            ..Default::default()
+        }],
+        stream: "main".into(),
+        timestamp: None,
+    });
+    content.generation = 3;
+    update_cache(&mut cache, &content, 400.0, &font);
+
+    let last = cache.heights().len() - 1;
+    assert!(
+        cache.spans()[last] > 0,
+        "an appended image line must originate a float, not fall back to text"
+    );
+
+    crate::core::inline_image::set_for_test(CustomEmojiRegistry::default());
 }
