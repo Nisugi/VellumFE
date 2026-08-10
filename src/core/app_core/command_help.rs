@@ -176,7 +176,12 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "Open widget type picker",
                 &[".addwindow <name> <type> <x> <y> <w> [h] adds a window manually"]
             ),
-            entry!(&["deletewindow", "delwindow"], "<name>", "Delete a window"),
+            entry!(
+                &["deletewindow", "delwindow"],
+                "<name>",
+                "Remove a window from the layout (restorable)",
+                &[".hidewindow keeps it in the layout; delete stashes it for restore"]
+            ),
             entry!(
                 &["hidewindow", "hidewin"],
                 "[name]",
