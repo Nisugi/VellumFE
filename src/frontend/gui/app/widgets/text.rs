@@ -73,7 +73,8 @@ impl VellumGuiApp {
         rich
     }
 
-    pub(super) fn segment_has_clickable_link(segment: &TextSegment) -> bool {
+    // Visibility: tested from app/tests.rs.
+    pub(in crate::frontend::gui::app) fn segment_has_clickable_link(segment: &TextSegment) -> bool {
         // Parser may mark creature links as Monsterbold when links are wrapped in pushBold/popBold.
         // `link_data` is the reliable indicator of actual clickability.
         segment.link_data.is_some()

@@ -585,7 +585,8 @@ impl VellumGuiApp {
             });
     }
 
-    pub(super) fn format_target_line(
+    // Visibility: tested from app/tests.rs.
+    pub(in crate::frontend::gui::app) fn format_target_line(
         creature: &crate::core::state::Creature,
         target_cfg: &TargetListConfig,
         status_position: &str,
@@ -613,7 +614,8 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn format_player_line(
+    // Visibility: tested from app/tests.rs.
+    pub(in crate::frontend::gui::app) fn format_player_line(
         player: &crate::core::state::Player,
         target_cfg: &TargetListConfig,
     ) -> String {

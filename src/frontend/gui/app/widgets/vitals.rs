@@ -61,7 +61,8 @@ impl VellumGuiApp {
         }
     }
 
-    pub(super) fn status_abbreviation(status: &str, target_cfg: &TargetListConfig) -> String {
+    // Visibility: tested from app/tests.rs.
+    pub(in crate::frontend::gui::app) fn status_abbreviation(status: &str, target_cfg: &TargetListConfig) -> String {
         let status_lower = status.to_ascii_lowercase();
         target_cfg
             .status_abbrev
@@ -76,7 +77,8 @@ impl VellumGuiApp {
             })
     }
 
-    pub(super) fn normalize_entity_id(id: &str) -> String {
+    // Visibility: tested from app/tests.rs.
+    pub(in crate::frontend::gui::app) fn normalize_entity_id(id: &str) -> String {
         id.trim().trim_start_matches('#').to_string()
     }
 
