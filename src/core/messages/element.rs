@@ -1535,6 +1535,17 @@ impl MessageProcessor {
                 let expires_at =
                     crate::data::parse_time_seconds(time).map(|secs| time_base + secs);
 
+                // Remember the feed's display name so the missing-spells
+                // window can label effects the static table doesn't know
+                // even after they drop.
+                if matches!(category.as_str(), "ActiveSpells" | "Buffs") {
+                    if let Ok(number) = id.parse::<u16>() {
+                        game_state
+                            .spell_names_seen
+                            .entry(number)
+                            .or_insert_with(|| text.clone());
+                    }
+                }
                 let spell_style = id
                     .parse::<u32>()
                     .ok()

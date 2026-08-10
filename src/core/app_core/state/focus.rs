@@ -253,6 +253,7 @@ impl AppCore {
             crate::data::WidgetType::Targets => "targets",
             crate::data::WidgetType::Players => "players",
             crate::data::WidgetType::Spells => "spells",
+            crate::data::WidgetType::MissingSpells => "missingspells",
             crate::data::WidgetType::Spacer => "spacer",
             crate::data::WidgetType::Performance => "performance",
             crate::data::WidgetType::Perception => "perception",

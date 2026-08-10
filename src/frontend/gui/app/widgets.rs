@@ -133,6 +133,10 @@ impl VellumGuiApp {
                 Self::render_vitals_content(app_core, ui, &settings);
                 None
             }
+            WindowContent::MissingSpells => {
+                Self::render_missing_spells_content(app_core, ui);
+                None
+            }
             WindowContent::Progress(data) => {
                 Self::render_single_progress_content(ui, data, &settings);
                 None

@@ -978,6 +978,12 @@ pub struct SpellsWidgetData {
     // No extra fields currently - uses "spells" stream
 }
 
+/// Missing-spells window: no per-widget fields — the watch list lives in
+/// per-character state (.spellwatch) and the display derives from the
+/// live effect feeds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MissingSpellsWidgetData {}
+
 /// Text replacement rule for perception widget
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextReplacement {

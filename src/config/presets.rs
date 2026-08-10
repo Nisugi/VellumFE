@@ -185,6 +185,7 @@ pub const CATALOG: &[(&str, Option<GameType>)] = &[
     ("reserve", Some(GameType::GS4)),
     ("room", None),
     ("spells", None),
+    ("missingspells", None),
     ("compass", None),
     ("map", None),
     ("injuries", None),
@@ -1568,6 +1569,20 @@ impl Config {
                 data: SpacerWidgetData {},
             }),
 
+            "missingspells" => Some(WindowDef::MissingSpells {
+                base: WindowBase {
+                    name: "missingspells".to_string(),
+                    title: Some("Missing Spells".to_string()),
+                    row: Row::new(0),
+                    col: Col::new(0),
+                    rows: Height::new(8),
+                    cols: Width::new(28),
+                    min_rows: Some(3),
+                    min_cols: Some(14),
+                    ..base_defaults.clone()
+                },
+                data: MissingSpellsWidgetData {},
+            }),
             "perception" => Some(WindowDef::Perception {
                 base: WindowBase {
                     name: "perception".to_string(),

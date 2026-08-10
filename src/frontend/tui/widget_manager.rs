@@ -34,6 +34,8 @@ pub struct WidgetManager {
     pub targets_widgets: HashMap<String, super::targets::Targets>,
     /// Cache of Players widgets per window name
     pub players_widgets: HashMap<String, super::players::Players>,
+    /// Cache of MissingSpells widgets per window name
+    pub missing_spells_widgets: HashMap<String, super::missing_spells::MissingSpells>,
     /// Cache of Items widgets per window name (room objects, non-creatures)
     pub items_widgets: HashMap<String, super::items::Items>,
     /// Cache of ContainerWindow widgets per window name
@@ -90,6 +92,7 @@ impl WidgetManager {
             indicator_widgets: HashMap::new(),
             targets_widgets: HashMap::new(),
             players_widgets: HashMap::new(),
+            missing_spells_widgets: HashMap::new(),
             items_widgets: HashMap::new(),
             container_widgets: HashMap::new(),
             dashboard_widgets: HashMap::new(),
@@ -125,6 +128,7 @@ impl WidgetManager {
         self.indicator_widgets.clear();
         self.targets_widgets.clear();
         self.players_widgets.clear();
+        self.missing_spells_widgets.clear();
         self.items_widgets.clear();
         self.container_widgets.clear();
         self.dashboard_widgets.clear();

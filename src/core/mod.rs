@@ -23,6 +23,7 @@ pub mod harmony_skin;
 pub mod highlight_engine;
 pub mod hotbar;
 pub mod input_router;
+pub mod missing_spells;
 pub mod jinx;
 pub mod layout_engine;
 pub mod map_service;

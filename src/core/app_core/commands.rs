@@ -1811,6 +1811,101 @@ impl AppCore {
         );
     }
 
+    /// `.spellwatch` - edit the missing-spells watch list.
+    ///   .spellwatch add 606          one spell
+    ///   .spellwatch add [101,103]    several
+    ///   .spellwatch add all          everything currently active
+    ///   .spellwatch rem 606 | [..] | all
+    ///   .spellwatch (or list)        show the list and what's missing
+    fn handle_spellwatch(&mut self, parts: &[&str]) {
+        use crate::core::missing_spells;
+        const USAGE: &str = "Usage: .spellwatch add|rem <number> | [n,n,...] | all - \
+                             bare .spellwatch lists the watch list.";
+        let verb = parts.get(1).map(|s| s.to_ascii_lowercase());
+        // The spell argument may contain spaces ("[101, 103]"): rejoin.
+        let arg = parts.get(2..).map(|rest| rest.concat()).unwrap_or_default();
+        match verb.as_deref() {
+            None | Some("list") => {
+                let watched = self.game_state.character.watched_spells.clone();
+                if watched.is_empty() {
+                    self.add_system_message(
+                        "No spells watched. .spellwatch add <number> (or 'all') to start; \
+                         add a Missing Spells window to see gaps at a glance.",
+                    );
+                    return;
+                }
+                let missing = missing_spells::missing(&self.game_state);
+                self.add_system_message(&format!(
+                    "Watched spells ({} missing):",
+                    missing.len()
+                ));
+                for &number in &watched {
+                    let name = missing_spells::spell_display_name(&self.game_state, number);
+                    let state = if missing.iter().any(|m| m.number == number) {
+                        "MISSING"
+                    } else {
+                        "active"
+                    };
+                    self.add_system_message(&format!(
+                        "  {:>5}  {:<30} {}",
+                        number, name, state
+                    ));
+                }
+            }
+            Some("add") if arg.eq_ignore_ascii_case("all") => {
+                let numbers = missing_spells::active_numbers(&self.game_state);
+                if numbers.is_empty() {
+                    self.add_system_message("Nothing active in ActiveSpells/Buffs to add.");
+                    return;
+                }
+                let added = self.game_state.character.watch_spells(&numbers);
+                self.add_system_message(&format!(
+                    "Watching {} active spell{} ({} new).",
+                    numbers.len(),
+                    if numbers.len() == 1 { "" } else { "s" },
+                    added
+                ));
+                self.needs_render = true;
+            }
+            Some("rem") | Some("remove") if arg.eq_ignore_ascii_case("all") => {
+                let removed = self.game_state.character.unwatch_all_spells();
+                self.add_system_message(&format!(
+                    "Cleared {} watched spell{}.",
+                    removed,
+                    if removed == 1 { "" } else { "s" }
+                ));
+                self.needs_render = true;
+            }
+            Some("add") => match missing_spells::parse_spell_list(&arg) {
+                Some(numbers) => {
+                    let added = self.game_state.character.watch_spells(&numbers);
+                    self.add_system_message(&format!(
+                        "Added {} spell{} to the watch list ({} total).",
+                        added,
+                        if added == 1 { "" } else { "s" },
+                        self.game_state.character.watched_spells.len()
+                    ));
+                    self.needs_render = true;
+                }
+                None => self.add_system_message(USAGE),
+            },
+            Some("rem") | Some("remove") => match missing_spells::parse_spell_list(&arg) {
+                Some(numbers) => {
+                    let removed = self.game_state.character.unwatch_spells(&numbers);
+                    self.add_system_message(&format!(
+                        "Removed {} spell{} from the watch list ({} left).",
+                        removed,
+                        if removed == 1 { "" } else { "s" },
+                        self.game_state.character.watched_spells.len()
+                    ));
+                    self.needs_render = true;
+                }
+                None => self.add_system_message(USAGE),
+            },
+            Some(_) => self.add_system_message(USAGE),
+        }
+    }
+
     fn handle_dot_command(&mut self, command: &str) -> Result<CommandOutcome> {
         let parts: Vec<&str> = command[1..].split_whitespace().collect();
         let cmd = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
@@ -2205,6 +2300,9 @@ impl AppCore {
                         "Types: text, progress, countdown, compass, hands, room, indicator",
                     );
                 }
+            }
+            "spellwatch" => {
+                self.handle_spellwatch(&parts);
             }
             "rename" => {
                 if parts.len() >= 3 {

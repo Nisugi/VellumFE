@@ -790,4 +790,40 @@ impl VellumGuiApp {
         clicked_link
     }
 
+    /// Missing-spells watchlist: watched spells (`.spellwatch`) that are
+    /// NOT currently active in ActiveSpells/Buffs. The list comes from
+    /// `core::missing_spells`; empty states explain themselves.
+    pub(super) fn render_missing_spells_content(app_core: &AppCore, ui: &mut egui::Ui) {
+        let watched = &app_core.game_state.character.watched_spells;
+        if watched.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(egui::RichText::new(".spellwatch add <n> to watch").weak());
+            });
+            return;
+        }
+        let missing = crate::core::missing_spells::missing(&app_core.game_state);
+        if missing.is_empty() {
+            ui.centered_and_justified(|ui| {
+                ui.label(
+                    egui::RichText::new("All spells up")
+                        .color(egui::Color32::from_rgb(0x5f, 0x87, 0x5f)),
+                );
+            });
+            return;
+        }
+        let max_height = ui.available_height().max(1.0);
+        egui::ScrollArea::vertical()
+            .id_salt("missing_spells_scroll")
+            .auto_shrink([false, false])
+            .min_scrolled_height(max_height)
+            .max_height(max_height)
+            .show(ui, |ui| {
+                for spell in &missing {
+                    ui.label(
+                        RichText::new(format!("{} {}", spell.number, spell.name))
+                            .color(egui::Color32::from_rgb(0xd7, 0x87, 0x00)),
+                    );
+                }
+            });
+    }
 }

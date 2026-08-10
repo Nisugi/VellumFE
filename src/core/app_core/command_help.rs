@@ -164,6 +164,13 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
         entries: &[
             entry!(&["windows"], "", "List all windows"),
             entry!(
+                &["spellwatch"],
+                "[add|rem <n>|[n,n]|all]",
+                "Watch spells for the Missing Spells window; bare lists the watch list",
+                &["The window shows watched spells that are NOT active in ActiveSpells/Buffs.",
+                  ".spellwatch add all snapshots everything currently active."]
+            ),
+            entry!(
                 &["addwindow"],
                 "",
                 "Open widget type picker",

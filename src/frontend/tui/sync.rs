@@ -1329,6 +1329,37 @@ impl TuiFrontend {
     }
 
     /// Sync players widget data from AppCore to players widgets (component-based)
+    /// Sync missing-spells widgets: recompute the watched-but-inactive
+    /// list (cheap - a few hash lookups per watched spell) and let the
+    /// widget's own cache decide whether the display actually changed.
+    pub(crate) fn sync_missing_spells_widgets(&mut self, app_core: &crate::core::AppCore) {
+        let mut computed: Option<(Vec<crate::core::missing_spells::MissingSpell>, usize)> = None;
+        for (name, window) in &app_core.ui_state.windows {
+            if !matches!(window.content, crate::data::WindowContent::MissingSpells) {
+                continue;
+            }
+            let (missing, watched_count) = computed.get_or_insert_with(|| {
+                (
+                    crate::core::missing_spells::missing(&app_core.game_state),
+                    app_core.game_state.character.watched_spells.len(),
+                )
+            });
+            let widget = self
+                .widget_manager
+                .missing_spells_widgets
+                .entry(name.clone())
+                .or_insert_with(|| {
+                    // Layout title wins (matches the other list widgets).
+                    let title = window_def_map(&app_core.layout)
+                        .get(name.as_str())
+                        .and_then(|def| def.base().title.clone())
+                        .unwrap_or_else(|| "Missing Spells".to_string());
+                    missing_spells::MissingSpells::new(&title)
+                });
+            widget.update_from_state(missing, *watched_count);
+        }
+    }
+
     pub(crate) fn sync_players_widgets(
         &mut self,
         app_core: &crate::core::AppCore,

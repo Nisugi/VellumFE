@@ -57,6 +57,9 @@ pub enum WidgetType {
     /// A resident game dialog panel (combat, befriend, ...) rendered from
     /// the accumulated dialog store by its id.
     DialogPanel,
+    /// Watched spells currently NOT active in ActiveSpells/Buffs.
+    /// Reads from GameState (character.watched_spells + effects).
+    MissingSpells,
 }
 
 impl WidgetType {
@@ -88,6 +91,7 @@ impl WidgetType {
             "active_effects" => Some(WidgetType::ActiveEffects),
             "targets" => Some(WidgetType::Targets), // Component-based (default)
             "players" => Some(WidgetType::Players),
+            "missingspells" => Some(WidgetType::MissingSpells),
             "items" => Some(WidgetType::Items),
             "spells" => Some(WidgetType::Spells),
             "perception" => Some(WidgetType::Perception),
@@ -181,6 +185,9 @@ pub enum WindowContent {
     /// Component-based items list (room objs, non-creatures)
     /// Reads from GameState.room_objects
     Items,
+    /// Missing-spells watchlist (watched spells not currently active).
+    /// Reads from GameState.character.watched_spells + effects.
+    MissingSpells,
     Dashboard {
         indicators: Vec<(String, u8)>, // (id, value) pairs
     },

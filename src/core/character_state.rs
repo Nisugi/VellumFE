@@ -123,6 +123,11 @@ pub struct CharacterState {
     /// value = permanent. Parsed from `urchin status`. Gates urchin travel.
     #[serde(default)]
     pub urchins_expire: i64,
+    /// Spell numbers watched by the missing-spells window (`.spellwatch`).
+    /// Kept in add order; persisted per-character with the rest of this
+    /// struct through the session cache.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watched_spells: Vec<u16>,
     /// True while inside a PROFILE block (between PERSONAL INFORMATION and the
     /// house line) — the house line is only trusted then, matching Lich's
     /// State::Profile gate. Runtime-only.
@@ -134,6 +139,46 @@ pub struct CharacterState {
 }
 
 impl CharacterState {
+    /// Add spell numbers to the watch list (dedup, keep add order).
+    /// Returns how many were newly added; bumps `generation` on change so
+    /// the session-cache persistence picks it up.
+    pub fn watch_spells(&mut self, numbers: &[u16]) -> usize {
+        let mut added = 0;
+        for &number in numbers {
+            if !self.watched_spells.contains(&number) {
+                self.watched_spells.push(number);
+                added += 1;
+            }
+        }
+        if added > 0 {
+            self.generation += 1;
+        }
+        added
+    }
+
+    /// Remove spell numbers from the watch list. Returns how many were
+    /// actually removed; bumps `generation` on change.
+    pub fn unwatch_spells(&mut self, numbers: &[u16]) -> usize {
+        let before = self.watched_spells.len();
+        self.watched_spells
+            .retain(|number| !numbers.contains(number));
+        let removed = before - self.watched_spells.len();
+        if removed > 0 {
+            self.generation += 1;
+        }
+        removed
+    }
+
+    /// Clear the whole watch list. Returns how many entries were dropped.
+    pub fn unwatch_all_spells(&mut self) -> usize {
+        let removed = self.watched_spells.len();
+        if removed > 0 {
+            self.watched_spells.clear();
+            self.generation += 1;
+        }
+        removed
+    }
+
     /// Feed one game line. Returns true if it changed state.
     pub fn parse_line(&mut self, line: &str) -> bool {
         let before = self.generation;

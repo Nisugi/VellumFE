@@ -156,6 +156,10 @@ pub struct GameState {
     /// Character state parsed from the feed (society status/rank, profession,
     /// CHE/House, citizenship) — gates seeking, guild, and locker travel.
     /// Populated by SOCIETY/INFO/PROFILE/CITIZENSHIP output. See
+    /// Spell number -> display name, remembered from every ActiveSpells/
+    /// Buffs feed entry this session. Lets the missing-spells window name
+    /// effects the static spell table doesn't know once they drop.
+    pub spell_names_seen: std::collections::HashMap<u16, String>,
     /// `core::character_state`.
     pub character: crate::core::character_state::CharacterState,
 
@@ -966,6 +970,7 @@ impl GameState {
             room_meta: RoomMetaState::default(),
             objects: crate::core::game_objects::GameObjects::default(),
             move_feedback: std::collections::VecDeque::new(),
+            spell_names_seen: std::collections::HashMap::new(),
             character: crate::core::character_state::CharacterState::default(),
             silver: None,
             day_passes: crate::core::day_pass::DayPassCache::default(),

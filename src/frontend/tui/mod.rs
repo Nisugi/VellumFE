@@ -39,6 +39,7 @@ pub mod menu_builders;
 mod minivitals;
 mod perception;
 mod performance_stats;
+mod missing_spells;
 mod players;
 mod popup_menu;
 mod progress_bar;

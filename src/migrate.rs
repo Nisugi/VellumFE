@@ -787,6 +787,7 @@ impl BaseMut for WindowDef {
             WindowDef::Quickbar { base, .. } => Some(base),
             WindowDef::Hotkeybar { base, .. } => Some(base),
             WindowDef::Spells { base, .. } => Some(base),
+            WindowDef::MissingSpells { base, .. } => Some(base),
             WindowDef::Perception { base, .. } => Some(base),
             WindowDef::Experience { base, .. } => Some(base),
             WindowDef::GS4Experience { base, .. } => Some(base),

@@ -115,6 +115,7 @@ impl Frontend for TuiFrontend {
         self.sync_indicator_widgets(app_core, &theme);
         self.sync_targets_widgets(app_core, &theme);  // New component-based
         self.sync_players_widgets(app_core, &theme);
+        self.sync_missing_spells_widgets(app_core);
         self.sync_items_widgets(app_core, &theme);
         self.sync_container_widgets(app_core, &theme);
         self.sync_dashboard_widgets(app_core, &theme);
@@ -145,6 +146,8 @@ impl Frontend for TuiFrontend {
         let mut indicator_widgets = std::mem::take(&mut self.widget_manager.indicator_widgets);
         let mut targets_widgets = std::mem::take(&mut self.widget_manager.targets_widgets);
         let mut players_widgets = std::mem::take(&mut self.widget_manager.players_widgets);
+        let mut missing_spells_widgets =
+            std::mem::take(&mut self.widget_manager.missing_spells_widgets);
         let mut items_widgets = std::mem::take(&mut self.widget_manager.items_widgets);
         let mut container_widgets = std::mem::take(&mut self.widget_manager.container_widgets);
         let mut dashboard_widgets = std::mem::take(&mut self.widget_manager.dashboard_widgets);
@@ -406,6 +409,11 @@ impl Frontend for TuiFrontend {
                         // Use the Players widget
                         if let Some(players_widget) = players_widgets.get_mut(name) {
                             players_widget.render(area, f.buffer_mut());
+                        }
+                    }
+                    WindowContent::MissingSpells => {
+                        if let Some(widget) = missing_spells_widgets.get_mut(name) {
+                            widget.render(area, f.buffer_mut());
                         }
                     }
                     WindowContent::Items => {
@@ -729,6 +737,7 @@ impl Frontend for TuiFrontend {
         self.widget_manager.indicator_widgets = indicator_widgets;
         self.widget_manager.targets_widgets = targets_widgets;
         self.widget_manager.players_widgets = players_widgets;
+        self.widget_manager.missing_spells_widgets = missing_spells_widgets;
         self.widget_manager.items_widgets = items_widgets;
         self.widget_manager.container_widgets = container_widgets;
         self.widget_manager.dashboard_widgets = dashboard_widgets;
