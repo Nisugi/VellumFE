@@ -7,7 +7,7 @@ impl VellumGuiApp {
     /// Mini map: follows the current room (auto-centered, auto-switching
     /// between the outdoor sheet and the interior group the character is
     /// in); clicking a room walks there via `;go2`.
-    pub(in crate::frontend::gui::app) fn render_map_content(
+    pub(super) fn render_map_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         map_data: &crate::data::MapData,
@@ -186,7 +186,7 @@ impl VellumGuiApp {
         })
     }
 
-    pub(in crate::frontend::gui::app) fn render_compass_content(
+    pub(super) fn render_compass_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         compass_data: &crate::data::CompassData,

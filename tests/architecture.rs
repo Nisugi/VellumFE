@@ -164,12 +164,12 @@ fn split_parents_stay_facades() {
     // submodule instead of raising the cap.
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let caps: &[(&str, usize)] = &[
-        ("src/frontend/gui/app.rs", 4800),
-        ("src/core/app_core/state.rs", 3600),
-        ("src/frontend/tui/window_editor.rs", 2100),
-        ("src/core/messages.rs", 3400),
-        ("src/frontend/gui/app/widgets.rs", 1200),
-        ("src/parser.rs", 3600),
+        ("src/frontend/gui/app.rs", 3600),
+        ("src/core/app_core/state.rs", 2100),
+        ("src/frontend/tui/window_editor.rs", 1700),
+        ("src/core/messages.rs", 800),
+        ("src/frontend/gui/app/widgets.rs", 700),
+        ("src/parser.rs", 1100),
     ];
     let mut violations = Vec::new();
     for (rel, cap) in caps {

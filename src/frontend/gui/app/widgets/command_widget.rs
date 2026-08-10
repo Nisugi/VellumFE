@@ -9,7 +9,7 @@ impl VellumGuiApp {
     /// the anchor; `extend` keeps the anchor (Shift-selection). Text ops are
     /// pure string surgery so tests can drive them without an egui frame;
     /// only Copy touches the Context (clipboard out).
-    pub(in crate::frontend::gui::app) fn apply_command_edit_op(
+    pub(super) fn apply_command_edit_op(
         ctx: &egui::Context,
         text: &mut String,
         range: &mut (usize, usize),

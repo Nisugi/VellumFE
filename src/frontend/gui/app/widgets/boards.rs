@@ -4,7 +4,7 @@
 use super::*;
 
 impl VellumGuiApp {
-    pub(in crate::frontend::gui::app) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
+    pub(super) fn render_performance_content(app_core: &AppCore, ui: &mut egui::Ui) {
         use crate::performance::{PerfFrontend, PerfMetric, PerfSeverity, PERF_METRICS};
 
         let cfg = app_core.perf_overlay_data(true);
@@ -99,7 +99,7 @@ impl VellumGuiApp {
         ));
     }
 
-    pub(in crate::frontend::gui::app) fn render_dashboard_content(
+    pub(super) fn render_dashboard_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         indicators: &[(String, u8)],
@@ -327,7 +327,7 @@ impl VellumGuiApp {
     /// the players and exits lines follow, links clickable throughout.
     /// Every section takes its natural height, so a tall enough window
     /// shows everything without scrolling.
-    pub(in crate::frontend::gui::app) fn render_room_content(
+    pub(super) fn render_room_content(
         ui: &mut egui::Ui,
         room: &crate::data::RoomContent,
         show: (bool, bool, bool, bool), // desc, objs, players, exits
@@ -424,7 +424,7 @@ impl VellumGuiApp {
     /// bar whose fill tracks remaining duration, with the name overlaid on
     /// the left and the time on the right. Row height and text size are
     /// user-adjustable (Settings → GUI, per-window text size).
-    pub(in crate::frontend::gui::app) fn render_active_effects_content(
+    pub(super) fn render_active_effects_content(
         ui: &mut egui::Ui,
         effects_content: &crate::data::ActiveEffectsContent,
         settings: WidgetRenderSettings,
@@ -585,7 +585,7 @@ impl VellumGuiApp {
             });
     }
 
-    pub(in crate::frontend::gui::app) fn format_target_line(
+    pub(super) fn format_target_line(
         creature: &crate::core::state::Creature,
         target_cfg: &TargetListConfig,
         status_position: &str,
@@ -613,7 +613,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn format_player_line(
+    pub(super) fn format_player_line(
         player: &crate::core::state::Player,
         target_cfg: &TargetListConfig,
     ) -> String {
@@ -646,7 +646,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn render_targets_content(
+    pub(super) fn render_targets_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         window_name: &str,
@@ -744,7 +744,7 @@ impl VellumGuiApp {
         clicked_link
     }
 
-    pub(in crate::frontend::gui::app) fn render_players_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+    pub(super) fn render_players_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
         let mut clicked_link = None;
         let target_cfg = &app_core.config.target_list;
 

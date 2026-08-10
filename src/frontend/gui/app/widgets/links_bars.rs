@@ -191,7 +191,7 @@ impl VellumGuiApp {
         clicked
     }
 
-    pub(in crate::frontend::gui::app) fn render_quickbar_content(
+    pub(super) fn render_quickbar_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
     ) -> Option<GuiLinkClick> {
@@ -283,7 +283,7 @@ impl VellumGuiApp {
         clicked
     }
 
-    pub(in crate::frontend::gui::app) fn render_hotkeybar_content(
+    pub(super) fn render_hotkeybar_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         window_name: &str,

@@ -10,7 +10,7 @@ impl VellumGuiApp {
     /// shared `DEFAULT_INJURY_PALETTE` (single source of truth with the TUI and
     /// web). Used when no per-widget config override applies (e.g. the
     /// other-player injuries popup).
-    pub(in crate::frontend::gui::app) fn default_injury_palette() -> [Color32; 7] {
+    pub(super) fn default_injury_palette() -> [Color32; 7] {
         std::array::from_fn(|i| {
             parse_hex_color(crate::config::DEFAULT_INJURY_PALETTE[i])
                 .unwrap_or(Color32::GRAY)
@@ -21,7 +21,7 @@ impl VellumGuiApp {
     /// over the shared defaults) into egui colors. The GUI previously ignored
     /// these config fields entirely, so a user's injury*_color/scar*_color
     /// changed the TUI but not the GUI.
-    pub(in crate::frontend::gui::app) fn resolved_injury_palette(
+    pub(super) fn resolved_injury_palette(
         data: &crate::config::InjuryDollWidgetData,
     ) -> [Color32; 7] {
         let hex = data.resolved_colors();
@@ -31,7 +31,7 @@ impl VellumGuiApp {
     }
 
     /// Look up the fill color for a severity level in a resolved palette.
-    pub(in crate::frontend::gui::app) fn injury_level_color(palette: &[Color32; 7], level: u8) -> Color32 {
+    pub(super) fn injury_level_color(palette: &[Color32; 7], level: u8) -> Color32 {
         palette[level.min(6) as usize]
     }
 
@@ -64,7 +64,7 @@ impl VellumGuiApp {
     /// Another player's doll must pass `None` and an empty set to
     /// `render_injury_doll` instead — these conditions read self state,
     /// so your prone flag must never swap or hide someone else's doll.
-    pub(in crate::frontend::gui::app) fn resolve_doll_render(
+    pub(super) fn resolve_doll_render(
         app_core: &AppCore,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
     ) -> (Option<usize>, std::collections::HashSet<String>) {
@@ -86,7 +86,7 @@ impl VellumGuiApp {
     /// part and severity. Back and nervous system have no spot on a front
     /// silhouette, so they render as "B"/"N" letters in the bottom corners
     /// (Wrayth-style). Scales with the window and needs no image assets.
-    pub(in crate::frontend::gui::app) fn render_injury_doll(
+    pub(super) fn render_injury_doll(
         ui: &mut egui::Ui,
         injuries: &HashMap<String, u8>,
         skin_art: Option<&crate::frontend::gui::skin::SkinWidgetArt>,
@@ -321,7 +321,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn render_indicator_content(
+    pub(super) fn render_indicator_content(
         ui: &mut egui::Ui,
         label: &str,
         indicator: &crate::data::IndicatorData,

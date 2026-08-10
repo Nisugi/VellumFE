@@ -5,7 +5,7 @@
 use super::*;
 
 impl VellumGuiApp {
-    pub(in crate::frontend::gui::app) fn render_hand_content(
+    pub(super) fn render_hand_content(
         ui: &mut egui::Ui,
         hand_prefix: &str,
         item: &Option<String>,
@@ -190,7 +190,7 @@ impl VellumGuiApp {
         out
     }
 
-    pub(in crate::frontend::gui::app) fn render_gs4_experience_content(
+    pub(super) fn render_gs4_experience_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         window_name: &str,
@@ -249,7 +249,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn render_dr_experience_content(app_core: &AppCore, ui: &mut egui::Ui) {
+    pub(super) fn render_dr_experience_content(app_core: &AppCore, ui: &mut egui::Ui) {
         let fields = app_core.game_state.dr_experience.fields_with_values();
         if fields.is_empty() {
             ui.weak("No experience data yet.");
@@ -269,7 +269,7 @@ impl VellumGuiApp {
             });
     }
 
-    pub(in crate::frontend::gui::app) fn render_encumbrance_content(
+    pub(super) fn render_encumbrance_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         window_name: &str,
@@ -299,7 +299,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn render_betrayer_content(
+    pub(super) fn render_betrayer_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         settings: &WidgetRenderSettings,
@@ -336,7 +336,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn render_perception_content(
+    pub(super) fn render_perception_content(
         ui: &mut egui::Ui,
         perception: &crate::data::PerceptionData,
     ) -> Option<GuiLinkClick> {
@@ -376,7 +376,7 @@ impl VellumGuiApp {
         clicked_link
     }
 
-    pub(in crate::frontend::gui::app) fn render_items_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
+    pub(super) fn render_items_content(app_core: &AppCore, ui: &mut egui::Ui) -> Option<GuiLinkClick> {
         let objects = &app_core.game_state.room_objects;
         if objects.is_empty() {
             ui.weak("No objects here.");
@@ -426,7 +426,7 @@ impl VellumGuiApp {
     /// command (the game echoes back new state); the spinbox edits in
     /// place and its value feeds `%id%` in sibling commands. Commands are
     /// queued on ui_state.pending_panel_commands (immutable AppCore here).
-    pub(in crate::frontend::gui::app) fn render_dialog_panel_content(
+    pub(super) fn render_dialog_panel_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         dialog_id: &str,
@@ -1039,7 +1039,7 @@ impl VellumGuiApp {
         picked
     }
 
-    pub(in crate::frontend::gui::app) fn render_container_content(
+    pub(super) fn render_container_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         container_title: &str,

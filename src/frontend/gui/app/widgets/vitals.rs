@@ -53,7 +53,7 @@ impl VellumGuiApp {
         bar
     }
 
-    pub(in crate::frontend::gui::app) fn progress_fraction(value: u32, max: u32) -> f32 {
+    pub(super) fn progress_fraction(value: u32, max: u32) -> f32 {
         if max == 0 {
             0.0
         } else {
@@ -61,7 +61,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn status_abbreviation(status: &str, target_cfg: &TargetListConfig) -> String {
+    pub(super) fn status_abbreviation(status: &str, target_cfg: &TargetListConfig) -> String {
         let status_lower = status.to_ascii_lowercase();
         target_cfg
             .status_abbrev
@@ -76,11 +76,11 @@ impl VellumGuiApp {
             })
     }
 
-    pub(in crate::frontend::gui::app) fn normalize_entity_id(id: &str) -> String {
+    pub(super) fn normalize_entity_id(id: &str) -> String {
         id.trim().trim_start_matches('#').to_string()
     }
 
-    pub(in crate::frontend::gui::app) fn direct_command_link(command: String) -> LinkData {
+    pub(super) fn direct_command_link(command: String) -> LinkData {
         LinkData {
             exist_id: "_direct_".to_string(),
             noun: command,
@@ -89,7 +89,7 @@ impl VellumGuiApp {
         }
     }
 
-    pub(in crate::frontend::gui::app) fn gui_link_click_from_response(
+    pub(super) fn gui_link_click_from_response(
         response: &egui::Response,
         ui: &egui::Ui,
         link_data: LinkData,
@@ -144,7 +144,7 @@ impl VellumGuiApp {
 
     /// A standalone progress-bar window (stance, individual vital bars).
     /// Data arrives via dialog progressBar updates matched on `progress_id`.
-    pub(in crate::frontend::gui::app) fn render_single_progress_content(
+    pub(super) fn render_single_progress_content(
         ui: &mut egui::Ui,
         data: &crate::data::ProgressData,
         settings: &WidgetRenderSettings,
@@ -176,7 +176,7 @@ impl VellumGuiApp {
         Self::overlay_progress_frame(ui, resp.rect, settings.skin_art.as_deref());
     }
 
-    pub(in crate::frontend::gui::app) fn render_vitals_content(
+    pub(super) fn render_vitals_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         settings: &WidgetRenderSettings,
@@ -372,7 +372,7 @@ impl VellumGuiApp {
     /// to ~1s of floor bias on top of the server's whole-second RT/CT
     /// timestamp. Ceiling means a displayed "1" persists until the timer
     /// actually clears. Matches the TUI countdown widget exactly.
-    pub(in crate::frontend::gui::app) fn countdown_remaining_seconds(
+    pub(super) fn countdown_remaining_seconds(
         end_time: i64,
         server_time_offset: i64,
         local_unix_time_ms: i64,
@@ -401,7 +401,7 @@ impl VellumGuiApp {
         (end_time as f64 - (local_unix_time_f + server_time_offset as f64)).max(0.0) as f32
     }
 
-    pub(in crate::frontend::gui::app) fn render_countdown_content(
+    pub(super) fn render_countdown_content(
         app_core: &AppCore,
         ui: &mut egui::Ui,
         countdown: &crate::data::CountdownData,

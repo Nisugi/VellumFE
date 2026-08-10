@@ -14,7 +14,7 @@ impl VellumGuiApp {
             .animate_value_with_time(ui.id().with(id_salt), target, BAR_ANIMATION_SECONDS)
     }
 
-    pub(in crate::frontend::gui::app) fn segment_to_rich_text(
+    pub(super) fn segment_to_rich_text(
         segment: &TextSegment,
         visuals: &egui::Visuals,
         is_link: bool,
@@ -73,7 +73,7 @@ impl VellumGuiApp {
         rich
     }
 
-    pub(in crate::frontend::gui::app) fn segment_has_clickable_link(segment: &TextSegment) -> bool {
+    pub(super) fn segment_has_clickable_link(segment: &TextSegment) -> bool {
         // Parser may mark creature links as Monsterbold when links are wrapped in pushBold/popBold.
         // `link_data` is the reliable indicator of actual clickability.
         segment.link_data.is_some()
@@ -111,7 +111,7 @@ impl VellumGuiApp {
     /// The active in-window search query (lowercased), if searching.
     /// ASCII lowercasing keeps byte offsets identical to the source text so
     /// match runs can slice it safely.
-    pub(in crate::frontend::gui::app) fn active_search_query(app_core: &AppCore) -> Option<String> {
+    pub(super) fn active_search_query(app_core: &AppCore) -> Option<String> {
         let query = app_core.ui_state.search_input.trim();
         if app_core.ui_state.input_mode == InputMode::Search && !query.is_empty() {
             Some(query.to_ascii_lowercase())
@@ -121,7 +121,7 @@ impl VellumGuiApp {
     }
 
     /// Split text into (piece, is_match) runs for an ascii-lowercased query.
-    pub(in crate::frontend::gui::app) fn split_search_runs<'t>(text: &'t str, query_lower: &str) -> Vec<(&'t str, bool)> {
+    pub(super) fn split_search_runs<'t>(text: &'t str, query_lower: &str) -> Vec<(&'t str, bool)> {
         let mut runs = Vec::new();
         if query_lower.is_empty() {
             runs.push((text, false));
@@ -325,7 +325,7 @@ impl VellumGuiApp {
         })
     }
 
-    pub(in crate::frontend::gui::app) fn render_styled_line(
+    pub(super) fn render_styled_line(
         ui: &mut egui::Ui,
         line: &StyledLine,
         visuals: &egui::Visuals,
@@ -826,7 +826,7 @@ impl VellumGuiApp {
     /// Pick a readable text color for text painted over `background`.
     /// Keeps `preferred` when it has enough contrast; otherwise falls back
     /// to near-black or near-white, whichever contrasts with the background.
-    pub(in crate::frontend::gui::app) fn readable_text_color(
+    pub(super) fn readable_text_color(
         preferred: Color32,
         background: Color32,
         auto_contrast: bool,
@@ -958,7 +958,7 @@ impl VellumGuiApp {
         debug_assert_eq!(cache.heights.len(), rendered_count);
     }
 
-    pub(in crate::frontend::gui::app) fn render_text_content(
+    pub(super) fn render_text_content(
         ui: &mut egui::Ui,
         content: &TextContent,
         scroll_id: &str,
