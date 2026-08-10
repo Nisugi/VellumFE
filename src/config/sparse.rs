@@ -52,20 +52,42 @@ pub(super) fn layer_config(global: Option<&str>, profile: Option<&str>) -> Resul
 
 /// The keys of `config` that differ from `base`, as a nested TOML table.
 /// Identical subtrees vanish entirely. Returns None when nothing differs.
-fn diff_value(config: &toml::Value, base: &toml::Value) -> Option<toml::Value> {
+///
+/// A registered key the base states and `config` omits is a cleared Option
+/// (`.setskin none`). TOML has no null, so it is written as an empty
+/// string — the encoding the settings registry already documents ("empty =
+/// ...") and that readers like `uipack` already treat as unset. Staying
+/// silent instead would re-inherit the base's value on the next load.
+fn diff_value(config: &toml::Value, base: &toml::Value, path: &str) -> Option<toml::Value> {
     match (config, base) {
         (toml::Value::Table(cfg_tbl), toml::Value::Table(base_tbl)) => {
             let mut out = toml::value::Table::new();
+            let dotted = |key: &str| {
+                if path.is_empty() {
+                    key.to_string()
+                } else {
+                    format!("{}.{}", path, key)
+                }
+            };
             for (key, cfg_child) in cfg_tbl {
                 match base_tbl.get(key) {
                     Some(base_child) => {
-                        if let Some(changed) = diff_value(cfg_child, base_child) {
+                        if let Some(changed) = diff_value(cfg_child, base_child, &dotted(key)) {
                             out.insert(key.clone(), changed);
                         }
                     }
                     None => {
                         out.insert(key.clone(), cfg_child.clone());
                     }
+                }
+            }
+            // Cleared Options: stated by the base, omitted by config.
+            for key in base_tbl.keys() {
+                if cfg_tbl.contains_key(key) {
+                    continue;
+                }
+                if super::registry::find(&dotted(key)).is_some() {
+                    out.insert(key.clone(), toml::Value::String(String::new()));
                 }
             }
             if out.is_empty() {
@@ -83,12 +105,34 @@ fn diff_value(config: &toml::Value, base: &toml::Value) -> Option<toml::Value> {
 /// (they are no-op overrides), recursing into tables. Keys the Config
 /// serialization doesn't know about are left untouched — hand-authored
 /// extras survive.
-fn prune_inherited(doc: &mut toml_edit::Table, config: &toml::Value, base: &toml::Value) {
+///
+/// `path` is the dotted prefix of the table being pruned, so a key absent
+/// from `config` can be checked against the settings registry. A `None`
+/// Option is omitted from `config` entirely, which used to be
+/// indistinguishable from a hand-authored key: clearing an Option
+/// (`.setskin none` -> active_skin = None) left the stale line in the file
+/// and the next load resurrected the old value.
+fn prune_inherited(
+    doc: &mut toml_edit::Table,
+    config: &toml::Value,
+    base: &toml::Value,
+    path: &str,
+) {
     let empty = toml::Value::Table(toml::value::Table::new());
     let keys: Vec<String> = doc.iter().map(|(key, _)| key.to_string()).collect();
     for key in keys {
+        let dotted = if path.is_empty() {
+            key.clone()
+        } else {
+            format!("{}.{}", path, key)
+        };
         let Some(cfg_child) = config.get(key.as_str()) else {
-            continue; // unknown key: not ours to manage
+            // A registered key that Config omitted is a cleared Option.
+            // The line must go, or it outlives the value it recorded.
+            if super::registry::find(&dotted).is_some() {
+                doc.remove(&key);
+            }
+            continue; // otherwise unknown: not ours to manage
         };
         let base_child = base.get(key.as_str());
         if base_child == Some(cfg_child) {
@@ -97,7 +141,7 @@ fn prune_inherited(doc: &mut toml_edit::Table, config: &toml::Value, base: &toml
         }
         if cfg_child.is_table() {
             if let Some(child_tbl) = doc.get_mut(&key).and_then(|item| item.as_table_mut()) {
-                prune_inherited(child_tbl, cfg_child, base_child.unwrap_or(&empty));
+                prune_inherited(child_tbl, cfg_child, base_child.unwrap_or(&empty), &dotted);
                 if child_tbl.is_empty() {
                     doc.remove(&key);
                 }
@@ -138,9 +182,9 @@ pub(super) fn sparse_config_toml(existing: &str, config: &Config, base: &Config)
         .parse()
         .context("Existing config file did not parse as TOML")?;
 
-    prune_inherited(doc.as_table_mut(), &cfg_value, &base_value);
+    prune_inherited(doc.as_table_mut(), &cfg_value, &base_value, "");
 
-    if let Some(diff) = diff_value(&cfg_value, &base_value) {
+    if let Some(diff) = diff_value(&cfg_value, &base_value, "") {
         let rendered = toml::to_string(&diff).context("Diff must serialize")?;
         let diff_doc: DocumentMut = rendered
             .parse()

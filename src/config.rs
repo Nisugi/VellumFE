@@ -333,14 +333,19 @@ pub struct Config {
     pub menu_keybinds: MenuKeybinds, // Keybinds for menu system (browsers, forms, editors)
     #[serde(default = "default_theme_name")] // Default to "dark" theme
     pub active_theme: String, // Currently active theme name
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // Empty string reads as None: a profile clearing a skin the global layer
+    // sets must be able to STATE "no skin" (TOML has no null), or the sparse
+    // save writes nothing and the next load re-inherits the global value.
+    #[serde(default, deserialize_with = "empty_string_as_none", skip_serializing_if = "Option::is_none")]
     pub active_skin: Option<String>, // Active GUI skin (dir name under ~/.vellum-fe/global/skins/); None = plain theme colors. In the GUI this mirrors ui_settings.active_skin in the layout file (web doll + non-GUI frontends read it here)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "empty_string_as_none", skip_serializing_if = "Option::is_none")]
     pub doll_image: Option<String>, // Injury doll image override (pool-relative, "dolls/x.png"); mirrors ui_settings.doll_image like active_skin (web doll endpoint reads it here)
     #[serde(default)] // Use defaults for stream routing
     pub streams: StreamsConfig, // Stream routing configuration (drop list, fallback)
     #[serde(default)] // `[sorter]` — categorized container looks (.sorter)
     pub sorter: SorterConfig,
+    #[serde(default)] // `[room_images]` — room art by uid (.roomimages)
+    pub room_images: RoomImagesSettings,
     #[serde(default, rename = "highlights")] // [highlights] section in config.toml
     pub highlight_settings: HighlightsConfig, // Highlight system toggles (sounds, replace, redirect, coloring)
     #[serde(default)]
@@ -357,6 +362,17 @@ pub struct Config {
     pub macros_local: MacrosConfig,
 }
 
+
+/// Deserialize an optional string, treating "" as None. The sparse save
+/// writes an empty string to record a deliberately cleared Option, since
+/// TOML cannot express null and an omitted key means "inherit".
+fn empty_string_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    Ok(Option::<String>::deserialize(deserializer)?.filter(|s| !s.is_empty()))
+}
 
 fn default_title_position() -> String {
     "top-left".to_string()
