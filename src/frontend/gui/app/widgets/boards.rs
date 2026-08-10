@@ -514,8 +514,12 @@ impl VellumGuiApp {
         let Some(natural) = super::custom_emoji_render::inline_image_size(ctx, name) else {
             return;
         };
-        // Fit inside the window with a margin, never magnifying beyond 1:1.
-        let bounds = ui.clip_rect();
+        // Fit inside the WHOLE application viewport, not the hosting
+        // window — a small room window must not cap the preview (live
+        // feedback, 2026-08-10). The paint already goes to a foreground
+        // layer, so only this size/center math was window-bound. Still
+        // never magnifies beyond the art's own 1:1.
+        let bounds = ctx.content_rect();
         let avail = (bounds.size() * 0.9).max(egui::vec2(1.0, 1.0));
         let scale = (avail.x / natural.x)
             .min(avail.y / natural.y)
