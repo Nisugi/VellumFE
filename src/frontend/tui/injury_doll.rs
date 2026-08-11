@@ -15,13 +15,16 @@ use super::colors::parse_color_to_ratatui;
 use super::crossterm_bridge;
 
 /// Injury doll widget showing body part injuries/scars
+///
+/// Three parts have no place on the figure, so they ride as two-letter
+/// labels down the right side: neck, back, then nervous system.
 /// Layout:
 ///  👁   👁
-///     0    ns
+///     0    nk
 ///    /|\
-///   o | o  nk
+///   o | o  bk
 ///    / \
-///   o   o  bk
+///   o   o  ns
 pub struct InjuryDoll {
     label: String,
     // Map body part name to injury level (0=none, 1-3=injury, 4-6=scar)
