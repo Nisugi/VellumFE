@@ -1,252 +1,285 @@
-# Mobile Web
+# Browser Client
 
-A touch-first client that runs in any browser, served by an embedded web
-server. It works two ways:
+> Put a second screen beside your PC with nothing to install — your phone,
+> tablet, or the spare laptop shows the same character you're already playing.
 
-- **Second screen for a desktop session** — the TUI or GUI keeps running
-  on your PC and the phone joins the *same* character (a sidecar).
-- **The whole interface** — [headless mode](#headless-mode) runs just the
-  core plus the web server; you log in and play entirely from the
-  browser. (The [Android](./android.md) and [iOS](./ios.md) apps package
-  exactly this into a phone app.)
+## What it's for
 
-## Enabling (Desktop Sidecar)
+You're hunting at your desk and the good text is scrolling past the window you
+can't see. Or you want to keep an eye on thoughts and your spell timers while
+your hands are busy elsewhere in the house. VellumFE ships a small web server
+inside the client: turn it on, open a browser on any device on your network, and
+you get a touch-first view of the *same* session — same character, same streams,
+same links to click.
 
-In `config.toml`:
+Two shapes, both first-class:
 
-```toml
-[web]
-enabled = true
-port = 8040
-bind = "0.0.0.0"   # required for phones on your LAN (default 127.0.0.1)
-pinned = false     # see "Multiple characters" below
-```
+- **A second screen for a running session (sidecar).** Your TUI or GUI keeps
+  running on the PC; the browser joins that same character. This is the shape
+  this page leads with.
+- **The whole client in the browser.** Run VellumFE with no local UI at all and
+  the browser is the only screen — [Headless mode](#headless-mode) below.
 
-Or one-off from the CLI: `--web-port 8040` (this enables the server but
-does **not** change `bind` — set that in config to reach it from a phone).
+If you want the client living on your phone rather than served from your PC, the
+[Android](./android.md) and [iOS](./ios.md) apps do that job instead. Neither
+route is the lesser one — the app plays from anywhere, the browser sits beside
+your PC.
 
-## Pairing Your Phone
+<figure class="shot" data-shot="mobile/web-sidecar-second-screen">
+  <div class="shot-ph">📷 screenshot pending</div>
+  <figcaption>A phone browser showing the story pane, stream chips, and vitals strip beside a desktop GUI session running the same character.</figcaption>
+</figure>
 
-Access requires a pairing token. In-game:
+## Set it up
 
-```
-.webinfo
-```
+{{#tabs global="frontend"}}
+{{#tab name="Desktop GUI"}}
 
-This prints the session URL (with the token included) and opens a QR code
-in your browser — scan it with the phone. One pairing covers all your
-characters; the phone remembers the token, so this is a one-time step per
-device. Unpaired connections are refused, and repeated bad attempts are
-locked out temporarily.
+Serve the session from the connection you launch it with:
 
-> **Security**: pairing keeps strangers out, but the traffic is plain
-> HTTP on your LAN. For off-LAN play use Tailscale/WireGuard — never
-> expose the port to the open internet.
+1. In the **VellumFE Launcher**, click **Edit** on the connection (or **➕ New
+   connection**) and open the **Advanced** fold.
+2. Tick **Enable on port** next to **Web dashboard** and set the port — `8040`
+   is a good first choice.
+3. Set **Bind address** to `0.0.0.0`. The hint next to the field says
+   **0.0.0.0 = allow LAN devices**; the default `127.0.0.1` serves this PC only,
+   so a phone will never reach it.
+4. **Save**, then **Launch** the connection.
+5. In the game input, type `.webinfo`. It prints
+   `Web session URL (browser): http://192.168.1.50:8040/#token=…` and opens a
+   pairing page with QR codes in your default browser.
+6. Scan the **browser** QR with the phone's camera, or type that URL in.
 
-## The Dashboard
+<figure class="shot" data-shot="gui/web-launcher-advanced-web-dashboard">
+  <div class="shot-ph">📷 screenshot pending</div>
+  <figcaption>The Launcher's <b>Advanced</b> fold with <b>Web dashboard</b> ticked on port 8040 and <b>Bind address</b> set to <code>0.0.0.0</code>.</figcaption>
+</figure>
 
-- `/` is a **dashboard**: one card per running character session, health-
-  checked and auto-refreshing — tap a card to play it.
-- `/play` is the game client itself.
-- "Add to Home Screen" works — the client is a PWA and installs like an app.
+→ **Expected result:** the phone opens the game client already paired, showing
+your character's live text. Your desktop window keeps playing exactly as before —
+this is a mirror, not a handover.
+{{#endtab}}
+{{#tab name="Terminal (TUI)"}}
 
-## Multiple Characters
+The Launcher is an egui window and does not open in a terminal, so set the port
+on the command line or in `config.toml` instead:
 
-Run several VellumFE instances and they share the web setup automatically:
-each instance walks upward from the base port to find a free one, and all
-of them appear on the dashboard. If you want a specific character to have
-a **stable port** (for a direct `/play` bookmark), set `pinned = true` in
-that character's profile config — it then binds exactly that port or
-disables web for the session with a loud warning, never a silent neighbor
-port.
+1. Start with `vellum-fe --port 8000 --character Rysk --web-port 8040`.
+   **`--web-port` enables the server but does not change `bind`** — for a phone
+   to reach it, set `bind = "0.0.0.0"` in the `[web]` block (see the config
+   reference at the bottom of this page).
+2. Once connected, type `.webinfo`.
+3. Read the printed `Web session URL (browser): …` line and open it on the phone,
+   or scan the QR from the pairing page `.webinfo` writes.
 
-## Playing from the Browser
+→ **Expected result:** the phone shows the same character's text live, and your
+terminal session is untouched.
+{{#endtab}}
+{{#tab name="Mobile"}}
 
-- **Read the game** live, with streams as filter chips (unread badges;
-  long-press a chip to reorder — the order follows your character across
-  devices).
-- **Send commands** — identical to typing at the PC, including
-  dot-commands. With a keyboard, Up/Down browse command history; the ↻
-  button resends the last command, and long-pressing it opens a history
-  sheet. The newest history entry matching what you type appears in dim
-  text after the cursor; press Tab to accept it.
-- **Tap links, nouns, and exits** — context menus open in a bottom
-  sheet; a mini **compass** floats over the text pane (exits light up,
-  tap to move). It starts bottom-right; hold it about half a second to
-  lift and drag it anywhere — the spot is remembered per device.
-- **Map** — a map button appears in the top bar once map data is
-  available (`.mapdb download`); it opens a full-screen canvas map that
-  follows your character. Tap a room to walk there with native `.go2`,
-  drag to pan, pinch to zoom. See the [Map](../widgets/map.md) and
-  [Travel](../widgets/travel.md) chapters.
-- **Side drawers** — swipe from the screen edges (or tap the handles):
-  the left drawer is a vertical **macro tray**; the right is a **status
-  panel** with the injury doll, injuries list, hands, character sheet
-  (experience, encumbrance, bounty, society), active effects with live
-  countdowns, and **tap-to-target** — tap a creature to get its
-  attack/look/target menu. When the server's active skin ships injury
-  doll art, the drawer renders that art with wound/scar dots at the same
-  calibrated anchor points as the desktop GUI (see
-  [Skins](../customization/skins.md)); without one it draws the built-in
-  vector doll.
-- **Vitals, hands, RT/CT** — a status strip with live countdowns.
-- **Macro buttons** — the macro rail, menu buttons, and draggable
-  floating buttons from [macros.toml](../configuration/macros-toml.md);
-  create and edit them from the phone with the rail's **+** button. A
-  button's **On tap** behavior can also *type into the input* instead of
-  sending, so word buttons ("go", "second", "door") compose phrases —
-  *Type, then send* submits the composed line in one tap.
-- **Sound alerts** — highlight sounds play in the browser (toggle in
-  Settings; the first sound may need one tap due to autoplay rules).
-- **Reconnect gracefully** — resumes where you left off, with a "missed
-  output" marker for long gaps. Multiple devices can connect at once.
+The phone is the client here, not the host — there is nothing to enable on it.
+You pair it once and it remembers:
 
-## Settings on the Phone
+1. Open the URL from `.webinfo` (or scan its QR). The token rides in the URL's
+   `#token=` fragment, so the browser stores the pairing itself.
+2. Use **Add to Home Screen** — the client is a PWA and installs like an app,
+   opening straight to `/play`.
 
-The gear button (also reachable from the login screen) opens Settings:
+**One pairing covers all your characters on that device.** Unpaired connections
+are refused and repeated bad attempts get locked out for a while.
 
-- **Appearance** — four theme presets (Vellum dark, OLED black, high
-  contrast, parchment), show/hide toggles for every piece of chrome
-  (macro bar, compass, vitals, hands, RT label, effect pills, chips),
-  and opacity sliders for floating buttons, drawers, and bottom sheets.
-  The **Aa** button sets story text from 6 to 24 px. Theme, text size,
-  and chip order **roam with your character** (the profile value wins on
-  connect); the chrome toggles and opacities stay per-device.
-- **Speech** — read incoming lines aloud with the browser's speech
-  synthesis, with per-stream toggles (thoughts on by default). Voice
-  availability depends on the phone; the first utterance may need a tap.
-- **Controller** — pair a gamepad (Backbone, Kishi, Bluetooth Xbox or
-  PlayStation, MFi): the left stick walks the 8 compass directions,
-  the right stick scrolls the story, and the d-pad defaults to
-  `up`/`down`/`out` with left running `.portal`; `look` sits on South.
-  Bind a button to `shift` for a second bank while held. All
-  rebindable here — tap a row, or press the button on the pad to jump
-  to it. The pad also **rumbles** on chosen streams (whispers and
-  deaths by default; toggles in this sheet). Whenever a bottom sheet
-  is open — context menus, tap-to-target — the d-pad navigates it:
-  up/down move, South taps, East closes. Per-device.
+→ **Expected result:** a home-screen icon that opens the game full-screen, with
+no address bar and no re-pairing.
+{{#endtab}}
+{{#endtabs}}
 
-  Hold a button bound to `wheel` (R2 by default) for the **radial
-  command wheel** — the same wheel the desktop GUI shows, defined once
-  in the host's `keybinds.toml`, wedge widths, ring rotation and
-  per-slice aim floors included: aim a slice with the free stick (the
-  one that isn't walking), release to fire it; South opens a folder
-  slice, East backs up a level. `wheel:<name>` opens a named wheel — and `wheel:portals`
-  (R3 by default) is always available, its slices built live from the
-  current room's noun exits (go gate, climb ladder). Buttons can also run
-  client-side **UI actions** instead of game commands: `left_panel` /
-  `right_panel` toggle the drawers, `map` the map overlay, `interact`
-  toggles interact mode, and `effects`, `settings`, `appearance`,
-  `speech`, `controller` open those sheets (which the d-pad then
-  navigates).
+## Common setups
 
-- **Interact mode** — the desktop focus cycle, phone-sized: the ◎
-  button (or a pad button bound to `interact`; Start by default)
-  opens a bar that walks the room's **Creatures / Objects / Players /
-  Exits**. On a pad the **right stick** does the cycling — up/down
-  switch categories, left/right step entities — and **South** selects:
-  the entity's server context menu (the usual bottom sheet, which the
-  d-pad navigates) or walking the exit. Everything else keeps its
-  binds: the left stick still walks, the d-pad still runs its
-  commands, and West/North/East (plus the whole shift bank) fire
-  their macros — with `<target_id>` / `<target_noun>` filled from the
-  focused entity at press time, so `target #<target_id>\rincant 611`
-  on a face button casts at whatever the ring is on. Close the mode
-  with its toggle or the ✕ (walking an exit closes it too). On
-  screen, the bar has category/entity arrows plus **Go**. Focus
-  follows the entity by id, so room churn doesn't steal it.
-- **Sound alerts / login music** — browser playback toggles.
-- **Client settings (saved on host)** — the full desktop settings
-  registry over the wire: every setting, editable at character or global
-  scope, saved on the hosting machine exactly as if edited there.
-- **Highlight editor** — add/edit highlight rules with color pickers, a
-  sound dropdown, and a live preview; fields the form doesn't cover
-  (redirects, squelch, ...) are preserved for desktop editing.
-- **Colors editor** — stream preset and prompt colors with native
-  pickers.
-- **Advanced** — raw TOML editors for highlights and colors (profile or
-  global) with **import file / export** — the practical way to move a
-  desktop config onto the phone.
+### A phone beside the keyboard while you hunt
 
-Edits save to the same config files the desktop uses and apply live.
+1. Launch your hunter in the desktop GUI with **Web dashboard** enabled on
+   `8040` and **Bind address** `0.0.0.0`.
+2. Run `.webinfo` and scan the browser QR.
+3. On the phone, tap the **thoughts** stream chip so the story pane filters to
+   thoughts only.
+4. Swipe in from the right edge to open the **status drawer** and leave it on
+   the **Targets** section.
 
-## Headless Mode
+→ You now watch thoughts and your target list on the phone while the desktop
+window stays on room text and combat. Tapping a creature in the drawer opens its
+attack/look/target menu and the command fires from your PC session.
+
+### Several characters, one dashboard
+
+Launch two or three characters with web enabled. Unpinned instances treat the
+configured port as a *base* and walk upward to the next free one, so no two fight
+over `8040`.
+
+1. Open `http://192.168.1.50:8040/` — the bare root, not `/play`.
+2. The **dashboard** lists one card per running session, health-checked and
+   auto-refreshing.
+3. Tap a card to play that character.
+
+→ Switching characters is one tap, and a character you shut down drops off the
+list on its own. If you want one character to keep a fixed address you can
+bookmark straight to `/play`, set `pinned = true` in that character's profile
+config — it then binds exactly that port or disables web for the session with a
+loud warning, never a silent neighbor port.
+
+## Playing from the browser
+
+- **Read the game live**, with streams as filter chips carrying unread badges.
+  Long-press a chip to reorder them; the order follows your character across
+  devices.
+- **Send commands** exactly as you would at the PC, dot-commands included. With a
+  keyboard attached, Up/Down browse history; the ↻ button resends the last
+  command and long-pressing it opens a history sheet. The newest matching history
+  entry appears dim after the cursor — press Tab to accept it.
+- **Tap links, nouns, and exits.** A direct link fires immediately; a plain noun
+  opens the server's context menu in a bottom sheet. A mini compass floats over
+  the text pane with live exits; hold it about half a second to lift and drag it
+  somewhere else, and the spot is remembered per device.
+- **Side drawers.** Swipe from the left edge for the **macro tray**; from the
+  right for the **status drawer** — **Targets**, **Players**, **Room**, the
+  injury doll, hands, and active effects with live countdowns.
+- **Map.** A map button appears in the top bar once map data exists
+  (`.mapdb download`). Tap a room to walk there with native `.go2`, drag to pan,
+  pinch to zoom. See [Map](../widgets/map.md) and [Travel](../widgets/travel.md).
+- **Reconnect gracefully.** The session resumes where you left off with a
+  "missed output" marker for long gaps, and several devices can be connected at
+  once.
+
+## Settings on the phone
+
+The gear ⚙ opens the settings sheet. What you can author from here:
+
+- **Appearance** — theme presets, show/hide toggles for every piece of chrome,
+  opacity sliders, and the **Aa** button for story text from 6 to 24 px. Theme,
+  text size, and chip order roam with your character; chrome toggles and
+  opacities stay per-device.
+- **Client settings (saved on host)** — the full desktop settings registry over
+  the wire, editable at character or global scope, written to the hosting
+  machine's config exactly as if you had edited it there.
+- **Highlight rules (this profile)** / **(global)** — add and edit rules with
+  color pickers, a sound dropdown, and a live preview.
+- **Colors (this profile)** / **(global)** — stream preset and prompt colors.
+- **Streams (saved on host)**, **Touch wheel (long-press ring)**, **Controller
+  (gamepad)**, **Speech**, and **SSH launcher (cold-start Lich)**.
+- **Advanced** — raw TOML editors for highlights and colors with import/export,
+  the practical way to move a desktop config onto the phone.
+
+> ✅ **The phone's highlight editor does redirects and squelch.** Older
+> documentation said it could not. The rule form has a **Squelch** checkbox and a
+> redirect **Off / redirect only / redirect + copy** selector with a target
+> field, so a phone-authored rule can send matching lines to another window or
+> hide them outright.
+
+What the phone genuinely cannot author: **layout and panel placement, window
+resizing, game keybinds, and macro `hidden_when` conditions.** Those stay on the
+desktop. Everything else on the list above is editable from the phone.
+
+## Headless mode
 
 ```bash
 vellum-fe --frontend headless
 ```
 
-Runs the core and web server with **no local UI** — it prints the ready
-`/play` URL (token included) at startup, and the browser does the rest.
-Give it credentials (`--direct --account ... --character ...`) to
-auto-connect, or give it nothing and it waits at the **browser login
-screen**: enter account/password/character/game, or tap a saved profile
-(shared with the [desktop Launcher](../getting-started/launcher.md)'s
-`launcher.toml`). "Remember this login" saves the password securely.
+This runs the core and the web server with **no local UI at all**. It prints the
+ready `/play` URL (token included) at startup and the browser does the rest.
+Give it credentials (`--direct --account … --character …`) to auto-connect, or
+give it nothing and it waits at the **login screen**.
 
-### Connecting Through Lich
+The login screen is the same overlay the phone apps show. In a **desktop
+browser** it has three tabs:
 
-The login screen has a **play.net / Lich** toggle. The Lich tab attaches
-to a Lich session already running on another machine — so a headless
-host, the Android app, or the iOS app can still play a fully scripted
-character:
+- **`play.net`** (default) — `play.net account`, `password`, `character`, a game
+  selector covering every GemStone IV and DragonRealms world, and **Remember
+  this login**. Submit is **Connect**.
+- **`Lich`** — `host`, `port`, `label (optional)`, and **Remember this
+  connection** (ticked by default). It attaches to a Lich session already
+  running elsewhere; launch that Lich with `--detachable-client`. The tab also
+  holds a `custom launch command (optional)` textarea: with one set, connecting
+  probes the port first, SSHes to the host and runs the command if Lich is down,
+  then attaches once the port opens. Configure the SSH side in ⚙ → **SSH
+  launcher (cold-start Lich)**.
+- **`Remote`** — points this browser at a *different* machine's VellumFE web
+  server using its host, port, and pairing token.
 
-- Launch Lich with `--detachable-client` on your PC, then enter its
-  host and port (an optional label names the saved entry). Saved Lich
-  connections reattach with one tap, no password.
-- **Coming in Lich 6** (not yet available): Lich's WebUI adds a
-  connect-a-device panel showing a `vellum://` **QR code / link**;
-  scanning or tapping it opens the login screen with the Lich tab
-  prefilled. It never auto-connects — you always press Connect. The
-  app understands `vellum://` links today; Lich 6 adds the panel that
-  displays them.
-- The detachable port is unauthenticated, so the form warns when the
-  host doesn't look private. Keep it to home Wi-Fi, Tailscale, or a
-  VPN — never the open internet.
-- If the link drops, the session reattaches to the same Lich target
-  automatically.
+> ⚠️ **A phone shows two tabs, not three.** In the Android and iOS apps the
+> in-page **Remote** tab is hidden on purpose and a native **Characters** picker
+> replaces it — reached from the person icon on the login screen. The picker
+> exists so the app can scan pairing QR codes with the camera and seal saved
+> servers into the Keychain or Keystore. Same capability, better home.
 
-### Remote: a desktop session on your phone (apps only)
+Headless sessions look after themselves: drops reconnect with backoff and typing
+resets it; repeated drops with **no input from you** stop the reconnect loop so
+an abandoned session winds down instead of relogging all night; a hung login is
+retried by a watchdog; and `quit` returns to the login screen.
 
-Inside the [Android](./android.md) and [iOS](./ios.md) apps the login
-screen has a third tab, **Remote**. Instead of running a session on the
-phone, it points the app at a **desktop VellumFE**'s web server — the
-same sidecar the browser gets, with the app's install-once, QR-pairing,
-secure-storage experience. Your PC session keeps its TUI/GUI screen; the
-phone becomes a live second screen for it. Lich's one-frontend limit
-doesn't apply — the web sidecar mirrors the session rather than
-replacing its client.
+## Tips & gotchas
 
-- On the PC, run `.webinfo`: the pairing page now shows two QR codes.
-  Scan the **VellumFE app** one with the phone camera — it opens the
-  app's Remote tab prefilled (host, port, and pairing token). It never
-  auto-connects; you always press Connect. Or type the address and token
-  by hand.
-- **Remember this server** keeps the pairing in the phone's Keychain
-  (iOS) / Keystore-sealed storage (Android); reconnecting is one tap
-  from then on.
-- While on a remote server, the app's embedded core sits idle — there is
-  no game connection on the phone to go stale in the background; the web
-  client's usual reconnect picks the mirror back up when you return.
-- The way back: **⚙ Settings → Leave this server (app login)**.
-- Same network rule as everything else on this page: home Wi-Fi,
-  Tailscale, or a VPN — never the open internet.
+> ⚠️ **`bind = "127.0.0.1"` is this PC only.** The most common failure is a
+> phone that cannot reach the URL at all. `.webinfo` tells you when this is the
+> cause, printing: *bind = "127.0.0.1" is this PC only. Set [web] bind =
+> "0.0.0.0" so phones on your LAN can connect.*
 
-Headless sessions manage themselves:
+> ⚠️ **Security: keep the port on a network you trust.** Pairing keeps strangers
+> out, but the traffic is plain HTTP. For play away from home use **Tailscale or
+> WireGuard** — never forward this port to the open internet. `.webinfo` repeats
+> this line every time you run it.
 
-- Drops reconnect automatically with backoff; typing again resets it.
-- If the connection drops repeatedly with **no input from you**, it
-  stops reconnecting — an abandoned session winds down instead of
-  relogging all night.
-- If login hangs, a watchdog retries it.
-- `quit` (or the logout button) returns to the login screen.
+- **`.webinfo` refuses when there's nothing to pair.** "Web server is disabled"
+  means the `[web]` block is off and you never passed `--web-port`. "Web server
+  is not running (bind failed or still starting)" means the port was taken or
+  the server is a beat behind — run it again.
+- **The pairing page shows two QR codes.** The **browser** one carries an
+  `http://…/#token=…` URL for any browser. The **VellumFE app** one carries a
+  `vellum://remote?…` link only the Android or iOS app understands. Scanning the
+  app QR into a plain browser does nothing.
+- **A sidecar has no login screen.** The desktop session owns the connection, so
+  the browser gets no account fields and no login music toggle. That screen
+  appears only in headless mode and in the phone apps.
+- **After editing `macros.toml` on the PC, run `.reloadmacros`** — connected
+  phones update instantly rather than on next connect.
+- **The wake button in the top bar keeps the phone's screen on.** Tap the title
+  line to toggle between room name and character name.
 
-The login screen only appears in headless and app (Android/iOS) mode — a
-desktop sidecar session is controlled from the desktop, as before.
+## See also
 
-## Tips
+- [Android app](./android.md) — the client living on your phone.
+- [iOS app](./ios.md) — the same, on iPhone.
+- [The Launcher](../getting-started/launcher.md) — where the **Web dashboard** fold
+  lives.
+- [Map](../widgets/map.md) and [Travel (.go2)](../widgets/travel.md) — what the phone's
+  map button drives.
+- [Skins (GUI Graphics)](../customization/skins.md) — the injury doll art the status drawer
+  renders when the host session has a skin active.
 
-- After editing `macros.toml` on the PC, run `.reloadmacros` — connected
-  phones update instantly.
-- The wake button in the top bar keeps the phone's screen on; tap the
-  title line to toggle between room name and character name.
+<details>
+<summary>Config reference (TOML)</summary>
+
+The `[web]` block in `config.toml` (or a character's profile config). The
+Launcher's **Advanced** fold and the phone's **Client settings (saved on host)**
+sheet both write these fields, so hand-editing is a troubleshooting path, not the
+intended one.
+
+```toml
+[web]
+enabled = true
+port = 8040
+bind = "0.0.0.0"
+pinned = false
+```
+
+| Field | Type | Default | What it does |
+|---|---|---|---|
+| `enabled` | bool | `false` | Turns the embedded web server on for this session. `--web-port <n>` enables it for one run without editing config. |
+| `port` | u16 | `8040` | The HTTP + WebSocket port. When `pinned = false` this is a **base** port: an instance that finds it taken walks upward to the next free one, so several characters launch without any per-character config. |
+| `bind` | string | `"127.0.0.1"` | The bind address. The default serves this machine only. Set `"0.0.0.0"` deliberately to let phones and tablets on your LAN connect. |
+| `pinned` | bool | `false` | Binds exactly `port` or disables web for the session with a loud warning — never a silent neighbor port. Set this in a character's profile config when you want a stable `/play` bookmark for that character. |
+
+Routes served: `/` is the multi-session dashboard, `/play` is the game client,
+and `/health` is a token-free reachability check (it is what puts the live or
+offline dot next to a saved server in the phone apps' **Characters** picker).
+
+</details>
