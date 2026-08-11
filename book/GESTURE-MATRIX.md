@@ -234,6 +234,77 @@ Android Keystore key alias `vellum-master` sealing `remote.bin` in app-private
 files. Never SharedPreferences, never plaintext. play.net passwords are sealed
 by the Rust core with a device master key.
 
+## Widget feed bindings and traps (added 2026-08-11)
+
+> Verified while writing the Wave 4 widget pages. Several of these contradict
+> what the old pages said.
+
+**Feed-id vocabulary (hover text is verbatim in source, `window_config.rs:891-900`):**
+- **Progress `Bar id`**: `health`, `mana`, `stamina`, `spirit`, `encumlevel`,
+  `mindState`, or a custom id pushed by Lich. The catalog also ships
+  `concentration` (DR only) and `stance`, whose feed id is `pbarStance`.
+- **Countdown `Timer id`**: `roundtime`, `casttime`, `stuntime`, a custom
+  `[event_patterns]` `event_type`, or an id a script pushes via
+  `<vellumTimer id='...' value='epoch'/>` (`value` = absolute epoch second the
+  timer ends; `0` clears).
+
+**⚠️ The name-fallback asymmetry — a real trap.** A **countdown** window matches
+on `countdown_id` **OR the window's name** (`element.rs:38`), so
+`.addwindow roundtime countdown …` works with no id set. A **progress** window
+matches on `progress_id` **only** (`element.rs:919`) — naming a window `health`
+does nothing. Never write the two as if they behave the same.
+
+**A blank custom bar or timer renders as NOTHING** until it has a feed id, which
+is why creating one from **➕ Custom window…** auto-opens its menu
+(`src/frontend/gui/app.rs:1408-1413`). Feed ids are **case-sensitive**.
+
+**`compact` is bounty-specific, not a blank-line stripper.** Gated on
+`content.compact && current_stream == "bounty"` (`messages/flush_line.rs:468-469`);
+inert on every other stream. Toggling it re-renders the existing bounty
+immediately via `refresh_bounty_window`. The old page called it "Remove blank
+lines" — wrong.
+
+**`buffer_size` default is 10,000** (`src/config.rs:485-487`), and on a tabbed
+window it is **per tab**.
+
+**Word wrap is shared for text windows, GUI-only for tabbed ones.** `Text`,
+`Inventory`, and `Reserve` defs carry `wordwrap` and it reaches `layout.toml`
+and the TUI; `tabbedtext` has no such field, so the setting is a GUI-local
+per-tab preference (`menus.rs:801-818`).
+
+**Room `show_name` is TUI-only and is NOT the border title.** In the TUI it
+prepends the room name as a bold content line; the border title is the window's
+own `title` (default `"Room"`). **The GUI never reads `show_name`** — it always
+draws the room name as the first content line (`gui/app/widgets/boards.rs:604-637`).
+
+**Hand identity is by name substring, with a silent fallback:** `left` →
+LEFTHAND, `right` → RIGHTHAND, **anything else (including a typo) → SPELLHAND**
+(`menus.rs:1004-1017`). Hand icon size follows window height, floored by the
+configured size (`widgets/panels.rs:55-63`). Empty reads `Empty` for the physical
+hands and `None` for the spell slot.
+
+**The compass window is FREE-FORM, never square-locked.** The rose paints as a
+centered square of `min(width, height)`, so growing one axis pads evenly while
+the art holds size and growing both scales it. **Compass windows floor at 48pt
+width; every other widget floors at 120pt.** `widgets/map_compass.rs:206-219`,
+`window_manager.rs:506-512`.
+
+**No blink/flash/pulse/threshold color exists on ANY bar or timer** — not
+vitals, not standalone `progress`, not `countdown`. Alerting is a hotbar state,
+an indicator, a sound, or rumble.
+
+**Tab-switching actions ship UNBOUND:** `next_tab`, `prev_tab`, and
+`next_unread_tab` exist in the **Tabs** keybind category with no default key
+(`src/config/keybinds.rs:423-425`).
+
+**The Tab Editor is Save-buffered** while the rest of the window menu is
+live-apply. Its two stream lists differ: **Known streams** is the full persisted
+registry; the per-row **+** is seen-this-session only. Unticking a Known stream
+removes it from **every** tab (`editors/tabs.rs`).
+
+**TUI authoring gaps (renders fine, cannot author):** countdown **Stay visible
+at rest** has no TUI field though `sync.rs:747` honors it.
+
 ## Conditions — the shared vocabulary (added 2026-08-11)
 
 > One condition language drives **hotbar button states**, **indicator icon
