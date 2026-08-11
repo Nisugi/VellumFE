@@ -77,6 +77,11 @@ struct HighlightFormState {
     /// Re-arm seconds for the condition gate; edited alongside `when` when
     /// that UI lands, preserved until then.
     alert_rearm: Option<f32>,
+    /// Countdown bar this alert starts, and the timer ids it cancels. Carried
+    /// through untouched for now — same rule as `when`: a rule must never
+    /// lose its timer to an unrelated edit.
+    alert_timer: Option<crate::config::AlertTimer>,
+    alert_cancels: Vec<String>,
 
     is_global: bool,
     error: Option<String>,
@@ -150,6 +155,8 @@ impl HighlightFormState {
             && art.is_none()
             && flash.is_none()
             && self.alert_when.is_none()
+            && self.alert_timer.is_none()
+            && self.alert_cancels.is_empty()
         {
             return None;
         }
@@ -185,6 +192,8 @@ impl HighlightFormState {
             priority: self.alert_priority,
             when: self.alert_when.clone(),
             rearm: self.alert_rearm,
+            timer: self.alert_timer.clone(),
+            cancels: self.alert_cancels.clone(),
         })
     }
 
@@ -227,6 +236,8 @@ impl HighlightFormState {
             alert_priority: None,
             alert_when: None,
             alert_rearm: None,
+            alert_timer: None,
+            alert_cancels: Vec::new(),
             is_global: true,
             error: None,
         }
@@ -281,6 +292,12 @@ impl HighlightFormState {
             alert_priority: pattern.alert.as_ref().and_then(|a| a.priority),
             alert_when: pattern.alert.as_ref().and_then(|a| a.when.clone()),
             alert_rearm: pattern.alert.as_ref().and_then(|a| a.rearm),
+            alert_timer: pattern.alert.as_ref().and_then(|a| a.timer.clone()),
+            alert_cancels: pattern
+                .alert
+                .as_ref()
+                .map(|a| a.cancels.clone())
+                .unwrap_or_default(),
             is_global,
             error: None,
         }

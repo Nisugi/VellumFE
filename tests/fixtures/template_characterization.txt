@@ -50,6 +50,7 @@ buffs
 debuffs
 cooldowns
 active_spells
+alert_timers
 active_effects_custom
 inventory
 room
@@ -113,6 +114,7 @@ buffs
 debuffs
 cooldowns
 active_spells
+alert_timers
 active_effects_custom
 inventory
 reserve
@@ -181,6 +183,7 @@ buffs
 debuffs
 cooldowns
 active_spells
+alert_timers
 active_effects_custom
 inventory
 room
@@ -247,6 +250,7 @@ buffs = None
 debuffs = None
 cooldowns = None
 active_spells = None
+alert_timers = None
 active_effects_custom = None
 inventory = None
 reserve = Some(GS4)
@@ -307,7 +311,7 @@ betrayer = Some(GS4)
 "": dialog="" stream="text_custom" has_widget=false
 
 [templates_by_category]
-ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, alert_timers, active_effects_custom
 Character: inventory, reserve, spells, missingspells, injuries, perception, experience, gs4_experience, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Dialog: betrayer
@@ -321,7 +325,7 @@ Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, knee
 TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
 
 [addable_on_empty_layout.all]
-ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, alert_timers, active_effects_custom
 Character: inventory, spells, missingspells, injuries, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Entity: targets, players, items, entity_custom
@@ -334,7 +338,7 @@ Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, knee
 TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
 
 [addable_on_empty_layout.gs4]
-ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, alert_timers, active_effects_custom
 Character: inventory, reserve, spells, missingspells, injuries, gs4_experience, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Dialog: betrayer
@@ -348,7 +352,7 @@ Status: dashboard, poisoned, bleeding, diseased, stunned, webbed, standing, knee
 TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar, ambients, bounty, society, text_custom, chat, tabbedtext_custom
 
 [addable_on_empty_layout.dr]
-ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
+ActiveEffects: buffs, debuffs, cooldowns, active_spells, alert_timers, active_effects_custom
 Character: inventory, spells, missingspells, injuries, perception, experience, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Entity: targets, players, items, entity_custom
@@ -1546,6 +1550,25 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   visibility = "shown"
   tts_speak = false
   category = "ActiveSpells"
+
+[template.alert_timers]
+  widget_type = "active_effects"
+  name = "alert_timers"
+  row = 0
+  col = 0
+  rows = 10
+  cols = 30
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Timers"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  visibility = "shown"
+  tts_speak = false
+  category = "Timers"
 
 [template.active_effects_custom]
   widget_type = "active_effects"

@@ -125,6 +125,82 @@ impl AppCore {
         self.last_pack_scope = None;
     }
 
+    /// Apply an alert's timer side effects: cancel what it cancels, then start
+    /// what it starts. Cancel-before-start so a rule that both cancels and
+    /// restarts the same id ends with a running bar, not a removed one.
+    fn apply_alert_timers(&mut self, spec: &crate::config::AlertSpec, fallback_id: &str) {
+        use crate::core::alert_timers::{self, TIMERS_CATEGORY};
+        if spec.timer.is_none() && spec.cancels.is_empty() {
+            return;
+        }
+        let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
+        let store = self
+            .game_state
+            .effects
+            .entry(TIMERS_CATEGORY.to_string())
+            .or_insert_with(|| crate::data::ActiveEffectsContent {
+                category: TIMERS_CATEGORY.to_string(),
+                effects: Vec::new(),
+                generation: 0,
+            });
+
+        let mut changed = alert_timers::cancel(store, &spec.cancels);
+        if let Some(timer) = spec.timer.as_ref() {
+            let id = timer.id.as_deref().unwrap_or(fallback_id);
+            alert_timers::start(
+                store,
+                id,
+                &timer.label,
+                timer.duration,
+                timer.color.as_deref(),
+                now_server,
+            );
+            changed = true;
+        }
+        if changed {
+            self.sync_timer_windows();
+        }
+    }
+
+    /// Retire expired timer bars. Called once per frame; without this they
+    /// would hold at 00:00:00 forever, because the effects model expects a
+    /// server to do the removing and client timers have no server.
+    pub fn tick_alert_timers(&mut self) {
+        use crate::core::alert_timers::{self, TIMERS_CATEGORY};
+        let now_server = chrono::Utc::now().timestamp() + self.server_time_offset;
+        let Some(store) = self.game_state.effects.get_mut(TIMERS_CATEGORY) else {
+            return;
+        };
+        if store.effects.is_empty() {
+            return;
+        }
+        if alert_timers::reap(store, now_server) {
+            self.sync_timer_windows();
+        }
+    }
+
+    /// Push the timer store into every window displaying the Timers category.
+    ///
+    /// Server-fed effects resolve ONE hardcoded window name per category; a
+    /// client category has no such mapping, so this syncs by category instead
+    /// — which also means a user may have several Timers windows if they want.
+    fn sync_timer_windows(&mut self) {
+        use crate::core::alert_timers::TIMERS_CATEGORY;
+        let Some(store) = self.game_state.effects.get(TIMERS_CATEGORY) else {
+            return;
+        };
+        let effects = store.effects.clone();
+        let generation = store.generation;
+        for window in self.ui_state.windows.values_mut() {
+            if let crate::data::WindowContent::ActiveEffects(ref mut content) = window.content {
+                if content.category.eq_ignore_ascii_case(TIMERS_CATEGORY) {
+                    content.effects = effects.clone();
+                    content.generation = generation;
+                }
+            }
+        }
+    }
+
     /// Hand queued alert triggers to the core alert state, which applies the
     /// cooldown and cap. Mirrors `apply_pending_status_actions`: the message
     /// pump collects, AppCore admits, frontends only draw.
@@ -142,7 +218,13 @@ impl AppCore {
         let triggers: Vec<_> = self.message_processor.pending_alerts.drain(..).collect();
         let now = std::time::Instant::now();
         for trigger in triggers {
-            self.alerts.fire(trigger, now);
+            // Timers ride the same admission decision as the overlay: a
+            // cooldown-suppressed alert must not restart its bar either.
+            let key = trigger.key.clone();
+            let spec = trigger.spec.clone();
+            if self.alerts.fire(trigger, now) {
+                self.apply_alert_timers(&spec, &key);
+            }
         }
     }
 
@@ -229,11 +311,13 @@ impl AppCore {
         for (key, gate, rearm, spec) in evaluated {
             if self.alerts.observe_condition(&key, gate, rearm, now) {
                 let trigger = crate::core::highlight_engine::AlertTrigger {
-                    key,
+                    key: key.clone(),
                     banner: spec.banner.clone(),
-                    spec,
+                    spec: spec.clone(),
                 };
-                self.alerts.fire(trigger, now);
+                if self.alerts.fire(trigger, now) {
+                    self.apply_alert_timers(&spec, &key);
+                }
             }
         }
     }
@@ -642,6 +726,176 @@ mod alert_condition_tests {
         core.game_state.vitals.health = 20;
         core.tick_alert_conditions();
         assert_eq!(core.alerts.active().len(), 1);
+    }
+
+    // ---- Alert-started timers ---------------------------------------
+
+    fn timers_of(core: &AppCore) -> Vec<String> {
+        core.game_state
+            .effects
+            .get(crate::core::alert_timers::TIMERS_CATEGORY)
+            .map(|s| s.effects.iter().map(|e| e.id.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// A condition rule that starts a timer when health drops below 30%.
+    fn timer_rule() -> HighlightPattern {
+        let mut rule = low_health_rule();
+        let alert = rule.alert.as_mut().expect("alert");
+        alert.timer = Some(crate::config::AlertTimer {
+            id: Some("boss-cast".to_string()),
+            label: "Boss cast".to_string(),
+            duration: 12.0,
+            color: None,
+        });
+        rule
+    }
+
+    #[test]
+    fn a_firing_alert_starts_its_timer_bar() {
+        let mut core = AppCore::new_for_test();
+        core.config.highlights.insert("t".to_string(), timer_rule());
+
+        core.game_state.vitals.health = 90;
+        core.tick_alert_conditions();
+        assert!(timers_of(&core).is_empty(), "not fired yet");
+
+        core.game_state.vitals.health = 20;
+        core.tick_alert_conditions();
+        assert_eq!(timers_of(&core), vec!["boss-cast"], "bar started");
+    }
+
+    #[test]
+    fn a_suppressed_alert_does_not_start_its_timer() {
+        // Timers ride the same admission decision as the overlay. A
+        // cooldown-blocked alert restarting its bar would leak the
+        // suppression the discipline layer exists to enforce.
+        let mut core = AppCore::new_for_test();
+        let mut rule = timer_rule();
+        // Long cooldown, zero re-arm: the edge fires twice, the alert once.
+        rule.alert.as_mut().expect("alert").cooldown = Some(600.0);
+        core.config.highlights.insert("t".to_string(), rule);
+
+        core.game_state.vitals.health = 90;
+        core.tick_alert_conditions();
+        core.game_state.vitals.health = 20;
+        core.tick_alert_conditions();
+        let first_expiry = core.game_state.effects
+            [crate::core::alert_timers::TIMERS_CATEGORY]
+            .effects[0]
+            .expires_at;
+
+        // Recover and drop again: a real edge, but the cooldown blocks it.
+        core.game_state.vitals.health = 90;
+        core.tick_alert_conditions();
+        core.game_state.vitals.health = 10;
+        core.tick_alert_conditions();
+
+        assert_eq!(
+            core.game_state.effects[crate::core::alert_timers::TIMERS_CATEGORY].effects[0]
+                .expires_at,
+            first_expiry,
+            "the blocked alert must not restart the bar"
+        );
+    }
+
+    #[test]
+    fn a_cancelling_rule_stops_a_running_timer() {
+        let mut core = AppCore::new_for_test();
+        core.config.highlights.insert("t".to_string(), timer_rule());
+
+        // A second rule that cancels the first's timer when health recovers.
+        let mut canceller = low_health_rule();
+        let alert = canceller.alert.as_mut().expect("alert");
+        alert.id = Some("boss-dead".to_string());
+        alert.cancels = vec!["boss-cast".to_string()];
+        alert.when = Some(Condition::Vital {
+            vital: VitalKind::Health,
+            cmp: Cmp::Gt,
+            value: 80,
+            unit: VitalUnit::Percent,
+        });
+        core.config.highlights.insert("c".to_string(), canceller);
+
+        // Start low so the canceller adopts "false", then drop to fire the timer.
+        core.game_state.vitals.health = 50;
+        core.tick_alert_conditions();
+        core.game_state.vitals.health = 20;
+        core.tick_alert_conditions();
+        assert_eq!(timers_of(&core), vec!["boss-cast"]);
+
+        // Heal above 80: the canceller fires and clears the bar.
+        core.game_state.vitals.health = 95;
+        core.tick_alert_conditions();
+        assert!(
+            timers_of(&core).is_empty(),
+            "a timer for something already over is a lie on screen"
+        );
+    }
+
+    #[test]
+    fn expired_timers_are_reaped_by_the_frame_tick() {
+        let mut core = AppCore::new_for_test();
+        core.config.highlights.insert("t".to_string(), timer_rule());
+        core.game_state.vitals.health = 90;
+        core.tick_alert_conditions();
+        core.game_state.vitals.health = 20;
+        core.tick_alert_conditions();
+        assert_eq!(timers_of(&core).len(), 1);
+
+        // Not yet due.
+        core.tick_alert_timers();
+        assert_eq!(timers_of(&core).len(), 1);
+
+        // Push the deadline into the past and tick again.
+        core.game_state
+            .effects
+            .get_mut(crate::core::alert_timers::TIMERS_CATEGORY)
+            .expect("store")
+            .effects[0]
+            .expires_at = Some(0);
+        core.tick_alert_timers();
+        assert!(timers_of(&core).is_empty(), "core reaps its own timers");
+    }
+
+    #[test]
+    fn timers_reach_every_window_showing_the_timers_category() {
+        use crate::core::alert_timers::TIMERS_CATEGORY;
+        let mut core = AppCore::new_for_test();
+        // Two Timers windows plus an unrelated Buffs window.
+        for (name, category) in [
+            ("timers1", TIMERS_CATEGORY),
+            ("timers2", TIMERS_CATEGORY),
+            ("buffs", "Buffs"),
+        ] {
+            let mut window = crate::data::WindowState::new_text(name.to_string(), 1);
+            window.widget_type = crate::data::WidgetType::ActiveEffects;
+            window.content =
+                crate::data::WindowContent::ActiveEffects(crate::data::ActiveEffectsContent {
+                    category: category.to_string(),
+                    effects: Vec::new(),
+                    generation: 0,
+                });
+            core.ui_state.windows.insert(name.to_string(), window);
+        }
+
+        core.config.highlights.insert("t".to_string(), timer_rule());
+        core.game_state.vitals.health = 90;
+        core.tick_alert_conditions();
+        core.game_state.vitals.health = 20;
+        core.tick_alert_conditions();
+
+        let effects_in = |name: &str| -> usize {
+            match &core.ui_state.windows[name].content {
+                crate::data::WindowContent::ActiveEffects(c) => c.effects.len(),
+                _ => 0,
+            }
+        };
+        // Synced by CATEGORY, not by one hardcoded window name, so a user may
+        // keep as many Timers windows as they like.
+        assert_eq!(effects_in("timers1"), 1);
+        assert_eq!(effects_in("timers2"), 1);
+        assert_eq!(effects_in("buffs"), 0, "unrelated categories untouched");
     }
 
     #[test]

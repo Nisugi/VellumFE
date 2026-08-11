@@ -42,7 +42,7 @@ pub use colors::{
     SpellColorStyle, UiColors,
 };
 pub use highlights::{
-    highlight_web_fields, AlertAnchor, AlertSpec, EventAction, EventPattern, HighlightPattern,
+    highlight_web_fields, AlertAnchor, AlertSpec, AlertTimer, EventAction, EventPattern, HighlightPattern,
     RedirectMode,
 };
 pub use alertpacks::{

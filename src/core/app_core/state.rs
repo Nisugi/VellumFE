@@ -914,6 +914,8 @@ impl AppCore {
         // its full duration rather than being aged by a stale tick.
         self.tick_alert_conditions();
         self.tick_alerts();
+        // Client timers have no server to remove them; core reaps its own.
+        self.tick_alert_timers();
         // Browse replies waiting on the layout worker.
         self.service_pending_map_views();
         // A layout that finished generating between game lines still needs

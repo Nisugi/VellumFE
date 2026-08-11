@@ -119,6 +119,35 @@ pub struct AlertSpec {
     /// `DEFAULT_REARM_SECS`; 0 means re-arm the instant it clears.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rearm: Option<f32>,
+
+    /// Start a countdown bar in the Timers window when this fires. The bar is
+    /// an ordinary `ActiveEffect` with an absolute `expires_at`, so it drains
+    /// smoothly and reads HH:MM:SS with no new rendering code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<AlertTimer>,
+
+    /// Timer ids this rule cancels when it fires. The counterpart to `timer`:
+    /// "the boss died" must be able to stop "boss cast in 12s", because a
+    /// countdown still running for something already over is a lie on screen.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cancels: Vec<String>,
+}
+
+/// A countdown bar started by an alert.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertTimer {
+    /// Stable id, used by `cancels` and to restart rather than duplicate a
+    /// bar that is already running. Defaults to the alert's own id when
+    /// absent — a rule that starts a timer usually IS that timer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Text shown on the bar.
+    pub label: String,
+    /// How long the bar runs, in seconds.
+    pub duration: f32,
+    /// Bar fill color; falls back to the widget accent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 fn is_default_anchor(anchor: &AlertAnchor) -> bool {

@@ -11,7 +11,10 @@ use super::*;
 use crate::data::WindowContent;
 
 /// Valid ActiveEffects feed categories (matched exactly by the router).
-const EFFECT_CATEGORIES: [&str; 4] = ["ActiveSpells", "Buffs", "Debuffs", "Cooldowns"];
+// The four server-fed categories plus "Timers", which the client owns
+// (alert-started countdown bars). All five render identically.
+const EFFECT_CATEGORIES: [&str; 5] =
+    ["ActiveSpells", "Buffs", "Debuffs", "Cooldowns", "Timers"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FeedKind {
