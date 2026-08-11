@@ -31,6 +31,7 @@ mod launch;
 mod layout_persistence;
 mod server_pump;
 mod webui_bridge;
+mod alert_overlay;
 mod custom_emoji_render;
 mod detached;
 mod map_explorer;
@@ -3082,6 +3083,9 @@ impl eframe::App for VellumGuiApp {
         for (origin, click) in detached_link_clicks {
             self.handle_link_click(click, Some(origin));
         }
+        // Alerts sit above the game windows but BELOW menus, popups, and
+        // editors: ambiance art must never cover a menu the user just opened.
+        self.render_alert_overlay(&ctx);
         self.render_window_context_popup(&ctx);
         self.render_popup_menus(&ctx);
         self.render_interact_overlay(&ctx);
