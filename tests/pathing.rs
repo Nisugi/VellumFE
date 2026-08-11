@@ -190,12 +190,12 @@ fn real_mapdb_coverage() {
     // after a mapdb rebuild means new idioms appeared — extend the
     // transpiler.
     assert!(
-        proc_supported as f64 / total_procs.max(1) as f64 > 0.85,
+        proc_supported as f64 / total_procs.max(1) as f64 > 0.90,
         "execution coverage regressed: {proc_supported}/{total_procs}"
     );
     // Graph coverage should be high — most edges have a numeric timeto.
     assert!(
-        graph_routable as f64 / total_edges.max(1) as f64 > 0.85,
+        graph_routable as f64 / total_edges.max(1) as f64 > 0.90,
         "graph coverage regressed: {graph_routable}/{total_edges}"
     );
 }

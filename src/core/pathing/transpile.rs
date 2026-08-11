@@ -224,6 +224,35 @@ re!(
     r#"^;e\s+fput\s*\(?['"]([^'"]+)['"]\)?\s*;\s*fput\s*\(?['"]([^'"]+)['"]\)?;?$"#
 );
 
+// 27x: try a move; if the room didn't change, fix something and retry. The
+// trailing `$go2_restart` is optional (it splits the family in the residue
+// report but is the same shape).
+re!(
+    TRY_MOVE,
+    r#"^;e\s+room\s*=\s*Room\.current\.id;\s*fput\s*\(?['"]([^'"]+)['"]\)?;\s*if\s*\(\s*room\s*==\s*Room\.current\.id\s*\);\s*fput\s*\(?['"]([^'"]+)['"]\)?;\s*move\s*\(?['"]([^'"]+)['"]\)?;\s*end;?\s*(\$go2_restart\s*=\s*true;?)?$"#
+);
+// 16x: stand until upright (bounded), move, stand again.
+re!(
+    STAND_RETRY_MOVE,
+    r#"^;e\s+waitrt\?;\s*(\d+)\.times\s*\{\s*if\s+standing\?;\s*break;\s*else;\s*fput\s+'stand';\s*sleep\s+([\d.]+);\s*waitrt\?;\s*end\s*\};\s*move\s*\(?['"]([^'"]+)['"]\)?;.*$"#
+);
+
+// 75x: a room -> direction swim table walked until a target room.
+re!(
+    SWIM_TABLE,
+    r#"^;e\s+empty_hand\s+if\s+\[([^\]]*)\]\.include\?\(Room\.current\.id\);\s*swim_dir\s*=\s*\{([^}]*)\};\s*while\s+Room\.current\.id\s*!=\s*(\d+);"#
+);
+// `12662 => 'whirlpool'` pairs inside the table body.
+re!(ROUTE_PAIR, r#"(\d+)\s*=>\s*['"]([^'"]+)['"]"#);
+
+// 23x: cast whatever buffs you can, then branch on whether one is active.
+// Lich's CAST_BUFF chain; ours is deliberately permissive about whitespace
+// and the exact buff list, since only the final branch changes the command.
+re!(
+    CAST_BUFF_BRANCH,
+    r#"^;e\s+(?:if\s+\w+\s*=\s*Spell\[\d+\][^;]*;\s*\w+\.cast;\s*end;\s*)+fput\s*\(\s*Spell\[(\d+)\]\.active\?\s*\?\s*['"]([^'"]+)['"]\s*:\s*['"]([^'"]+)['"]\s*\);?$"#
+);
+
 // 497x: the minotaur maze. A learned-graph walker whose whole configuration
 // is the goal room and the maze's room set — everything else in the ~1.5KB
 // proc is the exploration algorithm, which lives in travel::minotaur.
@@ -382,6 +411,68 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             WalkAction::Put(c[1].to_string()),
             WalkAction::Move(c[2].to_string()),
         ]);
+    }
+    if let Some(c) = TRY_MOVE.captures(src) {
+        let mut out = vec![WalkAction::TryMove {
+            cmd: c[1].to_string(),
+            fallback: vec![
+                WalkAction::Put(c[2].to_string()),
+                WalkAction::Move(c[3].to_string()),
+            ],
+        }];
+        if c.get(4).is_some() {
+            out.push(WalkAction::Replan);
+        }
+        return Some(out);
+    }
+    if let Some(c) = STAND_RETRY_MOVE.captures(src) {
+        let times: u32 = c[1].parse().ok()?;
+        let seconds: f32 = c[2].parse().ok()?;
+        let stand_up = WalkAction::Repeat {
+            body: vec![
+                WalkAction::Put("stand".into()),
+                WalkAction::Sleep(seconds),
+                WalkAction::WaitRt,
+            ],
+            until: RepeatUntil::Cond(Cond::Standing),
+            max: times,
+        };
+        return Some(vec![
+            WalkAction::WaitRt,
+            stand_up.clone(),
+            WalkAction::Move(c[3].to_string()),
+            WalkAction::Sleep(seconds),
+            WalkAction::WaitRt,
+            stand_up,
+            WalkAction::WaitRt,
+        ]);
+    }
+    if let Some(c) = SWIM_TABLE.captures(src) {
+        let dirs: Vec<(u32, String)> = ROUTE_PAIR
+            .captures_iter(&c[2])
+            .filter_map(|m| Some((m[1].parse().ok()?, m[2].to_string())))
+            .collect();
+        let target: u32 = c[3].parse().ok()?;
+        if !dirs.is_empty() {
+            return Some(vec![WalkAction::RouteTable {
+                dirs,
+                target,
+                verb: "swim".into(),
+                hands_free_in: parse_id_table(&c[1]),
+            }]);
+        }
+    }
+    if let Some(c) = CAST_BUFF_BRANCH.captures(src) {
+        // The casts are dropped: we have no cast primitive, and the branch
+        // reads the spell's LIVE state, so an uncast buff simply takes the
+        // other arm (`swim out` instead of `go out`) — which is the correct
+        // command for a character who doesn't have the buff up.
+        let spell: u16 = c[1].parse().ok()?;
+        return Some(vec![WalkAction::If {
+            cond: Cond::SpellActive(spell),
+            then: vec![WalkAction::Move(c[2].to_string())],
+            els: vec![WalkAction::Move(c[3].to_string())],
+        }]);
     }
     if let Some(c) = MINOTAUR_MAZE.captures(src) {
         let target: u32 = c[1].parse().ok()?;
@@ -908,6 +999,95 @@ mod tests {
             transpile(";e fput 'search';fput 'go hatch'"),
             Some(vec![Put("search".into()), Move("go hatch".into())])
         );
+    }
+
+    #[test]
+    fn swim_table_becomes_a_room_keyed_route_table() {
+        let got = transpile(
+            ";e empty_hand if [ 12662, 20786 ].include?(Room.current.id); \
+             swim_dir = { 20786 => 'down', 12662 => 'whirlpool', 12987 => 'south' }; \
+             while Room.current.id != 12677; if swim_dir[Room.current.id]; \
+             put \"swim #{swim_dir[Room.current.id]}\"; else; echo \"lost\"; end; \
+             sleep 1; waitrt?; end; fill_hand",
+        )
+        .expect("swim table transpiles");
+        match &got[0] {
+            WalkAction::RouteTable {
+                dirs,
+                target,
+                verb,
+                hands_free_in,
+            } => {
+                assert_eq!(*target, 12677);
+                assert_eq!(verb, "swim", "each direction is prefixed with the verb");
+                assert_eq!(hands_free_in, &[12662, 20786]);
+                // A room -> direction MAP, not a positional cycle: each room
+                // names its own next direction.
+                assert_eq!(dirs.len(), 3);
+                assert!(dirs.contains(&(12662, "whirlpool".to_string())));
+            }
+            other => panic!("expected a RouteTable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cast_buff_branch_keeps_the_branch_and_drops_the_casts() {
+        // We can't cast, but the branch reads the spell's LIVE state, so an
+        // uncast buff simply takes the other arm - which is the correct
+        // command for a character who doesn't have it up.
+        let got = transpile(
+            ";e if resolve = Spell[9704] and resolve.known? and resolve.affordable? \
+             and not resolve.active?; resolve.cast; end; if waterwalking = Spell[112] \
+             and waterwalking.known? and waterwalking.affordable? and not \
+             waterwalking.active?; waterwalking.cast; end; \
+             fput (Spell[112].active? ? 'go out' : 'swim out')",
+        )
+        .expect("cast-buff branch transpiles");
+        assert_eq!(
+            got,
+            vec![WalkAction::If {
+                cond: Cond::SpellActive(112),
+                then: vec![WalkAction::Move("go out".into())],
+                els: vec![WalkAction::Move("swim out".into())],
+            }]
+        );
+    }
+
+    #[test]
+    fn try_move_carries_its_fallback_and_optional_replan() {
+        use WalkAction::*;
+        let base = ";e room = Room.current.id;fput 'go curtain'; \
+                    if ( room == Room.current.id ); fput 'close locker';\
+                    move 'go curtain'; end";
+        let expected = TryMove {
+            cmd: "go curtain".into(),
+            fallback: vec![Put("close locker".into()), Move("go curtain".into())],
+        };
+        assert_eq!(transpile(base), Some(vec![expected.clone()]));
+        // The trailing $go2_restart splits this into two residue families but
+        // is the same shape plus a replan.
+        assert_eq!(
+            transpile(&format!("{base}; $go2_restart = true")),
+            Some(vec![expected, Replan])
+        );
+    }
+
+    #[test]
+    fn stand_retry_move_bounds_its_stand_loop() {
+        let got = transpile(
+            ";e waitrt?; 8.times { if standing?; break; else; fput 'stand'; \
+             sleep 0.2; waitrt?; end }; move 'up'; sleep 0.2; waitrt?; \
+             8.times { if standing?; break; else; fput 'stand'; sleep 0.2; \
+             waitrt?; end }; waitrt?",
+        )
+        .expect("stand-retry transpiles");
+        assert!(
+            matches!(&got[1], WalkAction::Repeat { until, max, .. }
+                if *until == RepeatUntil::Cond(Cond::Standing) && *max == 8),
+            "the stand loop ends when upright, bounded by the proc's count: {:?}",
+            got[1]
+        );
+        assert_eq!(got[2], WalkAction::Move("up".into()));
     }
 
     #[test]

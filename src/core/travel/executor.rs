@@ -183,6 +183,7 @@ impl TravelContext<'_> {
             Cond::Society(want) => matches(self.society, want),
             Cond::Not(inner) => !self.eval(inner),
             Cond::Any(any) => any.iter().any(|c| self.eval(c)),
+            Cond::InRoom(id) => self.current_room == Some(*id),
         }
     }
 
@@ -1832,6 +1833,85 @@ impl TravelTask {
                     ];
                     actions.splice(pc..=pc, expansion);
                 }
+                WalkAction::TryMove { cmd, fallback } => {
+                    // Lower into: send it, wait for the room to settle, then
+                    // run the fallback only if we're still where we started.
+                    // StepMove already does the send-and-wait (resuming on a
+                    // room change or its timeout), so the whole action is
+                    // that plus a guarded branch — no new suspend state.
+                    let here = ctx.current_room.unwrap_or(from);
+                    actions.splice(
+                        pc..=pc,
+                        [
+                            WalkAction::StepMove(cmd),
+                            WalkAction::If {
+                                cond: Cond::InRoom(here),
+                                then: fallback,
+                                els: Vec::new(),
+                            },
+                        ],
+                    );
+                }
+                WalkAction::RouteTable {
+                    dirs,
+                    target,
+                    verb,
+                    hands_free_in,
+                } => {
+                    let Some(here) = ctx.current_room else {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    // Arrived: the table's job is done.
+                    if here == target {
+                        pc += 1;
+                        continue;
+                    }
+                    // Off the table. The Ruby picks a random exit and echoes
+                    // "Oh crap.. I'm lost.." — we re-path instead, which is
+                    // the same intent (get back on a known route) without
+                    // swimming blindly further off course.
+                    let Some(dir) = dirs
+                        .iter()
+                        .find(|(room, _)| *room == here)
+                        .map(|(_, d)| d.clone())
+                    else {
+                        events.push(TravelEvent::Status(format!(
+                            "off the route table at room {here} - re-pathing"
+                        )));
+                        self.repath(ctx.db, here, ctx.lich_fallback, events);
+                        return;
+                    };
+                    // Free hands where the table says to, before the first
+                    // stroke rather than mid-swim.
+                    let mut expansion = Vec::new();
+                    if hands_free_in.contains(&here) {
+                        expansion.push(WalkAction::EmptyHands);
+                    }
+                    expansion.push(WalkAction::StepMove(if verb.is_empty() {
+                        dir
+                    } else {
+                        format!("{verb} {dir}")
+                    }));
+                    // Re-enter to look up the next room's direction once this
+                    // step lands. Bounded by the same lap guard as GuidedRoute.
+                    self.guided_laps += 1;
+                    if self.guided_laps > MAX_SCRIPT_LOOP {
+                        self.guided_laps = 0;
+                        events.push(TravelEvent::Status(format!(
+                            "route table from {from} didn't reach room {target}"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
+                    expansion.push(WalkAction::RouteTable {
+                        dirs,
+                        target,
+                        verb,
+                        hands_free_in,
+                    });
+                    actions.splice(pc..=pc, expansion);
+                }
                 WalkAction::MinotaurMaze { target, maze_rooms } => {
                     // Hand off to the learned-graph walker. It owns the whole
                     // crossing from here — including deciding when we've
@@ -1867,6 +1947,17 @@ impl TravelTask {
                 }
                 WalkAction::Replan => {
                     // The edge asked to re-plan from here ($go2_restart).
+                    //
+                    // Guard it on NOT having landed where the edge says it
+                    // goes (Lich's guard_trailing_replan). Procs set the flag
+                    // unconditionally because a jump can land anywhere, but a
+                    // restart is pure waste when the crossing worked — and
+                    // re-pathing from the destination of the final edge is
+                    // how a completed trip gets reported as a failure.
+                    if ctx.current_room == Some(expected) {
+                        pc += 1;
+                        continue;
+                    }
                     self.repath(ctx.db, from, ctx.lich_fallback, events);
                     return;
                 }
@@ -3823,6 +3914,65 @@ mod tests {
             ["search", "go crevice"],
             "break exits the loop and the script continues after it"
         );
+    }
+
+    #[test]
+    fn a_trailing_replan_is_skipped_when_the_crossing_landed_correctly() {
+        // Procs set $go2_restart unconditionally because a jump can land
+        // anywhere, but re-pathing after a crossing that WORKED is waste -
+        // and on the final edge it turns a completed trip into a failure.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.current = 2; // landed on the edge's destination
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::Replan, WalkAction::Put("after".into())],
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert_eq!(
+            sent(&ev),
+            ["after"],
+            "the replan is skipped and the script continues: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
+            "a correct landing is not a failure: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn try_move_runs_its_fallback_only_when_the_room_didnt_change() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ev = Vec::new();
+        task.tick_script(
+            vec![WalkAction::TryMove {
+                cmd: "go curtain".into(),
+                fallback: vec![
+                    WalkAction::Put("close locker".into()),
+                    WalkAction::Move("go curtain".into()),
+                ],
+            }],
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        // The move goes out first; the fallback waits on whether it landed.
+        assert_eq!(sent(&ev), ["go curtain"], "sends the move first: {ev:?}");
     }
 
     #[test]

@@ -102,6 +102,30 @@ pub enum WalkAction {
         /// landmark can't express them.
         landmarks: Vec<(String, String)>,
     },
+    /// Send `cmd`; if the room DIDN'T change, run `fallback` (Lich's
+    /// `try_move`). 27 corpus edges — a locker door that must be closed
+    /// before the exit works, and similar "try it, fix it, retry" doors.
+    TryMove {
+        cmd: String,
+        fallback: Vec<WalkAction>,
+    },
+    /// Walk a room -> direction MAP until `target` is reached, prefixing each
+    /// direction with `verb` ("swim north"). 75 corpus edges.
+    ///
+    /// Distinct from [`WalkAction::GuidedRoute`], which walks a positional
+    /// CYCLE joined at an offset and stops on a landmark. Here each room
+    /// names its own next direction, and arrival is a room id — a table
+    /// lookup per step rather than an index that advances.
+    RouteTable {
+        /// `room -> direction` for every room on the route.
+        dirs: Vec<(u32, String)>,
+        /// Room that ends the walk.
+        target: u32,
+        /// Verb prefixed to each direction ("swim"); empty sends the bare dir.
+        verb: String,
+        /// Rooms where hands must be emptied first (a swim needs free hands).
+        hands_free_in: Vec<u32>,
+    },
     /// Hand this crossing to the minotaur maze walker (see travel::minotaur):
     /// learn adjacency by walking until `target` is reached. 497 corpus edges.
     MinotaurMaze { target: u32, maze_rooms: Vec<u32> },
@@ -275,4 +299,7 @@ pub enum Cond {
     Not(Box<Cond>),
     /// True when any member holds (Ruby's `a or b`). Empty is false.
     Any(Vec<Cond>),
+    /// Standing in this specific room. `try_move`'s "did that work?" test and
+    /// the guard on a trailing replan.
+    InRoom(u32),
 }
