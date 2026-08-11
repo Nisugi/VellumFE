@@ -47,7 +47,43 @@ pub(super) fn layer_config(global: Option<&str>, profile: Option<&str>) -> Resul
             deep_merge(&mut value, &overlay);
         }
     }
+    scrub_cleared_options(&mut value, "");
     value.try_into().context("Layered config did not deserialize")
+}
+
+/// Resolves the cleared-Option sentinel at load. TOML has no null, so
+/// `diff_value` records a cleared Option as `""`; only a couple of fields
+/// decode that themselves via `empty_string_as_none`. Every other
+/// `OptionalText` setting would deserialize the sentinel as `Some("")` —
+/// visibly wrong downstream (`base.join("")`, a '' voice warning) instead of
+/// reverting to the default. Deleting the key here makes serde default the
+/// field to `None`, for every OptionalText setting at once. `Text` settings
+/// are untouched: for them an empty string is a legitimate value.
+fn scrub_cleared_options(value: &mut toml::Value, path: &str) {
+    let toml::Value::Table(tbl) = value else {
+        return;
+    };
+    let keys: Vec<String> = tbl.keys().cloned().collect();
+    for key in keys {
+        let dotted = if path.is_empty() {
+            key.clone()
+        } else {
+            format!("{path}.{key}")
+        };
+        let Some(child) = tbl.get_mut(&key) else {
+            continue;
+        };
+        let is_cleared_option = child.as_str() == Some("")
+            && matches!(
+                super::registry::find(&dotted).map(|def| &def.kind),
+                Some(super::registry::SettingKind::OptionalText)
+            );
+        if is_cleared_option {
+            tbl.remove(&key);
+        } else {
+            scrub_cleared_options(child, &dotted);
+        }
+    }
 }
 
 /// The keys of `config` that differ from `base`, as a nested TOML table.
@@ -263,6 +299,49 @@ mod tests {
         config.ui.buffer_size = 5000;
         let out = sparse_config_toml(existing, &config, &base).unwrap();
         assert!(!out.contains("buffer_size"), "{}", out);
+    }
+
+    /// TOML has no null, so a cleared Option is saved as "". Loading must turn
+    /// that sentinel back into None for EVERY OptionalText setting — before the
+    /// scrub, only active_skin/doll_image decoded it, and e.g. a cleared
+    /// logging.dir came back as Some("") (logs landed in `base.join("")`).
+    #[test]
+    fn cleared_option_sentinel_loads_as_none() {
+        let base = Config::default();
+        let mut with_dir = Config::default();
+        with_dir.logging.dir = Some("mylogs".to_string());
+        // The global layer sets the option; the profile clears it.
+        let global = sparse_config_toml("", &with_dir, &base).unwrap();
+        assert!(global.contains("mylogs"), "{}", global);
+
+        let profile = "[logging]\ndir = \"\"\n";
+        let layered = layer_config(Some(&global), Some(profile)).unwrap();
+        assert_eq!(
+            layered.logging.dir, None,
+            "the \"\" sentinel must clear the option, not become Some(\"\")"
+        );
+
+        // tts.voice rides the same rule.
+        let layered = layer_config(None, Some("[tts]\nvoice = \"\"\n")).unwrap();
+        assert_eq!(layered.tts.voice, None);
+    }
+
+    /// Clearing an Option in a profile and saving must round-trip: the save
+    /// writes the sentinel, the load resolves it to None.
+    #[test]
+    fn cleared_option_round_trips_through_save_and_load() {
+        let mut base = Config::default();
+        base.logging.dir = Some("global-dir".to_string()); // inherited layer
+        let mut config = Config::default();
+        config.logging.dir = None; // user cleared it in the profile
+        let existing = "[logging]\ndir = \"global-dir\"\n";
+        let saved = sparse_config_toml(existing, &config, &base).unwrap();
+        assert!(saved.contains("dir = \"\""), "{}", saved);
+
+        // Loading global (Some) + profile (sentinel) yields None, not Some("").
+        let global = "[logging]\ndir = \"global-dir\"\n";
+        let layered = layer_config(Some(global), Some(&saved)).unwrap();
+        assert_eq!(layered.logging.dir, None);
     }
 
     #[test]
