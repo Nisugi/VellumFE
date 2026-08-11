@@ -400,9 +400,11 @@ impl Creature {
         }
     }
 
-    /// Body-part "creatures" (severed arms, tentacles, …) that combat
-    /// spawns; target lists filter these out, Lich-style. The amaranthine
-    /// kraken tentacle is a real creature, not an appendage.
+    /// Appendage "creatures" — limbs that erupt from the ground and attack,
+    /// as summoned by Grasp of the Dead (709) and similar. They are
+    /// targetable but cannot be damaged, so target lists filter them out
+    /// Lich-style to keep the list actionable. The kraken tentacles are real
+    /// creatures despite matching the noun pattern.
     pub fn is_body_part(&self) -> bool {
         static BODY_PART_REGEX: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         let regex = BODY_PART_REGEX.get_or_init(|| {
