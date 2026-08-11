@@ -122,6 +122,10 @@ impl MessageProcessor {
             }
             ParsedElement::RoomId { id } => {
                 *nav_room_id = Some(id.clone());
+                // Mirror onto the processor so the `sprite` component (which
+                // arrives later in the same room block, and does not receive
+                // nav_room_id) can look up this room's art.
+                self.current_room_uid = id.parse::<u64>().ok();
                 *room_window_dirty = true;
                 // A <nav> tag is the universal "you moved" signal (Lich's
                 // room_count increment). Push it for the walk executor even
@@ -431,6 +435,7 @@ impl MessageProcessor {
                             span_type: SpanType::Normal,
                             link_data: None,
                             custom_emoji: None,
+                            inline_image: None,
                         });
                     }
 
@@ -510,6 +515,7 @@ impl MessageProcessor {
                         span_type: data_span_type,
                         link_data: link_data.clone(),
                         custom_emoji: None,
+                        inline_image: None,
                     };
 
                     // Accumulate this segment in the current line buffer
@@ -581,6 +587,7 @@ impl MessageProcessor {
                     span_type: data_span_type,
                     link_data: link_data.clone(),
                     custom_emoji: None,
+                    inline_image: None,
                 });
             }
             ParsedElement::RoundTime { value } => {
@@ -650,6 +657,87 @@ impl MessageProcessor {
                         "vellumCmd rejected (only dot-commands are allowed): {command}"
                     );
                 }
+            }
+            ParsedElement::RoomPicture { id } => {
+                // The game says "this room has picture N"; the wire carries
+                // only the number. Resolution order:
+                //   1. the user's own pool (images/inline/<id>.png) — always
+                //      wins, so installed art overrides the download
+                //   2. GemStone's art, downloaded from play.net, but ONLY
+                //      when the user opted in
+                // Unknown ids and the near-universal 0 clear the slot, so a
+                // room without a picture never shows the previous room's.
+                let mut art = (*id != 0)
+                    .then(|| id.to_string())
+                    .filter(|name| crate::core::inline_image::contains(name));
+
+                if art.is_none() && *id != 0 && self.config.game_art.enabled {
+                    let picture = *id;
+                    let downloaded = crate::core::game_art::pool_name(picture);
+                    if crate::core::inline_image::contains(&downloaded) {
+                        art = Some(downloaded);
+                    } else if crate::core::game_art::claim_fetch(picture) {
+                        // Off the feed thread: a room render must never wait
+                        // on the network. The picture appears on the next
+                        // visit (or the next room change) once cached.
+                        std::thread::spawn(move || {
+                            match crate::core::game_art::fetch_blocking(picture) {
+                                Ok(_) => {}
+                                Err(err @ crate::core::game_art::FetchError::Missing(_)) => {
+                                    // The server said this id has no art — remember
+                                    // it so the id is not requested again.
+                                    tracing::debug!("game art {picture}: {}", err.reason());
+                                    crate::core::game_art::mark_missing(picture);
+                                }
+                                Err(err) => {
+                                    // Transient (network/disk) — claim_fetch already
+                                    // stops retries this session; next session tries
+                                    // again. Recording it would kill the art forever.
+                                    tracing::debug!(
+                                        "game art {picture} (will retry next session): {}",
+                                        err.reason()
+                                    );
+                                }
+                            }
+                        });
+                    }
+                }
+                // Emit the picture into the STORY line, which is where
+                // Wrayth shows it: floated left with the room name and
+                // description wrapping beside it. `<resource>` arrives just
+                // before the room name, so pushing a segment here puts the
+                // image at the head of that line — the same float the
+                // <vellumImg> path produces.
+                if let Some(name) = &art {
+                    self.current_segments.push(TextSegment {
+                        text: format!("[img:{name}]"),
+                        inline_image: Some(crate::data::InlineImage {
+                            name: name.clone(),
+                            rows: crate::config::room_images::DEFAULT_ROOM_IMAGE_ROWS,
+                            align: crate::data::FloatAlign::Left,
+                        }),
+                        ..Default::default()
+                    });
+                }
+                if game_state.story_picture != art {
+                    game_state.story_picture = art;
+                    *room_window_dirty = true;
+                }
+            }
+            ParsedElement::VellumImage { src, rows, align } => {
+                // Script-facing inline image. The segment keeps a readable
+                // `[img:name]` fallback in `text` so the TUI (and any
+                // frontend that can't resolve the art) shows something
+                // rather than a blank, exactly like custom emoji.
+                self.current_segments.push(TextSegment {
+                    text: format!("[img:{src}]"),
+                    inline_image: Some(crate::data::InlineImage {
+                        name: src.clone(),
+                        rows: *rows,
+                        align: *align,
+                    }),
+                    ..Default::default()
+                });
             }
             ParsedElement::LeftHand { item, link } => {
                 self.chunk_has_silent_updates = true; // Mark as silent update
@@ -1436,6 +1524,7 @@ impl MessageProcessor {
                                         span_type: SpanType::Normal,
                                         link_data: None,
                                         custom_emoji: None,
+                                        inline_image: None,
                                     });
                                     let rest = label.value[1..].to_string();
                                     if !rest.is_empty() {
@@ -1448,6 +1537,7 @@ impl MessageProcessor {
                                             span_type: SpanType::Normal,
                                             link_data: None,
                                             custom_emoji: None,
+                                            inline_image: None,
                                         });
                                     }
                                     content.add_line(StyledLine {

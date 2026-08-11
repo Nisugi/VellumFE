@@ -176,7 +176,12 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "Open widget type picker",
                 &[".addwindow <name> <type> <x> <y> <w> [h] adds a window manually"]
             ),
-            entry!(&["deletewindow", "delwindow"], "<name>", "Delete a window"),
+            entry!(
+                &["deletewindow", "delwindow"],
+                "<name>",
+                "Remove a window from the layout (restorable)",
+                &[".hidewindow keeps it in the layout; delete stashes it for restore"]
+            ),
             entry!(
                 &["hidewindow", "hidewin"],
                 "[name]",
@@ -345,6 +350,11 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "Activate a GUI skin (.setskin none to disable)"
             ),
             entry!(&["makeskin"], "<name>", "Create a starter skin to edit"),
+            entry!(
+                &["roomimages", "roomimg"],
+                "[on|off|set <image>|clear|list|edit]",
+                "Room art by room id (set/clear act on the room you are in)"
+            ),
             entry!(
                 &["saveskin"],
                 "<name>",

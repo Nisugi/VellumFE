@@ -69,6 +69,14 @@ pub enum Condition {
     /// closed: unknown numbers, formula costs, and missing vitals data
     /// all evaluate false. No Lich required.
     SpellAffordable { number: u16 },
+    /// The phase of the in-game day (dawn/day/dusk/night).
+    ///
+    /// Elanthian time runs on US Eastern, so this is computed from the
+    /// system clock — no wire signal, no `time` command, and it works at
+    /// login before any game text arrives. See `core::elanthian_time`.
+    TimeOfDay {
+        phase: crate::core::elanthian_time::DayPhase,
+    },
     /// The hand holds nothing (spell hand: nothing prepared).
     HandEmpty {
         #[serde(default)]

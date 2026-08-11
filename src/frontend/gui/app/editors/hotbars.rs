@@ -75,6 +75,7 @@ const LEAF_KINDS: &[&str] = &[
     "Hand empty",
     "Hand holds",
     "Spell prepared",
+    "Time of day",
 ];
 
 fn leaf_kind_index(cond: &Condition) -> usize {
@@ -91,6 +92,7 @@ fn leaf_kind_index(cond: &Condition) -> usize {
         Condition::HandEmpty { .. } => 9,
         Condition::HandHolds { .. } => 10,
         Condition::SpellPrepared { .. } => 11,
+        Condition::TimeOfDay { .. } => 12,
         Condition::All { .. } | Condition::Any { .. } => 0,
     }
 }
@@ -141,9 +143,12 @@ fn default_leaf(kind: usize) -> Condition {
             name: None,
             name_match: NameMatch::Contains,
         },
-        _ => Condition::SpellPrepared {
+        11 => Condition::SpellPrepared {
             name: None,
             name_match: NameMatch::Contains,
+        },
+        _ => Condition::TimeOfDay {
+            phase: crate::core::elanthian_time::DayPhase::Night,
         },
     }
 }
@@ -243,8 +248,16 @@ impl VellumGuiApp {
         // Hotkey capture: suppress macro dispatch and grab the next press.
         if state.hotkey_capture_armed {
             self.app_core.ui_state.input_mode = InputMode::KeybindForm;
-            if let Some(press) = Self::collect_pressed_key_events(ctx).into_iter().next() {
-                let key = crate::core::menu_actions::key_event_to_string(press.key_event);
+            // Numpad presses come from eframe's channel via `handle_global_input`;
+            // see the keybind editor for why they take priority.
+            let captured = self.frame_numpad_presses.first().copied().or_else(|| {
+                Self::collect_pressed_key_events(ctx)
+                    .into_iter()
+                    .next()
+                    .map(|press| press.key_event)
+            });
+            if let Some(key_event) = captured {
+                let key = crate::core::menu_actions::key_event_to_string(key_event);
                 if let (Some(working), Some(idx)) = (&mut state.working, state.selected_button) {
                     if let Some(button) = working.buttons.get_mut(idx) {
                         button.hotkey = Some(key);
@@ -1359,6 +1372,22 @@ fn render_leaf_condition(
                 .add(egui::DragValue::new(level).range(0..=6))
                 .on_hover_text("1-3 = wounds, 4-6 = scars, 0 = healthy")
                 .changed();
+        }
+        Condition::TimeOfDay { phase } => {
+            use crate::core::elanthian_time::DayPhase;
+            ui.label("phase:");
+            egui::ComboBox::from_id_salt(format!("{id}_phase"))
+                .selected_text(phase.as_str())
+                .show_ui(ui, |ui| {
+                    for option in
+                        [DayPhase::Dawn, DayPhase::Day, DayPhase::Dusk, DayPhase::Night]
+                    {
+                        changed |= ui
+                            .selectable_value(phase, option, option.as_str())
+                            .changed();
+                    }
+                });
+            ui.weak("Elanthian time (US Eastern), from your system clock");
         }
         Condition::SpellAffordable { number } => {
             ui.label("spell #:");

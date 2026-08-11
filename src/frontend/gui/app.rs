@@ -390,6 +390,13 @@ pub struct VellumGuiApp {
     /// Numpad keybind names last pushed to eframe via `set_numpad_capture_keys`;
     /// `None` until the first sync so startup always pushes the initial set.
     numpad_capture_keys: Option<HashSet<String>>,
+    /// Numpad presses seen this frame, for keybind editors to record.
+    ///
+    /// Numpad keys arrive through eframe's dedicated channel rather than egui's
+    /// event queue, and reading that channel needs `&Frame` — which editors don't
+    /// have. `handle_global_input` runs first and stashes them here; an armed editor
+    /// drains this later in the same frame.
+    frame_numpad_presses: Vec<crate::data::input::KeyEvent>,
     /// Gamepad context; None when init failed or the feature is disabled.
     #[cfg(feature = "gamepad")]
     gamepad: Option<gilrs::Gilrs>,
@@ -514,6 +521,7 @@ pub struct VellumGuiApp {
     custom_windows_editor: Option<editors::CustomWindowsEditorState>,
     known_windows_editor: Option<editors::KnownWindowsEditorState>,
     sorter_editor: Option<editors::SorterEditorState>,
+    room_images_editor: Option<editors::RoomImagesEditorState>,
     touch_wheel_editor: Option<editors::TouchWheelEditorState>,
     launcher_editor: Option<editors::LauncherEditorState>,
     doll_calibration: Option<editors::DollCalibrationState>,
@@ -989,6 +997,7 @@ impl VellumGuiApp {
             highlight_editor: None,
             keybind_editor: None,
             menu_keybind_editor: None,
+            frame_numpad_presses: Vec::new(),
             #[cfg(feature = "gamepad")]
             controller_editor: None,
             hotbar_editor: None,
@@ -1003,6 +1012,7 @@ impl VellumGuiApp {
             custom_windows_editor: None,
             known_windows_editor: None,
             sorter_editor: None,
+            room_images_editor: None,
             touch_wheel_editor: None,
             launcher_editor: None,
             doll_calibration: None,
@@ -1543,6 +1553,7 @@ impl VellumGuiApp {
                         .add_system_message("No skin active. Use .setskin <name> first.");
                 }
             },
+            A::RoomImagesEdit => self.open_room_images_editor(),
             A::SorterEdit => self.open_sorter_editor(),
             A::TouchWheelEditor => self.open_touch_wheel_editor(),
             A::Reconnect => self.reconnect(),
@@ -2496,6 +2507,9 @@ impl eframe::App for VellumGuiApp {
                             }
                             if ui.button("Sorter").clicked() {
                                 self.open_sorter_editor();
+                            }
+                            if ui.button("Room Images").clicked() {
+                                self.open_room_images_editor();
                             }
                             ui.separator();
                             if ui.button("UI Packs").clicked() {

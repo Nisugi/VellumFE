@@ -32,8 +32,16 @@ Ships by default; adjust to taste:
 num_8 = { macro_text = "n\r" }
 num_2 = { macro_text = "s\r" }
 num_5 = { macro_text = "out\r" }
-"num_." = { macro_text = "up\r" }
-"num_+" = { macro_text = "look\r" }
+num_decimal = { macro_text = "up\r" }
+num_plus = { macro_text = "look\r" }
+```
+
+Numpad keys take modifiers, so you can layer more binds onto the same keys:
+
+```toml
+"ctrl+num_8" = { macro_text = "north\r" }
+"alt+num_plus" = { macro_text = "look in\r" }
+"ctrl+alt+num_divide" = "health"
 ```
 
 ## Rebind a Client Action

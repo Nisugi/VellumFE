@@ -183,6 +183,12 @@ pub struct AppCore {
     /// Room subtitle (e.g., " - Emberthorn Refuge, Bowery")
     pub room_subtitle: Option<String>,
 
+    /// Room art mappings (room_images.toml), loaded lazily by the
+    /// `.roomimages` command and the editor. The processor holds the
+    /// room-major index it actually looks up per room change; this is the
+    /// editable image-major store.
+    pub room_images: Option<crate::config::room_images::RoomImagesConfig>,
+
     /// Room component buffers (id -> lines of segments)
     /// Components: "room desc", "room objs", "room players", "room exits"
     pub room_components: HashMap<String, Vec<Vec<TextSegment>>>,
@@ -432,6 +438,7 @@ impl AppCore {
             lich_room_id: None,
             doll_rules: Default::default(),
             room_subtitle: None,
+            room_images: None,
             room_components: HashMap::new(),
             current_room_component: None,
             room_window_dirty: false,
@@ -486,6 +493,23 @@ impl AppCore {
             tracing::info!("Loaded {custom_emoji_count} custom emoji");
         }
 
+        // Same for inline image art (<vellumImg src=..>), scanned from the
+        // shared image pool.
+        let inline_image_count = crate::core::inline_image::reload();
+        if inline_image_count > 0 {
+            tracing::info!("Loaded {inline_image_count} inline images");
+        }
+
+        // Room art mappings (uid -> image), indexed room-major for the
+        // per-room-change lookup.
+        let room_images = Config::load_room_images(config.character.as_deref())
+            .unwrap_or_default();
+        let room_image_index =
+            crate::config::room_images::RoomImageIndex::build(&room_images);
+        if !room_image_index.is_empty() {
+            tracing::info!("Loaded room art for {} rooms", room_image_index.len());
+        }
+
         // Load saved dialog positions from widget_state.toml
         let saved_dialog_positions = Config::load_dialog_positions(config.character.as_deref())
             .unwrap_or_default();
@@ -499,7 +523,9 @@ impl AppCore {
         let window_registry_dirty = window_registry.seed_well_known();
 
         // Create message processor (shares saved_dialog_positions reference)
-        let message_processor = MessageProcessor::new(config.clone(), saved_dialog_positions.clone());
+        let mut message_processor =
+            MessageProcessor::new(config.clone(), saved_dialog_positions.clone());
+        message_processor.set_room_image_index(room_image_index);
 
         // Convert presets from config to parser format, resolving palette names to hex values
         let preset_list: Vec<(String, Option<String>, Option<String>)> = config
@@ -604,6 +630,7 @@ impl AppCore {
             lich_room_id: None,
             doll_rules: Default::default(),
             room_subtitle: None,
+            room_images: None,
             room_components: HashMap::new(),
             current_room_component: None,
             room_window_dirty: false,
@@ -1717,6 +1744,7 @@ impl AppCore {
                 span_type: SpanType::System, // system echo; skip highlight transforms
                 link_data: None,
                 custom_emoji: None,
+                inline_image: None,
             }],
             stream: String::from("main"),
             timestamp: None,

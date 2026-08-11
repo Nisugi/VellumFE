@@ -273,6 +273,42 @@ html, body {
   object-fit: contain;
 }
 
+/* Inline image (<vellumImg>). Height comes from the tag's `rows` (set inline
+   in em), width follows the art's aspect. The float itself is set inline so
+   a script can pick the side. Each game line is its own .line div, so the
+   float must be allowed to overhang into the following lines rather than
+   being contained — that overhang IS the text wrapping around it. */
+.inline-image {
+  width: auto;
+  max-width: 55%;
+  object-fit: contain;
+  margin: 0 0.4em 0.15em 0;
+}
+
+.inline-image[style*="float: right"] {
+  margin: 0 0 0.15em 0.4em;
+}
+
+/* Press-and-hold blows the image up, matching the GUI (and Wrayth). The
+   held copy is a fixed overlay so it is not clipped by the line box, and
+   pointer-events stay off it so releasing anywhere still dismisses. */
+.inline-image-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.63);
+  pointer-events: none;
+}
+
+.inline-image-zoom img {
+  max-width: 90%;
+  max-height: 90%;
+  object-fit: contain;
+}
+
 #bottombar {
   position: relative;
   background: var(--bg-panel);
@@ -2111,6 +2147,13 @@ body.hide-chips #chips { display: none !important; }
   gap: 6px;
   font-size: 13px;
   color: var(--fg);
+}
+
+/* A row carrying a floated inline image must NOT be a flex container:
+   flex items do not float, so the picture would stack above the prose
+   instead of the text wrapping beside it. */
+.status-row.has-inline-image {
+  display: block;
 }
 
 .status-effect { justify-content: space-between; }

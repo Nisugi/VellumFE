@@ -103,3 +103,6 @@ __pycache__/
 nul
 stack.txt
 Sa4dHKm0cLlY.yaml
+
+# mdbook build output (CI builds from book/src and deploys to Pages)
+book/book/

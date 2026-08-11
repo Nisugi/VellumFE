@@ -5,6 +5,7 @@
 
 mod buffers;
 mod component;
+pub use component::SPRITE_COMPONENT;
 mod element;
 mod flush_line;
 mod routing;
@@ -205,6 +206,23 @@ pub struct MessageProcessor {
     /// Previous room component values (for change detection to avoid unnecessary processing)
     previous_room_components: std::collections::HashMap<String, String>,
 
+    /// Current room uid from the last `<nav rm=>`, mirrored from
+    /// AppCore.nav_room_id. The `sprite` component arrives later in the same
+    /// room block but is not handed nav_room_id, so room-art injection reads
+    /// the uid from here. None until the first nav tag.
+    current_room_uid: Option<u64>,
+
+    /// Room art segments captured from the `sprite` component, held until
+    /// the `room desc` component arrives so the mirrored description can
+    /// LEAD with them. Sprite precedes the description in the room block, so
+    /// writing art straight into room_description would be overwritten.
+    /// This is what non-GUI frontends (phone, headless) read.
+    pending_room_art: Vec<TextSegment>,
+
+    /// Room uid -> art, rebuilt from room_images.toml at load and on
+    /// `.reload`. Empty when the feature is off or nothing is mapped.
+    room_image_index: crate::config::room_images::RoomImageIndex,
+
     squelch_matcher: Option<aho_corasick::AhoCorasick>,
     squelch_regexes: Vec<regex::Regex>,
 
@@ -338,6 +356,9 @@ impl MessageProcessor {
             skip_next_spells_clear: false,
             perception_buffer: Vec::new(),
             previous_room_components: std::collections::HashMap::new(),
+            current_room_uid: None,
+            pending_room_art: Vec::new(),
+            room_image_index: Default::default(),
             squelch_matcher: None,
             squelch_regexes: Vec::new(),
             has_redirect_highlights: false,
@@ -524,6 +545,12 @@ impl MessageProcessor {
     /// (AppCore owns the persisted copy).
     pub fn set_sorter_enabled(&mut self, enabled: bool) {
         self.config.sorter.enabled = enabled;
+    }
+
+    /// Mirror the room-art toggle into the processor's config copy, which is
+    /// what the sprite-injection path reads.
+    pub fn set_room_images_enabled(&mut self, enabled: bool) {
+        self.config.room_images.enabled = enabled;
     }
 
     /// Mirror the full sorter config (rules/order/labels/format) into the

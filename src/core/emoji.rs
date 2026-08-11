@@ -235,6 +235,7 @@ pub fn apply_to_segments(segments: &mut Vec<TextSegment>) {
     if !have_custom {
         for seg in segments.iter_mut() {
             if seg.span_type == crate::data::widget::SpanType::System
+                || seg.inline_image.is_some()
                 || !seg.text.contains(':')
             {
                 continue;
@@ -251,7 +252,12 @@ pub fn apply_to_segments(segments: &mut Vec<TextSegment>) {
     let old = std::mem::take(segments);
     segments.reserve(old.len());
     for seg in old {
-        if seg.span_type == crate::data::widget::SpanType::System || !seg.text.contains(':') {
+        // An inline-image segment's text is a fallback label, not prose:
+        // never rewrite or split it, or the painter's run would desync.
+        if seg.span_type == crate::data::widget::SpanType::System
+            || seg.inline_image.is_some()
+            || !seg.text.contains(':')
+        {
             segments.push(seg);
             continue;
         }
@@ -592,6 +598,7 @@ mod tests {
             span_type: SpanType::System,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         }];
         apply_to_segments(&mut segments);
         assert_eq!(segments[0].text, "[client :grin: notice]");
@@ -609,6 +616,7 @@ mod tests {
                 span_type: SpanType::Normal,
                 link_data: None,
                 custom_emoji: None,
+                inline_image: None,
             },
             TextSegment {
                 text: "click :grin: me".into(),
@@ -624,6 +632,7 @@ mod tests {
                     coord: None,
                 }),
                 custom_emoji: None,
+                inline_image: None,
             },
         ];
 

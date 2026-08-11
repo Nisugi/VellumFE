@@ -139,6 +139,16 @@ f10 = "tts_decrease_rate"              # Decrease TTS speech rate by 0.1
 f11 = "tts_mute_toggle"                # Toggle TTS mute (stops speech, prevents new speech)
 
 # Numpad movement macros (inline table syntax required for HashMap deserialization)
+#
+# Numpad keys use word-form names (num_plus, not "num_+") because a literal '+' in a
+# key name collides with the '+' that separates modifiers. Word form is what makes
+# modifier combos work: "ctrl+num_plus", "alt+num_8", "ctrl+alt+num_divide".
+# The old symbol spellings are still accepted when loading existing configs.
+#
+# Note on shift+numpad: Windows temporarily overrides NumLock while Shift is held, so
+# the numpad reports its navigation twin. VellumFE recovers the numpad identity, so
+# shift+numpad binds do work - but they are indistinguishable from the same physical
+# key with NumLock off.
 num_1 = { macro_text = "sw\r" }
 num_2 = { macro_text = "s\r" }
 num_3 = { macro_text = "se\r" }
@@ -149,9 +159,9 @@ num_7 = { macro_text = "nw\r" }
 num_8 = { macro_text = "n\r" }
 num_9 = { macro_text = "ne\r" }
 num_0 = { macro_text = "down\r" }
-"num_." = { macro_text = "up\r" }
-"num_+" = { macro_text = "look\r" }
-"num_-" = { macro_text = "info\r" }
-"num_*" = { macro_text = "exp\r" }
-"num_/" = { macro_text = "health\r" }
+num_decimal = { macro_text = "up\r" }
+num_plus = { macro_text = "look\r" }
+num_minus = { macro_text = "info\r" }
+num_multiply = { macro_text = "exp\r" }
+num_divide = { macro_text = "health\r" }
 

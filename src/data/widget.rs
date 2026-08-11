@@ -94,6 +94,106 @@ pub struct TextSegment {
     /// real Unicode glyph in `text`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_emoji: Option<String>,
+    /// Inline image this segment stands in for, from a `<vellumImg>` tag.
+    ///
+    /// Like [`Self::custom_emoji`], the segment's `text` stays a readable
+    /// fallback (`[img:name]`) so the TUI and any unresolved case show
+    /// something rather than a blank. Unlike custom emoji, the image carries
+    /// its own size and float alignment, and frontends lay text out *beside*
+    /// it rather than inside one text row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_image: Option<InlineImage>,
+}
+
+/// Which side of the text an inline image floats on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum FloatAlign {
+    #[default]
+    Left,
+    Right,
+}
+
+/// An image floated into a text window by `<vellumImg src=.. rows=.. align=..>`.
+///
+/// `rows` is the *requested* height in text rows; the renderer clamps it to
+/// the window's own visible row count (and a configured ceiling) and scales
+/// the image to fit with its aspect ratio preserved, so a script that asks
+/// for more than fits gets a smaller image rather than a broken window.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InlineImage {
+    /// Pool image name, validated to the shortcode alphabet. Never a path:
+    /// the frontend resolves it through the image registry, so a feed can
+    /// name art but can never read an arbitrary file.
+    pub name: String,
+    /// Requested height in text rows, before clamping.
+    pub rows: f32,
+    #[serde(default)]
+    pub align: FloatAlign,
+}
+
+/// Default ceiling on an inline image's height, in text rows. The window's
+/// own visible row count clamps further; this only bounds a feed that asks
+/// for something absurd in a very tall window.
+pub const INLINE_IMAGE_MAX_ROWS: f32 = 8.0;
+
+/// A float narrower than this fraction of the window is not worth wrapping
+/// text beside — below it the renderer drops the float and puts the image on
+/// its own rows, so text never degrades into a one-word-per-line column.
+pub const INLINE_IMAGE_MIN_TEXT_FRACTION: f32 = 0.45;
+
+impl InlineImage {
+    /// Final on-screen size for this image, in points.
+    ///
+    /// Height is `rows` clamped by both the configured ceiling and the
+    /// window's own visible height, so a script asking for 40 rows in a
+    /// 6-row window gets a 6-row image rather than a broken window. Width
+    /// follows from the texture's aspect, then a width clamp scales BOTH
+    /// dimensions down if the image would crowd out the text — a wide image
+    /// can overflow horizontally even at a legal row count.
+    ///
+    /// `natural` is the texture's pixel size; a degenerate one falls back to
+    /// square so a corrupt file cannot produce a zero or infinite rect.
+    pub fn fitted_size(
+        &self,
+        natural: (f32, f32),
+        row_height: f32,
+        available_width: f32,
+        available_height: f32,
+        max_rows: f32,
+    ) -> (f32, f32) {
+        let window_rows = if row_height > 0.0 {
+            (available_height / row_height).floor().max(1.0)
+        } else {
+            1.0
+        };
+        let rows = self.rows.max(0.0).min(max_rows).min(window_rows).max(1.0);
+        let mut height = rows * row_height;
+
+        let (nat_w, nat_h) = natural;
+        let aspect = if nat_w > 0.0 && nat_h > 0.0 {
+            nat_w / nat_h
+        } else {
+            1.0
+        };
+        let mut width = height * aspect;
+
+        // Width clamp: leave at least MIN_TEXT_FRACTION of the width for text.
+        let max_width = available_width * (1.0 - INLINE_IMAGE_MIN_TEXT_FRACTION);
+        if max_width > 0.0 && width > max_width {
+            let scale = max_width / width;
+            width = max_width;
+            height *= scale;
+        }
+        (width.max(1.0), height.max(1.0))
+    }
+
+    /// True when the float should collapse to its own rows instead of having
+    /// text wrapped beside it, because the remaining text column would be too
+    /// narrow to read.
+    pub fn should_collapse(image_width: f32, available_width: f32) -> bool {
+        available_width - image_width < available_width * INLINE_IMAGE_MIN_TEXT_FRACTION
+    }
 }
 
 impl TextSegment {
@@ -133,6 +233,7 @@ impl TextSegment {
             span_type,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         }
     }
 }
@@ -604,6 +705,7 @@ impl StyledLine {
                 span_type: SpanType::Normal,
                 link_data: None,
                 custom_emoji: None,
+                inline_image: None,
             }],
             stream: String::from("main"),
             timestamp: None,
@@ -622,6 +724,7 @@ impl StyledLine {
                 span_type: SpanType::Normal,
                 link_data: None,
                 custom_emoji: None,
+                inline_image: None,
             }],
             stream: stream.into(),
             timestamp: None,
@@ -666,6 +769,72 @@ pub struct PerceptionData {
 mod tests {
     use super::*;
 
+    fn img(rows: f32) -> InlineImage {
+        InlineImage {
+            name: "banner".to_string(),
+            rows,
+            align: FloatAlign::Left,
+        }
+    }
+
+    /// A square image at a legal row count takes exactly that many rows.
+    #[test]
+    fn inline_image_honors_requested_rows() {
+        let (w, h) = img(4.0).fitted_size((64.0, 64.0), 20.0, 800.0, 400.0, 8.0);
+        assert_eq!(h, 80.0);
+        assert_eq!(w, 80.0, "square art stays square");
+    }
+
+    /// Aspect ratio is preserved: a 2:1 image is twice as wide as it is tall.
+    #[test]
+    fn inline_image_preserves_aspect() {
+        let (w, h) = img(2.0).fitted_size((128.0, 64.0), 20.0, 800.0, 400.0, 8.0);
+        assert_eq!(h, 40.0);
+        assert_eq!(w, 80.0);
+    }
+
+    /// The window's own visible height caps the image: 40 rows in a 6-row
+    /// window yields a 6-row image, not a broken window.
+    #[test]
+    fn inline_image_clamps_to_window_rows() {
+        let (_, h) = img(40.0).fitted_size((64.0, 64.0), 20.0, 800.0, 120.0, 64.0);
+        assert_eq!(h, 120.0, "6 rows * 20pt");
+    }
+
+    /// The configured ceiling applies even when the window is tall enough.
+    #[test]
+    fn inline_image_clamps_to_configured_max() {
+        let (_, h) = img(40.0).fitted_size((64.0, 64.0), 20.0, 800.0, 4000.0, 8.0);
+        assert_eq!(h, 160.0, "8 rows * 20pt");
+    }
+
+    /// A very wide image scales BOTH dimensions down so text keeps a
+    /// readable column — a legal row count is not enough on its own.
+    #[test]
+    fn inline_image_width_clamp_scales_height_too() {
+        // 10:1 art at 4 rows would be 800pt wide in an 800pt window.
+        let (w, h) = img(4.0).fitted_size((640.0, 64.0), 20.0, 800.0, 400.0, 8.0);
+        assert!(w <= 800.0 * (1.0 - INLINE_IMAGE_MIN_TEXT_FRACTION) + 0.01, "w={w}");
+        assert!(h < 80.0, "height must shrink with width, got {h}");
+        // Aspect preserved through the clamp.
+        assert!((w / h - 10.0).abs() < 0.01, "aspect drifted: {w}x{h}");
+    }
+
+    /// Degenerate texture sizes fall back to square rather than producing a
+    /// zero or infinite rect.
+    #[test]
+    fn inline_image_survives_degenerate_texture() {
+        let (w, h) = img(2.0).fitted_size((0.0, 0.0), 20.0, 800.0, 400.0, 8.0);
+        assert_eq!((w, h), (40.0, 40.0));
+    }
+
+    /// Collapse triggers only when the leftover text column is too narrow.
+    #[test]
+    fn inline_image_collapse_threshold() {
+        assert!(!InlineImage::should_collapse(300.0, 800.0), "roomy");
+        assert!(InlineImage::should_collapse(600.0, 800.0), "too narrow");
+    }
+
     #[test]
     fn effect_category_maps_to_its_window() {
         assert_eq!(ActiveEffectsContent::window_name_for_category("Buffs"), Some("buffs"));
@@ -703,6 +872,7 @@ mod tests {
                         coord: Some("2524,1864".to_string()),
                     }),
                     custom_emoji: None,
+                    inline_image: None,
                 },
                 TextSegment::styled(" here.", Some("#a0a0a0".to_string()), false),
             ],
@@ -863,6 +1033,7 @@ mod tests {
                 coord: None,
             }),
             custom_emoji: None,
+            inline_image: None,
         };
 
         assert_eq!(segment.span_type, SpanType::Link);
@@ -882,6 +1053,7 @@ mod tests {
             span_type: SpanType::Monsterbold,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         };
 
         let seg2 = TextSegment {
@@ -893,6 +1065,7 @@ mod tests {
             span_type: SpanType::Monsterbold,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         };
 
         let seg3 = TextSegment {
@@ -904,6 +1077,7 @@ mod tests {
             span_type: SpanType::Monsterbold,
             link_data: None,
             custom_emoji: None,
+            inline_image: None,
         };
 
         assert_eq!(seg1, seg2);

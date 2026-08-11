@@ -41,7 +41,18 @@ Quote any name containing `+` or symbols.
 | Arrows | `up`, `down`, `left`, `right` |
 | Navigation | `home`, `end`, `page_up`, `page_down` |
 | Editing | `insert`, `delete`, `backspace`, `enter`, `tab`, `esc`, `space` |
-| Numpad | `num_0` – `num_9`, `"num_+"`, `"num_-"`, `"num_*"`, `"num_/"`, `"num_."` |
+| Numpad | `num_0` – `num_9`, `num_plus`, `num_minus`, `num_multiply`, `num_divide`, `num_decimal`, `num_enter` |
+
+Numpad keys accept any modifier combination — `ctrl+num_8`, `alt+num_divide`,
+`ctrl+alt+shift+num_plus`. They use word-form names because a literal `+` in a
+key name would collide with the `+` that separates modifiers. The older symbol
+spellings (`"num_+"`, `"num_."`, …) are still read, so existing files keep
+working, but they cannot take modifiers — switch to word form if you want chords.
+
+> **Shift+numpad on Windows**: Windows temporarily overrides NumLock while Shift
+> is held, so the numpad reports its navigation twin. VellumFE recovers the
+> numpad identity, so `shift+num_8` does bind — but it is indistinguishable from
+> pressing that same physical key with NumLock off.
 
 > **Tip**: If backspace doesn't work, your terminal may send `delete`
 > instead. Run with `RUST_LOG=debug` and check the log for `KEY EVENT`
@@ -90,7 +101,7 @@ f6 = { macro_text = "hide\r" }              # omit \r to just type it
 ```
 
 The default file ships numpad movement macros (`num_1`–`num_9` for
-directions, `num_0` down, `"num_."` up, `"num_+"` look, and so on).
+directions, `num_0` down, `num_decimal` up, `num_plus` look, and so on).
 
 A macro can chain several commands with `\r` between them, and pause
 between commands with a **sleep segment**: a segment that is just `s`

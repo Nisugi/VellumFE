@@ -1259,6 +1259,47 @@ fn hide_window_gates_on_main_stream_invariant() {
     assert!(core.ui_state.windows.contains_key("story_tab"));
 }
 
+/// `.deletewindow` truly deletes in BOTH frontends (it used to redirect to
+/// hide in the TUI while the GUI removed for real). The window leaves the
+/// layout and lands in the restore stash.
+#[test]
+fn delete_window_removes_and_stashes() {
+    let mut core = core_with_layout(vec![main_text_def("main"), main_text_def("combat")]);
+    core.init_windows(80, 24);
+
+    core.delete_window("combat");
+
+    // Gone from the live UI and from the layout — not merely hidden.
+    assert!(!core.ui_state.windows.contains_key("combat"));
+    assert!(core.layout.get_window("combat").is_none());
+    // Recoverable: the def is stashed for restore.
+    assert!(core
+        .deleted_window_names()
+        .iter()
+        .any(|name| name == "combat"));
+}
+
+/// Deleting the last story-feed window is refused for the same reason
+/// hiding it is — and more so, since a delete has no visibility checkbox
+/// to undo it.
+#[test]
+fn delete_window_gates_on_main_stream_invariant() {
+    let mut core = core_with_layout(vec![main_text_def("main")]);
+    core.init_windows(80, 24);
+
+    core.delete_window("main");
+    assert!(core.ui_state.windows.contains_key("main"));
+    assert!(core.layout.get_window("main").is_some());
+    assert!(core.deleted_window_names().is_empty());
+
+    // With a second subscriber the delete goes through.
+    let second = main_text_def("story_tab");
+    core.layout.windows.push(second.clone());
+    core.add_new_window(&second, 80, 24);
+    core.delete_window("main");
+    assert!(core.layout.get_window("main").is_none());
+}
+
 /// TUI force-show: a hidden command_input still materializes at init,
 /// and hiding it persists the layout flag without dropping the UI
 /// window. Without the flag (GUI), it hides like any other window.

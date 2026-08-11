@@ -178,6 +178,15 @@ pub fn eval_condition(
             cmp.eval(current as i64, *level as i64)
         }
         Condition::SpellAffordable { number } => spell_affordable(gs, *number),
+        Condition::TimeOfDay { phase } => {
+            // `now_server` is the game clock the rest of the evaluator uses,
+            // so a time-of-day rule agrees with effect expiries rather than
+            // drifting against them.
+            crate::core::elanthian_time::phase_at(
+                now_server,
+                crate::core::elanthian_time::PhaseBoundaries::default(),
+            ) == *phase
+        }
         Condition::HandEmpty { hand } => match hand {
             HandSlot::Right => hand_item(gs, Hand::Right).is_none(),
             HandSlot::Left => hand_item(gs, Hand::Left).is_none(),
@@ -525,5 +534,72 @@ mod tests {
         assert!(crate::config::INJURY_AREAS.contains(&"neck"));
         assert!(crate::config::INJURY_AREAS.contains(&"nsys"));
         assert_eq!(crate::config::INJURY_AREAS.len(), 14);
+    }
+}
+
+#[cfg(test)]
+mod time_of_day_tests {
+    use super::*;
+    use crate::core::elanthian_time::DayPhase;
+
+    /// A `TimeOfDay` condition matches the phase of the in-game clock, and
+    /// only that phase — evaluated through the REAL shared evaluator, so
+    /// hotbars, the injury doll, and room art all get it identically.
+    #[test]
+    fn time_of_day_matches_only_its_phase() {
+        let gs = GameState::new();
+        // 2026-08-10 20:44 UTC = 16:44 Eastern = Day under the defaults.
+        let noonish = 1_786_394_661_i64;
+
+        assert!(eval_condition(
+            &Condition::TimeOfDay { phase: DayPhase::Day },
+            &gs,
+            noonish,
+            None
+        ));
+        for other in [DayPhase::Dawn, DayPhase::Dusk, DayPhase::Night] {
+            assert!(
+                !eval_condition(
+                    &Condition::TimeOfDay { phase: other },
+                    &gs,
+                    noonish,
+                    None
+                ),
+                "{other:?} must not match a Day timestamp"
+            );
+        }
+    }
+
+    /// It composes with All/Any like every other leaf, which is the whole
+    /// reason for reusing the shared condition system.
+    #[test]
+    fn time_of_day_composes_with_other_conditions() {
+        let gs = GameState::new();
+        let night = 1_786_394_661_i64 - 10 * 3600; // 06:44 Eastern -> Dawn
+        let dawn = Condition::TimeOfDay { phase: DayPhase::Dawn };
+
+        assert!(eval_condition(&dawn, &gs, night, None), "fixture is Dawn");
+        assert!(eval_condition(
+            &Condition::Any {
+                conditions: vec![
+                    Condition::TimeOfDay { phase: DayPhase::Night },
+                    dawn.clone(),
+                ],
+            },
+            &gs,
+            night,
+            None
+        ));
+        assert!(!eval_condition(
+            &Condition::All {
+                conditions: vec![
+                    Condition::TimeOfDay { phase: DayPhase::Night },
+                    dawn,
+                ],
+            },
+            &gs,
+            night,
+            None
+        ));
     }
 }

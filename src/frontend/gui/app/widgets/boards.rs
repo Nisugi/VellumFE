@@ -327,6 +327,280 @@ impl VellumGuiApp {
     /// the players and exits lines follow, links clickable throughout.
     /// Every section takes its natural height, so a tall enough window
     /// shows everything without scrolling.
+    /// Render `body`, floating any line that carries an inline image and
+    /// wrapping the following lines beside it.
+    ///
+    /// The float lives here, in the caller, rather than in
+    /// `render_styled_line`: a line cannot affect its successors' width, so
+    /// the span has to be laid out as a unit. `ui.horizontal` with a nested
+    /// `ui.vertical` gives the inset for free — the covered lines simply wrap
+    /// to whatever width their parent `Ui` offers.
+    ///
+    /// Text rejoins full width after the image (real float semantics): only
+    /// the lines that actually fit beside the image are inset, and a line that
+    /// would straddle the image's bottom edge is excluded. egui's single
+    /// `max_width` per layout job cannot express CSS's "shorten just this
+    /// line's first rows", so excluding the straddler is the honest
+    /// approximation.
+    fn render_lines_with_floats(
+        ui: &mut egui::Ui,
+        body: &[StyledLine],
+        visuals: &egui::Visuals,
+        font_id: &egui::FontId,
+        text_size: f32,
+        // Index of the room-name line. The name is part of the flowing body
+        // (so it wraps beside room art instead of sitting above it) but must
+        // still read as a heading, so it renders a size larger.
+        name_line: Option<usize>,
+    ) -> Option<GuiLinkClick> {
+        let mut clicked_link = None;
+        let row_height = ui.ctx().fonts_mut(|f| f.row_height(font_id));
+        let name_font = egui::FontId {
+            size: text_size + 2.0,
+            family: font_id.family.clone(),
+        };
+        let font_for = |idx: usize| -> &egui::FontId {
+            if name_line == Some(idx) {
+                &name_font
+            } else {
+                font_id
+            }
+        };
+        let mut index = 0usize;
+
+        while index < body.len() {
+            let line = &body[index];
+            let float = line
+                .segments
+                .iter()
+                .find_map(|seg| seg.inline_image.as_ref())
+                .and_then(|image| {
+                    let natural =
+                        super::custom_emoji_render::inline_image_size(ui.ctx(), &image.name)?;
+                    Some((image, natural))
+                });
+
+            let Some((image, natural)) = float else {
+                if let Some(link) =
+                    Self::render_styled_line(ui, line, visuals, None, font_for(index), true, None)
+                {
+                    clicked_link = Some(link);
+                }
+                index += 1;
+                continue;
+            };
+
+            let avail_w = ui.available_width().max(1.0);
+            let avail_h = ui.available_height().max(row_height);
+            let (img_w, img_h) = image.fitted_size(
+                (natural.x, natural.y),
+                row_height,
+                avail_w,
+                avail_h,
+                crate::data::INLINE_IMAGE_MAX_ROWS,
+            );
+
+            // The image's own line usually carries prose too — a script
+            // writes `<vellumImg/>The room stretches...` as ONE line — so its
+            // remaining segments lead the wrapped text. Only the image
+            // segment itself is dropped; its `[img:name]` text is a fallback
+            // for frontends that cannot paint, not content to show here.
+            let lead: Vec<TextSegment> = line
+                .segments
+                .iter()
+                .filter(|seg| seg.inline_image.is_none())
+                .cloned()
+                .collect();
+            let lead_line = (!lead.iter().all(|s| s.text.trim().is_empty())).then(|| StyledLine {
+                segments: lead,
+                stream: line.stream.clone(),
+                timestamp: line.timestamp,
+            });
+
+            let text_w = (avail_w - img_w).max(1.0);
+            let collapse = crate::data::InlineImage::should_collapse(img_w, avail_w);
+            // The lead prose sits beside the image too, so it eats into the
+            // height available to the following lines.
+            let lead_height = lead_line
+                .as_ref()
+                .map(|l| Self::measure_styled_line(ui.ctx(), l, font_id, text_w))
+                .unwrap_or(0.0);
+            let covered_end = if collapse {
+                index + 1
+            } else {
+                Self::float_covered_end(body, index, (img_h - lead_height).max(0.0), |line| {
+                    Self::measure_styled_line(ui.ctx(), line, font_id, text_w)
+                })
+            };
+
+            let covered = &body[index + 1..covered_end];
+            let align = image.align;
+            let name = image.name.clone();
+
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let mut paint_image = |ui: &mut egui::Ui| {
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(img_w, img_h),
+                        egui::Sense::click_and_drag(),
+                    );
+                    super::custom_emoji_render::paint_inline_image(
+                        ui.ctx(),
+                        ui.painter(),
+                        &name,
+                        rect,
+                    );
+                    // Press-and-hold blows the image up to its full size, the
+                    // way Wrayth does; releasing drops it back. Drawn in a
+                    // foreground layer so it covers the text instead of being
+                    // clipped by the float's own narrow slot.
+                    if response.is_pointer_button_down_on() {
+                        Self::paint_enlarged_image(ui, &name, rect);
+                    }
+                    response.on_hover_cursor(egui::CursorIcon::ZoomIn);
+                };
+                let mut run_text = |ui: &mut egui::Ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(text_w);
+                        if let Some(lead) = &lead_line {
+                            if let Some(link) = Self::render_styled_line(
+                                ui, lead, visuals, None, font_for(index), true, None,
+                            ) {
+                                clicked_link = Some(link);
+                            }
+                        }
+                        for (offset, covered_line) in covered.iter().enumerate() {
+                            if let Some(link) = Self::render_styled_line(
+                                ui,
+                                covered_line,
+                                visuals,
+                                None,
+                                font_for(index + 1 + offset),
+                                true,
+                                None,
+                            ) {
+                                clicked_link = Some(link);
+                            }
+                        }
+                    });
+                };
+                match align {
+                    crate::data::FloatAlign::Left => {
+                        paint_image(ui);
+                        run_text(ui);
+                    }
+                    crate::data::FloatAlign::Right => {
+                        run_text(ui);
+                        paint_image(ui);
+                    }
+                }
+            });
+
+            index = covered_end;
+        }
+        clicked_link
+    }
+
+    /// Draw `name` blown up over the window while its float is held down.
+    ///
+    /// The enlarged copy is fitted into the window with its aspect ratio
+    /// preserved and never upscaled past the art's own pixel size, so holding
+    /// a small image does not produce a blurry poster. It paints in a
+    /// foreground layer above the text, with a dimmed backdrop, and is
+    /// centred on the window rather than on the float — a right-aligned float
+    /// would otherwise throw the enlargement off-screen.
+    pub(super) fn paint_enlarged_image(ui: &egui::Ui, name: &str, origin: egui::Rect) {
+        let ctx = ui.ctx();
+        let Some(natural) = super::custom_emoji_render::inline_image_size(ctx, name) else {
+            return;
+        };
+        // Fit inside the WHOLE application viewport, not the hosting
+        // window — a small room window must not cap the preview (live
+        // feedback, 2026-08-10). The paint already goes to a foreground
+        // layer, so only this size/center math was window-bound. Still
+        // never magnifies beyond the art's own 1:1.
+        let bounds = ctx.content_rect();
+        let avail = (bounds.size() * 0.9).max(egui::vec2(1.0, 1.0));
+        let scale = (avail.x / natural.x)
+            .min(avail.y / natural.y)
+            .min(1.0)
+            .max(f32::EPSILON);
+        let size = natural * scale;
+        // Never smaller than the float itself, or "enlarging" could shrink it.
+        let size = size.max(origin.size());
+        let rect = egui::Rect::from_center_size(bounds.center(), size);
+
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new(("inline_image_zoom", name)),
+        ));
+        painter.rect_filled(bounds, 0.0, egui::Color32::from_black_alpha(160));
+        super::custom_emoji_render::paint_inline_image(ctx, &painter, name, rect);
+    }
+
+    /// Index one past the last line a float covers.
+    ///
+    /// Lines are taken greedily at the inset width while they fit within
+    /// `image_height`. A line that would straddle the image's bottom edge is
+    /// excluded, so it renders full width — text rejoins after the image
+    /// rather than staying indented forever. A line carrying its own image
+    /// also ends the span: stacked floats are out of scope, and a hard break
+    /// beats overlapping pictures.
+    ///
+    /// `measure` returns a line's wrapped height at the inset width; it is a
+    /// parameter so this decision is testable without an egui context.
+    pub(super) fn float_covered_end(
+        body: &[StyledLine],
+        origin: usize,
+        image_height: f32,
+        mut measure: impl FnMut(&StyledLine) -> f32,
+    ) -> usize {
+        let mut end = origin + 1;
+        let mut used = 0.0f32;
+        while end < body.len() {
+            if body[end].segments.iter().any(|s| s.inline_image.is_some()) {
+                break;
+            }
+            let h = measure(&body[end]);
+            if used + h > image_height {
+                break;
+            }
+            used += h;
+            end += 1;
+        }
+        end
+    }
+
+    /// Height one styled line occupies when wrapped to `wrap_width`. Used to
+    /// decide how many lines fit beside a float.
+    fn measure_styled_line(
+        ctx: &egui::Context,
+        line: &StyledLine,
+        font_id: &egui::FontId,
+        wrap_width: f32,
+    ) -> f32 {
+        let text: String = line.segments.iter().map(|s| s.text.as_str()).collect();
+        if text.is_empty() {
+            return ctx.fonts_mut(|f| f.row_height(font_id));
+        }
+        let mut job = egui::text::LayoutJob {
+            wrap: egui::text::TextWrapping {
+                max_width: wrap_width,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        job.append(
+            &text,
+            0.0,
+            egui::text::TextFormat {
+                font_id: font_id.clone(),
+                ..Default::default()
+            },
+        );
+        ctx.fonts_mut(|f| f.layout_job(job)).size().y
+    }
+
     pub(super) fn render_room_content(
         ui: &mut egui::Ui,
         room: &crate::data::RoomContent,
@@ -344,8 +618,51 @@ impl VellumGuiApp {
         let (show_desc, show_objs, show_players, show_exits) = show;
 
         let mut body: Vec<StyledLine> = Vec::new();
+        // The room NAME is part of the flowing body, not a header above it:
+        // when the room has art, the name must wrap beside the picture along
+        // with the description rather than being pushed above it. It renders
+        // larger and bold via its own segment styling.
+        let name_line = (!room.name.is_empty()).then_some(0usize);
+        if !room.name.is_empty() {
+            body.push(StyledLine {
+                segments: vec![TextSegment {
+                    text: room.name.clone(),
+                    bold: true,
+                    span_type: crate::data::SpanType::Normal,
+                    ..Default::default()
+                }],
+                stream: "room".to_string(),
+                timestamp: None,
+            });
+        }
         if show_desc {
             body.extend(room.description.iter().cloned());
+        }
+        // The art rides on the description's first line (room_sync merges it
+        // there). Now that the NAME leads the body, hoist the art onto the
+        // name line so the float starts at the top and the name wraps beside
+        // the picture instead of sitting above it.
+        if body.len() > 1 {
+            let art: Vec<TextSegment> = body
+                .get(1)
+                .map(|line| {
+                    line.segments
+                        .iter()
+                        .filter(|s| s.inline_image.is_some())
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !art.is_empty() {
+                if let Some(desc) = body.get_mut(1) {
+                    desc.segments.retain(|s| s.inline_image.is_none());
+                }
+                if let Some(name_line) = body.first_mut() {
+                    let mut lead = art;
+                    lead.append(&mut name_line.segments);
+                    name_line.segments = lead;
+                }
+            }
         }
         // Objects continue the description paragraph, as in Wrayth:
         // "...coats them.  You also see some cuirbouilli leather, ..."
@@ -395,25 +712,10 @@ impl VellumGuiApp {
             .min_scrolled_height(max_height)
             .max_height(max_height)
             .show(ui, |ui| {
-                if !room.name.is_empty() {
-                    // Explicit size: room names track the window's text size,
-                    // not the Heading style (the title-bar size setting owns
-                    // that).
-                    ui.label(
-                        RichText::new(&room.name)
-                            .font(egui::FontId {
-                                size: text_size + 2.0,
-                                family: font_id.family.clone(),
-                            })
-                            .strong(),
-                    );
-                }
-                for line in &body {
-                    if let Some(link) =
-                        Self::render_styled_line(ui, line, visuals, None, font_id, true, None)
-                    {
-                        clicked_link = Some(link);
-                    }
+                if let Some(link) =
+                    Self::render_lines_with_floats(ui, &body, visuals, font_id, text_size, name_line)
+                {
+                    clicked_link = Some(link);
                 }
             });
 

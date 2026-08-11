@@ -78,6 +78,79 @@ pub enum KeyCode {
     KeypadEnter,
 }
 
+/// The canonical keybind name for every numpad key, paired with the legacy symbol
+/// spellings still found in older `keybinds.toml` files.
+///
+/// Word form is canonical because a symbol name like `num_+` collides with the `+`
+/// that separates modifiers: `ctrl+num_+` cannot be split unambiguously. With word
+/// form, no numpad name contains `+`, so the ordinary modifier parser handles the
+/// whole set and every numpad key becomes bindable with any modifier combination.
+///
+/// Aliases are accepted when reading so existing user configs keep working; the
+/// canonical name is always what gets written back.
+const KEYPAD_NAMES: &[(KeyCode, &str, &[&str])] = &[
+    (KeyCode::Keypad0, "num_0", &[]),
+    (KeyCode::Keypad1, "num_1", &[]),
+    (KeyCode::Keypad2, "num_2", &[]),
+    (KeyCode::Keypad3, "num_3", &[]),
+    (KeyCode::Keypad4, "num_4", &[]),
+    (KeyCode::Keypad5, "num_5", &[]),
+    (KeyCode::Keypad6, "num_6", &[]),
+    (KeyCode::Keypad7, "num_7", &[]),
+    (KeyCode::Keypad8, "num_8", &[]),
+    (KeyCode::Keypad9, "num_9", &[]),
+    (KeyCode::KeypadPlus, "num_plus", &["num_+", "num_add"]),
+    (
+        KeyCode::KeypadMinus,
+        "num_minus",
+        &["num_-", "num_subtract"],
+    ),
+    (
+        KeyCode::KeypadMultiply,
+        "num_multiply",
+        &["num_*", "num_times"],
+    ),
+    (KeyCode::KeypadDivide, "num_divide", &["num_/"]),
+    (
+        KeyCode::KeypadPeriod,
+        "num_decimal",
+        &["num_.", "num_period"],
+    ),
+    (KeyCode::KeypadEnter, "num_enter", &[]),
+];
+
+impl KeyCode {
+    /// The canonical keybind name for a numpad key (e.g. `num_plus`), or `None` for
+    /// any other key.
+    pub fn keypad_name(self) -> Option<&'static str> {
+        KEYPAD_NAMES
+            .iter()
+            .find(|(code, _, _)| *code == self)
+            .map(|(_, name, _)| *name)
+    }
+
+    /// Resolves a numpad keybind name to its key code, accepting both the canonical
+    /// word form and the legacy symbol spellings.
+    pub fn from_keypad_name(name: &str) -> Option<Self> {
+        KEYPAD_NAMES
+            .iter()
+            .find(|(_, canonical, aliases)| {
+                *canonical == name || aliases.contains(&name)
+            })
+            .map(|(code, _, _)| *code)
+    }
+
+    /// Whether this is a numpad key.
+    pub fn is_keypad(self) -> bool {
+        self.keypad_name().is_some()
+    }
+}
+
+/// Every canonical numpad keybind name, in keypad order.
+pub fn keypad_names() -> impl Iterator<Item = &'static str> {
+    KEYPAD_NAMES.iter().map(|(_, name, _)| *name)
+}
+
 /// A keyboard event combining a key code and modifiers
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyEvent {
@@ -236,6 +309,89 @@ mod tests {
     fn test_keycode_char() {
         let key = KeyCode::Char('a');
         assert!(matches!(key, KeyCode::Char('a')));
+    }
+
+    // ===========================================
+    // Numpad name table
+    // ===========================================
+
+    /// No canonical name may contain '+', or it would collide with the modifier
+    /// separator and become unbindable with modifiers - the original bug.
+    #[test]
+    fn canonical_keypad_names_have_no_modifier_separator() {
+        for name in keypad_names() {
+            assert!(
+                !name.contains('+'),
+                "canonical name {name} contains the modifier separator"
+            );
+        }
+    }
+
+    #[test]
+    fn keypad_names_round_trip_to_their_codes() {
+        for name in keypad_names() {
+            let code = KeyCode::from_keypad_name(name)
+                .unwrap_or_else(|| panic!("{name} should resolve to a key code"));
+            assert_eq!(
+                code.keypad_name(),
+                Some(name),
+                "{name} did not round-trip back to itself"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_symbol_names_resolve_to_canonical_codes() {
+        assert_eq!(KeyCode::from_keypad_name("num_+"), Some(KeyCode::KeypadPlus));
+        assert_eq!(
+            KeyCode::from_keypad_name("num_-"),
+            Some(KeyCode::KeypadMinus)
+        );
+        assert_eq!(
+            KeyCode::from_keypad_name("num_*"),
+            Some(KeyCode::KeypadMultiply)
+        );
+        assert_eq!(
+            KeyCode::from_keypad_name("num_/"),
+            Some(KeyCode::KeypadDivide)
+        );
+        assert_eq!(
+            KeyCode::from_keypad_name("num_."),
+            Some(KeyCode::KeypadPeriod)
+        );
+
+        // Aliases resolve, but the canonical spelling is what gets written back.
+        assert_eq!(
+            KeyCode::KeypadPlus.keypad_name(),
+            Some("num_plus"),
+            "an alias must never become the canonical name"
+        );
+    }
+
+    #[test]
+    fn all_sixteen_numpad_keys_are_named() {
+        assert_eq!(keypad_names().count(), 16);
+    }
+
+    #[test]
+    fn non_keypad_codes_have_no_keypad_name() {
+        for code in [
+            KeyCode::Enter,
+            KeyCode::Up,
+            KeyCode::Home,
+            KeyCode::Char('5'),
+            KeyCode::F(5),
+        ] {
+            assert_eq!(code.keypad_name(), None);
+            assert!(!code.is_keypad());
+        }
+    }
+
+    #[test]
+    fn unknown_names_do_not_resolve() {
+        for name in ["num_", "num_x", "numpad_1", "", "ctrl+num_1"] {
+            assert_eq!(KeyCode::from_keypad_name(name), None, "{name} should not resolve");
+        }
     }
 
     #[test]

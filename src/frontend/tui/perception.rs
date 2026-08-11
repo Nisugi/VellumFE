@@ -157,6 +157,7 @@ impl PerceptionWindow {
                     span_type: SpanType::Normal,
                     link_data: entry.link_data.clone(),
                     custom_emoji: None,
+                    inline_image: None,
                 };
 
                 // Apply highlights

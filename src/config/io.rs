@@ -540,6 +540,11 @@ impl Config {
 
         // Sorter (rules/order/labels/format): character overrides global.
         self.sorter = character_config.sorter;
+
+        // Room art toggle: character overrides global. Same restart-amnesia
+        // trap as active_skin — saved to the profile, dropped by the merge.
+        self.room_images = character_config.room_images;
+        self.game_art = character_config.game_art;
     }
 
     pub fn load_with_options(character: Option<&str>, port_override: Option<u16>) -> Result<Self> {
@@ -806,6 +811,8 @@ impl Default for Config {
             logging: LoggingConfig::default(),
             streams: StreamsConfig::default(), // Stream routing config
             sorter: SorterConfig::default(),
+            room_images: RoomImagesSettings::default(),
+            game_art: GameArtSettings::default(),
             highlight_settings: HighlightsConfig::default(), // Highlight system toggles
             quickbars: QuickbarsConfig::default(),
             web: WebConfig::default(), // Web server off by default
@@ -845,6 +852,82 @@ mod tests {
         assert_eq!(shipped.ui.focus.types, code.ui.focus.types);
         // Perf keys stay in [ui], not swallowed by a preceding sub-table.
         assert_eq!(shipped.ui.perf_stats_width, code.ui.perf_stats_width);
+    }
+
+    /// REPRO: `.setskin none` must survive a restart. Drives the real
+    /// save->load path (save_sparse then load_layered_config), not the
+    /// legacy merge_with.
+    #[test]
+    fn setskin_none_survives_reload() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        let character = Some("ReproChar");
+        let base = Config::default();
+        let path = Config::config_path(character).expect("config path");
+        std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir profile");
+
+        // 1. A skin is active and saved to the profile.
+        let mut config = Config::default();
+        config.active_skin = Some("stealth".to_string());
+        Config::save_sparse(&path, &config, &base).expect("save skin");
+        let on_disk = std::fs::read_to_string(&path).expect("read");
+        assert!(on_disk.contains("stealth"), "setup failed: {}", on_disk);
+
+        // 2. `.setskin none` clears it and saves.
+        config.active_skin = None;
+        Config::save_sparse(&path, &config, &base).expect("save none");
+        let after_none = std::fs::read_to_string(&path).expect("read");
+
+        // 3. Restart: what does the loader actually see?
+        let reloaded = Config::load_layered_config(character).expect("reload");
+
+        std::env::remove_var("VELLUM_FE_DIR");
+        assert_eq!(
+            reloaded.active_skin, None,
+            "skin resurrected after .setskin none; file still reads:\n{}",
+            after_none
+        );
+    }
+
+    /// `.setskin none` against a skin set in the GLOBAL layer. Pruning the
+    /// profile line alone is not enough here — with nothing stated, the
+    /// profile re-inherits the global skin.
+    #[test]
+    fn setskin_none_survives_reload_over_global_skin() {
+        let _guard = crate::config::VELLUM_FE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("VELLUM_FE_DIR", dir.path());
+
+        let character = Some("ReproChar");
+        let global_path = Config::common_config_path().expect("global path");
+        std::fs::create_dir_all(global_path.parent().unwrap()).expect("mkdir global");
+        std::fs::write(&global_path, "active_skin = \"stealth\"\n").expect("write global");
+
+        let path = Config::config_path(character).expect("config path");
+        std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir profile");
+
+        // The user clears the skin; base is the global layer, as in save().
+        let base = Config::load_global_layer().expect("global layer");
+        assert_eq!(base.active_skin.as_deref(), Some("stealth"), "setup");
+        let mut config = base.clone();
+        config.active_skin = None;
+        Config::save_sparse(&path, &config, &base).expect("save none");
+        let after_none = std::fs::read_to_string(&path).unwrap_or_default();
+
+        let reloaded = Config::load_layered_config(character).expect("reload");
+
+        std::env::remove_var("VELLUM_FE_DIR");
+        assert_eq!(
+            reloaded.active_skin, None,
+            "global skin re-inherited after .setskin none; profile reads:\n{}",
+            after_none
+        );
     }
 
     /// Every serialized root field that Config::save writes into the

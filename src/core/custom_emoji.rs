@@ -27,6 +27,10 @@ pub enum EmojiFormat {
     /// cycles frames).
     Gif,
     Webp,
+    /// JPEG. Never animated and has no alpha, so it is a poor emoji format —
+    /// but inline images (`<vellumImg>`) are photographs and banners, where
+    /// it is the common case.
+    Jpeg,
 }
 
 impl EmojiFormat {
@@ -47,6 +51,7 @@ impl EmojiFormat {
             EmojiFormat::Png | EmojiFormat::Apng => "image/png",
             EmojiFormat::Gif => "image/gif",
             EmojiFormat::Webp => "image/webp",
+            EmojiFormat::Jpeg => "image/jpeg",
         }
     }
 }
@@ -141,8 +146,10 @@ impl CustomEmojiRegistry {
     }
 }
 
-/// Shortcode name alphabet, matching the gemoji/resolver rule.
-fn is_shortcode_byte(b: u8) -> bool {
+/// Shortcode name alphabet, matching the gemoji/resolver rule. Also the
+/// name rule for inline images (`<vellumImg src=..>`), so a feed-supplied
+/// name can never contain a path separator.
+pub fn is_shortcode_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || b == b'+' || b == b'-'
 }
 
@@ -162,6 +169,7 @@ fn format_of(path: &Path) -> Option<EmojiFormat> {
         "apng" => Some(EmojiFormat::Apng),
         "gif" => Some(EmojiFormat::Gif),
         "webp" => Some(EmojiFormat::Webp),
+        "jpg" | "jpeg" => Some(EmojiFormat::Jpeg),
         _ => None,
     }
 }
@@ -294,10 +302,16 @@ mod tests {
 
         write_file(&tmp, "VibeCat.png", &[PNG_SIG, b"IDATxx"].concat());
         write_file(&tmp, "dance.gif", b"GIF89a....");
+        // JPEG matters for inline images (photos/banners), where it is the
+        // common case; both spellings of the extension must be accepted.
+        write_file(&tmp, "sunset.jpg", b"\xFF\xD8\xFF\xE0");
+        write_file(&tmp, "vista.jpeg", b"\xFF\xD8\xFF\xE0");
         write_file(&tmp, "notes.txt", b"ignore me"); // unsupported ext
 
         let reg = CustomEmojiRegistry::scan_dir(&tmp);
-        assert_eq!(reg.len(), 2, "png + gif, txt ignored");
+        assert_eq!(reg.get("sunset").unwrap().format, EmojiFormat::Jpeg);
+        assert_eq!(reg.get("vista").unwrap().format, EmojiFormat::Jpeg);
+        assert_eq!(reg.len(), 4, "png + gif + 2 jpeg, txt ignored");
         assert!(reg.contains("vibecat"), "lookup is case-insensitive");
         assert!(reg.contains("VibeCat"));
         assert!(reg.contains("dance"));

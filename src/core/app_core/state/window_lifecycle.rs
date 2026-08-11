@@ -371,10 +371,37 @@ impl AppCore {
         }
     }
 
-    /// Delete a window (legacy - use hide_window instead)
+    /// `.deletewindow` — remove a window from the layout for real, stashing it
+    /// for restore. Both frontends share this path: the GUI's menu delete and
+    /// the dot-command must mean the same thing, or "delete" means two
+    /// different things depending on where you're sitting (it used to: this
+    /// redirected to `hide_window` in the TUI while the GUI truly deleted).
+    /// Hiding is `.hidewindow`.
     pub(in crate::core::app_core) fn delete_window(&mut self, name: &str) {
-        // For backwards compatibility, redirect to hide
-        self.hide_window(name);
+        // The story feed has the same invariant as hiding — deleting the only
+        // window showing `main` would silently eat all game text, and unlike a
+        // hide there is no checkbox to bring it back.
+        let deletes_main_subscriber = self
+            .ui_state
+            .windows
+            .get(name)
+            .map(|w| Self::window_subscribes_to_main(&w.content))
+            .unwrap_or(false);
+        if deletes_main_subscriber && !self.main_stream_has_subscriber_excluding(name) {
+            self.add_system_message(
+                "Cannot delete the only window showing the story (main) feed. \
+                 Add the main stream to another window first.",
+            );
+            return;
+        }
+        if self.delete_and_stash_window(name) {
+            self.add_system_message(&format!(
+                "Window '{}' deleted. Restore it from the Windows menu.",
+                name
+            ));
+        } else {
+            self.add_system_message(&format!("Window '{}' not found", name));
+        }
     }
 
     /// Permanently delete a window from the layout, but STASH its full def in

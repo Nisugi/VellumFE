@@ -500,6 +500,42 @@ fn test_numpad_binding_name_maps_to_keypad_codes() {
     );
 }
 
+/// eframe's capture set is keyed by bare key name, with no modifier information, so
+/// a modified bind like ctrl+num_plus must still register "num_plus" for capture.
+/// If it didn't, the key would keep its native behavior and the chord would never
+/// reach dispatch.
+#[test]
+fn test_numpad_capture_name_ignores_modifiers() {
+    for name in ["num_0", "num_plus", "num_divide", "num_enter"] {
+        let code = VellumGuiApp::numpad_binding_name_to_frontend_code(name)
+            .unwrap_or_else(|| panic!("{name} should resolve"));
+
+        // Whatever modifiers a binding carries, the capture name is the bare key.
+        assert_eq!(
+            VellumGuiApp::frontend_code_to_numpad_binding_name(code),
+            Some(name),
+            "{name} must round-trip to its capture name regardless of modifiers"
+        );
+    }
+}
+
+/// The GUI capture layer and keybinds.toml must agree on spelling, or a binding
+/// saved by the editor would never be captured at runtime.
+#[test]
+fn test_numpad_capture_names_match_keybind_parser() {
+    for name in crate::data::input::keypad_names() {
+        let capture_code = VellumGuiApp::numpad_binding_name_to_frontend_code(name)
+            .unwrap_or_else(|| panic!("{name} unknown to the GUI capture layer"));
+        let (parsed_code, _) = crate::config::parse_key_string(name)
+            .unwrap_or_else(|| panic!("{name} unknown to the keybind parser"));
+
+        assert_eq!(
+            capture_code, parsed_code,
+            "{name} resolves differently in the GUI capture layer and the parser"
+        );
+    }
+}
+
 #[test]
 fn test_resolve_link_dispatch_direct_cmd_prefers_noun() {
     let link = LinkData {
@@ -620,6 +656,7 @@ fn test_segment_has_clickable_link_for_monsterbold_link_segment() {
             coord: None,
         }),
         custom_emoji: None,
+        inline_image: None,
     };
 
     assert!(VellumGuiApp::segment_has_clickable_link(&segment));
@@ -636,6 +673,7 @@ fn test_segment_has_clickable_link_false_without_link_data() {
         span_type: SpanType::Link,
         link_data: None,
         custom_emoji: None,
+        inline_image: None,
     };
 
     assert!(!VellumGuiApp::segment_has_clickable_link(&segment));
