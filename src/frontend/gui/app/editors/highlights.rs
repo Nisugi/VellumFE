@@ -47,16 +47,127 @@ struct HighlightFormState {
     set_status: String,
     status_duration: String,
     clear_status: String,
-    /// Overlay alert spec. Held as the parsed struct rather than round-tripped
-    /// through strings like the fields above, because it is a nested record,
-    /// not a scalar. Editing UI lands with the overlay renderer; until then
-    /// this preserves what was authored elsewhere.
-    alert: Option<crate::config::AlertSpec>,
+
+    // ---- Overlay alert ------------------------------------------------
+    // Flattened into strings like every other field so the form stays one
+    // uniform editing surface; `build_alert` reassembles the nested
+    // AlertSpec on save and yields None when nothing was filled in.
+    alert_banner: String,
+    alert_banner_fg: String,
+    alert_banner_bg: String,
+    alert_art: String,
+    alert_flash: String,
+    alert_anchor: crate::config::AlertAnchor,
+    alert_offset_x: String,
+    alert_offset_y: String,
+    alert_duration: String,
+    alert_cooldown: String,
+    /// Authored alert id, preserved so pack updates and cooldown state keep a
+    /// stable identity across pattern edits.
+    alert_id: String,
+    /// Priority is carried but has no editor control yet (eviction is
+    /// oldest-first in v1); kept so saving never drops an authored value.
+    alert_priority: Option<i32>,
+
     is_global: bool,
     error: Option<String>,
 }
 
+/// The nine screen anchors, in reading order so the picker matches the
+/// mental image of a 3x3 grid.
+const ALERT_ANCHORS: [crate::config::AlertAnchor; 9] = {
+    use crate::config::AlertAnchor::*;
+    [
+        TopLeft,
+        TopCenter,
+        TopRight,
+        CenterLeft,
+        Center,
+        CenterRight,
+        BottomLeft,
+        BottomCenter,
+        BottomRight,
+    ]
+};
+
+fn anchor_label(anchor: crate::config::AlertAnchor) -> &'static str {
+    use crate::config::AlertAnchor::*;
+    match anchor {
+        TopLeft => "Top left",
+        TopCenter => "Top center",
+        TopRight => "Top right",
+        CenterLeft => "Center left",
+        Center => "Center",
+        CenterRight => "Center right",
+        BottomLeft => "Bottom left",
+        BottomCenter => "Bottom center",
+        BottomRight => "Bottom right",
+    }
+}
+
+/// Pull one optional string out of a pattern's alert, or "" when the pattern
+/// has no alert at all. Keeps `from_pattern` readable rather than repeating
+/// the same `as_ref().and_then(...).unwrap_or_default()` chain a dozen times.
+fn alert_str<F>(pattern: &HighlightPattern, get: F) -> String
+where
+    F: Fn(&crate::config::AlertSpec) -> Option<String>,
+{
+    pattern
+        .alert
+        .as_ref()
+        .and_then(get)
+        .unwrap_or_default()
+}
+
 impl HighlightFormState {
+    /// Reassemble the nested AlertSpec from the flat form fields. Returns
+    /// `None` when no presentation was specified — an alert that shows
+    /// nothing would silently burn a concurrent slot at runtime, so "empty
+    /// form" must mean "no alert" rather than "invisible alert".
+    fn build_alert(&self) -> Option<crate::config::AlertSpec> {
+        let opt = |s: &str| {
+            let t = s.trim();
+            (!t.is_empty()).then(|| t.to_string())
+        };
+        let banner = opt(&self.alert_banner);
+        let art = opt(&self.alert_art);
+        let flash = opt(&self.alert_flash);
+        if banner.is_none() && art.is_none() && flash.is_none() {
+            return None;
+        }
+
+        // An offset counts if EITHER axis was given; the other defaults to 0
+        // so "nudge it down 20px" doesn't require typing a zero for x.
+        let x = self.alert_offset_x.trim().parse::<f32>().ok();
+        let y = self.alert_offset_y.trim().parse::<f32>().ok();
+        let offset = (x.is_some() || y.is_some())
+            .then(|| (x.unwrap_or(0.0), y.unwrap_or(0.0)));
+
+        Some(crate::config::AlertSpec {
+            id: opt(&self.alert_id),
+            banner,
+            banner_fg: opt(&self.alert_banner_fg),
+            banner_bg: opt(&self.alert_banner_bg),
+            art,
+            flash,
+            anchor: self.alert_anchor,
+            offset,
+            duration: self
+                .alert_duration
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .filter(|v| *v > 0.0),
+            cooldown: self
+                .alert_cooldown
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .filter(|v| *v >= 0.0),
+            priority: self.alert_priority,
+        })
+    }
+
     fn empty() -> Self {
         Self {
             original_name: None,
@@ -82,7 +193,18 @@ impl HighlightFormState {
             set_status: String::new(),
             status_duration: String::new(),
             clear_status: String::new(),
-            alert: None,
+            alert_banner: String::new(),
+            alert_banner_fg: String::new(),
+            alert_banner_bg: String::new(),
+            alert_art: String::new(),
+            alert_flash: String::new(),
+            alert_anchor: crate::config::AlertAnchor::default(),
+            alert_offset_x: String::new(),
+            alert_offset_y: String::new(),
+            alert_duration: String::new(),
+            alert_cooldown: String::new(),
+            alert_id: String::new(),
+            alert_priority: None,
             is_global: true,
             error: None,
         }
@@ -119,7 +241,22 @@ impl HighlightFormState {
                 .map(|secs| secs.to_string())
                 .unwrap_or_default(),
             clear_status: pattern.clear_status.clone().unwrap_or_default(),
-            alert: pattern.alert.clone(),
+            alert_banner: alert_str(pattern, |a| a.banner.clone()),
+            alert_banner_fg: alert_str(pattern, |a| a.banner_fg.clone()),
+            alert_banner_bg: alert_str(pattern, |a| a.banner_bg.clone()),
+            alert_art: alert_str(pattern, |a| a.art.clone()),
+            alert_flash: alert_str(pattern, |a| a.flash.clone()),
+            alert_anchor: pattern
+                .alert
+                .as_ref()
+                .map(|a| a.anchor)
+                .unwrap_or_default(),
+            alert_offset_x: alert_str(pattern, |a| a.offset.map(|(x, _)| x.to_string())),
+            alert_offset_y: alert_str(pattern, |a| a.offset.map(|(_, y)| y.to_string())),
+            alert_duration: alert_str(pattern, |a| a.duration.map(|v| v.to_string())),
+            alert_cooldown: alert_str(pattern, |a| a.cooldown.map(|v| v.to_string())),
+            alert_id: alert_str(pattern, |a| a.id.clone()),
+            alert_priority: pattern.alert.as_ref().and_then(|a| a.priority),
             is_global,
             error: None,
         }
@@ -190,7 +327,7 @@ impl HighlightFormState {
                 set_status: opt(&self.set_status),
                 status_duration,
                 clear_status: opt(&self.clear_status),
-                alert: self.alert.clone(),
+                alert: self.build_alert(),
                 compiled_regex: None,
             },
         ))
@@ -493,6 +630,102 @@ impl VellumGuiApp {
                                     ui.end_row();
                                 });
 
+                            // Overlay alert: collapsed by default so the
+                            // common case (a coloring rule) stays a short
+                            // form, but always one click away.
+                            ui.collapsing("Overlay alert", |ui| {
+                                ui.label(
+                                    "Raise an on-screen alert when this pattern matches. \
+                                     Leave Banner, Art, and Flash all empty for no alert.",
+                                );
+                                egui::Grid::new("highlight_alert_grid")
+                                    .num_columns(2)
+                                    .spacing([8.0, 4.0])
+                                    .show(ui, |ui| {
+                                        ui.label("Banner").on_hover_text(
+                                            "Text shown on screen. Supports $1, $2 capture \
+                                             groups from the pattern.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_banner);
+                                        ui.end_row();
+
+                                        ui.label("Banner color");
+                                        ui.text_edit_singleline(&mut form.alert_banner_fg);
+                                        ui.end_row();
+
+                                        ui.label("Banner background");
+                                        ui.text_edit_singleline(&mut form.alert_banner_bg);
+                                        ui.end_row();
+
+                                        ui.label("Art").on_hover_text(
+                                            "Image name from the image pool, played once. \
+                                             Static images (PNG) work too.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_art);
+                                        ui.end_row();
+
+                                        ui.label("Flash").on_hover_text(
+                                            "Screen-edge tint color. Scaled by the global \
+                                             flash intensity setting.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_flash);
+                                        ui.end_row();
+
+                                        ui.label("Anchor");
+                                        egui::ComboBox::from_id_salt("alert_anchor")
+                                            .selected_text(anchor_label(form.alert_anchor))
+                                            .show_ui(ui, |ui| {
+                                                for anchor in ALERT_ANCHORS {
+                                                    ui.selectable_value(
+                                                        &mut form.alert_anchor,
+                                                        anchor,
+                                                        anchor_label(anchor),
+                                                    );
+                                                }
+                                            });
+                                        ui.end_row();
+
+                                        ui.label("Offset X / Y").on_hover_text(
+                                            "Pixel nudge from the anchor point.",
+                                        );
+                                        ui.horizontal(|ui| {
+                                            ui.add(
+                                                egui::TextEdit::singleline(
+                                                    &mut form.alert_offset_x,
+                                                )
+                                                .desired_width(60.0),
+                                            );
+                                            ui.add(
+                                                egui::TextEdit::singleline(
+                                                    &mut form.alert_offset_y,
+                                                )
+                                                .desired_width(60.0),
+                                            );
+                                        });
+                                        ui.end_row();
+
+                                        ui.label("Duration").on_hover_text(
+                                            "Seconds on screen before it fades. Empty = 4s.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_duration);
+                                        ui.end_row();
+
+                                        ui.label("Cooldown").on_hover_text(
+                                            "Minimum seconds between fires of this rule. \
+                                             Empty = 3s. Keeps busy combat from spamming.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_cooldown);
+                                        ui.end_row();
+
+                                        ui.label("Alert id").on_hover_text(
+                                            "Optional stable name for this alert. Keeps its \
+                                             cooldown identity if you edit the pattern.",
+                                        );
+                                        ui.text_edit_singleline(&mut form.alert_id);
+                                        ui.end_row();
+                                    });
+                            });
+
                             ui.horizontal_wrapped(|ui| {
                                 ui.checkbox(&mut form.bold, "Bold");
                                 ui.checkbox(&mut form.color_entire_line, "Entire line");
@@ -538,5 +771,108 @@ impl VellumGuiApp {
         if open {
             self.highlight_editor = Some(state);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn form_with_alert() -> HighlightFormState {
+        let mut form = HighlightFormState::empty();
+        form.name = "stun-warning".to_string();
+        form.pattern = "You are stunned".to_string();
+        form.alert_banner = "STUNNED".to_string();
+        form.alert_banner_fg = "#ff0000".to_string();
+        form.alert_art = "lightning".to_string();
+        form.alert_anchor = crate::config::AlertAnchor::TopCenter;
+        form.alert_offset_x = "10".to_string();
+        form.alert_offset_y = "-20".to_string();
+        form.alert_duration = "6".to_string();
+        form.alert_cooldown = "5".to_string();
+        form.alert_id = "stun".to_string();
+        form
+    }
+
+    #[test]
+    fn alert_survives_a_full_form_round_trip() {
+        let (_, pattern) = form_with_alert().build_pattern().expect("builds");
+        let alert = pattern.alert.clone().expect("alert authored");
+        assert_eq!(alert.banner.as_deref(), Some("STUNNED"));
+        assert_eq!(alert.banner_fg.as_deref(), Some("#ff0000"));
+        assert_eq!(alert.art.as_deref(), Some("lightning"));
+        assert_eq!(alert.anchor, crate::config::AlertAnchor::TopCenter);
+        assert_eq!(alert.offset, Some((10.0, -20.0)));
+        assert_eq!(alert.duration, Some(6.0));
+        assert_eq!(alert.cooldown, Some(5.0));
+        assert_eq!(alert.id.as_deref(), Some("stun"));
+
+        // Reload into a form and rebuild: nothing may be lost in the cycle,
+        // since that silent drop is exactly what bit set_status once before.
+        let reloaded = HighlightFormState::from_pattern("stun-warning", &pattern, true);
+        let (_, again) = reloaded.build_pattern().expect("rebuilds");
+        let alert2 = again.alert.expect("alert preserved");
+        assert_eq!(alert2.banner, alert.banner);
+        assert_eq!(alert2.anchor, alert.anchor);
+        assert_eq!(alert2.offset, alert.offset);
+        assert_eq!(alert2.duration, alert.duration);
+        assert_eq!(alert2.cooldown, alert.cooldown);
+        assert_eq!(alert2.id, alert.id);
+    }
+
+    #[test]
+    fn empty_alert_fields_mean_no_alert() {
+        let mut form = HighlightFormState::empty();
+        form.name = "plain".to_string();
+        form.pattern = "hello".to_string();
+        let (_, pattern) = form.build_pattern().expect("builds");
+        assert!(
+            pattern.alert.is_none(),
+            "a coloring-only rule must not carry an invisible alert"
+        );
+    }
+
+    #[test]
+    fn any_single_presentation_is_enough_to_author_an_alert() {
+        for field in ["banner", "art", "flash"] {
+            let mut form = HighlightFormState::empty();
+            form.name = "x".to_string();
+            form.pattern = "y".to_string();
+            match field {
+                "banner" => form.alert_banner = "hi".to_string(),
+                "art" => form.alert_art = "boom".to_string(),
+                _ => form.alert_flash = "#ff0000".to_string(),
+            }
+            let (_, pattern) = form.build_pattern().expect("builds");
+            assert!(pattern.alert.is_some(), "{field} alone should author an alert");
+        }
+    }
+
+    #[test]
+    fn one_offset_axis_defaults_the_other_to_zero() {
+        let mut form = HighlightFormState::empty();
+        form.name = "x".to_string();
+        form.pattern = "y".to_string();
+        form.alert_banner = "hi".to_string();
+        form.alert_offset_y = "30".to_string();
+        let (_, pattern) = form.build_pattern().expect("builds");
+        // Typing only a Y nudge must not require typing a zero for X.
+        assert_eq!(pattern.alert.expect("alert").offset, Some((0.0, 30.0)));
+    }
+
+    #[test]
+    fn garbage_numbers_fall_back_to_defaults_rather_than_failing_the_save() {
+        let mut form = HighlightFormState::empty();
+        form.name = "x".to_string();
+        form.pattern = "y".to_string();
+        form.alert_banner = "hi".to_string();
+        form.alert_duration = "soon".to_string();
+        form.alert_cooldown = "-5".to_string();
+        let (_, pattern) = form.build_pattern().expect("still saves");
+        let alert = pattern.alert.expect("alert");
+        // Unparseable/invalid values become None so the runtime default
+        // applies; the rest of the rule is not lost over a typo.
+        assert_eq!(alert.duration, None);
+        assert_eq!(alert.cooldown, None);
     }
 }

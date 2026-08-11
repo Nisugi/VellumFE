@@ -260,13 +260,13 @@ pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
     HlFieldDef { name: "replace", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "stream", applies_to: &[Tui, Gui, Web] },
     HlFieldDef { name: "window", applies_to: &[Tui, Gui, Web] },
-    // Overlay alerts (2026-08-11). GUI-only by design, not by neglect: the
-    // GUI overlay renderer is the only one that exists in this slice. The
+    // Overlay alerts (2026-08-11). GUI-only for now, by scope and not by
+    // neglect: the GUI is the only frontend with an overlay renderer. The
     // TUI's constrained form (banner line, border flash) and the web DOM
-    // overlay each need a renderer AND a bridge message before their editors
-    // can honestly claim to author this. Widen `applies_to` as those land —
-    // that is the whole point of tracking it per-frontend rather than
-    // exempting it.
+    // overlay each need a renderer AND a bridge message carrying active-alert
+    // state before their editors could honestly claim to author this. Widen
+    // `applies_to` as those land — tracking it per-frontend rather than
+    // exempting it is exactly so this stays visible instead of forgotten.
     HlFieldDef { name: "alert", applies_to: &[Gui] },
 ];
 
@@ -274,15 +274,7 @@ pub const HIGHLIGHT_FIELDS: &[HlFieldDef] = &[
 /// here is excused from the parity test. Mirror of registry.rs's
 /// EXEMPT_PREFIXES — an explicit, reviewed escape hatch. Empty today:
 /// full parity is the goal, so any entry is a conscious retreat from it.
-pub const HL_FIELD_EXEMPTIONS: &[(&str, HlFrontend, &str)] = &[
-    // TEMPORARY — remove when the GUI highlight editor grows its alert
-    // section (the overlay renderer lands first; an editor for a field
-    // nothing can draw would be worse than none). The alert data path is
-    // live and round-trips through both editors without loss; only the
-    // authoring UI is outstanding. This entry is a dated IOU, not a
-    // decision: `alert` is meant to reach full Tui/Gui/Web parity.
-    ("alert", Gui, "GUI alert editor section pending (added 2026-08-11)"),
-];
+pub const HL_FIELD_EXEMPTIONS: &[(&str, HlFrontend, &str)] = &[];
 
 /// The highlight fields the web/phone form should render, in catalog order —
 /// every field that applies to `Web` and isn't exempted there. Shipped to the
@@ -325,7 +317,7 @@ pub const HL_GUI_COVERED: &[&str] = &[
     "pattern", "fg", "bg", "bold", "color_entire_line", "fast_parse", "sound",
     "sound_volume", "rumble", "category", "squelch", "silent_prompt",
     "redirect_to", "redirect_mode", "replace", "stream", "window",
-    "set_status", "status_duration", "clear_status",
+    "set_status", "status_duration", "clear_status", "alert",
 ];
 
 /// Fields edited by the web/phone highlight form
