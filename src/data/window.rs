@@ -131,6 +131,7 @@ impl WidgetType {
         "targets",
         "players",
         "spells",
+        "missingspells",
         "perception",
         "performance",
         "spacer",
