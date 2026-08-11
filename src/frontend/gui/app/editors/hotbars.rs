@@ -1217,8 +1217,11 @@ pub(super) fn render_condition_group(
                             );
                         });
                     } else {
-                        // Deeper nesting is file-authored only; keep intact
-                        ui.weak("(nested group - edit in hotbars.toml)");
+                        // Deeper nesting is file-authored only; keep intact.
+                        // This builder is shared by hotbars, hand icons,
+                        // indicators, and highlight alerts, so it must not
+                        // name any one config file here.
+                        ui.weak("(nested group - edit in the config file)");
                     }
                 }
                 leaf => {

@@ -185,6 +185,11 @@ impl CoreHighlightEngine {
                         }
                     }
                     None // Don't compile as regex
+                } else if h.pattern.is_empty() {
+                    // Condition-driven alerts carry no pattern. An empty
+                    // regex matches every line, so it must never be compiled
+                    // — this rule has no text trigger at all.
+                    None
                 } else {
                     // Regular regex pattern (reuse compiled regex when available)
                     if let Some(regex) = h.compiled_regex.clone() {
@@ -1798,6 +1803,22 @@ mod tests {
                 .alerts
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn a_pattern_less_condition_rule_never_matches_text() {
+        // Condition-driven alerts have an empty pattern. An empty regex is
+        // valid and matches EVERY line, so without an explicit guard such a
+        // rule would fire its alert (and apply its colors) on all game text.
+        let mut p = alert_pattern("", "SHOULD NOT FIRE");
+        p.fg = Some("#ff0000".to_string());
+        let engine = CoreHighlightEngine::new(vec![p]);
+
+        let result = engine.apply_highlights(&[make_segment("any ordinary line")], "main");
+        assert!(
+            result.alerts.is_empty(),
+            "a rule with no pattern has no text trigger"
         );
     }
 

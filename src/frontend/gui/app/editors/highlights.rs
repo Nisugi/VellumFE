@@ -301,10 +301,20 @@ impl HighlightFormState {
             return Err("Name is required.".to_string());
         }
         let pattern_text = self.pattern.trim().to_string();
-        if pattern_text.is_empty() {
-            return Err("Pattern is required.".to_string());
+        // A condition-driven alert is defined by having NO pattern — it fires
+        // on a game-state transition, not a line of text. Requiring a pattern
+        // unconditionally (as this did before alerts existed) makes that
+        // entire rule shape unauthorable.
+        if pattern_text.is_empty() && self.alert_when.is_none() {
+            return Err(
+                "Pattern is required (or add a condition to trigger on game state)."
+                    .to_string(),
+            );
         }
-        if !self.fast_parse {
+        // Only validate as a regex when there IS one. An empty pattern
+        // compiles fine but matches every line, so it must reach the engine
+        // as "no text trigger" rather than as a catch-all rule.
+        if !self.fast_parse && !pattern_text.is_empty() {
             regex::Regex::new(&pattern_text).map_err(|err| format!("Invalid regex: {}", err))?;
         }
         let sound_volume = match self.sound_volume.trim() {
@@ -539,6 +549,25 @@ impl VellumGuiApp {
             // "(none)" + built-ins + user-defined patterns from the
             // controller editor's Rumble tab (shared source with the TUI form).
             let rumble_options: Vec<String> = self.app_core.config.controller_rumble.pattern_names();
+            // Effect-name suggestions for the shared condition builder, built
+            // the same way the hand-icons editor does.
+            let condition_suggestions: std::collections::HashMap<&'static str, Vec<String>> =
+                crate::config::EffectCategory::ALL
+                    .iter()
+                    .map(|category| {
+                        (
+                            category.state_key(),
+                            self.app_core
+                                .game_state
+                                .effects
+                                .get(category.state_key())
+                                .map(|store| {
+                                    store.effects.iter().map(|e| e.text.clone()).collect()
+                                })
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect();
             let mut form_open = true;
             let mut submitted = false;
             let mut cancelled = false;
@@ -748,6 +777,73 @@ impl VellumGuiApp {
                                         ui.text_edit_singleline(&mut form.alert_id);
                                         ui.end_row();
                                     });
+
+                                ui.separator();
+
+                                // Condition gate. With a pattern, this is not
+                                // yet consulted (phase 1 fires on the text
+                                // match); with an EMPTY pattern the alert
+                                // becomes condition-driven and fires on the
+                                // moment the condition becomes true.
+                                let mut gated = form.alert_when.is_some();
+                                if ui
+                                    .checkbox(&mut gated, "Trigger on a game-state condition")
+                                    .on_hover_text(
+                                        "Fires when the condition BECOMES true, not while it \
+                                         stays true. Leave the Pattern field empty to make \
+                                         this a condition-driven alert.",
+                                    )
+                                    .changed()
+                                {
+                                    form.alert_when = gated.then(|| {
+                                        crate::config::Condition::All {
+                                            conditions: Vec::new(),
+                                        }
+                                    });
+                                }
+
+                                if let Some(condition) = form.alert_when.as_mut() {
+                                    if !form.pattern.trim().is_empty() {
+                                        ui.colored_label(
+                                            ui.visuals().warn_fg_color,
+                                            "This rule has a pattern, so it fires on the text \
+                                             match. Clear the Pattern field to make the \
+                                             condition drive it.",
+                                        );
+                                    }
+                                    super::hotbars::render_condition_group(
+                                        ui,
+                                        "highlight_alert_cond",
+                                        condition,
+                                        0,
+                                        &condition_suggestions,
+                                    );
+                                    ui.horizontal(|ui| {
+                                        ui.label("Re-arm after").on_hover_text(
+                                            "Seconds the condition must stay FALSE before this \
+                                             can fire again. Stops a value hovering on its \
+                                             threshold from firing over and over. Empty = 3s.",
+                                        );
+                                        let mut rearm = form
+                                            .alert_rearm
+                                            .map(|v| v.to_string())
+                                            .unwrap_or_default();
+                                        if ui
+                                            .add(
+                                                egui::TextEdit::singleline(&mut rearm)
+                                                    .desired_width(60.0),
+                                            )
+                                            .changed()
+                                        {
+                                            form.alert_rearm = rearm
+                                                .trim()
+                                                .parse::<f32>()
+                                                .ok()
+                                                .filter(|v| *v >= 0.0);
+                                        }
+                                        ui.label("seconds");
+                                    });
+                                }
                             });
 
                             ui.horizontal_wrapped(|ui| {
@@ -842,6 +938,52 @@ mod tests {
         assert_eq!(alert2.duration, alert.duration);
         assert_eq!(alert2.cooldown, alert.cooldown);
         assert_eq!(alert2.id, alert.id);
+    }
+
+    #[test]
+    fn condition_gate_survives_a_round_trip() {
+        let mut form = HighlightFormState::empty();
+        form.name = "low-hp".to_string();
+        // Condition-driven alerts have no pattern.
+        form.pattern = String::new();
+        form.alert_banner = "LOW HEALTH".to_string();
+        form.alert_when = Some(crate::config::Condition::Vital {
+            vital: crate::config::VitalKind::Health,
+            cmp: crate::config::Cmp::Lt,
+            value: 30,
+            unit: crate::config::VitalUnit::Percent,
+        });
+        form.alert_rearm = Some(5.0);
+
+        let (_, pattern) = form.build_pattern().expect("builds");
+        let alert = pattern.alert.clone().expect("alert");
+        assert!(alert.when.is_some(), "gate authored");
+        assert_eq!(alert.rearm, Some(5.0));
+
+        let reloaded = HighlightFormState::from_pattern("low-hp", &pattern, true);
+        let (_, again) = reloaded.build_pattern().expect("rebuilds");
+        let alert2 = again.alert.expect("alert preserved");
+        assert_eq!(
+            format!("{:?}", alert2.when),
+            format!("{:?}", alert.when),
+            "the condition tree survives edit-save-reload"
+        );
+        assert_eq!(alert2.rearm, alert.rearm);
+    }
+
+    #[test]
+    fn a_gate_alone_keeps_the_alert_alive_without_a_banner() {
+        // Clearing the presentation of a condition alert must NOT discard its
+        // gate — that would turn a working alert into one that never fires,
+        // and this form could not re-author the gate to recover it.
+        let mut form = HighlightFormState::empty();
+        form.name = "gated".to_string();
+        form.alert_when = Some(crate::config::Condition::RtActive);
+        let (_, pattern) = form.build_pattern().expect("builds");
+        assert!(
+            pattern.alert.and_then(|a| a.when).is_some(),
+            "gate preserved even with no banner/art/flash"
+        );
     }
 
     #[test]

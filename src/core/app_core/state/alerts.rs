@@ -7,6 +7,23 @@
 
 use super::AppCore;
 
+/// Is this gate empty of any actual test?
+///
+/// `Condition::All { conditions: [] }` evaluates to TRUE by the ordinary
+/// rules of `.all()`, which is correct logic and useless as a trigger: a
+/// half-built gate would fire immediately and keep firing. Detecting it here
+/// (rather than changing `eval_condition`'s semantics, which hotbars and the
+/// injury doll also depend on) keeps the fix local to alerts.
+fn is_empty_gate(condition: &crate::config::Condition) -> bool {
+    match condition {
+        crate::config::Condition::All { conditions }
+        | crate::config::Condition::Any { conditions } => {
+            conditions.is_empty() || conditions.iter().all(is_empty_gate)
+        }
+        _ => false,
+    }
+}
+
 impl AppCore {
     /// Hand queued alert triggers to the core alert state, which applies the
     /// cooldown and cap. Mirrors `apply_pending_status_actions`: the message
@@ -70,6 +87,13 @@ impl AppCore {
             // pattern-less rules are condition-driven, so skip those here to
             // avoid firing the same rule from two engines.
             if !pattern.pattern.is_empty() {
+                continue;
+            }
+            // An empty group is vacuously TRUE (`[].all()` is true), so a gate
+            // the user started building but left empty would fire the instant
+            // it was saved and on every re-arm thereafter. A gate with no
+            // tests states no requirement, so treat it as inert.
+            if is_empty_gate(condition) {
                 continue;
             }
 
@@ -281,6 +305,62 @@ mod alert_condition_tests {
             core.alerts.is_empty(),
             "pattern-bearing rules fire from the text match, not here"
         );
+    }
+
+    #[test]
+    fn an_empty_condition_group_never_fires() {
+        // A gate the user started but left empty is vacuously true. Without
+        // the guard it would fire the moment it was saved and keep firing.
+        let mut core = AppCore::new_for_test();
+        let mut rule = low_health_rule();
+        rule.alert.as_mut().expect("alert").when =
+            Some(Condition::All { conditions: Vec::new() });
+        core.config.highlights.insert("empty".to_string(), rule);
+
+        for _ in 0..10 {
+            core.tick_alert_conditions();
+        }
+        assert!(core.alerts.is_empty(), "an empty gate states no requirement");
+    }
+
+    #[test]
+    fn a_group_of_empty_groups_is_still_empty() {
+        let mut core = AppCore::new_for_test();
+        let mut rule = low_health_rule();
+        rule.alert.as_mut().expect("alert").when = Some(Condition::All {
+            conditions: vec![
+                Condition::Any { conditions: Vec::new() },
+                Condition::All { conditions: Vec::new() },
+            ],
+        });
+        core.config.highlights.insert("nested".to_string(), rule);
+
+        core.tick_alert_conditions();
+        core.tick_alert_conditions();
+        assert!(core.alerts.is_empty(), "nesting nothing is still nothing");
+    }
+
+    #[test]
+    fn a_group_with_one_real_test_still_fires() {
+        // The empty-gate guard must not swallow legitimate single-test gates,
+        // which is exactly the shape the editor produces.
+        let mut core = AppCore::new_for_test();
+        let mut rule = low_health_rule();
+        rule.alert.as_mut().expect("alert").when = Some(Condition::All {
+            conditions: vec![Condition::Vital {
+                vital: VitalKind::Health,
+                cmp: Cmp::Lt,
+                value: 30,
+                unit: VitalUnit::Percent,
+            }],
+        });
+        core.config.highlights.insert("real".to_string(), rule);
+
+        core.game_state.vitals.health = 90;
+        core.tick_alert_conditions();
+        core.game_state.vitals.health = 20;
+        core.tick_alert_conditions();
+        assert_eq!(core.alerts.active().len(), 1);
     }
 
     #[test]

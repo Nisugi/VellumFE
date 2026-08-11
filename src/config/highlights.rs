@@ -429,6 +429,14 @@ impl Config {
     /// Compile regex patterns for all highlights (performance optimization)
     pub fn compile_highlight_patterns(highlights: &mut HashMap<String, HighlightPattern>) {
         for (name, pattern) in highlights.iter_mut() {
+            // A condition-driven alert has no pattern at all. An empty regex
+            // is valid and matches EVERY line, so compiling one would turn a
+            // condition alert into a rule that fires on all text. Leave it
+            // uncompiled: the engine skips rules without a regex.
+            if pattern.pattern.is_empty() {
+                pattern.compiled_regex = None;
+                continue;
+            }
             if !pattern.fast_parse {
                 // Only compile regex for non-fast_parse patterns
                 match regex::Regex::new(&pattern.pattern) {
