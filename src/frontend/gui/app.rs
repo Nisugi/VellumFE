@@ -684,6 +684,10 @@ impl VellumGuiApp {
         // `.quit` works.
         app_core.detach_quit_supported = true;
         let is_direct_connection = direct.is_some();
+        // Core needs the connection mode too: travel's `;go2` fallback can only
+        // hand off when there's a Lich listening. The GUI previously kept this
+        // to itself, which left the fallback permanently disabled.
+        app_core.set_lich_connected(!is_direct_connection);
 
         let runtime = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 

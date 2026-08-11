@@ -610,7 +610,7 @@ impl TravelTask {
                     events.push(TravelEvent::Status(format!(
                         "off the planned route (room {current}) - re-pathing"
                     )));
-                    self.repath(ctx.db, current, &mut events);
+                    self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     return events;
                 }
                 self.tick_script(actions, pc, sleep_until, expected, from, ctx, &mut events);
@@ -655,7 +655,7 @@ impl TravelTask {
                     events.push(TravelEvent::Status(format!(
                         "off the transport (room {current}) - re-pathing to the destination"
                     )));
-                    self.repath(ctx.db, current, &mut events);
+                    self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     return events;
                 }
                 if current != from {
@@ -669,7 +669,7 @@ impl TravelTask {
                     events.push(TravelEvent::Status(format!(
                         "off the planned route (room {current}) - re-pathing"
                     )));
-                    self.repath(ctx.db, current, &mut events);
+                    self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     return events;
                 }
                 // Recovery from move feedback (Lich's `move` retry loop). Only
@@ -697,7 +697,7 @@ impl TravelTask {
                             "move {from} -> {expected} keeps failing - disabling that edge for this session and re-pathing"
                         )));
                         self.banned.insert((from, expected));
-                        self.repath(ctx.db, current, &mut events);
+                        self.repath(ctx.db, current, ctx.lich_fallback, &mut events);
                     } else {
                         // Retry the same edge (a scripted edge replays its
                         // whole action sequence).
@@ -942,7 +942,7 @@ impl TravelTask {
                                 "through the {} maze - continuing",
                                 maze.name
                             )));
-                            self.repath(ctx.db, current, events);
+                            self.repath(ctx.db, current, ctx.lich_fallback, events);
                         }
                         return;
                     }
@@ -1017,7 +1017,7 @@ impl TravelTask {
             self.step = Step::Confluence { pending: None };
         } else {
             // No entry edge from here — re-path.
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
         }
     }
 
@@ -1037,7 +1037,7 @@ impl TravelTask {
             events.push(TravelEvent::Status(
                 "left the Plane - re-pathing to the destination".into(),
             ));
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         }
         if ctx.muckled {
@@ -1102,7 +1102,7 @@ impl TravelTask {
         let Some(hot) = super::confluence::hot_side(current) else {
             // Off the zone map (Ruby `$go2_restart = true`) — re-path.
             self.confluence = None;
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         };
 
@@ -1149,7 +1149,7 @@ impl TravelTask {
             super::confluence::ConfluenceMove::Restart => {
                 // No exits at all — bail out to a normal re-path.
                 self.confluence = None;
-                self.repath(ctx.db, current, events);
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
             }
         }
     }
@@ -1304,7 +1304,7 @@ impl TravelTask {
                 }
                 WalkAction::Replan => {
                     // The edge asked to re-plan from here ($go2_restart).
-                    self.repath(ctx.db, from, events);
+                    self.repath(ctx.db, from, ctx.lich_fallback, events);
                     return;
                 }
             }
@@ -1334,7 +1334,7 @@ impl TravelTask {
     ) {
         use crate::core::day_pass;
         let Some((dep, dest)) = day_pass::edge(from, next) else {
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         };
         let inputs = ctx.day_pass;
@@ -1353,7 +1353,7 @@ impl TravelTask {
                 "no valid day pass held and buying is off - re-pathing".into(),
             ));
             self.banned.insert((from, next));
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         }
         // Expired passes get dropped by the machine's preamble (Lich's
@@ -1450,7 +1450,7 @@ impl TravelTask {
         let Some(&next) = self.path.get(self.idx) else {
             // The virtual room WAS the destination (shouldn't happen for a
             // hideout, but be safe): nothing more to do; re-path to confirm.
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         };
         // The crossing command is on the virtual room's wayto for `next`.
@@ -1461,7 +1461,7 @@ impl TravelTask {
         else {
             // No command bridges the virtual room to the next hop — re-path
             // around it from where we physically are.
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return;
         };
         if ctx.rt_remaining > 0.0 {
@@ -1672,7 +1672,7 @@ impl TravelTask {
                 // Leave the sack the way we found it before re-pathing.
                 self.flush_day_pass_close(events);
                 self.banned.insert((self.day_pass_buy_from, self.day_pass_buy_dest));
-                self.repath(ctx.db, current, events);
+                self.repath(ctx.db, current, ctx.lich_fallback, events);
             }
         }
     }
@@ -1828,7 +1828,7 @@ impl TravelTask {
                         "withdrew to {have} silver - continuing to room {real_dest}"
                     )));
                     self.destination = real_dest;
-                    self.repath(ctx.db, current, events);
+                    self.repath(ctx.db, current, ctx.lich_fallback, events);
                 } else if refreshed && have < need {
                     // The fresh reading came back and it's still short — the
                     // bank couldn't cover it (Lich's "too poor" bail).
@@ -1904,7 +1904,7 @@ impl TravelTask {
 
         let Some(&next) = self.path.get(self.idx) else {
             // Path exhausted without reaching the destination — re-path.
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         };
         // Curated maze boundary: the planned edges inside are junk (movement
@@ -1932,7 +1932,7 @@ impl TravelTask {
             .and_then(|room| room.wayto.get(&next).cloned())
         else {
             // The planned edge doesn't exist from where we actually are.
-            self.repath(ctx.db, current, events);
+            self.repath(ctx.db, current, ctx.lich_fallback, events);
             return;
         };
 
@@ -2038,7 +2038,7 @@ impl TravelTask {
             events.push(TravelEvent::Status(
                 "you're mounted - urchin guides don't work mounted; re-routing on foot".into(),
             ));
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return true;
         }
 
@@ -2057,7 +2057,7 @@ impl TravelTask {
                     "move {from} -> {expected} keeps failing - disabling that edge and re-pathing"
                 )));
                 self.banned.insert((from, expected));
-                self.repath(ctx.db, from, events);
+                self.repath(ctx.db, from, ctx.lich_fallback, events);
             } else {
                 self.edge_retries += 1;
                 if !command.is_empty() && ctx.rt_remaining <= 0.0 {
@@ -2073,7 +2073,7 @@ impl TravelTask {
             events.push(TravelEvent::Status(format!(
                 "move {from} -> {expected} is blocked right now - re-pathing (edge kept)"
             )));
-            self.repath(ctx.db, from, events);
+            self.repath(ctx.db, from, ctx.lich_fallback, events);
             return true;
         }
         // Hands full → run the stash cascade, then retry the move.
@@ -2159,28 +2159,37 @@ impl TravelTask {
     ) {
         // With the Lich fallback enabled (Lich connection only), hand the
         // whole trip to `;go2 <dest>` rather than banning the edge.
-        if ctx.lich_fallback {
-            events.push(TravelEvent::Status(format!(
-                "edge {current} -> {next} needs Lich - handing off to ;go2 {}",
-                self.destination
-            )));
-            events.push(TravelEvent::LichFallback {
-                destination: self.destination,
-            });
+        if self.hand_off_to_lich(
+            ctx.lich_fallback,
+            &format!("edge {current} -> {next} needs a script the native walker can't cross"),
+            events,
+        ) {
             return;
         }
         events.push(TravelEvent::Status(format!(
             "edge {current} -> {next} uses a script the native walker can't cross yet - disabling it and re-pathing"
         )));
         self.banned.insert((current, next));
-        self.repath(ctx.db, current, events);
+        self.repath(ctx.db, current, ctx.lich_fallback, events);
     }
 
-    fn repath(&mut self, db: &MapDb, current: u32, events: &mut Vec<TravelEvent>) {
+    /// Re-plan around banned edges. `lich_fallback` mirrors
+    /// `TravelContext::lich_fallback`: when a re-path leaves us with no route
+    /// at all, the trip is only dead if there's no Lich to hand it to.
+    fn repath(
+        &mut self,
+        db: &MapDb,
+        current: u32,
+        lich_fallback: bool,
+        events: &mut Vec<TravelEvent>,
+    ) {
         // A day-pass crossing abandoned mid-way still owes its sack close.
         self.flush_day_pass_close(events);
         self.restarts += 1;
         if self.restarts > MAX_RESTARTS {
+            if self.hand_off_to_lich(lich_fallback, "too many restarts", events) {
+                return;
+            }
             events.push(TravelEvent::Failed(
                 "too many restarts - travel aborted".into(),
             ));
@@ -2212,6 +2221,13 @@ impl TravelTask {
                     });
                 }
                 None => {
+                    if self.hand_off_to_lich(
+                        lich_fallback,
+                        &format!("no native route from room {current} to the bank (room {bank})"),
+                        events,
+                    ) {
+                        return;
+                    }
                     events.push(TravelEvent::Failed(format!(
                         "no remaining route from room {current} to the bank (room {bank}) - travel aborted"
                     )));
@@ -2229,12 +2245,45 @@ impl TravelTask {
                 self.step = Step::Prepare;
             }
             None => {
+                if self.hand_off_to_lich(
+                    lich_fallback,
+                    &format!(
+                        "no native route from room {current} to {}",
+                        self.destination
+                    ),
+                    events,
+                ) {
+                    return;
+                }
                 events.push(TravelEvent::Failed(format!(
                     "no remaining route from room {current} to {} - travel aborted",
                     self.destination
                 )));
             }
         }
+    }
+
+    /// Hand the remaining trip to Lich's `;go2` when the fallback is armed.
+    /// Returns true if the handoff fired (the caller must not also emit a
+    /// `Failed`). `why` names what the native walker ran out of, so the
+    /// notice doubles as the signal for which edges need recognizer work.
+    fn hand_off_to_lich(
+        &mut self,
+        lich_fallback: bool,
+        why: &str,
+        events: &mut Vec<TravelEvent>,
+    ) -> bool {
+        if !lich_fallback {
+            return false;
+        }
+        events.push(TravelEvent::Status(format!(
+            "{why} - handing off to ;go2 {}",
+            self.destination
+        )));
+        events.push(TravelEvent::LichFallback {
+            destination: self.destination,
+        });
+        true
     }
 
     /// A `Failed`/`Arrived` event ends the task; the owner uses this to know
@@ -2969,6 +3018,47 @@ mod tests {
     }
 
     #[test]
+    fn exhausted_route_hands_off_to_lich_instead_of_aborting() {
+        // The second half of the fallback: an edge got banned, the re-path
+        // found nothing, and the trip would otherwise die with "no remaining
+        // route ... travel aborted". With a Lich attached that trip is not
+        // dead — Lich can still walk it.
+        let db = MapDb::from_json(
+            r#"[
+                {"id": 1, "uid": [9000001], "location": "T", "title": ["[A]"],
+                 "wayto": {"2": "north"}, "timeto": {"2": 0.2}, "paths": ""},
+                {"id": 2, "uid": [9000002], "location": "T", "title": ["[B]"],
+                 "wayto": {"1": "south"}, "timeto": {"1": 0.2}, "paths": ""}
+            ]"#,
+        )
+        .unwrap();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        // Ban the only edge, then force the re-path that finds no route.
+        task.banned.insert((1, 2));
+        let mut ev = Vec::new();
+        task.repath(&db, 1, true, &mut ev);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, TravelEvent::LichFallback { destination: 2 })),
+            "an exhausted route hands off rather than aborting: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
+            "handoff replaces the abort, it doesn't accompany it: {ev:?}"
+        );
+
+        // Same situation with no Lich: it must still abort cleanly.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        task.banned.insert((1, 2));
+        let mut ev = Vec::new();
+        task.repath(&db, 1, false, &mut ev);
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Failed(_))),
+            "without a Lich the trip still fails: {ev:?}"
+        );
+    }
+
+    #[test]
     fn uncrossable_edge_bans_and_repaths_when_fallback_off() {
         let db = MapDb::from_json(
             r#"[
@@ -3133,7 +3223,7 @@ mod tests {
         // destination (2): funding_bank stays set and the new path ends at the
         // bank, never routing toward the portmaster edge.
         let mut ev = Vec::new();
-        task.repath(&db, 1, &mut ev);
+        task.repath(&db, 1, false, &mut ev);
         assert_eq!(task.funding_bank, Some(3), "still targeting the bank");
         assert_eq!(
             task.path.last(),

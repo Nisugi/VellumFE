@@ -410,6 +410,9 @@ pub async fn async_run(
     // eAccess connection bypasses Lich). Advertise it to phone clients so
     // they show the WebUI affordance only when it will work.
     app_core.set_webui_available(!is_direct);
+    // Connection mode for anything that sends `;` commands (travel's ;go2
+    // fallback). Separate from WebUI: `.webui off` must not disable `;go2`.
+    app_core.set_lich_connected(!is_direct);
 
     // Auto-connect only when the CLI asked for a session (--direct / --key);
     // otherwise idle on the login screen.

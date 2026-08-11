@@ -236,9 +236,11 @@ impl AppCore {
             hands: Some(hands),
             feedback: &feedback,
             // The fallback is a Lich-only bandaid: gated on the setting AND a
-            // non-direct connection (a direct connection has no Lich to hand
-            // off to). webui_available() is our "connected via Lich" proxy.
-            lich_fallback: self.config.go2.lich_fallback && self.webui_available(),
+            // Lich connection (a direct connection has no Lich to hand off to).
+            // Gate on the connection itself, NOT on WebUI reachability — WebUI
+            // is an optional Lich feature, and conflating the two left the
+            // fallback permanently dead on GUI/TUI.
+            lich_fallback: self.config.go2.lich_fallback && self.lich_connected(),
             funding: Some(crate::core::travel::executor::FundingInputs {
                 silver: self.game_state.silver,
                 get_silvers: self.config.go2.get_silvers,

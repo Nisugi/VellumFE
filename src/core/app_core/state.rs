@@ -314,6 +314,11 @@ pub struct AppCore {
     /// a direct eAccess connection has no Lich, so no WebUI). Advertised to
     /// the phone so it shows the WebUI affordance only when usable.
     pub(crate) webui_available: bool,
+    /// Whether this session is proxied through Lich (vs. a direct eAccess
+    /// connection). Distinct from `webui_available`: WebUI is an optional Lich
+    /// feature, while this is purely "is there a Lich to send `;` commands to".
+    /// Travel's `;go2` fallback gates on THIS, not on WebUI reachability.
+    pub(crate) lich_connected: bool,
     /// GUI re-emit channel: `pump_webui` forwards every bridge event here so
     /// the GUI can do its GUI-side handling (image textures, window kinds)
     /// while core owns the socket. None in headless/TUI (no local renderer).
@@ -470,6 +475,7 @@ impl AppCore {
             webui_handshake_sent: false,
             webui_pages: Vec::new(),
             webui_available: false,
+            lich_connected: false,
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
             webui_subscribed: std::collections::HashSet::new(),
@@ -662,6 +668,7 @@ impl AppCore {
             webui_handshake_sent: false,
             webui_pages: Vec::new(),
             webui_available: false,
+            lich_connected: false,
             webui_gui_tx: None,
             webui_pending_raw: Vec::new(),
             webui_subscribed: std::collections::HashSet::new(),
