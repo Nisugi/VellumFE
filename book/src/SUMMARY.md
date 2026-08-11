@@ -13,7 +13,7 @@
 
 - [How-To Guides](./how-to/README.md)
   - [Build a hunting layout](./how-to/hunting-layout.md)
-  - [Make your health bar flash when low](./how-to/vitals-flash.md)
+  - [Make your health bar shout when you're hurt](./how-to/vitals-flash.md)
   - [Set up highlights and sound alerts](./how-to/highlights-and-sounds.md)
   - [Put VellumFE on your phone](./how-to/vellum-on-your-phone.md)
   - [Wire a hotbar for combat](./how-to/combat-hotbar.md)

@@ -130,7 +130,7 @@ again, or use `.exit`, to close. Governed by `ui.keep_open_on_quit`.
 
 | Task | Terminal (TUI) | Desktop GUI | Mobile / Web |
 |------|----------------|-------------|--------------|
-| **Add / show a window** | ✅ `.addwindow` (no args → **picker**; full form `.addwindow <name> <type> <x> <y> <w> [h]`, h default 10). Types = `WidgetType::VALID_TYPES` (`src/data/window.rs:116-148`; the usage-string subset is stale). `commands.rs:2185-2208` | ✅ **Top-toolbar "Windows" button → stay-open inline catalog:** checkbox per window (tick=show/untick=hide), per-row **zone** submenu, **➕ Custom window…**, **↩ Restore deleted…**. Also `.addwindow` typed. **NO right-click add.** `app.rs:7060-7068`, `known_windows.rs:74-299` | ❌ **Not available** — fixed chrome; surfaces render from server snapshot+deltas. `app.js:808-840` |
+| **Add / show a window** | ✅ `.addwindow` takes **1 or ≥6 arguments — never 2–5**. No args → **picker**; full form `.addwindow <name> <type> <x> <y> <w> [h]` (h defaults 10; `x`→Col, `y`→Row; unparseable numbers fall back silently to x/y 0, w 40). **`.addwindow players` alone prints usage and adds NOTHING.** `name` is a free label, not a catalog key — the window is built from `<type>`, not a preset. Types = `WidgetType::VALID_TYPES` (`src/data/window.rs:116-148`); the in-app usage string is stale and lists `hands`, which is not a type (`hand` is). `src/core/app_core/commands.rs:2295-2317`, `state/window_lifecycle.rs:1175-1183,1318` | ✅ **Top-toolbar "Windows" button → stay-open inline catalog:** checkbox per window (tick=show/untick=hide), per-row **zone** submenu, **➕ Custom window…**, **↩ Restore deleted…**. Also `.addwindow` typed. **NO right-click add.** `app.rs:7060-7068`, `known_windows.rs:74-299` | ❌ **Not available** — fixed chrome; surfaces render from server snapshot+deltas. `app.js:808-840` |
 | **Move a window** | ✅ Left-drag the **top row (title bar)**. Locked = grab but no move. `src/frontend/tui/input.rs:72-105,1675-1769` | ✅ **Drag anywhere** (body/title, no modifier). Snap-docking active; **hold Shift to suspend**. Also right-click **Arrange ▸ Move Window** (works locked). `zones.rs:2013-2024,1561`, `menus.rs:1603` | ⚠️ Only floating elements move: **wheel puck** (drag >8px), **macro/compass** (long-press 450ms), **interact bar** (drag >8px). No game windows. `app.js:1887,4302,5003,2418` |
 | **Move a window to ANOTHER ZONE** | ❌ the TUI has no shell zones | ✅ Three ways: **Alt+drag** the window (a tinted overlay highlights the zone under the pointer; normal movement is suppressed while Alt is held), right-click ▸ **Arrange ▸ Move to ▸** *zone*, or the per-row **zone dropdown** in the Windows catalog. `src/frontend/gui/app/zones.rs:988-1000,1033-1045,1759`, `menus.rs:1770-1783`, `known_windows.rs:311-330` | ❌ (fixed chrome) |
 | **Resize a window** | ✅ Drag **right col / bottom row / bottom-right corner**. Locked = no resize. `.resize` refits layout (not per-window). `input.rs:81-105` | ✅ egui native **edge/corner** drag; snaps unless Shift held. `zones.rs:1986,2047` | ❌ Not available — fixed-size chrome. `app.js` (no resize handles) |
@@ -233,6 +233,66 @@ prefills the Lich tab and never auto-connects.
 Android Keystore key alias `vellum-master` sealing `remote.bin` in app-private
 files. Never SharedPreferences, never plaintext. play.net passwords are sealed
 by the Rust core with a device master key.
+
+## Conditions — the shared vocabulary (added 2026-08-11)
+
+> One condition language drives **hotbar button states**, **indicator icon
+> states**, and **hand icons**. Teach it once; it transfers.
+> `src/config/conditions.rs`
+
+Leaf kinds as the GUI builder labels them, in order: **Effect active · Effect
+inactive · Effect time remaining · Roundtime active · Casttime active ·
+Indicator · Vital · Injury · Spell affordable · Hand empty · Hand holds · Spell
+prepared · Time of day** (`editors/hotbars.rs:65-79`). Groups nest one level as
+**all of** / **any of**; deeper trees are file-authored, render as *(nested
+group - edit in hotbars.toml)*, and still evaluate.
+
+- **Vital**: vital · cmp · number · unit **%** or **abs**. New leaf defaults to
+  `stamina < 25 %`.
+- **Injury**: area (head, neck, chest, abdomen, back, leftArm, rightArm,
+  leftHand, rightHand, leftLeg, rightLeg, leftEye, rightEye, nsys) · cmp ·
+  level, where **1-3 = wounds, 4-6 = scars, 0 = healthy**.
+- **Indicator** ids: `standing`, `kneeling`, `sitting`, `prone`, `stunned`,
+  `bleeding`, `hidden`, `invisible`, `webbed`, `joined`, `dead`.
+
+**Ordering rule — state this on every page that touches states: the FIRST
+matching state wins.** A broad condition above a narrow one swallows it.
+`src/config/hotbars.rs:65-67`
+
+**Authoring parity (a real per-frontend gap):**
+
+| | Desktop GUI | Terminal (TUI) | Mobile |
+|---|---|---|---|
+| Hotbar bars/buttons/hotkeys/countdowns | ✅ | ✅ | ❌ no hotbars at all — the phone has **macros** (`macros.toml`, macro tray/rail), a separate system with no conditions |
+| Hotbar **condition states** | ✅ | ❌ **cannot author** — shows `"{N} state(s) defined - edit in the GUI editor or hotbars.toml"` and round-trips them untouched (`src/frontend/tui/hotbar_editor.rs:1-8,789-793`) | ❌ |
+| Indicator **conditions** | ✅ (`editors/indicators.rs:351`) | ❌ id/title/icon/colors only (`src/frontend/tui/indicator_template_editor.rs:19-26`) | ❌ |
+| Highlight rules incl. `set_status`, redirects, squelch | ✅ | ✅ | ✅ — **compile-enforced parity** across all three editors (`src/config/highlights.rs:151-234`) |
+
+**Binding by name, not by picker:** a `hotkeybar` window displays the bar whose
+name matches the **window's** name; an `indicator` window's name **is** its
+status id. There is no bar-picker in the window menu — only **Edit hotbars…**.
+`state/window_lifecycle.rs:1241-1242,1293-1297`
+
+**Scope merge:** a character bar with the same name **replaces the global bar
+wholesale** (not a per-button merge). Editor badges: `[G]` global, `[C]`
+character. `src/config/hotbars.rs:275-294`
+
+**No blink/flash/pulse animation exists for vitals bars in any frontend.** The
+vitals window offers Layout, Bar height, Bar text, Depleted color, and per-bar
+visibility — no threshold color, no animation. Low-health alerting is a hotbar
+state's color, an indicator lighting, a sound, or controller rumble. Verified by
+a whole-`src/` grep; the only `pulse` hits are controller rumble.
+`window_config.rs:1159-1290`, `web/assets/app.js:494-507`
+
+**`set_status` / `status_duration` / `clear_status`:** a highlight rule can
+light any indicator **and** dashboard cell by id (case-insensitive), riding the
+same machinery as the server's own status icons. A **dashboard auto-adds an
+unknown id**; an indicator only flips one it already has. Empty duration = stays
+lit until a `clear_status` rule matches. `src/core/app_core/state.rs:894-975`
+
+**`.testline <text>`** injects verbatim text through the live highlight/squelch
+pipeline — the intended way to prove a rule without waiting for a mob.
+`src/core/app_core/commands.rs:2354-2364`
 
 ## Frontend-exclusive capabilities
 

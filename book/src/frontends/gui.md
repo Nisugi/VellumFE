@@ -102,7 +102,7 @@ Two buttons sit at the top of the catalog:
 
 | Goal | Gesture | Typed equivalent |
 |---|---|---|
-| Add / show a window | **Windows** ▸ tick the row | `.addwindow <name>` |
+| Add / show a window | **Windows** ▸ tick the row | `.addwindow` (picker), or the full `.addwindow <name> <type> <x> <y> <w> [h]` |
 | Hide it, keep it in the layout | Right-click ▸ **Hide**, or untick in the catalog | `.hidewindow [name]` |
 | Remove it from the layout | Right-click ▸ **Window** ▸ **Advanced** ▸ **Delete Window…** | `.deletewindow <name>` |
 | Bring a deleted one back | **Windows** ▸ **↩ Restore deleted…** | — |
