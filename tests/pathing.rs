@@ -11,6 +11,7 @@
 
 use vellum_fe::core::mapdb::{find_latest_mapdb, is_proc_command, MapDb, TimeTo};
 use vellum_fe::core::pathing::{estimate_time, find_nearest_by_tag, path_to, transpile};
+use vellum_fe::core::travel::executor::{classify_edge, EdgeCrossing};
 
 /// Corpus report over the real mapdb. Post-routing-split (go2 plan P1),
 /// two DISTINCT numbers are tracked:
@@ -93,6 +94,10 @@ fn real_mapdb_coverage() {
     // of near-identical lines. Value -> (count, one sample edge).
     let mut residue: std::collections::HashMap<String, (usize, String)> =
         std::collections::HashMap::new();
+    // How each scripted edge gets crossed, so the report shows what carries
+    // the load rather than implying the transpiler does all of it.
+    let mut by_strategy: std::collections::HashMap<EdgeCrossing, usize> =
+        std::collections::HashMap::new();
     // Graph reachability: an edge whose timeto resolves to a number.
     let mut graph_routable = 0usize;
     let mut ids: Vec<u32> = Vec::new();
@@ -104,9 +109,15 @@ fn real_mapdb_coverage() {
     for id in ids {
         let room = db.room(id).expect("indexed room");
         for (dest, command) in &room.wayto {
-            // Execution coverage: can we transpile the wayto proc?
+            // Execution coverage: can the EXECUTOR cross this edge? Not "does
+            // transpile() return Some" — Confluence, curated mazes, day passes
+            // and overrides are dispatched by dedicated strategies before the
+            // transpiler is consulted, and counting them as residue misdirects
+            // recognizer work at the scale of thousands of edges.
             if is_proc_command(command) {
-                if transpile::transpile(command).is_some() {
+                let how = classify_edge(&db, room.id, *dest, command);
+                *by_strategy.entry(how).or_insert(0usize) += 1;
+                if how.is_crossable() {
                     proc_supported += 1;
                 } else {
                     proc_unsupported += 1;
@@ -145,6 +156,18 @@ fn real_mapdb_coverage() {
         "EXECUTION coverage (proc edges we can walk): {proc_supported}/{total_procs} ({:.1}%)",
         proc_supported as f64 / total_procs.max(1) as f64 * 100.0
     );
+    // Which mechanism carries each scripted edge. The transpiler is only one
+    // of several; a report that hid the strategies made Confluence look like
+    // 57% of unsolved work when it is in fact fully handled.
+    let mut strategies: Vec<(&EdgeCrossing, &usize)> = by_strategy.iter().collect();
+    strategies.sort_by(|a, b| b.1.cmp(a.1));
+    println!("  by mechanism:");
+    for (how, count) in strategies {
+        println!(
+            "    {how:?}: {count} ({:.1}%)",
+            *count as f64 / total_procs.max(1) as f64 * 100.0
+        );
+    }
     // Residue report: the top idiom families we can't yet cross, biggest
     // first. This is the work queue — write a recognizer for the top cluster,
     // re-run, repeat. Counts, not raw lines, so the tail stays readable.

@@ -190,6 +190,77 @@ impl TravelContext<'_> {
     }
 }
 
+/// How the executor will cross a given edge. Mirrors the dispatch order in
+/// `send_edge` exactly.
+///
+/// Exists so coverage reporting asks the question that matters — "can we
+/// cross this?" — instead of "does `transpile()` return Some?". Several
+/// families (Confluence, curated mazes, day passes, curated overrides) are
+/// handled by dedicated strategies BEFORE the transpiler is consulted, so
+/// measuring by transpilability alone counts thousands of perfectly walkable
+/// edges as residue and badly misdirects recognizer work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EdgeCrossing {
+    /// A plain string command.
+    Plain,
+    /// A curated hand-authored override.
+    Override,
+    /// The Plane of Elemental Confluence explorer.
+    Confluence,
+    /// A curated maze's pathcode strategy.
+    Maze,
+    /// The Chronomage day-pass crossing.
+    DayPass,
+    /// A StringProc the transpiler understands.
+    Transpiled,
+    /// A StringProc we can't cross natively (bans + re-paths, or hands to Lich).
+    Untranspiled,
+}
+
+impl EdgeCrossing {
+    /// Whether the executor has SOME native way across.
+    pub fn is_crossable(self) -> bool {
+        !matches!(self, EdgeCrossing::Untranspiled)
+    }
+}
+
+/// Classify how `from -> to` would be crossed. Kept in the same order as
+/// `send_edge`'s dispatch so the two can't disagree.
+pub fn classify_edge(db: &MapDb, from: u32, to: u32, command: &str) -> EdgeCrossing {
+    // The maze strategy takes over at the boundary, but `begin_maze` walks
+    // INBOUND only (from the entrance or start room) and fails from any other
+    // side. Classify only the case it actually handles, so the report doesn't
+    // credit crossings that would fail.
+    if let Some(maze) = super::mazes::maze_containing(to) {
+        if !maze.rooms.contains(&from) && (from == maze.entrance || from == maze.start) {
+            return EdgeCrossing::Maze;
+        }
+    }
+    // Entering the Plane is the `send_edge` boundary check. But the bulk of
+    // the Confluence edges point OUTWARD (23282 -> 188): they are the
+    // `$mapdb_confluence_target = N; Room[N].wayto['N'].call` delegations that
+    // set a goal and hand to the explorer. Once we are inside the zone the
+    // explorer owns every edge, in or out, so classify on either side.
+    if super::confluence::is_confluence_room(from)
+        || super::confluence::is_confluence_room(to)
+    {
+        return EdgeCrossing::Confluence;
+    }
+    if crate::core::pathing::overrides::edge_override(from, to).is_some() {
+        return EdgeCrossing::Override;
+    }
+    if crate::core::day_pass::edge(from, to).is_some() {
+        return EdgeCrossing::DayPass;
+    }
+    if !crate::core::mapdb::is_proc_command(command) {
+        return EdgeCrossing::Plain;
+    }
+    match crate::core::pathing::transpile::transpile_edge(db, command) {
+        Some(_) => EdgeCrossing::Transpiled,
+        None => EdgeCrossing::Untranspiled,
+    }
+}
+
 /// An armed `Await`: what it has already done, so a resume doesn't repeat it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AwaitState {
