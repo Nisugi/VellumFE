@@ -861,6 +861,19 @@ authoring (`construction.rs:249-257` pushes seven fields; the GUI has no `Injury
 frontend *reads* the other's half — a TUI-authored palette paints the GUI vector doll. Document
 as a division of labor, not a gap.
 
+**🕒 The injuries window MAY auto-create itself, like `gs4_experience` — CODE-VERIFIED ONLY.**
+`injury_doll` carries `WindowBinding::Dialog("injuries")` (`config/layout.rs:440`) and
+`injuries` is a claimed dialog id (`view_resolver.rs:76-82`), so an `openDialog id='injuries'`
+would queue a pending addition (`element.rs:1160-1165`) that builds a visible bound window
+(`window_lifecycle.rs:343-370`) — the same mechanism `gs4_experience` uses, which has passing
+tests at `state/tests.rs:563-617`. **Only the `dialogData id='injuries'` half is wire-verified**
+(`parser/dialogs.rs:16-17,300`); nothing confirms GS4 actually sends the `openDialog`. A repo
+grep found no capture either way, which is weak evidence — there is no dialog-capture corpus.
+**To settle it in one login:** run with `RUST_LOG=debug` and grep for
+`DialogOpen redirected to claimed widget: id=injuries` (`element.rs:1166`) or
+`Auto-added bound window` (`window_lifecycle.rs:366`). If neither fires, delete the "The window
+can appear on its own" paragraph from `widgets/injury-doll.md` and this row.
+
 **Both `injuries` and `injury_doll` work as type strings** (`data/window.rs:83`,
 `presets.rs:1090`). Catalog key `injuries`, **ungated — both games**, category **Character**.
 

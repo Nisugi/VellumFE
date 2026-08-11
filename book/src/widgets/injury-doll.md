@@ -170,11 +170,11 @@ tooltip, so you don't lose the information, only the drawing.
 > from **Default** to a variant reseeds every anchor and dot value from the manifest. Click
 > **Save to skin** before you switch sets, every time.
 
-**The window can appear on its own.** The injuries window is bound to the game's own injuries
-dialog, so when the game opens that dialog and you have no injuries window placed, one is
-created and shown for you. It won't duplicate — if you already have one, the existing window
-takes the feed. If a doll turned up unbidden, this is why, and `.hidewindow injuries` puts it
-away.
+**The window may appear on its own.** The injuries window is bound to the game's own injuries
+dialog, and windows bound that way are created for you the first time the game opens their
+dialog — that is how the GemStone IV experience window arrives. If a doll turns up unbidden,
+this is why, and `.hidewindow injuries` puts it away. It won't duplicate: if you already have
+one, the existing window takes the feed.
 
 **A pool doll and a skin doll are not the same thing.** A doll picked from **Doll image** is a
 single flat image with a sidecar file beside it holding its anchors and dot styling — that's
