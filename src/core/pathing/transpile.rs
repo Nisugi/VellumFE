@@ -231,6 +231,33 @@ re!(
     r#"^;e\s+(?:(\d+)\.times\s*\{\s*)?(?:fput|move)\s*\(?['"]([^'"]+)['"]\)?\s*\}?\s*;\s*UserVars\.(mapdb_\w+)\s*=\s*(\d+|Map\.current\.id|nil);?$"#
 );
 
+// 36x: `$mapdb_seeking_destination = N; Map[3600].wayto['3600'].call` — set
+// the goal, then run the Symbol of Seeking loop. The delegate is a ~2KB
+// room-name scraper we reimplement as a strategy, so only the goal matters.
+re!(
+    SEEKING_DELEGATE,
+    r"^;e\s+\$mapdb_seeking_destination\s*=\s*(\d+);\s*Map\[\d+\]\.wayto\['\d+'\]\.call;?$"
+);
+
+// 6x: save the stance, switch to one the climb needs, move, restore. The
+// restore matters — leaving someone in offensive after a climb is a real
+// change to their defences.
+re!(
+    STANCE_PRESERVING_MOVE,
+    r#"^;e\s+cur_stance\s*=\s*XMLData\.stance_text;\s*empty_hands;\s*fput\(['"]stance ([a-z]+)['"]\)\s*if\s+cur_stance\s*!=\s*['"][a-z]+['"];\s*move\(['"]([^'"]+)['"]\);\s*fill_hands;.*$"#
+);
+// 5x: `id=Room.current.id; move "east" until Room.current.id != id` — repeat
+// the move until it actually takes.
+re!(
+    MOVE_UNTIL_ROOM_CHANGE,
+    r#"^;e\s+\w+\s*=\s*Room\.current\.id;\s*move\s*\(?["']([^"']+)["']\)?\s+until\s+Room\.current\.id\s*!=\s*\w+;.*$"#
+);
+// 6x: `fput 'a';fput 'b';move 'c'` — two setup commands then the move.
+re!(
+    FPUT_FPUT_MOVE,
+    r#"^;e\s+fput\s*\(?["']([^"']+)["']\)?;\s*fput\s*\(?["']([^"']+)["']\)?;\s*move\s*\(?["']([^"']+)["']\)?;?$"#
+);
+
 // Tier-1 quoting variants: the same shapes we already support, written with
 // double quotes. An edge failing over a quote character is a bug in our
 // regexes, not a limit of the transpiler.
@@ -301,7 +328,11 @@ re!(
 // 75x: a room -> direction swim table walked until a target room.
 re!(
     SWIM_TABLE,
-    r#"^;e\s+empty_hand\s+if\s+\[([^\]]*)\]\.include\?\(Room\.current\.id\);\s*swim_dir\s*=\s*\{([^}]*)\};\s*while\s+Room\.current\.id\s*!=\s*(\d+);"#
+    // A bounty-escort variant inserts a `child = ...` clause between the
+    // table and the loop, and parenthesises the condition. Neither changes
+    // the walk — we don't model the escorted child (paced StepMove already
+    // waits for the room to settle) — so both are skipped.
+    r#"^;e\s+empty_hand\s+if\s+\[([^\]]*)\]\.include\?\(Room\.current\.id\);\s*swim_dir\s*=\s*\{([^}]*)\};\s*(?:child\s*=[^;]*;\s*)?while\s+\(?Room\.current\.id\s*!=\s*(\d+)\)?;"#
 );
 // `12662 => 'whirlpool'` pairs inside the table body.
 re!(ROUTE_PAIR, r#"(\d+)\s*=>\s*['"]([^'"]+)['"]"#);
@@ -327,7 +358,10 @@ re!(
 // invitation, which must be accepted by sending the SAME command again.
 re!(
     TABLE_JOIN,
-    r#"^;e\s+table\s*=\s*["']((?:[^"'\\]|\\.)*)["']\s*;\s*fput\s+"go \#\{table\} table"\s+if\s+dothistimeout\(.*?\)\s*=~\s*/([^/]+)/\s*$"#
+    // Double-quoted names may contain a bare apostrophe ("Cat's Paw"), so
+    // the body is anchored on the closing double quote rather than a class
+    // that excludes both quote characters.
+    r#"^;e\s+table\s*=\s*(?:"([^"]*)"|'((?:[^'\\]|\\.)*)')\s*;\s*fput\s+"go \#\{table\} table"\s+if\s+dothistimeout\(.*?\)\s*=~\s*/([^/]+)/\s*$"#
 );
 
 // 554x across 4 residue families: a table-driven guided walk. `start_room`
@@ -546,8 +580,13 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
         }
     }
     if let Some(c) = TABLE_JOIN.captures(src) {
-        // The table name carries Ruby's escaped quotes ("Cat\'s Paw").
-        let table = c[1].replace("\\'", "'").replace("\\\"", "\"");
+        // Either quoting style; a single-quoted name escapes its apostrophes.
+        let table = c
+            .get(1)
+            .or_else(|| c.get(2))?
+            .as_str()
+            .replace("\\'", "'")
+            .replace("\\\"", "\"");
         let go = format!("go {table} table");
         return Some(vec![WalkAction::Await {
             cmd: Some(go.clone()),
@@ -560,7 +599,8 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             // Missing the line means we never sat down; the crossing failed.
             on_timeout: OnTimeout::Fail,
             if_match: Some((
-                Box::new(AwaitPattern::new(&c[2])?),
+                // Group 3: the two name alternatives above take 1 and 2.
+                Box::new(AwaitPattern::new(&c[3])?),
                 // An invitation is accepted by re-sending the same command.
                 vec![WalkAction::Move(go)],
             )),
@@ -805,6 +845,34 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
         return Some(out);
     }
 
+    if let Some(c) = STANCE_PRESERVING_MOVE.captures(src) {
+        // We can't read the prior stance to restore it exactly, so restore to
+        // defensive — the safe default, and where a traveller wants to be
+        // between rooms. Leaving them in the climb's offensive stance would
+        // silently change their defences for the rest of the trip.
+        return Some(vec![
+            WalkAction::EmptyHands,
+            WalkAction::Put(format!("stance {}", &c[1])),
+            WalkAction::Move(c[2].to_string()),
+            WalkAction::FillHands,
+            WalkAction::Put("stance defensive".into()),
+        ]);
+    }
+    if let Some(c) = MOVE_UNTIL_ROOM_CHANGE.captures(src) {
+        return Some(vec![WalkAction::Repeat {
+            body: vec![WalkAction::StepMove(c[1].to_string()), WalkAction::WaitRt],
+            until: RepeatUntil::RoomChanged,
+            max: MAX_RETRY_LOOP,
+        }]);
+    }
+    if let Some(c) = FPUT_FPUT_MOVE.captures(src) {
+        return Some(vec![
+            WalkAction::Put(c[1].to_string()),
+            WalkAction::Put(c[2].to_string()),
+            WalkAction::Move(c[3].to_string()),
+        ]);
+    }
+
     // --- tier 1: quoting/whitespace variants of supported shapes ---
     if let Some(c) = WAITRT_MOVE.captures(src) {
         return Some(vec![WalkAction::WaitRt, WalkAction::Move(c[1].to_string())]);
@@ -900,6 +968,13 @@ fn transpile_edge_depth(db: &MapDb, source: &str, depth: u8) -> Option<Vec<WalkA
         return None;
     }
     let src = source.trim();
+    // Before the generic delegation: this one's target is a ~2KB room-name
+    // scraper we reimplement as a strategy, so following it would just fail.
+    if let Some(c) = SEEKING_DELEGATE.captures(src) {
+        return Some(vec![WalkAction::VolnSeeking {
+            destination: c[1].parse().ok()?,
+        }]);
+    }
     if let Some(c) = WAYTO_DELEGATE.captures(src) {
         let room_id: u32 = c[1].parse().ok()?;
         let dest: u32 = c[2].parse().ok()?;
@@ -1228,6 +1303,74 @@ mod tests {
             transpile(";e fput 'search';fput 'go hatch'"),
             Some(vec![Put("search".into()), Move("go hatch".into())])
         );
+    }
+
+    #[test]
+    fn tier3_families_transpile() {
+        use WalkAction::*;
+        // Voln seeking: the ~2KB room-name-scraping delegate is a strategy,
+        // so only the goal is extracted. Handled in transpile_edge (the
+        // delegation-aware entry), ahead of the generic delegate follow.
+        let db = MapDb::from_json("[]").unwrap();
+        assert_eq!(
+            transpile_edge(
+                &db,
+                ";e $mapdb_seeking_destination = 2635;Map[3600].wayto['3600'].call;"
+            ),
+            Some(vec![VolnSeeking { destination: 2635 }])
+        );
+        // Retry a move until it takes.
+        assert!(matches!(
+            transpile(
+                ";e id=Room.current.id;move \"east\" until Room.current.id != id;\
+                 $go2_restart=true"
+            )
+            .as_deref(),
+            Some([Repeat { until: RepeatUntil::RoomChanged, .. }])
+        ));
+        assert_eq!(
+            transpile(";e fput 'pull lever';fput 'open gate';move 'go gate'"),
+            Some(vec![
+                Put("pull lever".into()),
+                Put("open gate".into()),
+                Move("go gate".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn stance_preserving_move_restores_a_safe_stance() {
+        // Leaving someone in the climb's offensive stance would silently
+        // change their defences for the rest of the trip.
+        let got = transpile(
+            ";e cur_stance = XMLData.stance_text;empty_hands;\
+             fput('stance offensive') if cur_stance != 'offensive';\
+             move('climb rockslide');fill_hands;\
+             fput('stance ' + cur_stance) if cur_stance != 'offensive';$go2_restart = true",
+        )
+        .expect("stance-preserving move transpiles");
+        assert_eq!(got[1], WalkAction::Put("stance offensive".into()));
+        assert_eq!(got[2], WalkAction::Move("climb rockslide".into()));
+        assert_eq!(
+            got.last(),
+            Some(&WalkAction::Put("stance defensive".into())),
+            "the stance is restored, not left where the climb needed it"
+        );
+    }
+
+    #[test]
+    fn a_table_name_with_an_apostrophe_still_transpiles() {
+        // "Cat's Paw" - the apostrophe is data, not a delimiter.
+        let got = transpile(
+            r##";e table = "Cat's Paw"; fput "go #{table} table" if dothistimeout("go #{table} table", 25, /You (?:and your group )?head over to|waves.*you.*(?:invites|inviting) you(?: and your group)? to (?:join|come sit at)/) =~ /inviting you|invites you/"##,
+        )
+        .expect("apostrophe table name transpiles");
+        match &got[0] {
+            WalkAction::Await { cmd, .. } => {
+                assert_eq!(cmd.as_deref(), Some("go Cat's Paw table"))
+            }
+            other => panic!("expected an Await, got {other:?}"),
+        }
     }
 
     #[test]

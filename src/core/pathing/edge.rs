@@ -102,6 +102,14 @@ pub enum WalkAction {
         /// landmark can't express them.
         landmarks: Vec<(String, String)>,
     },
+    /// Voln Symbol of Seeking: cast repeatedly, and each time the symbol
+    /// offers a room, confirm if it's the one we want. 36 corpus edges.
+    ///
+    /// The offered room arrives as a room NAME, not an id, so the check is a
+    /// title match against the destination — which is why this needs the
+    /// destination's title resolved at crossing time rather than being a
+    /// plain step list.
+    VolnSeeking { destination: u32 },
     /// Set (or with `None`, clear) a `UserVars.mapdb_<name>` scratch variable.
     ///
     /// Load-bearing, not bookkeeping: an event area's dozen return edges all

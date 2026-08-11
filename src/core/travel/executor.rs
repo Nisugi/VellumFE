@@ -499,6 +499,11 @@ const MAX_SCRIPT_LOOP: u32 = 50;
 /// giving up. The landmark normally appears within one lap; more than two
 /// means the table no longer matches the map.
 const GUIDED_ROUTE_LAPS: u32 = 2;
+/// How long one Symbol of Seeking cast gets to offer a room.
+const SEEKING_OFFER_TIMEOUT: f32 = 6.0;
+/// Casts before giving up on a destination the symbol never offers (the
+/// Ruby's `20.times`).
+const SEEKING_MAX_CASTS: u32 = 20;
 /// How long the maze NPC gets to speak a route before the walk gives up.
 const MAZE_ASK_TIMEOUT_MS: u64 = 12_000;
 /// Gap between maze route commands beyond waiting out RT.
@@ -1866,6 +1871,60 @@ impl TravelTask {
                         },
                     ];
                     actions.splice(pc..=pc, expansion);
+                }
+                WalkAction::VolnSeeking { destination } => {
+                    // The symbol offers rooms by NAME, so we need the
+                    // destination's title to know when to confirm.
+                    let Some(title) = ctx
+                        .db
+                        .room(destination)
+                        .and_then(|r| r.title.first())
+                        .map(|t| t.trim_matches(['[', ']']).to_string())
+                        .filter(|t| !t.is_empty())
+                    else {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    let Some(pattern) = crate::core::pathing::edge::AwaitPattern::new(
+                        &regex::escape(&title),
+                    ) else {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    // Cast until the offered room is the one we want, then
+                    // confirm. Bounded: the symbol cycles through rooms, and
+                    // a destination it never offers must not loop forever.
+                    actions.splice(
+                        pc..=pc,
+                        [
+                            WalkAction::Repeat {
+                                body: vec![
+                                    WalkAction::WaitRt,
+                                    WalkAction::Await {
+                                        cmd: Some("symbol of seeking".into()),
+                                        pattern: Box::new(pattern),
+                                        timeout: SEEKING_OFFER_TIMEOUT,
+                                        // A miss just means this cast offered
+                                        // somewhere else; cast again.
+                                        on_timeout:
+                                            crate::core::pathing::edge::OnTimeout::Continue,
+                                        if_match: Some((
+                                            Box::new(
+                                                crate::core::pathing::edge::AwaitPattern::new(
+                                                    ".",
+                                                )
+                                                .expect("valid"),
+                                            ),
+                                            vec![WalkAction::Break],
+                                        )),
+                                    },
+                                ],
+                                until: RepeatUntil::Count,
+                                max: SEEKING_MAX_CASTS,
+                            },
+                            WalkAction::StepMove("symbol of seeking confirm".into()),
+                        ],
+                    );
                 }
                 WalkAction::SetVar { name, value } => {
                     use crate::core::pathing::transpile::{
