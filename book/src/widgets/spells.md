@@ -67,8 +67,7 @@ picker.
 
 > ⚠️ **The missing-spells type is `missingspells`, one word.** `missing_spells` with an
 > underscore is not accepted, and an unrecognized type does not error — it quietly creates a
-> **text** window instead. The bare-`.addwindow` picker also doesn't offer this type, so typing
-> it correctly is the only route.
+> **text** window instead. Run `.addwindow` bare for a picker if you'd rather not type it.
 
 **2. Build the watch list.**
 
@@ -159,28 +158,9 @@ to populate a window you just added.
 cooldown that isn't running is normal, and reporting it as "missing" would make the window
 useless. So a watched entry that only ever appears under Cooldowns will read as missing forever.
 
-**`.spellwatch` takes numbers, and takes them in bulk.** `.spellwatch add 606`,
-`.spellwatch add [101,103,107]`, and `.spellwatch add 101,103` all work. **A single unparseable
-number rejects the whole command** rather than applying half of it, so a typo never leaves you
-with a partially-updated list.
-
-**There is no `.spellwatch clear`.** Clearing the list is `.spellwatch rem all`. `remove` works
-anywhere `rem` does.
-
-**The watch list is per character and survives restarts.** It's stored with that character's
-session state, so each character keeps its own list without you managing files.
-
-> ⚠️ **`add all` snapshots what's running *at that moment*.** Run it while half-spelled and you
-> have codified being half-spelled — the window will cheerfully report **All spells up**. Spell
-> up fully first, then snapshot.
-
-**Missing Spells ignores your spell colors.** Its rows are always amber, regardless of what the
-spell color table says. Spell colors reach the [Active Effects](./active-effects.md) windows,
-not this one.
-
-**Empty states are informative, so read them.** **All spells up** in green means the watch list
-is satisfied. `.spellwatch add <n> to watch` in gray means you haven't built a list yet — the
-window is working and has nothing to do.
+**The watch list has its own page.** The `.spellwatch` command forms, the `add all` snapshot
+trap, where the list is stored, and the amber/green/gray display states all live on
+[Missing Spells](./missing-spells.md).
 
 ## See also
 
@@ -230,8 +210,7 @@ title = "Missing Spells"
 | Spells | `spells` | `SpellsWidgetData` — no fields | Subscribed to the game's `Spells` stream, bound automatically at window creation. You do not set a stream. |
 | Missing Spells | `missingspells` | `MissingSpellsWidgetData` — no fields | Derived: the per-character watch list minus everything currently in **ActiveSpells** and **Buffs** |
 
-> The Missing Spells type string is **`missingspells`** — no underscore — and it is absent from
-> the type list `.addwindow` advertises, though the window is real and the catalog creates it.
+> The Missing Spells type string is **`missingspells`** — no underscore.
 
 **Catalog presets**, both under the **Character** heading:
 
@@ -240,30 +219,9 @@ title = "Missing Spells"
 | `spells` | Spells | 20 rows x 40 cols |
 | `missingspells` | Missing Spells | 8 rows x 28 cols (floor: 3 x 14) |
 
-**`.spellwatch`** — usage is `.spellwatch add|rem <number> | [n,n,...] | all`, and bare
-`.spellwatch` lists the watch list.
-
-| Form | What it does |
-|---|---|
-| `.spellwatch` / `.spellwatch list` | Lists watched spells, each marked `active` or `MISSING`, headed `Watched spells (N missing):` |
-| `.spellwatch add <n>` | Adds one spell number |
-| `.spellwatch add [n,n,n]` | Adds several — also accepts `n,n` without brackets |
-| `.spellwatch add all` | Watches everything currently in **ActiveSpells** and **Buffs**. Replies `Watching N active spells (M new).`, or `Nothing active in ActiveSpells/Buffs to add.` |
-| `.spellwatch rem <n>` / `.spellwatch remove <n>` | Removes spells, same number forms |
-| `.spellwatch rem all` | Clears the list. **There is no `clear` subcommand.** |
-
-Numbers are parsed as whole numbers up to 65535; anything outside that, or any unparseable
-element, rejects the entire command.
-
-**Persistence.** The watch list lives in that character's session state under
-`~/.vellum-fe/profiles/<Character>/session_cache.toml` (or under `$VELLUM_FE_DIR` when set), in
-the `[character]` table as `watched_spells`. It's written by autosave when it changes, and
-restored at login — there is no reason to edit it by hand.
-
-**Display details.** Missing Spells rows are `<number> <name>` in amber `#d78700` in both desktop
-frontends, and **the spell color table does not apply.** Empty states are `All spells up` in
-green `#5f875f` and `.spellwatch add <n> to watch` in gray `#666666`. **The terminal appends the
-count to the window title** (`Missing Spells (3)`); the GUI does not.
+**The watch list.** `.spellwatch` builds and edits the list the Missing Spells window reads. Its
+full command surface, number forms, persistence path, and display colors are documented on
+[Missing Spells](./missing-spells.md).
 
 Standard window keys — `row`, `col`, `rows`, `cols`, `show_border`, `border_style`, `title`,
 `locked` — apply as they do to any window.

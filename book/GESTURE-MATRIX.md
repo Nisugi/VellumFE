@@ -70,7 +70,19 @@
 | ~~**`.go2 targets` help strings contradict the code**~~ — **FIXED 2026-08-11** | TUI, GUI | **[fixed]** | `command_help.rs:116` and `editors/settings.rs:1186` both said `targets` lists saved targets; it lists reachable tagged destinations, and `saved` is the saved list. |
 | **Effect times don't tick on desktop** | TUI, GUI | **[repair?]** | `expires_at` exists (`src/data/widget.rs:406-411`) but is read ONLY by `conditions.rs:158,334` and `hotbar.rs:106` — **never by a renderer**. Both desktop frontends draw the frozen server `time` string; only the web client ticks at 1 Hz (`app.js:647-657,760-763`). Conditions are therefore accurate while the window is stale. |
 | **`setEffects` doesn't re-render an open status drawer** | Mobile | **[repair?]** | `app.js:647-657` ends at `renderEffects()`; every other setter guards with `renderStatusDrawer()`. Rows added/dropped while the drawer is open don't appear until something else re-renders. Existing rows keep ticking. |
-| **`missingspells` absent from `VALID_TYPES`** | TUI | **[repair?]** | Template-registered and catalog-creatable (`presets.rs:188`, `window.rs:94`) but missing from `window.rs:116-148`, so the bare-`.addwindow` picker never offers it. |
+| ~~**`missingspells` absent from `VALID_TYPES`**~~ — **FIXED 2026-08-11 (`8ca79f68`)** | TUI | **[fixed]** | Now at `src/data/window.rs:134`. It was only ever missing from the "Valid types:" error list — the picker is gated by `addable_by_category`/`CATALOG` (`presets.rs:188`, ungated) and always offered it. **`spells.md` claimed the opposite twice; corrected in Wave 7.** |
+| **Perception settings are TUI-only; the GUI silently ignores them** | GUI | **[repair?]** | `sort_direction`, `use_short_spell_names`, `text_replacements` applied at `frontend/tui/sync.rs:2338-2391`. `gui/app/widgets/panels.rs:339-377` paints `entry.raw_text` in core's hard-coded descending order (`buffers.rs:227`) with no abbreviation, replacement, or re-sort. **One layout renders two ways.** |
+| **Perception `stream` + `buffer_size` authored but never read** | TUI, GUI | **[repair?]** | Preset ships `stream="percWindow"`, `buffer_size=100` (`presets.rs:1599-1600`); the flush path reads neither (`buffers.rs:187-255`). Both editors deliberately omit them. Same shape as the Inventory `buffer_size` row. |
+| **MiniVitals GUI settings are GLOBAL, not per-window** | GUI | **[repair?]** | `window_config.rs:351-353` reads one `ui_settings.vitals` for every MiniVitals window; `SetVitals` writes it back globally (`:668-673`). **Two MiniVitals windows cannot differ in the GUI.** The TUI stores per window in `layout.toml`, and the two frontends share no fields at all. |
+| **MiniVitals: GUI draws 8 bar kinds, TUI accepts 4** | TUI | **[repair?]** | `VitalKind` (`gui/persistence.rs:166-178`) adds Mind, Encumbrance, NextLevel, Blood. `tui/minivitals.rs:190-218` accepts only `health\|mana\|concentration\|stamina\|spirit` and **silently drops** the rest via `filter_map`. A GUI-authored layout renders in the TUI with bars missing, not an error. |
+| **Betrayer has no GUI widget section** | GUI | **[repair?]** | `widget_section_label` returns `None` for `W::Betrayer` (`window_config.rs:140-161`), so `show_items` and `bar_color` are TUI-only authoring. The GUI honors `show_items` from the layout but hardcodes the bar to `#cd4d4d` (`panels.rs:316-322`), never reading `bar_color`. |
+| **Encumbrance color bands differ and only the TUI can author them** | GUI | **[repair?]** | TUI: four bands 0–20/21–50/51–80/81–100 with user colors (`tui/encumbrance.rs:146-153`). GUI: three fixed bands 0–33/34–66/67+ hardcoded, reading none of the four color fields (`panels.rs:282-286`). Each frontend also offers one toggle the other lacks (`show_bar` GUI-only, band colors TUI-only). |
+| **Custom quickbars have no in-app editor** | TUI, GUI, Mobile | **[repair?]** | `[[quickbars.custom]]` is TOML-only (`config/widgets.rs:940-973`, applied `state.rs:1061-1165`); no `.quickbars` command, and `quickbars` sits in `EXEMPT_PREFIXES` (`config/registry.rs:141`). The one live violation of "every feature ships its editor". |
+| **Quickbar is `Tab`-unreachable by default** | TUI | **[repair?]** | Arrow/Enter navigation needs focus (`input_handlers.rs:148-177`), but `"quickbar"` ships in `default_focus_exclude` (`src/config.rs:392`). Mouse clicking works regardless; the keyboard path is dead until the user edits `[ui.focus] exclude`. |
+| **Six parsed GS4 experience fields are never rendered** | TUI, GUI | **[repair?]** | `field_exp`, `max_field_exp`, `until_next`, `fashlonae`, `lumnis`, `rpa` parsed off the `mindState` bar (`parser/handlers.rs:320-335`), stored (`core/state.rs:730-746`), read by no renderer. Only total and ascension exp have toggles. |
+| **`dr_experience` is never cleared** | TUI, GUI | **[repair?]** | `DRExperienceState::clear` (`core/state.rs:653-656`) has no caller, so field order and values accumulate across character swaps for the process lifetime. |
+| **`layout_template.toml` documents four nonexistent DR experience keys** | — | **[doc-bug]** | `defaults/globals/templates/layout_template.toml:342-345` lists `stream`, `buffer_size`, `show_rates`, `compact_mode`. `ExperienceWidgetData` has exactly one field, `align` (`config/widgets.rs:1119-1123`). Silently ignored if copied. |
+| **`layout_template.toml` documents nonexistent quickbar selection keys** | — | **[doc-bug]** | `:780-781` advertises `selection_fg` / `selection_bg` as window keys. `WindowBase` has no such fields; the TUI feeds selection colors from `theme.text_selected` / `theme.background_selected` (`tui/sync.rs:983-986`). |
 | **Stale source comment — Targets category** | — | **[doc-bug]** | `editors/settings.rs:12-14` says the Targets category moved to the Window Editor (`editors/windows.rs`), which is deleted. It lives in **Settings** (`settings.rs:41,1192-1200`); the window menu only links to it. Comment-only fix. |
 
 ---
@@ -609,6 +621,152 @@ different: no database, loading spinner, `"Map unavailable: {err}"`, and
 
 **Automation lease:** one automation drives at a time —
 `[go2] {owner} is driving - .stop to cancel it first.` (`travel_ticks.rs:363-368`).
+
+### The two Experience widgets — one name, two games (added 2026-08-11)
+
+**`experience` and `gs4_experience` are DIFFERENT WIDGETS** with different renderers, different
+feeds, and opposite game gates (`presets.rs:196-197`). **Both carry the catalog title
+"Experience"** and both sit in category **Character**, so a player only ever sees one. Never
+write one page as covering both.
+
+- **DR `experience`** ← `<component id='exp XXX'>` / `<compDef>`; the `exp ` prefix is stripped
+  and the remainder is the field name (`core/messages/component.rs:139-156`). `compDef`
+  establishes ORDER at login. State: `GameState.dr_experience` (`core/state.rs:602-657`).
+- **GS4 `gs4_experience`** ← the `expr` DIALOG: `Label id='yourLvl'`, `progressBar
+  id='mindState'`, `id='nextLvlPB'` (`element.rs:952-993`). State: `GameState.gs4_experience`.
+
+**⚠️ `gs4_experience` AUTO-CREATES ITSELF.** It carries `WindowBinding::Dialog("expr")`
+(`config/layout.rs:442`) and `dialog_seed_alias` maps `"expr" → "gs4_experience"`
+(`core/view_resolver.rs:43`), so a first `openDialog id='expr'` queues a pending addition
+(`element.rs:1160-1165`) that `process_pending_window_additions` builds and binds
+(`window_lifecycle.rs:344-370`). Re-sends never duplicate. Tests: `state/tests.rs:563-617`.
+**DR `experience` has no binding and never auto-appears.**
+
+**⚠️ Bar labels DIVERGE.** GUI prefixes `"Mind: {}"` / `"Next: {}"` (`panels.rs:224,236`); the
+**TUI paints the raw server text with no prefix** (`tui/gs4_experience.rs:355-382`).
+
+**⚠️ The DR list SCROLLS in the GUI and CLIPS in the TUI.** GUI wraps in an `egui::ScrollArea`
+(`panels.rs:260-269`); the TUI renders a plain `Paragraph` with no scroll offset
+(`tui/experience.rs:114-124`), so lines past the window height are unreachable.
+
+**Empty states:** GUI **"No experience data yet."** for both; TUI **"(No experience data)"**.
+
+**GUI widget section: GS4 has one ("Experience"); DR has NONE** (`window_config.rs:140-161`).
+TUI editor mirrors it — `gs4_experience` exposes seven fields, `experience` exposes nothing
+(`window_editor/construction.rs:302-315`).
+
+**`align` is authored NOWHERE and read ONCE**, inside `or_insert_with` at widget construction
+(`tui/sync.rs:2427-2431,2482-2486`). A hand-edit needs a fresh window. The GUI DR renderer
+ignores it entirely.
+
+**GS4 height is CAPPED at 7 rows** (floor 3) — one row per toggleable field plus borders.
+
+### Vitals, encumbrance, and Betrayer (added 2026-08-11)
+
+**MiniVitals is NOT fed by a `minivitals` dialog.** `MiniVitalsState` updates from **any**
+`ProgressBar` element whose id is `health|mana|concentration|stamina|spirit`
+(`element.rs:904-947`) — the same arm feeding `progress` windows and `GameState.vitals`
+percentages. **One feed, three consumers**; running a strip and separate bars costs nothing.
+
+**MiniVitals carries absolute values; `GameState.vitals` carries percentages only**, and the
+phone is fed the percentages (`app.js:494-507`), so **`142/193` can never appear on the phone**.
+
+**MiniVitals ships `title: None`** (`presets.rs:1680`, deliberate — "like Wrayth Stats"), and
+`enumerate_known_windows` falls back to the window NAME when title is None
+(`state/menus.rs:811-815`), so **the GUI catalog row reads the lowercase key `minivitals`** while
+Encumbrance and Betrayer show proper titles. Rows pinned at 3 (`min_rows == max_rows == 3`).
+**`concentration` is a TUI-only fifth bar**, capped at 4 enabled (`MAX_ENABLED`).
+
+**One `encumlevel` reading feeds THREE surfaces at once**: any `progress` window bound to it,
+the `encum` widget, and (GUI only) the **Encumbrance** bar inside MiniVitals — all off the same
+`ProgressBar` arm (`element.rs:959-961`). The blurb is a separate `encumblurb` Label.
+
+**⚠️ The `encum` type string is NOT `encumbrance`.** Type = `encum` (`data/window.rs:103`), but
+the window **title is "Encumbrance"** and the GUI catalog labels by TITLE — so the row a player
+clicks reads **Encumbrance** while the string they must type is `encum`. `from_str` falls back to
+**Text** for unknowns, giving a silent blank window.
+
+**GUI encumbrance re-labels the bar and ignores `align`.** It always prints
+`"Encumbrance: {text}"` (`panels.rs:287-291`); the TUI centers the bare level name and honors
+`align` for the blurb.
+
+**⚠️ Betrayer is the ONLY self-resizing widget.** `adjust_content_driven_windows`
+(`state/persistence.rs:263-309`) recomputes `base.rows` from the item count, clamps to 3–12,
+writes it into both the layout and `ui_state`, and schedules an autosave. **A user-dragged height
+does not stick.** `show_items = false` pins it at 3.
+
+**Betrayer's `!` active marker colors in the TUI, not in the GUI widget.** TUI splits the leading
+`!` into `active_color` (`tui/betrayer.rs:242-258`); the GUI widget does a plain `ui.label(item)`
+(`panels.rs:332-334`). The *text-window* path colors it via `config.ui.betrayer_active_color`.
+Three code paths, two behaviors.
+
+**Betrayer feed shape:** `<dialogData id='BetrayerPanel'>`; `lblBPs` parsed by
+`strip_prefix("Blood Points: ")` → u32 out of 100 (`core/state.rs:917-930`); items from
+`lblitem1..lblitem20`, **stopping at the first gap** (`element.rs:1486-1496`).
+
+**Catalog categories:** `minivitals` → **Progress Bars**, `encum` → **Character**, `betrayer` →
+**Dialogs**, `quickbar` → **Hotbars**.
+
+### Quickbars (added 2026-08-11)
+
+**A quickbar is game-fed AND user-authorable — do not write it as one or the other.** Bars arrive
+as `<openDialog id="quick…">` / `<dialogData id="quick…">` carrying `<link cmd=>`, `<menuLink
+exist= noun=>`, `<label>`, `<sep>` children (`parser/dialogs.rs:480-485,877-952`). **Only ids
+that are exactly `quick` or start with `quick-` are quickbars** (`dialogs.rs:868-870`); anything
+else on that tag is a dialog panel. Users add their own via `[[quickbars.custom]]`, with the
+**same id rule enforced silently** — an invalid id is skipped with a log warning only
+(`state.rs:1065-1090`). A custom `quick` **replaces** the game's main bar.
+
+**Bars, their order, and the active id persist per character** in
+`profiles/<Character>/session_cache.toml`, which is what makes a mid-session Lich attach show
+buttons. A cold cache seeds three canned bars (`state.rs:1497-1528`).
+
+**The switcher diverges, and one frontend hides it.** TUI: a literal `>>` at the left, **always
+rendered**, opening a popup of `_qlink change <id>` items (`tui/quickbar.rs:268,292-305`). GUI:
+an `egui::ComboBox` shown **only when `ids.len() > 1`** (`links_bars.rs:222-243`).
+
+**Only `Link` and `MenuLink` entries are selectable**; `Label` and `Separator` get no selectable
+index (`tui/quickbar.rs:321-332`). `Link` sends `cmd`; `MenuLink` fires `request_menu(exist,
+noun)` — the two-step server verb menu. **GUI empty state:** `"No quickbars configured."`
+
+### Perception (added 2026-08-11)
+
+**Perception is DR-only, and its preset title is `"Perceptions"` — plural** (`presets.rs:1589`).
+
+**The flush is prompt-driven, not push-driven.** `clearStream percWindow` empties the buffer
+(`element.rs:266-279`); the buffer survives `pushStream`/`popStream` and flushes on the next
+prompt (`element.rs:375-378` → `buffers.rs:187-255`). Entries arrive concatenated and are split
+by duration-suffix detection (`buffers.rs:266-297`).
+
+**Core sorts descending by weight unconditionally** (`buffers.rs:227`). Weights
+(`buffers.rs:318-327`): Percentage `3000+pct`, OngoingMagic `2000`, Indefinite/Cyclic `1500`,
+Other `500`, Roisaen `= the count`, **Fading `0`**.
+
+**Rows run through the highlight engine on stream id `"perception"`** (`tui/perception.rs:166`) —
+highlight rules, `color_entire_line` and bold all apply. **A text replacement that empties a row
+drops the row** (`sync.rs:2366-2369`).
+
+### Widget-section coverage (added 2026-08-11)
+
+`widget_section_label` returns `None` for **Perception, Quickbar, MissingSpells, Betrayer,
+Inventory, Container, Experience (DR)** (`gui/app/window_config.rs:140-161`) — none has a GUI
+widget section. In the TUI editor, `Quickbar` and `MissingSpells` push **zero** fields
+(`construction.rs:206-207`); `Perception` pushes exactly three (`:296-301`).
+
+### Mobile coverage for the Wave 7 widgets (added 2026-08-11)
+
+- **Status drawer ▸ Experience** — part of `CHAR_SECTIONS` (`app.js:5527-5546`), **fed from
+  `gs4_experience` ONLY** (`core/remote.rs:1096-1112`): the level text, `Mind: {text} ({n}%)`,
+  `Next level: {text}`. **`dr_experience` never reaches the phone.** The drawer ignores the
+  desktop window's field toggles.
+- **Status drawer ▸ Encumbrance** — pre-formatted `"{text} ({value}%)"` plus the blurb
+  (`core/remote.rs:1113-1119`).
+- **No phone surface at all** for quickbar, perception, missing-spells, Betrayer, or MiniVitals.
+  `percWindow` is in `HIDDEN_STREAMS` (`app.js:31`) so it gets no chip. Honest redirects:
+  quickbar → the **macro tray**; perception and missing-spells → the **status drawer**'s effect
+  sections, which tick live where desktop does not.
+- **`experience` in `HIDDEN_STREAMS` is inert** — no code path produces a text stream by that
+  name; neither Experience widget is stream-fed. The entry is defensive.
 
 ## Conditions — the shared vocabulary (added 2026-08-11)
 
