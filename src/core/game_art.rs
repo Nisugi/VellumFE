@@ -93,23 +93,48 @@ pub fn looks_like_jpeg(body: &[u8]) -> bool {
     body.starts_with(&[0xFF, 0xD8, 0xFF])
 }
 
+/// Why a fetch failed. The distinction decides what gets remembered:
+///
+/// - `Missing` — the server answered and the answer is "this id has no art"
+///   (4xx, the redirect-to-error-page, a non-JPEG body). Safe to record on disk
+///   so the id is never requested again.
+/// - `Transient` — anything that could succeed next time (DNS, timeout, TLS,
+///   5xx, disk trouble). Must NOT be recorded: a permanent `.missing` marker
+///   written during a network blip would silence that room's art forever, with
+///   nothing in the UI to clear it.
+#[derive(Debug)]
+pub enum FetchError {
+    Missing(String),
+    Transient(String),
+}
+
+impl FetchError {
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::Missing(reason) | Self::Transient(reason) => reason,
+        }
+    }
+}
+
 /// Fetch and cache the art for `id`, blocking.
 ///
 /// Returns the cached path on success. Callers run this off the feed thread:
 /// a room render must never wait on the network.
-pub fn fetch_blocking(id: u32) -> Result<PathBuf, String> {
+pub fn fetch_blocking(id: u32) -> Result<PathBuf, FetchError> {
+    use FetchError::{Missing, Transient};
+
     let Some(dir) = cache_dir() else {
-        return Err("no cache directory".to_string());
+        return Err(Transient("no cache directory".to_string()));
     };
     let Some(path) = cache_path(id) else {
-        return Err("no cache path".to_string());
+        return Err(Transient("no cache path".to_string()));
     };
     if path.exists() {
         return Ok(path);
     }
 
-    let connector =
-        native_tls::TlsConnector::new().map_err(|e| format!("TLS init failed: {e}"))?;
+    let connector = native_tls::TlsConnector::new()
+        .map_err(|e| Transient(format!("TLS init failed: {e}")))?;
     let agent = ureq::AgentBuilder::new()
         .tls_connector(std::sync::Arc::new(connector))
         // A missing id redirects to an HTML error page. Following that would
@@ -122,11 +147,23 @@ pub fn fetch_blocking(id: u32) -> Result<PathBuf, String> {
 
     let url = format!("{ART_URL}/{id}.jpg");
     let response = agent.get(&url).call().map_err(|e| match e {
-        ureq::Error::Status(code, _) => format!("no art for picture {id} (HTTP {code})"),
-        e => format!("fetch failed: {e}"),
+        // A 4xx is the server answering "no such art" — definitive. A 5xx is
+        // the server failing to answer — retry next session.
+        ureq::Error::Status(code, _) if (400..500).contains(&code) => {
+            Missing(format!("no art for picture {id} (HTTP {code})"))
+        }
+        ureq::Error::Status(code, _) => {
+            Transient(format!("server error for picture {id} (HTTP {code})"))
+        }
+        e => Transient(format!("fetch failed: {e}")),
     })?;
     if response.status() != 200 {
-        return Err(format!("no art for picture {id} (HTTP {})", response.status()));
+        // With redirects disabled, a missing id surfaces as the 302 to the
+        // HTML error page — the server's way of saying the art doesn't exist.
+        return Err(Missing(format!(
+            "no art for picture {id} (HTTP {})",
+            response.status()
+        )));
     }
 
     use std::io::Read as _;
@@ -135,17 +172,20 @@ pub fn fetch_blocking(id: u32) -> Result<PathBuf, String> {
         .into_reader()
         .take(MAX_ART_BYTES + 1)
         .read_to_end(&mut body)
-        .map_err(|e| format!("read failed: {e}"))?;
+        .map_err(|e| Transient(format!("read failed: {e}")))?;
     if body.len() as u64 > MAX_ART_BYTES {
-        return Err(format!("picture {id} exceeds the size cap"));
+        // The asset exists but will never fit the cap — retrying can't help.
+        return Err(Missing(format!("picture {id} exceeds the size cap")));
     }
     if !looks_like_jpeg(&body) {
-        return Err(format!("picture {id} is not a JPEG (probably an error page)"));
+        return Err(Missing(format!(
+            "picture {id} is not a JPEG (probably an error page)"
+        )));
     }
 
-    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {dir:?}: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| Transient(format!("cannot create {dir:?}: {e}")))?;
     crate::config::write_atomic(&path, &body)
-        .map_err(|e| format!("cannot write {path:?}: {e}"))?;
+        .map_err(|e| Transient(format!("cannot write {path:?}: {e}")))?;
     crate::config::pool::invalidate_cache();
     // Re-scan so the just-downloaded picture resolves by name without a
     // restart or a manual .reload.
@@ -233,9 +273,18 @@ mod live_tests {
         assert!(looks_like_jpeg(&bytes), "cached bytes must be a JPEG");
 
         // An id with no art redirects to an HTML error page. It must FAIL
-        // rather than caching markup as a picture.
+        // rather than caching markup as a picture — and as a MISSING failure,
+        // the kind the caller is allowed to remember on disk. A transient
+        // network failure here would abort the test rather than mislabel.
         let err = fetch_blocking(32).expect_err("picture 32 has no art");
-        assert!(!cache_path(32).is_some_and(|p| p.exists()), "nothing cached: {err}");
+        assert!(
+            matches!(err, FetchError::Missing(_)),
+            "an error-page redirect is a definitive miss: {err:?}"
+        );
+        assert!(
+            !cache_path(32).is_some_and(|p| p.exists()),
+            "nothing cached: {err:?}"
+        );
 
         std::env::remove_var("VELLUM_FE_DIR");
     }

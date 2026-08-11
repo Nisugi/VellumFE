@@ -3112,6 +3112,53 @@ fn art_injects_on_every_room_not_just_the_first() {
     );
 }
 
+/// A variant whose condition matches but whose art file is NOT installed must
+/// fall back to the entry's installed base art — not take the room's art down
+/// with it. (A typo'd night variant otherwise blanked the room every night.)
+#[test]
+fn missing_variant_art_falls_back_to_the_base_image() {
+    use crate::config::room_images::{RoomImageDef, RoomImageIndex, RoomImageVariant, RoomImagesConfig};
+    use crate::core::custom_emoji::{CustomEmoji, CustomEmojiRegistry, EmojiFormat};
+
+    let _guard = crate::core::inline_image::TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    // Only the BASE art is installed; the variant art is not.
+    let mut registry = CustomEmojiRegistry::default();
+    registry.insert_for_test(CustomEmoji {
+        name: "pier".to_string(),
+        path: std::path::PathBuf::from("pier.png"),
+        format: EmojiFormat::Png,
+    });
+    crate::core::inline_image::set_for_test(registry);
+
+    let mut config = Config::default();
+    config.room_images.enabled = true;
+    let mut processor = MessageProcessor::new(config, SavedDialogPositions::default());
+    processor.set_room_image_index(RoomImageIndex::build(&RoomImagesConfig {
+        images: vec![RoomImageDef {
+            name: "pier".to_string(),
+            rooms: vec![7118245],
+            rows: None,
+            align: None,
+            variants: vec![RoomImageVariant {
+                name: "pier_nite".to_string(), // not installed (typo/deleted)
+                // An empty All is vacuously true: the variant always matches.
+                when: crate::config::Condition::All { conditions: vec![] },
+            }],
+        }],
+        names: Default::default(),
+    }));
+
+    let mut ui = UiState::new();
+    assert_eq!(
+        enter_room(&mut processor, "7118245", &mut ui).as_deref(),
+        Some("pier"),
+        "missing variant art must fall back to the base image, not blank the room"
+    );
+}
+
 /// An unmapped room leaves the slot empty — no art, no placeholder label.
 #[test]
 fn unmapped_room_gets_no_art() {

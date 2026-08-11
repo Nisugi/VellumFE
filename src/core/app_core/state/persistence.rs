@@ -441,6 +441,19 @@ impl AppCore {
         self.reload_layout();
         let emoji_count = crate::core::custom_emoji::reload();
         let image_count = crate::core::inline_image::reload();
+        // Room-art mappings ride the same reload: re-read both scope files and
+        // republish the lookup index, so room_images.toml edits and newly
+        // installed art take effect without a restart.
+        match crate::config::Config::load_room_images(self.config.character.as_deref()) {
+            Ok(store) => {
+                self.message_processor.set_room_image_index(
+                    crate::config::room_images::RoomImageIndex::build(&store),
+                );
+                self.room_images = Some(store);
+                self.room_window_dirty = true;
+            }
+            Err(e) => self.add_system_message(&format!("Room images reload failed: {e}")),
+        }
         self.add_system_message(&format!(
             "All configuration reloaded ({emoji_count} custom emoji, \
              {image_count} inline images)"

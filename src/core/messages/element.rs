@@ -681,10 +681,23 @@ impl MessageProcessor {
                         // on the network. The picture appears on the next
                         // visit (or the next room change) once cached.
                         std::thread::spawn(move || {
-                            if crate::core::game_art::fetch_blocking(picture).is_err() {
-                                // Remember the miss so this id is not
-                                // requested again on every future visit.
-                                crate::core::game_art::mark_missing(picture);
+                            match crate::core::game_art::fetch_blocking(picture) {
+                                Ok(_) => {}
+                                Err(err @ crate::core::game_art::FetchError::Missing(_)) => {
+                                    // The server said this id has no art — remember
+                                    // it so the id is not requested again.
+                                    tracing::debug!("game art {picture}: {}", err.reason());
+                                    crate::core::game_art::mark_missing(picture);
+                                }
+                                Err(err) => {
+                                    // Transient (network/disk) — claim_fetch already
+                                    // stops retries this session; next session tries
+                                    // again. Recording it would kill the art forever.
+                                    tracing::debug!(
+                                        "game art {picture} (will retry next session): {}",
+                                        err.reason()
+                                    );
+                                }
                             }
                         });
                     }

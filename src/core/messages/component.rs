@@ -562,8 +562,21 @@ impl MessageProcessor {
             match self
                 .current_room_uid
                 .and_then(|uid| self.room_image_index.get(uid))
-                .map(|art| (art, art.resolve_name(game_state, now_server, None).to_string()))
-                .filter(|(_, name)| crate::core::inline_image::contains(name))
+                .and_then(|art| {
+                    let resolved = art.resolve_name(game_state, now_server, None).to_string();
+                    if crate::core::inline_image::contains(&resolved) {
+                        Some((art, resolved))
+                    } else if resolved != art.name
+                        && crate::core::inline_image::contains(&art.name)
+                    {
+                        // A variant matched but its file isn't installed (typo,
+                        // deleted art). Fall back to the entry's base image rather
+                        // than dropping the room's art for the whole phase.
+                        Some((art, art.name.clone()))
+                    } else {
+                        None
+                    }
+                })
             {
                 Some((art, name)) => {
                     let align = match art.align_or_default() {
