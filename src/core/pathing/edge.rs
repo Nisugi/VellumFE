@@ -61,6 +61,11 @@ pub enum WalkAction {
         /// are advisory, and failing the edge on a missed cosmetic line would
         /// ban walkable edges.
         on_timeout: OnTimeout,
+        /// Extra steps to run only when the matching line ALSO matches this
+        /// pattern (Lich's `if_match`). How "the response decides what to do
+        /// next" is expressed: a table invitation needs accepting, a plain
+        /// seating does not.
+        if_match: Option<(Box<AwaitPattern>, Vec<WalkAction>)>,
     },
     /// Run `body` until `until` is satisfied, at most `max` iterations.
     ///

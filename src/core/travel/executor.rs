@@ -1472,6 +1472,7 @@ impl TravelTask {
                     pattern,
                     timeout,
                     on_timeout,
+                    if_match,
                 } => {
                     use crate::core::pathing::edge::OnTimeout;
                     let state = match awaiting.take() {
@@ -1522,7 +1523,14 @@ impl TravelTask {
                                 self.captures.push((name, value));
                             }
                         }
-                        pc += 1;
+                        // The response can decide what happens next: splice
+                        // the branch in only when the line also matches it.
+                        match if_match {
+                            Some((branch_pat, steps)) if branch_pat.is_match(line) => {
+                                actions.splice(pc..=pc, steps);
+                            }
+                            _ => pc += 1,
+                        }
                         continue;
                     }
                     if ctx.now_ms < state.deadline_ms {
@@ -3466,6 +3474,7 @@ mod tests {
                 pattern: pattern(r"lowers the gangplank"),
                 timeout: 30.0,
                 on_timeout: OnTimeout::Fail,
+                if_match: None,
             },
             WalkAction::Move("out".into()),
         ];
@@ -3502,6 +3511,7 @@ mod tests {
                 pattern: pattern(r"never happens"),
                 timeout: 5.0,
                 on_timeout: OnTimeout::Continue,
+                if_match: None,
             },
             WalkAction::Move("out".into()),
         ];
@@ -3521,6 +3531,7 @@ mod tests {
                 pattern: pattern(r"never happens"),
                 timeout: 5.0,
                 on_timeout: OnTimeout::Fail,
+                if_match: None,
             },
             WalkAction::Move("out".into()),
         ];
@@ -3550,6 +3561,7 @@ mod tests {
                 pattern: pattern(r"lowers the gangplank"),
                 timeout: 30.0,
                 on_timeout: OnTimeout::Fail,
+                if_match: None,
             },
             WalkAction::Move("out".into()),
         ];
@@ -3719,6 +3731,7 @@ mod tests {
                 ),
                 timeout: 8.0,
                 on_timeout: OnTimeout::Fail,
+                if_match: None,
             },
             WalkAction::Move("go {capture:v} door".into()),
         ];

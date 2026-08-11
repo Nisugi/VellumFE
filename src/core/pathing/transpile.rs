@@ -192,6 +192,40 @@ re!(
 /// long enough for a scheduled ferry, short enough to not strand a trip.
 const WAITFOR_TIMEOUT_SECS: f32 = 1800.0;
 
+// 28x ";e if Spell[112].active?; move 'north';else; move 'swim north';end" —
+// the modern Spell[] form of the checkspell ternary.
+re!(
+    SPELL_ACTIVE_MOVE,
+    r#"^;e\s+if\s+Spell\[(\d+)\]\.active\?;\s*move\s*\(?['"]([^'"]+)['"]\)?;?\s*else;\s*move\s*\(?['"]([^'"]+)['"]\)?;?\s*end;?$"#
+);
+// 26x ";e if resolve = Spell[9704] and resolve.known? and resolve.affordable?
+// and not resolve.active?; resolve.cast; end; move 'climb wall'; waitrt?" —
+// buff-if-you-can then move. We can't cast, so the move is what matters: the
+// spell is an optimization (it makes the climb safer), not a gate.
+re!(
+    BUFF_THEN_MOVE,
+    r#"^;e\s+if\s+\w+\s*=\s*Spell\[\d+\][^;]*;\s*\w+\.cast;\s*end;\s*move\s*\(?['"]([^'"]+)['"]\)?;?\s*(?:waitrt\?;?)?$"#
+);
+// 27x ";e multifput 'go darkened alleyway', 'go darkened alleyway'" — the
+// spaced-comma variant the existing MULTIFPUT regex misses.
+re!(
+    MULTIFPUT_SPACED,
+    r#"^;e\s+multifput\s+['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]\s*$"#
+);
+// 14x ";e fput 'search';fput 'go hatch'" — two bare fputs, no move.
+re!(
+    FPUT_FPUT,
+    r#"^;e\s+fput\s*\(?['"]([^'"]+)['"]\)?\s*;\s*fput\s*\(?['"]([^'"]+)['"]\)?;?$"#
+);
+
+// 478x, the largest residue family: joining a gaming table. Send `go <table>
+// table`; the response is either "you head over to" (seated, done) or an
+// invitation, which must be accepted by sending the SAME command again.
+re!(
+    TABLE_JOIN,
+    r#"^;e\s+table\s*=\s*["']((?:[^"'\\]|\\.)*)["']\s*;\s*fput\s+"go \#\{table\} table"\s+if\s+dothistimeout\(.*?\)\s*=~\s*/([^/]+)/\s*$"#
+);
+
 // 554x across 4 residue families: a table-driven guided walk. `start_room`
 // positions you in the `dirs` cycle; you step it until a landmark object
 // appears, then enter it. Not an algorithm — two tables and a noun.
@@ -220,6 +254,10 @@ fn parse_dir_table(body: &str) -> Vec<String> {
         })
         .collect()
 }
+
+/// How long to wait for a gaming table to seat or invite us. The corpus proc
+/// uses 25s; a table with other players can take a moment to respond.
+const TABLE_JOIN_TIMEOUT_SECS: f32 = 25.0;
 
 /// Timeout for a `dothistimeout`-derived await whose captured value a later
 /// command needs. Short: the response to a `look` is immediate or not coming.
@@ -297,6 +335,54 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             els: vec![WalkAction::Move(c[2].to_string())],
         }]);
     }
+    if let Some(c) = SPELL_ACTIVE_MOVE.captures(src) {
+        let spell: u16 = c[1].parse().ok()?;
+        return Some(vec![WalkAction::If {
+            cond: Cond::SpellActive(spell),
+            then: vec![WalkAction::Move(c[2].to_string())],
+            els: vec![WalkAction::Move(c[3].to_string())],
+        }]);
+    }
+    if let Some(c) = BUFF_THEN_MOVE.captures(src) {
+        // The cast is dropped deliberately: we have no cast primitive, and the
+        // buff is an optimization rather than a gate — the move is the whole
+        // crossing. Worst case the walk is slower or takes a slip, which the
+        // executor's move-feedback recovery already handles.
+        return Some(vec![WalkAction::Move(c[1].to_string()), WalkAction::WaitRt]);
+    }
+    if let Some(c) = MULTIFPUT_SPACED.captures(src) {
+        return Some(vec![
+            WalkAction::Put(c[1].to_string()),
+            WalkAction::Move(c[2].to_string()),
+        ]);
+    }
+    if let Some(c) = FPUT_FPUT.captures(src) {
+        return Some(vec![
+            WalkAction::Put(c[1].to_string()),
+            WalkAction::Move(c[2].to_string()),
+        ]);
+    }
+    if let Some(c) = TABLE_JOIN.captures(src) {
+        // The table name carries Ruby's escaped quotes ("Cat\'s Paw").
+        let table = c[1].replace("\\'", "'").replace("\\\"", "\"");
+        let go = format!("go {table} table");
+        return Some(vec![WalkAction::Await {
+            cmd: Some(go.clone()),
+            // Either response ends the wait; which one decides whether we
+            // must accept an invitation.
+            pattern: Box::new(AwaitPattern::new(
+                r"head over to|invites you|inviting you",
+            )?),
+            timeout: TABLE_JOIN_TIMEOUT_SECS,
+            // Missing the line means we never sat down; the crossing failed.
+            on_timeout: OnTimeout::Fail,
+            if_match: Some((
+                Box::new(AwaitPattern::new(&c[2])?),
+                // An invitation is accepted by re-sending the same command.
+                vec![WalkAction::Move(go)],
+            )),
+        }]);
+    }
     if let Some(c) = GUIDED_ROUTE.captures(src) {
         let start_rooms = parse_id_table(&c[1]);
         let dirs = parse_dir_table(&c[2]);
@@ -326,6 +412,7 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
                 // there is no command to send: this await must fail, not
                 // continue.
                 on_timeout: OnTimeout::Fail,
+                if_match: None,
             },
             WalkAction::Move(cmd),
         ]);
@@ -358,6 +445,7 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
                 pattern: Box::new(AwaitPattern::new(&regex::escape(&c[2]))?),
                 timeout: WAITFOR_TIMEOUT_SECS,
                 on_timeout: OnTimeout::Fail,
+                if_match: None,
             },
             WalkAction::Move(c[3].to_string()),
         ]);
@@ -369,6 +457,7 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
                 pattern: Box::new(AwaitPattern::new(&regex::escape(&c[1]))?),
                 timeout: WAITFOR_TIMEOUT_SECS,
                 on_timeout: OnTimeout::Fail,
+                if_match: None,
             },
             WalkAction::Move(c[2].to_string()),
         ]);
@@ -733,6 +822,80 @@ mod tests {
     use super::*;
 
     pub(crate) use super::GATE_LOCK;
+
+    #[test]
+    fn small_residue_families_transpile() {
+        use WalkAction::*;
+        // Modern Spell[] form of the checkspell ternary.
+        assert_eq!(
+            transpile(";e if Spell[112].active?; move 'north';else; move 'swim north';end"),
+            Some(vec![If {
+                cond: Cond::SpellActive(112),
+                then: vec![Move("north".into())],
+                els: vec![Move("swim north".into())],
+            }])
+        );
+        // Buff-if-you-can then move. We have no cast primitive; the buff is an
+        // optimization, not a gate, so the move is the whole crossing.
+        assert_eq!(
+            transpile(
+                ";e if resolve = Spell[9704] and resolve.known? and resolve.affordable? \
+                 and not resolve.active?; resolve.cast; end; move 'climb wall'; waitrt?"
+            ),
+            Some(vec![Move("climb wall".into()), WaitRt])
+        );
+        // Spaced-comma multifput, which the original MULTIFPUT regex misses.
+        assert_eq!(
+            transpile(";e multifput 'go darkened alleyway', 'go darkened alleyway'"),
+            Some(vec![
+                Put("go darkened alleyway".into()),
+                Move("go darkened alleyway".into())
+            ])
+        );
+        // Two bare fputs, no move.
+        assert_eq!(
+            transpile(";e fput 'search';fput 'go hatch'"),
+            Some(vec![Put("search".into()), Move("go hatch".into())])
+        );
+    }
+
+    #[test]
+    fn table_join_accepts_an_invitation_but_not_a_plain_seating() {
+        // The largest residue family (478). The response decides: "head over
+        // to" means we're seated, an invitation must be accepted by
+        // re-sending the same command.
+        let got = transpile(
+            r##";e table = "Cat\'s Paw"; fput "go #{table} table" if dothistimeout("go #{table} table", 25, /You (?:and your group )?head over to|waves.*you.*(?:invites|inviting) you(?: and your group)? to (?:join|come sit at)/) =~ /inviting you|invites you/"##,
+        )
+        .expect("table join transpiles");
+        match &got[0] {
+            WalkAction::Await {
+                cmd,
+                pattern,
+                if_match,
+                ..
+            } => {
+                assert_eq!(
+                    cmd.as_deref(),
+                    Some("go Cat's Paw table"),
+                    "the escaped quote in the table name is unescaped"
+                );
+                assert!(pattern.is_match("You head over to the table."));
+                let (branch_pat, steps) =
+                    if_match.as_ref().expect("an invitation branch exists");
+                assert!(
+                    branch_pat.is_match("A dwarf waves at you, inviting you to join"),
+                    "an invitation triggers the branch"
+                );
+                assert!(
+                    !branch_pat.is_match("You head over to the table."),
+                    "a plain seating does NOT re-send"
+                );
+                assert_eq!(steps, &[WalkAction::Move("go Cat's Paw table".into())]);
+            }
+            other => panic!("expected an Await, got {other:?}"),
+        }
+    }
 
     #[test]
     fn guided_route_extracts_both_tables_and_the_landmark() {
