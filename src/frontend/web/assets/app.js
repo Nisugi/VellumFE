@@ -405,7 +405,11 @@ function renderLine(line) {
       img.className = "inline-image";
       const info = seg.inline_image;
       img.src = `/image/${encodeURIComponent(info.name)}?token=${encodeURIComponent(pairingToken)}`;
-      img.style.height = `${Math.max(1, info.rows || 1)}em`;
+      // Clamp to the same 8-row cap the GUI applies (INLINE_IMAGE_MAX_ROWS in
+      // data/widget.rs): the parser itself allows up to 64, and an unclamped
+      // rows='40' would fill a phone screen while the GUI shows 8 rows.
+      const MAX_IMAGE_ROWS = 8;
+      img.style.height = `${Math.min(MAX_IMAGE_ROWS, Math.max(1, info.rows || 1))}em`;
       img.style.float = info.align === "right" ? "right" : "left";
       const label = seg.text || `[img:${info.name}]`;
       img.alt = label;
