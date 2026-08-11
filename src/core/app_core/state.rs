@@ -13,6 +13,7 @@ use crate::performance::PerformanceStats;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 
+mod alerts;
 mod focus;
 mod menus;
 mod persistence;
@@ -885,7 +886,10 @@ impl AppCore {
         self.poll_jinx();
         // Auto-clear expired highlight-set custom statuses.
         self.tick_custom_statuses();
-        // Retire overlay alerts past their duration.
+        // Edge-detect condition-gated alerts, then retire expired ones.
+        // Evaluation runs before expiry so an alert firing this frame gets
+        // its full duration rather than being aged by a stale tick.
+        self.tick_alert_conditions();
         self.tick_alerts();
         // Browse replies waiting on the layout worker.
         self.service_pending_map_views();
@@ -931,40 +935,6 @@ impl AppCore {
                 self.custom_status_expiries.remove(&id.to_ascii_uppercase());
             }
         }
-    }
-
-    /// Hand queued alert triggers to the core alert state, which applies the
-    /// cooldown and cap. Mirrors `apply_pending_status_actions`: the message
-    /// pump collects, AppCore admits, frontends only draw.
-    pub fn apply_pending_alerts(&mut self) {
-        // Config is the authority for the kill switch; sync it here rather
-        // than mirroring it into a second place that can drift. Toggling it
-        // off also clears what is already on screen (see `set_enabled`).
-        let enabled = self.config.highlight_settings.alerts_enabled;
-        if self.alerts.is_enabled() != enabled {
-            self.alerts.set_enabled(enabled);
-        }
-        if self.message_processor.pending_alerts.is_empty() {
-            return;
-        }
-        let triggers: Vec<_> = self.message_processor.pending_alerts.drain(..).collect();
-        let now = std::time::Instant::now();
-        for trigger in triggers {
-            self.alerts.fire(trigger, now);
-        }
-    }
-
-    /// Retire alerts whose time is up. Called once per frame with the other
-    /// pollers; expiry is time-based, so this must run even on idle frames.
-    pub fn tick_alerts(&mut self) {
-        // Also sync the kill switch here, not just on the drain path: toggling
-        // alerts off must take effect immediately even when the game is quiet
-        // and no lines are arriving to drive `apply_pending_alerts`.
-        let enabled = self.config.highlight_settings.alerts_enabled;
-        if self.alerts.is_enabled() != enabled {
-            self.alerts.set_enabled(enabled);
-        }
-        self.alerts.tick(std::time::Instant::now());
     }
 
     /// Deactivate custom statuses whose duration ran out. Called once per

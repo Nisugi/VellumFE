@@ -100,6 +100,25 @@ pub struct AlertSpec {
     /// a field into already-authored TOML is far costlier than reserving it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<i32>,
+
+    /// Game-state gate. When present WITHOUT a pattern, this alert is
+    /// condition-driven: it fires once on the false->true transition ("health
+    /// crossed 30%"), stays silent while it remains true, and re-arms when it
+    /// clears. Level-triggered firing would repaint the warning every frame,
+    /// which is why the engine is edge-triggered by construction.
+    ///
+    /// Evaluated in core once per frame, never in a render path — a condition
+    /// evaluated while painting fires twice on a detached viewport and cannot
+    /// reach the phone bridge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<crate::config::Condition>,
+
+    /// Seconds the gate must stay continuously FALSE before this rule may
+    /// fire again. The anti-flap guard: a vital hovering on its threshold
+    /// (29/31/29%) would otherwise machine-gun the screen. Defaults to
+    /// `DEFAULT_REARM_SECS`; 0 means re-arm the instant it clears.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rearm: Option<f32>,
 }
 
 fn is_default_anchor(anchor: &AlertAnchor) -> bool {

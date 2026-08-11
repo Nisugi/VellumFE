@@ -68,6 +68,15 @@ struct HighlightFormState {
     /// Priority is carried but has no editor control yet (eviction is
     /// oldest-first in v1); kept so saving never drops an authored value.
     alert_priority: Option<i32>,
+    /// Condition gate for condition-driven alerts. Carried through untouched:
+    /// authoring a Condition tree needs the shared condition editor, which
+    /// this form does not host yet. Preserving it is non-negotiable — a rule
+    /// silently losing its `when` on an unrelated edit would turn a
+    /// condition alert into one that never fires again.
+    alert_when: Option<crate::config::Condition>,
+    /// Re-arm seconds for the condition gate; edited alongside `when` when
+    /// that UI lands, preserved until then.
+    alert_rearm: Option<f32>,
 
     is_global: bool,
     error: Option<String>,
@@ -132,7 +141,16 @@ impl HighlightFormState {
         let banner = opt(&self.alert_banner);
         let art = opt(&self.alert_art);
         let flash = opt(&self.alert_flash);
-        if banner.is_none() && art.is_none() && flash.is_none() {
+        // No presentation AND no condition gate means the user authored no
+        // alert at all. But a rule carrying a `when` must survive even with
+        // its presentation cleared: dropping the spec here would silently
+        // discard a condition gate this form cannot yet re-author, turning a
+        // working condition alert into one that never fires again.
+        if banner.is_none()
+            && art.is_none()
+            && flash.is_none()
+            && self.alert_when.is_none()
+        {
             return None;
         }
 
@@ -165,6 +183,8 @@ impl HighlightFormState {
                 .ok()
                 .filter(|v| *v >= 0.0),
             priority: self.alert_priority,
+            when: self.alert_when.clone(),
+            rearm: self.alert_rearm,
         })
     }
 
@@ -205,6 +225,8 @@ impl HighlightFormState {
             alert_cooldown: String::new(),
             alert_id: String::new(),
             alert_priority: None,
+            alert_when: None,
+            alert_rearm: None,
             is_global: true,
             error: None,
         }
@@ -257,6 +279,8 @@ impl HighlightFormState {
             alert_cooldown: alert_str(pattern, |a| a.cooldown.map(|v| v.to_string())),
             alert_id: alert_str(pattern, |a| a.id.clone()),
             alert_priority: pattern.alert.as_ref().and_then(|a| a.priority),
+            alert_when: pattern.alert.as_ref().and_then(|a| a.when.clone()),
+            alert_rearm: pattern.alert.as_ref().and_then(|a| a.rearm),
             is_global,
             error: None,
         }

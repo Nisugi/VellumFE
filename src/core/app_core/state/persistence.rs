@@ -469,6 +469,11 @@ impl AppCore {
                 crate::config::Config::compile_highlight_patterns(&mut self.config.highlights);
                 self.message_processor.apply_config(self.config.clone());
                 tracing::debug!("reload_highlights: apply_config done");
+                // Edge state belongs to the OLD rule set. Clearing it means
+                // the next evaluation is a "first sight" that adopts current
+                // reality silently, so saving an edit while its condition
+                // already holds does not fire an alert for it.
+                self.alerts.reset_edges();
                 self.add_system_message("Highlights reloaded");
                 tracing::debug!("reload_highlights: system message queued");
                 let has_perception_window = self.ui_state.windows.values().any(|window| {
