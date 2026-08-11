@@ -88,6 +88,35 @@ the CLI's `--frontend` defaults to **`tui`** (`src/main.rs:40`), while a saved
 connection's frontend defaults to **GUI** (`profiles.rs:79-83`). The same
 character started two ways lands in two different interfaces.
 
+**`--frontend` has THREE values, not two:** `tui`, `gui`, and **`headless`** —
+core plus web server only, no local UI, with a browser at `/play` as the
+interface (also what the Android shell drives). `src/main.rs:126-132`
+
+**`--profile` is not `--character`.** `--character` is the *login* name (Lich
+proxy selection + direct login); `--profile` picks the *config directory* under
+`profiles/<name>/` and silently falls back to `--character` when omitted — which
+is why each new character starts with a blank layout. `src/main.rs:440,482-499`,
+`src/config/paths.rs:83-86`
+
+**Direct-login password resolution:** `--password` → `connection.password` →
+a hidden terminal prompt `"Password for account {account}: "`. The prompt is
+**desktop-feature only**; headless/Android builds must supply it up front.
+`src/network.rs:271-284`
+
+**Game-name spellings differ between CLI and config.** CLI (clap value enum) is
+hyphenated — `dr-platinum`, `dr-fallen`, `dr-test`; config/profile strings are
+not — `drplatinum`, `drfallen`, `drtest`. **An unrecognized `game` in config
+silently falls back to GemStone IV Prime** rather than erroring
+(`src/network.rs:240`). `src/main.rs:135-146`
+
+**Subcommands run and exit instead of connecting:** `validate-layout`,
+`migrate-layout`, and `import-highlights` (Wrayth/StormFront XML → TOML — the
+third is undocumented elsewhere). `src/main.rs:165-206,347`
+
+**The default layout ships six windows:** `main`, `command_input`, `thoughts`,
+`speech`, `room`, `society`. Everything else is user-added.
+`defaults/globals/layouts/layout.toml`
+
 **Connection list summary format:** `<character> @ <game>` for direct,
 `<character> via Lich @ <host>:<port>` for Lich. The account is deliberately
 NOT shown (source comment says the list is on screen and in screenshots
