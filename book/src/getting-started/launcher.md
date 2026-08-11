@@ -83,19 +83,28 @@ already logged in as that connection's character.
 {{#endtab}}
 {{#tab name="Mobile"}}
 
-The Android **(in progress)** and iOS **(beta — via TestFlight)** apps are
-standalone clients, not remote controls for a desktop session, and they do not
-read `launcher.toml`. Each has its own login screen where you enter and save
-your account details on the device; those saved logins live in the app's private
-storage, separate from the desktop's connections.
+The Android **(in progress)** and iOS **(beta — via TestFlight)** apps don't read
+`launcher.toml` — they keep their own connections on the device. What they give
+you is the same set of choices in a different place:
 
-If what you want is your desktop session on your phone, that is a different
-feature — the embedded web server, set up under the Launcher's **Advanced** fold
-via **Web dashboard** and **Bind address**. See
+- **play.net** and **Lich** tabs on the login screen, matching Direct and Lich
+  above. The Lich tab's **custom launch command (optional)** field even
+  cold-starts Lich over SSH, the phone's version of this page's SSH Launcher.
+- The person icon opens **Characters**, the app's saved-server list, where
+  **Scan QR to add** pairs the phone with a VellumFE session running on your PC.
+  Run `.webinfo` there for the QR code.
+
+That last one means the app can also be your second screen — you are not limited
+to the browser for that. The two paths do different jobs: **the app is for
+playing from anywhere**, with everything saved on the phone; **the browser is
+for a screen beside your PC**, with nothing to install. The browser route is set
+up under this Launcher's **Advanced** fold via **Web dashboard** and **Bind
+address**. Both are covered in
 [Put VellumFE on your phone](../how-to/vellum-on-your-phone.md).
 
-→ **Expected result:** the phone app opens its own login screen; your desktop
-connections are not listed there, by design.
+→ **Expected result:** the phone app opens its own login screen with **play.net**
+and **Lich** tabs; your desktop's saved connections are not listed there, because
+the phone keeps its own.
 {{#endtab}}
 {{#endtabs}}
 

@@ -85,16 +85,19 @@ vitals bars, a command line at the bottom — and your character logs in.
 {{#endtab}}
 {{#tab name="Mobile"}}
 
-There's no command line to type on a phone, so the phone joins rather than
-starts. Two routes, both covered in
+There's no command line to type on a phone, so you either install the app or
+point a browser at a session. Two routes for two jobs, both covered in
 [Put VellumFE on your phone](../how-to/vellum-on-your-phone.md):
 
-- **Second screen** — start a desktop session with `--web-port 8080 --web-bind
-  0.0.0.0`, then open `http://<your-pc-address>:8080/play` in the phone's
-  browser. Your desktop session keeps running; the phone shows the same game.
-- **Standalone** — install the Android APK (see
+- **The app — play from anywhere.** Install the Android APK (see
   [Installation](./installation.md)) or join the iOS TestFlight beta
-  **(beta — via TestFlight)**, and log in on the phone with no PC involved.
+  **(beta — via TestFlight)**. Its login screen offers **play.net** and **Lich**
+  tabs, and the person icon opens **Characters**, where **Scan QR to add** pairs
+  the phone with a session running on your PC.
+- **A browser — a second screen beside your PC.** Start a desktop session with
+  `--web-port 8080 --web-bind 0.0.0.0`, then open
+  `http://<your-pc-address>:8080/play` in the phone's browser. Nothing to
+  install; your desktop keeps playing and the phone shows the same game.
 
 → **Expected result:** the touch client loads with the main text pane, the
 **status drawer** on the right, and the **macro tray** on the left.

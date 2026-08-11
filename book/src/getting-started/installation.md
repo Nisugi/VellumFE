@@ -88,9 +88,10 @@ use flags.
 {{#endtab}}
 {{#tab name="Android"}}
 
-The Android app **(in progress)** is a standalone client — it connects to the
-game itself, with no PC involved, and uses the touch interface rather than the
-desktop GUI.
+The Android app **(in progress)** is a full client in its own right — it can log
+in to play.net with no PC involved, attach to a Lich session, cold-start Lich
+over SSH, or pair with a VellumFE session already running on your PC. It uses the
+touch interface rather than the desktop GUI.
 
 1. Download `vellum-fe-android-arm64.apk` onto the phone and tap it. Allow
    installs from the source when Android asks. Android 8.0 or newer.
@@ -118,8 +119,8 @@ page — the release build uploads it straight to App Store Connect. You need a
 TestFlight invitation; ask in [the Discord](https://discord.gg/6nKhWRTkSN) for
 one, then install through Apple's TestFlight app.
 
-Like Android, it is a standalone client with its own login screen, not a
-companion to a desktop session.
+Like Android, it is a full client with its own login screen — play.net direct,
+Lich, SSH cold-start, or pairing with a session on your PC.
 
 → **Expected result:** VellumFE appears in TestFlight as an installable build.
 See [iOS App](../frontends/ios.md).
@@ -200,10 +201,12 @@ build, which needs Perl — present on effectively every distro.
   Connections are stored in `~/.vellum-fe/`, not next to the exe. The Launcher
   spawns sessions using its own current path, so a moved binary keeps working
   as long as you launch the moved copy.
-- **Android and iOS are not "the mobile version of your desktop setup."** They
-  are standalone clients with their own login. To drive a desktop session from
-  a phone instead, that is the web server —
-  see [Put VellumFE on your phone](../how-to/vellum-on-your-phone.md).
+- **The apps keep their own connections; they don't import your desktop ones.**
+  Your `launcher.toml` stays on the desktop, and the phone saves its logins on
+  the device. The apps *can* pair with a running desktop session (**Characters**
+  ▸ **Scan QR to add**), and a browser can act as a second screen without
+  installing anything — two routes for two jobs, both in
+  [Put VellumFE on your phone](../how-to/vellum-on-your-phone.md).
 
 ## See also
 

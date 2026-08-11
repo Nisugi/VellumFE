@@ -155,13 +155,62 @@ Map Explorer** (`menus.rs:1989`).
 Arrange/Group/Send-to-Back (meaningless in an OS window); drag the body to move
 one. `src/frontend/gui/app/detached.rs`, `menus.rs:1707-1729`.
 
+## Mobile connection modes (added 2026-08-11)
+
+> **Why this block exists:** the "two modes: sidecar vs standalone" line further
+> down describes the **browser** client. Wave 1 read it as covering the native
+> apps too and published a wrong claim ("the apps are not remote controls for a
+> desktop session" — they are). A row about one frontend's shape is NOT a row
+> about another frontend. Re-verify per surface.
+>
+> The phone's login screen is the **web client's login overlay rendered in a
+> WebView**, not native UI. Native Swift/Kotlin contributes one extra screen: a
+> saved **Characters** picker. Four capabilities, two surfaces.
+
+| Capability | Where the user finds it | Cite |
+|---|---|---|
+| **Direct play.net login** | Tab **`play.net`** (default). Placeholder-only fields: `play.net account`, `password`, `character`, a Game `<select>`, checkbox **Remember this login**. Submit is **Connect**. | `src/frontend/web/assets/index.html:137-161,206` |
+| **Attach to a running Lich** | Tab **`Lich`**: `host`, `port`, `label (optional)`, checkbox **Remember this connection** (checked by default). | `index.html:139-178` |
+| **Cold-start Lich over SSH** | **Not a fourth tab** — a `custom launch command (optional)` textarea *inside* the Lich tab, plus a **SSH launcher** sheet under the gear ⚙. Connecting probes the port, SSHes in if Lich is down, then attaches. | `index.html:169-173`, `src/frontend/web/assets/app.js:3359,5886-5973`, `src/launcher/ssh.rs` |
+| **Remote-connect to a running VellumFE session** | The in-page **`Remote`** tab is **deliberately hidden on phones** — the native picker replaces it. Phones reach it via the person icon → **Characters**. | `index.html:141`, `app.js:1193` (`modeRemoteBtn.hidden = !inShell \|\| nativePicker`) |
+
+**So: a desktop browser shows three tabs; a phone shows two tabs plus a
+Characters picker.** The user-facing reason (say this, don't document the flag):
+the app swaps the in-page Remote tab for a native picker so it can scan pairing
+QR codes and seal saved servers into the Keychain/Keystore.
+
+**The Characters picker — quote per platform, do NOT blend:**
+
+| | iOS | Android |
+|---|---|---|
+| Title | **Characters** (`ios/app/Sources/RemotePickerView.swift:78`) | **Characters** (`android/app/src/main/java/dev/vellumfe/RemotePickerView.kt:60`) |
+| Add buttons | **Scan QR to add** (`:51`), **Add manually** (`:58`) | **⧉  Scan QR to add** (`:70`), **＋  Add manually** (`:71`) |
+| Back | accessibility label **Back to login** (`:71`) | **‹  Back to login** (`:79`) |
+| Empty state | "No saved characters yet — scan a QR or add one manually." (`:25`) | "No saved characters yet. Scan a pairing QR or add one manually." (`:101`) |
+| Delete | swipe + `EditButton` (`:36-40,79`) | **✕** → dialog **"Delete {name}?"** / "Removes the saved server (and its pairing token)." (`:156-157`) |
+
+Manual-add form is **Add character** on both, with fields **Label (required,
+e.g. Rysk)**, **Host (e.g. 192.168.1.21)**, **Port (e.g. 8042)**, **Pairing
+token (optional)**, and Cancel / Save. Rows show `host:port` plus a live/offline
+dot from a `/health` probe.
+
+**Pairing:** QR payload `vellum://remote?host=…&port=…&token=…&name=…`,
+generated PC-side by `.webinfo`. A second deep link `vellum://lich?host=…&port=…`
+prefills the Lich tab and never auto-connects.
+
+**Credential storage** (players ask): iOS Keychain, service
+`dev.vellumfe.remote-server`, accessibility after-first-unlock-this-device-only;
+Android Keystore key alias `vellum-master` sealing `remote.bin` in app-private
+files. Never SharedPreferences, never plaintext. play.net passwords are sealed
+by the Rust core with a device master key.
+
 ## Frontend-exclusive capabilities
 
 **GUI-only:** stay-open toolbar hubs (Windows/Settings/Zones/Editors); per-window graphical **Appearance** (skin frame, background, accent, corner radius, doll/compass/hand art) via right-click; skins (`.setskin`/`.makeskin`); `.controller`, `.snapdebug`, shell zones (`.header`/`.footer`/`.leftbar`/`.rightbar`), WebUI bridge; **`Ctrl+C`=quit** (GlobalKeybinds, GUI-only). `command_help.rs:178-182`
 
 **TUI-only:** `.setpalette`/`.resetpalette` (terminal 256-color); `.deletewindow` hide-redirect; Ctrl+C copies.
 
-**Mobile-only:** touch radial wheel from **puck** (long-press 300ms, not open-anywhere — `app.js:1826-1838`); **macro rail/tray** (tap fires, long-press 450ms edits; create via **＋ New button…** → editor with tap-modes send/type/type-then-send — `app.js:4363-4422`); **two modes**: sidecar (second screen, `session_control:false`) vs headless/standalone (login screen). `app.js:800-802,933`
+**Mobile-only:** touch radial wheel from **puck** (long-press 300ms, not open-anywhere — `app.js:1826-1838`); **macro rail/tray** (tap fires, long-press 450ms edits; create via **＋ New button…** → editor with tap-modes send/type/type-then-send — `app.js:4363-4422`); **the BROWSER client has two modes**: sidecar (second screen, `session_control:false`) vs headless/standalone (login screen) — `app.js:800-802,933`. ⚠️ **This describes the browser only. The native apps are a separate story — see "Mobile connection modes" above.** Do not generalize this row to iOS/Android.
 
 **Mobile CANNOT author:** layout/panels, resize, game keybinds, macro conditions. **CAN author:** macros, touch-wheel slices, highlights **incl. redirects & squelch** (despite stale doc), colors, controller binds, full settings registry.
 

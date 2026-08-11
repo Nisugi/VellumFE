@@ -78,14 +78,17 @@ a command line at the bottom, vitals bars — and your character logs in.
 {{#endtab}}
 {{#tab name="Mobile"}}
 
-Your phone joins a session rather than starting one from a command line. Two
-ways in:
+There's no command line to type on a phone, so you either install the app or
+point a browser at a session. Two routes, two jobs:
 
-- **As a second screen.** Give a desktop session `--web-port 8080 --web-bind
-  0.0.0.0`, then open `http://<your-pc-address>:8080/play` on the phone. The
-  desktop keeps playing; the phone mirrors it.
-- **As the whole client.** Install the Android app, or join the iOS TestFlight
-  beta, and log in on the phone with no PC involved.
+- **The app — play from anywhere.** Install the Android app or join the iOS
+  TestFlight beta. Its login screen does everything: log in to play.net
+  directly, attach to a Lich session, cold-start Lich over SSH, or pair with a
+  VellumFE session running on your PC (**Characters** ▸ **Scan QR to add**).
+- **A browser — a second screen beside your PC.** Give a desktop session
+  `--web-port 8080 --web-bind 0.0.0.0`, then open
+  `http://<your-pc-address>:8080/play`. Nothing to install, and it works just as
+  well on a tablet or a spare laptop.
 
 → **Expected result:** the touch client loads with the main text pane, the
 **status drawer** on the right, and the **macro tray** on the left.
