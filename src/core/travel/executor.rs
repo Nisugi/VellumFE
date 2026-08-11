@@ -33,6 +33,14 @@ pub struct TravelContext<'a> {
     pub standing: bool,
     pub sitting: bool,
     pub kneeling: bool,
+    /// Hidden or invisible, for scripted-edge `hidden?` branches.
+    pub hidden: bool,
+    /// Home-town citizenship, profession and society — scripted edges gate on
+    /// these (a guild door, a citizen-only gate). `None` when not yet parsed
+    /// from the feed, which evaluates as "doesn't match" (see `eval`).
+    pub citizenship: Option<&'a str>,
+    pub profession: Option<&'a str>,
+    pub society: Option<&'a str>,
     /// Active spell numbers, for scripted-edge `checkspell(N)` branches.
     pub active_spells: &'a [u16],
     /// Roundtime remaining in seconds (0 when free).
@@ -147,12 +155,33 @@ impl<'a> StashInputs<'a> {
 }
 
 impl TravelContext<'_> {
-    fn eval(&self, cond: crate::core::pathing::edge::Cond) -> bool {
+    fn eval(&self, cond: &crate::core::pathing::edge::Cond) -> bool {
         use crate::core::pathing::edge::Cond;
+        // Case-insensitive compare against an Option<&str> we may not know.
+        // An UNKNOWN value answers false: refusing a route we might have been
+        // able to take is recoverable (re-path, or hand off to Lich), while
+        // walking one we can't take strands the trip mid-route.
+        let matches = |actual: Option<&str>, want: &str| {
+            actual.is_some_and(|a| a.eq_ignore_ascii_case(want))
+        };
         match cond {
-            Cond::SpellActive(n) => self.active_spells.contains(&n),
+            Cond::SpellActive(n) => self.active_spells.contains(n),
             Cond::Sitting => self.sitting,
             Cond::Kneeling => self.kneeling,
+            Cond::Standing => self.standing,
+            Cond::Hidden => self.hidden,
+            Cond::PathAvailable(dir) => self
+                .compass_dirs
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case(dir)),
+            Cond::RoomHasObject(noun) => self
+                .loot_nouns
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(noun)),
+            Cond::Citizenship(want) => matches(self.citizenship, want),
+            Cond::Profession(want) => matches(self.profession, want),
+            Cond::Society(want) => matches(self.society, want),
+            Cond::Not(inner) => !self.eval(inner),
         }
     }
 
@@ -173,6 +202,10 @@ pub struct AwaitState {
     /// second timeout rather than re-sending forever).
     retried: bool,
 }
+
+/// Named values captured by `Await` patterns, for `{capture:name}` tokens in
+/// later commands. Scoped to one edge's script run.
+type Captures = Vec<(String, String)>;
 
 /// What a tick produced, in order.
 #[derive(Debug, Clone, PartialEq)]
@@ -367,6 +400,12 @@ pub struct TravelTask {
     banned: HashSet<(u32, u32)>,
     /// Failures on the current edge (reset on arrival and re-path).
     edge_retries: u32,
+    /// `{capture:name}` values bound by `Await` steps on the CURRENT edge.
+    /// Lives on the task (not threaded through tick_script) so it survives the
+    /// suspend/resume an await necessarily performs. Cleared per edge: a
+    /// capture from a previous crossing has no business filling a later
+    /// command.
+    captures: Captures,
     restarts: u32,
     started_ms: u64,
     /// Set once while waiting out a muckled state so the status line doesn't
@@ -438,6 +477,7 @@ impl TravelTask {
             step,
             banned: HashSet::new(),
             edge_retries: 0,
+            captures: Captures::new(),
             restarts: 0,
             started_ms: now_ms,
             muckle_announced: false,
@@ -757,6 +797,9 @@ impl TravelTask {
     fn arrive(&mut self) {
         self.idx += 1;
         self.edge_retries = 0;
+        // Captures are scoped to the edge that bound them; a value read off a
+        // line during the last crossing must not fill a command in the next.
+        self.captures.clear();
         // On a funding detour, reaching the bank returns to the funding phase
         // (to withdraw) rather than continuing as a normal walk.
         if let Some(bank) = self.funding_bank {
@@ -1240,6 +1283,17 @@ impl TravelTask {
             match action {
                 WalkAction::Noop => pc += 1,
                 WalkAction::Move(cmd) | WalkAction::Put(cmd) => {
+                    // {capture:name} from an earlier await — the lever/rune
+                    // puzzles read a value off a line, then act on it.
+                    let Some(cmd) =
+                        crate::core::pathing::edge::expand_captures(&cmd, &self.captures)
+                    else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: unbound capture in '{cmd}'"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
                     events.push(TravelEvent::Send(cmd));
                     sent_anything = true;
                     pc += 1;
@@ -1280,7 +1334,7 @@ impl TravelTask {
                     }
                 },
                 WalkAction::If { cond, then, els } => {
-                    let branch = if ctx.eval(cond) { then } else { els };
+                    let branch = if ctx.eval(&cond) { then } else { els };
                     actions.splice(pc..=pc, branch);
                 }
                 WalkAction::EmptyHands | WalkAction::FillHands => {
@@ -1352,7 +1406,22 @@ impl TravelTask {
                         // the line seq so only NEWER lines can satisfy us.
                         None => {
                             if let Some(cmd) = &cmd {
-                                events.push(TravelEvent::Send(cmd.clone()));
+                                // Fill {capture:...} from earlier awaits. An
+                                // unbound token means we'd send a half-formed
+                                // command, so fail the edge instead.
+                                let Some(cmd) =
+                                    crate::core::pathing::edge::expand_captures(
+                                        cmd,
+                                        &self.captures,
+                                    )
+                                else {
+                                    events.push(TravelEvent::Status(format!(
+                                        "edge {from} -> {expected}: unbound capture in '{cmd}'"
+                                    )));
+                                    self.handle_uncrossable_edge(from, expected, ctx, events);
+                                    return;
+                                };
+                                events.push(TravelEvent::Send(cmd));
                                 sent_anything = true;
                             }
                             AwaitState {
@@ -1363,11 +1432,21 @@ impl TravelTask {
                             }
                         }
                     };
-                    let matched = ctx
+                    // Bind named groups from the matching line so later
+                    // commands can interpolate them ({capture:name}).
+                    let hit = ctx
                         .recent_lines
                         .iter()
-                        .any(|(seq, line)| *seq > state.since_seq && pattern.is_match(line));
-                    if matched {
+                        .find(|(seq, line)| *seq > state.since_seq && pattern.is_match(line));
+                    if let Some((_, line)) = hit {
+                        if let Some(bound) = pattern.captures(line) {
+                            for (name, value) in bound {
+                                // Last write wins: a loop re-running an await
+                                // should see the newest value, not the first.
+                                self.captures.retain(|(k, _)| *k != name);
+                                self.captures.push((name, value));
+                            }
+                        }
                         pc += 1;
                         continue;
                     }
@@ -1421,7 +1500,7 @@ impl TravelTask {
                         RepeatUntil::Count => false,
                         RepeatUntil::RoomChanged => ctx.current_room != Some(from),
                         RepeatUntil::Room(id) => ctx.current_room == Some(*id),
-                        RepeatUntil::Cond(cond) => ctx.eval(*cond),
+                        RepeatUntil::Cond(cond) => ctx.eval(cond),
                     };
                     if done || budget == 0 {
                         pc += 1;
@@ -1449,6 +1528,27 @@ impl TravelTask {
                         // Outside a loop: a no-op, per Lich.
                         None => pc += 1,
                     }
+                }
+                WalkAction::PauseForUser {
+                    msg,
+                    until,
+                    timeout,
+                } => {
+                    // Already satisfied (the user acted, or the gate was never
+                    // closed): carry straight on without bothering them.
+                    if until.as_ref().is_some_and(|c| ctx.eval(c)) {
+                        pc += 1;
+                        continue;
+                    }
+                    // Otherwise abandon rather than block. A walker that waits
+                    // silently on a human is indistinguishable from a hang;
+                    // the message says what to do so the trip can be re-issued.
+                    let _ = timeout;
+                    events.push(TravelEvent::Status(format!(
+                        "edge {from} -> {expected} needs you: {msg}"
+                    )));
+                    self.handle_uncrossable_edge(from, expected, ctx, events);
+                    return;
                 }
                 WalkAction::Replan => {
                     // The edge asked to re-plan from here ($go2_restart).
@@ -2517,6 +2617,10 @@ mod tests {
         standing: bool,
         sitting: bool,
         kneeling: bool,
+        hidden: bool,
+        citizenship: Option<String>,
+        profession: Option<String>,
+        society: Option<String>,
         muckled: bool,
         dead: bool,
         spells: Vec<u16>,
@@ -2541,6 +2645,10 @@ mod tests {
                 standing: true,
                 sitting: false,
                 kneeling: false,
+                hidden: false,
+                citizenship: None,
+                profession: None,
+                society: None,
                 muckled: false,
                 dead: false,
                 spells: Vec::new(),
@@ -2573,6 +2681,10 @@ mod tests {
                 standing: self.standing,
                 sitting: self.sitting,
                 kneeling: self.kneeling,
+                hidden: self.hidden,
+                citizenship: self.citizenship.as_deref(),
+                profession: self.profession.as_deref(),
+                society: self.society.as_deref(),
                 active_spells: &self.spells,
                 rt_remaining: self.rt,
                 now_ms: self.now,
@@ -2861,6 +2973,10 @@ mod tests {
                 standing: true,
                 sitting: false,
                 kneeling: false,
+                hidden: false,
+                citizenship: None,
+                profession: None,
+                society: None,
                 active_spells: &[],
                 rt_remaining: 0.0,
                 now_ms: now,
@@ -2954,6 +3070,10 @@ mod tests {
                     standing: true,
                     sitting: false,
                     kneeling: false,
+                    hidden: false,
+                    citizenship: None,
+                    profession: None,
+                    society: None,
                     active_spells: &[],
                     rt_remaining: 0.0,
                     now_ms: $now,
@@ -3383,6 +3503,133 @@ mod tests {
             sent(&ev),
             ["search", "go crevice"],
             "break exits the loop and the script continues after it"
+        );
+    }
+
+    #[test]
+    fn a_capture_bound_by_an_await_fills_a_later_command() {
+        use crate::core::pathing::edge::{OnTimeout, WalkAction};
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+
+        let actions = vec![
+            WalkAction::Await {
+                cmd: Some("look wall".into()),
+                pattern: Box::new(
+                    crate::core::pathing::edge::AwaitPattern::new(r"The (?P<v>\w+) door")
+                        .unwrap(),
+                ),
+                timeout: 8.0,
+                on_timeout: OnTimeout::Fail,
+            },
+            WalkAction::Move("go {capture:v} door".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(sent(&ev), ["look wall"]);
+
+        sim.say("The bronze door stands here.");
+        sim.now += 500;
+        let ev = task.tick(sim.ctx(&db));
+        assert_eq!(
+            sent(&ev),
+            ["go bronze door"],
+            "the captured word filled the command"
+        );
+    }
+
+    #[test]
+    fn an_unbound_capture_fails_the_edge_rather_than_sending_garbage() {
+        // Sending "go  door" because a capture didn't fire is worse than not
+        // sending: a half-formed command can do something unintended.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let actions = vec![WalkAction::Move("go {capture:missing} door".into())];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            sent(&ev).is_empty(),
+            "nothing is sent with an unbound token: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn character_state_conditions_answer_from_live_state() {
+        use crate::core::pathing::edge::{Cond, WalkAction};
+        let db = script_db();
+
+        // Citizenship matches -> the `then` branch.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        sim.citizenship = Some("Solhaven".into());
+        let gate = |c: Cond| {
+            vec![WalkAction::If {
+                cond: c,
+                then: vec![WalkAction::Move("go gate".into())],
+                els: vec![WalkAction::Move("go road".into())],
+            }]
+        };
+        let mut ev = Vec::new();
+        task.tick_script(
+            gate(Cond::Citizenship("solhaven".into())),
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert_eq!(sent(&ev), ["go gate"], "case-insensitive match");
+
+        // Unknown citizenship answers false, taking the safe `else` branch.
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let mut ev = Vec::new();
+        task.tick_script(
+            gate(Cond::Citizenship("Solhaven".into())),
+            0,
+            None,
+            2,
+            1,
+            None,
+            sim.ctx(&db),
+            &mut ev,
+        );
+        assert_eq!(
+            sent(&ev),
+            ["go road"],
+            "unknown state takes the else branch rather than guessing"
+        );
+    }
+
+    #[test]
+    fn pause_for_user_abandons_rather_than_blocking_forever() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let actions = vec![
+            WalkAction::PauseForUser {
+                msg: "put a gem in your hand".into(),
+                until: None,
+                timeout: 0.0,
+            },
+            WalkAction::Move("go portal".into()),
+        ];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            !sent(&ev).iter().any(|c| *c == "go portal"),
+            "the crossing doesn't proceed without the user: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| matches!(e, TravelEvent::Status(s)
+                if s.contains("put a gem in your hand"))),
+            "the message names what's needed: {ev:?}"
         );
     }
 
@@ -3887,6 +4134,7 @@ mod tests {
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
@@ -3981,6 +4229,7 @@ mod tests {
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,
@@ -4059,6 +4308,7 @@ mod tests {
                 TravelContext {
                     db: &db, current_room: Some($cur), dead: false, muckled: false,
                     standing: true, sitting: false, kneeling: false, active_spells: &[],
+                    hidden: false, citizenship: None, profession: None, society: None,
                     rt_remaining: 0.0, now_ms: $now, pathcodes: &Default::default(),
                     hands: None, feedback: $fb, lich_fallback: false, funding: None,
                     recent_lines: &[], line_seq: 0,

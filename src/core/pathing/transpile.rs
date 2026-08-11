@@ -165,11 +165,69 @@ re!(
     r#"^;e\s+(?:fput|dothistimeout)\s*\(?['"]([^'"]+)['"]\)?[^;]*?\s+while\s+Room\.current\.id\s*==\s*\d+;?$"#
 );
 
+// ";e result = dothistimeout 'look wall', 5, /The (\w+) door/; move "go #{$1}
+// door"" — read a value off a line, then act on it. The capture-binding
+// idiom: without it these edges can't be expressed at all, because the
+// command isn't knowable until the game answers.
+re!(
+    MATCH_THEN_MOVE,
+    r#"^;e\s+(?:\w+\s*=\s*)?dothistimeout\s+['"]([^'"]+)['"]\s*,\s*[\d.]+\s*,\s*/(.+?)/[a-z]*\s*;\s*move\s*\(?["']([^"']*#\{\$1\}[^"']*)["']\)?;?$"#
+);
+// ";e if Char.citizenship == 'Solhaven'; move 'go gate'; else; move 'go
+// road'; end" — a citizenship/profession/society gate.
+re!(
+    CITIZENSHIP_GATE,
+    r#"^;e\s+if\s+Char\.citizenship\s*==\s*['"]([^'"]+)['"];?\s*move\s*\(?['"]([^'"]+)['"]\)?;?\s*else;?\s*move\s*\(?['"]([^'"]+)['"]\)?;?\s*end;?$"#
+);
+// ";e echo 'Put a gem in your hand'; pause_script; move 'go portal'" — the
+// crossing needs something only the user can do.
+re!(
+    PAUSE_SCRIPT_MOVE,
+    r#"^;e\s+echo\s+['"]([^'"]+)['"]\s*;\s*pause_script;?\s*(?:move\s*\(?['"]([^'"]+)['"]\)?;?)?$"#
+);
+
 /// How long a bare `waitfor` waits before giving up. Lich's `waitfor` blocks
 /// forever; a client that hangs a trip indefinitely is worse than one that
 /// gives up and hands off, so this is "effectively forever, but bounded" —
 /// long enough for a scheduled ferry, short enough to not strand a trip.
 const WAITFOR_TIMEOUT_SECS: f32 = 1800.0;
+
+/// Timeout for a `dothistimeout`-derived await whose captured value a later
+/// command needs. Short: the response to a `look` is immediate or not coming.
+const DOTHIS_TIMEOUT_SECS: f32 = 8.0;
+
+/// Rewrite the first unnamed capture group in `pattern` into a named one, so
+/// `{capture:<name>}` can reference it. Returns `None` when there is no
+/// unnamed group to name (the edge then doesn't transpile rather than
+/// producing a command with an unfillable token).
+///
+/// Named rather than positional deliberately: a positional binding silently
+/// shifts whenever the pattern gains a group, which is a live bug class in
+/// Lich's own converter.
+fn name_first_group(pattern: &str, name: &str) -> Option<String> {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // Skip an escaped character: `\(` is a literal paren, not a group.
+            b'\\' => i += 2,
+            b'(' => {
+                // `(?:`, `(?=`, `(?<name>` … are not unnamed capture groups.
+                if pattern[i + 1..].starts_with('?') {
+                    i += 1;
+                    continue;
+                }
+                return Some(format!(
+                    "{}(?P<{name}>{}",
+                    &pattern[..i],
+                    &pattern[i + 1..]
+                ));
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
 
 /// Iterations for a "retry until the room changes" loop. The interpreter
 /// clamps this again; keeping it lower here matches the corpus, where these
@@ -209,6 +267,43 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             then: vec![WalkAction::Move(c[1].to_string())],
             els: vec![WalkAction::Move(c[2].to_string())],
         }]);
+    }
+    if let Some(c) = MATCH_THEN_MOVE.captures(src) {
+        // Ruby's positional $1 becomes a NAMED group so the binding can't
+        // shift if the pattern later gains a group. The first unnamed capture
+        // group in the source pattern is the one $1 refers to.
+        let named = name_first_group(&c[2], "v")?;
+        let cmd = c[3].replace("#{$1}", "{capture:v}");
+        return Some(vec![
+            WalkAction::Await {
+                cmd: Some(c[1].to_string()),
+                pattern: Box::new(AwaitPattern::new(&named)?),
+                timeout: DOTHIS_TIMEOUT_SECS,
+                // The move interpolates the captured value, so without a match
+                // there is no command to send: this await must fail, not
+                // continue.
+                on_timeout: OnTimeout::Fail,
+            },
+            WalkAction::Move(cmd),
+        ]);
+    }
+    if let Some(c) = CITIZENSHIP_GATE.captures(src) {
+        return Some(vec![WalkAction::If {
+            cond: Cond::Citizenship(c[1].to_string()),
+            then: vec![WalkAction::Move(c[2].to_string())],
+            els: vec![WalkAction::Move(c[3].to_string())],
+        }]);
+    }
+    if let Some(c) = PAUSE_SCRIPT_MOVE.captures(src) {
+        let mut out = vec![WalkAction::PauseForUser {
+            msg: c[1].to_string(),
+            until: None,
+            timeout: 0.0,
+        }];
+        if let Some(m) = c.get(2) {
+            out.push(WalkAction::Move(m.as_str().to_string()));
+        }
+        return Some(out);
     }
     // Await idioms first: they are strictly more specific than the plain
     // fput/move shapes below, which would otherwise match and silently drop
@@ -595,6 +690,71 @@ mod tests {
     use super::*;
 
     pub(crate) use super::GATE_LOCK;
+
+    #[test]
+    fn capture_idiom_binds_a_value_and_interpolates_it() {
+        // The lever/rune family: the command isn't knowable until the game
+        // answers, so the value must be read off the line and substituted.
+        let got = transpile(
+            r##";e result = dothistimeout 'look wall', 5, /The (\w+) door/; move "go #{$1} door""##,
+        )
+        .expect("capture idiom transpiles");
+        assert_eq!(got.len(), 2, "an await that binds, then the move: {got:?}");
+        let bindings = match &got[0] {
+            WalkAction::Await { pattern, cmd, .. } => {
+                assert_eq!(cmd.as_deref(), Some("look wall"));
+                pattern
+                    .captures("The bronze door stands here.")
+                    .expect("pattern matches and binds")
+            }
+            other => panic!("expected an Await, got {other:?}"),
+        };
+        match &got[1] {
+            WalkAction::Move(cmd) => {
+                assert_eq!(
+                    crate::core::pathing::edge::expand_captures(cmd, &bindings).as_deref(),
+                    Some("go bronze door"),
+                    "the captured word fills the command"
+                );
+            }
+            other => panic!("expected a Move, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn positional_dollar_one_becomes_a_named_group() {
+        // Named, not positional: a positional binding shifts whenever the
+        // pattern gains a group, which is a live bug class in Lich's converter.
+        assert_eq!(
+            name_first_group(r"The (\w+) door", "v").as_deref(),
+            Some(r"The (?P<v>\w+) door")
+        );
+        // Non-capturing and lookahead groups are not $1.
+        assert_eq!(
+            name_first_group(r"(?:a|b)(\d+)", "v").as_deref(),
+            Some(r"(?:a|b)(?P<v>\d+)")
+        );
+        // An escaped paren is a literal, not a group.
+        assert_eq!(name_first_group(r"costs \(5\)", "v"), None);
+        // Nothing to bind: the edge must not transpile into an unfillable token.
+        assert_eq!(name_first_group(r"no groups here", "v"), None);
+    }
+
+    #[test]
+    fn citizenship_gate_becomes_a_condition() {
+        let got = transpile(
+            ";e if Char.citizenship == 'Solhaven'; move 'go gate'; else; move 'go road'; end",
+        )
+        .expect("transpiles");
+        assert_eq!(
+            got,
+            vec![WalkAction::If {
+                cond: Cond::Citizenship("Solhaven".into()),
+                then: vec![WalkAction::Move("go gate".into())],
+                els: vec![WalkAction::Move("go road".into())],
+            }]
+        );
+    }
 
     #[test]
     fn ferry_idiom_becomes_an_await_not_a_bare_move() {

@@ -73,6 +73,18 @@ pub enum WalkAction {
     },
     /// Leave the innermost `Repeat` (Lich's `break`). A no-op outside a loop.
     Break,
+    /// Stop and tell the user to do something the client can't (place a gem in
+    /// hand, be strong enough to turn a wheel), resuming when `until` holds.
+    ///
+    /// This ABANDONS the trip rather than blocking forever: an automated
+    /// walker silently waiting on a human is indistinguishable from a hang.
+    /// The message names what's needed so the user can act and re-issue.
+    PauseForUser {
+        msg: String,
+        /// Resume automatically if this becomes true within the timeout.
+        until: Option<Cond>,
+        timeout: f32,
+    },
     /// Re-plan the route from the current room to the same destination
     /// (Lich's `$go2_restart = true`). A transpiled edge sets this when its
     /// script signals that the map may have changed under it; the executor
@@ -104,6 +116,26 @@ impl AwaitPattern {
         self.regex.is_match(line)
     }
 
+    /// Named capture groups from the first match, for `{capture:name}`
+    /// interpolation into a later command. `None` when the line doesn't match.
+    ///
+    /// Only NAMED groups are collected: an edge that wants a value has to say
+    /// which one, and positional indices would silently shift whenever a
+    /// pattern gains a group (the exact bug that shipped in Lich's converter).
+    pub fn captures(&self, line: &str) -> Option<Vec<(String, String)>> {
+        let caps = self.regex.captures(line)?;
+        Some(
+            self.regex
+                .capture_names()
+                .flatten()
+                .filter_map(|name| {
+                    caps.name(name)
+                        .map(|m| (name.to_string(), m.as_str().to_string()))
+                })
+                .collect(),
+        )
+    }
+
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -113,6 +145,38 @@ impl PartialEq for AwaitPattern {
     fn eq(&self, other: &Self) -> bool {
         self.source == other.source
     }
+}
+
+/// Substitute `{capture:name}` tokens in a command with values bound by an
+/// earlier [`WalkAction::Await`].
+///
+/// An unbound token yields `None` rather than an empty string: sending
+/// "pull  lever" because a capture didn't fire is worse than not sending at
+/// all, since a half-formed command can do something unintended.
+pub fn expand_captures(
+    template: &str,
+    bindings: &[(String, String)],
+) -> Option<String> {
+    // Cheap exit for the overwhelmingly common tokenless command.
+    if !template.contains("{capture:") {
+        return Some(template.to_string());
+    }
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find("{capture:") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + "{capture:".len()..];
+        let end = after.find('}')?;
+        let name = &after[..end];
+        let value = bindings
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())?;
+        out.push_str(value);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
 }
 
 /// What a timed-out [`WalkAction::Await`] does.
@@ -145,7 +209,12 @@ pub enum RepeatUntil {
 }
 
 /// Conditions the executor can answer from game state.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Deliberately a closed set answered from state we already track. An unknown
+/// condition can't be "maybe" at walk time — it would either walk a route the
+/// character can't actually take or refuse one it can — so anything not
+/// listed here keeps its edge untranspiled, where the Lich fallback handles it.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Cond {
     /// `checkspell(N)` — spell N currently active.
     SpellActive(u16),
@@ -153,4 +222,23 @@ pub enum Cond {
     Sitting,
     /// `kneeling?`
     Kneeling,
+    /// `standing?`
+    Standing,
+    /// `hidden?` or `invisible?`
+    Hidden,
+    /// A compass exit is available in the current room (`checkpaths`).
+    /// Lowercased short form as the game reports it ("n", "se", "out").
+    PathAvailable(String),
+    /// A ground-loot noun is present in the current room (`checkloot` /
+    /// `GameObj.loot.find`).
+    RoomHasObject(String),
+    /// Home-town citizenship matches (case-insensitive).
+    Citizenship(String),
+    /// Profession matches (case-insensitive).
+    Profession(String),
+    /// Society membership matches (case-insensitive).
+    Society(String),
+    /// Negation, so a recognizer can express "unless X" without every
+    /// condition needing an inverted twin.
+    Not(Box<Cond>),
 }
