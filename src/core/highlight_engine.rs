@@ -145,6 +145,19 @@ impl CoreHighlightEngine {
             h.set_status.hash(&mut hasher);
             h.status_duration.map(f32::to_bits).hash(&mut hasher);
             h.clear_status.hash(&mut hasher);
+            // Alerts are read by apply_highlights (three match sites call
+            // `alert_for`), so per the rule above they must be hashed or
+            // editing ONLY a rule's alert would keep serving the old one.
+            // AlertSpec isn't Hash (it carries f32s and a Condition tree), so
+            // hash its serialized form — correctness over elegance, and it
+            // costs nothing on the common None path.
+            match h.alert.as_ref() {
+                None => 0u8.hash(&mut hasher),
+                Some(alert) => {
+                    1u8.hash(&mut hasher);
+                    toml::to_string(alert).unwrap_or_default().hash(&mut hasher);
+                }
+            }
         }
         hasher.finish()
     }
@@ -1803,6 +1816,41 @@ mod tests {
                 .alerts
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn editing_only_the_alert_still_rebuilds_the_engine() {
+        // compute_hash gates rebuilds. A field apply_highlights READS but
+        // does not hash is invisible to update_if_changed, so the engine
+        // keeps serving the stale value forever. `alert` was exactly that.
+        let base = alert_pattern("stunned", "OLD");
+        let mut engine = CoreHighlightEngine::new(vec![base.clone()]);
+
+        let mut edited = base.clone();
+        edited.alert.as_mut().expect("alert").banner = Some("NEW".to_string());
+        assert!(
+            engine.update_if_changed(vec![edited]),
+            "an alert-only edit must rebuild"
+        );
+
+        let result = engine.apply_highlights(&[make_segment("You are stunned")], "main");
+        assert_eq!(result.alerts[0].banner.as_deref(), Some("NEW"));
+    }
+
+    #[test]
+    fn adding_or_removing_an_alert_changes_the_hash() {
+        let plain = make_pattern("kobold");
+        let alerting = alert_pattern("kobold", "KOBOLD");
+        assert_ne!(
+            CoreHighlightEngine::compute_hash(&[plain.clone()]),
+            CoreHighlightEngine::compute_hash(&[alerting.clone()]),
+            "gaining an alert is a change"
+        );
+        assert_eq!(
+            CoreHighlightEngine::compute_hash(&[plain.clone()]),
+            CoreHighlightEngine::compute_hash(&[plain]),
+            "identical rules still hash equal"
         );
     }
 
