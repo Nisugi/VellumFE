@@ -1143,45 +1143,40 @@ fn characterize_statusinfo_fields_written_by_parser() {
     }
 
     let s = &game_state.status;
-    assert!(s.stunned && s.bleeding && s.hidden && s.invisible && s.webbed);
-    assert!(s.dead && s.standing && s.kneeling && s.sitting && s.prone);
+    assert!(s.stunned() && s.bleeding() && s.hidden() && s.invisible() && s.webbed());
+    assert!(s.dead() && s.standing() && s.kneeling() && s.sitting() && s.prone());
 
     // Clearing round-trips too.
     feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
-    assert!(!game_state.status.stunned);
+    assert!(!game_state.status.stunned());
 }
 
-/// CHARACTERIZATION OF A DEFECT: `element.rs` has no `"joined"` match arm, so
-/// the game's `IconJOINED` indicator is swallowed by the `_ => {}` fallthrough
-/// and `status.joined` stays false forever -- despite the field existing and
-/// being serialized to remote clients.
-///
-/// The refactor FIXES this. Group membership is a prerequisite for the
-/// multi-account roster, so this flip is the whole point.
+/// FIXED (was a defect): `element.rs` had no `"joined"` match arm, so
+/// `IconJOINED` was swallowed by the `_ => {}` fallthrough and `status.joined`
+/// stayed false forever -- despite being serialized to remote clients. Group
+/// membership is a prerequisite for the multi-account roster.
 #[test]
-fn characterize_joined_indicator_is_dropped() {
+fn joined_indicator_reaches_gamestate() {
     let mut processor = create_test_processor();
     let mut game_state = GameState::new();
     let mut ui_state = dash_ui();
 
     feed_indicator(&mut processor, &mut game_state, &mut ui_state, "JOINED", true);
+    assert!(game_state.status.joined());
 
-    assert!(
-        !game_state.status.joined,
-        "pre-refactor: JOINED is dropped by the _ => {{}} arm"
-    );
-    // It DOES reach the dashboard widget path, proving the id arrives intact
-    // and only the GameState projection loses it.
+    // And it still reaches the dashboard widget path.
     assert!(dashboard_ids(&ui_state).contains(&"JOINED".to_string()));
+
+    feed_indicator(&mut processor, &mut game_state, &mut ui_state, "JOINED", false);
+    assert!(!game_state.status.joined());
 }
 
-/// CHARACTERIZATION OF A DEFECT: POISONED/DISEASED are real game indicators
-/// and shipped presets, but have no `StatusInfo` field at all. They reach the
-/// dashboard but nothing in core can read them.
-///
-/// The refactor FIXES this -- a general map stores every id the game sends.
+/// FIXED (was a defect): POISONED/DISEASED are real game indicators and
+/// shipped presets, but had no `StatusInfo` field, so they reached the
+/// dashboard while nothing in core could read them. The general map stores
+/// every id the game sends.
 #[test]
-fn characterize_unmapped_indicators_reach_widget_but_not_gamestate() {
+fn unmapped_indicators_now_reach_gamestate() {
     let mut processor = create_test_processor();
     let mut game_state = GameState::new();
     let mut ui_state = dash_ui();
@@ -1190,18 +1185,33 @@ fn characterize_unmapped_indicators_reach_widget_but_not_gamestate() {
         feed_indicator(&mut processor, &mut game_state, &mut ui_state, id, true);
     }
 
-    // Widget path sees them...
+    // Widget path still sees them...
     let ids = dashboard_ids(&ui_state);
     assert!(ids.contains(&"POISONED".to_string()));
     assert!(ids.contains(&"DISEASED".to_string()));
 
-    // ...but GameState has nowhere to put them. Asserting the whole struct is
-    // still default proves nothing else was written as a side effect.
-    assert_eq!(
-        game_state.status,
-        crate::core::state::StatusInfo::default(),
-        "pre-refactor: unmapped ids leave GameState.status untouched"
+    // ...and now so does GameState.
+    assert!(game_state.status.poisoned());
+    assert!(game_state.status.diseased());
+}
+
+/// An id with no typed accessor and no preset must still round-trip, so a new
+/// game indicator needs no code change to become readable by conditions.
+#[test]
+fn novel_indicator_ids_round_trip_without_code_changes() {
+    let mut processor = create_test_processor();
+    let mut game_state = GameState::new();
+    let mut ui_state = dash_ui();
+
+    feed_indicator(
+        &mut processor,
+        &mut game_state,
+        &mut ui_state,
+        "SOMETHINGNEW",
+        true,
     );
+    assert!(game_state.status.get("somethingnew"));
+    assert!(game_state.status.is_known("SOMETHINGNEW"));
 }
 
 /// CHARACTERIZATION: the parser strips the `Icon` prefix but preserves case,
@@ -1214,10 +1224,10 @@ fn characterize_indicator_write_is_case_insensitive() {
     let mut ui_state = dash_ui();
 
     feed_indicator(&mut processor, &mut game_state, &mut ui_state, "stunned", true);
-    assert!(game_state.status.stunned, "lowercase id must write");
+    assert!(game_state.status.stunned(), "lowercase id must write");
 
     feed_indicator(&mut processor, &mut game_state, &mut ui_state, "STUNNED", false);
-    assert!(!game_state.status.stunned, "uppercase id must write too");
+    assert!(!game_state.status.stunned(), "uppercase id must write too");
 }
 
 #[test]

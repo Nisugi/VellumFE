@@ -334,22 +334,27 @@ fn effect_is_active(effect: &ActiveEffect, now_server: i64) -> bool {
     effect.expires_at.map(|end| end > now_server).unwrap_or(true)
 }
 
+/// Resolve a configured indicator id against reported status.
+///
+/// Ids are case-normalized: config and presets store them uppercase
+/// (`"STANDING"`) while the old implementation matched lowercase literals, so
+/// every uppercase indicator condition silently evaluated false regardless of
+/// the flag's real value. `StatusInfo::get` normalizes, so both castings
+/// resolve.
+///
+/// An id the game has never reported reads `false` rather than "unknown".
+/// That keeps `active: false` conditions working from a cold start: GS4 sends
+/// the posture indicators with explicit `visible="n"` at login, but occasional
+/// ones like POISONED/DISEASED only appear once they happen, so a
+/// `poisoned == false` rule must not sit dead until the first poisoning.
+/// Callers that genuinely need to distinguish "reported inactive" from "never
+/// reported" -- a status display showing unknown rather than a confident "no"
+/// -- should ask `StatusInfo::is_known` directly.
+///
+/// Always returns `Some`; the signature is kept for the call site's
+/// `unwrap_or(false)` and to leave room for a future tri-state.
 fn indicator_value(gs: &GameState, id: &str) -> Option<bool> {
-    let s = &gs.status;
-    Some(match id {
-        "standing" => s.standing,
-        "kneeling" => s.kneeling,
-        "sitting" => s.sitting,
-        "prone" => s.prone,
-        "stunned" => s.stunned,
-        "bleeding" => s.bleeding,
-        "hidden" => s.hidden,
-        "invisible" => s.invisible,
-        "webbed" => s.webbed,
-        "joined" => s.joined,
-        "dead" => s.dead,
-        _ => return None,
-    })
+    Some(gs.status.get(id))
 }
 
 /// Percent comes from the vitals bars; absolute from minivitals (GS4).
@@ -402,8 +407,8 @@ mod tests {
     #[test]
     fn characterize_indicator_lowercase_ids_resolve() {
         let mut gs = GameState::new();
-        gs.status.standing = true;
-        gs.status.stunned = true;
+        gs.status.set("standing", true);
+        gs.status.set("stunned", true);
 
         // Lowercase ids hit `indicator_value`'s match arms and resolve.
         assert!(eval_condition(&indicator_cond("standing", true), &gs, 0, None));
@@ -415,76 +420,78 @@ mod tests {
         assert!(eval_condition(&indicator_cond("kneeling", false), &gs, 0, None));
     }
 
-    /// CHARACTERIZATION OF A DEFECT: config and presets store indicator ids in
-    /// UPPERCASE (`presets.rs` uses `"STANDING"`), but `indicator_value`
-    /// matches lowercase literals only and does not normalize. So every
-    /// uppercase indicator condition currently resolves to `None` and is
-    /// coerced to `false` by the `unwrap_or(false)` at the call site --
-    /// including `active: false`, which a user would reasonably expect to be
-    /// true when the flag is unset.
-    ///
-    /// The refactor FIXES this by normalizing case in the accessor. When that
-    /// lands, these assertions flip; that flip is the intended behavior change.
+    /// FIXED (was a defect): config and presets store indicator ids in
+    /// UPPERCASE (`presets.rs` uses `"STANDING"`) while the old
+    /// `indicator_value` matched lowercase literals only, so every uppercase
+    /// indicator condition resolved to `None` and coerced to false in BOTH
+    /// directions. `StatusInfo::get` now normalizes case, so both castings
+    /// resolve to the same flag.
     #[test]
-    fn characterize_indicator_uppercase_ids_silently_false_today() {
+    fn indicator_ids_resolve_regardless_of_case() {
         let mut gs = GameState::new();
-        gs.status.standing = true;
+        gs.status.set("standing", true);
 
-        // Standing IS set, but the uppercase id never matches -> false.
-        assert!(!eval_condition(&indicator_cond("STANDING", true), &gs, 0, None));
-        // And the negation is ALSO false -- the tell-tale sign of `None`
-        // rather than a real boolean answer.
+        assert!(eval_condition(&indicator_cond("STANDING", true), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("standing", true), &gs, 0, None));
+        // The negation is now a real boolean answer, not a `None` coercion.
         assert!(!eval_condition(&indicator_cond("STANDING", false), &gs, 0, None));
     }
 
-    /// CHARACTERIZATION OF A DEFECT: `element.rs` has no match arm writing
-    /// `status.joined`, so the field is permanently `false` even though the
-    /// game sends `<indicator id='IconJOINED'>` and the field is serialized to
-    /// remote clients. The condition path resolves the id (it is a real match
-    /// arm) but always reads the stale default.
-    ///
-    /// The refactor FIXES this: a general map stores whatever the game sends.
-    /// Group membership conditions start working, which is a prerequisite for
-    /// the multi-account roster.
+    /// FIXED (was a defect): `element.rs` had no match arm writing
+    /// `status.joined`, so it was permanently false despite the game sending
+    /// `<indicator id='IconJOINED'>`. The general map stores whatever arrives,
+    /// so group-membership conditions work -- a prerequisite for the
+    /// multi-account roster.
     #[test]
-    fn characterize_joined_never_set_by_parser() {
-        let gs = GameState::new();
-        // The id resolves (unlike an unknown id) but the value is always false.
+    fn joined_indicator_resolves_once_reported() {
+        let mut gs = GameState::new();
+        // Unreported: reads false, and is not "known".
         assert!(!eval_condition(&indicator_cond("joined", true), &gs, 0, None));
-        assert!(eval_condition(&indicator_cond("joined", false), &gs, 0, None));
+
+        gs.status.set("JOINED", true);
+        assert!(eval_condition(&indicator_cond("joined", true), &gs, 0, None));
+        assert!(!eval_condition(&indicator_cond("joined", false), &gs, 0, None));
     }
 
-    /// CHARACTERIZATION OF A DEFECT: POISONED and DISEASED are shipped
-    /// indicator templates (`presets.rs`) and real game indicators, but have no
-    /// `StatusInfo` field, so `indicator_value` returns `None` and conditions
-    /// on them are silently false in BOTH directions. They reach the dashboard
-    /// widget path only.
-    ///
-    /// The refactor FIXES this -- a general map has no fixed arity.
+    /// FIXED (was a defect): POISONED and DISEASED are shipped indicator
+    /// templates and real game indicators, but had no `StatusInfo` field, so
+    /// conditions on them were silently false in both directions. The map has
+    /// no fixed arity, so any id the game reports is readable.
     #[test]
-    fn characterize_unmapped_game_indicators_are_dead_conditions() {
+    fn previously_unmapped_indicators_now_resolve() {
+        let mut gs = GameState::new();
+        gs.status.set("POISONED", true);
+        gs.status.set("DISEASED", false);
+
+        assert!(eval_condition(&indicator_cond("POISONED", true), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("poisoned", true), &gs, 0, None));
+        // Reported-inactive answers false to active=true and true to
+        // active=false -- a real boolean, unlike the old `None`.
+        assert!(!eval_condition(&indicator_cond("DISEASED", true), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("DISEASED", false), &gs, 0, None));
+    }
+
+    /// An id the game has never reported reads as inactive, so `active: false`
+    /// rules work from a cold start. GS4 reports the posture indicators with
+    /// explicit `visible="n"` at login, but occasional ones (POISONED,
+    /// DISEASED) only appear once they occur -- a `poisoned == false` rule
+    /// must not sit dead until the first poisoning.
+    #[test]
+    fn unreported_indicator_reads_as_inactive() {
         let gs = GameState::new();
-        for id in ["poisoned", "diseased", "POISONED", "DISEASED"] {
-            assert!(
-                !eval_condition(&indicator_cond(id, true), &gs, 0, None),
-                "{id} active=true should be false pre-refactor"
-            );
-            assert!(
-                !eval_condition(&indicator_cond(id, false), &gs, 0, None),
-                "{id} active=false should ALSO be false pre-refactor (None, not a boolean)"
-            );
-        }
+        assert!(!eval_condition(&indicator_cond("poisoned", true), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("poisoned", false), &gs, 0, None));
     }
 
-    /// CHARACTERIZATION: a genuinely unknown id must stay false in both
-    /// directions even after the refactor. A general map must NOT invent
-    /// `true` for ids the game never sent. This assertion is expected to
-    /// survive the refactor unchanged.
+    /// A typo'd or nonexistent id behaves the same as a real-but-unreported
+    /// one. There is no id allowlist anywhere in the config path, so this is
+    /// the honest behavior rather than a silent trap: the map cannot tell a
+    /// typo from an indicator the game has not sent yet.
     #[test]
-    fn characterize_unknown_indicator_id_stays_false() {
+    fn unknown_indicator_id_reads_as_inactive() {
         let gs = GameState::new();
         assert!(!eval_condition(&indicator_cond("not_a_real_id", true), &gs, 0, None));
-        assert!(!eval_condition(&indicator_cond("not_a_real_id", false), &gs, 0, None));
+        assert!(eval_condition(&indicator_cond("not_a_real_id", false), &gs, 0, None));
     }
 
     /// CHARACTERIZATION: the full set of ids that DO resolve today, asserted
@@ -493,17 +500,17 @@ mod tests {
     #[test]
     fn characterize_all_eleven_statusinfo_fields_readable() {
         let mut gs = GameState::new();
-        gs.status.standing = true;
-        gs.status.kneeling = true;
-        gs.status.sitting = true;
-        gs.status.prone = true;
-        gs.status.stunned = true;
-        gs.status.bleeding = true;
-        gs.status.hidden = true;
-        gs.status.invisible = true;
-        gs.status.webbed = true;
-        gs.status.joined = true;
-        gs.status.dead = true;
+        gs.status.set("standing", true);
+        gs.status.set("kneeling", true);
+        gs.status.set("sitting", true);
+        gs.status.set("prone", true);
+        gs.status.set("stunned", true);
+        gs.status.set("bleeding", true);
+        gs.status.set("hidden", true);
+        gs.status.set("invisible", true);
+        gs.status.set("webbed", true);
+        gs.status.set("joined", true);
+        gs.status.set("dead", true);
 
         for id in [
             "standing",

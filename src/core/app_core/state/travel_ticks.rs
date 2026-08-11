@@ -19,8 +19,8 @@ impl AppCore {
         let now_epoch = chrono::Utc::now().timestamp();
         let now_valid = self.game_state.character.urchins_valid(
             now_epoch,
-            self.game_state.status.hidden,
-            self.game_state.status.invisible,
+            self.game_state.status.hidden(),
+            self.game_state.status.invisible(),
         );
         let expired = std::time::Instant::now() >= deadline;
         if now_valid || expired {
@@ -224,11 +224,11 @@ impl AppCore {
         let ctx = crate::core::travel::TravelContext {
             db: &db,
             current_room: self.map.current_room_id,
-            dead: self.game_state.status.dead,
-            muckled: self.game_state.status.stunned || self.game_state.status.webbed,
-            standing: self.game_state.status.standing,
-            sitting: self.game_state.status.sitting,
-            kneeling: self.game_state.status.kneeling,
+            dead: self.game_state.status.dead(),
+            muckled: self.game_state.status.stunned() || self.game_state.status.webbed(),
+            standing: self.game_state.status.standing(),
+            sitting: self.game_state.status.sitting(),
+            kneeling: self.game_state.status.kneeling(),
             active_spells: &active_spells,
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.travel.now_ms(),
@@ -263,7 +263,7 @@ impl AppCore {
                 get_silvers: self.config.go2.get_silvers,
                 cache: &self.game_state.day_passes,
                 now_epoch: chrono::Utc::now().timestamp(),
-                hidden: self.game_state.status.hidden || self.game_state.status.invisible,
+                hidden: self.game_state.status.hidden() || self.game_state.status.invisible(),
             }),
         };
         let events = self.travel.tick(ctx);
@@ -308,7 +308,7 @@ impl AppCore {
         let ctx = crate::core::foreach::ForeachContext {
             rt_remaining: self.game_state.roundtime_remaining() as f64,
             now_ms: self.foreach.now_ms(),
-            dead: self.game_state.status.dead,
+            dead: self.game_state.status.dead(),
         };
         let events = self.foreach.tick(&ctx);
         for event in events {
@@ -386,11 +386,11 @@ impl AppCore {
             && self.pending_urchin_refresh.is_none()
             && !self.game_state.character.urchins_valid(
                 now_epoch,
-                self.game_state.status.hidden,
-                self.game_state.status.invisible,
+                self.game_state.status.hidden(),
+                self.game_state.status.invisible(),
             )
-            && !self.game_state.status.hidden
-            && !self.game_state.status.invisible
+            && !self.game_state.status.hidden()
+            && !self.game_state.status.invisible()
         {
             // Stale/unknown access (not merely hidden) — refresh before routing.
             self.add_system_message("[go2] checking urchin access...");
@@ -454,8 +454,8 @@ impl AppCore {
             self.config.go2.use_urchins
                 && self.game_state.character.urchins_valid(
                     now_epoch,
-                    self.game_state.status.hidden,
-                    self.game_state.status.invisible,
+                    self.game_state.status.hidden(),
+                    self.game_state.status.invisible(),
                 ),
         );
         // Day-pass: for each of the three town pairs, decide the routable cost.
