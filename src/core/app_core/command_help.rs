@@ -113,7 +113,8 @@ pub(crate) const COMMAND_HELP: &[CommandHelpSection] = &[
                 "Travel there (room id, uid, tag, saved name, or text search)",
                 &[
                     ".go2 stop|status cancels / shows the active trip",
-                    ".go2 save <name> [id] saves a target (.go2 targets lists, .go2 back returns)",
+                    ".go2 save <name> [id] saves a target (.go2 saved lists, .go2 back returns)",
+                    ".go2 targets lists reachable tagged destinations, nearest first",
                 ]
             ),
             entry!(

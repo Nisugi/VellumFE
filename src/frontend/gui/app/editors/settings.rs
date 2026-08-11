@@ -1183,7 +1183,7 @@ impl VellumGuiApp {
                                         ui.label(
                                             egui::RichText::new(format!(
                                                 "Saved targets: {saved_target_count} (manage \
-                                                 with .go2 save / .go2 targets)"
+                                                 with .go2 save / .go2 saved)"
                                             ))
                                             .weak(),
                                         );
