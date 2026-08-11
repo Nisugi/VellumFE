@@ -73,6 +73,29 @@ pub enum WalkAction {
     },
     /// Leave the innermost `Repeat` (Lich's `break`). A no-op outside a loop.
     Break,
+    /// Walk a fixed direction table starting at whichever entry matches the
+    /// current room, wrapping at the end, until a landmark object appears —
+    /// then send `enter`.
+    ///
+    /// The corpus shape is `start_room = [ids]; dirs = [...]; if index =
+    /// start_room.index(Room.current.id); until checkloot.include?('X'); move
+    /// dirs[index]; index += 1; index = 0 if index >= dirs.length; end; move
+    /// 'climb X'`. It's a table-driven walk, not an algorithm: the whole
+    /// program is the two tables plus the landmark.
+    ///
+    /// `dirs` is deliberately independent of `start_room` — the corpus tables
+    /// differ in length and the walk wraps, so the direction list is a cycle
+    /// the character joins at its own offset.
+    GuidedRoute {
+        /// Room ids, positionally matched to an offset into `dirs`.
+        start_rooms: Vec<u32>,
+        /// The direction cycle. Longer than `start_rooms` in most corpus edges.
+        dirs: Vec<String>,
+        /// Ground-loot noun that ends the walk when it appears.
+        landmark: String,
+        /// Command sent once the landmark is in the room ("climb staircase").
+        enter: String,
+    },
     /// Stop and tell the user to do something the client can't (place a gem in
     /// hand, be strong enough to turn a wheel), resuming when `until` holds.
     ///

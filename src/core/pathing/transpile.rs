@@ -192,6 +192,35 @@ re!(
 /// long enough for a scheduled ferry, short enough to not strand a trip.
 const WAITFOR_TIMEOUT_SECS: f32 = 1800.0;
 
+// 554x across 4 residue families: a table-driven guided walk. `start_room`
+// positions you in the `dirs` cycle; you step it until a landmark object
+// appears, then enter it. Not an algorithm — two tables and a noun.
+re!(
+    GUIDED_ROUTE,
+    r#"^;e\s*start_room\s*=\s*\[([^\]]*)\]\s*;\s*dirs\s*=\s*\[([^\]]*)\]\s*;\s*if\s+index\s*=\s*start_room\.index\(Room\.current\.id\);\s*until\s+checkloot\.include\?\(['"]([^'"]+)['"]\);.*?end;\s*move\s*\(?['"]([^'"]+)['"]\)?;"#
+);
+/// Parse a Ruby array literal of ids, mapping `nil` to a sentinel that can
+/// never match a room id. Positions matter — the index into `dirs` is
+/// positional — so holes must be preserved, not skipped.
+fn parse_id_table(body: &str) -> Vec<u32> {
+    body.split(',')
+        .map(|t| t.trim().parse::<u32>().unwrap_or(u32::MAX))
+        .collect()
+}
+
+/// Parse a Ruby array literal of quoted direction strings.
+fn parse_dir_table(body: &str) -> Vec<String> {
+    body.split(',')
+        .filter_map(|t| {
+            let t = t.trim();
+            t.strip_prefix('\'')
+                .and_then(|s| s.strip_suffix('\''))
+                .or_else(|| t.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 /// Timeout for a `dothistimeout`-derived await whose captured value a later
 /// command needs. Short: the response to a `look` is immediate or not coming.
 const DOTHIS_TIMEOUT_SECS: f32 = 8.0;
@@ -267,6 +296,20 @@ pub fn transpile(source: &str) -> Option<Vec<WalkAction>> {
             then: vec![WalkAction::Move(c[1].to_string())],
             els: vec![WalkAction::Move(c[2].to_string())],
         }]);
+    }
+    if let Some(c) = GUIDED_ROUTE.captures(src) {
+        let start_rooms = parse_id_table(&c[1]);
+        let dirs = parse_dir_table(&c[2]);
+        // A table we couldn't parse would walk the wrong way; leave the edge
+        // untranspiled so it bans or hands off instead.
+        if !start_rooms.is_empty() && !dirs.is_empty() {
+            return Some(vec![WalkAction::GuidedRoute {
+                start_rooms,
+                dirs,
+                landmark: c[3].to_string(),
+                enter: c[4].to_string(),
+            }]);
+        }
     }
     if let Some(c) = MATCH_THEN_MOVE.captures(src) {
         // Ruby's positional $1 becomes a NAMED group so the binding can't
@@ -690,6 +733,43 @@ mod tests {
     use super::*;
 
     pub(crate) use super::GATE_LOCK;
+
+    #[test]
+    fn guided_route_extracts_both_tables_and_the_landmark() {
+        // 554 edges across 4 residue families - the biggest non-algorithmic
+        // cluster in the corpus.
+        let got = transpile(
+            ";e start_room = [ 12095, 12096, nil, 12097 ]; \
+             dirs = [ 'southwest', 'west', 'northwest', 'southeast', 'east' ]; \
+             if index = start_room.index(Room.current.id); \
+             until checkloot.include?('thread'); move dirs[index]; index += 1; \
+             index = 0 if index >= dirs.length; end; move 'climb thread'; waitrt?; \
+             fput 'stand'; else; echo 'error: mini-script expected a different room'; \
+             end; $go2_restart = true",
+        )
+        .expect("guided route transpiles");
+        match &got[0] {
+            WalkAction::GuidedRoute {
+                start_rooms,
+                dirs,
+                landmark,
+                enter,
+            } => {
+                // `nil` holds a POSITION - the index into dirs is positional,
+                // so dropping it would shift every later room's direction.
+                assert_eq!(
+                    start_rooms,
+                    &[12095, 12096, u32::MAX, 12097],
+                    "nil keeps its slot as an unmatchable sentinel"
+                );
+                assert_eq!(dirs.len(), 5, "dirs is its own cycle, longer than start_room");
+                assert_eq!(dirs[0], "southwest");
+                assert_eq!(landmark, "thread");
+                assert_eq!(enter, "climb thread");
+            }
+            other => panic!("expected a GuidedRoute, got {other:?}"),
+        }
+    }
 
     #[test]
     fn capture_idiom_binds_a_value_and_interpolates_it() {

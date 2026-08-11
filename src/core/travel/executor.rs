@@ -377,6 +377,10 @@ const MAX_RESTARTS: u32 = 10;
 /// MAX_LOOP_ITERATIONS: bad map data may waste a route, it must never hang
 /// the client waiting on a loop that can't terminate.
 const MAX_SCRIPT_LOOP: u32 = 50;
+/// How many times a `GuidedRoute` may walk its whole direction cycle before
+/// giving up. The landmark normally appears within one lap; more than two
+/// means the table no longer matches the map.
+const GUIDED_ROUTE_LAPS: u32 = 2;
 /// How long the maze NPC gets to speak a route before the walk gives up.
 const MAZE_ASK_TIMEOUT_MS: u64 = 12_000;
 /// Gap between maze route commands beyond waiting out RT.
@@ -1245,7 +1249,7 @@ impl TravelTask {
         ctx: TravelContext,
         events: &mut Vec<TravelEvent>,
     ) {
-        use crate::core::pathing::edge::{RepeatUntil, WalkAction};
+        use crate::core::pathing::edge::{Cond, RepeatUntil, WalkAction};
         // Did this run emit any command? A script that finishes without sending
         // anything (a pure `;e true` pass-through, e.g. the virtual urchin
         // hideout entry) causes no room change — so we must NOT arrival-watch
@@ -1528,6 +1532,60 @@ impl TravelTask {
                         // Outside a loop: a no-op, per Lich.
                         None => pc += 1,
                     }
+                }
+                WalkAction::GuidedRoute {
+                    start_rooms,
+                    dirs,
+                    landmark,
+                    enter,
+                } => {
+                    // Join the direction cycle at the offset for the room we
+                    // are actually in. Not knowing where we are is the Ruby's
+                    // `else echo 'error: mini-script expected a different
+                    // room'` branch — it can't walk, so let the edge fall to
+                    // ban/fallback rather than guessing an offset.
+                    let Some(here) = ctx.current_room else {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    let Some(offset) = start_rooms.iter().position(|&r| r == here) else {
+                        events.push(TravelEvent::Status(format!(
+                            "edge {from} -> {expected}: room {here} isn't on this guided route"
+                        )));
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    };
+                    if dirs.is_empty() {
+                        self.handle_uncrossable_edge(from, expected, ctx, events);
+                        return;
+                    }
+                    // Lower into primitives: step the cycle until the landmark
+                    // shows up, then enter it. Expressing it this way (rather
+                    // than as bespoke stepping state) means the walk inherits
+                    // RT-waiting and suspend/resume for free, and the loop
+                    // ceiling bounds it.
+                    let cycle = (0..dirs.len())
+                        .map(|i| dirs[(offset + i) % dirs.len()].clone())
+                        .map(|d| {
+                            WalkAction::Repeat {
+                                // One StepMove per iteration, skipped once the
+                                // landmark appears — the loop's own condition
+                                // is what actually ends the walk.
+                                body: vec![WalkAction::StepMove(d)],
+                                until: RepeatUntil::Cond(Cond::RoomHasObject(
+                                    landmark.clone(),
+                                )),
+                                max: 1,
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    let mut expansion = vec![WalkAction::Repeat {
+                        body: cycle,
+                        until: RepeatUntil::Cond(Cond::RoomHasObject(landmark.clone())),
+                        max: GUIDED_ROUTE_LAPS,
+                    }];
+                    expansion.push(WalkAction::Move(enter));
+                    actions.splice(pc..=pc, expansion);
                 }
                 WalkAction::PauseForUser {
                     msg,
@@ -3503,6 +3561,74 @@ mod tests {
             sent(&ev),
             ["search", "go crevice"],
             "break exits the loop and the script continues after it"
+        );
+    }
+
+    #[test]
+    fn guided_route_joins_the_cycle_at_the_current_rooms_offset() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        // Room 1 is at offset 1, so the walk starts with the SECOND direction.
+        let actions = vec![WalkAction::GuidedRoute {
+            start_rooms: vec![99, 1, 98],
+            dirs: vec!["north".into(), "east".into(), "south".into()],
+            landmark: "staircase".into(),
+            enter: "climb staircase".into(),
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev).first(),
+            Some(&"east"),
+            "joins the cycle at the offset for the room we're in: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn guided_route_off_its_table_doesnt_guess_a_direction() {
+        // The Ruby's `else echo 'error: mini-script expected a different
+        // room'` branch. Walking from an unknown offset sends the character
+        // somewhere arbitrary, which is worse than not crossing.
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let sim = Sim::new(1);
+        let actions = vec![WalkAction::GuidedRoute {
+            start_rooms: vec![97, 98, 99],
+            dirs: vec!["north".into()],
+            landmark: "staircase".into(),
+            enter: "climb staircase".into(),
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert!(
+            sent(&ev).is_empty(),
+            "no movement is sent from an unknown offset: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn guided_route_stops_once_the_landmark_appears() {
+        use crate::core::pathing::edge::WalkAction;
+        let db = script_db();
+        let mut task = TravelTask::start(&db, 1, 2, 0).unwrap();
+        let mut sim = Sim::new(1);
+        // The landmark is already here: enter it without walking the cycle.
+        sim.loot_nouns = vec!["staircase".into()];
+        let actions = vec![WalkAction::GuidedRoute {
+            start_rooms: vec![1],
+            dirs: vec!["north".into(), "east".into()],
+            landmark: "staircase".into(),
+            enter: "climb staircase".into(),
+        }];
+        let mut ev = Vec::new();
+        task.tick_script(actions, 0, None, 2, 1, None, sim.ctx(&db), &mut ev);
+        assert_eq!(
+            sent(&ev),
+            ["climb staircase"],
+            "the landmark ends the walk immediately: {ev:?}"
         );
     }
 
