@@ -59,6 +59,12 @@
 | Macro `hidden_when`/set conditions | Mobile | **[repair?]** | Phone macro editor: label/command/color/tap-mode only. `app.js:4386-4422` |
 | **Mobile highlight editor redirects/squelch** | Mobile | **[doc-bug]** | `web.md:164` + `app.js:3410-3412` comment say phone CAN'T; **code DOES** (`app.js:3509,3660,3523-3526`). Fix the doc. |
 | Copy: TUI `Ctrl+C` copies (not quit) / plain-text only (all) | all | **[doc-only]** | Plain-text-only copy is deliberate ([[styled-clipboard-copy-rejected]]). |
+| **Targets click fires `target`, but the phone opens a verb menu** | Mobile | **[repair?]** | Desktop targets rows send `target #id` directly; `tapCreature` sends `link_tap` for Targets AND Players rows. Unify, or document as-is? `boards.rs:1039` vs `app.js:5388` |
+| **No items surface on mobile** | Mobile | **[by-design?]** | Room objects reach the phone via interact mode's **Objects** category and the drawer's **Room** section only; no dedicated Items section. `app.js:2241-2243,5365-5413` |
+| **Effect times don't tick on desktop** | TUI, GUI | **[repair?]** | `expires_at` exists (`src/data/widget.rs:406-411`) but is read ONLY by `conditions.rs:158,334` and `hotbar.rs:106` — **never by a renderer**. Both desktop frontends draw the frozen server `time` string; only the web client ticks at 1 Hz (`app.js:647-657,760-763`). Conditions are therefore accurate while the window is stale. |
+| **`setEffects` doesn't re-render an open status drawer** | Mobile | **[repair?]** | `app.js:647-657` ends at `renderEffects()`; every other setter guards with `renderStatusDrawer()`. Rows added/dropped while the drawer is open don't appear until something else re-renders. Existing rows keep ticking. |
+| **`missingspells` absent from `VALID_TYPES`** | TUI | **[repair?]** | Template-registered and catalog-creatable (`presets.rs:188`, `window.rs:94`) but missing from `window.rs:116-148`, so the bare-`.addwindow` picker never offers it. |
+| **Stale source comment — Targets category** | — | **[doc-bug]** | `editors/settings.rs:12-14` says the Targets category moved to the Window Editor (`editors/windows.rs`), which is deleted. It lives in **Settings** (`settings.rs:41,1192-1200`); the window menu only links to it. Comment-only fix. |
 
 ---
 
@@ -304,6 +310,163 @@ removes it from **every** tab (`editors/tabs.rs`).
 
 **TUI authoring gaps (renders fine, cannot author):** countdown **Stay visible
 at rest** has no TUI field though `sync.rs:747` honors it.
+
+### Entity list widgets — targets, players, items (added 2026-08-11)
+
+**One component feeds two of the three.** `<component id='room objs'>` is parsed
+once (`src/core/messages/component.rs`), and **boldness is the splitter**: `<a>`
+links inside `<b>…</b>` become **creatures** (`component.rs:229-244`), links
+outside bold become **room objects** (`component.rs:333-356`). Players come from
+a separate room-players component into `GameState.room_players`
+(`src/core/state.rs:563-579`).
+
+**The targets list has TWO independent gates; conflating them is the trap.**
+1. **Hostile gate** — requires a `<crtrStatus>` snapshot with `hostile="1"`.
+   **`flags: None` (no snapshot seen yet) is excluded by design**, not a bug
+   (`boards.rs:988-993`, `targets.rs:122-134`; test `targets.rs:550-579`).
+2. **`is_valid_target`** — dead/gone, `animated*` (except "animated slush"),
+   appendages, and `excluded_nouns`. **It deliberately does NOT check
+   hostility** (`src/core/state.rs:426-454`).
+
+**⚠️ Appendages are NOT severed body parts.** They are limbs summoned from the
+ground that attack you — a sorcerer's **Grasp of the Dead (709)** and similar.
+They are targetable but **cannot be damaged**, so filtering them keeps the list
+actionable. Regex on the **noun**:
+`^(?:arm|appendage|claw|limb|pincer|tentacle)s?$|^(?:palpus|palpi)$`, overridden
+when the **name** matches `(?:amaranthine|ghostly|grizzled|ancient) kraken
+tentacle` — those four are real, killable creatures (`state.rs:406-426`).
+*(The old source comment said "severed arms"; corrected 2026-08-11 per Nisugi.)*
+
+**The appendage footer counts HOSTILE appendages only.** The hostile check
+`continue`s *before* `body_part_count += 1` in both frontends
+(`boards.rs:991-997`, `targets.rs:127-141`), so an appendage with no hostile
+snapshot is never counted. The footer means "how many hostile appendages were
+hidden", not "how many are in the room".
+
+**Status abbreviation fallback is by CHARS, not bytes.** `config.status_abbrev`
+lookup is lowercased; on miss, `s.chars().take(3)` — and a status of ≤3 chars
+passes through whole (`targets.rs:178-195`, `players.rs:86-95`). Test: `"awake"`
+→ `[awa]` (`players.rs:405-427`). Defaults ship 12 entries.
+
+**Multi-status only comes from the structured feed.** `<crtrStatus>` yields
+`[stu,prn]`; the legacy text parse contributes at most one (`state.rs:390-401`).
+Dead leads the tag list for players: `Regyy [ded] [prn]` (`players.rs:74-81`).
+**Dead creatures are filtered from targets entirely** — there is no `[ded]` row
+there; that styling is players-only.
+
+| Task | Terminal (TUI) | Desktop GUI | Mobile / Web |
+|---|---|---|---|
+| **Click a TARGET row** | ✅ Sends **`target #<id>` directly** — no verb menu. `targets.rs:393-399` → `_direct_` link `room_window_ops.rs:554-565` | ✅ Sends **`target #<id>` directly**. `boards.rs:1035-1041` | ⚠️ **Opens the server verb menu instead** — `tapCreature` → `link_tap`. `app.js:5388,4951-4966` |
+| **Click a PLAYER row** | ✅ `LinkData` → **server verb menu**. `players.rs:209-212` | ✅ Same. `boards.rs:1079-1088` | ✅ Same. `app.js:5408-5409` |
+| **Click an ITEM row** | ✅ `LinkData` → verb menu. `room_window_ops.rs:464-510` | ✅ verb menu via `request_menu` → `_menu #id`. `panels.rs:394-418` | ❌ **No items surface.** Reachable via interact mode's **Objects** + drawer **Room** section. `app.js:2241-2243` |
+| **Right-click a row** | ❌ **No per-row right-click** — it's the window menu | ❌ Same | ❌ |
+| **Drag a row** | ⚠️ Items are drop targets (`input.rs:1121-1128`) | ✅ **Items only** — `Sense::click_and_drag()`. Targets/players are `Sense::click()`. `panels.rs:394-418` vs `boards.rs:1033,1076` | ❌ |
+| **Count in title `[04]`** | ✅ All three. `targets.rs:305`, `players.rs:155`, `items.rs:95` | ❌ **No count suffix** — no `{:02}` under `src/frontend/gui/` | ❌ |
+| **Empty state** | (blank) | ⚠️ **Items only**: `"No objects here."` `panels.rs:381-384` | — |
+
+**Per-window settings (targets only) — GUI right-click ▸ widget section, live-apply:**
+
+| Control | GUI label | TUI label | Cite |
+|---|---|---|---|
+| Appendage footer | **Show filtered appendage count** | **Show Appendages** | `window_config.rs:1009`, `render.rs:1272-1273` |
+| Status side | **Status position** ▸ Global default / Before the name / After the name | **Status Pos:** ▸ Left / Right | `window_config.rs:1020-1045`, `render.rs:1287-1295` |
+| Jump to globals | **Global target settings…** → Settings ▸ Targets | ❌ none; use `.settings` | `window_config.rs:1141-1152` |
+
+`players` and `items` expose **only** `entity_id` in the TUI editor and **no
+widget section at all** in the GUI menu (`construction.rs:283-288`).
+
+**Global `[target_list]` lives in Settings ▸ Targets** (`settings.rs:41,1192-1206`):
+`status_position` (`"end"`), `truncation_mode` (`"noun"`), `excluded_nouns`
+(`["arm","coal"]`), `boss_color` (`#ff5555`), `challenging_color` (`#ffaa55`),
+**`dead_color` (`#888888`, the players window's corpse styling)**, plus a bespoke
+**Status abbreviations** editor. **`truncation_mode = "noun"` only fires when a
+status is present AND the line overflows** — not an always-on shortener
+(`targets.rs:200-223`).
+
+### Active effects and spells (added 2026-08-11)
+
+**Effects arrive on `<dialogData>`, not a text stream.** Four literal wire ids
+gated at `src/parser/dialogs.rs:409`: `Active Spells` (**with a space**),
+`Buffs`, `Debuffs`, `Cooldowns`. The category key strips the space →
+`ActiveSpells`. A `<progressBar>` missing any of `id`/`value`/`text`/`time` is
+silently dropped (`dialogs.rs:431-452`). Every ActiveEffects window subscribes to
+all four **lowercase** streams regardless of its own category
+(`routing.rs:373-378`) — three distinct spellings of one concept.
+
+**⚠️ Desktop effect times DO NOT tick.** See the watch-list row. Renderers draw
+the frozen server `time` string; **conditions compute from `expires_at` and are
+accurate while the window is stale.** Only the web client ticks (1 Hz, anchored
+to client `Date.now()` with **no clock-offset correction**, unlike RT/CT).
+
+**No expiry sweep exists.** Effects are removed only by a server `clear='t'`
+(`element.rs:1712-1737`). An effect at zero keeps rendering. **Effects never
+sort** — first-seen arrival order at all three layers; server
+`anchor_left`/`anchor_top` are discarded. **Changing Category clears effects and
+bumps `generation`** (`window_config.rs:599-618`).
+
+**The bar tracks `value` (server percentage), not remaining time**
+(`boards.rs:803-810`).
+
+**Time format diverges:** TUI `[MM:SS]` / `[HH:MM]` / `[??:??]` **in brackets**
+(`active_effects.rs:23-41`); **GUI paints the raw `03:06:54` unbracketed**
+(`boards.rs:834`).
+
+**TUI Category is free text, not a dropdown**, and blank silently falls back to
+`ActiveSpells` (`window_editor/sync.rs:402-410`). The GUI is a 4-item combo
+(`window_config.rs:975-992`).
+
+**`.addwindow` type strings are unforgiving:** `active_effects` **only**
+(`activeeffects` rejected); `missingspells` **only** (`missing_spells` rejected)
+— `src/data/window.rs:91,94`. `from_str` silently falls back to **Text** for
+unknown strings (`:69-71`), so a typo yields a wrong-widget window, not an error.
+
+**Spell colors key on the effect id parsed as u32 (the spell number), resolved
+once at parse time** and baked onto the effect (`element.rs:1639-1647`).
+Renderers never call `get_spell_color_style`. **`SpellColorRange` is a
+misnomer** — an explicit ID list, first match wins; **`bg_color` is parsed but
+dropped by `style()`**. Applies to ActiveEffects only — **Missing Spells is
+hard-coded amber `#d78700`** (`missing_spells.rs:58`); Spells uses server
+styling. **`.spellcolors` is desktop-only** (`headless/runtime.rs:1168`).
+
+**The Spells window is a login-time snapshot**, wholesale-replaced — not a live
+"known spells" roster. **Clicking a spell requests a server context menu**
+(`input.rs:1221-1233`); it does not prepare or cast. **`.spellwatch` has no
+`clear`** — use `rem all`. **`add all` snapshots ActiveSpells + Buffs only**;
+Debuffs/Cooldowns deliberately excluded (`missing_spells.rs:8-15`). A single
+unparseable number rejects the whole command.
+
+### Indicators and dashboards (added 2026-08-11)
+
+**An indicator window's NAME is its status id** — there is no picker anywhere.
+**A dashboard auto-adds an unknown `set_status` id as a new cell; an indicator
+cannot**, because the window *is* the id. Exception: the dashboard won't
+auto-add an id a combined indicator template already claims in a condition.
+
+**Two Save-buffered editors sit inside the live-apply menu:** the **Indicator
+Icons** editor (`editors/indicators.rs:203`, **Save all** at `:210`) and the
+**Dashboard** editor. Everything around them applies live.
+
+**`DashboardLayout` has FOUR variants** — Horizontal, Vertical, Grid, **Flow**.
+Unrecognized layout strings fall back to horizontal silently. **The TUI grid
+truncates past `rows × cols`** (a fifth status in `grid:2x2` is dropped); the GUI
+does not. **`hide_inactive` defaults true.** **`stack` collapses entries into one
+cell** and they count once for the height cap. Height is capped from the row
+count for every layout **except Flow**, which is uncapped because wrapping
+depends on width.
+
+**An inactive indicator draws NOTHING — it does not dim.** Inactive art is
+opt-in in both frontends, so `inactive_color` has nothing to color unless an
+inactive icon is set.
+
+**Mobile indicators live in the STATUS ROW, not the status drawer**
+(`#indicators` inside `#status-row`, `index.html:80-89`). The badge set is
+exactly nine (`INDICATOR_BADGES`, `app.js:597-607`): DEAD, STUN, BLEED, WEB,
+HIDDEN, INVIS, KNEEL, SIT, PRONE. **`poisoned`, `diseased`, `joined`, and
+`standing` have none, and custom `set_status` ids never reach the phone.**
+
+**TUI indicator editor has five fields and no conditions** (Id, Title, Icon,
+Active color, Inactive color). Multi-condition switching is GUI authoring;
+**both frontends display** whatever was authored.
 
 ## Conditions — the shared vocabulary (added 2026-08-11)
 
