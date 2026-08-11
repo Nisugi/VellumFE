@@ -61,6 +61,13 @@
 | Copy: TUI `Ctrl+C` copies (not quit) / plain-text only (all) | all | **[doc-only]** | Plain-text-only copy is deliberate ([[styled-clipboard-copy-rejected]]). |
 | **Targets click fires `target`, but the phone opens a verb menu** | Mobile | **[repair?]** | Desktop targets rows send `target #id` directly; `tapCreature` sends `link_tap` for Targets AND Players rows. Unify, or document as-is? `boards.rs:1039` vs `app.js:5388` |
 | **No items surface on mobile** | Mobile | **[by-design?]** | Room objects reach the phone via interact mode's **Objects** category and the drawer's **Room** section only; no dedicated Items section. `app.js:2241-2243,5365-5413` |
+| **No CONTAINER surface on mobile** (inventory HAS one) | Mobile | **[by-design?]** | `inv` is a first-class **stream filter chip** labelled **Inventory**, deliberately kept out of `HIDDEN_STREAMS` with a source comment ("so a phone-only player can read carried items", `app.js:25-33`), plus a default touch-wheel slice `open:inv` (`app.js:1619`) that switches the CHIP, not a drawer section (`app.js:1707-1710`). **Containers have no phone surface at all.** |
+| **Inventory `buffer_size` is authored but never read** | TUI, GUI | **[repair?]** | Both editors expose it and the preset ships 0, but `init_windows` hard-codes 10000 (`state/windows.rs:243-247`) and `add_new_window` hard-codes 0 (`:610-614`). Content is replaced wholesale each update, so the control does nothing either way. |
+| **Container position memory is TUI-only** | GUI | **[repair?]** | TUI drag-release writes `widget_state.toml` `[containers]` (`frontend/tui/input.rs:1267-1288`); the GUI never persists ephemeral container geometry, so every container window reopens centered at 40x15. |
+| **Bare `.hidecontainers` closes dialog panels too** | TUI, GUI | **[repair?]** | `close_all_ephemeral_windows` iterates the whole `ephemeral_windows` set while reporting the count as "container window(s)" (`window_lifecycle.rs:1127-1142`). Misleading message, not a wrong action. |
+| **Inventory/Reserve click hit-test assumes a border** | TUI | **[repair?]** | `room_window_ops.rs:236` hardcodes `border_offset = 1` ("Inventory windows always have borders"); a borderless window mis-registers row clicks by one. |
+| ~~**`wordwrap` authored in the TUI but never applied**~~ — **FIXED 2026-08-11 (`4f959d5d`)** | TUI | **[fixed]** | `InventoryWindow::new` hardcoded wrap off and `sync_inventory_windows` never revisited it, so one layout rendered two ways. The sync path now reads the flag and forces a refill on change. |
+| ~~**`.go2 targets` help strings contradict the code**~~ — **FIXED 2026-08-11** | TUI, GUI | **[fixed]** | `command_help.rs:116` and `editors/settings.rs:1186` both said `targets` lists saved targets; it lists reachable tagged destinations, and `saved` is the saved list. |
 | **Effect times don't tick on desktop** | TUI, GUI | **[repair?]** | `expires_at` exists (`src/data/widget.rs:406-411`) but is read ONLY by `conditions.rs:158,334` and `hotbar.rs:106` — **never by a renderer**. Both desktop frontends draw the frozen server `time` string; only the web client ticks at 1 Hz (`app.js:647-657,760-763`). Conditions are therefore accurate while the window is stale. |
 | **`setEffects` doesn't re-render an open status drawer** | Mobile | **[repair?]** | `app.js:647-657` ends at `renderEffects()`; every other setter guards with `renderStatusDrawer()`. Rows added/dropped while the drawer is open don't appear until something else re-renders. Existing rows keep ticking. |
 | **`missingspells` absent from `VALID_TYPES`** | TUI | **[repair?]** | Template-registered and catalog-creatable (`presets.rs:188`, `window.rs:94`) but missing from `window.rs:116-148`, so the bare-`.addwindow` picker never offers it. |
@@ -467,6 +474,141 @@ HIDDEN, INVIS, KNEEL, SIT, PRONE. **`poisoned`, `diseased`, `joined`, and
 **TUI indicator editor has five fields and no conditions** (Id, Title, Icon,
 Active color, Inactive color). Multi-condition switching is GUI authoring;
 **both frontends display** whatever was authored.
+
+### Inventory, Reserve, and containers (added 2026-08-11)
+
+**Inventory/Reserve are SNAPSHOT windows, not logs.** `flush_inventory_buffer` clears
+`content.lines` and refills on every change (`core/messages/buffers.rs:26-37`). An
+unchanged snapshot is skipped, not redrawn (`buffers.rs:15`). **`buffer_size` is
+authored in BOTH editors but no constructor reads it** — `init_windows` hard-codes
+10000 (`state/windows.rs:243-247`), `add_new_window` hard-codes 0 (`:610-614`), preset
+ships 0 (`presets.rs:296`). The control is inert. **[repair?]**
+
+**Inventory has NO empty-state placeholder** — unlike Items (`"No objects here."`) and
+Container (`"Empty."`).
+
+**⚠️ CONTAINERS ARE OPT-IN. `LOOK IN` does NOT create a window.** A sighting only sets
+`newly_registered_container` (`messages/element.rs:1776-1778`); the window is created
+only if the title is already in `ui_state.shown_container_titles`
+(`window_lifecycle.rs:904-910`). Ticking the Windows-list row inserts it and creates
+(`:791-793`); unticking removes both. Session-only, wiped on relog. Test:
+`state/tests.rs:1377-1416` ("Sighted while not opted in → no window").
+
+**Ephemeral containers ALWAYS open 40x15 centered** (`window_lifecycle.rs:546-551`) —
+game placement hints never reach them.
+
+**⚠️ Container position memory is TUI-ONLY.** Written on TUI drag-release to
+`widget_state.toml` `[containers]` (`frontend/tui/input.rs:1267-1288`). The GUI never
+writes it. **[repair?]**
+
+**`.hidecontainers` semantics:** bare = `close_all_ephemeral_windows`, which closes
+**every ephemeral window including dialog panels** while still reporting "container
+window(s)" (`window_lifecycle.rs:1127-1142`). With an arg = a **lowercased,
+space-to-underscore, substring** match that can close several at once (`:1145-1172`).
+**[repair?]** on the misleading message.
+
+**A layout-declared `widget_type = "container"` IS persistent** (`window_def.rs:490`;
+`ContainerWidgetData.container_title`). **Nothing dedupes it against the ephemeral
+window** — a different name gives you two windows on one bag. `find_container` matches
+exact, then substring, then article-stripped (`core/game_objects/mod.rs:470-492`).
+
+**Neither Inventory nor Container gets a GUI widget section** —
+`widget_section_label` returns `None` for both (`window_config.rs:140-161`). The
+`menus.rs:967-977` type list gates **Appearance ▸ Text ▸ Word wrap + content
+alignment** only. TUI editor: Inventory/Reserve expose Streams, Buffer size, Wordwrap
+(no Timestamps); **Container exposes NOTHING** (`construction.rs:289-291`).
+
+**TUI container title carries a live count `[06]` / `(empty)`**
+(`container_window.rs:179-183`); the GUI has no count and prints **`Empty.`** or
+**`No contents cached for "X".`** (`gui/app/widgets/panels.rs:1050,1074`).
+
+**Inventory/Reserve `wordwrap` — FIXED 2026-08-11 (`4f959d5d`).** Was authored in both
+editors and honored only by the GUI; `InventoryWindow::new` hardcoded wrap off and the
+sync path never revisited it. The TUI now reads the flag and forces a refill when it
+changes (wrapping is applied at `finish_line`, so a stale flag would otherwise persist
+until the game re-sent the list). Document ONE behavior across frontends.
+
+### Game-type gating — which windows exist for which game (added 2026-08-11)
+
+Gating lives in ONE table: `CATALOG` in `src/config/presets.rs:132-201`, as
+`(key, Option<GameType>)`. `None` = both games.
+
+**GS4-only:** `reserve` (`:185`), `gs4_experience` (`:197`), `minivitals` (`:199`),
+`betrayer` (`:200`). **DR-only:** `concentration` (`:137`), `perception` (`:195`),
+`experience` (`:196`).
+
+**⚠️ The trap: `GameType::from_game_string` NEVER returns `None`** — it returns `DR`
+only when the game string starts with `dr` (case-insensitive) and **defaults to GS4 for
+everything else, including an unset game** (`src/config.rs:220-227`; the comment says
+this is deliberate so GS4 templates appear when connecting via Lich without `--game`).
+So "GS4-gated" means **hidden from DR characters**, not "requires you to set the game".
+
+**Gated:** the GUI **Windows** catalog (`state/menus.rs:797-798` → `creatable_for_game`)
+and the bare-`.addwindow` picker (`state/menus.rs:573` → `addable_by_category`). **NOT
+gated:** the six-argument `.addwindow` form — `commands.rs:2295-2317` calls `add_window`
+with no game check. A DR player can force a `reserve` window; it renders empty.
+
+### Map and travel (added 2026-08-11)
+
+**The map is GUI + mobile only.** The TUI renders one literal string,
+`"Map is available in the GUI frontend (--frontend gui)"`
+(`src/frontend/tui/frontend_impl.rs:462-467`). There is **no**
+`src/frontend/tui/map_compass.rs` — that file exists only at
+`src/frontend/gui/app/widgets/map_compass.rs`, shared by the GUI map and GUI compass.
+
+**⚠️ The mini map is CLICK-ONLY — it does not pan or zoom by gesture.**
+`map_view.rs:341` is `Sense::click()`; no `drag_delta`, no `smooth_scroll_delta`. Zoom is
+the **Custom map zoom** checkbox (`menus.rs:2014-2020`, default 16.0 px/cell, clamped
+2.0–96.0 at paint). Drag-pan and scroll/pinch-zoom exist only in the **Map Explorer**
+(`map_explorer.rs:686,714,818`) and on the phone.
+
+| Task | Terminal (TUI) | Desktop GUI | Mobile / Web |
+|---|---|---|---|
+| **See a map** | ❌ one-line hint. `frontend_impl.rs:462-467` | ✅ catalog or `.addwindow map map 0 0 30 12`. `presets.rs:190,1054` | ✅ 🗺 **Map** button, hidden until `map_state.available`. `app.js:7411` |
+| **Zoom** | ❌ | ⚠️ **Not a gesture** — right-click ▸ **Custom map zoom** + slider | ✅ pinch |
+| **Pan** | ❌ | ❌ on the mini map (drag moves the window); ✅ in the Explorer | ✅ drag; turns Follow off. `app.js:7398` |
+| **Click a room to travel** | ❌ | ✅ single click → `.go2 <id>`, or `;go2 <id>` when `native_map_clicks=false`. `map_compass.rs:177-186` | ✅ tap; **the overlay closes itself**. `app.js:7837-7839` |
+| **Cancel a trip** | ✅ `.go2 stop`, or **Esc in Normal mode only**. `input_handlers.rs:135-144` | ✅ `.go2 stop` or Esc | ✅ **■ Stop** only — **no Esc**. `app.js:7452` |
+| **Walk to a selected room** | ❌ | ✅ **two ways**: **Walk here** (`map_explorer.rs:363`) and double-click (`:882-885`) | ✅ tap |
+
+**Travel progress banner text differs — do not blend.** Desktop GUI paints ASCII
+`-> {dest} | {done}/{total} rooms | ETA {eta}` (`map_compass.rs:149-155`); the web canvas
+paints `→ {dest} · {done}/{total} rooms · ETA {eta}` (`app.js:7730`).
+
+**⚠️ `.go2 targets` is NOT the saved list.** `targets` prints a nearest-first directory
+of reachable mapdb-**tagged** destinations (`commands.rs:1354+`); the saved list is
+**`.go2 saved`** (`commands.rs:1338`, whose comment reads "formerly what `.go2 targets`
+showed"). **Two stale help strings FIXED 2026-08-11**: `app_core/command_help.rs:116`
+and `gui/app/editors/settings.rs:1186`.
+
+**Undocumented `.go2` forms** (`travel/target.rs:42-113`): `goback` (alias of `back`),
+`guild` / `guild shop` (needs profession from `INFO`), `locker` / `public locker`, and
+`.go2 reload`.
+
+**Resolution order, first match wins:** `back` → room id → `u`-uid → saved name →
+guild/locker specials → mapdb tag → free text over titles then descriptions. Saving a
+name that parses as a room id or equals `back` is **refused** (`commands.rs:1308-1311`).
+
+**⚠️ "No silver handling" is OBSOLETE — delete it wherever it appears.** Paid and gated
+travel are implemented and settings-gated, all **off by default**: `use_seeking`,
+`use_portmasters`, `get_silvers`, `get_return_trip_silvers`, `use_urchins`,
+`use_day_pass`, `buy_day_pass`, `day_pass_sack` (`settings.rs:897-970`).
+`native_map_clicks` is the only one defaulting **on**.
+
+**Ghost rooms: capture ALWAYS runs; `mapping_mode` gates RENDERING only**
+(`settings.rs:1017-1022`, explicit). Session-only, never written to disk.
+
+**Map data source priority: explicit `mapdb_path` → downloaded release → `lich_dir`**
+(`map_service.rs:37-60`). Nothing downloads automatically. `.mapdb` / `.mapdb download` /
+`.mapdb remove` / `.mapdb repo <owner/repo>` work in **every** frontend including the
+phone. Default repo `Nisugi/mapdb`.
+
+**Four distinct mini-map empty states** (`map_compass.rs:25-55`), each meaning something
+different: no database, loading spinner, `"Map unavailable: {err}"`, and
+`"Waiting for a mapped room..."` / `"Generating map..."`.
+
+**Automation lease:** one automation drives at a time —
+`[go2] {owner} is driving - .stop to cancel it first.` (`travel_ticks.rs:363-368`).
 
 ## Conditions — the shared vocabulary (added 2026-08-11)
 
