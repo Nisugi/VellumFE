@@ -1261,8 +1261,19 @@ impl VellumGuiApp {
                 .iter()
                 .skip(content.lines.len() - delta)
                 .any(|line| line.segments.iter().any(|s| s.inline_image.is_some()));
+        // A float at the tail with unconsumed reserved height (`extra > 0` on the
+        // last cached row) is still OPEN: rows appended now belong beside it,
+        // inside its span, which the append-only path cannot compute — it would
+        // lay them out at full width under the reserved blank column, and the
+        // buffer would then visibly re-wrap on the next full rebuild. Take the
+        // full pass while the tail float is open; it closes once text has
+        // consumed the picture's height, so this costs at most a few rebuilds
+        // per image.
+        let open_tail_float =
+            delta > 0 && cache.extra.last().is_some_and(|extra| *extra > 0.0);
         let incremental = !width_changed
             && !appended_float
+            && !open_tail_float
             && content.generation >= cache.generation
             && delta <= rendered_count
             && cache.heights.len() + delta >= rendered_count;
@@ -1280,9 +1291,9 @@ impl VellumGuiApp {
                 let len = content.lines.len();
                 for line in content.lines.iter().skip(len - delta) {
                     // Appended lines are past any float that began earlier in
-                    // the buffer, so they lay out at full width. A float that
-                    // starts ON one of these lines is picked up by the next
-                    // full rebuild (its epoch bumps when the art resolves).
+                    // the buffer: an OPEN tail float (unconsumed reserve) and a
+                    // float starting on one of these lines both force the full
+                    // pass above, so full width is correct on this path.
                     let inset = LineInset::full(wrap_width);
                     cache.heights.push(Self::measure_line_height(
                         ctx, line, visuals, inset, font_id, timestamps,
@@ -1506,16 +1517,24 @@ impl VellumGuiApp {
         // raw event of their own. Pinning the offset on any of those frames
         // would swallow the rest of the gesture, so the smoothed delta counts
         // as user input for as long as it is still moving.
-        let user_scrolled = ui.input(|input| {
-            input.smooth_scroll_delta.y != 0.0
-                || input.raw.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::MouseWheel { .. }
-                            | egui::Event::PointerButton { pressed: true, .. }
-                    )
-                })
-        });
+        //
+        // egui input is context-global — every text window sees the same events —
+        // so the input only counts as OURS when the pointer is over this window.
+        // That mirrors where egui actually routes the wheel gesture. Without the
+        // gate, wheeling (or clicking) in one window detached every other text
+        // window from its tail whenever a burst had grown past the re-arm band.
+        let pointer_over_window = ui.rect_contains_pointer(ui.max_rect());
+        let user_scrolled = pointer_over_window
+            && ui.input(|input| {
+                input.smooth_scroll_delta.y != 0.0
+                    || input.raw.events.iter().any(|event| {
+                        matches!(
+                            event,
+                            egui::Event::MouseWheel { .. }
+                                | egui::Event::PointerButton { pressed: true, .. }
+                        )
+                    })
+            });
         // User input owns the window the moment it arrives. Setting the flag
         // is idempotent, so a producer repeating every frame can no longer
         // out-race it (the 82c2a8d5 failure: "the mouse lost every round").
