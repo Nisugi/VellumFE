@@ -6234,7 +6234,7 @@ dependencies = [
 
 [[package]]
 name = "vellum-fe"
-version = "0.3.0-beta.36"
+version = "0.3.0-beta.37"
 dependencies = [
  "aho-corasick",
  "anyhow",
