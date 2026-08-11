@@ -54,6 +54,7 @@ active_effects_custom
 inventory
 room
 spells
+missingspells
 compass
 map
 injuries
@@ -117,6 +118,7 @@ inventory
 reserve
 room
 spells
+missingspells
 compass
 map
 injuries
@@ -183,6 +185,7 @@ active_effects_custom
 inventory
 room
 spells
+missingspells
 compass
 map
 injuries
@@ -249,6 +252,7 @@ inventory = None
 reserve = Some(GS4)
 room = None
 spells = None
+missingspells = None
 compass = None
 map = None
 injuries = None
@@ -304,7 +308,7 @@ betrayer = Some(GS4)
 
 [templates_by_category]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, reserve, spells, injuries, perception, experience, gs4_experience, encum
+Character: inventory, reserve, spells, missingspells, injuries, perception, experience, gs4_experience, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
@@ -318,7 +322,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
 
 [addable_on_empty_layout.all]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, spells, injuries, encum
+Character: inventory, spells, missingspells, injuries, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
@@ -331,7 +335,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
 
 [addable_on_empty_layout.gs4]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, reserve, spells, injuries, gs4_experience, encum
+Character: inventory, reserve, spells, missingspells, injuries, gs4_experience, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Dialog: betrayer
 Entity: targets, players, items, entity_custom
@@ -345,7 +349,7 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
 
 [addable_on_empty_layout.dr]
 ActiveEffects: buffs, debuffs, cooldowns, active_spells, active_effects_custom
-Character: inventory, spells, injuries, perception, experience, encum
+Character: inventory, spells, missingspells, injuries, perception, experience, encum
 Countdown: roundtime, casttime, stuntime, countdown_custom
 Entity: targets, players, items, entity_custom
 Hand: left, right, spell
@@ -1648,6 +1652,26 @@ TextWindow: main, thoughts, speech, announcements, loot, death, logons, familiar
   title_position = "top-left"
   transparent_background = false
   locked = false
+  visibility = "shown"
+  tts_speak = false
+
+[template.missingspells]
+  widget_type = "missingspells"
+  name = "missingspells"
+  row = 0
+  col = 0
+  rows = 8
+  cols = 28
+  show_border = true
+  border_style = "single"
+  border_sides = ["top", "bottom", "left", "right"]
+  show_title = true
+  title = "Missing Spells"
+  title_position = "top-left"
+  transparent_background = false
+  locked = false
+  min_rows = 3
+  min_cols = 14
   visibility = "shown"
   tts_speak = false
 
