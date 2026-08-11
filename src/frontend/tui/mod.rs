@@ -41,6 +41,7 @@ mod perception;
 mod performance_stats;
 mod missing_spells;
 mod players;
+mod alert_overlay;
 mod popup_menu;
 mod progress_bar;
 mod quickbar;

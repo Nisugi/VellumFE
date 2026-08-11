@@ -526,6 +526,20 @@ impl Frontend for TuiFrontend {
                 window_times.push((name.clone(), window_start.elapsed()));
             }
 
+            // Alerts sit above the game windows but BELOW menus and forms,
+            // matching the GUI: a menu the user opened must stay on top.
+            if !app_core.alerts.is_empty() {
+                let hl = &app_core.config.highlight_settings;
+                alert_overlay::render(
+                    app_core.alerts.active(),
+                    screen_area,
+                    f.buffer_mut(),
+                    &theme,
+                    hl.alerts_reduce_motion,
+                    hl.alerts_flash_intensity,
+                );
+            }
+
             // Render popup menu if active
             if let Some(ref popup_menu) = app_core.ui_state.popup_menu {
                 // Convert from ui_state::PopupMenu to rendering popup_menu::PopupMenu
