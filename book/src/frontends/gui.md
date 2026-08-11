@@ -1,326 +1,386 @@
 # Desktop GUI
 
-A native windowed client built on egui:
+> Build the layout you play in — drag windows anywhere, reskin them with real artwork, and
+> change any setting from a right-click without leaving the game.
 
-```bash
-vellum-fe --frontend gui --port 8000 --character YourName
-```
+## What it's for
 
-Direct connection (`--direct`) works in the GUI too.
+This is where you *design* your interface. Everything else — the terminal, the phone, the
+browser — plays the layout; the GUI is where you make it. You drag a window to the corner
+you want it in, right-click it to change its font, and watch the change land while combat
+text is still scrolling past.
 
-## What's Shared with the TUI
+It is also the only frontend with pixels. The compass is a drawn rose, the injury doll is a
+body diagram that colors by wound severity, and a skin can replace your window borders,
+backgrounds, and icons with real artwork. A character grid cannot do those things, so the
+GUI does them for everyone.
 
-Connection settings, highlights, keybinds, colors, themes, and all
-dot-commands work identically — editors opened in the GUI write to the same
-config files, so changes carry over if you switch frontends.
+<figure class="shot" data-shot="gui/gui-hunting-layout-annotated">
+  <div class="shot-ph">📷 screenshot pending</div>
+  <figcaption>A GUI hunting layout with the toolbar's <b>Windows</b>, <b>Settings</b>, <b>Zones</b>, and <b>Editors</b> hubs across the top, vitals in the header, and a skinned frame on the story window.</figcaption>
+</figure>
 
-**Layout is not shared.** The GUI keeps its own per-character live layout
-(window positions, zoom, fonts) in `~/.vellum-fe/gui/`, separate from the
-TUI's layout.toml. Window size, position, and zoom are restored between
-sessions automatically.
+## Set it up
 
-`.savelayout <name>` / `.loadlayout <name>` / `.layouts` work here too,
-on GUI-native layouts: save the current arrangement as a named
-checkpoint (say, `combat` vs `town`), then swap with one command.
-Checkpoints go to the shared `~/.vellum-fe/layouts/` folder (as
-`<name>.json`), so — like TUI layouts — any character can load a layout
-any character saved; a checkpoint carries the whole look, including
-skin, fonts, and zoom. Loading applies instantly — windows, zones, tab
-groups, detached windows, fonts, zoom — and later rearranging never
-rewrites a checkpoint; only an explicit `.savelayout` does. TUI `.toml`
-layouts are a separate format and can't be loaded here (`.resize` is
-also TUI-only).
+{{#tabs global="frontend"}}
+{{#tab name="Desktop GUI"}}
 
-## Windows and Zones
+1. Run `vellum-fe` with **no arguments** (or double-click it) to open the
+   [**VellumFE Launcher**](../getting-started/launcher.md), then click **Launch** on a saved
+   connection. A saved connection opens in the GUI by default.
+2. To start the GUI directly from a shell instead, run
+   `vellum-fe --frontend gui --port 8000 --character YourName`. Direct login works here too:
+   `vellum-fe --frontend gui --direct --account YOURACCOUNT --game prime --character YourName`.
+3. Once the window is up, click **Windows** in the top toolbar and tick the windows you want.
+   The catalog stays open while you work, so you can add several in one visit.
 
-The GUI arranges windows in five zones: header, footer, left sidebar,
-center, and right sidebar. Toggle zones from the top toolbar. Every zone
-is a free canvas: windows go exactly where you drag them, may overlap,
-and remember their spot.
+**A saved connection defaults to GUI, but the `--frontend` command-line flag defaults to
+`tui`.** The same character launched from the Launcher and from a typed command lands in two
+different interfaces. See [First Launch](../getting-started/first-launch.md) for the full
+flag list.
 
-- **Move a window**: drag it anywhere — body or title bar (interactive
-  content like text selection and links still wins over the drag). To
-  move a window **between zones**, **Alt+drag** it; the drop point
-  becomes its new position. Within its zone, just drag it.
-- **Resize**: drag any window edge or corner.
-- **Snapping**: while you drag or resize, edges snap to the zone's
-  bounds, to other windows in the same zone, and (optionally) to a grid.
-  Engaged snaps draw a guide line with the matched coordinate, and the
-  grid shows as a faint overlay during the gesture. **Hold Shift** to
-  place a window freely. Tune it under **Settings → GUI**: snap distance,
-  targets (other windows / pane edges / pane center), grid pitch, and
-  **Grid sizing** (moves also pull each edge onto the grid, so windows
-  conform to it as you drag).
-- **Sidebar width**: drag the strip on the sidebar/center boundary — it
-  stays grabbable even with a window parked flush against it. Header and
-  footer heights have their own edge handles.
-- **Lock in place** (right-click → Window) pins a window's position and
-  size; `.lockwindows` locks everything at once.
-- **The Windows manager**: the **Windows** button in the toolbar opens one
-  window listing **every window the client can have** — the full built-in
-  catalog plus game dialogs, streams, and containers — grouped into
-  categories (Status, Progress Bars, Character, Navigation, Hotbars,
-  Containers, Dialogs, …) that start collapsed. Each row has a
-  **show/hide checkbox** (ticking a never-added window creates it) and a
-  **Zone** dropdown — set the zone on a hidden window and it appears
-  there when shown; otherwise placement defaults to a sensible zone
-  (usually Center). **➕ Custom window…** creates blank custom widgets
-  (text, tabbed, progress, countdown, entity, active effects) and drops
-  you into the new window's right-click menu to configure it; they then
-  appear as rows under their category.
-  Hidden windows stay hidden even when the game re-sends them (there is
-  no dialog blocklist — hiding is the control). Even the **story (main)
-  window** can be hidden once another window or tab carries the `main`
-  stream, and hiding the **command input** hands typing to the built-in
-  bottom bar (the TUI always keeps its input line).
-- **Right-click** a window body for its menu — every per-window setting
-  lives there (see [The Window Menu](#the-window-menu) below).
-  Overlapping windows offer **Send to Back**, dropping the window behind
-  any it covers so a buried one can be reached (clicking a window still
-  raises it to the front).
-- Windows can be **detached** into separate OS windows (restored across
-  sessions) — drag anywhere on the body to move one, and right-click for
-  the same menu (with **Reattach** in place of the zone controls) — or
-  locked together into tab groups that move as a unit. The menu's
-  **Group** section reorders members (⬆ / ⬇) and can ungroup one member
-  or the whole group.
+<figure class="shot" data-shot="gui/gui-toolbar-hubs-open">
+  <div class="shot-ph">📷 screenshot pending</div>
+  <figcaption>The <b>Windows</b> hub open as a stay-open catalog, showing show/hide checkboxes, per-row zone dropdowns, and <b>➕ Custom window…</b>.</figcaption>
+</figure>
 
-Layouts saved by older versions arranged sidebar windows in a fixed
-stack; they convert to freely placed windows automatically the first
-time each sidebar is shown, keeping their on-screen positions.
+→ **Expected result:** a native window opens with your layout, and the top toolbar shows the
+**Windows**, **Settings**, **Zones**, and **Editors** hubs.
+{{#endtab}}
+{{#tab name="Terminal (TUI)"}}
 
-## The Map
+The terminal cannot run the GUI, but it shares its layouts and its settings files. Build an
+arrangement in the GUI, save it with `.savelayout hunting`, then in the terminal run
+`.loadlayout hunting` — both frontends read the same `~/.vellum-fe/layouts/` pool.
 
-The GUI renders a live [map](../widgets/map.md) of your surroundings: a
-mini map widget that follows your character (click a room to walk there),
-and a **Map Explorer** native window for browsing any mapped location,
-with a drag-to-tidy override editor. Map data comes from your Lich install
-or a one-click download in **Settings → Map** — see the
-[Map page](../widgets/map.md) for setup.
+What does not cross over is artwork. Skin frames, window background images, and the drawn
+doll, compass, and hand icons load without complaint on the terminal side and have nothing to
+draw, because a character cell has no pixels. The [TUI](./tui.md) shows the same underlying
+information with glyphs and color.
 
-## The Window Menu
+The TUI also **keeps its own full-screen window editor** (`.editwindow`), which the GUI
+retired in favor of the right-click menu described below.
 
-Right-click any window (or run `.editwindow <name>`) for its menu — the
-one home for every per-window setting, applied **live** as you change
-them. Three quick actions sit on top (**Hide**, **Detach** — or
-**Reattach** on a detached window — and **Send to Back** where windows
-can overlap), then collapsible sections:
+→ **Expected result:** your GUI-built arrangement redraws on the character grid, with the
+same windows in the same relative places and no skin artwork.
+{{#endtab}}
+{{#tab name="Mobile"}}
 
-- **Window** — title, custom title-bar text, stream subscriptions (with
-  a picker of streams seen this session), scrollback size, the **speak
-  new lines (TTS)** checkbox, and **Lock in place**. Under **Advanced**:
-  per-line **timestamps** (with an at-line-start toggle), **compact**
-  mode, and **Delete Window** — which, behind a confirmation, actually
-  removes the window from the layout (unlike hiding, or the
-  `.deletewindow` command, which only hides).
-- **A widget section**, named for the widget, when it has settings of
-  its own:
-  - **Timer / Bar**: the feed id the widget tracks, its label, color
-    (defaults: roundtime red, casttime blue), and display modes
-    (`value/max` or bare `value`; timers can stay visible at rest).
-  - **Effects**: category (spells/buffs/debuffs/cooldowns).
-  - **Room**: section toggles (description, objects, players, exits).
-  - **Targets / Experience / Encumbrance**: per-window display toggles
-    and bar colors; targets windows also link to the global settings in
-    **Settings → Targets**.
-  - **Vitals**: orientation, bar height, text format, and per-bar
-    toggles, edited right on the vitals window.
-  - Widgets with a dedicated editor link to it here: **Edit tabs…**
-    (tabbed windows — names, streams, order, per-tab quiet/timestamps),
-    **Edit hotbars…**, **Edit dashboard…**, **Edit indicators…**,
-    **Hand icons…**, **Calibrate doll…**, and the **Map Explorer**.
-- **Arrange** — Move Window, move to a zone, and **Release Anchors**
-  (enabled when a snapped drop has anchored an edge). Under Advanced:
-  **Fixed size**.
-- **Appearance** — Text (font, size, wrap, alignment), Title bar, and
-  Frame (border, accent color, skin frame, background), with the
-  rarely-touched knobs (title-bar height, border sides, corner radius,
-  frame scale) under Advanced.
-- **Group** — orientation, member order, and grouping controls.
+The phone does not run the desktop GUI and cannot author a layout — its chrome is fixed by
+design and renders from a snapshot the host streams. To see a GUI session on your phone,
+start the GUI with the web server on
+(`vellum-fe --frontend gui --port 8000 --character YourName --web-port 8080`), run `.webinfo`
+for the pairing URL and QR code, and open that URL in the phone browser or scan the QR from
+the app's **Characters** picker (person icon ▸ **Characters** ▸ **Scan QR to add**).
 
-## Streams & Custom Windows
+The phone then shows the same character through its own surfaces — the right **status
+drawer**'s **Targets**, **Players**, and **Room** sections — rather than your GUI windows.
+You can still author macros, touch-wheel slices, highlights, colors, and controller binds
+from the phone; window and skin work stays on the desktop.
 
-**Windows menu → Streams & Custom Windows…** opens a panel that does two
-things:
+→ **Expected result:** the phone shows the same game text and vitals as the GUI window, and a
+command typed on either lands in the game once.
+{{#endtab}}
+{{#endtabs}}
 
-- **Stream routing** — every stream seen this session, with a route for
-  each: a window, main, or discard. This is the GUI counterpart of the
-  `.streams` editor and writes `[streams.routes]` in
-  [config.toml](../configuration/config-toml.md#stream-routing).
-- **Custom windows** — author text windows fed by any Lich stream id.
-  Name the window, type comma-separated stream ids — or click one from
-  the seen-streams list — and it starts collecting that output. The panel
-  also edits or deletes existing custom windows. (The TUI can do the same
-  from its window editor's Streams field; `Ctrl+P` there opens the same
-  seen-streams picker.)
+## Working with windows
 
-## Lich WebUI Panels
+### Adding, hiding, deleting
 
-Lich 5.18+ scripts can register live UI pages (`;ui`). The GUI renders
-those pages as **native docked panels** — real widgets, not an embedded
-browser:
+**Adding a window is the Windows catalog, not a right-click.** Click **Windows** in the
+toolbar and you get every window the client can have — the built-in catalog plus game
+dialogs, streams, and containers — sorted by title and grouped into collapsed categories.
+Each row is a **checkbox** (tick to show, untick to hide) and a **zone** dropdown. Setting the
+zone on a hidden window decides where it appears when you show it.
 
-```
-.webui            # connect to Lich's WebUI and pick from its pages
-.webui <page>     # open a specific script's page as a panel
-.webui off        # disconnect the bridge
-```
+Two buttons sit at the top of the catalog:
 
-Open panels are saved with your layout and reconnect automatically at
-login. Requires a Lich proxy connection (not `--direct`). Works with
-containerized Lich too — the bridge follows the host Lich advertises in
-its handshake instead of assuming localhost.
+- **➕ Custom window…** creates a blank widget of the type you pick and drops you into the new
+  window's right-click menu to configure it.
+- **↩ Restore deleted…** brings back a window you deleted, with its position, streams, and
+  widget type intact. It appears only when something is waiting to be restored.
 
-## Appearance
+| Goal | Gesture | Typed equivalent |
+|---|---|---|
+| Add / show a window | **Windows** ▸ tick the row | `.addwindow <name>` |
+| Hide it, keep it in the layout | Right-click ▸ **Hide**, or untick in the catalog | `.hidewindow [name]` |
+| Remove it from the layout | Right-click ▸ **Window** ▸ **Advanced** ▸ **Delete Window…** | `.deletewindow <name>` |
+| Bring a deleted one back | **Windows** ▸ **↩ Restore deleted…** | — |
+| Save the arrangement | — (no button) | `.savelayout <name>` |
+| Load one | `.menu` ▸ **Layouts** | `.loadlayout <name>` · `.layouts` |
 
-Open `.settings` → GUI panel:
+> ⚠️ **`.deletewindow` truly deletes and `.hidewindow` hides — in *both* desktop frontends.**
+> There is no asymmetry to remember. Delete stashes the window so **↩ Restore deleted…** can
+> bring it back, and both commands refuse to remove your only main-feed window.
 
-- **Zoom** (Ctrl+= / Ctrl+- / Ctrl+0, or the slider), **text size**,
-  **density** (spacing scale — the default approximates Wrayth's compact
-  look), title bar size, bar corner radius.
-- **Fonts**: pick any installed system font app-wide, or per-window.
-- **Vitals bars**: orientation, height, text format, and per-bar toggles
-  (health/mana/stamina/spirit/mind/encumbrance/...), with automatic
-  light/dark bar text for contrast.
-- Per-window overrides: text size, accent (border) color, wrapping, fonts.
+> ⚠️ **There is no button to save a layout.** `.savelayout <name>` is typed, in the GUI as
+> much as the terminal. The catalog says so itself when no layouts exist yet.
 
-Every size is adjustable — the Wrayth-like defaults are just defaults.
+### Moving, resizing, snapping
 
-## Interact Mode
+**Drag a window from anywhere — body or title bar, no modifier held.** Interactive content
+still wins, so selecting text or clicking a link does not start a drag. Resize by dragging any
+edge or corner.
 
-Press **F6** (keybind action `interact_mode`) for pointer-free interaction
-with the room — built for controller players (map your d-pad to the arrow
-keys with Steam Input or similar) and anyone who'd rather not mouse:
+> ⚠️ **The GUI drags from the whole window; the TUI drags from the title bar only.** And
+> **`Ctrl`+drag is not window movement in either frontend** — it is the object-drag gesture
+> that sends `_drag`, for dropping an item onto a hand, a container, or another item.
 
-- **↑/↓** cycle entities in the current category, **←/→** switch category
-  (creatures → objects → players → exits).
-- **Enter** opens the same server context menu a click would — arrow keys
-  and Enter navigate it, Esc backs out to interact mode.
-- Activating an **exit** walks that direction and leaves the mode.
-- The focused entity is highlighted in the room window, named in a status
-  overlay, and announced through TTS when speech is enabled.
-- **Esc** exits the mode.
+While you drag or resize, edges snap to the zone's bounds, to other windows in the same zone,
+and optionally to a grid. An engaged snap draws a guide line at the matched coordinate.
+**Hold Shift to suspend snapping** and place the window exactly where the pointer is — the
+guides disappear for as long as you hold it.
 
-## Controllers
+A snapped drop can promote to a persistent **anchor**, which makes the window keep following
+the edge it snapped to when the app window resizes. Right-click ▸ **Arrange** ▸ **Release
+Anchors** forgets them; the window stays exactly where it is and stops following. Dragging
+the window away from its snap does the same thing. The row is always visible, greyed when the
+window has no anchors, so you can tell at a glance which case you are in.
 
-Plug in a gamepad and the GUI reads it natively (Xbox and PlayStation
-pads verified on Windows; no mapper software needed — turn yours off to
-avoid doubled inputs).
+Tune the whole system under **Settings** ▸ **GUI**: snap distance, which targets participate,
+grid pitch, and grid sizing. `.snapdebug` writes a trace of the snap engine to
+`~/.vellum-fe/vellum-fe.log` when a snap is not doing what you expect.
 
-- **Left stick** walks the 8 compass directions — deflect toward
-  northeast to head `ne`; one step per deflection.
-- **D-pad** covers the rest of movement by default: up/down go `up` and
-  `down`, right goes `out`, and left runs [`.portal`](../reference/commands.md)
-  — walk the room's door/arch/gate, with a pick list when there are
-  several.
-- While a **context menu** is open, the d-pad navigates, South
-  (A/cross) confirms, East (B/circle) cancels — that part is fixed.
-- In **[interact mode](#interact-mode)** the **right stick** does the
-  cycling — up/down switch categories, left/right step entities — and
-  **South selects** (menu, or walk the exit). Everything else keeps
-  its binds: the left stick still walks, the d-pad still runs its
-  commands, and the other face buttons (plus the shift bank) fire
-  their macros. Macros may use `<target_id>` / `<target_noun>`,
-  filled from the focused entity at press time — bind
-  `target #<target_id>\rincant 611\r` to West and cast at whatever
-  the ring is on. Toggle the mode off from its Start bind.
+### Zones
 
-Everything else is yours to bind with **`.controller`**: each button
-maps to a keybind action or macro, with a "press a button" capture in
-the editor (`look` on South and interact mode on Start ship as
-defaults). Bindings live in the `[controller]` table of
-[controller.toml](../configuration/controller-toml.md). A **Save to:**
-switch at the top of the editor picks global (all characters) or the
-active character's own override file; loading merges character over
-global, so a class can keep only its own diffs.
+The GUI arranges windows in five zones — **Header**, **Footer**, **Left Bar**, **Center**, and
+**Right Bar**. Toggle them from the toolbar's **Zones** hub, which stays open so you can
+adjust several and watch each take effect, or type `.header`, `.footer`, `.leftbar`,
+`.rightbar` (each takes `on`, `off`, or `toggle`, defaulting to toggle).
 
-Beyond plain bindings:
+Every zone is a free canvas: windows sit exactly where you drop them, may overlap, and
+remember their spot. Moving a window to a *different* zone has three routes:
 
-- **Shift layer** — hold the button bound to `controller_shift` (l2 by
-  default) and every button switches to a second bank, edited on the
-  editor's Shift tab. Defaults: shift+d-pad pages the story window,
-  shift+South stands up.
-- **Radial command wheels** — hold the button bound to
-  `controller_wheel` (r2 by default), aim with the free stick (the one
-  that isn't walking — right, unless you move `movement_stick`), release
-  to fire. Slices can be **folders** (South opens, East backs up) and
-  carry **colors** — the wedge tints from its aim floor out to the rim
-  (dim at rest, bright while aimed), so the colored band is exactly
-  the zone where the slice activates and wheels can be color-coded by
-  function. Wedges don't
-  have to be even: give a slice a fixed **span** in degrees, rotate the
-  ring with **Start**, and set a per-slice **inner** floor that demands
-  a deeper stick throw before that slice will aim. Multiple named
-  wheels via `controller_wheel:<name>` bindings; build it all on the
-  editor's Wheels tab. Its **Visual** view is a drag-and-drop designer:
-  drag a divider to trade width between wedges (it snaps to the compass
-  points — hold Shift to go free), drag a wedge's floor arc to set its
-  inner, drag a wedge's body to reorder the ring, click a wedge to edit
-  its fields, double-click a folder to step inside (and the Back wedge
-  to step back out), plus lock / even-out / mirror / rotate tools.
-  Inside a folder, **Add Back** turns the auto Back ghost into a real
-  slice you can move, resize, and color (dwelling it still ascends);
-  **Remove Back** restores the ghost. **Lock** a slice to freeze its
-  width — its span field and dividers disable, and even-out leaves it
-  alone. **Numeric** shows the same wheel as exact rows. One name is
-  dynamic:
-  **`controller_wheel:portals`**
-  (r3 by default) fills its slices from the current room's noun exits —
-  the same list [`.portal`](../reference/commands.md) resolves — so
-  `go gate` / `climb ladder` are always one hold-and-flick away.
-- **Binding legend** — Select toggles a compact overlay of your
-  bindings (`controller_overlay` action). It's curated: check **HUD**
-  on the rows you want shown. While shift is held the shift entries
-  read strong — the legend always shows what the pad does right now.
-- **Rumble** — the pad buzzes when roundtime ends, you're stunned, or
-  you die; pattern per event on the editor's Rumble tab. Beyond the
-  built-ins (off/short/long/double) you can define **custom patterns**
-  there — strength, buzz length, buzz count, gap, with a **Test**
-  button that plays the row on the pad — and any
-  [highlight rule](../customization/highlights.md) can name a pattern
-  to buzz when its text matches (rate-limited so a chatty pattern
-  can't vibrate continuously).
-- **Right stick** scrolls the story window with an analog speed curve;
-  the same page-scroll actions work from any bound key or button.
-- With several portals in a room, `.portal` (d-pad left) opens a
-  pad-navigable picker menu.
+- **Alt+drag the window.** Hold `Alt` and drag, and a tinted overlay highlights the zone under
+  your pointer; release to drop it there. Ordinary movement is suppressed while `Alt` is held,
+  so the two gestures never fight.
+- **Right-click ▸ Arrange ▸ Move to ▸** the zone you want.
+- **The zone dropdown** on that window's row in the **Windows** catalog — the one that also
+  works on a window that is currently hidden.
 
-## Speech (Text-to-Speech)
+### Overlapping and detaching
 
-**Settings > Speech** holds the TTS controls: enable, rate, volume, a
-voice picker, pronunciation substitutions, gag patterns, and a **Test**
-button that speaks a sample line. Pick which windows are read aloud with
-the per-window **speak new lines** checkbox in each window's right-click
-menu (Window section); the
-[`.tts` commands](../reference/commands.md#text-to-speech) drive the same
-settings from the input line.
+Where windows can overlap — Center, Header, and Footer — the right-click menu offers **Send to
+Back**, dropping the window behind anything it covers so a buried one becomes reachable.
+Clicking a window still raises it. The packed sidebars do not offer it, because nothing
+overlaps there.
 
-## Graphics
+**Detach** puts a window in its own OS window, restored across sessions. A detached window
+gets the same right-click menu with **Reattach** in place of **Detach**, and without
+**Arrange**, **Group**, or **Send to Back** — none of them mean anything inside an OS window.
+Drag its body to move it.
 
-The GUI draws real graphics where the terminal uses characters:
+## The right-click menu
+
+**Right-click any window body and you get every per-window setting there is.** Changes apply
+**live** — there is no Save button. Text fields commit when you press **Enter** or click away.
+`.editwindow <name>` opens the same menu for a window by name.
+
+> ⚠️ **The GUI's separate Window Editor no longer exists.** If a guide tells you to open an
+> editor window and press Save, it is describing the old client. Right-click is the one home
+> for these settings now. (The [TUI](./tui.md) still has its own full-screen editor form.)
+
+Three quick actions sit at the top — **Hide**, **Detach** (or **Reattach**), and **Send to
+Back** — then collapsible sections, each with its own **Advanced** fold so the menu opens
+short.
+
+### Window
+
+Title, **Title bar text** (custom text for the bar, separate from the window's name),
+**Streams** — the stream ids this window collects, with a **+** picker listing every stream
+seen this session so you do not have to know an id in advance — **Buffer lines** (scrollback
+size), **Speak new lines (TTS)**, and **Lock in place**. A locked window can still be grabbed
+but will not move or resize; `.lockwindows` locks everything at once.
+
+Under **Advanced**: **Compact** (condenses known content such as bounty text), **Timestamps**
+with a **Timestamp at line start** toggle, and **Delete Window…**. Delete is double-gated —
+the first click arms it, then the menu asks *"Really delete this window from the layout?"*
+with **Delete** and **Cancel**.
+
+### The widget section
+
+Named for the widget itself, and present only when the widget has settings of its own:
+
+- **Timer / Bar** — the feed id it tracks, its label, color, whether it shows `value/max` or
+  a bare value, and **Stay visible at rest** for timers that should not vanish at zero.
+- **Effects** — which category the window carries.
+- **Room** — section toggles for **Description**, **Objects**, **Players**, and **Exits**.
+- **Targets** — the filtered-appendage count and status position, plus **Global target
+  settings…**, which jumps to **Settings** ▸ **Targets** where the colors and excluded nouns
+  live for every targets window at once.
+- **Experience** — **Level**, **Mind state**, **Experience bar**, **Total exp**, **Ascension
+  exp**, and the two bar colors. **Encumbrance** — **Level bar** and **Help text**.
+- **Vitals** — **Layout** (orientation), **Bar height**, **Bar text** format, **Depleted
+  color**, and a checkbox per bar in display order.
+
+Widgets with an editor of their own link to it from here: **Edit tabs…** (tab names, streams,
+and order), **Edit hotbars…**, **Edit indicators…**, **Edit dashboard…**, **Hand icons…**
+(status-driven icons for an empty hand, a held weapon, a prepared spell), **Calibrate doll…**,
+and **Open Map Explorer**.
+
+<figure class="shot" data-shot="gui/gui-window-menu-sections">
+  <div class="shot-ph">📷 screenshot pending</div>
+  <figcaption>A story window's right-click menu with <b>Hide</b> / <b>Detach</b> / <b>Send to Back</b> on top and the <b>Window</b> section expanded over the <b>Streams</b> field and its seen-stream picker.</figcaption>
+</figure>
+
+### Arrange, Appearance, Group
+
+**Arrange** holds **Move Window** (a keyboard-friendly move that works even on a locked
+window), **Move to** ▸ each zone, and **Release Anchors**. Under Advanced: **Fixed size**,
+which keeps a window's exact width and height when the app window resizes or zooms so only its
+position adapts — what you want for a compass or a hands widget.
+
+**Appearance** splits into **Text** (font, text size, word wrap, content alignment), **Title
+bar** (show it, and its alignment), and **Frame** (border on/off and style, accent color, skin
+frame, background). Under Advanced sit the knobs you set once: title-bar height, which border
+sides draw, corner radius, and frame scale.
+
+**Group** locks windows together so they move as a unit. It sets the group's orientation
+(**Stacked** or **Side by side**), reorders members with ⬆ / ⬇, and ungroups one member or the
+whole group.
+
+## The toolbar hubs
+
+Four stay-open menus sit across the top. None of them close when you click inside — only
+clicking outside dismisses them — so you can make several changes and watch each land.
+
+| Hub | What's in it |
+|---|---|
+| **Windows** | The full window catalog: show/hide checkbox and zone per row, **➕ Custom window…**, **↩ Restore deleted…** |
+| **Settings** | **All Settings…**, plus one row per section that opens the Settings window scrolled to that section |
+| **Zones** | Show/hide and an overlay toggle for each of the five zones |
+| **Editors** | Themes · Colors · Highlights · Keybinds · Menu Keybinds · Controller · Touch Wheel · Hotbars · Indicators · **Streams & Custom Windows** · Sorter · Room Images · UI Packs · Asset Manager (Jinx) |
+
+The distinction between the last two is worth knowing: **Settings** holds the knobs that live
+in `config.toml`, while **Editors** holds the authored content that owns its own files —
+your highlight rules, your keybinds, your hotbars.
+
+## Graphics and skins
+
+The GUI draws what the terminal spells:
 
 - **Compass rose** — a vector rose with lit direction markers.
-- **Injury paperdoll** — a vector body diagram colored by wound/scar
-  severity. With a skin that ships doll art, wounds render as generated
-  dots (solid = wound, ring = scar, numeral = rank) at positions you set
-  by clicking in Settings > Appearance > Skin > Calibrate injury doll.
-- **Status icons** — vector pictograms for stance, hidden, stunned, and
-  the rest of the dashboard/indicator set.
+- **Injury doll** — a body diagram colored by wound and scar severity. With a skin that ships
+  doll art, wounds render as dots at positions you set by clicking, through **Calibrate
+  doll…** in the doll window's own menu section.
+- **Status icons** — vector pictograms for stance, hidden, stunned, and the rest of the
+  indicator set.
 
-All of it can be reskinned with your own images — window background art,
-nine-slice borders, icon sprites, a sprite compass and paperdoll. See
-[Skins](../customization/skins.md).
+A **skin** replaces all of it at once — nine-slice window borders, background art, icon
+sprites, a sprite compass and paperdoll. `.skins` lists what is installed, `.setskin <name>`
+activates one, `.setskin none` turns skinning off, and `.makeskin <name>` scaffolds a starter
+skin you can edit. Per-window, **Appearance** ▸ **Frame** picks which frame from the active
+skin a given window wears. See [Skins (GUI Graphics)](../customization/skins.md).
 
-## Differences from the TUI
+## Common setups
 
-- Copying is plain text: select with the mouse, `Ctrl+C`. Selections are
-  anchored to the text itself, so they survive scrolling — drag past the
-  window edge to auto-scroll, and copy picks up everything selected, even
-  lines currently scrolled out of view.
-- `Ctrl+F` opens in-window search with match highlighting.
-- Up/Down in the input bar browse command history; whatever you were
-  typing is stashed and restored when you come back down.
-- The newest history entry matching what you type appears as dim text after
-  the cursor; press `Tab` to accept it.
-- Terminal-only commands (`.setpalette`, `.resetpalette`, `.transparent`)
-  don't apply; themes handle appearance instead.
+### A hunting layout you can rebuild in five minutes
+
+1. Click **Zones** and turn on **Header** and **Right Bar**.
+2. Click **Windows**, tick **Vitals** and set its zone dropdown to **Header**; tick
+   **Roundtime**, **Compass**, and **Targets** and set them to **Right Bar**.
+3. Drag each one where you want it. Hold **Shift** while dropping the compass if the snap
+   keeps pulling it flush against an edge you want it off of.
+4. Right-click the compass ▸ **Arrange** ▸ **Advanced** ▸ tick **Fixed size**, so it keeps its
+   proportions when you resize the app window.
+5. Type `.savelayout hunting`.
+
+**You'll see:** the arrangement redraw exactly as you left it after `.loadlayout hunting` —
+including on the terminal, which reads the same layout pool.
+
+### A story window that reads the way you read
+
+Right-click your main story window. Under **Window**, raise **Buffer lines** so a long hunt
+stays scrollable. Under **Advanced**, tick **Timestamps** and **Timestamp at line start** if
+you want to reconstruct a fight afterward. Under **Appearance** ▸ **Text**, pick a font and
+size that suit your monitor, and turn **word wrap** on. Under **Appearance** ▸ **Frame**, set
+an accent color so the window you look at most is instantly identifiable.
+
+**You'll see:** each change take effect while game text is still arriving — timestamps appear
+on the *next* line, the font reflows what is already on screen, and nothing needs saving.
+
+## Tips & gotchas
+
+> ⚠️ **In the Desktop GUI, `Ctrl+C` quits.** In the [Terminal (TUI)](./tui.md) the same
+> combination **copies your selection** and does not quit at all. This is the single biggest
+> trap when you move between the two. To copy in the GUI, select with the mouse (double-click
+> for a word, triple-click for a line) and *then* press `Ctrl+C`.
+
+> ⚠️ **`.quit` disconnects but keeps the window open by default.** Run it again, or use
+> `.exit`, to close. Change it with `ui.keep_open_on_quit` in Settings.
+
+- **There is no right-click "Add Window".** Adding is the **Windows** catalog or
+  `.addwindow`. Right-click configures a window that already exists.
+- **Copy is plain text, deliberately.** Selections are anchored to the text itself, so they
+  survive scrolling — drag past the window edge to auto-scroll and the copy picks up lines
+  currently out of view — but colors and styling are not carried to the clipboard.
+- **Hiding is the control for game dialogs.** A hidden window stays hidden even when the game
+  re-sends it. There is no separate blocklist to maintain.
+- **Even the story window can be hidden**, once another window or tab carries the `main`
+  stream. Hiding the command input hands typing to the built-in bottom bar.
+- **Terminal-only commands do nothing here.** `.setpalette`, `.resetpalette`, `.transparent`,
+  and `.resize` belong to the TUI; themes and skins handle appearance in the GUI.
+- **Layouts are shared; the live arrangement is not.** `.savelayout` / `.loadlayout` write to
+  the pool both desktop frontends read, but the GUI keeps its own per-character live layout
+  (positions, zoom, fonts) apart from the TUI's `layout.toml`.
+- **`Ctrl+F`** opens in-window search with match highlighting. **`Ctrl+=` / `Ctrl+-` /
+  `Ctrl+0`** zoom the whole interface.
+- **The two "Launchers" are unrelated.** The [**Launcher**](../getting-started/launcher.md) is
+  the graphical connection list. The **SSH Launcher** (`.launcher` / `.launch <character>`) is
+  an in-session panel that cold-starts a headless Lich on another machine.
+
+## See also
+
+- [Frontends overview](./README.md) — all five, and how to choose
+- [Terminal (TUI)](./tui.md) — the terminal counterpart, and its own window editor
+- [Mobile Web](./web.md) — joining a GUI session from a phone or browser
+- [The Launcher](../getting-started/launcher.md) — saved connections and per-connection frontend
+- [First Launch](../getting-started/first-launch.md) — command-line flags and the default screen
+- [Skins (GUI Graphics)](../customization/skins.md) · [Widgets](../widgets/README.md) · [Map](../widgets/map.md)
+- [Configuration Files](../configuration/README.md) — the settings all frontends share
+
+<details>
+<summary>Config reference (TOML)</summary>
+
+The GUI writes its own state; you never need to hand-edit these to use the client. They are
+here for troubleshooting and for reading a layout someone shared with you.
+
+**Command line**
+
+| Flag | Type | Default | What it does |
+|---|---|---|---|
+| `--frontend` | `tui` \| `gui` \| `headless` | `tui` | Pass `gui` explicitly; a *saved connection* defaults to `gui` instead. |
+| `--launcher` | flag | on when run with no arguments | Opens the graphical Launcher. GUI only. |
+| `--launch-profile <NAME>` | string | — | Runs a saved connection by name from `launcher.toml`. |
+| `--web-port <PORT>` | u16 | — | Enables the embedded web server so a phone or browser can join this GUI session. |
+| `--data-dir <DIR>` | path | `~/.vellum-fe` | Config directory root. Also settable via `VELLUM_FE_DIR`. |
+
+**Where GUI state lives**
+
+| Path | Contains |
+|---|---|
+| `~/.vellum-fe/gui/<profile>/<character>/layout_v1.json` | The per-character live layout: window positions, zones, detached windows, tab groups, zoom, fonts. |
+| `~/.vellum-fe/layouts/<name>.json` | Named layout checkpoints from `.savelayout`, shared with the TUI's pool. |
+| `~/.vellum-fe/global/skins/` | Installed skins. The active skin is recorded in the GUI layout, not `config.toml`. |
+
+**Session behavior** (`config.toml`)
+
+| Field | Type | Default | What it does |
+|---|---|---|---|
+| `ui.keep_open_on_quit` | bool | `true` | After `.quit`, disconnect but keep the window open. `.quit` again or `.exit` closes it. |
+
+**GUI-only dot-commands**
+
+| Command | What it does |
+|---|---|
+| `.header` / `.footer` / `.leftbar` / `.rightbar` `[on\|off\|toggle]` | Show or hide a shell zone. Default is toggle. |
+| `.skins` · `.setskin <name>` · `.makeskin <name>` | List, activate (`none` disables), or scaffold a skin. |
+| `.controller` | Open the controller bindings editor. |
+| `.webui [page\|off]` | Render Lich WebUI pages as native docked panels. Needs a Lich proxy connection. |
+| `.snapdebug` | Toggle the snap-engine trace in `vellum-fe.log`. |
+| `.editwindow [name]` | Open that window's right-click menu; with no name, the Windows catalog. |
+
+The in-app `.help` footer states the same split: commands marked `(GUI)` need the desktop
+GUI, and `.setpalette` / `.resetpalette` / `.resize` are TUI-only.
+
+</details>
